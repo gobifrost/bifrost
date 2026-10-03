@@ -11,6 +11,7 @@ Covers:
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
 
 from src.models.orm.audit import AuditLog
 
@@ -87,20 +88,27 @@ class TestAuditLogEmission:
         ]
         assert matching, "Expected an organization.create audit event"
 
-    def test_login_failure_emits_event(self, e2e_client):
-        """Failed login attempts with an unknown user should be recorded."""
-        resp = e2e_client.post(
+    @pytest.mark.asyncio
+    async def test_login_failure_emits_event(self, private_client, db_session):
+        """A refused sign-in is recorded even though the request fails."""
+        email = f"no-such-user-{uuid4().hex[:8]}@gobifrost.dev"
+        resp = private_client.post(
             "/auth/login",
-            data={
-                "username": "no-such-user@gobifrost.dev",
-                "password": "wrongpassword",
-            },
+            data={"username": email, "password": "wrongpassword"},
         )
         assert resp.status_code == 401
 
-        # Can't list without platform admin; that's covered elsewhere. Here we
-        # just verify the request was accepted by the server (audit write
-        # happens in the same session).
+        rows = (
+            await db_session.execute(
+                select(AuditLog.outcome, AuditLog.details).where(
+                    AuditLog.action == "auth.login.failed",
+                    AuditLog.details["email"].astext == email,
+                )
+            )
+        ).all()
+        assert [(outcome, details["reason"]) for outcome, details in rows] == [
+            ("failure", "user_not_found")
+        ]
 
     def test_outcome_filter(self, e2e_client, platform_admin):
         resp = e2e_client.get(

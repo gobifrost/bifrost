@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy import select
 
 from shared.identities import IDENTITY_EMAIL_DOMAIN, IdentityKind
+from src.models.orm.audit import AuditLog
 from src.models.orm.users import User
 
 pytestmark = pytest.mark.e2e
@@ -41,6 +42,15 @@ async def test_identity_cannot_sign_in(private_client, org1, db_session) -> None
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
     assert response.status_code == 401, response.text
+
+    reasons = (
+        await db_session.scalars(
+            select(AuditLog.details["reason"].astext).where(
+                AuditLog.action == "auth.login.failed", AuditLog.resource_id == identity.id
+            )
+        )
+    ).all()
+    assert reasons == ["identity"]
 
 
 @pytest.mark.asyncio

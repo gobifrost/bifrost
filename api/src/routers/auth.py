@@ -16,11 +16,13 @@ Key Features:
 
 import logging
 from datetime import datetime, timezone
+from typing import NoReturn
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.cache import get_shared_redis
 from src.core.cache.keys import (
@@ -71,7 +73,7 @@ from shared.external_access import (
     resolve_external_claim,
     resolve_provider_org_claim,
 )
-from shared.identities import refuse_identity_sign_in
+from shared.identities import is_identity, refuse_identity_sign_in
 
 logger = logging.getLogger(__name__)
 
@@ -272,6 +274,36 @@ class UserCreate(BaseModel):
     name: str | None = None
 
 
+async def _refuse_login(
+    db: AsyncSession,
+    *,
+    email: str,
+    reason: str,
+    user=None,
+    status_code: int = status.HTTP_401_UNAUTHORIZED,
+    detail: str = "Incorrect email or password",
+) -> NoReturn:
+    """Record a refused sign-in, then refuse it.
+
+    The record is committed before raising: the request's session rolls back
+    when the refusal propagates, which would otherwise take the record with it.
+    """
+    await emit_audit(
+        db,
+        "auth.login.failed",
+        resource_type="user" if user is not None else None,
+        resource_id=user.id if user is not None else None,
+        outcome="failure",
+        details={"email": email, "reason": reason},
+    )
+    await db.commit()
+    raise HTTPException(
+        status_code=status_code,
+        detail=detail,
+        headers={"WWW-Authenticate": "Bearer"} if status_code == status.HTTP_401_UNAUTHORIZED else None,
+    )
+
+
 # =============================================================================
 # Endpoints
 # =============================================================================
@@ -318,60 +350,25 @@ async def login(
     user = await user_repo.get_by_email(form_data.username)
 
     if not user:
-        await emit_audit(
-            db,
-            "auth.login.failed",
-            outcome="failure",
-            details={"email": form_data.username, "reason": "user_not_found"},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    refuse_identity_sign_in(user)
-
+        await _refuse_login(db, email=form_data.username, reason="user_not_found")
+    if is_identity(user):
+        await _refuse_login(db, email=user.email, reason="identity", user=user, detail="Invalid credentials")
     if not user.hashed_password:
-        await emit_audit(
+        await _refuse_login(
             db,
-            "auth.login.failed",
-            resource_type="user",
-            resource_id=user.id,
-            outcome="failure",
-            details={"email": user.email, "reason": "no_password"},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            email=user.email,
+            reason="no_password",
+            user=user,
             detail="Account does not have password authentication enabled",
-            headers={"WWW-Authenticate": "Bearer"},
         )
-
     if not verify_password(form_data.password, user.hashed_password):
-        await emit_audit(
-            db,
-            "auth.login.failed",
-            resource_type="user",
-            resource_id=user.id,
-            outcome="failure",
-            details={"email": user.email, "reason": "wrong_password"},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
+        await _refuse_login(db, email=user.email, reason="wrong_password", user=user)
     if not user.is_active:
-        await emit_audit(
+        await _refuse_login(
             db,
-            "auth.login.failed",
-            resource_type="user",
-            resource_id=user.id,
-            outcome="failure",
-            details={"email": user.email, "reason": "inactive"},
-        )
-        raise HTTPException(
+            email=user.email,
+            reason="inactive",
+            user=user,
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is inactive",
         )
