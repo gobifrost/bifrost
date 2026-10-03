@@ -56,7 +56,7 @@ operation: `workflows.execute`, `tables.query`, `tables.get`, `tables.insert`,
 - Targeting is resolution plus install context, not a delegated user identity.
   Authorization still runs as the target: its policies, roles, and org
   boundaries decide each read/write. If the target workflow gates on an
-  authenticated actor (`context.user`, `context.org_id`), verify what the child
+  authenticated actor (`context.user_id`, `context.org_id`), verify what the child
   run actually receives instead of assuming it inherits your caller.
 
 Set the gate at create time (`bifrost solution create --allow-inbound-access` /

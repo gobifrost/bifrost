@@ -64,9 +64,11 @@ from bifrost import workflows
 
 execution_id = await workflows.execute(
     "functions/notify.py::send",
-    input_data={"recipient": "user@example.com"},
+    input_data={"ticket_id": 4821},
 )
 ```
+
+Never pass the caller's identity (email, user id, org) as input. The child reads it from `context` (`from bifrost import context`); see `best-practices/security.md`.
 
 Use delayed execution for scheduling, then query/cancel through the same namespace. A nested loose workflow resolved by an open Solution executes in its own loose context; it does not inherit Solution ownership.
 
