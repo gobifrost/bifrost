@@ -33,6 +33,7 @@ def _orm(**overrides):
         type="data_provider",
         organization_id=None,
         solution_id=None,
+        run_identity_id=None,
         access_level=None,
         parameters_schema=None,
         execution_mode=None,
