@@ -581,6 +581,29 @@ class TestRoleAssignments:
         )
         assert [a.role_id for a in response.additional] == [PLATFORM_ADMIN_ROLE_ID]
 
+    async def test_authorization_summary_lists_an_admins_grants(self, db_session) -> None:
+        from src.services.user_role_assignments import authorization_summary
+
+        user = await _user(db_session, PROVIDER_ORG_ID, admin=True)
+        summary = await authorization_summary(db_session, user.id)
+        held = {(g.permission, g.boundary.kind) for g in summary.grants}
+        assert summary.is_platform_admin is True
+        assert ("*", "platform") in held
+        assert not any(permission == "secrets.read" for permission, _ in held)
+
+        await self._put(
+            db_session,
+            admin_caller(),
+            user,
+            additional=[{"role_id": PLATFORM_ADMIN_ROLE_ID}, {"role_id": DECRYPTION_ROLE_ID}],
+        )
+        summary = await authorization_summary(db_session, user.id)
+        assert {
+            (g.boundary.kind, g.boundary.organization_id)
+            for g in summary.grants
+            if g.permission == "secrets.read"
+        } == {("platform", None), ("managed_organizations", None), ("organization", PROVIDER_ORG_ID)}
+
     async def test_secrets_reader_boundaries_cannot_be_chosen(self, db_session) -> None:
         from src.services.user_role_assignments import (
             SECRETS_READER_BOUNDARY_MESSAGE,

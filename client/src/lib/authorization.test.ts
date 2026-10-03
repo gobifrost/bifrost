@@ -53,6 +53,35 @@ describe("canAt", () => {
 		expect(canAnywhere(admin, "secrets.read")).toBe(false);
 	});
 
+	it("does not let an admin's wildcard grant satisfy secrets.read", () => {
+		const admin = summary([grant("*", "platform")], {
+			is_platform_admin: true,
+		});
+
+		expect(canAt(admin, "users.readwrite", orgTarget(ORG_A))).toBe(true);
+		expect(canAt(admin, "roles.readwrite", GLOBAL_TARGET)).toBe(true);
+		expect(canAt(admin, "secrets.read", orgTarget(ORG_A))).toBe(false);
+		expect(canAt(admin, "secrets.read", GLOBAL_TARGET)).toBe(false);
+		expect(canAnywhere(admin, "secrets.read")).toBe(false);
+	});
+
+	it("gives an admin who holds Secrets Reader secrets.read only where it applies", () => {
+		const admin = summary(
+			[
+				grant("*", "platform"),
+				grant("secrets.read", "platform"),
+				grant("secrets.read", "managed_organizations"),
+				grant("secrets.read", "organization", PROVIDER),
+			],
+			{ is_platform_admin: true },
+		);
+
+		expect(canAt(admin, "secrets.read", GLOBAL_TARGET)).toBe(true);
+		expect(canAt(admin, "secrets.read", orgTarget(ORG_A))).toBe(true);
+		expect(canAt(admin, "secrets.read", orgTarget(PROVIDER))).toBe(true);
+		expect(canAnywhere(admin, "secrets.read")).toBe(true);
+	});
+
 	it("decides secrets.read for an admin by explicit grants", () => {
 		const admin = summary([grant("secrets.read", "organization", ORG_A)], {
 			is_platform_admin: true,

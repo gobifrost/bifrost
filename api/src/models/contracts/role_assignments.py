@@ -168,7 +168,9 @@ class AuthorizationSummary(BaseModel):
         description=(
             "Base-role permissions (kind='home', the home organization only) "
             "and every additional role's permissions at each of its "
-            "boundaries. Empty for a Platform Admin, who holds everything "
-            "except secrets.read."
+            "boundaries, for everyone including a Platform Admin. A Platform "
+            "Admin's list has the wildcard '*' at the platform boundary, "
+            "which satisfies every permission except secrets.read; "
+            "secrets.read is held only through its own grant."
         )
     )

@@ -658,29 +658,25 @@ async def authorization_summary(session: AsyncSession, user_id: UUID) -> Authori
     """The signed-in user's own authorization, read from the database."""
     ctx = await build_authorization_context(session, user_id)
     base_name = await session.scalar(select(Role.name).where(Role.id == ctx.base_role_id))
-    grants: list[AuthorizationGrant] = []
-    if not ctx.is_platform_admin:
-        grants.extend(
-            AuthorizationGrant(
-                permission=permission,
-                boundary=AuthorizationBoundary(
-                    kind="home", organization_id=ctx.home_organization_id
-                ),
-            )
-            for permission in sorted(ctx.base_permissions)
+    grants = [
+        AuthorizationGrant(
+            permission=permission,
+            boundary=AuthorizationBoundary(kind="home", organization_id=ctx.home_organization_id),
         )
-        for grant in ctx.role_grants:
-            for boundary in grant.boundaries:
-                grants.extend(
-                    AuthorizationGrant(
-                        permission=permission,
-                        boundary=AuthorizationBoundary(
-                            kind=boundary.kind.value,
-                            organization_id=boundary.organization_id,
-                        ),
-                    )
-                    for permission in sorted(grant.permissions)
+        for permission in sorted(ctx.base_permissions)
+    ]
+    for grant in ctx.role_grants:
+        for boundary in grant.boundaries:
+            grants.extend(
+                AuthorizationGrant(
+                    permission=permission,
+                    boundary=AuthorizationBoundary(
+                        kind=boundary.kind.value,
+                        organization_id=boundary.organization_id,
+                    ),
                 )
+                for permission in sorted(grant.permissions)
+            )
     return AuthorizationSummary(
         is_platform_admin=ctx.is_platform_admin,
         home_organization_id=ctx.home_organization_id,
