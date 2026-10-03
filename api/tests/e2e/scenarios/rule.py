@@ -63,7 +63,9 @@ class Start:
     person: str | None = None
     request_org: str | None = None
     children: tuple[Child, ...] = field(default=())
-    source: str | None = None  # home of the event source, when it differs from the probe's
+    source: str | None = (
+        None  # home of the event source, when it differs from the probe's
+    )
 
     @property
     def key(self) -> str:
@@ -79,9 +81,16 @@ class Start:
 
 STARTS: tuple[Start, ...] = (
     # A person starts a probe directly (REST, also what the web SDK and CLI use).
-    Start("rest", "global", "customer", children=(
-        Child("contoso", "customer"), Child(None), Child("fabrikam"),
-    )),
+    Start(
+        "rest",
+        "global",
+        "customer",
+        children=(
+            Child("contoso", "customer"),
+            Child(None),
+            Child("fabrikam"),
+        ),
+    ),
     Start("rest", "contoso", "customer"),
     Start("rest", "global", "hr"),
     Start("rest", "global", "external"),
@@ -89,11 +98,16 @@ STARTS: tuple[Start, ...] = (
     Start("rest", "global", "fabrikam_customer"),
     Start("rest", "global", "staff", children=(Child("contoso"),)),
     Start("rest", "provider", "staff"),
-    Start("rest", "global", "admin", children=(
-        Child("fabrikam"),
-        Child(None, "customer"),
-        Child("contoso", "admin", children=(Child("fabrikam"),)),
-    )),
+    Start(
+        "rest",
+        "global",
+        "admin",
+        children=(
+            Child("fabrikam"),
+            Child(None, "customer"),
+            Child("contoso", "admin", children=(Child("fabrikam"),)),
+        ),
+    ),
     Start("rest", "contoso", "admin"),
     Start("rest", "provider", "admin"),
     # The request-level org override (web SDK useWorkflow sends it).

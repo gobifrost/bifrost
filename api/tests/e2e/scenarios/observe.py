@@ -19,9 +19,14 @@ from tests.e2e.scenarios.rule import (
     expected_spawn,
 )
 
-WRITE_KNOBS = ("set_scope", "tables_scope", "raw_api", "context_override")
-READ_KNOBS = ("config_scope", "integration_scope")
-KNOBS = WRITE_KNOBS + READ_KNOBS
+WRITE_KNOBS = (
+    "set_scope",
+    "tables_scope",
+    "tables_upsert",
+    "raw_api",
+    "context_override",
+)
+READ_KNOBS = ("config_scope", "integration_scope", "tables_query")
 
 
 def cell_id(run_key: str, knob: str, target: str) -> str:
@@ -33,7 +38,18 @@ def landed(rows: dict[str, dict[str, Any]], doc_id: str) -> str | None:
     return "+".join(found) if found else None
 
 
-def run_cells(run: dict, rows: dict[str, dict[str, Any]], run_key: str) -> dict[str, Any]:
+def _read_reached(attempt: dict, knob: str, target: str) -> bool:
+    """A read reached the target: allowed, and a table query answered from it."""
+    if not attempt["ok"]:
+        return False
+    if knob == "tables_query":
+        return target in attempt["value"]
+    return True
+
+
+def run_cells(
+    run: dict, rows: dict[str, dict[str, Any]], run_key: str
+) -> dict[str, Any]:
     """Every cell of one finished probe run."""
     execution = run["execution"]
     execution_id = execution["execution_id"]
@@ -41,9 +57,13 @@ def run_cells(run: dict, rows: dict[str, dict[str, Any]], run_key: str) -> dict[
     cells: dict[str, Any] = {}
     for target in TARGETS:
         for knob in WRITE_KNOBS:
-            cells[cell_id(run_key, knob, target)] = landed(rows, f"{execution_id}-{knob}-{target}")
+            cells[cell_id(run_key, knob, target)] = landed(
+                rows, f"{execution_id}-{knob}-{target}"
+            )
         for knob in READ_KNOBS:
-            cells[cell_id(run_key, knob, target)] = bool(attempts[target][knob]["ok"])
+            cells[cell_id(run_key, knob, target)] = _read_reached(
+                attempts[target][knob], knob, target
+            )
     return cells
 
 
@@ -67,12 +87,17 @@ def identity_cells(run: dict, labels: dict[str, str], run_key: str) -> dict[str,
     user_id = identity["user_id"]
     return {
         cell_id(run_key, "identity", "user"): labels.get(user_id, user_id),
-        cell_id(run_key, "identity", "is_platform_admin"): identity["is_platform_admin"],
+        cell_id(run_key, "identity", "is_platform_admin"): identity[
+            "is_platform_admin"
+        ],
     }
 
 
 def observed_cells(
-    start: Start, runs: dict[str, dict], rows: dict[str, dict[str, Any]], labels: dict[str, str]
+    start: Start,
+    runs: dict[str, dict],
+    rows: dict[str, dict[str, Any]],
+    labels: dict[str, str],
 ) -> dict[str, Any]:
     """Every observed cell of one start's run tree."""
     cells: dict[str, Any] = {}

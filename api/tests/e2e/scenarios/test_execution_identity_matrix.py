@@ -48,18 +48,23 @@ def _start_cells(start: rule.Start, matrix: dict) -> tuple[dict, dict]:
         assert start.person and start.request_org
         expected = {cell: rule.expected_allowed(start.person, start.request_org)}
         if observed[cell]:
-            observed.update(observed_cells(start, matrix["runs"], matrix["rows"], matrix["labels"]))
+            observed.update(
+                observed_cells(start, matrix["runs"], matrix["rows"], matrix["labels"])
+            )
             expected.update(expected_cells(start, observed))
         return observed, expected
     if start.entry == "direct":
         assert start.person
         reads = matrix["direct"][start.key]
         observed = {
-            cell_id(start.key, "direct_read", target): target in reads[target].get("partitions", [])
+            cell_id(start.key, "direct_read", target): target
+            in reads[target].get("partitions", [])
             for target in rule.TARGETS
         }
         expected = {
-            cell_id(start.key, "direct_read", target): rule.expected_allowed(start.person, target)
+            cell_id(start.key, "direct_read", target): rule.expected_allowed(
+                start.person, target
+            )
             for target in rule.TARGETS
         }
         return observed, expected
@@ -83,7 +88,8 @@ def test_pre_r3b_entries_are_live(matrix_runs: dict) -> None:
         observed.update(o)
         expected.update(e)
     stale = [
-        cell for cell in PRE_R3B
+        cell
+        for cell in PRE_R3B
         if cell not in observed or PRE_R3B[cell] == expected.get(cell)
     ]
     assert not stale, "PRE_R3B entries to delete:\n" + "\n".join(stale)
@@ -91,12 +97,15 @@ def test_pre_r3b_entries_are_live(matrix_runs: dict) -> None:
 
 def _tree_runs(start: rule.Start, runs: dict) -> list[tuple[str, dict]]:
     return [
-        (key, run) for key, run in runs.items()
+        (key, run)
+        for key, run in runs.items()
         if (key == start.key or key.startswith(f"{start.key}>")) and "execution" in run
     ]
 
 
-def _write_cells(start: rule.Start, matrix: dict) -> list[tuple[str, str, str, str | None]]:
+def _write_cells(
+    start: rule.Start, matrix: dict
+) -> list[tuple[str, str, str, str | None]]:
     """(cell, run key, target, partition landed) for every write in a start's tree."""
     observed, _ = _start_cells(start, matrix)
     out = []
@@ -142,7 +151,9 @@ def test_refused_writes_leave_no_row(matrix_runs: dict) -> None:
     problems = []
     for start in RUN_STARTS:
         for run_key, run in _tree_runs(start, matrix_runs["runs"]):
-            problems += [f"{run_key}|{p}" for p in reported_vs_landed(run, matrix_runs["rows"])]
+            problems += [
+                f"{run_key}|{p}" for p in reported_vs_landed(run, matrix_runs["rows"])
+            ]
     assert not problems, "\n".join(problems)
 
 
@@ -152,7 +163,11 @@ def test_children_never_exceed_original_reach(matrix_runs: dict) -> None:
     for start in RUN_STARTS:
         reach = rule.REACH[start.user]
         for cell, run_key, _target, where in _write_cells(start, matrix_runs):
-            if ">" in run_key and where is not None and not set(where.split("+")) <= reach:
+            if (
+                ">" in run_key
+                and where is not None
+                and not set(where.split("+")) <= reach
+            ):
                 violations.append(cell)
     assert not _unexplained(violations), "\n".join(_unexplained(violations))
 
@@ -177,7 +192,10 @@ def _row(matrix: dict, doc_id: str) -> tuple[str | None, str | None]:
 def _onboarded(matrix: dict, key: str, person: str) -> None:
     run = _journey(matrix, key)
     assert run["result"]["outcome"] == "onboarded"
-    assert _row(matrix, f"onboard-{run['execution_id']}") == ("contoso", f"person:{person}")
+    assert _row(matrix, f"onboard-{run['execution_id']}") == (
+        "contoso",
+        f"person:{person}",
+    )
     child = _journey(matrix, f"{key}>child")
     assert matrix["labels"].get(child["executed_by"]) == f"person:{person}"
     assert child["result"]["config"] == "contoso-value"
@@ -235,11 +253,13 @@ def test_journey_app_table_reads(scenario_world: dict) -> None:
         query = f"?scope={world['targets'][scope]}" if scope else ""
         resp = world["client"].post(
             f"/api/tables/{world['table']}/documents/query{query}",
-            headers=world["people"][person].headers, json={"limit": 1000},
+            headers=world["people"][person].headers,
+            json={"limit": 1000},
         )
         assert resp.status_code == 200, resp.text
         return sorted(
-            d["id"].removeprefix("marker-") for d in resp.json()["documents"]
+            d["id"].removeprefix("marker-")
+            for d in resp.json()["documents"]
             if d["id"].startswith("marker-")
         )
 
@@ -256,6 +276,6 @@ def test_journey_settings_fallback(matrix_runs: dict) -> None:
     assert run["result"]["secret_matches"] is True
 
 
-def test_module_runtime(matrix_runs: dict, record_property) -> None:
+def test_module_runtime(matrix_runs: dict, record_testsuite_property) -> None:
     """Record how long building the world and running every start took."""
-    record_property("scenario_runs_seconds", round(matrix_runs["elapsed"], 1))
+    record_testsuite_property("scenario_runs_seconds", round(matrix_runs["elapsed"], 1))
