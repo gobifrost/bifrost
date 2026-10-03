@@ -262,7 +262,9 @@ class TestPlatformOperator:
         assert summary["is_platform_admin"] is False
         assert {"permission": "users.readwrite", "boundary": {"kind": "managed_organizations", "organization_id": None}} in summary["grants"]
         admin = _ok(e2e_client.get("/auth/authorization", headers=platform_admin.headers))
-        assert admin["is_platform_admin"] is True and admin["grants"] == []
+        assert admin["is_platform_admin"] is True
+        assert {"permission": "*", "boundary": {"kind": "platform", "organization_id": None}} in admin["grants"]
+        assert not any(g["permission"] == "secrets.read" for g in admin["grants"])
 
 
 def test_operator_is_only_for_provider_org_people(e2e_client, world, platform_admin) -> None:

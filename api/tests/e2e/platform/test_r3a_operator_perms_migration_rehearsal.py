@@ -73,11 +73,15 @@ USER_PERMISSIONS = {
     "settings.read",
 }
 CUSTOM_PERMISSIONS = {"forms.readwrite", "users.read"}
-# Set by the later 20261001_r3a_operator_desc revision.
+# Set by the later 20261003_r3_operator_secrets revision.
+DECRYPTION_DESCRIPTION_AT_HEAD = (
+    "Decrypts secret values through the SDK secret paths, for local "
+    "development. Not included in the Platform Admin wildcard."
+)
 OPERATOR_DESCRIPTION_AT_HEAD = (
     "Support for customer organizations: view organizations and users, invite users, "
-    "reset MFA, deactivate ordinary users, and assign roles that carry no permissions. "
-    "Additional role only."
+    "reset MFA, deactivate ordinary users, assign roles that carry no permissions, "
+    "and run workflows in customer organizations. Additional role only."
 )
 
 
@@ -197,15 +201,21 @@ def test_operator_gains_user_support_and_secrets_reader_is_seeded() -> None:
         assert "wildcard" in reader["description"]
         assert after["reader_assignments"] == 0
 
-        # At head the later 20261001_r3a_operator_desc revision has rewritten
-        # the Operator description and 20261002_r3a_admin_additional has
-        # stored Platform Admin's wildcard; everything else this revision
-        # wrote holds.
+        # At head 20261002_r3a_admin_additional has stored Platform Admin's
+        # wildcard and 20261003_r3_operator_secrets has given Platform
+        # Operator workflows.execute, rewritten its description and dropped
+        # "Not yet assignable" from Secrets Reader's description; everything
+        # else this revision wrote holds.
         _upgrade(database_url, "head")
         assert asyncio.run(_snapshot(database_url, custom_role_id)) == {
             **after,
-            "permissions": {**after["permissions"], "admin": {"*"}},
+            "permissions": {
+                **after["permissions"],
+                "admin": {"*"},
+                "operator": after["permissions"]["operator"] | {"workflows.execute"},
+            },
             "operator_description": OPERATOR_DESCRIPTION_AT_HEAD,
+            "reader": {**after["reader"], "description": DECRYPTION_DESCRIPTION_AT_HEAD},
         }
 
         _downgrade(database_url, PREVIOUS_REVISION)

@@ -34,6 +34,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
 from shared.builtin_roles import (
+    DECRYPTION_ROLE_ID,
     PLATFORM_ADMIN_ROLE_ID,
     PLATFORM_OPERATOR_PERMISSIONS,
     PLATFORM_OPERATOR_ROLE_ID,
@@ -372,7 +373,14 @@ async def _snapshot_state(database_url: str, ids: dict[str, str]) -> dict[str, A
 
 
 def _boundaries_for(snapshot: dict[str, Any], *, user_id: str) -> list[dict[str, Any]]:
-    return [b for b in snapshot["boundaries"] if str(b["user_id"]) == user_id]
+    """The user's boundaries, apart from Secrets Reader, which the later
+    20261003_r3_operator_secrets migration gives Platform Admins (its
+    own rehearsal covers it)."""
+    return [
+        b
+        for b in snapshot["boundaries"]
+        if str(b["user_id"]) == user_id and b["role_id"] != DECRYPTION_ROLE_ID
+    ]
 
 
 def _assert_migrated_state(snapshot: dict[str, Any], ids: dict[str, str]) -> None:

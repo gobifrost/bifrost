@@ -87,6 +87,27 @@ describe("useAuthorization", () => {
 		expect(result.current.isPlatformAdmin).toBe(false);
 	});
 
+	it("answers for an admin whose summary lists the wildcard", async () => {
+		mockGet.mockResolvedValue({
+			data: {
+				...operatorSummary,
+				is_platform_admin: true,
+				grants: [{ permission: "*", boundary: { kind: "platform" } }],
+			},
+		});
+		const { wrapper } = wrapperFor();
+
+		const { result } = renderHook(() => useAuthorization(), { wrapper });
+
+		await waitFor(() => expect(result.current.authorization).toBeDefined());
+		expect(result.current.isPlatformAdmin).toBe(true);
+		expect(result.current.canAnywhere("users.readwrite")).toBe(true);
+		expect(result.current.canAnywhere("secrets.read")).toBe(false);
+		expect(result.current.meets({ permission: "secrets.read" })).toBe(
+			false,
+		);
+	});
+
 	it("does not ask for embed sessions or signed-out users", () => {
 		auth.hasRole.mockReturnValue(true);
 		const { wrapper } = wrapperFor();

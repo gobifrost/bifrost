@@ -80,6 +80,13 @@ class AssignableRole(BaseModel):
     provider_organization_allowed: bool = Field(
         description="Whether an 'organization' boundary may name the provider organization."
     )
+    fixed_boundaries: list[RoleBoundaryInput] = Field(
+        default_factory=list,
+        description=(
+            "When not empty, the role applies at exactly these boundaries "
+            "and the caller doesn't choose where."
+        ),
+    )
 
 
 class UserRoleAssignmentsResponse(BaseModel):
@@ -161,7 +168,9 @@ class AuthorizationSummary(BaseModel):
         description=(
             "Base-role permissions (kind='home', the home organization only) "
             "and every additional role's permissions at each of its "
-            "boundaries. Empty for a Platform Admin, who holds everything "
-            "except secrets.read."
+            "boundaries, for everyone including a Platform Admin. A Platform "
+            "Admin's list has the wildcard '*' at the platform boundary, "
+            "which satisfies every permission except secrets.read; "
+            "secrets.read is held only through its own grant."
         )
     )

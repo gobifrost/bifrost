@@ -100,7 +100,7 @@ PERMISSION_DOMAINS: dict[str, PermissionDomain] = {
     ),
     "workflows": PermissionDomain(
         description="Workflow definitions: registration, validation, role grants, execution.",
-        who_should_hold="Write: platform admins, or an admin-assigned role at a specific boundary; never the User base role. Read: members, where the object is shared with them. Running a workflow is `execute`.",
+        who_should_hold="Write: platform admins, or an admin-assigned role at a specific boundary; never the User base role. Read: members, where the object is shared with them. Running a workflow is `execute`; the Platform Operator role runs workflows at Managed organizations.",
     ),
     "policyrules": PermissionDomain(
         description="Reusable named policy-rule fragments referenced by table/file policies.",

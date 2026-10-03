@@ -181,6 +181,39 @@ describe("RoleDetail", () => {
 		expect(await screen.findByText("People panel")).toBeInTheDocument();
 	});
 
+	it("says when Secrets Reader takes effect, and lists who holds it", async () => {
+		const id = "00000000-0000-0000-0000-000000000008";
+		state.role = {
+			...customRole,
+			id,
+			name: "Secrets Reader",
+			is_builtin: true,
+			is_base: false,
+			consumer_counts: null,
+		};
+		const { user } = renderAt(`/roles/${id}`);
+
+		expect(
+			screen.getByText("Takes effect when secret decryption is enforced."),
+		).toBeInTheDocument();
+		await user.click(screen.getByRole("tab", { name: "People" }));
+		expect(await screen.findByText("People panel")).toBeInTheDocument();
+	});
+
+	it("says nothing about enforcement for roles that are enforced", () => {
+		state.role = {
+			...customRole,
+			id: "operator",
+			name: "Platform Operator",
+			is_builtin: true,
+			is_base: false,
+			consumer_counts: null,
+		};
+		renderAt("/roles/operator");
+
+		expect(screen.queryByText(/Takes effect when/)).not.toBeInTheDocument();
+	});
+
 	it("lists no people for base roles or callers without role-assignment access", () => {
 		state.role = {
 			...customRole,

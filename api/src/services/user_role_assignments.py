@@ -11,11 +11,14 @@ permissions and are not builtin, never on a privileged user, and may write
 only ``organization`` boundaries their own ``roleassignments.readwrite``
 reach covers. A Platform Admin may assign anything, with limits that hold for
 everyone: a base role is User or a custom role, never a builtin role beyond
-User; Platform Operator applies only at managed organizations or at customer
-organizations (not the provider org, not Platform); Platform Admin is an
-additional role held only by people in the provider organization or Global
-users, always at the ``platform`` boundary, and only a Platform Admin may grant
-or remove it; and Secrets Reader is not assignable yet.
+User; Platform Operator is held only by people in the provider organization
+and applies only at managed organizations or at customer organizations (not
+the provider org, not Platform); Platform Admin is an additional role held only
+by people in the provider organization or Global users, always at the
+``platform`` boundary, and only a Platform Admin may grant or remove it; and
+Secrets Reader has one fixed set of boundaries (``SECRETS_READER_BOUNDARIES``)
+that nobody chooses. Every one of these carries permissions, so only a
+Platform Admin can grant or remove them.
 """
 
 from __future__ import annotations
@@ -43,6 +46,7 @@ from src.models.contracts.role_assignments import (
     AuthorizationBoundary,
     AuthorizationGrant,
     AuthorizationSummary,
+    RoleBoundaryInput,
     RoleBoundaryPublic,
     RoleSummary,
     UserRoleAssignmentsResponse,
@@ -74,7 +78,6 @@ from src.services.authorization.privilege import (
 GET_OPERATION = "GET /api/users/{user_id}/role-assignments"
 PUT_OPERATION = "PUT /api/users/{user_id}/role-assignments"
 
-SECRETS_READER_MESSAGE = "Secrets Reader can't be assigned yet."
 CEILING_MESSAGE = (
     "You can only assign or remove roles that carry no permissions, on users "
     "without privileged access"
@@ -86,6 +89,7 @@ ADMIN_ROLE_MESSAGE = "Only a Platform Admin can grant or remove the Platform Adm
 OPERATOR_HOLDER_MESSAGE = (
     "Platform Operator can only be given to people in the provider organization"
 )
+SECRETS_READER_BOUNDARY_MESSAGE = "Secrets Reader applies everywhere"
 ADMIN_HOLDER_MESSAGE = (
     "Move the user to the provider organization before making them a Platform Admin"
 )
@@ -110,6 +114,19 @@ class RoleInfo:
     description: str | None
     is_builtin: bool
     permissions: frozenset[str]
+
+
+# Secrets Reader applies at exactly these boundaries. A secret is decrypted at
+# a target: Global is covered by ``platform`` only, the provider organization
+# by an ``organization`` boundary naming it, and every customer organization by
+# ``managed_organizations``; none of the three reaches the others' targets.
+SECRETS_READER_BOUNDARIES = frozenset(
+    {
+        Boundary(BoundaryKind.PLATFORM),
+        Boundary(BoundaryKind.MANAGED_ORGANIZATIONS),
+        Boundary(BoundaryKind.ORGANIZATION, PROVIDER_ORG_ID),
+    }
+)
 
 
 def default_boundaries(home_organization_id: UUID | None) -> frozenset[Boundary]:
@@ -184,8 +201,6 @@ async def load_roles(session: AsyncSession, role_ids: Iterable[UUID]) -> dict[UU
 
 def check_role_change(caller: Caller, role: RoleInfo, target_permissions: frozenset[str]) -> None:
     """The grant ceiling for granting or removing one role on one user."""
-    if role.id == DECRYPTION_ROLE_ID:
-        raise RoleAssignmentError(409, SECRETS_READER_MESSAGE)
     if not may_change_role_assignment(
         actor_is_platform_admin=caller.is_platform_admin,
         role_id=role.id,
@@ -238,6 +253,10 @@ def check_boundaries(
     """Where ``role`` may be written to apply."""
     if not boundaries:
         raise RoleAssignmentError(422, f"'{role.name}' needs at least one boundary")
+    if role.id == DECRYPTION_ROLE_ID:
+        if boundaries != SECRETS_READER_BOUNDARIES:
+            raise RoleAssignmentError(422, SECRETS_READER_BOUNDARY_MESSAGE)
+        return
     kinds, provider_allowed = _role_boundary_rule(role)
     for boundary in boundaries:
         if boundary.kind not in kinds or (
@@ -312,7 +331,7 @@ def _assignable_roles(
     same rules ``replace_role_assignments`` applies, so the UI never
     re-implements them. A role ``target`` holds (``held_role_ids``) but can
     no longer be given stays listed with ``can_be_additional`` false, so it
-    can be removed. Secrets Reader is never listed (not assignable yet)."""
+    can be removed."""
     org = org_target(target.user.organization_id)
     if not allows_operation(caller, PUT_OPERATION, org):
         return []
@@ -324,7 +343,7 @@ def _assignable_roles(
     ) and _may_change(caller, current_base, target.held)
     out: list[AssignableRole] = []
     for role in sorted(roles.values(), key=lambda r: (not r.is_builtin, r.name.lower())):
-        if role.id == DECRYPTION_ROLE_ID or not _may_change(caller, role, target.held):
+        if not _may_change(caller, role, target.held):
             continue
         # A Global user can't lose Platform Admin, so it is neither offered
         # nor removable.
@@ -341,6 +360,7 @@ def _assignable_roles(
         if not (can_be_base or can_be_additional or role.id in held_role_ids):
             continue
         kinds, provider_allowed = boundary_placement(caller, role)
+        fixed = role.id == DECRYPTION_ROLE_ID
         out.append(
             AssignableRole(
                 id=role.id,
@@ -350,11 +370,23 @@ def _assignable_roles(
                 permissions=sorted(role.permissions),
                 can_be_base=can_be_base,
                 can_be_additional=can_be_additional,
-                boundary_kinds=[kind.value for kind in BoundaryKind if kind in kinds],
+                boundary_kinds=[]
+                if fixed
+                else [kind.value for kind in BoundaryKind if kind in kinds],
                 provider_organization_allowed=provider_allowed,
+                fixed_boundaries=_fixed_boundaries() if fixed else [],
             )
         )
     return out
+
+
+def _fixed_boundaries() -> list[RoleBoundaryInput]:
+    return [
+        RoleBoundaryInput(kind=boundary.kind.value, organization_id=boundary.organization_id)
+        for boundary in sorted(
+            SECRETS_READER_BOUNDARIES, key=lambda b: (b.kind.value, str(b.organization_id))
+        )
+    ]
 
 
 def _may_change(caller: Caller, role: RoleInfo, target_permissions: frozenset[str]) -> bool:
@@ -447,6 +479,8 @@ def _requested_boundaries(
     if boundaries is None:
         if role_id == PLATFORM_ADMIN_ROLE_ID:
             return frozenset({Boundary(BoundaryKind.PLATFORM)})
+        if role_id == DECRYPTION_ROLE_ID:
+            return SECRETS_READER_BOUNDARIES
         return default_boundaries(home_organization_id)
     return frozenset(
         Boundary(BoundaryKind(item.kind), item.organization_id) for item in boundaries
@@ -624,29 +658,25 @@ async def authorization_summary(session: AsyncSession, user_id: UUID) -> Authori
     """The signed-in user's own authorization, read from the database."""
     ctx = await build_authorization_context(session, user_id)
     base_name = await session.scalar(select(Role.name).where(Role.id == ctx.base_role_id))
-    grants: list[AuthorizationGrant] = []
-    if not ctx.is_platform_admin:
-        grants.extend(
-            AuthorizationGrant(
-                permission=permission,
-                boundary=AuthorizationBoundary(
-                    kind="home", organization_id=ctx.home_organization_id
-                ),
-            )
-            for permission in sorted(ctx.base_permissions)
+    grants = [
+        AuthorizationGrant(
+            permission=permission,
+            boundary=AuthorizationBoundary(kind="home", organization_id=ctx.home_organization_id),
         )
-        for grant in ctx.role_grants:
-            for boundary in grant.boundaries:
-                grants.extend(
-                    AuthorizationGrant(
-                        permission=permission,
-                        boundary=AuthorizationBoundary(
-                            kind=boundary.kind.value,
-                            organization_id=boundary.organization_id,
-                        ),
-                    )
-                    for permission in sorted(grant.permissions)
+        for permission in sorted(ctx.base_permissions)
+    ]
+    for grant in ctx.role_grants:
+        for boundary in grant.boundaries:
+            grants.extend(
+                AuthorizationGrant(
+                    permission=permission,
+                    boundary=AuthorizationBoundary(
+                        kind=boundary.kind.value,
+                        organization_id=boundary.organization_id,
+                    ),
                 )
+                for permission in sorted(grant.permissions)
+            )
     return AuthorizationSummary(
         is_platform_admin=ctx.is_platform_admin,
         home_organization_id=ctx.home_organization_id,

@@ -16,6 +16,7 @@ const PROVIDER = "00000000-0000-0000-0000-000000000002";
 const ADMIN_ROLE = "00000000-0000-0000-0000-000000000005";
 const USER_ROLE = "00000000-0000-0000-0000-000000000006";
 const OPERATOR_ROLE = "00000000-0000-0000-0000-000000000007";
+const SECRETS_ROLE = "00000000-0000-0000-0000-000000000008";
 const SUPPORT_ROLE = "custom-support";
 
 const state = vi.hoisted(() => ({
@@ -191,6 +192,21 @@ function adminView(): Assignments {
 				provider_organization_allowed: false,
 			},
 			{
+				id: SECRETS_ROLE,
+				name: "Secrets Reader",
+				is_builtin: true,
+				permissions: ["secrets.read"],
+				can_be_base: false,
+				can_be_additional: true,
+				boundary_kinds: [],
+				provider_organization_allowed: true,
+				fixed_boundaries: [
+					{ kind: "platform", organization_id: null },
+					{ kind: "managed_organizations", organization_id: null },
+					{ kind: "organization", organization_id: PROVIDER },
+				],
+			},
+			{
 				...supportRole,
 				boundary_kinds: [
 					"organization",
@@ -260,6 +276,39 @@ describe("UserRoleAssignmentsPanel", () => {
 				],
 			},
 		});
+	});
+
+	it("assigns Secrets Reader with its fixed places and no picker", async () => {
+		const { user } = render();
+		await user.click(screen.getByRole("button", { name: "Add role" }));
+		await user.click(
+			await screen.findByRole("option", { name: /Secrets Reader/ }),
+		);
+
+		expect(screen.getByText("Applies everywhere.")).toBeInTheDocument();
+		expect(
+			screen.queryByRole("list", {
+				name: "Where Secrets Reader applies",
+			}),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", {
+				name: "Add where Secrets Reader applies",
+			}),
+		).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: "Save roles" }));
+		await waitFor(() => expect(state.mutateAsync).toHaveBeenCalled());
+		expect(state.mutateAsync.mock.calls[0][0].body.additional).toEqual([
+			{
+				role_id: SECRETS_ROLE,
+				boundaries: [
+					{ kind: "platform", organization_id: null },
+					{ kind: "managed_organizations", organization_id: null },
+					{ kind: "organization", organization_id: PROVIDER },
+				],
+			},
+		]);
 	});
 
 	it("offers Operator only its allowed places, never the provider org", async () => {

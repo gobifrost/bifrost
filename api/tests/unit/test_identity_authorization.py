@@ -552,13 +552,105 @@ class TestRoleAssignments:
         response = await self._put(db_session, admin_caller(), user, additional=[])
         assert response.additional == []
 
-    async def test_secrets_reader_is_not_assignable_yet(self, db_session) -> None:
-        from src.services.user_role_assignments import RoleAssignmentError
+    async def test_secrets_reader_is_assigned_with_its_fixed_boundaries(self, db_session) -> None:
+        from src.services.user_role_assignments import SECRETS_READER_BOUNDARIES, get_role_assignments
 
-        user = await _user(db_session, (await _org(db_session)).id)
+        user = await _user(db_session, PROVIDER_ORG_ID, admin=True)
+        view = await get_role_assignments(db_session, admin_caller(), user_id=user.id)
+        listed = {r.id: r for r in view.assignable_roles}[DECRYPTION_ROLE_ID]
+        assert listed.boundary_kinds == []
+        assert {(b.kind, b.organization_id) for b in listed.fixed_boundaries} == {
+            (b.kind.value, b.organization_id) for b in SECRETS_READER_BOUNDARIES
+        }
+
+        response = await self._put(
+            db_session,
+            admin_caller(),
+            user,
+            additional=[{"role_id": PLATFORM_ADMIN_ROLE_ID}, {"role_id": DECRYPTION_ROLE_ID}],
+        )
+        assert {a.role_id for a in response.additional} == {PLATFORM_ADMIN_ROLE_ID, DECRYPTION_ROLE_ID}
+        assert await _boundaries(db_session, user.id, DECRYPTION_ROLE_ID) == {
+            ("platform", None),
+            ("managed_organizations", None),
+            ("organization", PROVIDER_ORG_ID),
+        }
+
+        response = await self._put(
+            db_session, admin_caller(), user, additional=[{"role_id": PLATFORM_ADMIN_ROLE_ID}]
+        )
+        assert [a.role_id for a in response.additional] == [PLATFORM_ADMIN_ROLE_ID]
+
+    async def test_authorization_summary_lists_an_admins_grants(self, db_session) -> None:
+        from src.services.user_role_assignments import authorization_summary
+
+        user = await _user(db_session, PROVIDER_ORG_ID, admin=True)
+        summary = await authorization_summary(db_session, user.id)
+        held = {(g.permission, g.boundary.kind) for g in summary.grants}
+        assert summary.is_platform_admin is True
+        assert ("*", "platform") in held
+        assert not any(permission == "secrets.read" for permission, _ in held)
+
+        await self._put(
+            db_session,
+            admin_caller(),
+            user,
+            additional=[{"role_id": PLATFORM_ADMIN_ROLE_ID}, {"role_id": DECRYPTION_ROLE_ID}],
+        )
+        summary = await authorization_summary(db_session, user.id)
+        assert {
+            (g.boundary.kind, g.boundary.organization_id)
+            for g in summary.grants
+            if g.permission == "secrets.read"
+        } == {("platform", None), ("managed_organizations", None), ("organization", PROVIDER_ORG_ID)}
+
+    async def test_secrets_reader_boundaries_cannot_be_chosen(self, db_session) -> None:
+        from src.services.user_role_assignments import (
+            SECRETS_READER_BOUNDARY_MESSAGE,
+            RoleAssignmentError,
+        )
+
+        user = await _user(db_session, PROVIDER_ORG_ID)
+        for boundaries in (
+            [{"kind": "platform"}],
+            [{"kind": "managed_organizations"}, {"kind": "platform"}],
+        ):
+            with pytest.raises(RoleAssignmentError) as exc_info:
+                await self._put(
+                    db_session,
+                    admin_caller(),
+                    user,
+                    additional=[{"role_id": DECRYPTION_ROLE_ID, "boundaries": boundaries}],
+                )
+            assert (exc_info.value.status_code, exc_info.value.detail) == (
+                422,
+                SECRETS_READER_BOUNDARY_MESSAGE,
+            )
+
+    async def test_only_a_platform_admin_grants_or_removes_secrets_reader(self, db_session) -> None:
+        from src.services.user_role_assignments import CEILING_MESSAGE, RoleAssignmentError
+
+        assigner = _delegate(({"roleassignments.readwrite", "roleassignments.read"}, _at(PROVIDER_ORG_ID)))
+        plain = await _user(db_session, PROVIDER_ORG_ID)
         with pytest.raises(RoleAssignmentError) as exc_info:
-            await self._put(db_session, admin_caller(), user, additional=[{"role_id": DECRYPTION_ROLE_ID}])
-        assert exc_info.value.status_code == 409
+            await self._put(
+                db_session,
+                assigner,
+                plain,
+                additional=[{"role_id": DECRYPTION_ROLE_ID}],
+            )
+        assert (exc_info.value.status_code, exc_info.value.detail) == (403, CEILING_MESSAGE)
+
+        holder = await _user(db_session, PROVIDER_ORG_ID)
+        await self._put(
+            db_session,
+            admin_caller(),
+            holder,
+            additional=[{"role_id": DECRYPTION_ROLE_ID}],
+        )
+        with pytest.raises((RoleAssignmentError, HTTPException)) as removal:
+            await self._put(db_session, assigner, holder, additional=[])
+        assert removal.value.status_code == 403
 
     async def test_admin_grants_and_removes_platform_admin_as_an_additional_role(self, db_session) -> None:
         user = await _user(db_session, PROVIDER_ORG_ID)

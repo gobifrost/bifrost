@@ -4,7 +4,8 @@
  * A Platform Admin opens a user, assigns Platform Operator for all customer
  * organizations, saves, and sees the assignment listed; after a reload the
  * assignment is still there. Platform Admin is an additional role too: it is
- * added platform-wide and removed again from the same screen.
+ * added platform-wide and removed again from the same screen. Secrets Reader
+ * is added the same way, at places the server fixes.
  */
 
 import { test, expect } from "./fixtures/api-fixture";
@@ -92,7 +93,7 @@ test.describe("Roles & access", () => {
 		await dialog.getByRole("tab", { name: "Roles & access" }).click();
 
 		await dialog.getByRole("button", { name: "Add role" }).click();
-		await page.getByRole("option", { name: /Platform Admin/ }).click();
+		await page.getByRole("option", { name: /^Platform Admin/ }).click();
 		await expect(adminPlaces().getByText("Platform-wide")).toBeVisible();
 		await dialog.getByRole("button", { name: "Save roles" }).click();
 		await expect(page.getByText("Roles saved")).toBeVisible();
@@ -109,5 +110,29 @@ test.describe("Roles & access", () => {
 		await reopened.getByRole("button", { name: "Save roles" }).click();
 		await expect(page.getByText("Roles saved")).toBeVisible();
 		await expect(adminPlaces()).toHaveCount(0);
+	});
+
+	test("adds Secrets Reader at its fixed places", async ({ page }) => {
+		await page.goto(`/users/${userId}`);
+		const dialog = page.getByRole("dialog", { name: /edit user/i });
+		await expect(dialog).toBeVisible({ timeout: 10000 });
+		await dialog.getByRole("tab", { name: "Roles & access" }).click();
+
+		await dialog.getByRole("button", { name: "Add role" }).click();
+		await page.getByRole("option", { name: /Secrets Reader/ }).click();
+		await expect(dialog.getByText("Applies everywhere.")).toBeVisible();
+		await expect(
+			dialog.getByRole("button", {
+				name: "Add where Secrets Reader applies",
+			}),
+		).toHaveCount(0);
+		await dialog.getByRole("button", { name: "Save roles" }).click();
+		await expect(page.getByText("Roles saved")).toBeVisible();
+
+		await page.reload();
+		const reopened = page.getByRole("dialog", { name: /edit user/i });
+		await expect(reopened).toBeVisible({ timeout: 10000 });
+		await reopened.getByRole("tab", { name: "Roles & access" }).click();
+		await expect(reopened.getByText("Applies everywhere.")).toBeVisible();
 	});
 });
