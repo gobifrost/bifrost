@@ -16,6 +16,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.identities import is_identity_email
 from src.core.constants import PROVIDER_ORG_ID
 from src.core.log_safety import log_safe
 from src.models import User
@@ -77,6 +78,9 @@ async def ensure_user_provisioned(
 
     email = email.lower()
     logger.info(f"Processing user provisioning for {log_safe(email)}")
+
+    if is_identity_email(email):
+        raise ValueError("This email domain is reserved")
 
     user_repo = UserRepository(db)
     org_repo = OrganizationRepository(db)

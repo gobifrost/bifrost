@@ -127,18 +127,21 @@ async def create_user(
     db: DbSession,
 ) -> UserPublic:
     """Create a new user."""
-    from shared.sdk_users import create_user as create_user_service
+    from shared.sdk_users import UserServiceError, create_user as create_user_service
 
-    return await create_user_service(
-        db,
-        await load_caller(db, user),
-        email=request.email,
-        name=request.name,
-        is_active=request.is_active,
-        is_superuser=request.is_superuser,
-        is_external=request.is_external,
-        organization_id=request.organization_id,
-    )
+    try:
+        return await create_user_service(
+            db,
+            await load_caller(db, user),
+            email=request.email,
+            name=request.name,
+            is_active=request.is_active,
+            is_superuser=request.is_superuser,
+            is_external=request.is_external,
+            organization_id=request.organization_id,
+        )
+    except UserServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
 
 @router.patch(

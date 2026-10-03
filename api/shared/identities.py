@@ -11,6 +11,7 @@ from __future__ import annotations
 from enum import StrEnum
 from uuid import UUID
 
+from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,6 +35,16 @@ def is_identity(user: User) -> bool:
 
 def is_identity_email(email: str) -> bool:
     return email.lower().endswith("@" + IDENTITY_EMAIL_DOMAIN)
+
+
+def refuse_identity_sign_in(user: User) -> None:
+    """Every path that signs a user in, or gives them a credential, calls this."""
+    if is_identity(user):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
 async def ensure_default_identity(session: AsyncSession, organization: Organization) -> User:

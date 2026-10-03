@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
+from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +22,7 @@ from shared.identities import (
     ensure_default_identity,
     is_identity,
     is_identity_email,
+    refuse_identity_sign_in,
     run_identity_allowed,
 )
 from src.core.constants import PROVIDER_ORG_ID
@@ -121,3 +123,21 @@ def test_identity_facts() -> None:
     assert not is_identity_email("identity-x@example.test")
     assert not is_identity_email(f"identity-x@sub.{IDENTITY_EMAIL_DOMAIN}.example.test")
 
+
+def test_refuse_identity_sign_in() -> None:
+    with pytest.raises(HTTPException) as refused:
+        refuse_identity_sign_in(_identity(None, IdentityKind.GLOBAL_DEFAULT))
+    assert refused.value.status_code == 401
+
+    refuse_identity_sign_in(User(email="person@example.test"))
+
+
+@pytest.mark.asyncio
+async def test_sso_provisioning_refuses_identity_emails(db_session: AsyncSession) -> None:
+    from src.services.user_provisioning import ensure_user_provisioned
+
+    identity = await default_identity(db_session, PROVIDER_ORG_ID)
+    with pytest.raises(ValueError):
+        await ensure_user_provisioned(db_session, identity.email.upper(), name="Claimed")
+    with pytest.raises(ValueError):
+        await ensure_user_provisioned(db_session, f"new@{IDENTITY_EMAIL_DOMAIN}")

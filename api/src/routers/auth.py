@@ -71,6 +71,7 @@ from shared.external_access import (
     resolve_external_claim,
     resolve_provider_org_claim,
 )
+from shared.identities import refuse_identity_sign_in
 
 logger = logging.getLogger(__name__)
 
@@ -329,6 +330,8 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    refuse_identity_sign_in(user)
+
     if not user.hashed_password:
         await emit_audit(
             db,
@@ -517,6 +520,7 @@ async def mfa_initial_setup(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
         )
+    refuse_identity_sign_in(user)
 
     force_new = setup_request.force_new if setup_request else False
 
@@ -604,6 +608,7 @@ async def mfa_initial_verify(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
         )
+    refuse_identity_sign_in(user)
 
     mfa_service = MFAService(db)
 
@@ -704,6 +709,7 @@ async def verify_mfa_login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
         )
+    refuse_identity_sign_in(user)
 
     mfa_service = MFAService(db)
 
@@ -765,6 +771,7 @@ async def _generate_login_tokens(user, db, response: Response | None = None) -> 
     Returns:
         LoginResponse with tokens
     """
+    refuse_identity_sign_in(user)
     # Update last login (use naive datetime for DB compatibility)
     user.last_login = datetime.now(timezone.utc)
     await db.commit()
@@ -936,6 +943,7 @@ async def refresh_token(
             detail="User not found or inactive",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    refuse_identity_sign_in(user)
 
     # Get fresh user roles from database
     db_roles = await get_user_roles(db, user.id)
@@ -1232,6 +1240,7 @@ async def register_user(
     existing_user = await user_repo.get_by_email(user_data.email)
 
     if existing_user:
+        refuse_identity_sign_in(existing_user)
         # Check if this is a pre-created user completing registration
         if not existing_user.is_registered:
             # Pre-created user - complete their registration
