@@ -25,7 +25,7 @@ from tests.e2e.conftest import poll_until, write_and_register
 from tests.e2e.fixtures.setup import _register_and_authenticate_user
 from tests.e2e.fixtures.users import E2EUser
 from tests.e2e.scenarios import rule
-from tests.e2e.scenarios.workflow_sources import probe_source
+from tests.e2e.scenarios.workflow_sources import journey_sources, probe_source
 
 PROVIDER_ORG_ID = "00000000-0000-0000-0000-000000000002"
 ENGINE_USER_ID = "00000000-0000-0000-0000-000000000001"
@@ -178,12 +178,37 @@ def scenario_world(
         }))
         workflows[home] = registered
 
+    # Journey workflows. A stored request in the provider partition is what the
+    # unattended dispatcher replays as its submitter.
+    stored_action_id = f"request-{tag}"
+    _ok(client.post(f"/api/tables/{table_ids['provider']}/documents", headers=admin.headers, json={
+        "id": stored_action_id,
+        "data": {"submitter": str(org1_user.user_id), "org": "contoso"},
+    }))
+    journey_homes = {
+        "reader": None, "onboard": None, "replay_child": None, "global_switch": None,
+        "dispatcher": PROVIDER_ORG_ID, "fleet": PROVIDER_ORG_ID,
+    }
+    for key, (name, source) in journey_sources(
+        tag=tag, targets=targets, table=table, config_key=config_key, secret_key=secret_key,
+        secret_value=f"secret-{tag}", integration=integration, hr_role_id=hr_role["id"], stored_action_id=stored_action_id,
+    ).items():
+        org_id = journey_homes[key]
+        path = f"scenarios_{tag}/journey_{key}.py"
+        registered = write_and_register(client, admin.headers, path, source, name, organization_id=org_id)
+        created_paths.append(path)
+        _ok(client.patch(f"/api/workflows/{registered['id']}", headers=admin.headers, json={
+            "organization_id": org_id,
+            "access_level": "everyone" if org_id is None else "authenticated",
+        }))
+        workflows[f"journey_{key}"] = registered
+
     # Entry points other than REST. Event sources: one per home; a source fires
     # every subscription on it, so the Contoso source runs two probes per POST.
     sources: dict[str, dict] = {}
     source_specs = {
-        "provider": (PROVIDER_ORG_ID, ["provider"], None),
-        "global": (None, ["global"], f"scn-signing-{tag}"),
+        "provider": (PROVIDER_ORG_ID, ["provider", "journey_dispatcher", "journey_fleet"], None),
+        "global": (None, ["global", "journey_global_switch"], f"scn-signing-{tag}"),
         "contoso": (org1["id"], ["contoso", "global_new"], None),
     }
     for label, (org_id, probes, secret) in source_specs.items():
@@ -379,6 +404,16 @@ def _direct_reads(world, start: rule.Start) -> dict[str, dict]:
     return reads
 
 
+# Journeys a person starts: key -> (person, workflow, inputs).
+JOURNEY_STARTS = {
+    "onboard_hr": ("hr", "journey_onboard", {"target": "contoso", "person": "new-hire-1"}),
+    "onboard_customer": ("customer", "journey_onboard", {"target": "contoso", "person": "new-hire-2"}),
+    "onboard_other_org": ("hr", "journey_onboard", {"target": "fabrikam", "person": "new-hire-3"}),
+    "onboard_staff": ("staff", "journey_onboard", {"target": "contoso", "person": "new-hire-4"}),
+    "reader_fabrikam": ("fabrikam_customer", "journey_reader", {}),
+}
+
+
 def _start_other(world, start: rule.Start, posted: dict[str, str]) -> dict:
     """Launch a non-REST start. Returns an execution id or what to resolve it from."""
     client, tag = world["client"], world["tag"]
@@ -563,6 +598,13 @@ def matrix_runs(scenario_world, async_session_factory) -> dict[str, Any]:
             if start.entry == "chat":
                 chat_start = start
 
+    journey_launches = {
+        key: _ok(world["client"].post("/api/workflows/execute", headers=world["people"][person].headers, json={
+            "workflow_id": world["workflows"][workflow]["id"], "input_data": inputs, "sync": False,
+        }))["execution_id"]
+        for key, (person, workflow, inputs) in JOURNEY_STARTS.items()
+    }
+
     chat_person = world["people"][chat_start.person] if chat_start and chat_start.person else None
     chat_execution = asyncio.run(_in_process(world, async_session_factory, chat_person))
     if chat_start is not None:
@@ -580,12 +622,33 @@ def matrix_runs(scenario_world, async_session_factory) -> dict[str, Any]:
             world, launch, world["workflows"][start.probe]["id"]
         )
         _collect_tree(world, execution_id, start.children, start.key, runs)
+    unattended = {
+        "dispatcher": launched["webhook.nobody.provider"],
+        "fleet": launched["webhook.nobody.provider"],
+        "global_switch": launched["webhook.nobody.global"],
+    }
+    for key, launch in unattended.items():
+        journey_launches[key] = _resolve_event_execution(
+            world, launch, world["workflows"][f"journey_{key}"]["id"]
+        )
+    finished = _await_executions(world, list(journey_launches.values()))
+    journeys = {key: finished[execution_id] for key, execution_id in journey_launches.items()}
+    children = {
+        f"{key}>child": execution["result"]["child"]
+        for key, execution in journeys.items()
+        if isinstance(execution.get("result"), dict) and execution["result"].get("child")
+    }
+    finished = _await_executions(world, list(children.values()))
+    journeys.update({key: finished[execution_id] for key, execution_id in children.items()})
+
     labels = {str(person.user_id): f"person:{key}" for key, person in world["people"].items()}
     labels[ENGINE_USER_ID] = "engine"
     return {
         "runs": runs,
         "labels": labels,
         "direct": direct,
+        "journeys": journeys,
+        "tag": world["tag"],
         "rows": _rows_by_partition(world),
         "elapsed": time.monotonic() - world["started"],
     }

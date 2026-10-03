@@ -155,3 +155,107 @@ def test_children_never_exceed_original_reach(matrix_runs: dict) -> None:
             if ">" in run_key and where is not None and not set(where.split("+")) <= reach:
                 violations.append(cell)
     assert not _unexplained(violations), "\n".join(_unexplained(violations))
+
+
+# Functional journeys: these hold today and must hold unchanged after R3b.
+
+
+def _journey(matrix: dict, key: str) -> dict:
+    execution = matrix["journeys"][key]
+    assert execution["status"] == "Success", f"{key}: {execution.get('error_message')}"
+    return execution
+
+
+def _row(matrix: dict, doc_id: str) -> tuple[str | None, str | None]:
+    """(partition, created_by label) of a document, or (None, None)."""
+    for label, docs in matrix["rows"].items():
+        if doc_id in docs:
+            return label, matrix["labels"].get(docs[doc_id], docs[doc_id])
+    return None, None
+
+
+def _onboarded(matrix: dict, key: str, person: str) -> None:
+    run = _journey(matrix, key)
+    assert run["result"]["outcome"] == "onboarded"
+    assert _row(matrix, f"onboard-{run['execution_id']}") == ("contoso", f"person:{person}")
+    child = _journey(matrix, f"{key}>child")
+    assert matrix["labels"].get(child["executed_by"]) == f"person:{person}"
+    assert child["result"]["config"] == "contoso-value"
+    assert child["result"]["entity_id"] == "contoso-tenant"
+    assert child["result"]["secret_matches"] is True
+
+
+def test_journey_customer_onboarding(matrix_runs: dict) -> None:
+    """J1: an HR member onboards in their own org; the child reads its settings."""
+    _onboarded(matrix_runs, "onboard_hr", "hr")
+    denied = _journey(matrix_runs, "onboard_customer")
+    assert denied["result"] == {"outcome": "not_permitted"}
+    assert _row(matrix_runs, f"onboard-{denied['execution_id']}") == (None, None)
+
+
+def test_journey_onboarding_other_customer_refused(matrix_runs: dict) -> None:
+    """J2: the same onboarding aimed at another customer is refused and writes nothing."""
+    run = _journey(matrix_runs, "onboard_other_org")
+    assert run["result"] == {"outcome": "refused"}
+    assert _row(matrix_runs, f"onboard-{run['execution_id']}") == (None, None)
+
+
+def test_journey_staff_onboard_customer(matrix_runs: dict) -> None:
+    """J3: provider staff onboard into a customer org named as input."""
+    _onboarded(matrix_runs, "onboard_staff", "staff")
+
+
+def test_journey_replay_as_submitter(matrix_runs: dict) -> None:
+    """J4: an unattended provider dispatcher replays a stored request as its submitter."""
+    _journey(matrix_runs, "dispatcher")
+    child = _journey(matrix_runs, "dispatcher>child")
+    assert matrix_runs["labels"].get(child["executed_by"]) == "person:customer"
+    tag = matrix_runs["tag"]
+    assert _row(matrix_runs, f"replay-request-{tag}") == ("contoso", "person:customer")
+
+
+def test_journey_provider_fleet_job(matrix_runs: dict) -> None:
+    """J5: an unattended provider job writes in every customer org."""
+    run = _journey(matrix_runs, "fleet")
+    for label in ("contoso", "fabrikam"):
+        assert _row(matrix_runs, f"fleet-{run['execution_id']}-{label}")[0] == label
+
+
+def test_journey_global_job_switches_to_provider(matrix_runs: dict) -> None:
+    """J6: an unattended global job (platform org MI after migration) writes in the provider org."""
+    run = _journey(matrix_runs, "global_switch")
+    assert _row(matrix_runs, f"switch-{run['execution_id']}")[0] == "provider"
+
+
+def test_journey_app_table_reads(scenario_world: dict) -> None:
+    """J7: app-style reads: a customer sees their own org; staff and admin pick an org."""
+    world = scenario_world
+
+    def partitions(person: str, scope: str | None) -> list[str]:
+        query = f"?scope={world['targets'][scope]}" if scope else ""
+        resp = world["client"].post(
+            f"/api/tables/{world['table']}/documents/query{query}",
+            headers=world["people"][person].headers, json={"limit": 1000},
+        )
+        assert resp.status_code == 200, resp.text
+        return sorted(
+            d["id"].removeprefix("marker-") for d in resp.json()["documents"]
+            if d["id"].startswith("marker-")
+        )
+
+    assert partitions("customer", None) == ["contoso"]
+    assert partitions("staff", "contoso") == ["contoso"]
+    assert partitions("admin", "fabrikam") == ["fabrikam"]
+
+
+def test_journey_settings_fallback(matrix_runs: dict) -> None:
+    """J8: an org without an override gets the global config, its own mapping and the secret."""
+    run = _journey(matrix_runs, "reader_fabrikam")
+    assert run["result"]["config"] == "global-default"
+    assert run["result"]["entity_id"] == "fabrikam-tenant"
+    assert run["result"]["secret_matches"] is True
+
+
+def test_module_runtime(matrix_runs: dict, record_property) -> None:
+    """Record how long building the world and running every start took."""
+    record_property("scenario_runs_seconds", round(matrix_runs["elapsed"], 1))
