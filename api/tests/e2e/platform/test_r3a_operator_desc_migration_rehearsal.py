@@ -2,7 +2,8 @@
 
 Builds a disposable database at the migration's ``down_revision``, upgrades,
 and checks that only Platform Operator's description changes (its
-permissions stay), that the upgrade is idempotent at head, and that the
+permissions stay), what head holds once the later
+20261003_r3_operator_secrets revision has rewritten it, and that the
 downgrade restores the previous description. Texts are frozen here.
 """
 
@@ -40,6 +41,13 @@ AFTER = (
     "Support for customer organizations: view organizations and users, invite users, "
     "reset MFA, deactivate ordinary users, and assign roles that carry no permissions. "
     "Additional role only."
+)
+# Set by the later 20261003_r3_operator_secrets revision, which also
+# gives the role workflows.execute.
+AT_HEAD = (
+    "Support for customer organizations: view organizations and users, invite users, "
+    "reset MFA, deactivate ordinary users, assign roles that carry no permissions, "
+    "and run workflows in customer organizations. Additional role only."
 )
 
 
@@ -80,7 +88,7 @@ def test_operator_description_says_what_the_role_does() -> None:
         assert asyncio.run(_operator(database_url)) == (AFTER, permissions)
 
         _upgrade(database_url, "head")
-        assert asyncio.run(_operator(database_url)) == (AFTER, permissions)
+        assert asyncio.run(_operator(database_url)) == (AT_HEAD, permissions | {"workflows.execute"})
 
         _downgrade(database_url, PREVIOUS_REVISION)
         assert asyncio.run(_operator(database_url)) == (BEFORE, permissions)

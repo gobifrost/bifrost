@@ -13117,6 +13117,11 @@ export interface components {
              * @description Whether an 'organization' boundary may name the provider organization.
              */
             provider_organization_allowed: boolean;
+            /**
+             * Fixed Boundaries
+             * @description When not empty, the role applies at exactly these boundaries and the caller doesn't choose where.
+             */
+            fixed_boundaries?: components["schemas"]["RoleBoundaryInput"][];
         };
         /** AssignedRole */
         AssignedRole: {

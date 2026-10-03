@@ -80,6 +80,13 @@ class AssignableRole(BaseModel):
     provider_organization_allowed: bool = Field(
         description="Whether an 'organization' boundary may name the provider organization."
     )
+    fixed_boundaries: list[RoleBoundaryInput] = Field(
+        default_factory=list,
+        description=(
+            "When not empty, the role applies at exactly these boundaries "
+            "and the caller doesn't choose where."
+        ),
+    )
 
 
 class UserRoleAssignmentsResponse(BaseModel):

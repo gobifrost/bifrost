@@ -11,13 +11,13 @@ and runtime code agree on identity without a name lookup:
   (``src.services.access_list.ACCESS_LIST``) rather than hand-maintained,
   so it can never silently drift from what an authenticated user can
   already reach today. See ``derive_user_base_permissions``.
-- **Platform Operator** (builtin, not base): seeded but assigned to
-  nobody yet. Read visibility into managed organizations plus user support
-  and role assignment (see ``PLATFORM_OPERATOR_PERMISSIONS``).
-- **Secrets Reader** (builtin, not base): seeded but assigned to nobody
-  yet. Holds only ``secrets.read``, the one permission the Platform Admin
-  wildcard does not include, so decrypting a secret always takes an
-  explicit assignment.
+- **Platform Operator** (builtin, not base): read visibility into managed
+  organizations plus user support, role assignment and running workflows
+  there (see ``PLATFORM_OPERATOR_PERMISSIONS``). Held as an additional role
+  by people in the provider organization only.
+- **Secrets Reader** (builtin, not base): holds only ``secrets.read``, the
+  one permission the Platform Admin wildcard does not include, so decrypting
+  a secret always takes an explicit assignment.
 
 Migrations must not import live application code (a historical migration
 has to keep producing the same rows regardless of later refactors), so the
@@ -72,8 +72,7 @@ def is_builtin_role_id(role_id: UUID) -> bool:
 
     Resource-assignment endpoints (role-to-agent/app/workflow/user/form)
     refuse builtin role ids with 409 — there's no UI yet (R3a) for
-    assigning entities to Platform Admin/User/Platform Operator/Secrets
-    Reader, and their
+    assigning entities to a builtin role, and their
     access is meant to come from their permission set, not per-entity
     role bindings.
     """
@@ -141,8 +140,8 @@ USER_BASE_PERMISSIONS: frozenset[str] = frozenset(
     }
 )
 
-# Seeded but assigned to nobody yet. Frozen copy of what the latest
-# migration that seeds it (20261001_r3a_operator_perms) writes; see
+# Frozen copy of what the latest migration that seeds it
+# (20261003_r3_operator_secrets) writes; see
 # `tests/unit/test_builtin_roles.py`. `configs.read` and `integrations.read`
 # are metadata only: decrypting a secret is `secrets.read`, which this role
 # never holds. `roleassignments.readwrite` is limited at the cutover to roles
@@ -154,6 +153,7 @@ PLATFORM_OPERATOR_PERMISSIONS: frozenset[str] = frozenset(
         "forms.read",
         "apps.read",
         "workflows.read",
+        "workflows.execute",
         "executions.read",
         "agentruns.read",
         "configs.read",
@@ -167,6 +167,6 @@ PLATFORM_OPERATOR_PERMISSIONS: frozenset[str] = frozenset(
     }
 )
 
-# Seeded but assigned to nobody yet. Frozen copy of what
-# 20261001_r3a_operator_perms writes; see `tests/unit/test_builtin_roles.py`.
+# Frozen copy of what 20261001_r3a_operator_perms writes; see
+# `tests/unit/test_builtin_roles.py`.
 DECRYPTION_ROLE_PERMISSIONS: frozenset[str] = frozenset({"secrets.read"})
