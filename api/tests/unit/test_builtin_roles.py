@@ -172,6 +172,12 @@ def test_migration_frozen_copies_match_live_constants():
     assert latest.PREVIOUS_OPERATOR_DESCRIPTION == desc.DESCRIPTION
     assert latest.PREVIOUS_DECRYPTION_DESCRIPTION == operator.DECRYPTION_ROLE_DESCRIPTION
 
+    identities = _load_migration("20261003_r3b_identities.py")
+    assert identities.down_revision == "20261003_r3_operator_secrets"
+    assert identities.PROVIDER_ORG_ID == PROVIDER_ORG_ID
+    assert identities.PLATFORM_ADMIN_ROLE_ID == PLATFORM_ADMIN_ROLE_ID
+    assert identities.USER_ROLE_ID == USER_ROLE_ID
+
 
 def test_migration_assigns_at_boundaries_the_assignment_service_allows():
     """The migration writes Secrets Reader at exactly the boundaries the

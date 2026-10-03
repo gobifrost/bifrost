@@ -83,6 +83,7 @@ class UserRepository(BaseRepository[User]):  # type: ignore[type-var]
         Excludes:
         - System user (SYSTEM_USER_UUID) - automated execution account
         - Users with NULL organization_id - system/global accounts
+        - Identities - accounts that run work no person started
 
         Returns:
             True if at least one real human user exists, False otherwise
@@ -96,6 +97,7 @@ class UserRepository(BaseRepository[User]):  # type: ignore[type-var]
                 User.id.isnot(None),
                 User.id != SYSTEM_USER_UUID,
                 User.organization_id.isnot(None),
+                User.identity_kind.is_(None),
             ))
         )
         return result.scalar() or False

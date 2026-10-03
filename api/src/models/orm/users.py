@@ -71,6 +71,10 @@ class User(Base):
         nullable=False,
         default=_USER_ROLE_ID,
     )
+    # org_default | global_default | custom; NULL for people and system
+    # accounts. An identity runs work no person started and never signs in
+    # (see `shared.identities`).
+    identity_kind: Mapped[str | None] = mapped_column(String(16), default=None)
     last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=text("NOW()")

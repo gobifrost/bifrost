@@ -108,9 +108,11 @@ async def _state(database_url: str, ids: dict[str, str]) -> dict:
                 await connection.execute(
                     sa.text(
                         "SELECT user_id, role_id FROM user_roles "
-                        "WHERE role_id = CAST(:admin_role AS uuid)"
+                        "WHERE role_id = CAST(:admin_role AS uuid) "
+                        "AND user_id IN (CAST(:admin AS uuid), CAST(:global_admin AS uuid), "
+                        "CAST(:regular AS uuid), CAST(:custom AS uuid))"
                     ),
-                    {"admin_role": str(PLATFORM_ADMIN_ROLE_ID)},
+                    {**ids, "admin_role": str(PLATFORM_ADMIN_ROLE_ID)},
                 )
             ).all()
         }
@@ -120,9 +122,11 @@ async def _state(database_url: str, ids: dict[str, str]) -> dict:
                 await connection.execute(
                     sa.text(
                         "SELECT user_id, role_id, kind, organization_id FROM user_role_boundaries "
-                        "WHERE role_id = CAST(:admin_role AS uuid)"
+                        "WHERE role_id = CAST(:admin_role AS uuid) "
+                        "AND user_id IN (CAST(:admin AS uuid), CAST(:global_admin AS uuid), "
+                        "CAST(:regular AS uuid), CAST(:custom AS uuid))"
                     ),
-                    {"admin_role": str(PLATFORM_ADMIN_ROLE_ID)},
+                    {**ids, "admin_role": str(PLATFORM_ADMIN_ROLE_ID)},
                 )
             ).all()
         }

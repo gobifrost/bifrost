@@ -121,6 +121,13 @@ class Workflow(Base):
     # reads this until delegated execution.
     permission_mode: Mapped[str | None] = mapped_column(String(16), default=None)
 
+    # Identity this workflow runs as when no person starts it; NULL = its
+    # organization's default identity. Not read for execution until run
+    # lineage lands.
+    run_identity_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), default=None, index=True
+    )
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=text("NOW()")
