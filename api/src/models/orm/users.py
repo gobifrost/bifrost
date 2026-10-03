@@ -99,7 +99,7 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan", passive_deletes=True
     )
     executions: Mapped[list["Execution"]] = relationship(
-        back_populates="executed_by_user", passive_deletes=True
+        back_populates="executed_by_user", passive_deletes=True, foreign_keys="Execution.executed_by"
     )
     mfa_methods: Mapped[list["UserMFAMethod"]] = relationship(
         back_populates="user", cascade="all, delete-orphan", passive_deletes=True

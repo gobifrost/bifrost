@@ -31,6 +31,11 @@ class AgentRun(Base):
     caller_user_id: Mapped[str | None] = mapped_column(String(255), default=None)
     caller_email: Mapped[str | None] = mapped_column(String(255), default=None)
     caller_name: Mapped[str | None] = mapped_column(String(255), default=None)
+    # Who this run is for (the person, or an identity when no person started
+    # it). Recorded by shared.run_lineage; nothing decides on it yet.
+    run_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
     iterations_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tokens_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     budget_max_iterations: Mapped[int | None] = mapped_column(Integer, default=None)
