@@ -4261,7 +4261,9 @@ class TestOrgImport:
     async def test_deactivate_removed_org(
         self, db_session: AsyncSession, sync_service, working_clone,
     ):
-        """Org in DB (is_active=True, created_by=git-sync), not in manifest → is_active=False."""
+        """Org in DB (is_active=True, created_by=git-sync), not in manifest → is_active=False.
+        The provider organization is never in a manifest and stays active."""
+        from src.core.constants import PROVIDER_ORG_ID
         from src.models.orm.organizations import Organization
 
         org_id = uuid4()
@@ -4293,6 +4295,11 @@ class TestOrgImport:
             select(Organization).where(Organization.id == keep_id)
         )).scalar_one()
         assert kept.is_active is True
+
+        provider = (await db_session.execute(
+            select(Organization).where(Organization.id == PROVIDER_ORG_ID)
+        )).scalar_one()
+        assert provider.is_active is True
 
     async def test_reactivate_org(
         self, db_session: AsyncSession, sync_service, working_clone,
