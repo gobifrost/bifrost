@@ -1941,11 +1941,13 @@ class ManifestResolver:
         # the import isn't flagged as unused.
         _ = UserMCPCredential
 
-        # Soft-delete organizations not in manifest (only when manifest has orgs)
+        # Soft-delete organizations not in manifest (only when manifest has
+        # orgs). The provider organization is never deactivated, here or
+        # through the API.
         if present_org_uuids:
             await _bulk_deactivate(
                 Organization,
-                [Organization.is_active == True],  # noqa: E712
+                [Organization.is_active == True, Organization.is_provider.is_(False)],  # noqa: E712
                 present_org_uuids,
                 "organizations",
             )
