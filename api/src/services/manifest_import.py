@@ -797,6 +797,8 @@ class ManifestResolver:
             await _prog(f"Importing organization: {morg.name}")
             org_ops.extend(self._resolve_organization(morg, cache))
         await self._apply_ops(org_ops, all_ops, dry_run=dry_run, existing_ids=cache.get("org_ids", set()))
+        if not dry_run:
+            await self._ensure_default_identities(org_ops)
 
         # 0b. Resolve roles (no deps) — execute immediately
         role_ops: list[SyncOp] = []
@@ -1213,6 +1215,16 @@ class ManifestResolver:
                 )
 
         return modified
+
+    async def _ensure_default_identities(self, org_ops: "list[SyncOp]") -> None:
+        """Every imported organization has its default identity, like one created through the API."""
+        from shared.identities import ensure_default_identity
+        from src.models.orm.organizations import Organization
+
+        for op in org_ops:
+            organization = await self.db.get(Organization, op.id)
+            if organization is not None:
+                await ensure_default_identity(self.db, organization)
 
     def _resolve_organization(self, morg, cache: dict) -> "list[SyncOp]":
         """Resolve an organization from manifest into SyncOps.

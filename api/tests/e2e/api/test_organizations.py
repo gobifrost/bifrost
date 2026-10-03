@@ -4,7 +4,13 @@ E2E tests for organization management.
 Tests CRUD operations and access control for organizations.
 """
 
+from uuid import UUID
+
 import pytest
+from sqlalchemy import select
+
+from shared.identities import IDENTITY_EMAIL_DOMAIN, IdentityKind
+from src.models.orm.users import User
 
 
 @pytest.mark.e2e
@@ -107,6 +113,28 @@ class TestOrganizationCRUD:
 
         assert response.status_code == 403
         assert response.json()["detail"] == "Provider organization cannot be disabled"
+
+    @pytest.mark.asyncio
+    async def test_created_organization_has_its_default_identity(
+        self, e2e_client, platform_admin, db_session
+    ):
+        """Creating an organization creates its default identity with it."""
+        response = e2e_client.post(
+            "/api/organizations",
+            headers=platform_admin.headers,
+            json={"name": "Identity Org"},
+        )
+        assert response.status_code == 201, response.text
+        org_id = UUID(response.json()["id"])
+
+        identities = (
+            await db_session.scalars(
+                select(User).where(User.organization_id == org_id, User.identity_kind.is_not(None))
+            )
+        ).all()
+        assert [(i.identity_kind, i.email, i.name) for i in identities] == [
+            (IdentityKind.ORG_DEFAULT, f"identity-{org_id}@{IDENTITY_EMAIL_DOMAIN}", "Identity Org identity")
+        ]
 
 
 @pytest.mark.e2e

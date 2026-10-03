@@ -440,7 +440,7 @@ async def cleanup_test_data(db_session: AsyncSession):
     # Clean up orgs and roles last (entities FK into these)
     from src.models.orm.executions import Execution
     from src.models.orm.organizations import Organization
-    from src.models.orm.users import Role
+    from src.models.orm.users import Role, User
 
     # Executions FK into organizations (RESTRICT): other suites legitimately
     # create executions inside their created_by="test" orgs (e.g. the form
@@ -452,6 +452,10 @@ async def cleanup_test_data(db_session: AsyncSession):
     )
     await db_session.execute(
         delete(Execution).where(Execution.organization_id.in_(cohort_orgs))
+    )
+    # Each organization's default identity is a user in it.
+    await db_session.execute(
+        delete(User).where(User.organization_id.in_(cohort_orgs), User.identity_kind.is_not(None))
     )
     await db_session.execute(delete(Organization).where(Organization.created_by.in_(["git-sync", "test"])))
     await db_session.execute(delete(Role).where(Role.created_by == "git-sync"))
@@ -4124,8 +4128,11 @@ class TestOrgImport:
     async def test_create_org(
         self, db_session: AsyncSession, sync_service, working_clone,
     ):
-        """Org in manifest, not in DB → created."""
+        """Org in manifest, not in DB → created, with its default identity."""
+        from uuid import UUID
+
         from src.models.orm.organizations import Organization
+        from src.models.orm.users import User
 
         org_id = str(uuid4())
         work_dir = Path(working_clone.working_dir)
@@ -4145,6 +4152,14 @@ class TestOrgImport:
         assert org is not None, "Org not created"
         assert org.name == "TestOrg"
         assert org.is_active is True
+        identity_kinds = (
+            await db_session.scalars(
+                select(User.identity_kind).where(
+                    User.organization_id == UUID(org_id), User.identity_kind.is_not(None)
+                )
+            )
+        ).all()
+        assert identity_kinds == ["org_default"], "Imported org has its default identity"
 
     async def test_update_org_by_id_rename(
         self, db_session: AsyncSession, sync_service, working_clone,
