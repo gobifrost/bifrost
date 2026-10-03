@@ -119,6 +119,36 @@ class TestResolveTableIdByName:
         resolved = await ws_mod._resolve_table_id(name, _org_user(org))
         assert resolved == str(live.id)
 
+class TestResolveTableIdById:
+    """UUID subscribes follow the REST ``?scope=`` target-org rule."""
+
+    async def _foreign_table(self, db) -> Table:
+        table = _table(f"history_{uuid.uuid4().hex[:8]}", org_id=await _make_org(db))
+        db.add(table)
+        await db.flush()
+        return table
+
+    async def test_member_of_another_org_is_refused(self, patched_db) -> None:
+        table = await self._foreign_table(patched_db)
+        other_org = await _make_org(patched_db)
+
+        assert await ws_mod._resolve_table_id(str(table.id), _org_user(other_org)) is None
+
+    async def test_provider_org_member_resolves_customer_table(self, patched_db) -> None:
+        table = await self._foreign_table(patched_db)
+        staff = _org_user(await _make_org(patched_db))
+        staff.is_provider_org = True
+
+        assert await ws_mod._resolve_table_id(str(table.id), staff) == str(table.id)
+
+    async def test_superuser_resolves_customer_table(self, patched_db) -> None:
+        table = await self._foreign_table(patched_db)
+        admin = _org_user(await _make_org(patched_db))
+        admin.is_superuser = True
+
+        assert await ws_mod._resolve_table_id(str(table.id), admin) == str(table.id)
+
+
 class TestLoadPoliciesForTableByName:
     async def test_name_lookup_skips_solution_rows(self, patched_db) -> None:
         """Same-name `_repo/` + solution rows: the name branch must load the

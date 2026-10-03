@@ -28,6 +28,7 @@ from src.core.exceptions import AccessDeniedError
 from src.core.principal import UserPrincipal
 from src.core.database import get_db_context
 from src.core.log_safety import log_safe
+from src.core.org_filter import resolve_target_org
 from src.core.pubsub import manager
 from src.models import Conversation, Execution
 from src.models.contracts.policies import Expr, TablePolicies
@@ -126,9 +127,11 @@ async def _resolve_table_id(name_or_id: str, user: UserPrincipal) -> str | None:
 
     table_id, table_org = row[0], row[1]
 
-    # Org gate for UUID lookups (name lookups already constrained above).
-    if not user.is_superuser:
-        if table_org is not None and table_org != user.organization_id:
+    # Org gate for UUID lookups (name lookups already constrained above):
+    # the same target-org rule the REST table routes apply to ``?scope=``,
+    # so a caller who can read a table over REST can also subscribe to it.
+    if table_org is not None and table_org != user.organization_id:
+        if resolve_target_org(user, str(table_org), user.organization_id) != table_org:
             return None
 
     return str(table_id)
