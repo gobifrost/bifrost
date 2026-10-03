@@ -7,6 +7,7 @@ export function RoleDetailHeader({
 	name,
 	description,
 	isBuiltin,
+	note,
 	canManage,
 	onEdit,
 	onDelete,
@@ -14,6 +15,8 @@ export function RoleDetailHeader({
 	name: string;
 	description?: string | null;
 	isBuiltin: boolean;
+	/** When the role takes effect, for built-in roles that nothing enforces yet. */
+	note?: string;
 	/** Edit and delete controls (roles.readwrite, custom roles only). */
 	canManage: boolean;
 	onEdit: () => void;
@@ -37,6 +40,11 @@ export function RoleDetailHeader({
 					{description && (
 						<p className="mt-2 text-sm text-muted-foreground">
 							{description}
+						</p>
+					)}
+					{note && (
+						<p className="mt-2 text-sm text-muted-foreground">
+							{note}
 						</p>
 					)}
 					<p className="mt-2 text-sm text-muted-foreground">

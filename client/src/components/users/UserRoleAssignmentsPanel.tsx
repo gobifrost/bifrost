@@ -432,6 +432,12 @@ export function UserRoleAssignmentsPanel({
 	};
 
 	const defaultPlaces = (role: AssignableRole): Place[] => {
+		if (role.fixed_boundaries?.length) {
+			return role.fixed_boundaries.map((boundary) => ({
+				kind: boundary.kind,
+				organization_id: boundary.organization_id ?? null,
+			}));
+		}
 		const home = user.organization_id;
 		if (
 			home &&
@@ -694,6 +700,9 @@ export function UserRoleAssignmentsPanel({
 								const removable = canEdit && !!grantable;
 								const editable =
 									removable && !!grantable?.can_be_additional;
+								// The server fixes where some roles apply; nobody picks.
+								const fixedPlaces =
+									!!grantable?.fixed_boundaries?.length;
 								return (
 									<li
 										key={role.roleId}
@@ -738,87 +747,97 @@ export function UserRoleAssignmentsPanel({
 												</Button>
 											)}
 										</div>
-										<div className="mt-2 flex flex-wrap items-center gap-1.5">
-											<span className="text-xs text-muted-foreground">
-												Applies
-											</span>
-											<ul
-												className="contents"
-												aria-label={`Where ${name} applies`}
-											>
-												{role.places.map((place) => {
-													const label = placeText(
-														place,
-														orgName,
-													);
-													return (
-														<li
-															key={placeKey(
-																place,
-															)}
-														>
-															<Badge
-																variant="secondary"
-																className="h-auto min-h-8 gap-1.5 whitespace-normal py-1 [overflow-wrap:anywhere]"
-															>
-																<PlaceIcon
-																	kind={
-																		place.kind
-																	}
-																/>
-																{label}
-																{editable &&
-																	role.places
-																		.length >
-																		1 && (
-																		<button
-																			type="button"
-																			className="flex size-6 items-center justify-center rounded-[var(--bf-radius-control)] hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-																			aria-label={`Remove ${label} from ${name}`}
-																			onClick={() =>
-																				updateRole(
-																					role.roleId,
-																					role.places.filter(
-																						(
-																							p,
-																						) =>
-																							placeKey(
-																								p,
-																							) !==
-																							placeKey(
-																								place,
-																							),
-																					),
-																				)
-																			}
-																		>
-																			<X className="h-3 w-3" />
-																		</button>
+										{fixedPlaces ? (
+											<p className="mt-2 text-xs text-muted-foreground">
+												Applies everywhere.
+											</p>
+										) : (
+											<div className="mt-2 flex flex-wrap items-center gap-1.5">
+												<span className="text-xs text-muted-foreground">
+													Applies
+												</span>
+												<ul
+													className="contents"
+													aria-label={`Where ${name} applies`}
+												>
+													{role.places.map(
+														(place) => {
+															const label =
+																placeText(
+																	place,
+																	orgName,
+																);
+															return (
+																<li
+																	key={placeKey(
+																		place,
 																	)}
-															</Badge>
-														</li>
-													);
-												})}
-											</ul>
-											{editable && grantable && (
-												<PlacementPicker
-													roleName={name}
-													options={placementOptions(
-														grantable,
-														role.places,
+																>
+																	<Badge
+																		variant="secondary"
+																		className="h-auto min-h-8 gap-1.5 whitespace-normal py-1 [overflow-wrap:anywhere]"
+																	>
+																		<PlaceIcon
+																			kind={
+																				place.kind
+																			}
+																		/>
+																		{label}
+																		{editable &&
+																			role
+																				.places
+																				.length >
+																				1 && (
+																				<button
+																					type="button"
+																					className="flex size-6 items-center justify-center rounded-[var(--bf-radius-control)] hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+																					aria-label={`Remove ${label} from ${name}`}
+																					onClick={() =>
+																						updateRole(
+																							role.roleId,
+																							role.places.filter(
+																								(
+																									p,
+																								) =>
+																									placeKey(
+																										p,
+																									) !==
+																									placeKey(
+																										place,
+																									),
+																							),
+																						)
+																					}
+																				>
+																					<X className="h-3 w-3" />
+																				</button>
+																			)}
+																	</Badge>
+																</li>
+															);
+														},
 													)}
-													onAdd={(place) =>
-														updateRole(
-															role.roleId,
-															[
-																...role.places,
-																place,
-															],
-														)
-													}
-												/>
-											)}
-										</div>
+												</ul>
+												{editable && grantable && (
+													<PlacementPicker
+														roleName={name}
+														options={placementOptions(
+															grantable,
+															role.places,
+														)}
+														onAdd={(place) =>
+															updateRole(
+																role.roleId,
+																[
+																	...role.places,
+																	place,
+																],
+															)
+														}
+													/>
+												)}
+											</div>
+										)}
 										{role.places.length === 0 && (
 											<p
 												role="alert"

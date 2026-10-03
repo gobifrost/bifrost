@@ -47,6 +47,7 @@ import { useApplications } from "@/hooks/useApplications";
 import { useWorkflows } from "@/hooks/useWorkflows";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { RoleDialog } from "@/components/roles/RoleDialog";
+import { NOT_ENFORCED_ROLE_NOTES } from "@/lib/builtin-roles";
 import { RolePeoplePanel } from "@/components/roles/RolePeoplePanel";
 import { RolePermissionsPanel } from "@/components/roles/RolePermissionsPanel";
 import { getErrorMessage } from "@/lib/api-error";
@@ -182,6 +183,7 @@ export function RoleDetail() {
 				name={role.name}
 				description={role.description}
 				isBuiltin={isBuiltin}
+				note={NOT_ENFORCED_ROLE_NOTES[role.id]}
 				canManage={canManage}
 				onEdit={() => setEditOpen(true)}
 				onDelete={() => {
