@@ -161,7 +161,7 @@ const create = useWorkflowMutation<{ id: string }>("functions/tickets.py::create
 
 ## Identity in the browser is for display only
 
-**Rule:** Read the signed-in user with `useBifrostContext().authedFetch("/api/auth/me")` (fields: `id`, `email`, `name`, `is_superuser`) to greet the user or label "mine". Never send `email`/`id` from the browser to a workflow as input; the workflow reads `context.email`/`context.user_id` itself. Never gate a sensitive action on `is_superuser` from the browser; the workflow's registration and the table policy are the gate.
+**Rule:** Read the signed-in user with `useBifrostContext().authedFetch("/api/auth/me")` (fields: `id`, `email`, `name`, `is_superuser`, `roles`) to greet the user, label "mine", or show and hide controls by role (show "Approve" when `roles` includes the approver role). Never send `email`/`id`/roles from the browser to a workflow as input; the workflow reads `context` itself. Showing or hiding a control is convenience, not security: the workflow's access level and roles, its own checks on `context`, and table policies are the gate.
 
 **Why:** Anything the browser sends can be edited; anything the browser hides can be unhidden. A workflow that accepts the viewer's email as a parameter lets anyone act as anyone.
 
@@ -172,8 +172,6 @@ mutate({ email: me.email, ticket_id });
 // Good: the workflow already knows who is calling.
 mutate({ ticket_id });
 ```
-
-When the UI genuinely needs capability flags (show "Approve" only to approvers), expose one workflow (`functions/viewer.py::get_viewer_capabilities`) that computes them server-side from `context`, and still let the approve workflow be `role_based`.
 
 ## Scope and app identity are host-provided
 
@@ -194,4 +192,4 @@ When the UI genuinely needs capability flags (show "Approve" only to approvers),
 - Shell `flex h-full min-h-0 flex-col`; `main` scrolls; lists content-sized until capped.
 - Semantic tokens only; both themes verified or `supportsTheme` removed.
 - Loading/empty/error/denied states on every data view; mutations disabled while running; input preserved.
-- Identity from `/api/auth/me` for display only; no identity or scope sent as workflow input; capabilities computed server-side.
+- Identity from `/api/auth/me` for display only; roles may hide controls, but the workflow and policies enforce; no identity or scope sent as workflow input.
