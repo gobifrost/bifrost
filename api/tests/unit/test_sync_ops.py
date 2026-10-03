@@ -897,7 +897,7 @@ class TestManifestWorkflowImport:
         ops = resolver._resolve_workflow(
             "custom_tool_name",
             mwf,
-            {"wf_by_natural": {}, "wf_ids": set()},
+            {"wf_by_natural": {}, "wf_ids": set(), "wf_run_identity": {}},
         )
 
         # The resolver emits the workflow Upsert plus a SyncRoles op — the latter
