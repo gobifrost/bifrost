@@ -16,6 +16,7 @@ from sqlalchemy import select
 from shared.identities import IdentityKind
 from src.core.constants import PROVIDER_ORG_ID
 from src.models.orm.users import User
+from src.models.orm.workflows import Workflow
 from tests.e2e.conftest import write_and_register
 
 pytestmark = pytest.mark.e2e
@@ -121,3 +122,27 @@ async def test_moving_a_workflow_keeps_its_identity_allowed(
     assert moved_together.status_code == 200, moved_together.text
     body = moved_together.json()
     assert (body["organization_id"], body["run_identity_id"]) == (org2["id"], identities["org2"])
+
+
+@pytest.mark.asyncio
+async def test_reregistering_into_another_organization_rechecks_its_identity(
+    e2e_client, platform_admin, org1, org2, db_session
+) -> None:
+    identities = await _identities(db_session, org1, org2)
+    workflow_id = _register(e2e_client, platform_admin, org1["id"])
+    assert _patch(e2e_client, platform_admin, workflow_id, {"run_identity_id": identities["org1"]}).status_code == 200
+    workflow = await db_session.get(Workflow, uuid.UUID(workflow_id))
+    assert workflow is not None
+    workflow.is_active = False
+    await db_session.commit()
+
+    response = e2e_client.post(
+        "/api/workflows/register",
+        headers=platform_admin.headers,
+        json={"path": workflow.path, "function_name": workflow.function_name, "organization_id": org2["id"]},
+    )
+    assert response.status_code == 422, response.text
+    assert "run_identity_id" in response.text
+
+    await db_session.refresh(workflow)
+    assert (workflow.is_active, str(workflow.organization_id)) == (False, org1["id"])

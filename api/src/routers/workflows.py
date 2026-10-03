@@ -724,6 +724,16 @@ async def register_workflow(
         existing_wf.is_orphaned = False
         existing_wf.type = wf_type
         existing_wf.organization_id = org_uuid
+        if existing_wf.run_identity_id is not None:
+            try:
+                await validate_run_identity(
+                    db, workflow_organization_id=org_uuid, identity_id=existing_wf.run_identity_id
+                )
+            except ValueError as e:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail={"run_identity_id": str(e)},
+                ) from None
         if request.access_level is not None:
             existing_wf.access_level = request.access_level
         existing_wf.updated_at = datetime.now(timezone.utc)
