@@ -121,6 +121,11 @@ async def _state(database_url: str) -> dict:
                 )
             )
         ).scalar_one()
+        users_org_on_update = (
+            await connection.execute(
+                sa.text("SELECT confupdtype::text FROM pg_constraint WHERE conname = 'users_organization_id_fkey'")
+            )
+        ).scalar_one()
         columns = {
             (table, column)
             for table, column in (
@@ -178,6 +183,7 @@ async def _state(database_url: str) -> dict:
         }
         return {
             "constraint": constraint,
+            "users_org_on_update": users_org_on_update,
             "columns": columns,
             "identities": identities,
             "run_identities": run_identities,
@@ -202,6 +208,7 @@ def test_identities_are_created_and_unattended_global_workflows_point_at_the_pro
         before = asyncio.run(_state(database_url))
         assert before["constraint"] == "CHECK (((organization_id IS NOT NULL) OR (is_superuser = true)))"
         assert before["columns"] == set()
+        assert before["users_org_on_update"] == "a"
 
         _upgrade(database_url, REVISION)
         after = asyncio.run(_state(database_url))
@@ -209,6 +216,8 @@ def test_identities_are_created_and_unattended_global_workflows_point_at_the_pro
             "CHECK (((organization_id IS NOT NULL) OR (is_superuser = true) "
             "OR ((identity_kind)::text = 'global_default'::text)))"
         )
+
+        assert after["users_org_on_update"] == "c"
 
         by_org = {row[3]: row for row in after["identities"]}
         assert len(after["identities"]) == 4

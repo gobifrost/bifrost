@@ -387,7 +387,10 @@ async def delete_organization(db: AsyncSession, entity_id: str) -> None:
     from sqlalchemy import delete
 
     from src.models.orm.organizations import Organization
+    from src.models.orm.users import User
 
+    # The organization's default identity was created with it.
+    await db.execute(delete(User).where(User.organization_id == UUID(entity_id)))
     await db.execute(delete(Organization).where(Organization.id == UUID(entity_id)))
     await db.commit()
 
@@ -414,7 +417,7 @@ async def cleanup_roundtrip_rows(db: AsyncSession) -> None:
     documents, solution config-schema) cascade via their FK ``ondelete``. It
     commits so the deletes are visible to the next test's fresh session.
     """
-    from sqlalchemy import delete, or_
+    from sqlalchemy import delete, or_, select
 
     from src.models.orm.agents import Agent
     from src.models.orm.applications import Application
@@ -427,7 +430,7 @@ async def cleanup_roundtrip_rows(db: AsyncSession) -> None:
     from src.models.orm.organizations import Organization
     from src.models.orm.solutions import Solution
     from src.models.orm.tables import Table
-    from src.models.orm.users import Role
+    from src.models.orm.users import Role, User
     from src.models.orm.workflows import Workflow
 
     # Order: entities that reference others first (forms/agents -> workflows;
@@ -460,15 +463,16 @@ async def cleanup_roundtrip_rows(db: AsyncSession) -> None:
     await db.execute(delete(MCPServer).where(MCPServer.name.like("rt-mcp-%")))
     await db.execute(delete(Role).where(Role.name.like("rt_role_%")))
     await db.execute(delete(Solution).where(Solution.slug.like("rt-sol-%")))
-    await db.execute(
-        delete(Organization).where(
-            or_(
-                Organization.name.like("RT Org %"),
-                Organization.name.like("RT Claim Org %"),
-                Organization.name.like("RT Target %"),
-            )
-        )
+    rt_orgs = or_(
+        Organization.name.like("RT Org %"),
+        Organization.name.like("RT Claim Org %"),
+        Organization.name.like("RT Target %"),
     )
+    # Each organization's default identity was created with it.
+    await db.execute(
+        delete(User).where(User.organization_id.in_(select(Organization.id).where(rt_orgs)))
+    )
+    await db.execute(delete(Organization).where(rt_orgs))
     await db.commit()
 
 

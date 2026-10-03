@@ -20,6 +20,10 @@ Data written:
   an enabled endpoint) runs unattended as the provider organization's
   identity (`workflows.run_identity_id`).
 
+Every organization now has an account, so `users.organization_id` follows
+its organization when the organization's id changes (git sync matches an
+organization by name across environments and takes the manifest's id).
+
 Nothing reads `run_identity_id` or the identities for execution yet.
 Idempotent; downgrade removes exactly what this created.
 Migrations never import live application code; the literals below are frozen.
@@ -134,6 +138,11 @@ def upgrade() -> None:
         "users",
         "organization_id IS NOT NULL OR is_superuser = true OR identity_kind = 'global_default'",
     )
+    op.drop_constraint("users_organization_id_fkey", "users", type_="foreignkey")
+    op.create_foreign_key(
+        "users_organization_id_fkey", "users", "organizations",
+        ["organization_id"], ["id"], onupdate="CASCADE",
+    )
     op.add_column(
         "workflows",
         sa.Column(
@@ -153,6 +162,10 @@ def downgrade() -> None:
     op.drop_column("workflows", "run_identity_id")
     # Their role assignments and boundaries cascade with them.
     op.execute("DELETE FROM users WHERE identity_kind IS NOT NULL")
+    op.drop_constraint("users_organization_id_fkey", "users", type_="foreignkey")
+    op.create_foreign_key(
+        "users_organization_id_fkey", "users", "organizations", ["organization_id"], ["id"]
+    )
     op.drop_constraint("ck_users_org_requires_superuser", "users", type_="check")
     op.create_check_constraint(
         "ck_users_org_requires_superuser",

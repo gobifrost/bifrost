@@ -4192,12 +4192,18 @@ class TestOrgImport:
     async def test_update_org_by_name_new_id(
         self, db_session: AsyncSession, sync_service, working_clone,
     ):
-        """Org exists by name with different UUID → ID updated (cross-env)."""
+        """Org exists by name with different UUID → ID updated (cross-env),
+        and its accounts (here its default identity) follow it."""
+        from shared.identities import ensure_default_identity
         from src.models.orm.organizations import Organization
+        from src.models.orm.users import User
 
         old_id = uuid4()
         new_id = uuid4()
-        db_session.add(Organization(id=old_id, name="SharedOrg", is_active=True, created_by="git-sync"))
+        organization = Organization(id=old_id, name="SharedOrg", is_active=True, created_by="git-sync")
+        db_session.add(organization)
+        await db_session.flush()
+        identity_id = (await ensure_default_identity(db_session, organization)).id
         await db_session.commit()
 
         work_dir = Path(working_clone.working_dir)
@@ -4218,6 +4224,10 @@ class TestOrgImport:
         )).scalar_one_or_none()
         assert row is not None, "Org should have new ID"
         assert row.name == "SharedOrg"
+        identity_org = (
+            await db_session.execute(select(User.organization_id).where(User.id == identity_id))
+        ).scalar_one()
+        assert identity_org == new_id
 
     async def test_org_preserves_domain(
         self, db_session: AsyncSession, sync_service, working_clone,

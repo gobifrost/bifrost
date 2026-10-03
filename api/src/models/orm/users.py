@@ -60,7 +60,7 @@ class User(Base):
     )
     mfa_enforced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     organization_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("organizations.id"), nullable=True
+        ForeignKey("organizations.id", onupdate="CASCADE"), nullable=True
     )
     # The base role: User or a custom role (never Platform Admin, Platform
     # Operator or Secrets Reader, which are builtin but never base; Platform
