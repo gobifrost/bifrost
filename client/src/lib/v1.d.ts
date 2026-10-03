@@ -28867,6 +28867,11 @@ export interface components {
              */
             solution_id?: string | null;
             /**
+             * Run Identity Id
+             * @description Identity this workflow runs as when no person starts it. Null = its organization's default identity.
+             */
+            run_identity_id?: string | null;
+            /**
              * Access Level
              * @description Access level: 'authenticated' (any signed-in user except externals), 'everyone' (any signed-in user incl. externals), or 'role_based' (specific roles required)
              * @default role_based
@@ -29274,6 +29279,11 @@ export interface components {
              * @description Role IDs for role_based access (bulk replaces existing assignments when provided). Mutually exclusive with clear_roles; if both are set, role_ids wins.
              */
             role_ids?: string[] | null;
+            /**
+             * Run Identity Id
+             * @description Identity this workflow runs as when no person starts it. Null = its organization's default identity.
+             */
+            run_identity_id?: string | null;
             /**
              * Name
              * @description MCP tool name for this workflow. Defaults to the Python function name on registration.

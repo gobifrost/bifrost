@@ -256,6 +256,7 @@ async def bifrost_workflow_update(
     tags: list[str] | None = None,
     endpoint_enabled: bool | None = None,
     public_endpoint: bool | None = None,
+    run_identity_id: str | None = None,
 ) -> ToolResult:
     """Update a workflow — ``PATCH /api/workflows/{uuid}`` (platform admin only).
 
@@ -263,7 +264,8 @@ async def bifrost_workflow_update(
     ``role_ids`` bulk-replaces the workflow's role assignments when supplied
     (an empty list clears them); pair with ``clear_roles=True`` only when no
     list is provided. ``name`` is the MCP tool name; ``function_name`` is not
-    changed by this tool. Fields marked as UI/code-managed in
+    changed by this tool. ``run_identity_id`` names the identity the workflow
+    runs as when no person starts it. Fields marked as UI/code-managed in
     :data:`bifrost.dto_flags.DTO_EXCLUDES` (``display_name``,
     ``tool_description``, ``time_saved``, ``value``, ``cache_ttl_seconds``,
     ``allowed_methods``, ``execution_mode``, ``disable_global_key``) are not
@@ -300,6 +302,7 @@ async def bifrost_workflow_update(
             "tags": tags,
             "endpoint_enabled": endpoint_enabled,
             "public_endpoint": public_endpoint,
+            "run_identity_id": run_identity_id,
         }
         try:
             body = await assemble_body(

@@ -3097,6 +3097,7 @@ Options:
   --public-endpoint / --no-public-endpoint
                                   public_endpoint (tri-state; omit to leave
                                   unchanged).
+  --run-identity-id TEXT          run_identity_id (UUID).
   --json                          Emit JSON instead of human-readable output.
   --help                          Show this message and exit.
 ```

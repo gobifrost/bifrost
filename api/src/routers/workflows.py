@@ -66,6 +66,7 @@ from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.services.audit import emit_audit
 from src.services.operation_catalog import operation_route
+from shared.identities import validate_run_identity
 
 logger = logging.getLogger(__name__)
 
@@ -880,6 +881,25 @@ async def update_workflow(
             else:
                 # Explicitly set to global scope
                 workflow.organization_id = None
+
+        # The identity must suit the workflow's organization, whichever of
+        # the two changed.
+        if "run_identity_id" in request.model_fields_set:
+            workflow.run_identity_id = request.run_identity_id
+        if workflow.run_identity_id is not None and (
+            {"run_identity_id", "organization_id"} & request.model_fields_set
+        ):
+            try:
+                await validate_run_identity(
+                    db,
+                    workflow_organization_id=workflow.organization_id,
+                    identity_id=workflow.run_identity_id,
+                )
+            except ValueError as e:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail={"run_identity_id": str(e)},
+                ) from None
 
         # Update access_level if provided
         if request.access_level is not None:

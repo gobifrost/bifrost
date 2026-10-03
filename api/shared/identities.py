@@ -88,6 +88,17 @@ async def default_identity(session: AsyncSession, organization_id: UUID | None) 
     return (await session.scalars(query)).one()
 
 
+async def validate_run_identity(
+    session: AsyncSession, *, workflow_organization_id: UUID | None, identity_id: UUID
+) -> None:
+    """Raise ValueError when a workflow of this organization can't run as `identity_id`."""
+    identity = await session.get(User, identity_id)
+    if identity is None or not is_identity(identity):
+        raise ValueError(f"{identity_id} is not an identity")
+    if not run_identity_allowed(workflow_organization_id=workflow_organization_id, identity=identity):
+        raise ValueError(f"{identity.name} can't run workflows of this organization")
+
+
 def run_identity_allowed(*, workflow_organization_id: UUID | None, identity: User) -> bool:
     """Whether a workflow may run unattended as `identity`.
 
