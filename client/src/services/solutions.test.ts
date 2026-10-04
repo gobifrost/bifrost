@@ -754,22 +754,59 @@ describe("solution export jobs", () => {
 		expect(out.id).toBe("job-1");
 	});
 
-	it("downloads an export job artifact with authFetch", async () => {
-		const blob = new Blob(["zipbytes"], { type: "application/zip" });
+	it("starts a native backup download without buffering artifact bytes", async () => {
 		mockAuthFetch.mockResolvedValue({
 			ok: true,
-			headers: new Headers({
-				"Content-Disposition": 'attachment; filename="backup.zip"',
-			}),
-			blob: () => Promise.resolve(blob),
+			headers: new Headers(),
+			blob: () => {
+				throw new Error("a backup must not be buffered as a Blob");
+			},
 		});
+		const anchors: HTMLAnchorElement[] = [];
+		const click = vi
+			.spyOn(HTMLAnchorElement.prototype, "click")
+			.mockImplementation(function (this: HTMLAnchorElement) {
+				anchors.push(this);
+			});
+		mockPost.mockResolvedValue({
+			data: {
+				url: "https://storage.test/backup.zip?signed=yes",
+				filename: "backup.zip",
+				expires_in: 600,
+			},
+		});
+		try {
+			await downloadSolutionExportJob("job-1");
+			expect(mockPost).toHaveBeenCalledWith(
+				"/api/solutions/export-jobs/{job_id}/download-link",
+				{ params: { path: { job_id: "job-1" } }, signal: undefined },
+			);
+			expect(mockAuthFetch).not.toHaveBeenCalled();
+			expect(click).toHaveBeenCalledOnce();
+			expect(anchors[0].href).toBe(
+				"https://storage.test/backup.zip?signed=yes",
+			);
+			expect(anchors[0].download).toBe("backup.zip");
+			expect(document.body.contains(anchors[0])).toBe(false);
+		} finally {
+			click.mockRestore();
+		}
+	});
 
-		const out = await downloadSolutionExportJob("job-1");
-
-		expect(mockAuthFetch).toHaveBeenCalledWith(
-			"/api/solutions/export-jobs/job-1/download",
-			{ signal: undefined },
-		);
-		expect(out).toEqual({ blob, filename: "backup.zip" });
+	it("does not start a native download when authorization or expiry validation fails", async () => {
+		mockPost.mockResolvedValue({
+			error: { detail: "Export job is not downloadable" },
+		});
+		const click = vi
+			.spyOn(HTMLAnchorElement.prototype, "click")
+			.mockImplementation(() => {});
+		try {
+			await expect(downloadSolutionExportJob("expired")).rejects.toThrow(
+				"Export job is not downloadable",
+			);
+			expect(click).not.toHaveBeenCalled();
+		} finally {
+			click.mockRestore();
+		}
 	});
 });

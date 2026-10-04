@@ -594,25 +594,26 @@ export async function getSolutionExportJob(
 export async function downloadSolutionExportJob(
 	jobId: string,
 	options: RequestOptions = {},
-): Promise<{ blob: Blob; filename: string }> {
-	const response = await authFetch(
-		`/api/solutions/export-jobs/${jobId}/download`,
-		{ signal: options.signal },
+): Promise<void> {
+	const { data, error } = await apiClient.POST(
+		"/api/solutions/export-jobs/{job_id}/download-link",
+		{ params: { path: { job_id: jobId } }, signal: options.signal },
 	);
-	if (!response.ok) {
+	if (error)
 		throw new Error(
-			await parseUploadError(
-				response,
-				"Failed to download backup export",
-			),
+			getErrorMessage(error, "Failed to download backup export"),
 		);
+	// Let the browser download directly to disk; the archive never becomes a Blob.
+	const link = document.createElement("a");
+	link.href = data.url;
+	link.download = data.filename;
+	link.rel = "noreferrer";
+	document.body.appendChild(link);
+	try {
+		link.click();
+	} finally {
+		link.remove();
 	}
-	const disposition = response.headers.get("Content-Disposition") ?? "";
-	const match = /filename="([^"]+)"/.exec(disposition);
-	return {
-		blob: await response.blob(),
-		filename: match?.[1] ?? `solution-export-${jobId}.zip`,
-	};
 }
 
 async function parseUploadError(

@@ -13,6 +13,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
+from botocore.config import Config
+
 from src.config import Settings
 
 
@@ -51,6 +53,8 @@ class S3StorageClient:
             aws_access_key_id=self.settings.s3_access_key,
             aws_secret_access_key=self.settings.s3_secret_key,
             region_name=self.settings.s3_region,
+            # Keep presigned requests from falling back to legacy SigV2 signing.
+            config=Config(signature_version="s3v4"),
         ) as client:
             yield client
 

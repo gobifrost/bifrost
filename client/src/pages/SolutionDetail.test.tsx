@@ -272,10 +272,7 @@ beforeEach(() => {
 		created_at: "2026-06-25T12:00:00Z",
 		updated_at: "2026-06-25T12:00:00Z",
 	});
-	mockDownloadSolutionExportJob.mockResolvedValue({
-		blob: new Blob(["zipbytes"]),
-		filename: "backup.zip",
-	});
+	mockDownloadSolutionExportJob.mockResolvedValue(undefined);
 	mockGetSolutionDeletionSummary.mockResolvedValue({
 		solution_id: "sol-1",
 		files: 2,
@@ -1456,10 +1453,7 @@ it("keeps failed export downloads available for retry", async () => {
 	});
 	mockDownloadSolutionExportJob
 		.mockRejectedValueOnce(new Error("Synthetic download failure"))
-		.mockResolvedValueOnce({
-			blob: new Blob(["synthetic"]),
-			filename: "retry.zip",
-		});
+		.mockResolvedValueOnce(undefined);
 	const { user } = await renderPage();
 	await screen.findByTestId("solution-detail");
 	await user.click(screen.getByTestId("tab-exports"));
