@@ -43,7 +43,7 @@ async def test_a_config_secret_read_is_noted_without_its_value(collector, monkey
     assert collector.notes == [access_checks.Note("secret", org, {"kind": "config", "name": "api_key"})]
 
 
-async def test_oauth_secrets_read_for_a_run_are_noted(collector) -> None:
+async def test_an_integration_call_is_noted_once_with_the_secrets_it_read(collector) -> None:
     org = uuid4()
     provider = SimpleNamespace(
         encrypted_client_secret=encrypt_secret("PLAIN-CLIENT"),
@@ -66,8 +66,6 @@ async def test_oauth_secrets_read_for_a_run_are_noted(collector) -> None:
     await build_oauth_data(provider, token, None, lambda **_: "", decrypt_secret)
 
     assert [(note.target, note.facts) for note in collector.notes] == [
-        (None, {"kind": "integration_client_secret", "name": "Example"}),
-        (org, {"kind": "oauth_access_token", "name": "Example"}),
-        (org, {"kind": "oauth_refresh_token", "name": "Example"}),
+        (org, {"kind": "integration", "name": "Example", "secrets": ["client_secret", "access_token", "refresh_token"]}),
     ]
     assert "PLAIN-" not in repr(collector.notes)
