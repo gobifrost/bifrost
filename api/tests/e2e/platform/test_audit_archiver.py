@@ -149,6 +149,10 @@ async def _remaining(db: AsyncSession, seeded: Seeded) -> set[UUID]:
     return ids
 
 
+async def _assert_stored(store: AuditArchiveStore, segment: Segment) -> None:
+    verify_segment(await store.get(segment.key), sha256=segment.sha256, ids=segment.ids)
+
+
 async def _catalog(db: AsyncSession, seeded: Seeded) -> list[AuditArchiveSegment]:
     result = await db.execute(
         select(AuditArchiveSegment).where(AuditArchiveSegment.object_key.in_(seeded.keys))
@@ -177,14 +181,14 @@ class TestAuditArchiver:
         assert sum(c.row_count for c in catalog) == 3
         assert {c.platform_job_id for c in catalog} == {lease.job_id}
         for segment in segments:
-            verify_segment(await store.get(segment.key), sha256=segment.sha256, ids=segment.ids)
+            await _assert_stored(store, segment)
 
         info = await retention_info(db_session, AuditRetentionSettings(hot_days=30, archive_days=None))
         await db_session.commit()
         assert (info["hot_days"], info["archive_days"]) == (30, None)
-        assert info["archived_segments"] >= 2
-        assert info["archived_rows"] >= 3
-        assert info["archived_through"] >= datetime(2001, 1, 2, 8, 0, tzinfo=UTC)
+        assert info["archived_segments"] == 2
+        assert info["archived_rows"] == 3
+        assert info["archived_through"] == datetime(2001, 1, 2, 8, 0, tzinfo=UTC)
 
     async def test_rerun_after_upload_before_commit_is_idempotent(self, db_session, store, old_rows, lease):
         first = (await _segments(db_session, old_rows))[0]
@@ -199,6 +203,7 @@ class TestAuditArchiver:
         catalog = await _catalog(db_session, old_rows)
         assert sorted(c.object_key for c in catalog) == sorted(s.key for s in segments)
         assert sum(c.row_count for c in catalog) == 3
+        await _assert_stored(store, first)
 
     async def test_corrupt_object_deletes_nothing(self, db_session, store, old_rows, lease, monkeypatch):
         segment = (await _segments(db_session, old_rows))[0]
@@ -213,9 +218,12 @@ class TestAuditArchiver:
 
         with pytest.raises(ArchiveVerifyError):
             await archive_segment(store, segment, job_id=lease.job_id, lease_token=lease.token)
+        monkeypatch.undo()
 
         assert await _remaining(db_session, old_rows) == set(old_rows.ids)
         assert await _catalog(db_session, old_rows) == []
+        # The uncataloged upload stays behind; the fixture removes it.
+        await _assert_stored(store, segment)
 
     async def test_stale_lease_cannot_delete(self, db_session, store, old_rows, lease):
         segment = (await _segments(db_session, old_rows))[0]
@@ -229,6 +237,7 @@ class TestAuditArchiver:
 
         assert await _remaining(db_session, old_rows) == set(old_rows.ids)
         assert await _catalog(db_session, old_rows) == []
+        await _assert_stored(store, segment)
 
     async def test_delete_count_mismatch_rolls_back(self, db_session, store, old_rows, lease):
         segment = next(s for s in await _segments(db_session, old_rows) if len(s.rows) == 2)
@@ -241,6 +250,7 @@ class TestAuditArchiver:
 
         assert await _remaining(db_session, old_rows) == set(old_rows.ids) - {gone}
         assert await _catalog(db_session, old_rows) == []
+        await _assert_stored(store, segment)
 
     async def test_expiry_removes_only_old_segments(self, db_session, store, old_rows, lease):
         segments = await _segments(db_session, old_rows)
@@ -257,7 +267,7 @@ class TestAuditArchiver:
         assert [c.object_key for c in await _catalog(db_session, old_rows)] == [kept.key]
         with pytest.raises(FileNotFoundError):
             await store.get(old.key)
-        verify_segment(await store.get(kept.key), sha256=kept.sha256, ids=kept.ids)
+        await _assert_stored(store, kept)
 
     async def test_stale_lease_cannot_expire(self, db_session, store, old_rows, lease):
         segments = await _segments(db_session, old_rows)
@@ -270,6 +280,8 @@ class TestAuditArchiver:
         assert sorted(c.object_key for c in await _catalog(db_session, old_rows)) == sorted(
             s.key for s in segments
         )
+        for segment in segments:
+            await _assert_stored(store, segment)
 
     async def test_plan_counts_without_writing(self, db_session, old_rows):
         plan = await plan_archive(db_session, cutoff=CUTOFF, expiry=None)

@@ -153,34 +153,40 @@ async def expire_segments(
     expiry: datetime,
     job_id: UUID,
     lease_token: UUID,
-    limit: int = 500,
+    limit: int = 100,
 ) -> tuple[int, int]:
-    """Delete segments whose newest event is older than ``expiry``; returns (segments, rows)."""
+    """Delete segments whose newest event is older than ``expiry``; returns (segments, rows).
+
+    Each page deletes its objects inside the lease-holding transaction that
+    removes their catalog rows, so a runner without the lease deletes nothing,
+    and a failed object delete rolls the catalog back. ``limit`` stays small
+    because the job row lock blocks this job's heartbeat until the page commits.
+    """
     segments = rows = 0
     while True:
         async with get_db_context() as db:
+            await _hold_lease(db, job_id, lease_token)
             page = (
                 await db.execute(
-                    select(AuditArchiveSegment.id, AuditArchiveSegment.object_key)
+                    select(AuditArchiveSegment.id)
                     .where(AuditArchiveSegment.last_created_at < expiry)
                     .order_by(AuditArchiveSegment.last_created_at, AuditArchiveSegment.id)
                     .limit(limit)
                 )
+            ).scalars().all()
+            if not page:
+                return segments, rows
+            removed = (
+                await db.execute(
+                    delete(AuditArchiveSegment)
+                    .where(AuditArchiveSegment.id.in_(page))
+                    .returning(AuditArchiveSegment.object_key, AuditArchiveSegment.row_count)
+                )
             ).all()
-        if not page:
-            return segments, rows
-        for _, key in page:
-            await store.delete(key)
-        async with get_db_context() as db:
-            await _hold_lease(db, job_id, lease_token)
-            removed = await db.execute(
-                delete(AuditArchiveSegment)
-                .where(AuditArchiveSegment.id.in_([segment_id for segment_id, _ in page]))
-                .returning(AuditArchiveSegment.row_count)
-            )
-            counts = removed.scalars().all()
-        segments += len(counts)
-        rows += sum(counts)
+            for key, _ in removed:
+                await store.delete(key)
+        segments += len(removed)
+        rows += sum(count for _, count in removed)
 
 
 async def plan_archive(
