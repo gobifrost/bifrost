@@ -116,18 +116,18 @@ def segment_key(organization_id: UUID | None, day: date, sha256: str) -> str:
     return f"_audit/v1/org={org}/day={day.isoformat()}/{sha256}.jsonl.gz"
 
 
-def _encode_line(row: ArchiveRow) -> bytes:
+def encode_line(row: ArchiveRow) -> bytes:
     return (json.dumps(row.to_line(), sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode()
 
 
 def line_size(row: ArchiveRow) -> int:
     """Bytes of the encoded line, including the trailing newline."""
-    return len(_encode_line(row))
+    return len(encode_line(row))
 
 
 def encode_rows(rows: Sequence[ArchiveRow]) -> bytes:
     ordered = sorted(rows, key=lambda r: (r.created_at, r.id))
-    return gzip.compress(b"".join(_encode_line(r) for r in ordered), compresslevel=6, mtime=0)
+    return gzip.compress(b"".join(encode_line(r) for r in ordered), compresslevel=6, mtime=0)
 
 
 def build_segments(rows: Sequence[ArchiveRow]) -> list[Segment]:
@@ -142,9 +142,12 @@ def build_segments(rows: Sequence[ArchiveRow]) -> list[Segment]:
     return segments
 
 
-def verify_segment(blob: bytes, *, sha256: str, ids: Sequence[UUID]) -> list[ArchiveRow]:
+def verify_checksum(blob: bytes, sha256: str) -> None:
     if hashlib.sha256(blob).hexdigest() != sha256:
         raise ArchiveVerifyError("stored object checksum does not match")
+
+
+def decode_segment(blob: bytes) -> list[ArchiveRow]:
     try:
         text = gzip.decompress(blob).decode()
         # Split on "\n" only: str.splitlines() also splits on U+2028/U+2029/U+0085,
@@ -152,9 +155,14 @@ def verify_segment(blob: bytes, *, sha256: str, ids: Sequence[UUID]) -> list[Arc
         lines = text.split("\n")
         if not lines[-1]:
             lines.pop()
-        rows = [ArchiveRow.from_line(json.loads(line)) for line in lines]
+        return [ArchiveRow.from_line(json.loads(line)) for line in lines]
     except (OSError, EOFError, ValueError, KeyError, TypeError, AttributeError) as exc:
         raise ArchiveVerifyError(f"stored object is unreadable: {exc}") from exc
+
+
+def verify_segment(blob: bytes, *, sha256: str, ids: Sequence[UUID]) -> list[ArchiveRow]:
+    verify_checksum(blob, sha256)
+    rows = decode_segment(blob)
     if [r.id for r in rows] != list(ids):
         raise ArchiveVerifyError(f"stored object holds {len(rows)} rows that do not match the {len(ids)} expected ids")
     return rows

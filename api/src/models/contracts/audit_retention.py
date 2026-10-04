@@ -1,8 +1,9 @@
 """Contracts for audit event retention settings."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, Field, model_validator
 
 from src.models.contracts.platform_jobs import PlatformJobPublic
 
@@ -67,3 +68,22 @@ class AuditExpiryPreview(BaseModel):
     expiring_rows: int
     expiring_from: date | None
     expiring_to: date | None
+
+
+class AuditExportRequest(BaseModel):
+    start_date: AwareDatetime = Field(description="Start of the export range (inclusive).")
+    end_date: AwareDatetime = Field(description="End of the export range (inclusive).")
+    organization_id: UUID | None = Field(
+        default=None, description="Export only this organization's events; omit for every organization you reach."
+    )
+    action: str | None = Field(
+        default=None, description="Action prefix filter, e.g. 'access.check'."
+    )
+
+    @model_validator(mode="after")
+    def _bounded_range(self) -> "AuditExportRequest":
+        if self.end_date <= self.start_date:
+            raise ValueError("end_date must be after start_date")
+        if self.end_date - self.start_date > timedelta(days=366):
+            raise ValueError("an export covers at most 366 days")
+        return self

@@ -14,6 +14,7 @@ from src.services.audit_retention.format import (
     encode_rows,
     line_size,
     segment_key,
+    verify_checksum,
     verify_segment,
 )
 
@@ -132,3 +133,10 @@ def test_every_field_round_trips_and_non_utc_rows_land_on_their_utc_day() -> Non
 def test_line_size_is_the_encoded_line_length() -> None:
     row = _row(1, details={"ü": "x"})
     assert line_size(row) == len(gzip.decompress(encode_rows([row])))
+
+
+def test_verify_checksum_accepts_only_the_cataloged_digest() -> None:
+    blob = encode_rows([_row(1)])
+    verify_checksum(blob, hashlib.sha256(blob).hexdigest())
+    with pytest.raises(ArchiveVerifyError):
+        verify_checksum(blob + b"x", hashlib.sha256(blob).hexdigest())

@@ -1,33 +1,45 @@
 """
 Audit log router.
 
-Read-only API over the audit_logs table. Platform Admins read everything.
-Anyone else holding ``roleassignments.read`` (who may see who has what
-access, e.g. Platform Operators) reads only report-only access checks
-(``access.check*``) in the organizations that permission reaches (decision
-R3b P2).
+Read-only API over the audit_logs table, and exports of archived and current
+events to a file. Platform Admins read everything. Anyone else holding
+``roleassignments.read`` (who may see who has what access, e.g. Platform
+Operators) reads only report-only access checks (``access.check*``) in the
+organizations that permission reaches (decision R3b P2).
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config import get_settings
 from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
+from src.jobs.platform.audit_query import AUDIT_QUERY_DEFINITION, enqueue_audit_export
 from src.models import AuditLogActor, AuditLogEntry, AuditLogListResponse
 from src.models import Organization as OrganizationORM
 from src.models import User as UserORM
 from src.models.contracts.audit import AuditLogGroup
+from src.models.contracts.audit_retention import AuditExportRequest
+from src.models.contracts.platform_jobs import PlatformJobAccepted
 from src.models.orm.audit import AuditLog
+from src.models.orm.platform_jobs import PlatformJob
 from src.repositories.audit_logs import AuditLogRepository, GroupBy
 from src.services.audit_retention.archiver import audit_retention_info
+from src.services.audit_retention.export import (
+    ACCESS_CHECK_ACTIONS,
+    EXPORT_TTL_DAYS,
+    AuditQueryPayload,
+    ReachSnapshot,
+)
+from src.services.audit_retention.store import AuditArchiveStore
 from src.services.authorization.enforce import load_caller, operation_reach
-
-ACCESS_CHECK_ACTIONS = "access.check"
+from src.services.authorization.reach import OrgReach
 
 logger = logging.getLogger(__name__)
 
@@ -67,13 +79,9 @@ async def list_audit_logs(
 ) -> AuditLogListResponse:
     """List audit log entries, newest first, with keyset pagination."""
     reach = operation_reach(await load_caller(db, user), "GET /api/audit")
+    _require_readable(reach, action)
     # None when the caller reaches everything (a Platform Admin).
     organizations = reach.where(AuditLog.organization_id)
-    if organizations is not None and not (action or "").startswith(ACCESS_CHECK_ACTIONS):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only access checks (action=access.check) are readable without Platform Admin",
-        )
     repo = AuditLogRepository(db)
     filters = {
         "action_prefix": action,
@@ -106,6 +114,78 @@ async def list_audit_logs(
     return AuditLogListResponse(
         entries=await _entries(db, rows), continuation_token=next_token, retention=retention
     )
+
+
+@router.post(
+    "/exports",
+    response_model=PlatformJobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Export audit events, archived and current, to a file",
+    description=(
+        "Queue an export of the audit events in a date range (at most 366 days) to one gzip JSONL "
+        "file, under the same rules as listing them."
+    ),
+)
+async def start_audit_export(
+    body: AuditExportRequest,
+    response: Response,
+    user: CurrentActiveUser,
+    db: DbSession,
+) -> PlatformJobAccepted:
+    reach = operation_reach(await load_caller(db, user), "POST /api/audit/exports")
+    _require_readable(reach, body.action)
+    if body.organization_id is not None and not reach.covers(body.organization_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You cannot read audit events in that organization",
+        )
+    job = await enqueue_audit_export(db, user, body, reach)
+    response.headers["Location"] = f"/api/platform-jobs/{job.id}"
+    return PlatformJobAccepted(job_id=job.id, notification_id=job.notification_id, status=job.status)
+
+
+@router.get(
+    "/exports/{job_id}/download",
+    response_class=StreamingResponse,
+    summary="Download a finished audit export",
+    responses={200: {"content": {"application/gzip": {}}}},
+)
+async def download_audit_export(job_id: UUID, user: CurrentActiveUser, db: DbSession) -> StreamingResponse:
+    job = await db.get(PlatformJob, job_id)
+    if (
+        job is None
+        or job.job_type != AUDIT_QUERY_DEFINITION.job_type
+        or job.status != "succeeded"
+        or job.requested_by_user_id != str(user.user_id)
+        or job.completed_at is None
+        or job.result is None
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export not found")
+    if job.completed_at < datetime.now(timezone.utc) - timedelta(days=EXPORT_TTL_DAYS):
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Export expired; run it again.")
+    payload = AuditQueryPayload.model_validate(job.payload)
+    current = operation_reach(await load_caller(db, user), "GET /api/audit/exports/{job_id}/download")
+    if ReachSnapshot.of(current) != payload.reach and not current.everything:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your access changed since this export was made; run it again.",
+        )
+    start = payload.request.start_date.date().isoformat()
+    end = payload.request.end_date.date().isoformat()
+    return StreamingResponse(
+        AuditArchiveStore(get_settings()).iter_chunks(job.result["export_key"]),
+        media_type="application/gzip",
+        headers={"Content-Disposition": f'attachment; filename="audit-export-{start}-{end}.jsonl.gz"'},
+    )
+
+
+def _require_readable(reach: OrgReach, action: str | None) -> None:
+    """Callers who do not reach everything read only access checks."""
+    if not reach.everything and not (action or "").startswith(ACCESS_CHECK_ACTIONS):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only access checks (action=access.check) are readable without Platform Admin",
+        )
 
 
 async def _entries(db: AsyncSession, rows: list[AuditLog]) -> list[AuditLogEntry]:

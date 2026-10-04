@@ -8,7 +8,7 @@ storage in tests/e2e/platform/test_audit_archiver.py.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, AsyncGenerator
 from uuid import UUID, uuid4
 
@@ -71,6 +71,7 @@ class Calls:
         self.cutoffs: list[datetime] = []
         self.archived: list[Segment] = []
         self.planned: list[tuple[datetime, datetime | None]] = []
+        self.export_cleanups: list[datetime] = []
 
     async def select_batch(
         self,
@@ -102,6 +103,10 @@ class Calls:
     ) -> dict[str, Any]:
         self.planned.append((cutoff, expiry))
         return {"cutoff": cutoff.isoformat(), "eligible_rows": 1}
+
+    async def cleanup_expired_exports(self, store: object, *, older_than: datetime) -> int:
+        self.export_cleanups.append(older_than)
+        return 2
 
 
 def _row(created_at: datetime) -> ArchiveRow:
@@ -141,6 +146,7 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> Calls:
     monkeypatch.setattr(audit_archive, "select_batch", recorded.select_batch)
     monkeypatch.setattr(audit_archive, "archive_segment", recorded.archive_segment)
     monkeypatch.setattr(audit_archive, "plan_archive", recorded.plan_archive)
+    monkeypatch.setattr(audit_archive, "cleanup_expired_exports", recorded.cleanup_expired_exports)
     return recorded
 
 
@@ -192,11 +198,23 @@ async def test_dry_run_writes_nothing(calls: Calls) -> None:
 
     assert calls.archived == []
     assert calls.cutoffs == []
+    assert calls.export_cleanups == []
     assert context.checkpoints == []
     assert len(calls.planned) == 1
     assert calls.planned[0][1] is None
     assert result["dry_run"] is True
     assert result["eligible_rows"] == 1
+
+
+@pytest.mark.asyncio
+async def test_run_removes_expired_exports(calls: Calls) -> None:
+    before = datetime.now(UTC)
+
+    result = await run_audit_archive(FakeContext(), AuditArchivePayload())
+
+    [older_than] = calls.export_cleanups
+    assert before - timedelta(days=7) <= older_than <= datetime.now(UTC) - timedelta(days=7)
+    assert result["expired_exports"] == 2
 
 
 @pytest.mark.asyncio

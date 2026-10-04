@@ -28,6 +28,7 @@ from src.services.audit_retention.archiver import (
     plan_archive,
     select_batch,
 )
+from src.services.audit_retention.export import EXPORT_TTL_DAYS, cleanup_expired_exports
 from src.services.audit_retention.format import ArchiveVerifyError, build_segments
 from src.services.audit_retention.settings import AuditRetentionSettingsService
 from src.services.audit_retention.store import ArchiveStorageUnavailable, AuditArchiveStore
@@ -125,11 +126,15 @@ async def run_audit_archive(context: PlatformJobContext, payload: AuditArchivePa
         state["expired_segments"] += segments
         state["expired_rows"] += rows_expired
 
+    state["expired_exports"] = await cleanup_expired_exports(
+        store, older_than=datetime.now(timezone.utc) - timedelta(days=EXPORT_TTL_DAYS)
+    )
     await context.log(
         "info",
         "audit_archive_completed",
         f"Archived {state['archived_rows']} audit events in {state['archived_segments']} segments; "
-        f"expired {state['expired_segments']} segments ({state['expired_rows']} events).",
+        f"expired {state['expired_segments']} segments ({state['expired_rows']} events) "
+        f"and {state['expired_exports']} exports.",
     )
     return state
 

@@ -40,6 +40,38 @@ class DeleteMismatch(Exception):
     """The delete removed a different number of rows than the segment holds."""
 
 
+def snapshot_query():
+    """Audit events with the actor and organization names an archive line snapshots."""
+    return (
+        select(AuditLog, User.email, User.name, Organization.name)
+        .outerjoin(User, User.id == AuditLog.user_id)
+        .outerjoin(Organization, Organization.id == AuditLog.organization_id)
+    )
+
+
+def snapshot_row(log: AuditLog, email: str | None, name: str | None, org_name: str | None) -> ArchiveRow:
+    return ArchiveRow(
+        id=log.id,
+        created_at=log.created_at,
+        organization_id=log.organization_id,
+        user_id=log.user_id,
+        action=log.action,
+        resource_type=log.resource_type,
+        resource_id=log.resource_id,
+        outcome=log.outcome,
+        source=log.source,
+        operation_id=log.operation_id,
+        surface=log.surface,
+        execution_id=log.execution_id,
+        ip_address=log.ip_address,
+        user_agent=log.user_agent,
+        details=log.details,
+        actor_email=email,
+        actor_name=name,
+        organization_name=org_name,
+    )
+
+
 async def select_batch(
     db: AsyncSession,
     *,
@@ -49,9 +81,7 @@ async def select_batch(
 ) -> list[ArchiveRow]:
     """Oldest events created before ``cutoff``, bounded by row count and encoded size."""
     result = await db.execute(
-        select(AuditLog, User.email, User.name, Organization.name)
-        .outerjoin(User, User.id == AuditLog.user_id)
-        .outerjoin(Organization, Organization.id == AuditLog.organization_id)
+        snapshot_query()
         .where(AuditLog.created_at < cutoff)
         .order_by(AuditLog.created_at, AuditLog.id)
         .limit(limit)
@@ -59,26 +89,7 @@ async def select_batch(
     rows: list[ArchiveRow] = []
     total = 0
     for log, email, name, org_name in result.all():
-        row = ArchiveRow(
-            id=log.id,
-            created_at=log.created_at,
-            organization_id=log.organization_id,
-            user_id=log.user_id,
-            action=log.action,
-            resource_type=log.resource_type,
-            resource_id=log.resource_id,
-            outcome=log.outcome,
-            source=log.source,
-            operation_id=log.operation_id,
-            surface=log.surface,
-            execution_id=log.execution_id,
-            ip_address=log.ip_address,
-            user_agent=log.user_agent,
-            details=log.details,
-            actor_email=email,
-            actor_name=name,
-            organization_name=org_name,
-        )
+        row = snapshot_row(log, email, name, org_name)
         size = line_size(row)
         if rows and total + size > max_bytes:
             break

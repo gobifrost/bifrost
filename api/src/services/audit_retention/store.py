@@ -43,3 +43,10 @@ class AuditArchiveStore:
 
     async def put_chunks(self, key: str, chunks: AsyncIterator[bytes]) -> tuple[str, int]:
         return await self._client.put_object_from_chunks(key, chunks, content_type=CONTENT_TYPE)
+
+    async def iter_keys(self, prefix: str) -> AsyncIterator[str]:
+        async with self._client.get_client() as s3:
+            paginator = s3.get_paginator("list_objects_v2")
+            async for page in paginator.paginate(Bucket=self._bucket, Prefix=prefix):
+                for item in page.get("Contents", []):
+                    yield item["Key"]
