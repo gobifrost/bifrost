@@ -98,6 +98,7 @@ class AgentRun(Base):
     )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     parent_run_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("agent_runs.id", ondelete="CASCADE"), default=None
     )

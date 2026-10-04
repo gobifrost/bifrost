@@ -286,15 +286,15 @@ def _agent_run_timeout_seconds(agent: Agent | None) -> int:
 def _agent_run_sweep_policy(run: AgentRun, agent: Agent | None) -> tuple[datetime | None, int]:
     """Return the reference time and stale threshold (seconds) for a run.
 
-    Cancelling runs use the workflow CANCELLING rule; AgentRun records no
-    cancel-request time, so the reference is started_at like the workflow sweep.
+    A cancelling run is measured from when cancellation was requested, so a
+    long run cancelled moments ago keeps the full window to wind down.
     """
+    if run.status == "cancelling":
+        return run.cancel_requested_at, CANCELLING_TIMEOUT_MINUTES * 60
     if run.status == "queued":
         reference_time = run.created_at
     else:
         reference_time = run.started_at or run.created_at
-    if run.status == "cancelling":
-        return reference_time, CANCELLING_TIMEOUT_MINUTES * 60
     return reference_time, _agent_run_timeout_seconds(agent) + AGENT_RUN_TIMEOUT_GRACE_SECONDS
 
 
