@@ -9033,6 +9033,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/solutions/export-jobs/{job_id}/download-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create a direct backup download link (admin only) */
+        post: operations["create_solution_export_download_link_api_solutions_export_jobs__job_id__download_link_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/solutions/export-jobs/{job_id}/download": {
         parameters: {
             query?: never;
@@ -26607,6 +26624,18 @@ export interface components {
             name: string;
             /** Version */
             version?: string | null;
+        };
+        /**
+         * SolutionExportDownloadLink
+         * @description Short-lived direct download for one authorized backup artifact.
+         */
+        SolutionExportDownloadLink: {
+            /** Url */
+            url: string;
+            /** Filename */
+            filename: string;
+            /** Expires In */
+            expires_in: number;
         };
         /**
          * SolutionExportJobCreate
@@ -46005,6 +46034,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SolutionExportJobPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_solution_export_download_link_api_solutions_export_jobs__job_id__download_link_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionExportDownloadLink"];
                 };
             };
             /** @description Validation Error */

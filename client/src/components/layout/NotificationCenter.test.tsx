@@ -14,8 +14,12 @@ const state = vi.hoisted(() => ({
 	error: null as Error | null,
 	refetch: vi.fn(),
 	isFetching: false,
+	download: vi.fn(),
 }));
 vi.mock("@/hooks/useNotifications", () => ({ useNotifications: () => state }));
+vi.mock("@/services/solutions", () => ({
+	downloadSolutionExportJob: (...args: unknown[]) => state.download(...args),
+}));
 beforeEach(() => {
 	vi.clearAllMocks();
 	state.isLoading = false;
@@ -131,4 +135,37 @@ it("opens explainer details from a notification Learn more button", async () => 
 		screen.getByRole("button", { name: "Open execution settings" }),
 	);
 	expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+});
+
+it("starts a completed backup download through the native download service", async () => {
+	state.download.mockResolvedValue(undefined);
+	state.notifications = [
+		{
+			id: "backup-notification",
+			category: "system",
+			title: "Backup ready",
+			description: null,
+			status: "completed",
+			percent: 100,
+			error: null,
+			result: null,
+			metadata: {
+				action: "download_solution_export",
+				action_label: "Download backup",
+				job_id: "backup-job",
+			},
+			createdAt: new Date().toISOString(),
+			updatedAt: new Date().toISOString(),
+			userId: "admin",
+		},
+	];
+	const user = userEvent.setup();
+	render(
+		<MemoryRouter>
+			<NotificationCenter />
+		</MemoryRouter>,
+	);
+	await user.click(screen.getByRole("button", { name: "Notifications" }));
+	await user.click(screen.getByRole("button", { name: "Download backup" }));
+	expect(state.download).toHaveBeenCalledExactlyOnceWith("backup-job");
 });

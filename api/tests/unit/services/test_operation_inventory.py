@@ -21,7 +21,7 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
         "cli": 155,
         "manifest": 16,
         "mcp": 94,
-        "rest": 653,
+        "rest": 654,
         "sdk": 19,
     }
     for surface, rows in inventory["uncataloged"].items():

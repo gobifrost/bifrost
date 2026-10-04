@@ -1,5 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 import { Buffer } from "node:buffer";
+import { readFile } from "node:fs/promises";
 import { test, type AuthedApi } from "./fixtures/api-fixture";
 
 const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
@@ -229,11 +230,31 @@ test.describe("Solution backup export (admin)", () => {
 
 			const downloadButton = page.getByRole("button", { name: "Download" });
 			await expect(downloadButton).toBeEnabled();
-			const [download] = await Promise.all([
+			const [download, linkResponse] = await Promise.all([
 				page.waitForEvent("download"),
+				page.waitForResponse(
+					(response) =>
+						response
+							.url()
+							.endsWith(
+								`/export-jobs/${exportJobId}/download-link`,
+							) && response.request().method() === "POST",
+				),
 				downloadButton.click(),
 			]);
+			expect(linkResponse.status()).toBe(200);
+			expect(linkResponse.headers()["cache-control"]).toContain("no-store");
 			expect(download.suggestedFilename()).toMatch(/\.zip$/);
+			expect(new URL(download.url()).protocol).toMatch(/^https?:$/);
+			expect(await download.failure()).toBeNull();
+			const downloadedPath = await download.path();
+			expect(downloadedPath).not.toBeNull();
+			const legacyDownload = await api.get(`/api/solutions/export-jobs/${exportJobId}/download`);
+			expect(legacyDownload.ok()).toBe(true);
+			const legacyBytes = await legacyDownload.body();
+			const downloadedBytes = await readFile(downloadedPath!);
+			expect(downloadedBytes.equals(legacyBytes)).toBe(true);
+			expect(downloadedBytes.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))).toBe(true);
 		} finally {
 			if (solutionId) {
 				await api

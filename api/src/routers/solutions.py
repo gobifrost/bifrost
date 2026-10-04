@@ -62,6 +62,7 @@ from src.models.contracts.solutions import (
     SolutionExportJobCreate,
     SolutionExportJobPublic,
     SolutionExportJobsList,
+    SolutionExportDownloadLink,
     SolutionInstallPreview,
     PullAckRequest,
     PullAckResponse,
@@ -1438,6 +1439,56 @@ async def get_solution_export_job(
     return public_job(row)
 
 
+async def _downloadable_export_job(db: AsyncSession, job_id: UUID) -> SolutionExportJob:
+    row = await db.get(SolutionExportJob, job_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export job not found")
+    if (
+        row.status != "completed"
+        or not row.artifact_storage_key
+        or public_job(row).download_url is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Export job is not downloadable",
+        )
+    return row
+
+
+@router.post(
+    "/export-jobs/{job_id}/download-link",
+    response_model=SolutionExportDownloadLink,
+    summary="Create a direct backup download link (admin only)",
+)
+async def create_solution_export_download_link(
+    job_id: UUID,
+    ctx: Context,
+    user: CurrentSuperuser,
+    response: Response,
+) -> SolutionExportDownloadLink:
+    from src.services.file_storage import FileStorageService
+
+    row = await _downloadable_export_job(ctx.db, job_id)
+    # The shared guard requires a storage key and a future artifact expiry.
+    assert row.artifact_storage_key is not None
+    assert row.expires_at is not None
+    expiry = row.expires_at
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=timezone.utc)
+    expires_in = min(600, int((expiry - datetime.now(timezone.utc)).total_seconds()))
+    if expires_in < 1:
+        raise HTTPException(status_code=409, detail="Export job is not downloadable")
+    filename = _safe_zip_filename(row.artifact_filename or f"solution-export-{row.id}.zip")
+    url = await FileStorageService(ctx.db).generate_presigned_download_url(
+        row.artifact_storage_key,
+        expires_in=expires_in,
+        response_content_type="application/zip",
+        response_content_disposition=f'attachment; filename="{filename}"',
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return SolutionExportDownloadLink(url=url, filename=filename, expires_in=expires_in)
+
+
 @router.get(
     "/export-jobs/{job_id}/download",
     summary="Download a completed durable Solution backup export artifact (admin only)",
@@ -1454,19 +1505,8 @@ async def download_solution_export_job(
 ) -> StreamingResponse:
     from src.services.file_storage import FileStorageService
 
-    row = await ctx.db.get(SolutionExportJob, job_id)
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export job not found")
-    if (
-        row.status != "completed"
-        or not row.artifact_storage_key
-        or public_job(row).download_url is None
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Export job is not downloadable",
-        )
-
+    row = await _downloadable_export_job(ctx.db, job_id)
+    assert row.artifact_storage_key is not None
     filename = _safe_zip_filename(row.artifact_filename or f"solution-export-{row.id}.zip")
     return StreamingResponse(
         FileStorageService(ctx.db).iter_raw_s3_chunks(row.artifact_storage_key),

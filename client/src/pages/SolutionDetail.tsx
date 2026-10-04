@@ -3202,11 +3202,7 @@ export function SolutionDetail() {
 												: undefined
 									}
 									onDownload={async (job) => {
-										const { blob, filename } =
-											await downloadSolutionExportJob(
-												job.id,
-											);
-										downloadBlob(blob, filename);
+										await downloadSolutionExportJob(job.id);
 									}}
 								/>
 							</PageScrollArea>

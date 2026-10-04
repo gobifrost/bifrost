@@ -508,6 +508,7 @@
 | GET | `/api/solutions/deploy-jobs/{job_id}` |
 | GET | `/api/solutions/export-jobs/{job_id}` |
 | GET | `/api/solutions/export-jobs/{job_id}/download` |
+| POST | `/api/solutions/export-jobs/{job_id}/download-link` |
 | POST | `/api/solutions/import-workspace` |
 | POST | `/api/solutions/import-workspace/preview` |
 | POST | `/api/solutions/import-workspace/preview-repo` |

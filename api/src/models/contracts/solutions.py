@@ -710,6 +710,14 @@ class SolutionExportJobsList(BaseModel):
     jobs: list[SolutionExportJobPublic] = Field(default_factory=list)
 
 
+class SolutionExportDownloadLink(BaseModel):
+    """Short-lived direct download for one authorized backup artifact."""
+
+    url: str
+    filename: str
+    expires_in: int = Field(ge=1, le=600)
+
+
 class SolutionCaptureRequest(BaseModel):
     """Move existing loose entities into an install in place.
 

@@ -9968,7 +9968,7 @@
     "cli": 155,
     "manifest": 16,
     "mcp": 94,
-    "rest": 653,
+    "rest": 654,
     "sdk": 19
   },
   "schema_version": 1,
@@ -13489,6 +13489,13 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/solutions/export-jobs/{job_id}/download",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/solutions/export-jobs/{job_id}/download-link",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
