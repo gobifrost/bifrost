@@ -137,3 +137,115 @@ async def test_outside_a_run_nothing_is_evaluated(helper) -> None:
     else:
         await check_table_rows(None, table, _policies(OWN_ROWS), [{"id": "a"}])  # type: ignore[arg-type]
     assert access_checks.current() is None
+
+
+async def test_a_failing_query_leaves_the_requests_transaction_usable(db_session, world, monkeypatch) -> None:
+    from sqlalchemy import text
+
+    async def broken_claims(user, policies, db, *args, **kwargs):
+        await db.execute(text("SELECT 1/0"))
+
+    monkeypatch.setattr("src.services.access_check_policies.preresolve_for_policies", broken_claims)
+    token = _collecting(world["person"].id)
+    try:
+        await check_table_write(db_session, "create", world["table"], [{"id": "r1"}], _policies(HR_RULE), allowed_today=True)
+        collector = access_checks.current()
+        assert collector is not None
+        [note] = collector.notes
+    finally:
+        access_checks.stop_collecting(token)
+
+    assert note.facts == {"gap": "observer_error:DBAPIError"}
+    assert (await db_session.execute(text("SELECT 1"))).scalar() == 1
+
+
+async def test_claims_are_resolved_once_per_organization_in_a_request(db_session, world, monkeypatch) -> None:
+    import shared.claims.preresolve as preresolve
+
+    calls: list[str] = []
+
+    async def counting(claim, *args, **kwargs):
+        calls.append(claim.name)
+        return []
+
+    async def one_claim(db, org_id, solution_id=None):
+        from src.models.contracts.claims import CustomClaim
+
+        return {
+            "regions": CustomClaim.model_validate(
+                {
+                    "id": str(uuid4()),
+                    "name": "regions",
+                    "type": "list",
+                    "organization_id": str(org_id),
+                    "query": {"table": "nowhere", "select": "region", "where": {"eq": [1, 1]}},
+                }
+            )
+        }
+
+    monkeypatch.setattr(preresolve, "_run_claim_query", counting)
+    monkeypatch.setattr(preresolve, "_load_claims", one_claim)
+    token = _collecting(world["person"].id)
+    try:
+        for _ in range(3):
+            await check_table_write(db_session, "create", world["table"], [{"id": "r"}], _policies(REGION_RULE), allowed_today=True)
+    finally:
+        access_checks.stop_collecting(token)
+
+    assert calls == ["regions"]
+
+
+def _engine():
+    from src.core.constants import SYSTEM_USER_UUID
+    from src.core.principal import UserPrincipal
+
+    return UserPrincipal(user_id=SYSTEM_USER_UUID, email="engine@x.example", organization_id=None, is_superuser=True)
+
+
+async def test_batch_writes_are_checked_for_the_run_user(db_session, world) -> None:
+    from shared.table_batch_writes import BatchPolicyDenied, BatchWriteRow, write_table_batch
+
+    hr_writes = {"name": "hr", "actions": ["create"], "when": {"call": "has_role", "args": ["HR"]}}
+    token = _collecting(world["hr"].id)
+    try:
+        try:
+            await write_table_batch(
+                db_session,
+                world["table"],
+                [BatchWriteRow(0, "b1", {}, None, None)],
+                mode="insert",
+                policies=_policies(hr_writes),
+                user=_engine(),
+            )
+        except BatchPolicyDenied:
+            pass
+        collector = access_checks.current()
+        assert collector is not None
+        [note] = collector.notes
+    finally:
+        access_checks.stop_collecting(token)
+
+    assert (note.kind, note.facts["action"], note.facts["today"], note.facts["model"]) == ("policy", "batch:insert", False, True)
+
+
+async def test_batch_deletes_are_checked_for_the_run_user(db_session, world) -> None:
+    from shared.table_document_writes import TableWriteForbidden, batch_delete_table_documents
+    from src.models.orm.tables import Document
+
+    db_session.add(Document(id="d1", table_id=world["table"].id, data={}))
+    await db_session.flush()
+    world["table"].access = {"policies": [{"name": "hr", "actions": ["delete"], "when": {"call": "has_role", "args": ["HR"]}}]}
+    await db_session.flush()
+    token = _collecting(world["hr"].id)
+    try:
+        try:
+            await batch_delete_table_documents(db_session, world["table"], _engine(), ids=["d1"])
+        except TableWriteForbidden:
+            pass
+        collector = access_checks.current()
+        assert collector is not None
+        [note] = collector.notes
+    finally:
+        access_checks.stop_collecting(token)
+
+    assert (note.facts["action"], note.facts["today"], note.facts["model"]) == ("delete", False, True)

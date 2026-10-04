@@ -4,14 +4,17 @@ Called by the request middleware after the response, with its own session.
 Every note is judged against the run's user by the decision core
 (``src.services.authorization.explain``). Written to the audit log:
 
-- ``access.check`` with outcome ``failure``: always (the model would block it).
+- ``access.check`` with outcome ``failure``: whenever the model would block
+  what today allows.
 - ``access.check`` with outcome ``success``: when it crosses into another
   organization, acts as another user (``run_as``), or is a policy or secret
   decision.
 - ``access.check_gap``: when the request carries no run user, the run user no
   longer exists, or a check could not be judged.
 
-Each decision is written once per run (Redis marks it for a day). Without
+Each decision (kind, operation, target, run user, outcome and subject: the
+table, secret, path or user it concerns) is written once per run (Redis marks
+it for a day). Without
 Redis nothing is written. Nothing here raises into the request.
 """
 
@@ -47,6 +50,8 @@ logger = logging.getLogger(__name__)
 
 _DEDUPE_SECONDS = 86_400
 _ALWAYS_WRITTEN = frozenset({"run_as", "policy", "secret"})
+# Facts that vary between calls of the same decision (a query's row counts).
+_PER_CALL_FACTS = frozenset({"hidden", "returned"})
 
 
 @cache
@@ -82,7 +87,10 @@ def _judge(run_user: RunUser, powers: Powers, note: Note, entry: AccessEntry | N
 
 
 def _written(note: Note, trace: Trace, run_user: RunUser) -> bool:
-    if trace.outcome == "failure" or note.kind in _ALWAYS_WRITTEN:
+    if trace.outcome == "failure":
+        # Only what today allows: a denial today already stops the request.
+        return bool(note.facts.get("today", True))
+    if note.kind in _ALWAYS_WRITTEN:
         return True
     if note.kind in ("scope_switch", "child_run"):
         return note.target == ALL_ORGS or (isinstance(note.target, UUID) and note.target != run_user.home)
@@ -123,7 +131,8 @@ class _Writer:
 
     async def check(self, note: Note, trace: Trace, run_user: RunUser) -> None:
         target = "*" if note.target == ALL_ORGS else _plain(note.target)
-        if not await self._first_time(note.kind, self.operation, target, run_user.user_id, trace.outcome):
+        subject = sorted((key, str(value)) for key, value in note.facts.items() if key not in _PER_CALL_FACTS)
+        if not await self._first_time(note.kind, self.operation, target, run_user.user_id, trace.outcome, subject):
             return
         today = note.facts.get("today", True)
         await self.repo.create(
@@ -197,5 +206,5 @@ async def flush(
         return
     try:
         await _write(db, collector, operation=operation, route=route)
-    except Exception:
-        logger.warning("access checks not written (operation=%s)", operation, exc_info=True)
+    except Exception as exc:
+        logger.warning("access checks not written (operation=%s): %s", operation, type(exc).__name__)

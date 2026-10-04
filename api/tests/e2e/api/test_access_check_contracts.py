@@ -68,25 +68,32 @@ async def _checks(session_factory, **where) -> list[dict]:
         await close_db()
 
 
-@pytest.fixture(scope="module")
-def world(e2e_client, platform_admin, org1, org1_user, async_session_factory):
-    tag = uuid.uuid4().hex[:8]
-    admin = platform_admin.headers
-    role = _ok(e2e_client.post("/api/roles", headers=admin, json={"name": f"AC HR {tag}"}))
-    hr = _ok(
-        e2e_client.post(
-            "/api/users",
-            headers=admin,
-            json={"email": f"ac-hr-{tag}@contoso.example", "name": "AC HR", "organization_id": org1["id"]},
-        )
-    )
+def _person(e2e_client, admin, org_id: str, *, tag: str, key: str):
+    """A person of our own, so these runs never count against shared fixture users."""
     from tests.e2e.fixtures.setup import _register_and_authenticate_user
     from tests.e2e.fixtures.users import E2EUser
 
-    hr_user = _register_and_authenticate_user(
-        E2EUser(email=hr["email"], password=f"Ac-{tag}-Pass1!", name="AC HR", organization_id=uuid.UUID(org1["id"])),
+    created = _ok(
+        e2e_client.post(
+            "/api/users",
+            headers=admin,
+            json={"email": f"ac-{key}-{tag}@contoso.example", "name": f"AC {key}", "organization_id": org_id},
+        )
+    )
+    person = _register_and_authenticate_user(
+        E2EUser(email=created["email"], password=f"Ac-{tag}-Pass1!", name=f"AC {key}", organization_id=uuid.UUID(org_id)),
         skip_registration=False,
     )
+    return created, person
+
+
+@pytest.fixture(scope="module")
+def world(e2e_client, platform_admin, org1, async_session_factory):
+    tag = uuid.uuid4().hex[:8]
+    admin = platform_admin.headers
+    role = _ok(e2e_client.post("/api/roles", headers=admin, json={"name": f"AC HR {tag}"}))
+    hr, hr_user = _person(e2e_client, admin, org1["id"], tag=tag, key="hr")
+    customer, customer_user = _person(e2e_client, admin, org1["id"], tag=tag, key="customer")
     _ok(e2e_client.post(f"/api/roles/{role['id']}/users", headers=admin, json={"user_ids": [hr["id"]]}))
     hr_table = _ok(
         e2e_client.post(
@@ -131,12 +138,12 @@ def world(e2e_client, platform_admin, org1, org1_user, async_session_factory):
     inputs = {"hr_table": hr_table["name"], "admin_table": admin_table["name"], "secret_key": secret_key}
     runs = {
         who: execute_workflow_sync(e2e_client, user.headers, probe["id"], inputs, max_wait=60)
-        for who, user in (("hr", hr_user), ("customer", org1_user))
+        for who, user in (("hr", hr_user), ("customer", customer_user))
     }
     yield {
         "runs": runs,
         "hr_id": uuid.UUID(hr["id"]),
-        "customer_id": org1_user.user_id,
+        "customer_id": uuid.UUID(customer["id"]),
         "hr_table": hr_table["id"],
         "admin_table": admin_table["id"],
         "role": role["name"],
@@ -147,7 +154,8 @@ def world(e2e_client, platform_admin, org1, org1_user, async_session_factory):
     for table in (hr_table, admin_table):
         e2e_client.delete(f"/api/tables/{table['id']}", headers=admin)
     e2e_client.delete(f"/api/config/{config['id']}", headers=admin)
-    e2e_client.delete(f"/api/users/{hr['id']}", headers=admin)
+    for person in (hr, customer):
+        e2e_client.delete(f"/api/users/{person['id']}", headers=admin)
     e2e_client.delete(f"/api/roles/{role['id']}", headers=admin)
 
 
@@ -162,14 +170,15 @@ def _policy(checks: list[dict], table_id: str) -> list[dict]:
 
 
 def test_a_role_policy_follows_the_run_users_own_roles(world) -> None:
-    """Today the run is judged as the execution credential (no roles); the model as the person."""
+    """Today the run is judged as the execution credential (no roles), so both
+    inserts are refused. The model judges the person: the HR member's insert
+    would pass (recorded); the customer's is refused either way (nothing to
+    record)."""
     hr = _policy(_run_checks(world, "hr"), world["hr_table"])
     customer = _policy(_run_checks(world, "customer"), world["hr_table"])
 
     assert [(c["outcome"], c["details"]["today"], c["user_id"]) for c in hr] == [("success", "denied", world["hr_id"])]
-    assert [(c["outcome"], c["details"]["inputs"]["missing"]) for c in customer] == [
-        ("failure", [f"role:{world['role']}"])
-    ]
+    assert customer == []
 
 
 def test_a_full_run_passes_an_admin_only_global_table(world) -> None:

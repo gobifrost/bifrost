@@ -505,6 +505,8 @@ async def batch_delete_table_documents(
         if not evaluate_action("delete", policies, _row_from_doc(existing), user):
             denied.append(i)
 
+    rows = [_row_from_doc(doc) for doc in existing_by_index.values()]
+    await check_table_write(db, "delete", table, rows, policies, allowed_today=not denied)
     if denied:
         raise TableWriteForbidden({"denied_row_indices": denied})
 

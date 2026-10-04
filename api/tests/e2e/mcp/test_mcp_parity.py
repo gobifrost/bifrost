@@ -77,6 +77,8 @@ class MockMCPContext:
         self.user_name = user_name
         self.accessible_namespaces: list[str] = []
         self.session = None
+        # Mirrors MCPContext: a person's own MCP call carries no agent-run user.
+        self.run_user_id = None
 
 
 @pytest_asyncio.fixture

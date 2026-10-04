@@ -219,3 +219,37 @@ async def test_a_check_that_could_not_be_computed_is_a_gap(db_session: AsyncSess
     [row] = await _rows(db_session, collector)
     assert (row.action, row.resource_type, row.user_id) == ("access.check_gap", "entry", person.id)
     assert row.details == {"reason": "observer_error:TimeoutError", "operation": ROUTE["operation"]}
+
+
+async def test_a_denial_that_also_happens_today_is_not_written(db_session: AsyncSession) -> None:
+    home = await _org(db_session)
+    person = await _person(db_session, home)
+    collector = _collector(
+        person.id, Note("policy", home.id, {"today": False, "model": False, "missing": ["role:HR"], "table": "t"})
+    )
+
+    await flush(db_session, collector, **ROUTE)
+
+    assert await _rows(db_session, collector) == []
+
+
+async def test_each_table_and_secret_is_written_once_per_run(db_session: AsyncSession) -> None:
+    home = await _org(db_session)
+    person = await _person(db_session, home)
+    collector = _collector(
+        person.id,
+        Note("policy", home.id, {"today": True, "model": True, "missing": [], "table": "a"}),
+        Note("policy", home.id, {"today": True, "model": True, "missing": [], "table": "b"}),
+        Note("secret", home.id, {"kind": "config", "name": "one"}),
+        Note("secret", home.id, {"kind": "config", "name": "two"}),
+        Note("secret", home.id, {"kind": "config", "name": "one"}),
+    )
+
+    await flush(db_session, collector, **ROUTE)
+
+    assert sorted((r.resource_type, r.details["inputs"].get("table") or r.details["inputs"]["name"]) for r in await _rows(db_session, collector)) == [
+        ("policy", "a"),
+        ("policy", "b"),
+        ("secret", "one"),
+        ("secret", "two"),
+    ]

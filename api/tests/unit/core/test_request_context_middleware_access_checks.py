@@ -113,3 +113,32 @@ async def test_unreadable_lineage_claims_skip_the_checks_not_the_request() -> No
 
     assert response.status_code == 200
     assert flushed == []
+
+
+async def test_checks_are_judged_after_the_whole_response_is_sent() -> None:
+    """The client gets the full response before the checks are judged and
+    written, so judging never adds latency to the request."""
+    timeline: list[str] = []
+    app = _app()
+
+    async def recording_app(scope, receive, send):
+        async def recording_send(message):
+            if message["type"] == "http.response.body" and not message.get("more_body", False):
+                timeline.append("response sent")
+            await send(message)
+
+        await app(scope, receive, recording_send)
+
+    async def capture(db, collector, *, operation, route):
+        timeline.append("judged")
+
+    transport = httpx.ASGITransport(app=recording_app)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("src.services.access_check_writer.flush", capture)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                "/__test__/checked/a", headers={"Authorization": f"Bearer {_engine_token()}"}
+            )
+
+    assert response.status_code == 200
+    assert timeline == ["response sent", "judged"]

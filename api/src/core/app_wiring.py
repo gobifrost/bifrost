@@ -290,7 +290,7 @@ def install_request_context_middleware(app: FastAPI) -> None:
                         engine_workflow_id, operation_key
                     )
             if collector is not None:
-                await _judge_access_checks(request, collector)
+                _judge_after_response(request, response, collector)
         finally:
             access_checks.stop_collecting(checks_token)
             # Reset context after request
@@ -301,25 +301,34 @@ def install_request_context_middleware(app: FastAPI) -> None:
         return response
 
 
-async def _judge_access_checks(request: Request, collector) -> None:
-    """Judge and write a run's report-only access checks (never raises).
-
-    Runs after ``call_next`` returns, so the response is already decided;
-    see ``shared.access_checks``.
-    """
-    from src.core.database import get_db_context
-    from src.services import access_check_writer
+def _judge_after_response(request: Request, response, collector) -> None:
+    """Judge and write a run's report-only access checks after the response
+    is sent (see ``shared.access_checks``), so the client never waits for it."""
+    from starlette.background import BackgroundTask, BackgroundTasks
 
     route = request.scope.get("route")
     path = getattr(route, "path", None) or request.url.path
     operation = getattr(route, "operation_id", None) or f"{request.method} {path}"
+    judge = BackgroundTask(_judge_access_checks, collector, operation=operation, route=(request.method, path))
+    if response.background is None:
+        response.background = judge
+        return
+    tasks = BackgroundTasks()
+    tasks.add_task(response.background)
+    tasks.add_task(judge)
+    response.background = tasks
+
+
+async def _judge_access_checks(collector, *, operation: str, route: tuple[str, str]) -> None:
+    """Never raises: a failure here is logged, never surfaced."""
+    from src.core.database import get_db_context
+    from src.services import access_check_writer
+
     try:
         async with get_db_context() as db:
-            await access_check_writer.flush(
-                db, collector, operation=operation, route=(request.method, path)
-            )
-    except Exception:
-        logger.warning("access checks not written (operation=%s)", operation, exc_info=True)
+            await access_check_writer.flush(db, collector, operation=operation, route=route)
+    except Exception as exc:
+        logger.warning("access checks not written (operation=%s): %s", operation, type(exc).__name__)
 
 
 async def _record_workflow_operation_usage(workflow_id: str, operation_key: str) -> None:

@@ -221,9 +221,22 @@ def test_every_run_records_its_lineage(matrix_runs: dict, async_session_factory)
     assert not mismatches, "\n".join(mismatches)
 
 
-async def _access_check_failures(session_factory, execution_ids: list[str]) -> set[tuple[str, str, Any]]:
-    """(execution, resource type, target) of every report-only access check
-    that the model would block."""
+# The route each probe knob's SDK call reaches.
+KNOB_OPERATIONS = {
+    "set_scope": "POST /api/tables/{table_id}/documents",
+    "tables_scope": "POST /api/tables/{table_id}/documents",
+    "context_override": "POST /api/tables/{table_id}/documents",
+    "raw_api": "POST /api/tables/{table_id}/documents",
+    "tables_upsert": "POST /api/tables/{table_id}/documents/upsert",
+    "tables_query": "POST /api/tables/{table_id}/documents/query",
+    "config_scope": "POST /api/sdk/config/get",
+    "integration_scope": "POST /api/sdk/integrations/get",
+}
+
+
+async def _access_check_failures(session_factory, execution_ids: list[str]) -> set[tuple[str, str, Any, str]]:
+    """(execution, resource type, target, operation) of every report-only
+    access check that the model would block."""
     from sqlalchemy import select
 
     from src.core.database import close_db
@@ -232,13 +245,18 @@ async def _access_check_failures(session_factory, execution_ids: list[str]) -> s
     try:
         async with session_factory() as session:
             rows = await session.execute(
-                select(AuditLog.execution_id, AuditLog.resource_type, AuditLog.details["inputs"]["target"]).where(
+                select(
+                    AuditLog.execution_id,
+                    AuditLog.resource_type,
+                    AuditLog.details["inputs"]["target"],
+                    AuditLog.operation_id,
+                ).where(
                     AuditLog.action == "access.check",
                     AuditLog.outcome == "failure",
                     AuditLog.execution_id.in_([UUID(e) for e in execution_ids]),
                 )
             )
-            return {(str(execution), kind, target) for execution, kind, target in rows}
+            return {(str(execution), kind, target, operation) for execution, kind, target, operation in rows}
     finally:
         await close_db()
 
@@ -247,9 +265,9 @@ def test_access_checks_predict_the_rule(matrix_runs: dict, scenario_world: dict,
     """Blocking exactly what the report-only checks flag yields the rule.
 
     (a) every check the model would block is a target the rule denies;
-    (b) every attempt the server let through that the rule denies, and every
-    child it started outside the reach, was flagged. Reach is per target, so
-    one flag per (run, target) covers every knob.
+    (b) every attempt the server let through that the rule denies was
+    flagged on the route it took, and every child it started outside the
+    reach was flagged.
     """
     label_of = {org_id: label for label, org_id in scenario_world["org_ids"].items()}
 
@@ -259,8 +277,8 @@ def test_access_checks_predict_the_rule(matrix_runs: dict, scenario_world: dict,
     trees = {start: _tree_runs(start, matrix_runs["runs"]) for start in RUN_STARTS}
     ids = [run["execution"]["execution_id"] for runs in trees.values() for _, run in runs]
     flagged = {
-        (execution, kind, label(target))
-        for execution, kind, target in asyncio.run(_access_check_failures(async_session_factory, ids))
+        (execution, kind, label(target), operation)
+        for execution, kind, target, operation in asyncio.run(_access_check_failures(async_session_factory, ids))
     }
     problems = []
     for start, runs in trees.items():
@@ -268,19 +286,17 @@ def test_access_checks_predict_the_rule(matrix_runs: dict, scenario_world: dict,
         observed, _ = _start_cells(start, matrix_runs)
         for run_key, run in runs:
             execution = run["execution"]["execution_id"]
-            for kind, target in sorted((k, t) for e, k, t in flagged if e == execution):
+            for kind, target in sorted({(k, t) for e, k, t, _ in flagged if e == execution}):
                 allowed = rule.REACH[user] == rule.EVERYWHERE if target == "*" else rule.expected_allowed(user, target)
                 if allowed:
                     problems.append(f"{run_key}: {kind} flagged at {target}, which the rule allows")
             for target in rule.TARGETS:
                 if rule.expected_allowed(user, target):
                     continue
-                let_through = any(
-                    observed[cell_id(run_key, knob, target)] not in (None, False)
-                    for knob in (*WRITE_KNOBS, *READ_KNOBS)
-                )
-                if let_through and (execution, "scope_switch", target) not in flagged:
-                    problems.append(f"{run_key}: reached {target} unflagged")
+                for knob in (*WRITE_KNOBS, *READ_KNOBS):
+                    let_through = observed[cell_id(run_key, knob, target)] not in (None, False)
+                    if let_through and (execution, "scope_switch", target, KNOB_OPERATIONS[knob]) not in flagged:
+                        problems.append(f"{run_key}: {knob} reached {target} unflagged")
             child_prefix = f"{run_key}>"
             for cell, spawned in observed.items():
                 child_key, knob, _ = cell.split("|")
@@ -288,7 +304,7 @@ def test_access_checks_predict_the_rule(matrix_runs: dict, scenario_world: dict,
                     continue
                 org = child_key.split("[", 1)[1].split(",", 1)[0]
                 if spawned and org != "-" and not rule.expected_allowed(user, org):
-                    if (execution, "child_run", org) not in flagged:
+                    if (execution, "child_run", org, "workflows.execute") not in flagged:
                         problems.append(f"{child_key}: started outside the reach, unflagged")
     assert not problems, "\n".join(problems)
 

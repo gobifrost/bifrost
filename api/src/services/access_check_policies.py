@@ -11,6 +11,7 @@ raise into it.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 from uuid import UUID
@@ -97,13 +98,52 @@ def _missing(policies: TablePolicies | Any, principal: UserPrincipal) -> list[st
 async def _policy_principal(
     db: AsyncSession, collector: access_checks.Collector, policies: Any, org_id: UUID | None, solution_id: UUID | None
 ) -> UserPrincipal | None:
-    base = await _run_user_principal(db, collector)
-    if base is None:
-        return None
-    # Claims are resolved per organization; never reuse them across tables.
-    principal = replace(base)
-    await preresolve_for_policies(principal, policies, db, org_id, solution_id)
+    """The run user with claims resolved for ``org_id``/``solution_id``,
+    cached per request: claims depend on the organization and Solution."""
+    key = f"policy_principal:{org_id}:{solution_id}"
+    if key in collector.cache:
+        principal = collector.cache[key]
+    else:
+        base = await _run_user_principal(db, collector)
+        principal = None if base is None else replace(base)
+        collector.cache[key] = principal
+    if principal is not None:
+        await preresolve_for_policies(principal, policies, db, org_id, solution_id)
     return principal
+
+
+async def check_table_rule(
+    db: AsyncSession,
+    table: Table,
+    policies: TablePolicies,
+    *,
+    action: str,
+    allowed_today: bool,
+    model_allows: Callable[[UserPrincipal], dict[str, Any]],
+) -> None:
+    """Note a table policy decision for the run user: ``model_allows`` returns
+    the model's facts (``model`` and anything else worth keeping) for a
+    principal. Runs in a savepoint so a failed query never affects the
+    request's transaction."""
+    collector = access_checks.current()
+    if collector is None:
+        return
+    facts = {"table": str(table.id), "action": action, "today": allowed_today}
+    try:
+        async with db.begin_nested():
+            principal = await _policy_principal(db, collector, policies, table.organization_id, table.solution_id)
+        if principal is None:
+            access_checks.note("policy", table.organization_id, **facts)
+            return
+        access_checks.note(
+            "policy",
+            table.organization_id,
+            **facts,
+            **model_allows(principal),
+            missing=_missing(policies, principal),
+        )
+    except Exception as exc:
+        access_checks.note_failure("policy", table.organization_id, exc)
 
 
 async def check_table_write(
@@ -117,48 +157,28 @@ async def check_table_write(
 ) -> None:
     """A row-level policy decision (create, delete, reading one row, or an
     update's pre- and post-image): allowed when every row passes."""
-    collector = access_checks.current()
-    if collector is None:
-        return
-    facts = {"table": str(table.id), "action": action, "today": allowed_today}
-    try:
-        principal = await _policy_principal(db, collector, policies, table.organization_id, table.solution_id)
-        if principal is None:
-            access_checks.note("policy", table.organization_id, **facts)
-            return
-        model = all(evaluate_action(action, policies, row, principal) for row in rows)
-        access_checks.note(
-            "policy", table.organization_id, **facts, model=model, missing=_missing(policies, principal)
-        )
-    except Exception as exc:
-        access_checks.note_failure("policy", table.organization_id, exc)
+    await check_table_rule(
+        db,
+        table,
+        policies,
+        action=action,
+        allowed_today=allowed_today,
+        model_allows=lambda principal: {
+            "model": all(evaluate_action(action, policies, row, principal) for row in rows)
+        },
+    )
 
 
 async def check_table_rows(
     db: AsyncSession, table: Table, policies: TablePolicies, rows: list[dict[str, Any]]
 ) -> None:
     """A query's returned rows: how many the run user would not see."""
-    collector = access_checks.current()
-    if collector is None:
-        return
-    facts = {"table": str(table.id), "action": "read", "today": True}
-    try:
-        principal = await _policy_principal(db, collector, policies, table.organization_id, table.solution_id)
-        if principal is None:
-            access_checks.note("policy", table.organization_id, **facts)
-            return
-        hidden = sum(1 for row in rows if not evaluate_action("read", policies, row, principal))
-        access_checks.note(
-            "policy",
-            table.organization_id,
-            **facts,
-            model=hidden == 0,
-            missing=_missing(policies, principal),
-            hidden=hidden,
-            returned=len(rows),
-        )
-    except Exception as exc:
-        access_checks.note_failure("policy", table.organization_id, exc)
+
+    def hidden(principal: UserPrincipal) -> dict[str, Any]:
+        count = sum(1 for row in rows if not evaluate_action("read", policies, row, principal))
+        return {"model": count == 0, "hidden": count, "returned": len(rows)}
+
+    await check_table_rule(db, table, policies, action="read", allowed_today=True, model_allows=hidden)
 
 
 async def check_file(
@@ -171,7 +191,7 @@ async def check_file(
     solution_id: UUID | None,
     allowed_today: bool,
 ) -> None:
-    """A file policy decision."""
+    """A file policy decision, in a savepoint like the table checks."""
     collector = access_checks.current()
     if collector is None:
         return
@@ -179,18 +199,23 @@ async def check_file(
 
     facts = {"location": location, "path": path, "action": action, "today": allowed_today}
     try:
-        principal = await _run_user_principal(db, collector)
-        if principal is None:
+        async with db.begin_nested():
+            principal = await _policy_principal(db, collector, None, organization_id, solution_id)
+            model = (
+                None
+                if principal is None
+                else await FilePolicyService(db).is_allowed(
+                    action,  # type: ignore[arg-type]
+                    organization_id=organization_id,
+                    location=location,
+                    path=path,
+                    user=principal,
+                    solution_id=solution_id,
+                )
+            )
+        if model is None:
             access_checks.note("policy", organization_id, **facts)
             return
-        model = await FilePolicyService(db).is_allowed(
-            action,  # type: ignore[arg-type]
-            organization_id=organization_id,
-            location=location,
-            path=path,
-            user=replace(principal),
-            solution_id=solution_id,
-        )
         access_checks.note("policy", organization_id, **facts, model=model, missing=[])
     except Exception as exc:
         access_checks.note_failure("policy", organization_id, exc)

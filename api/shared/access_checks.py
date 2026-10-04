@@ -60,15 +60,17 @@ def start_collecting(payload: dict[str, Any] | None) -> Token[Collector | None] 
     """Start a collector for a run's request; None for anyone else.
 
     Collected: the engine token (superuser with an execution id, as
-    ``src.core.auth`` treats it) and any token carrying a run user (the MCP
-    bridge for an agent run). People act as themselves and supervised
-    services act with their own non-admin principal, so neither is judged
-    differently by the model.
+    ``src.core.auth`` treats it) and any token acting for a run user other
+    than its own subject (the MCP bridge for an agent run nobody started).
+    People act as themselves (including through the bridge for an agent they
+    started) and supervised services act with their own non-admin
+    principal, so neither is judged differently by the model.
     """
     if not payload:
         return None
     engine = bool(payload.get("engine_execution_id")) and bool(payload.get("is_superuser"))
-    if not engine and not payload.get("engine_run_user_id"):
+    run_user = payload.get("engine_run_user_id")
+    if not engine and (not run_user or run_user == payload.get("sub")):
         return None
     return _current.set(
         Collector(

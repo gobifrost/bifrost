@@ -83,3 +83,9 @@ def test_a_check_that_failed_to_compute_is_noted_as_a_gap() -> None:
         assert collector.notes == [access_checks.Note("entry", None, {"gap": "observer_error:TimeoutError"})]
     finally:
         access_checks.stop_collecting(token)
+
+
+def test_a_persons_own_bridge_call_is_not_collected() -> None:
+    """The bridge acts as the person who started the agent: nothing differs."""
+    person = str(uuid4())
+    assert access_checks.start_collecting({"sub": person, "engine_run_user_id": person}) is None
