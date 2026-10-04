@@ -760,6 +760,7 @@ class EventProcessor:
         workflow parameters using template substitution. Otherwise, the raw event
         data is used as parameters (legacy behavior).
         """
+        from shared.run_lineage import unattended_lineage
         from src.services.execution.async_executor import enqueue_system_workflow_execution
 
         # Get workflow details
@@ -832,6 +833,7 @@ class EventProcessor:
             source="Event System",
             org_id=str(workflow.organization_id) if workflow.organization_id else None,
             event=event_context,
+            lineage=await unattended_lineage(self.session, workflow.id),
         )
 
         # Store the execution ID on the delivery for tracking
@@ -853,6 +855,7 @@ class EventProcessor:
         event: Event,
     ) -> None:
         """Queue an agent run for an event delivery targeting an agent."""
+        from shared.run_lineage import identity_lineage
         from src.services.execution.agent_run_service import enqueue_agent_run
 
         subscription = delivery.subscription
@@ -892,6 +895,7 @@ class EventProcessor:
             input_data=parameters,
             org_id=org_id,
             event_delivery_id=str(delivery.id),
+            lineage=await identity_lineage(self.session, agent.organization_id),
         )
 
         delivery.agent_run_id = uuid.UUID(run_id)

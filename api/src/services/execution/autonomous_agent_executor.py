@@ -155,6 +155,7 @@ class AutonomousAgentExecutor:
         # service token only.
         self._caller_user_id: UUID | None = None
         self._caller: dict[str, Any] | None = None
+        self._run_user_id: UUID | None = None
         # Buffers for Redis-first pattern (flushed to DB after run completes)
         self._pending_steps: list[dict[str, Any]] = []
         self._pending_ai_usage: list[dict[str, Any]] = []
@@ -186,6 +187,7 @@ class AutonomousAgentExecutor:
         _caller: dict | None = None,
         _shared_usage: RunUsage | None = None,
         _shared_budget: AgentRunBudget | None = None,
+        run_user_id: UUID | None,
     ) -> dict:
         """Execute an autonomous agent run.
 
@@ -198,6 +200,8 @@ class AutonomousAgentExecutor:
             _shared_usage: Internal cumulative usage ledger inherited from a
                 parent run during delegation.
             _shared_budget: Internal hard ceiling inherited from a parent run.
+            run_user_id: The run's run user (AgentRun.run_user_id); its tool
+                calls and delegations run for the same user.
 
         Returns:
             Dict with keys: output, iterations_used, tokens_used, status, llm_model
@@ -228,6 +232,7 @@ class AutonomousAgentExecutor:
                 caller_user_id = None
         self._caller_user_id = caller_user_id
         self._caller = dict(_caller) if _caller else None
+        self._run_user_id = run_user_id
 
         async with self._session_factory() as db:
             llm_configs = await get_llm_configs(db, profile_id=agent.llm_profile_id)
@@ -666,6 +671,7 @@ class AutonomousAgentExecutor:
                     else agent.name
                 ),
                 organization_id=self._execution_org_id(agent),
+                run_user_id=self._run_user_id,
                 is_platform_admin=(
                     bool(self._caller.get("is_platform_admin", False))
                     if self._caller_user_id and self._caller
@@ -930,8 +936,12 @@ class AutonomousAgentExecutor:
         caller: dict[str, Any] | None = None,
         _shared_usage: RunUsage | None = None,
         _shared_budget: AgentRunBudget | None = None,
+        run_user_id: UUID | None,
     ) -> DelegationOutcome:
-        """Run one delegated child with a durable, caller-neutral lifecycle."""
+        """Run one delegated child with a durable, caller-neutral lifecycle.
+
+        The child keeps the delegating run's user (``run_user_id``).
+        """
         if parent_run_id and await self._check_cancelled(parent_run_id):
             raise ToolError("Agent run was cancelled")
         if self._delegation_depth >= MAX_DELEGATION_DEPTH:
@@ -1026,6 +1036,7 @@ class AutonomousAgentExecutor:
                 caller_user_id=caller.get("user_id") if caller else None,
                 caller_email=caller.get("email") if caller else None,
                 caller_name=caller.get("name") if caller else None,
+                run_user_id=run_user_id,
                 parent_run_id=UUID(parent_run_id) if parent_run_id else None,
                 budget_max_iterations=target_agent.max_iterations,
                 budget_max_tokens=target_agent.max_token_budget,
@@ -1065,6 +1076,7 @@ class AutonomousAgentExecutor:
                     _caller=caller,
                     _shared_usage=shared_usage,
                     _shared_budget=shared_budget,
+                    run_user_id=run_user_id,
                 ),
                 timeout=DELEGATION_TIMEOUT_SECONDS,
             )
@@ -1230,6 +1242,7 @@ class AutonomousAgentExecutor:
             tool_call=tool_call,
             parent_run_id=self._current_run_id,
             caller=self._caller,
+            run_user_id=self._run_user_id,
         )
         if not outcome.succeeded:
             raise ToolError(

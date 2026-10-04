@@ -679,6 +679,7 @@ class TestChatDelegation:
             caller=caller,
             _shared_usage=None,
             _shared_budget=None,
+            run_user_id=None,
         )
 
     def test_parent_history_prefers_error_over_partial_result(self):
@@ -754,6 +755,7 @@ class TestChatDelegation:
             caller=None,
             _shared_usage=None,
             _shared_budget=None,
+            run_user_id=None,
         )
         assert result.error is None
 

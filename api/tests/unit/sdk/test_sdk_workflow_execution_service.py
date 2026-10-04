@@ -394,6 +394,11 @@ class TestExecuteScheduling:
         assert row.parameters == {"a": 1}
         assert row.organization_id == org.id
         assert row.executed_by == principal.user_id
+        assert (row.run_user_id, row.started_by_user_id, row.root_execution_id) == (
+            admin_row.id,
+            admin_row.id,
+            row.id,
+        )
 
         await db_session.execute(
             delete(ExecutionModel).where(ExecutionModel.id == row.id)
@@ -405,8 +410,9 @@ class TestExecuteScheduling:
 
         org = await _seed_org(db_session)
         target = await _seed_user(db_session, org_id=org.id)
+        admin_row = await _seed_user(db_session, org_id=org.id, is_superuser=True)
         wf = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
-        principal = _admin(org.id)
+        principal = _admin(org.id, user_id=admin_row.id)
         req = _request(
             workflow_id=str(wf.id),
             input_data={},
@@ -425,11 +431,93 @@ class TestExecuteScheduling:
             )
         ).scalar_one()
         assert row.executed_by == target.id
+        # The run is for the admin who called; run_as changes the acting user only.
+        assert (row.run_user_id, row.started_by_user_id, row.root_execution_id) == (
+            admin_row.id,
+            admin_row.id,
+            row.id,
+        )
 
         await db_session.execute(
             delete(ExecutionModel).where(ExecutionModel.id == row.id)
         )
         await db_session.commit()
+
+
+@pytest.mark.asyncio
+class TestExecuteLineage:
+    async def _dispatched_lineage(self, db_session, principal, **request):
+        patches = _patch_dispatch()
+        mocks = _start_patches(patches)
+        try:
+            await execute_sdk_workflow(
+                db_session, principal, _request(**request), caller_org_id=principal.organization_id
+            )
+        finally:
+            _stop_patches(patches)
+        run_workflow, run_code = mocks[0], mocks[1]
+        call = run_workflow.await_args or run_code.await_args
+        return call.kwargs["lineage"]
+
+    async def test_person_run_is_for_the_person(self, db_session):
+        from shared.run_lineage import person_lineage
+
+        org = await _seed_org(db_session)
+        wf = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
+        principal = _admin(org.id)
+
+        lineage = await self._dispatched_lineage(db_session, principal, workflow_id=str(wf.id))
+
+        assert lineage == person_lineage(principal.user_id)
+
+    async def test_run_as_keeps_the_caller_as_run_user(self, db_session):
+        from shared.run_lineage import person_lineage
+
+        org = await _seed_org(db_session)
+        target = await _seed_user(db_session, org_id=org.id)
+        wf = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
+        principal = _admin(org.id)
+
+        lineage = await self._dispatched_lineage(
+            db_session, principal, workflow_id=str(wf.id), run_as=str(target.id)
+        )
+
+        assert lineage == person_lineage(principal.user_id)
+
+    async def test_child_run_copies_the_parent_lineage(self, db_session):
+        from shared.run_lineage import RunLineage
+        from src.core.constants import SYSTEM_USER_ID
+
+        org = await _seed_org(db_session)
+        person = await _seed_user(db_session, org_id=org.id)
+        root = uuid4()
+        parent = await _seed_execution(db_session, "parent", user_id=person.id, org_id=org.id)
+        parent.run_user_id = person.id
+        parent.started_by_user_id = person.id
+        parent.root_execution_id = root
+        await db_session.flush()
+        wf = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
+        engine = UserPrincipal(
+            user_id=UUID(SYSTEM_USER_ID),
+            email="engine@internal",
+            organization_id=org.id,
+            is_superuser=True,
+            engine_execution_id=str(parent.id),
+        )
+
+        lineage = await self._dispatched_lineage(db_session, engine, workflow_id=str(wf.id))
+
+        assert lineage == RunLineage(person.id, person.id, root)
+
+    async def test_inline_code_run_is_for_the_person(self, db_session):
+        from shared.run_lineage import person_lineage
+
+        org = await _seed_org(db_session)
+        principal = _admin(org.id)
+
+        lineage = await self._dispatched_lineage(db_session, principal, code="print(1)")
+
+        assert lineage == person_lineage(principal.user_id)
 
 
 @pytest.mark.asyncio

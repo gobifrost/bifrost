@@ -88,6 +88,15 @@ async def promote_due_executions() -> tuple[int, int]:
                     ),
                     file_path=None,
                     execution_record_exists=True,
+                    lineage=(
+                        {
+                            "run_user_id": str(row.run_user_id),
+                            "started_by_user_id": str(row.started_by_user_id),
+                            "root_execution_id": str(row.root_execution_id),
+                        }
+                        if row.run_user_id is not None
+                        else None
+                    ),
                 )
                 promoted += 1
             except Exception:

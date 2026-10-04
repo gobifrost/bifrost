@@ -2,7 +2,14 @@
 Enumeration types used across the application.
 """
 
-from enum import Enum
+from enum import Enum, StrEnum
+
+
+class IdentityKind(StrEnum):
+    """Marks a user account as an identity (shared.identities)."""
+    ORG_DEFAULT = "org_default"
+    GLOBAL_DEFAULT = "global_default"
+    CUSTOM = "custom"
 
 
 class ExecutionStatus(str, Enum):

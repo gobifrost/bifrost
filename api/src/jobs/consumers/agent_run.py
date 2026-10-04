@@ -326,6 +326,7 @@ class AgentRunConsumer(BaseConsumer):
                     output_schema=context.get("output_schema"),
                     run_id=run_id,
                     _caller=context.get("caller"),
+                    run_user_id=agent_run.run_user_id,
                 ))
 
                 # Cancel watcher: polls Redis flag, force-cancels task if stuck
@@ -695,6 +696,7 @@ class AgentRunConsumer(BaseConsumer):
                             attachment_ids=attachment_ids or None,
                             model_profile_id=model_profile_id,
                             user_message_id=persisted_user_message_id,
+                            run_user_id=agent_run.run_user_id,
                         ):
                             await publish_chat_run_event(
                                 conversation_id=conversation.id,

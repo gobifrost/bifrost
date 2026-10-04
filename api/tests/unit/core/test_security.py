@@ -117,3 +117,34 @@ class TestMintEngineTokenWorkflowIdClaim:
         after_payload = _decode(after)
         assert after_payload["sub"] == before_payload["sub"]
         assert after_payload["is_superuser"] is True
+
+
+class TestMintEngineTokenLineageClaims:
+    """``engine_run_user_id`` etc. are attribution only, like ``engine_caller_*``."""
+
+    def test_emits_lineage_claims_when_supplied(self):
+        run_user, root = str(uuid4()), str(uuid4())
+        token, _ = mint_engine_token(
+            execution_id=str(uuid4()),
+            solution_id=None,
+            global_repo_access=True,
+            timeout_seconds=300,
+            lineage={"run_user_id": run_user, "started_by_user_id": run_user, "root_execution_id": root},
+        )
+        payload = _decode(token)
+        assert payload["engine_run_user_id"] == run_user
+        assert payload["engine_started_by_user_id"] == run_user
+        assert payload["engine_root_execution_id"] == root
+        assert payload["is_superuser"] is True
+
+    def test_omits_lineage_claims_when_none(self):
+        token, _ = mint_engine_token(
+            execution_id=str(uuid4()),
+            solution_id=None,
+            global_repo_access=True,
+            timeout_seconds=300,
+            lineage=None,
+        )
+        payload = _decode(token)
+        for claim in ("engine_run_user_id", "engine_started_by_user_id", "engine_root_execution_id"):
+            assert claim not in payload

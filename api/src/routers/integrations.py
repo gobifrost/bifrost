@@ -2143,6 +2143,7 @@ async def test_integration_connection(
     import time
     from uuid import uuid4
     from src.sdk.context import ExecutionContext as SharedContext, Organization
+    from shared.run_lineage import principal_lineage
     from src.services.execution.async_executor import enqueue_code_execution
     from src.core.redis_client import get_redis_client
 
@@ -2185,6 +2186,7 @@ async def test_integration_connection(
     )
 
     script_name = f"test_integration_{integration.name}"
+    lineage = await principal_lineage(ctx.db, user)
     scope_label = f"org {request.organization_id}" if request.organization_id else "global"
     start_time = time.time()
 
@@ -2201,6 +2203,7 @@ async def test_integration_connection(
             user_name=shared_ctx.name,
             user_email=shared_ctx.email,
             form_id=None,
+            lineage=lineage.bound(execution_id) if lineage else None,
         )
 
         # Queue with sync=True to wait for result
@@ -2211,6 +2214,7 @@ async def test_integration_connection(
             parameters={},
             execution_id=execution_id,
             sync=True,
+            lineage=lineage,
         )
 
         # Wait for result from worker via Redis BLPOP

@@ -187,6 +187,7 @@ async def enqueue_sdk_agent_run(
             agent_id=agent.id,
         )
 
+    from shared.run_lineage import principal_lineage
     from src.services.execution.agent_run_service import enqueue_agent_run
 
     run_id = await enqueue_agent_run(
@@ -199,6 +200,7 @@ async def enqueue_sdk_agent_run(
         caller_email=principal.email,
         caller_name=getattr(principal, "name", None),
         sync=False,
+        lineage=await principal_lineage(session, principal),
     )
     return AgentRunEnqueueResponse(run_id=UUID(run_id))
 

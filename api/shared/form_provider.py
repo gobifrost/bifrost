@@ -67,6 +67,7 @@ async def execute_form_field_provider(
 ) -> list[dict[str, Any]]:
     """Execute only the provider persisted on ``field`` in the form's scope."""
 
+    from shared.run_lineage import principal_lineage
     from src.repositories.workflows import WorkflowRepository
     from src.sdk.context import ExecutionContext, Organization
     from src.services.execution.service import run_workflow
@@ -109,6 +110,7 @@ async def execute_form_field_provider(
         form_id=str(form.id),
         transient=True,
         sync=True,
+        lineage=await principal_lineage(db, user),
     )
     metadata_keys = set((field.auto_fill or {}).values())
     return _normalize_options(response.result, metadata_keys)

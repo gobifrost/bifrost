@@ -1,8 +1,11 @@
 """Agent run enqueue and result waiting."""
+from __future__ import annotations
+
 import json
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import redis.asyncio as aioredis
@@ -12,6 +15,9 @@ from src.core.database import get_session_factory
 from src.core.log_safety import log_safe
 from src.jobs.rabbitmq import publish_message
 from src.models.orm.agent_runs import AgentRun
+
+if TYPE_CHECKING:
+    from shared.run_lineage import RunLineage
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +45,12 @@ async def enqueue_agent_run(
     sync: bool = False,
     run_id: str | None = None,
     before_queue_publish: Callable[[str], Awaitable[None]] | None = None,
+    lineage: RunLineage | None,
 ) -> str:
     """Persist and enqueue an agent run for worker processing.
+
+    ``lineage`` says who the run is for (shared.run_lineage); the row records
+    its run user. None when it can't be known.
 
     The database row is committed before the queue message is published so a
     returned run ID is immediately queryable. If Redis or RabbitMQ rejects the
@@ -70,6 +80,7 @@ async def enqueue_agent_run(
                 caller_user_id=caller_user_id,
                 caller_email=caller_email,
                 caller_name=caller_name,
+                run_user_id=lineage.run_user_id if lineage else None,
             )
         )
         await db.commit()

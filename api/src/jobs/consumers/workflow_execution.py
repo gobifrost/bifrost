@@ -756,6 +756,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
         embed = pending.get("embed", {})
         event_data = pending.get("event")  # EventContext dict if event-triggered
         artifact_workspace_id = pending.get("artifact_workspace_id")
+        lineage = pending.get("lineage")
 
         # Determine if this is a code or workflow execution
         is_script = bool(code_base64)
@@ -788,6 +789,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
                     execution_model="process",
                     workflow_id=workflow_id,
                     check_existing=execution_record_exists,
+                    lineage=lineage,
                 )
                 await update_execution(
                     execution_id=execution_id,
@@ -893,6 +895,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
                         execution_model="process",
                         workflow_id=workflow_id,
                         check_existing=execution_record_exists,
+                        lineage=lineage,
                     )
                     await update_execution(
                         execution_id=execution_id,
@@ -936,6 +939,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 execution_model="process",
                 workflow_id=workflow_id,
                 check_existing=execution_record_exists,
+                lineage=lineage,
             )
             execution_created_ms = (time.perf_counter() - dispatch_started) * 1000
             if not is_sync:
@@ -987,6 +991,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 caller_email=user_email,
                 caller_name=user_name,
                 engine_workflow_id=workflow_id,
+                lineage=lineage,
             )
 
             # Build context for worker process

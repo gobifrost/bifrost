@@ -19,6 +19,8 @@ from uuid import uuid4
 
 import pytest
 
+from shared.run_lineage import person_lineage
+
 from shared.sdk_agent_runs import (
     SdkAgentRunError,
     enqueue_sdk_agent_run,
@@ -190,6 +192,7 @@ class TestEnqueueSdkAgentRun:
             caller_email=principal.email,
             caller_name="Caller Name",
             sync=False,
+            lineage=person_lineage(principal.user_id),
         )
 
     async def test_name_lookup_is_case_insensitive(self, db_session):

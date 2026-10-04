@@ -17,6 +17,7 @@ from sqlalchemy import desc, func, select, update
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.run_lineage import lineage_columns
 from src.core.principal import UserPrincipal
 from src.core.log_safety import log_safe
 from src.models import (
@@ -76,6 +77,8 @@ class ExecutionRepository(BaseRepository[Execution]):
         execution_model: str | None = None,
         workflow_id: str | None = None,
         check_existing: bool = True,
+        *,
+        lineage: dict[str, str] | None,
     ) -> Execution:
         """
         Create a new execution record.
@@ -94,6 +97,8 @@ class ExecutionRepository(BaseRepository[Execution]):
             api_key_id: Optional workflow ID whose API key triggered this execution
             status: Initial status (default RUNNING)
             execution_model: Which system ran the execution ('process' or 'thread')
+            lineage: Run lineage from the pending record (RunLineage.bound).
+                None leaves a pre-existing row's lineage as it is.
 
         Returns:
             Created Execution record
@@ -138,6 +143,9 @@ class ExecutionRepository(BaseRepository[Execution]):
             existing.api_key_id = parsed_api_key_id
             existing.execution_model = execution_model
             existing.started_at = datetime.now(timezone.utc)
+            if lineage is not None:
+                for column, value in lineage_columns(lineage).items():
+                    setattr(existing, column, value)
             await self.session.flush()
             await self.session.refresh(existing)
             logger.info(
@@ -159,6 +167,7 @@ class ExecutionRepository(BaseRepository[Execution]):
             api_key_id=parsed_api_key_id,
             execution_model=execution_model,
             started_at=datetime.now(timezone.utc),
+            **lineage_columns(lineage),
         )
 
         self.session.add(execution)
@@ -687,6 +696,8 @@ async def create_execution(
     workflow_id: str | None = None,
     session: "AsyncSession | None" = None,
     check_existing: bool = True,
+    *,
+    lineage: dict[str, str] | None,
 ) -> None:
     """
     Create a new execution record in PostgreSQL.
@@ -717,6 +728,7 @@ async def create_execution(
             execution_model=execution_model,
             workflow_id=workflow_id,
             check_existing=check_existing,
+            lineage=lineage,
         )
 
     if session is not None:

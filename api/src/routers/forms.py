@@ -63,6 +63,7 @@ from shared.form_captcha import (
     redeem_form_captcha_solution,
 )
 from shared.form_provider import FormProviderError, execute_form_field_provider
+from shared.run_lineage import principal_lineage
 from shared.form_runtime import (
     FormRuntimeValidationError,
     accept_external_submission,
@@ -1412,6 +1413,7 @@ async def submit_form(
             form_id=form.id,
             api_key_id=None,
             is_platform_admin=ctx.user.is_superuser,
+            lineage=await principal_lineage(db, ctx.user),
         )
         logger.info(
             f"Form {log_safe(form_id)} scheduled by user {ctx.user.email}, "
@@ -1490,6 +1492,7 @@ async def submit_form(
             workflow_id=resolved_workflow_id,
             input_data=merged_params,
             form_id=str(form.id),
+            lineage=await principal_lineage(db, ctx.user),
         )
         external_workflow_accepted = ctx.user.embed
 
@@ -1708,6 +1711,7 @@ async def execute_startup_workflow(
             form_id=str(form.id),
             transient=True,
             sync=True,
+            lineage=await principal_lineage(db, ctx.user),
         )
 
         logger.info(f"Launch workflow executed for form {log_safe(form_id)} by user {ctx.user.email}")

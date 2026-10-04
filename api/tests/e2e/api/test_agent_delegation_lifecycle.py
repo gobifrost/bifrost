@@ -155,7 +155,10 @@ async def test_chat_delegation_creates_terminal_run_with_conversation_and_caller
             "name": alice_user.name,
             "organization_id": str(alice_user.organization_id),
         }
-        async def child_run(child_executor, **_kwargs):
+        child_run_kwargs: dict = {}
+
+        async def child_run(child_executor, **kwargs):
+            child_run_kwargs.update(kwargs)
             # The real run() counts each model response on the executor.
             child_executor._own_tokens = 42
             return {
@@ -187,11 +190,15 @@ async def test_chat_delegation_creates_terminal_run_with_conversation_and_caller
                 ),
                 conversation_id=conversation_id,
                 caller=caller,
+                run_user_id=alice_user.user_id,
             )
 
+        # The delegated run keeps the delegating run's user.
+        assert child_run_kwargs["run_user_id"] == alice_user.user_id
         async with session_factory() as session:
             persisted = await session.get(AgentRun, outcome.child_run_id)
             assert persisted is not None
+            assert persisted.run_user_id == alice_user.user_id
             assert persisted.status == "completed"
             assert persisted.completed_at is not None
             assert persisted.parent_run_id is None
@@ -384,6 +391,7 @@ async def test_chat_executor_receives_durable_child_callback(
                 stream=False,
                 enable_routing=False,
                 user=principal,
+                run_user_id=None,
             ):
                 if chunk.type == "done":
                     final_content = chunk.content or ""

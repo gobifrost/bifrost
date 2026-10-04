@@ -697,6 +697,7 @@ async def _execute_workflow_tool_impl(
     **inputs: Any,
 ) -> Any:
     """Execute a specific workflow tool by ID."""
+    from shared.run_lineage import person_lineage
     from src.core.database import get_db_context
     from src.repositories.workflows import WorkflowRepository
     from src.services.execution.service import execute_tool
@@ -729,6 +730,7 @@ async def _execute_workflow_tool_impl(
                 user_name=context.user_name or "MCP User",
                 org_id=str(context.org_id) if context.org_id else None,
                 is_platform_admin=context.is_platform_admin,
+                lineage=person_lineage(context.user_id),
             )
 
             success = result.status.value == "Success"

@@ -25,7 +25,7 @@ async def test_run_workflow_reuses_validated_timeout_for_sync_wait() -> None:
             new_callable=AsyncMock,
         ) as enqueue,
     ):
-        await run_workflow(context, "workflow-1", sync=True)
+        await run_workflow(context, "workflow-1", sync=True, lineage=None)
 
     get_metadata.assert_awaited_once_with("workflow-1")
     enqueue.assert_awaited_once_with(
@@ -37,6 +37,7 @@ async def test_run_workflow_reuses_validated_timeout_for_sync_wait() -> None:
         sync=True,
         timeout_seconds=123,
         dispatch_metadata=None,
+        lineage=None,
     )
 
 

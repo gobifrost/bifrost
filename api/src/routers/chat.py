@@ -747,8 +747,10 @@ async def send_message(
     # Agent is now optional - agentless chat uses default system prompt
 
     # Execute chat — executor manages its own short-lived sessions
+    from shared.run_lineage import principal_lineage
     from src.core.database import get_session_factory
     executor = AgentExecutor(get_session_factory())
+    lineage = await principal_lineage(db, user)
 
     # Collect streaming response into a single response
     final_content = ""
@@ -767,6 +769,7 @@ async def send_message(
         user=user,
         attachment_ids=request.attachment_ids,
         model_profile_id=request.model_profile_id,
+        run_user_id=lineage.run_user_id if lineage else None,
     ):
         if chunk.type == "delta" and chunk.content:
             final_content += chunk.content

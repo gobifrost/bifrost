@@ -128,3 +128,37 @@ async def test_reverts_on_publish_failure(db_session):
     await db_session.refresh(due)
     # Reverted so next tick can retry.
     assert due.status == ExecutionStatus.SCHEDULED
+
+
+@pytest.mark.asyncio
+async def test_forwards_the_row_lineage(db_session):
+    from sqlalchemy import select
+
+    from src.models.enums import IdentityKind
+    from src.jobs.schedulers.deferred_execution_promoter import promote_due_executions
+    from src.models.orm.users import User
+
+    identity = (
+        await db_session.execute(select(User.id).where(User.identity_kind == IdentityKind.GLOBAL_DEFAULT))
+    ).scalar_one()
+    due = _new_scheduled(datetime.now(timezone.utc) - timedelta(seconds=1))
+    due.run_user_id = identity
+    due.started_by_user_id = identity
+    due.root_execution_id = due.id
+    plain = _new_scheduled(datetime.now(timezone.utc) - timedelta(seconds=1))
+    db_session.add_all([due, plain])
+    await db_session.commit()
+
+    with (
+        patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
+        patch(PATH_PUBLISH, new=AsyncMock()) as pub,
+    ):
+        await promote_due_executions()
+
+    lineage = {call.kwargs["execution_id"]: call.kwargs["lineage"] for call in pub.await_args_list}
+    assert lineage[str(due.id)] == {
+        "run_user_id": str(identity),
+        "started_by_user_id": str(identity),
+        "root_execution_id": str(due.id),
+    }
+    assert lineage[str(plain.id)] is None

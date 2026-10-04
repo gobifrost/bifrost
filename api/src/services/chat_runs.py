@@ -9,6 +9,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
+from shared.run_lineage import principal_lineage
 from shared.scope_resolver import has_scope_bypass
 from src.core.cache.redis_client import get_redis
 from src.core.db_deps import DbSession
@@ -332,6 +333,7 @@ async def create_chat_run(
             sync=False,
             run_id=str(client_run_id),
             before_queue_publish=publish_queued,
+            lineage=await principal_lineage(db, user),
         )
     except Exception:
         await publish_chat_run_event(

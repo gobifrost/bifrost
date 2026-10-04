@@ -150,6 +150,7 @@ class AgentExecutor:
         self._active_budget: AgentRunBudget | None = None
         self._active_llm_model: str | None = None
         self._active_failover_path: list[str] | None = None
+        self._run_user_id: UUID | None = None
 
     @asynccontextmanager
     async def _db(self):
@@ -244,6 +245,7 @@ class AgentExecutor:
         attachment_ids: list[UUID] | None = None,
         model_profile_id: UUID | None = None,
         user_message_id: UUID | None = None,
+        run_user_id: UUID | None,
     ) -> AsyncIterator[ChatStreamChunk]:
         """
         Process a user message and generate a response.
@@ -260,6 +262,8 @@ class AgentExecutor:
             user: Current user for permission-aware agent routing
             user_message_id: Persisted user message id when the caller already
                 inserted the user row before invoking chat.
+            run_user_id: Who the chat run is for (shared.run_lineage); its tool
+                calls and delegations run for the same user.
 
         Yields:
             ChatStreamChunk objects with response content, tool calls, etc.
@@ -268,6 +272,7 @@ class AgentExecutor:
 
         start_time = time.time()
         self._knowledge_search_budget.reset()
+        self._run_user_id = run_user_id
         router = AgentRouter(
             self._session_factory,
             user_id=user.user_id if user else None,
@@ -1455,6 +1460,7 @@ class AgentExecutor:
                         if user is not None
                         else agent.organization_id if agent else None
                     ),
+                    run_user_id=self._run_user_id,
                     is_platform_admin=(
                         bool(caller.get("is_platform_admin", False))
                         if caller
@@ -1949,6 +1955,7 @@ class AgentExecutor:
                 caller=caller,
                 _shared_usage=self._active_usage,
                 _shared_budget=self._active_budget,
+                run_user_id=self._run_user_id,
             )
             metadata = {
                 "child_run_id": str(outcome.child_run_id),

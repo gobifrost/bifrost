@@ -9,7 +9,8 @@ from uuid import UUID
 import pytest
 from sqlalchemy import select
 
-from shared.identities import IDENTITY_EMAIL_DOMAIN, IdentityKind
+from shared.identities import IDENTITY_EMAIL_DOMAIN
+from src.models.enums import IdentityKind
 from src.models.orm.users import User
 
 

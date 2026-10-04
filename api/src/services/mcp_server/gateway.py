@@ -14,6 +14,7 @@ import pydantic_core
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from shared.run_lineage import person_lineage
 from shared.scope_resolver import has_scope_bypass
 from src.core.org_filter import OrgFilterType
 from src.models.orm.agents import Agent
@@ -1226,6 +1227,7 @@ class MCPAgentGatewayService:
                 email=self.context.user_email,
                 name=self.context.user_name or "MCP User",
                 organization_id=self.context.org_id,
+                run_user_id=UUID(str(self.context.user_id)),
                 is_platform_admin=self.context.is_platform_admin,
             ),
             sync=not async_execution,
@@ -1308,6 +1310,7 @@ class MCPAgentGatewayService:
             caller_email=self.context.user_email,
             caller_name=self.context.user_name,
             sync=not async_execution,
+            lineage=person_lineage(self.context.user_id),
         )
         if async_execution:
             return {

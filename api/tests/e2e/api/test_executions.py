@@ -143,6 +143,7 @@ class TestAsyncExecution:
             user_id=str(platform_admin.user_id),
             user_name=platform_admin.name,
             user_email=platform_admin.email,
+            lineage=None,
         )
         try:
             response = e2e_client.get(

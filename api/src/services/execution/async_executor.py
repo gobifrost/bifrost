@@ -14,9 +14,11 @@ For sync execution (sync=True):
 - Caller waits on Redis BLPOP
 """
 
+from __future__ import annotations
+
 import logging
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.core.constants import SYSTEM_USER_ID, SYSTEM_USER_EMAIL
 from src.core.log_safety import log_safe
@@ -24,6 +26,9 @@ from src.core.redis_client import get_redis_client
 from src.jobs.rabbitmq import publish_message
 from src.sdk.context import EventContext, ExecutionContext
 from src.services.execution.queue_tracker import add_to_queue
+
+if TYPE_CHECKING:
+    from shared.run_lineage import RunLineage
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +55,8 @@ async def _publish_pending(
     execution_record_exists: bool = False,
     dispatch_metadata: dict[str, Any] | None = None,
     artifact_workspace_id: str | None = None,
+    *,
+    lineage: dict[str, str] | None,
 ) -> None:
     """
     Write a pending-execution blob to Redis, register with the queue tracker,
@@ -79,6 +86,7 @@ async def _publish_pending(
         is_platform_admin=is_platform_admin,
         event=event,
         artifact_workspace_id=artifact_workspace_id,
+        lineage=lineage,
     )
 
     # Sync callers wait on their private result list and cannot consume queue
@@ -115,6 +123,8 @@ async def enqueue_workflow_execution(
     api_key_id: str | None = None,
     file_path: str | None = None,
     dispatch_metadata: dict[str, Any] | None = None,
+    *,
+    lineage: RunLineage | None,
 ) -> str:
     """
     Enqueue a workflow for async execution.
@@ -131,6 +141,7 @@ async def enqueue_workflow_execution(
         sync: If True, worker will push result to Redis for caller to BLPOP
         api_key_id: Optional workflow ID whose API key triggered this execution
         file_path: Optional file path (for fast direct loading, avoids filesystem scan)
+        lineage: Who the run is for (shared.run_lineage); None when unknown
 
     Returns:
         execution_id: UUID of the queued execution
@@ -166,6 +177,7 @@ async def enqueue_workflow_execution(
         event=event_payload,
         dispatch_metadata=dispatch_metadata,
         artifact_workspace_id=context.artifact_workspace_id,
+        lineage=lineage.bound(execution_id) if lineage else None,
     )
 
     logger.info(
@@ -187,6 +199,8 @@ async def enqueue_code_execution(
     parameters: dict[str, Any],
     execution_id: str | None = None,
     sync: bool = False,
+    *,
+    lineage: RunLineage | None,
 ) -> str:
     """
     Enqueue inline code for async execution.
@@ -228,6 +242,7 @@ async def enqueue_code_execution(
         sync=sync,
         is_platform_admin=context.is_platform_admin,
         artifact_workspace_id=context.artifact_workspace_id,
+        lineage=lineage.bound(execution_id) if lineage else None,
     )
 
     # Sync callers wait on their private result list and cannot consume queue
@@ -264,6 +279,8 @@ async def enqueue_system_workflow_execution(
     source: str,
     org_id: str | None = None,
     event: EventContext | None = None,
+    *,
+    lineage: RunLineage,
 ) -> str:
     """
     Enqueue a system-triggered workflow execution.
@@ -278,6 +295,7 @@ async def enqueue_system_workflow_execution(
         source: Display name for what triggered this (e.g., "Event System", "Scheduled Execution")
         org_id: Optional organization scope (UUID string, not "ORG:" prefixed)
         event: Optional EventContext populated for event-triggered executions
+        lineage: The identity the run is for (shared.run_lineage.unattended_lineage)
 
     Returns:
         execution_id: UUID string of the queued execution
@@ -306,4 +324,5 @@ async def enqueue_system_workflow_execution(
         workflow_id=workflow_id,
         parameters=parameters,
         execution_id=execution_id,  # Pass explicitly to avoid double generation
+        lineage=lineage,
     )

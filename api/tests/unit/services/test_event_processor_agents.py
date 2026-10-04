@@ -255,3 +255,30 @@ async def test_queue_deliveries_uses_fallback_message_for_empty_exception():
     assert count == 0
     assert delivery.status == EventDeliveryStatus.FAILED
     assert delivery.error_message == "ReadError while queueing event delivery"
+
+
+@pytest.mark.asyncio
+async def test_event_agent_run_is_for_the_agent_organization_identity():
+    """No person started it: the run is for the agent's organization identity."""
+    from shared.run_lineage import RunLineage
+
+    processor = _create_processor()
+    agent = MagicMock()
+    agent.id = uuid.uuid4()
+    agent.organization_id = uuid.uuid4()
+    delivery = _make_delivery(target_type="agent", agent=agent)
+    identity = uuid.uuid4()
+    lineage = RunLineage(identity, identity, None)
+
+    with (
+        patch("shared.run_lineage.identity_lineage", new=AsyncMock(return_value=lineage)) as resolve,
+        patch(
+            "src.services.execution.agent_run_service.enqueue_agent_run",
+            new_callable=AsyncMock,
+            return_value=str(uuid.uuid4()),
+        ) as mock_enqueue,
+    ):
+        await processor._queue_agent_run(delivery, _make_event())
+
+    resolve.assert_awaited_once_with(processor.session, agent.organization_id)
+    assert mock_enqueue.call_args.kwargs["lineage"] == lineage
