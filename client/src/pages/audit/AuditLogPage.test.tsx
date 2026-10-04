@@ -12,6 +12,16 @@ vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockUseAuth(),
 }));
 
+vi.mock("@/hooks/useOrganizations", () => ({
+	useOrganizations: () => ({
+		data: [],
+		isLoading: false,
+		isFetching: false,
+		error: null,
+		refetch: vi.fn(),
+	}),
+}));
+
 import { AuditLogPage } from "./AuditLogPage";
 
 const filePath = "denied/quarterly-result.csv";
@@ -210,5 +220,52 @@ describe("AuditLogPage policy filters", () => {
 		expect(screen.getByText(`reports / ${filePath}`)).toBeInTheDocument();
 		expect(screen.getByLabelText("Loading page")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+	});
+
+	it("shows the retention window and exports with the current action filter", async () => {
+		mockUseAuditLog.mockReturnValue({
+			data: {
+				entries: [],
+				continuation_token: null,
+				retention: {
+					hot_days: 90,
+					archive_days: 365,
+					oldest_in_database: "2026-07-06T09:30:00Z",
+					archived_through: "2026-07-05T23:59:00Z",
+					archived_segments: 12,
+					archived_rows: 4200,
+				},
+			},
+			isLoading: false,
+			error: null,
+			refetch: vi.fn(),
+		});
+		const { user } = renderWithProviders(<AuditLogPage />);
+
+		const banner = screen.getByRole("region", { name: "Audit retention" });
+		expect(banner).toHaveTextContent("Older events are archived through");
+		await user.click(
+			screen.getByRole("combobox", { name: "Action filter" }),
+		);
+		await user.click(
+			await screen.findByRole("option", { name: "Policy denials" }),
+		);
+		await user.click(screen.getByRole("button", { name: "Export" }));
+
+		const dialog = await screen.findByRole("dialog", {
+			name: "Export audit events",
+		});
+		expect(dialog).toBeVisible();
+		expect(screen.getByLabelText("Action prefix (optional)")).toHaveValue(
+			"policy.deny",
+		);
+	});
+
+	it("shows no retention window when the list omits it", () => {
+		renderWithProviders(<AuditLogPage />);
+
+		expect(
+			screen.queryByRole("region", { name: "Audit retention" }),
+		).not.toBeInTheDocument();
 	});
 });

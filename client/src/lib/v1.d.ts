@@ -3376,6 +3376,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audit/exports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Export audit events, archived and current, to a file
+         * @description Queue an export of the audit events in a date range (at most 366 days) to one gzip JSONL file, under the same rules as listing them.
+         */
+        post: operations["start_audit_export_api_audit_exports_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/audit/exports/{job_id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download a finished audit export */
+        get: operations["download_audit_export_api_audit_exports__job_id__download_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/metrics": {
         parameters: {
             query?: never;
@@ -7186,6 +7223,58 @@ export interface paths {
         put?: never;
         /** Clean up expired artifacts */
         post: operations["cleanup_artifact_retention_api_maintenance_artifact_retention_cleanup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/maintenance/audit-retention/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get audit retention settings and archive status */
+        get: operations["get_audit_retention_settings_api_maintenance_audit_retention_settings_get"];
+        /** Update audit retention settings */
+        put: operations["update_audit_retention_settings_api_maintenance_audit_retention_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/maintenance/audit-retention/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Archive aged audit events now, or preview the run */
+        post: operations["start_audit_archive_api_maintenance_audit_retention_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/maintenance/audit-retention/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Preview which archived audit events an archive window would delete */
+        get: operations["preview_audit_expiry_api_maintenance_audit_retention_preview_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -13202,6 +13291,50 @@ export interface components {
             /** Attachments */
             attachments: components["schemas"]["AttachmentPublic"][];
         };
+        /** AuditArchiveRunRequest */
+        AuditArchiveRunRequest: {
+            /**
+             * Dry Run
+             * @default false
+             */
+            dry_run: boolean;
+        };
+        /** AuditExpiryPreview */
+        AuditExpiryPreview: {
+            /** Expiring Segments */
+            expiring_segments: number;
+            /** Expiring Rows */
+            expiring_rows: number;
+            /** Expiring From */
+            expiring_from: string | null;
+            /** Expiring To */
+            expiring_to: string | null;
+        };
+        /** AuditExportRequest */
+        AuditExportRequest: {
+            /**
+             * Start Date
+             * Format: date-time
+             * @description Start of the export range (inclusive).
+             */
+            start_date: string;
+            /**
+             * End Date
+             * Format: date-time
+             * @description End of the export range (inclusive).
+             */
+            end_date: string;
+            /**
+             * Organization Id
+             * @description Export only this organization's events; omit for every organization you reach.
+             */
+            organization_id?: string | null;
+            /**
+             * Action
+             * @description Action prefix filter, e.g. 'access.check'.
+             */
+            action?: string | null;
+        };
         /**
          * AuditLogActor
          * @description Who performed the action.
@@ -13345,6 +13478,51 @@ export interface components {
              * @description Opaque token for next page (null when no more)
              */
             continuation_token?: string | null;
+            /** @description What the database holds and what is archived */
+            retention?: components["schemas"]["AuditRetentionInfo"] | null;
+        };
+        /** AuditRetentionInfo */
+        AuditRetentionInfo: {
+            /** Hot Days */
+            hot_days: number;
+            /** Archive Days */
+            archive_days: number | null;
+            /** Oldest In Database */
+            oldest_in_database: string | null;
+            /** Archived Through */
+            archived_through: string | null;
+            /** Archived Segments */
+            archived_segments: number;
+            /** Archived Rows */
+            archived_rows: number;
+        };
+        /** AuditRetentionSettings */
+        AuditRetentionSettings: {
+            /**
+             * Hot Days
+             * @description Days events stay in the database before they are archived.
+             * @default 90
+             */
+            hot_days: number;
+            /**
+             * Archive Days
+             * @description Age in days at which archived events are deleted; null keeps them forever.
+             * @default 365
+             */
+            archive_days: number | null;
+        };
+        /** AuditRetentionSettingsUpdate */
+        AuditRetentionSettingsUpdate: {
+            /** Hot Days */
+            hot_days: number;
+            /** Archive Days */
+            archive_days: number | null;
+        };
+        /** AuditRetentionStatus */
+        AuditRetentionStatus: {
+            settings: components["schemas"]["AuditRetentionSettings"];
+            info: components["schemas"]["AuditRetentionInfo"];
+            last_run: components["schemas"]["PlatformJobPublic"] | null;
         };
         /**
          * AuthStatusResponse
@@ -35710,6 +35888,70 @@ export interface operations {
             };
         };
     };
+    start_audit_export_api_audit_exports_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuditExportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_audit_export_api_audit_exports__job_id__download_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/gzip": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_metrics_api_metrics_get: {
         parameters: {
             query?: never;
@@ -42579,6 +42821,124 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlatformJobAccepted"];
+                };
+            };
+        };
+    };
+    get_audit_retention_settings_api_maintenance_audit_retention_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditRetentionStatus"];
+                };
+            };
+        };
+    };
+    update_audit_retention_settings_api_maintenance_audit_retention_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuditRetentionSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditRetentionStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_audit_archive_api_maintenance_audit_retention_run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuditArchiveRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_audit_expiry_api_maintenance_audit_retention_preview_get: {
+        parameters: {
+            query?: {
+                /** @description Archive window in days; omit to keep archives forever. */
+                archive_days?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditExpiryPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

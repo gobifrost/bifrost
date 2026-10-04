@@ -23,6 +23,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { AuditFilters } from "./AuditFilters";
+import { AuditRetentionBanner } from "./AuditRetentionBanner";
+import { AuditExportDialog } from "./AuditExportDialog";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent } from "@/components/ui/card";
@@ -57,6 +59,7 @@ export function AuditLogPage() {
 	const [endDate, setEndDate] = useState("");
 	const [continuationTokens, setContinuationTokens] = useState<string[]>([]);
 	const [currentPage, setCurrentPage] = useState(0);
+	const [exportOpen, setExportOpen] = useState(false);
 
 	const resetPagination = () => {
 		setContinuationTokens([]);
@@ -169,6 +172,11 @@ export function AuditLogPage() {
 						/>
 					</Button>
 				</div>
+
+				<AuditRetentionBanner
+					retention={data?.retention}
+					onExport={() => setExportOpen(true)}
+				/>
 
 				<AuditFilters
 					searchText={searchText}
@@ -340,6 +348,14 @@ export function AuditLogPage() {
 					)}
 				</div>
 			</PageScrollArea>
+			{exportOpen && (
+				<AuditExportDialog
+					defaultAction={actionGroup === "All" ? "" : actionGroup}
+					defaultStartDate={startDate}
+					defaultEndDate={endDate}
+					onClose={() => setExportOpen(false)}
+				/>
+			)}
 		</PageWorkspace>
 	);
 }
