@@ -85,32 +85,62 @@ describe("BifrostHeader (SDK, self-contained)", () => {
     expect(screen.queryByText("Account")).toBeNull();
   });
 
-  it("uses shrinkable and wrapping inline layout for narrow app viewports", () => {
+  it("keeps one row on narrow viewports: the title truncates instead of the header wrapping", () => {
     const { container } = render(
       <BifrostProvider baseUrl="https://dev.example" token="t" fetchImpl={noNetwork} supportsTheme>
-        <BifrostHeader
-          title="A very long app title that should not force the app viewport wider"
-          action={<button type="button">Export a very long report label</button>}
-        />
+        <BifrostHeader title="A very long app title that should not force the app viewport wider" />
       </BifrostProvider>,
     );
 
     const header = container.querySelector("header")!;
-    const left = screen.getByText(/very long app title/i).parentElement!;
-    const right = screen.getByRole("button", { name: /account menu/i }).closest("div")!.parentElement!;
     const title = screen.getByText(/very long app title/i);
-    const accountName = screen.getByText("Account");
+    const left = title.parentElement!;
+    const right = screen.getByRole("button", { name: /account menu/i }).closest("div")!.parentElement!;
 
-    expect(header.style.flexWrap).toBe("wrap");
+    // Exactly two flex children (title side, controls side) that never wrap.
+    expect(Array.from(header.children)).toEqual([left, right]);
+    expect(header.style.flexWrap).toBe("nowrap");
     expect(header.style.alignItems).toBe("center");
-    expect(left.style.flex).toBe("1 1 240px");
+    // The title side takes only leftover space and may shrink to nothing...
+    expect(left.style.flex).toBe("1 1 0%");
     expect(left.style.minWidth).toBe("0");
-    expect(right.style.flex).toBe("0 1 auto");
-    expect(right.style.flexWrap).toBe("wrap");
+    expect(left.style.overflow).toBe("hidden");
+    // ...so the title is what gives way, with an ellipsis.
+    expect(title.style.whiteSpace).toBe("nowrap");
     expect(title.style.overflow).toBe("hidden");
     expect(title.style.textOverflow).toBe("ellipsis");
-    expect(accountName.style.maxWidth).not.toBe("");
-    expect(accountName.style.overflow).toBe("hidden");
+    expect(title.style.minWidth).toBe("0");
+    // The controls keep their content width.
+    expect(right.style.flex).toBe("0 1 auto");
+    expect(right.contains(screen.getByRole("button", { name: /theme/i }))).toBe(true);
+  });
+
+  it("compacts the user menu to the avatar below the 640px breakpoint", () => {
+    render(
+      <BifrostProvider baseUrl="https://dev.example" token="t" fetchImpl={noNetwork}>
+        <BifrostHeader title="Compact" />
+      </BifrostProvider>,
+    );
+
+    const trigger = screen.getByRole("button", { name: /account menu/i });
+    const accountName = screen.getByText("Account");
+    const chevron = trigger.querySelector(".bfh-account-chevron");
+    expect(trigger.contains(accountName)).toBe(true);
+    expect(accountName.classList.contains("bfh-account-name")).toBe(true);
+    expect(chevron).not.toBeNull();
+
+    // The scoped sheet hides exactly the name + chevron under the breakpoint,
+    // leaving the avatar as the (still accessibly named) trigger.
+    const sheet = (document.getElementById("bifrost-header-style-light") as HTMLStyleElement).sheet!;
+    const media = Array.from(sheet.cssRules).find(
+      (rule): rule is CSSMediaRule => rule instanceof CSSMediaRule,
+    )!;
+    expect(media.media.mediaText).toBe("(max-width: 639.98px)");
+    const hidden = media.cssRules[0] as CSSStyleRule;
+    expect(hidden.style.display).toBe("none");
+    expect(hidden.selectorText).toContain(".bfh-account-name");
+    expect(hidden.selectorText).toContain(".bfh-account-chevron");
+    expect(hidden.selectorText).not.toContain("bfh-trigger");
   });
 
   it("styles itself inline (no dependency on Tailwind/theme CSS variables)", () => {

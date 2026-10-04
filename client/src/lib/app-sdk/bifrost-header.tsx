@@ -15,6 +15,10 @@
  * the dropdown. It does NOT depend on Tailwind or the platform CSS-variable
  * theme — drop-in correct in `npm run dev`, deployed, or any standalone bundle.
  *
+ * ONE ROW at every width: the left side absorbs all spare space and the title
+ * truncates with an ellipsis; below the 640px breakpoint the user menu trigger
+ * compacts to just the avatar (the scoped sheet hides the name + chevron).
+ *
  * User identity + app logo are fetched lazily from the authed context the
  * provider already supplies (`authedFetch` + `appId`) — no new bootstrap
  * fields, no provider change. `GET /api/auth/me` → name/email/avatar;
@@ -98,6 +102,7 @@ ${s} .bfh-link,${s} .bfh-trigger{color:${C.muted};transition:color .12s,backgrou
 ${s} .bfh-link:hover{color:${C.fg}}
 ${s} .bfh-trigger:hover{color:${C.fg};background-color:${C.accent}}
 ${s} .bfh-item:hover{background-color:${C.accent}}
+@media (max-width: 639.98px){${s} .bfh-account-name,${s} .bfh-account-chevron{display:none}}
 `;
 }
 
@@ -119,13 +124,15 @@ function initials(me: Me | null): string {
   return src[0].toUpperCase();
 }
 
-// Palette-independent layout (shared by light + dark).
+// Palette-independent layout (shared by light + dark). The left side has a zero
+// flex basis so it only receives the space the right cluster leaves over: the
+// title truncates before the theme toggle or user menu is squeezed or wrapped.
 const leftStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: "0.7rem",
   minWidth: 0,
-  flex: "1 1 240px",
+  flex: "1 1 0%",
   overflow: "hidden",
 };
 const logoStyle: CSSProperties = {
@@ -166,8 +173,8 @@ const headerStyle = (C: Palette): CSSProperties => ({
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
-  flexWrap: "wrap",
-  gap: "0.5rem 1rem",
+  flexWrap: "nowrap",
+  gap: "1rem",
   borderBottom: `1px solid ${C.border}`,
   padding: "0.5rem 1rem",
   background: C.surface,
@@ -375,8 +382,10 @@ export function BifrostHeader({ title, logo, action, className }: BifrostHeaderP
                 initials(me)
               )}
             </span>
-            <span style={accountNameStyle(C)}>{name}</span>
-            <ChevronDown style={{ ...iconStyle, color: C.faint }} />
+            <span className="bfh-account-name" style={accountNameStyle(C)}>
+              {name}
+            </span>
+            <ChevronDown className="bfh-account-chevron" style={{ ...iconStyle, color: C.faint }} />
           </button>
 
           {open && (
