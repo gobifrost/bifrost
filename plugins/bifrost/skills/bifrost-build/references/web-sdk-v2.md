@@ -14,7 +14,23 @@ Omit `--app` for a single-App Solution. The Solution command downloads the SDK f
 
 Keep the scaffolded `BifrostProvider` wiring in `src/main.tsx`. The host supplies the API URL, viewer token, org scope, app ID, theme, logout handler, and mount basename.
 
-`useBifrostContext()` exposes the scoped transport and host state, including `authedFetch`, logout, and theme controls. It does not expose a trustworthy client-side role authorization API; enforce access in workflows and platform policies.
+`useBifrostContext()` exposes the scoped transport and host state, including `authedFetch`, logout, and theme controls.
+
+## Signed-in user and roles
+
+`useUser()` returns the signed-in user (`id`, `email`, `name`, `organizationId`, `isPlatformAdmin`, `roles`, `hasRole(name)`, `isLoading`, `error`), read once per provider from `/api/auth/me`. `<RequireRole role="..." fallback={...}>` renders its children only for a holder of that role and nothing while loading.
+
+```tsx
+import { RequireRole, useUser } from "bifrost";
+
+const user = useUser();
+<p>Signed in as {user.name}</p>
+<RequireRole role="Approvers">
+  <ApproveButton />
+</RequireRole>
+```
+
+Showing or hiding a control is convenience, not security: the workflow (its access level and roles, its own checks on `context`) and table policies enforce. Never send these values to a workflow as input.
 
 `supportsTheme` declares that the entire app responds to host light/dark state. Read the theme contract in `app-quality.md` before retaining it.
 

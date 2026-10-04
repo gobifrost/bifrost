@@ -112,6 +112,7 @@ COPY client/src/lib/app-sdk/provider.tsx \
      client/src/lib/app-sdk/use-workflow-hooks.ts \
      client/src/lib/app-sdk/files.ts \
      client/src/lib/app-sdk/use-files.ts \
+     client/src/lib/app-sdk/use-user.tsx \
      client/src/lib/app-sdk/bifrost-header.tsx \
      /app/src/services/sdk_package/sdk_src/
 COPY client/src/lib/app-sdk/index.v2.ts /app/src/services/sdk_package/sdk_src/index.ts

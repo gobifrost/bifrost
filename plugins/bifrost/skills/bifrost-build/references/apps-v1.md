@@ -37,7 +37,7 @@ Other imports follow these rules:
 
 ## v1-only capabilities
 
-`useUser`, `RequireRole`, and `useAppState` belong to the v1 injected surface. They do not exist in the v2 SDK. Preserve them while maintaining v1 code, but do not carry them into a v2 migration.
+`useAppState` belongs to the v1 injected surface and does not exist in the v2 SDK. `useUser` and `RequireRole` exist in both with the same shape (the v2 `useUser` adds `isLoading`, since it reads the user over the network); in v2, import them from `bifrost`.
 
 Server-side workflows and policies remain the authorization boundary even when a v1 component hides UI by role.
 
