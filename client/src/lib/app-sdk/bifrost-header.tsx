@@ -17,8 +17,9 @@
  * theme — drop-in correct in `npm run dev`, deployed, or any standalone bundle.
  * It does not depend on a router either: the app passes its router's NavLink.
  *
- * PHONES (below 640px): one row — back link, truncated title, and a single menu
- * button. The button opens a panel holding the nav links, the action slot, the
+ * PHONES (below 640px): one row — a menu button on the left, then the truncated
+ * title (the navigation-drawer layout). The button opens a full-width panel
+ * under the bar holding Back to Bifrost, the nav links, the action slot, the
  * theme toggle and the account section. Focus moves into the panel and Tab is
  * kept inside it; Escape, a tap outside, following a link, or browser
  * back/forward closes it.
@@ -544,17 +545,8 @@ export function BifrostHeader({ title, logo, action, nav, className }: BifrostHe
 
   return (
     <header data-bifrost-header data-bifrost-header-theme={themeKey} style={headerStyle(C)} className={className}>
-      <div style={barStyle}>
-        <div style={leftStyle}>
-          <a href={platformApps} className="bfh-link" style={backLinkStyle(C)}>
-            <ArrowLeft style={iconStyle} />
-            Bifrost
-          </a>
-          {effectiveLogo ? <img src={effectiveLogo} alt="" style={logoStyle} /> : null}
-          <span style={titleStyle(C)}>{title}</span>
-        </div>
-
-        {narrow ? (
+      {narrow ? (
+        <div style={{ ...barStyle, justifyContent: "flex-start", gap: "0.5rem" }}>
           <button
             ref={panelTriggerRef}
             type="button"
@@ -567,7 +559,19 @@ export function BifrostHeader({ title, logo, action, nav, className }: BifrostHe
           >
             {open ? <X style={iconStyle} /> : <Menu style={iconStyle} />}
           </button>
-        ) : (
+          <span style={titleStyle(C)}>{title}</span>
+        </div>
+      ) : (
+        <div style={barStyle}>
+          <div style={leftStyle}>
+            <a href={platformApps} className="bfh-link" style={backLinkStyle(C)}>
+              <ArrowLeft style={iconStyle} />
+              Bifrost
+            </a>
+            {effectiveLogo ? <img src={effectiveLogo} alt="" style={logoStyle} /> : null}
+            <span style={titleStyle(C)}>{title}</span>
+          </div>
+
           <div style={rightStyle}>
             {action}
             {/* Light/dark toggle — only when the app declared it supports theming
@@ -622,8 +626,8 @@ export function BifrostHeader({ title, logo, action, nav, className }: BifrostHe
               )}
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {nav && !narrow && (
         <nav aria-label="Primary" style={tabRowStyle}>
@@ -635,14 +639,23 @@ export function BifrostHeader({ title, logo, action, nav, className }: BifrostHe
         <>
           <div aria-hidden="true" className="bfh-backdrop" style={backdropStyle} onClick={closeMenu} />
           <div ref={panelRef} id={panelId} role="dialog" aria-label="Menu" style={panelStyle(C)}>
+            <div style={panelSectionStyle}>
+              <a href={platformApps} className="bfh-item" style={menuItemStyle(C)}>
+                <ArrowLeft style={iconStyle} />
+                Back to Bifrost
+              </a>
+            </div>
             {nav && (
-              <nav aria-label="Primary" style={panelSectionStyle}>
-                <NavItems nav={nav} className="bfh-item bfh-panel-link" style={menuItemStyle(C)} onClick={closeMenu} />
-              </nav>
+              <>
+                <div style={dividerStyle(C)} />
+                <nav aria-label="Primary" style={panelSectionStyle}>
+                  <NavItems nav={nav} className="bfh-item bfh-panel-link" style={menuItemStyle(C)} onClick={closeMenu} />
+                </nav>
+              </>
             )}
             {(action || supportsTheme) && (
               <>
-                {nav && <div style={dividerStyle(C)} />}
+                <div style={dividerStyle(C)} />
                 <div style={panelSectionStyle}>
                   {action}
                   {supportsTheme && (
@@ -654,7 +667,7 @@ export function BifrostHeader({ title, logo, action, nav, className }: BifrostHe
                 </div>
               </>
             )}
-            {(nav || action || supportsTheme) && <div style={dividerStyle(C)} />}
+            <div style={dividerStyle(C)} />
             <div style={panelSectionStyle}>
               <AccountSummary me={me} C={C} name={name} email={email} />
               <button type="button" className="bfh-item" onClick={onLogout} style={{ ...menuItemStyle(C), color: C.danger }}>

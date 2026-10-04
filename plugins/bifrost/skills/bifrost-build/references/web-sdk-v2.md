@@ -50,7 +50,7 @@ const NAV = [
 <BifrostHeader title="Operations" nav={{ items: NAV, link: NavLink }} />
 ```
 
-`nav.link` is the router's link component; the SDK has no router of its own. On wide screens the links form a tab row under the title bar. Below 640px the header is one row (back link, truncated title, a menu button labelled "Open menu"); the button opens a panel with the links, the `action` slot, the theme toggle and the account section. Without `nav`, phones still get the menu button for theme and account.
+`nav.link` is the router's link component; the SDK has no router of its own. On wide screens the links form a tab row under the title bar. Below 640px the header is one row: a menu button labelled "Open menu" on the left, then the truncated title. The button opens a panel with Back to Bifrost, the links, the `action` slot, the theme toggle and the account section. Without `nav`, phones still get the menu button for theme and account.
 
 The platform does not insert it automatically. Compose it into the app's own layout and avoid adding a second competing top-level header.
 

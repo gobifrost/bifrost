@@ -4,7 +4,7 @@ Applies to V2 Apps (independent or Solution-owned). `references/app-quality.md` 
 
 ## What the host gives you, and what it does not
 
-The platform mounts a `standalone_v2` App into a full-viewport container (`h-dvh w-full overflow-hidden`) with **no platform chrome**: no sidebar, no top bar, no page padding. The scaffold's `index.html` puts `h-full` on `html`, `body`, and `#root`. The optional `BifrostHeader` from `bifrost` supplies a one-line header: back-to-Bifrost link, logo, title, an `action` slot, the theme toggle (only when `supportsTheme`), and the user menu (name/email from `/api/auth/me`, log out). Its optional `nav` prop holds the App's section links: a tab row under the title bar on wide screens, and the panel behind a single menu button below 640px, where the header collapses to one row (back link, title, menu button).
+The platform mounts a `standalone_v2` App into a full-viewport container (`h-dvh w-full overflow-hidden`) with **no platform chrome**: no sidebar, no top bar, no page padding. The scaffold's `index.html` puts `h-full` on `html`, `body`, and `#root`. The optional `BifrostHeader` from `bifrost` supplies a one-line header: back-to-Bifrost link, logo, title, an `action` slot, the theme toggle (only when `supportsTheme`), and the user menu (name/email from `/api/auth/me`, log out). Its optional `nav` prop holds the App's section links: a tab row under the title bar on wide screens, and the panel behind a single menu button below 640px, where the header collapses to one row: a menu button on the left, then the title. "Back to Bifrost" moves into that panel.
 
 Consequences:
 

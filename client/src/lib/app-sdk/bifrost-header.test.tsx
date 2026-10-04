@@ -143,6 +143,9 @@ describe("BifrostHeader (SDK, self-contained)", () => {
     // Without `nav` the header is just the bar: title side + controls side.
     expect(Array.from(header.children)).toEqual([bar]);
     expect(Array.from(bar.children)).toEqual([left, right]);
+    // Desktop keeps the back link in the bar, before the title.
+    expect(left.firstElementChild!.textContent).toBe("Bifrost");
+    expect(left.firstElementChild!.getAttribute("href")).toBe("https://dev.example/apps");
     expect(bar.style.flexWrap).toBe("nowrap");
     expect(bar.style.alignItems).toBe("center");
     // The title side takes only leftover space and may shrink to nothing...
@@ -201,16 +204,23 @@ describe("BifrostHeader (SDK, self-contained)", () => {
     beforeEach(() => setViewportWidth(390));
     afterEach(() => setViewportWidth(1024));
 
-    it("collapses to one row: back link, title and a single menu button", () => {
-      const { container } = renderAt("/", <BifrostHeader title="Phone" nav={NAV} action={<button type="button">Export</button>} />);
+    it("collapses to one row: the menu button on the left, then the title, nothing else", () => {
+      const { container } = renderAt(
+        "/",
+        <BifrostHeader title="Phone" logo="data:image/png;base64,AA==" nav={NAV} action={<button type="button">Export</button>} />,
+      );
 
       const header = container.querySelector("header")!;
-      const bar = screen.getByText("Phone").parentElement!.parentElement!;
+      const title = screen.getByText("Phone");
+      const bar = title.parentElement!;
       expect(Array.from(header.children)).toEqual([bar]);
       const menuButton = screen.getByRole("button", { name: "Open menu" });
       expect(menuButton.getAttribute("aria-expanded")).toBe("false");
-      expect(within(bar).getAllByRole("button")).toEqual([menuButton]);
-      expect(within(bar).getAllByRole("link").map((a) => a.textContent)).toEqual(["Bifrost"]);
+      expect(Array.from(bar.children)).toEqual([menuButton, title]);
+      expect(bar.style.justifyContent).toBe("flex-start");
+      expect(title.style.textOverflow).toBe("ellipsis");
+      // The back link lives in the panel on phones.
+      expect(screen.queryByRole("link")).toBeNull();
       expect(screen.queryByRole("navigation")).toBeNull();
       expect(screen.queryByText("Export")).toBeNull();
     });
@@ -229,8 +239,10 @@ describe("BifrostHeader (SDK, self-contained)", () => {
       const panel = screen.getByRole("dialog", { name: "Menu" });
       expect(screen.getByRole("button", { name: "Close menu" }).getAttribute("aria-expanded")).toBe("true");
       const links = within(panel).getAllByRole("link");
-      expect(links.map((a) => a.textContent)).toEqual(["Home", "About"]);
-      expect(links[1].getAttribute("aria-current")).toBe("page");
+      // Back to Bifrost comes first, above the nav links.
+      expect(links.map((a) => a.textContent)).toEqual(["Back to Bifrost", "Home", "About"]);
+      expect(links[0].getAttribute("href")).toBe("https://dev.example/apps");
+      expect(links[2].getAttribute("aria-current")).toBe("page");
       expect(within(panel).getByRole("button", { name: "Export" })).toBeInTheDocument();
       expect(within(panel).getByRole("button", { name: "Dark mode" })).toBeInTheDocument();
       expect(await within(panel).findByText("Alex Rivera")).toBeInTheDocument();
@@ -247,7 +259,7 @@ describe("BifrostHeader (SDK, self-contained)", () => {
       renderAt("/", <BifrostHeader title="Phone" nav={NAV} />);
       fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
       const panel = screen.getByRole("dialog", { name: "Menu" });
-      const first = within(panel).getByRole("link", { name: "Home" });
+      const first = within(panel).getByRole("link", { name: "Back to Bifrost" });
       const last = within(panel).getByRole("button", { name: "Log out" });
 
       last.focus();
@@ -289,6 +301,7 @@ describe("BifrostHeader (SDK, self-contained)", () => {
       const panel = screen.getByRole("dialog", { name: "Menu" });
 
       expect(within(panel).queryByRole("navigation")).toBeNull();
+      expect(within(panel).getAllByRole("link").map((a) => a.textContent)).toEqual(["Back to Bifrost"]);
       expect(within(panel).getByRole("button", { name: "Dark mode" })).toBeInTheDocument();
       expect(within(panel).getByText("Account")).toBeInTheDocument();
       expect(within(panel).getByRole("button", { name: "Log out" })).toBeInTheDocument();
