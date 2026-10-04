@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
+import { StrictMode } from "react";
 import { MemoryRouter, NavLink, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -195,6 +196,24 @@ describe("BifrostHeader (SDK, self-contained)", () => {
 
       setViewportWidth(390);
       expect(screen.queryByRole("dialog")).toBeNull();
+    } finally {
+      setViewportWidth(1024);
+    }
+  });
+
+  it("restores desktop controls after phone resizing without a header interaction", async () => {
+    const me: typeof fetch = async () =>
+      new Response(JSON.stringify({ name: "Alex Rivera" }), { status: 200 });
+    renderAt("/", <StrictMode><BifrostHeader title="Resizing" action={<button type="button">Organization</button>} /></StrictMode>, { fetchImpl: me });
+    await screen.findByText("Alex Rivera");
+    try {
+      setViewportWidth(390);
+      expect(screen.getByRole("button", { name: "Open menu" })).toBeInTheDocument();
+      setViewportWidth(320);
+      setViewportWidth(1920);
+      expect(screen.getByRole("button", { name: "Organization" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Account menu" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Open menu" })).toBeNull();
     } finally {
       setViewportWidth(1024);
     }
