@@ -208,7 +208,7 @@ async def test_batch_writes_are_checked_for_the_run_user(db_session, world) -> N
     hr_writes = {"name": "hr", "actions": ["create"], "when": {"call": "has_role", "args": ["HR"]}}
     token = _collecting(world["hr"].id)
     try:
-        try:
+        with pytest.raises(BatchPolicyDenied):
             await write_table_batch(
                 db_session,
                 world["table"],
@@ -217,8 +217,6 @@ async def test_batch_writes_are_checked_for_the_run_user(db_session, world) -> N
                 policies=_policies(hr_writes),
                 user=_engine(),
             )
-        except BatchPolicyDenied:
-            pass
         collector = access_checks.current()
         assert collector is not None
         [note] = collector.notes
@@ -238,10 +236,8 @@ async def test_batch_deletes_are_checked_for_the_run_user(db_session, world) -> 
     await db_session.flush()
     token = _collecting(world["hr"].id)
     try:
-        try:
+        with pytest.raises(TableWriteForbidden):
             await batch_delete_table_documents(db_session, world["table"], _engine(), ids=["d1"])
-        except TableWriteForbidden:
-            pass
         collector = access_checks.current()
         assert collector is not None
         [note] = collector.notes
