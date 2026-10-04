@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import BinaryIO
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from cryptography.fernet import Fernet
@@ -86,7 +87,52 @@ def write_encrypted_payload_member_from_bytes(
     with zf.open(info, "w", force_zip64=True) as out:
         out.write(json.dumps(header, separators=(",", ":")).encode() + b"\n")
         for offset in range(0, len(content), 8 * 1024 * 1024):
-            out.write(fernet.encrypt(content[offset : offset + 8 * 1024 * 1024]) + b"\n")
+            out.write(
+                fernet.encrypt(content[offset : offset + 8 * 1024 * 1024]) + b"\n"
+            )
+
+
+_MAX_HEADER_BYTES = 4096
+_MAX_TOKEN_BYTES = 16 * 1024 * 1024
+_MAX_KDF_MEMORY_BYTES = 64 * 1024 * 1024
+
+
+async def iter_encrypted_payload_stream(
+    stream: BinaryIO,
+    *,
+    password: str,
+) -> AsyncIterator[bytes]:
+    """Decrypt an archive member with bounded header, token and KDF allocations."""
+    import base64
+
+    first = stream.readline(_MAX_HEADER_BYTES + 1)
+    if not first or len(first) > _MAX_HEADER_BYTES:
+        raise ValueError("invalid solution file payload header")
+    header = json.loads(first.decode())
+    if not isinstance(header, dict) or header.get("format") != _PAYLOAD_FORMAT:
+        raise ValueError("unsupported solution file payload format")
+    if header.get("kdf") != "scrypt":
+        raise ValueError("unsupported solution file payload KDF")
+    n, r, p = int(header["n"]), int(header["r"]), int(header["p"])
+    if (
+        n < 2
+        or n & (n - 1)
+        or r < 1
+        or not 1 <= p <= 4
+        or 128 * n * r > _MAX_KDF_MEMORY_BYTES
+    ):
+        raise ValueError("unsafe solution file payload KDF parameters")
+    salt = base64.urlsafe_b64decode(header["salt"])
+    if len(salt) != 16:
+        raise ValueError("invalid solution file payload KDF salt")
+    key = _derive_fernet_key(password, salt, n=n, r=r, p=p)
+    fernet = Fernet(key)
+    while line := stream.readline(_MAX_TOKEN_BYTES + 1):
+        if len(line) > _MAX_TOKEN_BYTES:
+            raise ValueError("solution file payload token exceeds chunk limit")
+        token = line.strip()
+        if token:
+            yield fernet.decrypt(token)
 
 
 async def iter_encrypted_payload_file(
@@ -94,25 +140,7 @@ async def iter_encrypted_payload_file(
     *,
     password: str,
 ) -> AsyncIterator[bytes]:
-    """Yield decrypted chunks from a payload file created by export."""
-    import base64
-
-    with path.open("rb") as f:
-        first = f.readline()
-        if not first:
-            raise ValueError(f"empty solution file payload: {path}")
-        header = json.loads(first.decode())
-        if header.get("format") != _PAYLOAD_FORMAT:
-            raise ValueError(f"unsupported solution file payload format: {path}")
-        key = _derive_fernet_key(
-            password,
-            base64.urlsafe_b64decode(header["salt"]),
-            n=int(header["n"]),
-            r=int(header["r"]),
-            p=int(header["p"]),
-        )
-        fernet = Fernet(key)
-        while line := f.readline():
-            token = line.strip()
-            if token:
-                yield fernet.decrypt(token)
+    """Yield bounded decrypted chunks from an extracted payload file."""
+    with path.open("rb") as stream:
+        async for chunk in iter_encrypted_payload_stream(stream, password=password):
+            yield chunk

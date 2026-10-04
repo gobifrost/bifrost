@@ -84,3 +84,25 @@ async def test_workspace_bundle_rejects_different_decisions_for_an_active_previe
     assert error.value.status_code == 409
     assert storage.stage_calls == 0
     assert db.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_backup_upload_uses_explicit_budget_without_relaxing_workspace_limit(monkeypatch):
+    from src.routers import solutions
+
+    class Upload:
+        def __init__(self):
+            self.chunks = iter((b"a" * 6, b"b" * 6, b""))
+
+        async def read(self, _size):
+            return next(self.chunks)
+
+    monkeypatch.setattr(solutions, "MAX_SOLUTION_ARCHIVE_BYTES", 10)
+    path = await solutions._spool_upload_to_temp(Upload(), prefix="backup-budget-", max_bytes=14)
+    try:
+        assert path.read_bytes() == b"a" * 6 + b"b" * 6
+    finally:
+        path.unlink()
+    with pytest.raises(HTTPException) as error:
+        await solutions._spool_upload_to_temp(Upload(), prefix="workspace-budget-")
+    assert error.value.status_code == 413
