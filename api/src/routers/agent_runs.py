@@ -646,6 +646,7 @@ async def cancel_agent_run(
 
     # Running — set to cancelling and signal via Redis
     agent_run.status = "cancelling"
+    agent_run.cancel_requested_at = datetime.now(timezone.utc)
     await db.commit()
 
     await redis_client.set_agent_run_cancel_flag(str(run_id))

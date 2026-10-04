@@ -422,6 +422,7 @@ async def cancel_chat_run(
         async with get_redis() as redis:
             await redis.setex(f"bifrost:agent_run:{run_id}:cancel", 3600, "1")
         run.status = "cancelling"
+        run.cancel_requested_at = datetime.now(timezone.utc)
 
     await db.commit()
 

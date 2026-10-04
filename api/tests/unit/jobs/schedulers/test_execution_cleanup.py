@@ -193,3 +193,123 @@ class TestExecutionCleanupAgentRuns:
         assert kwargs["kind"] == "error"
         assert kwargs["status"] == "timeout"
         assert kwargs["payload"].run_status == "timeout"
+
+    async def test_cleanup_cancels_runs_stuck_in_cancelling(
+        self,
+        db_session,
+        async_session_factory,
+        seed_agent,
+        monkeypatch,
+    ) -> None:
+        _patch_cleanup_dependencies(monkeypatch, async_session_factory)
+        # 60s + 5 min grace means the run timeout would not fire at 5 minutes;
+        # only the cancelling rule can sweep the stale run.
+        seed_agent.max_run_timeout = 60
+        seed_agent.updated_at = datetime.now(timezone.utc)
+        stale = AgentRun(
+            id=uuid4(),
+            agent_id=seed_agent.id,
+            trigger_type="api",
+            status="cancelling",
+            iterations_used=1,
+            tokens_used=25,
+            created_at=_stale_time(5),
+            started_at=_stale_time(5),
+            cancel_requested_at=_stale_time(5),
+        )
+        db_session.add_all([seed_agent, stale])
+        await db_session.commit()
+
+        results = await cleanup.cleanup_stuck_executions()
+
+        assert results["agent_run_cancelling_timeouts"] == 1
+        assert results["agent_run_running_timeouts"] == 0
+        assert results["agent_run_total_cleaned"] == 1
+
+        stale_reloaded = await _load_run(async_session_factory, stale.id)
+        assert stale_reloaded.status == "cancelled"
+        assert stale_reloaded.completed_at is not None
+        assert "stuck in cancelling" in stale_reloaded.error
+
+        assert _agent_run_updates(cleanup.publish_agent_run_update) == [
+            (stale.id, "cancelled"),
+        ]
+        cleanup.publish_chat_run_event.assert_not_awaited()
+
+    async def test_cleanup_measures_cancelling_from_cancel_request(
+        self,
+        db_session,
+        async_session_factory,
+        seed_agent,
+        monkeypatch,
+    ) -> None:
+        _patch_cleanup_dependencies(monkeypatch, async_session_factory)
+        # Started an hour ago but cancelled a minute ago: the worker is still
+        # inside its cancellation window, so the run must be left alone.
+        recently_cancelled = AgentRun(
+            id=uuid4(),
+            agent_id=seed_agent.id,
+            trigger_type="api",
+            status="cancelling",
+            iterations_used=1,
+            tokens_used=25,
+            created_at=_stale_time(60),
+            started_at=_stale_time(60),
+            cancel_requested_at=_fresh_time(1),
+        )
+        db_session.add_all([seed_agent, recently_cancelled])
+        await db_session.commit()
+
+        results = await cleanup.cleanup_stuck_executions()
+
+        assert results["agent_run_cancelling_timeouts"] == 0
+        assert results["agent_run_total_cleaned"] == 0
+        reloaded = await _load_run(async_session_factory, recently_cancelled.id)
+        assert reloaded.status == "cancelling"
+        assert reloaded.completed_at is None
+        assert reloaded.error is None
+        cleanup.publish_agent_run_update.assert_not_awaited()
+
+    async def test_cleanup_cancels_stuck_cancelling_chat_and_publishes_cancelled_event(
+        self,
+        db_session,
+        async_session_factory,
+        seed_user,
+        monkeypatch,
+    ) -> None:
+        _patch_cleanup_dependencies(monkeypatch, async_session_factory)
+        conversation = Conversation(
+            id=uuid4(),
+            user_id=seed_user.id,
+            title="Stuck cancelling chat",
+        )
+        run = AgentRun(
+            id=uuid4(),
+            agent_id=None,
+            conversation_id=conversation.id,
+            trigger_type="chat",
+            status="cancelling",
+            iterations_used=0,
+            tokens_used=0,
+            created_at=_stale_time(5),
+            started_at=_stale_time(5),
+            cancel_requested_at=_stale_time(5),
+        )
+        db_session.add_all([conversation, run])
+        await db_session.commit()
+
+        results = await cleanup.cleanup_stuck_executions()
+
+        assert results["agent_run_cancelling_timeouts"] == 1
+        assert results["agent_run_total_cleaned"] == 1
+        reloaded = await _load_run(async_session_factory, run.id)
+        assert reloaded.status == "cancelled"
+        cleanup.publish_agent_run_update.assert_awaited_once()
+        cleanup.publish_chat_run_event.assert_awaited_once()
+        kwargs = cleanup.publish_chat_run_event.await_args.kwargs
+        assert kwargs["conversation_id"] == conversation.id
+        assert kwargs["run_id"] == str(run.id)
+        assert kwargs["kind"] == "cancelled"
+        assert kwargs["status"] == "cancelled"
+        assert kwargs["payload"].type == "cancelled"
+        assert kwargs["payload"].run_status == "cancelled"
