@@ -1,9 +1,12 @@
 """
 Audit export: archived and current events in one gzip JSONL file.
 
-Every test seeds two events dated 2001 (one per organization), archives them
-through the archiver services, and inserts one current event. Exports run as
-real ``audit.query`` platform jobs on the scheduler.
+Every test seeds the same four kinds of event in each source, all dated 2001:
+an access check and a user update in an organization the operator reaches, and
+the same two in one it does not. One set is archived through the archiver
+services; the other stays in Postgres. Each export therefore reads both
+sources, and only the filters inside the job tell the rows apart. Exports run
+as real ``audit.query`` platform jobs on the scheduler.
 """
 
 from __future__ import annotations
@@ -38,16 +41,30 @@ USER_ROLE_ID = "00000000-0000-0000-0000-000000000006"
 YEAR_2001 = {"start_date": "2001-01-01T00:00:00Z", "end_date": "2001-12-31T23:59:59Z"}
 
 
+# (source, reach, action, created_at): the four kinds of event, once per source.
+EVENTS = [
+    ("archived", "in", "access.check", datetime(2001, 3, 1, 9, 0, tzinfo=UTC)),
+    ("archived", "in", "user.update", datetime(2001, 3, 1, 10, 0, tzinfo=UTC)),
+    ("archived", "out", "access.check", datetime(2001, 3, 2, 8, 0, tzinfo=UTC)),
+    ("archived", "out", "user.update", datetime(2001, 3, 2, 9, 0, tzinfo=UTC)),
+    ("current", "in", "access.check", datetime(2001, 6, 1, 9, 0, tzinfo=UTC)),
+    ("current", "in", "user.update", datetime(2001, 6, 1, 10, 0, tzinfo=UTC)),
+    ("current", "out", "access.check", datetime(2001, 6, 2, 8, 0, tzinfo=UTC)),
+    ("current", "out", "user.update", datetime(2001, 6, 2, 9, 0, tzinfo=UTC)),
+]
+
+
 @dataclass
 class Seeded:
     in_reach: Organization
     out_of_reach: Organization
-    archived: dict[str, UUID]  # action -> id
-    current: UUID
-    current_action: str
+    ids: dict[tuple[str, str, str], str]  # (source, reach, action) -> id
     keys: list[str]
     actor_email: str
     exports: list[UUID] = field(default_factory=list)
+
+    def id(self, source: str, reach: str, action: str) -> str:
+        return self.ids[(source, reach, action)]
 
 
 def _ok(response, status: int = 200) -> Any:
@@ -92,31 +109,23 @@ async def seeded(db_session: AsyncSession, store: AuditArchiveStore, platform_ad
     out_of_reach = Organization(id=uuid4(), name=f"Export Org Out {tag}", created_by="test")
     db_session.add_all([in_reach, out_of_reach])
     await db_session.flush()
-    archived = {"access.check": uuid4(), "user.update": uuid4()}
-    current_action = f"access.check.export-{tag}"
-    current = uuid4()
+    orgs = {"in": in_reach.id, "out": out_of_reach.id}
+    ids = {(source, reach, action): uuid4() for source, reach, action, _ in EVENTS}
     db_session.add_all(
-        [
-            AuditLog(id=archived["access.check"], organization_id=in_reach.id, user_id=platform_admin.user_id,
-                     action="access.check", outcome="failure", source="workflow",
-                     details={"tag": tag}, created_at=datetime(2001, 3, 1, 9, 0, tzinfo=UTC)),
-            AuditLog(id=archived["user.update"], organization_id=out_of_reach.id, user_id=platform_admin.user_id,
-                     action="user.update", outcome="success", source="http",
-                     details={"tag": tag}, created_at=datetime(2001, 3, 2, 9, 0, tzinfo=UTC)),
-            AuditLog(id=current, organization_id=in_reach.id, action=current_action, outcome="success",
-                     source="workflow", created_at=datetime.now(UTC)),
-        ]
+        AuditLog(id=ids[(source, reach, action)], organization_id=orgs[reach], user_id=platform_admin.user_id,
+                 action=action, outcome="success", source="http", details={"tag": tag}, created_at=at)
+        for source, reach, action, at in EVENTS
     )
     await db_session.commit()
     db_session.expunge_all()
-    keys = await _archive(db_session, store, set(archived.values()))
-    world = Seeded(in_reach, out_of_reach, archived, current, current_action, keys, platform_admin.email)
+    keys = await _archive(db_session, store, {i for (source, _, _), i in ids.items() if source == "archived"})
+    world = Seeded(in_reach, out_of_reach, {k: str(v) for k, v in ids.items()}, keys, platform_admin.email)
 
     yield world
 
     await db_session.rollback()
     await db_session.execute(delete(PlatformJob).where(PlatformJob.id.in_(world.exports)))
-    await db_session.execute(delete(AuditLog).where(AuditLog.id.in_([*archived.values(), current])))
+    await db_session.execute(delete(AuditLog).where(AuditLog.id.in_(ids.values())))
     await db_session.execute(delete(AuditArchiveSegment).where(AuditArchiveSegment.object_key.in_(keys)))
     await db_session.execute(delete(Organization).where(Organization.id.in_([in_reach.id, out_of_reach.id])))
     await db_session.commit()
@@ -194,10 +203,10 @@ def _lines(response) -> list[dict[str, Any]]:
 
 @pytest.mark.asyncio
 class TestAuditExport:
-    async def test_admin_exports_archived_events_with_snapshot_names(
+    async def test_admin_exports_both_sources_with_snapshot_names(
         self, e2e_client, platform_admin, seeded, db_session
     ):
-        # A rename after archiving does not reach the archived snapshot.
+        # Archived lines keep the name they were archived with; current rows read it live.
         await db_session.execute(
             update(Organization).where(Organization.id == seeded.in_reach.id).values(name="Renamed Org")
         )
@@ -206,12 +215,16 @@ class TestAuditExport:
         job = _export(e2e_client, platform_admin, YEAR_2001, seeded)
 
         assert job["status"] == "succeeded", job
-        assert (job["result"]["rows"], job["result"]["segments"]) == (2, 2)
+        assert (job["result"]["rows"], job["result"]["segments"]) == (8, 2)
         response = _download(e2e_client, platform_admin, job["id"])
         assert 'filename="audit-export-2001-01-01-2001-12-31.jsonl.gz"' in response.headers["content-disposition"]
         lines = _lines(response)
-        assert [line["id"] for line in lines] == [str(seeded.archived["access.check"]), str(seeded.archived["user.update"])]
-        assert [line["organization_name"] for line in lines] == [seeded.in_reach.name, seeded.out_of_reach.name]
+        # Archived segments first, then current rows, each in (created_at, id) order.
+        assert [line["id"] for line in lines] == [seeded.id(*event[:3]) for event in EVENTS]
+        assert [line["organization_name"] for line in lines] == [
+            seeded.in_reach.name, seeded.in_reach.name, seeded.out_of_reach.name, seeded.out_of_reach.name,
+            "Renamed Org", "Renamed Org", seeded.out_of_reach.name, seeded.out_of_reach.name,
+        ]
         assert {line["actor_email"] for line in lines} == {seeded.actor_email}
         assert {line["schema"] for line in lines} == {"audit.v1"}
 
@@ -225,22 +238,6 @@ class TestAuditExport:
         expired = _download(e2e_client, platform_admin, job["id"])
         assert expired.status_code == 410, expired.text
         assert expired.json()["detail"] == "Export expired; run it again."
-
-    async def test_export_includes_current_events(self, e2e_client, platform_admin, seeded):
-        now = datetime.now(UTC)
-        job = _export(
-            e2e_client,
-            platform_admin,
-            {
-                "start_date": (now - timedelta(days=1)).isoformat(),
-                "end_date": (now + timedelta(days=1)).isoformat(),
-                "action": seeded.current_action,
-            },
-            seeded,
-        )
-
-        assert job["status"] == "succeeded", job
-        assert [line["id"] for line in _lines(_download(e2e_client, platform_admin, job["id"]))] == [str(seeded.current)]
 
     async def test_operator_exports_access_checks_in_reach_only(self, e2e_client, platform_admin, seeded, operator):
         user_id, user = operator
@@ -257,7 +254,13 @@ class TestAuditExport:
 
         assert job["status"] == "succeeded", job
         lines = _lines(_download(e2e_client, user, job["id"]))
-        assert [line["id"] for line in lines] == [str(seeded.archived["access.check"])]
+        # The in-reach user update shares its archived segment with the in-reach access
+        # check, and the out-of-reach access check matches the action: only the job's
+        # own filters keep them out, in both sources.
+        assert [line["id"] for line in lines] == [
+            seeded.id("archived", "in", "access.check"),
+            seeded.id("current", "in", "access.check"),
+        ]
         # Only the requester downloads it, and only while their reach is unchanged.
         assert _download(e2e_client, platform_admin, job["id"]).status_code == 404
         _assign_operator(e2e_client, platform_admin, user_id, seeded.out_of_reach.id)
