@@ -20,13 +20,17 @@ from src.models.orm.organizations import Organization
 from src.models.orm.users import User
 from src.services.access_check_writer import flush
 
-ROUTE = {"method": "POST", "path": "/api/tables/{name}/documents", "operation": "POST /api/tables/{name}/documents"}
+ROUTE = {"operation": "POST /api/tables/{name}/documents", "route": ("POST", "/api/tables/{name}/documents")}
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def _fresh_redis_client():
+async def _fresh_redis_client(monkeypatch):
     # The shared client binds to the event loop that created it; each test
-    # runs in its own loop.
+    # runs in its own loop, so it starts without one (an earlier test's client
+    # belongs to a closed loop) and closes the one it made.
+    from src.core.cache import redis_client
+
+    monkeypatch.setattr(redis_client, "_shared_client", None)
     yield
     await close_shared_redis()
 
@@ -203,3 +207,15 @@ async def test_without_redis_nothing_is_written_and_nothing_raises(db_session: A
 
     assert await _rows(db_session, collector) == []
     assert "access checks not written" in caplog.text
+
+
+async def test_a_check_that_could_not_be_computed_is_a_gap(db_session: AsyncSession) -> None:
+    home = await _org(db_session)
+    person = await _person(db_session, home)
+    collector = _collector(person.id, Note("entry", home.id, {"gap": "observer_error:TimeoutError"}))
+
+    await flush(db_session, collector, **ROUTE)
+
+    [row] = await _rows(db_session, collector)
+    assert (row.action, row.resource_type, row.user_id) == ("access.check_gap", "entry", person.id)
+    assert row.details == {"reason": "observer_error:TimeoutError", "operation": ROUTE["operation"]}

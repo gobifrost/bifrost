@@ -43,8 +43,8 @@ def _engine_token() -> str:
 
 
 async def _get(path: str, token: str, flushed: list) -> httpx.Response:
-    async def capture(db, collector, *, method, path, operation):
-        flushed.append((collector, method, path, operation))
+    async def capture(db, collector, *, operation, route):
+        flushed.append((collector, route, operation))
 
     transport = httpx.ASGITransport(app=_app())
     with pytest.MonkeyPatch.context() as mp:
@@ -59,8 +59,8 @@ async def test_an_engine_request_is_judged_with_its_route() -> None:
     response = await _get("/__test__/checked/a", _engine_token(), flushed)
 
     assert response.status_code == 200
-    [(collector, method, path, operation)] = flushed
-    assert (method, path, operation) == ("GET", "/__test__/checked/{name}", "GET /__test__/checked/{name}")
+    [(collector, route, operation)] = flushed
+    assert (route, operation) == (("GET", "/__test__/checked/{name}"), "GET /__test__/checked/{name}")
     assert [note.facts for note in collector.notes] == [{"name": "a"}]
 
 
@@ -85,7 +85,7 @@ async def test_a_persons_request_is_not_judged() -> None:
 
 
 async def test_a_failing_writer_never_changes_the_response() -> None:
-    async def broken(db, collector, *, method, path, operation):
+    async def broken(db, collector, *, operation, route):
         raise RuntimeError("boom")
 
     transport = httpx.ASGITransport(app=_app())

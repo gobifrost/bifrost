@@ -72,3 +72,14 @@ def test_a_note_after_the_collector_closed_is_not_kept() -> None:
         assert collector.notes == []
     finally:
         access_checks.stop_collecting(token)
+
+
+def test_a_check_that_failed_to_compute_is_noted_as_a_gap() -> None:
+    token = access_checks.start_collecting(_engine_payload(engine_run_user_id=str(uuid4())))
+    try:
+        access_checks.note_failure("entry", None, TimeoutError())
+        collector = access_checks.current()
+        assert collector is not None
+        assert collector.notes == [access_checks.Note("entry", None, {"gap": "observer_error:TimeoutError"})]
+    finally:
+        access_checks.stop_collecting(token)

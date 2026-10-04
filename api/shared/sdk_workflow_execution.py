@@ -38,6 +38,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared import access_checks
 from shared.run_lineage import RunLineage, lineage_columns, principal_lineage
 from src.core.org_filter import resolve_target_org
 from src.core.principal import UserPrincipal
@@ -141,6 +142,28 @@ def _server_caller_context(
         app_id=context_app_id,
         caller_solution_id=context_caller_solution_id,
     )
+
+
+async def _note_entry(session: AsyncSession, principal: UserPrincipal, workflow: Any) -> None:
+    """Report-only: an agent run nobody started opens the workflow as its own user.
+
+    Today the MCP bridge opens it as the system account; the model opens it
+    as the agent run's user (``principal.run_user_id``), like a person.
+    Children of a run (engine tokens) do not consult workflow access.
+    """
+    if access_checks.current() is None or principal.engine_execution_id is not None:
+        return
+    if principal.run_user_id is None or principal.run_user_id == principal.user_id:
+        return
+    from src.repositories import WorkflowRepository
+    from src.services.access_check_entry import run_user_may_open
+
+    try:
+        allowed = await run_user_may_open(session, WorkflowRepository, principal.run_user_id, workflow.id)
+    except Exception as exc:
+        access_checks.note_failure("entry", workflow.organization_id, exc)
+        return
+    access_checks.note("entry", workflow.organization_id, allowed=allowed, subject=f"workflow:{workflow.id}")
 
 
 async def execute_sdk_workflow(
@@ -290,6 +313,9 @@ async def execute_sdk_workflow(
             "Either workflow_id or code must be provided",
         )
 
+    if workflow is not None:
+        await _note_entry(session, principal, workflow)
+
     # Validate admin-only overrides (org_id, run_as)
     if (request.org_id or request.run_as) and not principal.is_superuser:
         raise SdkWorkflowExecutionError(
@@ -320,6 +346,8 @@ async def execute_sdk_workflow(
         exec_user_email = run_as_user.email or ""
         exec_is_admin = run_as_user.is_superuser
         logger.info(f"Impersonating user: {exec_user_id} ({exec_user_email})")
+        if run_as_user.id != principal.run_user_id:
+            access_checks.note("run_as", None, run_as_user_id=run_as_user.id)
 
     # Who the run is for: the authenticated caller, never the run_as user.
     lineage = await principal_lineage(session, principal)
@@ -340,6 +368,7 @@ async def execute_sdk_workflow(
         logger.info(f"Using workflow's organization: {execution_org_id}")
     else:
         execution_org_id = caller_org_id
+    access_checks.note("child_run", execution_org_id)
 
     # Scheduled execution: normalize delay_seconds -> scheduled_at and insert row.
     # The deferred_execution_promoter job will publish this row when it matures.

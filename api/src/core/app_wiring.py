@@ -316,7 +316,7 @@ async def _judge_access_checks(request: Request, collector) -> None:
     try:
         async with get_db_context() as db:
             await access_check_writer.flush(
-                db, collector, method=request.method, path=path, operation=operation
+                db, collector, operation=operation, route=(request.method, path)
             )
     except Exception:
         logger.warning("access checks not written (operation=%s)", operation, exc_info=True)

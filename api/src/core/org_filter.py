@@ -16,6 +16,8 @@ from uuid import UUID
 
 from sqlalchemy import ColumnElement, false, or_
 
+from shared.access_checks import ALL_ORGS
+from shared.access_checks import note as note_access_target
 from src.core.principal import UserPrincipal
 
 
@@ -105,17 +107,20 @@ def resolve_org_filter(
     if user.is_superuser:
         if scope is None or scope == "":
             # Superuser with no filter - show ALL records
+            note_access_target("scope_switch", ALL_ORGS)
             return (OrgFilterType.ALL, None)
         elif scope == "global":
             # Superuser filtering to global only
+            note_access_target("scope_switch", None)
             return (OrgFilterType.GLOBAL_ONLY, None)
         else:
             # Superuser filtering by specific org - ONLY that org (no global)
             try:
                 org_uuid = UUID(scope)
-                return (OrgFilterType.ORG_ONLY, org_uuid)
             except ValueError:
                 raise ValueError(f"Invalid scope value: {scope}")
+            note_access_target("scope_switch", org_uuid)
+            return (OrgFilterType.ORG_ONLY, org_uuid)
     else:
         # Org users: always filter to their organization, ignore the scope parameter
         if user.organization_id is not None:
@@ -167,13 +172,16 @@ def resolve_target_org(
     """
     if user.is_superuser or user.is_provider_org:
         if scope is None:
-            return default_org_id
-        if scope == "global":
-            return None
-        try:
-            return UUID(scope)
-        except ValueError:
-            raise ValueError(f"Invalid scope value: {scope}")
+            target = default_org_id
+        elif scope == "global":
+            target = None
+        else:
+            try:
+                target = UUID(scope)
+            except ValueError:
+                raise ValueError(f"Invalid scope value: {scope}")
     else:
         # Non-bypass callers always use their own org, scope is ignored
-        return user.organization_id
+        target = user.organization_id
+    note_access_target("scope_switch", target)
+    return target

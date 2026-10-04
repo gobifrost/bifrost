@@ -156,7 +156,7 @@ class _Writer:
         )
 
 
-async def _write(db: AsyncSession, collector: Collector, *, method: str, path: str, operation: str) -> None:
+async def _write(db: AsyncSession, collector: Collector, *, operation: str, route: tuple[str, str] | None) -> None:
     writer = _Writer(db, await get_shared_redis(), collector, operation)
     kinds = sorted({note.kind for note in collector.notes})
     if collector.run_user_id is None:
@@ -169,8 +169,11 @@ async def _write(db: AsyncSession, collector: Collector, *, method: str, path: s
             await writer.gap(kind, "run_user_missing")
         return
     powers = await load_powers(db, collector.workflow_id)
-    entry = _entries_by_route().get((method, path))
+    entry = None if route is None else _entries_by_route().get(route)
     for note in collector.notes:
+        if "gap" in note.facts:
+            await writer.gap(note.kind, note.facts["gap"], run_user.user_id)
+            continue
         try:
             trace = _judge(run_user, powers, note, entry)
         except Exception as exc:
@@ -181,12 +184,18 @@ async def _write(db: AsyncSession, collector: Collector, *, method: str, path: s
             await writer.check(note, trace, run_user)
 
 
-async def flush(db: AsyncSession, collector: Collector, *, method: str, path: str, operation: str) -> None:
-    """Judge and write ``collector``'s notes; never raises."""
+async def flush(
+    db: AsyncSession, collector: Collector, *, operation: str, route: tuple[str, str] | None
+) -> None:
+    """Judge and write ``collector``'s notes; never raises.
+
+    ``route`` is the request's (method, path template), which names its
+    access-list entry; None outside a request.
+    """
     collector.closed = True
     if not collector.notes:
         return
     try:
-        await _write(db, collector, method=method, path=path, operation=operation)
+        await _write(db, collector, operation=operation, route=route)
     except Exception:
         logger.warning("access checks not written (operation=%s)", operation, exc_info=True)

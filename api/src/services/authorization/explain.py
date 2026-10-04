@@ -25,6 +25,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.access_checks import ALL_ORGS, NoteTarget
 from src.core.constants import PROVIDER_ORG_ID
 from src.models.contracts.access_list import AccessClass, AccessEntry, CurrentGate
 from src.models.contracts.workflow_permissions import WorkflowGrant, WorkflowPermissionMode
@@ -47,9 +48,7 @@ from src.services.workflow_permissions import (
 StepStatus = Literal["passed", "stopped", "not_applicable", "not_reached"]
 Outcome = Literal["success", "failure"]
 
-# Target of a list read with no scope: every organization.
-ALL_ORGS = "*"
-TargetOrg = UUID | None | Literal["*"]
+TargetOrg = NoteTarget
 
 _SECRETS_PERMISSION = "secrets.read"
 

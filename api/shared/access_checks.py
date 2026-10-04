@@ -24,8 +24,9 @@ from uuid import UUID
 logger = logging.getLogger(__name__)
 
 NoteKind = Literal["scope_switch", "child_run", "run_as", "entry", "policy", "secret"]
-# A target organization; None is Global; "*" is every organization (a list
-# read with no scope).
+# Every organization: the target of a list read with no scope.
+ALL_ORGS: Literal["*"] = "*"
+# A target organization; None is Global.
 NoteTarget = UUID | None | Literal["*"]
 
 
@@ -96,3 +97,9 @@ def note(kind: NoteKind, target: NoteTarget, /, **facts: Any) -> None:
         logger.warning("access check noted after the request was judged; dropped (kind=%s)", kind)
         return
     collector.notes.append(Note(kind, target, facts))
+
+
+def note_failure(kind: NoteKind, target: NoteTarget, error: BaseException) -> None:
+    """Note that a check could not be computed; written as a coverage gap."""
+    logger.warning("access check could not be computed (kind=%s): %s", kind, type(error).__name__)
+    note(kind, target, gap=f"observer_error:{type(error).__name__}")
