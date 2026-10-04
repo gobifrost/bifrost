@@ -7772,6 +7772,20 @@
     "mcp_tool": null,
     "method": "POST",
     "operation_id": null,
+    "path": "/api/solutions/export-jobs/{job_id}/download-link",
+    "permission": "solutions.read",
+    "reason": "Platform-admin-only operation."
+  },
+  {
+    "access_class": "permission",
+    "boundary": "organization",
+    "current_gate": "superuser",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "POST",
+    "operation_id": null,
     "path": "/api/solutions/import-workspace",
     "permission": "solutions.readwrite",
     "reason": "Platform-admin-only operation."
