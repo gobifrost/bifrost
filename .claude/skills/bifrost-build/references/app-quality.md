@@ -62,7 +62,7 @@ For mutations:
 
 ## Layout and responsiveness
 
-Bifrost apps mount inside a constrained host region. The root must fill the available mount, while individual lists and panels should remain content-sized until constrained.
+A V2 app owns the whole viewport: the host mounts it in a full-height, non-scrolling region and draws no navigation around it, so the app provides its own nav shell and its own scrolling (see `best-practices/apps.md`). The root must fill the available mount, while individual lists and panels should remain content-sized until constrained.
 
 - Keep fixed headers and metadata outside the scrolling region.
 - Put `overflow-auto` on the content region that can actually grow.

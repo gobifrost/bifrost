@@ -4,7 +4,7 @@ Use workflows for server-side logic, integrations, secrets, durable execution, f
 
 ## Authoring contract
 
-Import decorators and SDK modules from `bifrost`. Workflow inputs come from the function signature; do not add a `ctx` parameter.
+Import decorators and SDK modules from `bifrost`. Workflow inputs come from the function signature; do not add a `ctx` parameter. Who is calling (user, organization, admin flag) is on `context` (`from bifrost import context`) — never take identity as an input; see `best-practices/security.md`.
 
 ```python
 from bifrost import tables, workflow
