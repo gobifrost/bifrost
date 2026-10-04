@@ -609,6 +609,7 @@ async def test_execute_validates_before_dispatch():
                 snapshot,
                 tool,
                 {"ticket_id": "invalid"},
+                lineage=None,
             )
 
     assert exc_info.value.code == "INVALID_ARGUMENTS"
@@ -635,7 +636,7 @@ async def test_execute_keeps_legacy_empty_schema_permissive():
         "_dispatch",
         new=AsyncMock(return_value={"output": "ok"}),
     ) as dispatch:
-        result = await service.execute_tool(snapshot, tool, arguments)
+        result = await service.execute_tool(snapshot, tool, arguments, lineage=None)
 
     assert result["result"] == {"output": "ok"}
     dispatch.assert_awaited_once_with(
@@ -643,6 +644,7 @@ async def test_execute_keeps_legacy_empty_schema_permissive():
         tool,
         arguments,
         async_execution=False,
+        lineage=None,
     )
 
 
@@ -662,6 +664,7 @@ async def test_execute_returns_auditable_envelope():
             snapshot,
             tool,
             {"ticket_id": 42},
+            lineage=None,
         )
 
     assert result["agent_id"] == str(agent.id)
@@ -696,6 +699,7 @@ async def test_delegation_defaults_to_async_execution():
             snapshot,
             tool,
             {"ticket_id": 42},
+            lineage=None,
         )
 
     assert dispatch.await_args.kwargs["async_execution"] is True
@@ -722,6 +726,7 @@ async def test_delegation_allows_explicit_synchronous_execution():
             tool,
             {"ticket_id": 42},
             async_execution=False,
+            lineage=None,
         )
 
     assert dispatch.await_args.kwargs["async_execution"] is False
@@ -746,7 +751,7 @@ async def test_workflow_dispatch_returns_only_the_workflow_result():
         "src.services.execution.service.execute_tool",
         new=AsyncMock(return_value=response),
     ) as execute:
-        result = await service._dispatch_workflow(tool, {"ticket_id": 42})
+        result = await service._dispatch_workflow(tool, {"ticket_id": 42}, lineage=None)
 
     assert result == [{"ticket": 42}]
     assert execute.await_args.kwargs["org_id"] == str(context.org_id)
@@ -773,6 +778,7 @@ async def test_async_workflow_dispatch_returns_immediate_execution_receipt():
             tool,
             {"ticket_id": 42},
             async_execution=True,
+            lineage=None,
         )
 
     assert result == {
@@ -797,6 +803,7 @@ async def test_async_rejects_unsupported_sources_without_dispatching():
                 tool,
                 {"ticket_id": 42},
                 async_execution=True,
+                lineage=None,
             )
 
     assert exc_info.value.code == "ASYNC_NOT_SUPPORTED"
@@ -846,6 +853,7 @@ async def test_async_delegation_enqueues_agent_run():
             tool,
             {"task": "Assemble the customer report"},
             async_execution=True,
+            lineage=None,
         )
 
     assert result == {
@@ -911,6 +919,7 @@ async def test_sync_delegation_waits_for_queued_agent_run_result():
             tool,
             {"task": "Assemble the customer report"},
             async_execution=False,
+            lineage=None,
         )
 
     assert result == {
@@ -940,7 +949,7 @@ async def test_workflow_dispatch_keeps_execution_details_on_failure():
         new=AsyncMock(return_value=response),
     ):
         with pytest.raises(GatewayError) as exc_info:
-            await service._dispatch_workflow(tool, {"ticket_id": 42})
+            await service._dispatch_workflow(tool, {"ticket_id": 42}, lineage=None)
 
     error = exc_info.value
     assert error.message == "HaloPSA rejected the query"
@@ -997,3 +1006,23 @@ def test_external_dispatch_preserves_structured_error_details():
     assert error.message == "Invalid project"
     assert error.retryable is True
     assert error.details["underlying_result"] == underlying
+
+
+@pytest.mark.asyncio
+async def test_gateway_workflow_tool_runs_with_the_callers_lineage():
+    from shared.run_lineage import RunLineage
+
+    service = MCPAgentGatewayService(_context())
+    tool = _resolved_tool()
+    run_user, root = uuid4(), uuid4()
+    lineage = RunLineage(run_user, run_user, root)
+    response = MagicMock(execution_id=str(uuid4()), status=MagicMock(value="Success"), result={})
+
+    with patch(
+        "src.services.mcp_server.gateway.execute_agent_workflow_tool",
+        new_callable=AsyncMock,
+        return_value=response,
+    ) as execute:
+        await service._dispatch(_agent(), tool, {"ticket_id": 1}, lineage=lineage)
+
+    assert execute.await_args.kwargs["lineage"] == lineage

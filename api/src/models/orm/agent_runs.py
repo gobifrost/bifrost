@@ -127,6 +127,7 @@ class AgentRun(Base):
         Index("ix_agent_runs_created_at", "created_at"),
         Index("ix_agent_runs_parent_run_id", "parent_run_id"),
         Index("ix_agent_runs_agent_verdict_status", "agent_id", "verdict", "status"),
+        Index("ix_agent_runs_run_user_id", "run_user_id", postgresql_where=run_user_id.isnot(None)),
     )
 
 

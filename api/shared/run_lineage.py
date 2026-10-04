@@ -62,6 +62,13 @@ def person_lineage(user_id: UUID | str) -> RunLineage:
     return RunLineage(run_user_id=person, started_by_user_id=person, root_execution_id=None)
 
 
+def run_user_lineage(run_user_id: UUID | None) -> RunLineage | None:
+    """A run started by an agent run for its run user; None when unrecorded."""
+    if run_user_id is None:
+        return None
+    return RunLineage(run_user_id=run_user_id, started_by_user_id=run_user_id, root_execution_id=None)
+
+
 async def identity_lineage(session: AsyncSession, organization_id: UUID | str | None) -> RunLineage:
     """The organization's default identity; the global identity when there is no organization."""
     query = (

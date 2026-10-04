@@ -39,6 +39,7 @@ from src.services.execution.agent_helpers import (
     parse_mcp_tool_name,
     resolve_agent_tools,
 )
+from shared.run_lineage import run_user_lineage
 from src.services.execution.agent_workflow_tools import (
     AgentWorkflowCaller,
     execute_agent_workflow_tool,
@@ -671,7 +672,6 @@ class AutonomousAgentExecutor:
                     else agent.name
                 ),
                 organization_id=self._execution_org_id(agent),
-                run_user_id=self._run_user_id,
                 is_platform_admin=(
                     bool(self._caller.get("is_platform_admin", False))
                     if self._caller_user_id and self._caller
@@ -683,6 +683,7 @@ class AutonomousAgentExecutor:
                 if self._ancestor_run_ids
                 else self._current_run_id or None
             ),
+            lineage=run_user_lineage(self._run_user_id),
         )
         self._last_workflow_execution_id = response.execution_id
         self._last_workflow_execution_is_error = response.status.value != "Success"

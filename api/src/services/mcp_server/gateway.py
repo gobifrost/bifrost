@@ -14,7 +14,7 @@ import pydantic_core
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from shared.run_lineage import person_lineage
+from shared.run_lineage import RunLineage
 from shared.scope_resolver import has_scope_bypass
 from src.core.org_filter import OrgFilterType
 from src.models.orm.agents import Agent
@@ -601,8 +601,13 @@ class MCPAgentGatewayService:
         arguments: dict[str, Any],
         *,
         async_execution: bool | None = None,
+        lineage: RunLineage | None,
     ) -> dict[str, Any]:
-        """Re-resolve, validate, and execute an agent-bound tool."""
+        """Re-resolve, validate, and execute an agent-bound tool.
+
+        ``lineage`` is the caller's (shared.run_lineage.principal_lineage);
+        workflow and delegation tools run with it.
+        """
         snapshot = await self.get_agent_snapshot(agent_id)
         tool = self.find_tool(snapshot, tool_ref)
         return await self.execute_tool(
@@ -610,6 +615,7 @@ class MCPAgentGatewayService:
             tool,
             arguments,
             async_execution=async_execution,
+            lineage=lineage,
         )
 
     async def get_execution(
@@ -1044,6 +1050,7 @@ class MCPAgentGatewayService:
         arguments: dict[str, Any],
         *,
         async_execution: bool | None = None,
+        lineage: RunLineage | None,
     ) -> dict[str, Any]:
         started = time.monotonic()
         resolved_async = (
@@ -1065,6 +1072,7 @@ class MCPAgentGatewayService:
                 tool,
                 arguments,
                 async_execution=resolved_async,
+                lineage=lineage,
             )
         except GatewayError as exc:
             duration_ms = int((time.monotonic() - started) * 1000)
@@ -1138,6 +1146,7 @@ class MCPAgentGatewayService:
         arguments: dict[str, Any],
         *,
         async_execution: bool = False,
+        lineage: RunLineage | None,
     ) -> Any:
         if tool.source in {"system", "knowledge"}:
             return await self._dispatch_system_tool(agent, tool, arguments)
@@ -1146,6 +1155,7 @@ class MCPAgentGatewayService:
                 tool,
                 arguments,
                 async_execution=async_execution,
+                lineage=lineage,
             )
         if tool.source == "delegation":
             return await self._dispatch_delegation(
@@ -1153,6 +1163,7 @@ class MCPAgentGatewayService:
                 tool,
                 arguments,
                 async_execution=async_execution,
+                lineage=lineage,
             )
         if tool.source == "external_mcp":
             return await self._dispatch_external_mcp(tool, arguments)
@@ -1212,6 +1223,7 @@ class MCPAgentGatewayService:
         arguments: dict[str, Any],
         *,
         async_execution: bool = False,
+        lineage: RunLineage | None,
     ) -> Any:
         if tool.source_id is None:
             raise GatewayError(
@@ -1227,10 +1239,10 @@ class MCPAgentGatewayService:
                 email=self.context.user_email,
                 name=self.context.user_name or "MCP User",
                 organization_id=self.context.org_id,
-                run_user_id=UUID(str(self.context.user_id)),
                 is_platform_admin=self.context.is_platform_admin,
             ),
             sync=not async_execution,
+            lineage=lineage,
         )
         data = {
             "execution_id": response.execution_id,
@@ -1261,6 +1273,7 @@ class MCPAgentGatewayService:
         arguments: dict[str, Any],
         *,
         async_execution: bool = False,
+        lineage: RunLineage | None,
     ) -> Any:
         from src.core.database import get_db_context
         from src.services.execution.agent_run_service import (
@@ -1310,7 +1323,7 @@ class MCPAgentGatewayService:
             caller_email=self.context.user_email,
             caller_name=self.context.user_name,
             sync=not async_execution,
-            lineage=person_lineage(self.context.user_id),
+            lineage=lineage,
         )
         if async_execution:
             return {

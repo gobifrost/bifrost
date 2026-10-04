@@ -74,6 +74,7 @@ from src.services.execution.agent_helpers import (
     parse_mcp_tool_name,
     resolve_agent_tools,
 )
+from shared.run_lineage import run_user_lineage
 from src.services.execution.agent_workflow_tools import (
     AgentWorkflowCaller,
     execute_agent_workflow_tool,
@@ -1460,7 +1461,6 @@ class AgentExecutor:
                         if user is not None
                         else agent.organization_id if agent else None
                     ),
-                    run_user_id=self._run_user_id,
                     is_platform_admin=(
                         bool(caller.get("is_platform_admin", False))
                         if caller
@@ -1469,6 +1469,7 @@ class AgentExecutor:
                 ),
                 execution_id=execution_id,
                 artifact_workspace_id=str(conversation.id) if conversation else None,
+                lineage=run_user_lineage(self._run_user_id),
             )
 
             duration_ms = int((time.time() - start_time) * 1000)

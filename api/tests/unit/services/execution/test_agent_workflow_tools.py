@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from shared.run_lineage import RunLineage
+from shared.run_lineage import RunLineage, run_user_lineage
 
 from src.services.execution.agent_workflow_tools import (
     AgentWorkflowCaller,
@@ -24,7 +24,6 @@ async def test_execute_agent_workflow_tool_builds_canonical_agent_context():
         email="person@example.com",
         name="Person",
         organization_id=organization_id,
-        run_user_id=run_user_id,
         is_platform_admin=True,
     )
 
@@ -41,6 +40,7 @@ async def test_execute_agent_workflow_tool_builds_canonical_agent_context():
             execution_id="execution-1",
             artifact_workspace_id="workspace-1",
             sync=False,
+            lineage=RunLineage(run_user_id, run_user_id, None),
         )
 
     assert result is response
@@ -61,22 +61,8 @@ async def test_execute_agent_workflow_tool_builds_canonical_agent_context():
     )
 
 
-@pytest.mark.asyncio
-async def test_agent_run_without_a_recorded_run_user_starts_tools_without_lineage():
-    caller = AgentWorkflowCaller(
-        user_id=str(uuid4()),
-        email="person@example.com",
-        name="Person",
-        organization_id=None,
-        run_user_id=None,
-    )
+def test_agent_run_tools_run_for_the_agent_run_user():
+    run_user_id = uuid4()
 
-    with patch(
-        "src.services.execution.service.execute_tool",
-        new_callable=AsyncMock,
-    ) as execute_tool:
-        await execute_agent_workflow_tool(
-            workflow_id=uuid4(), workflow_name="t", parameters={}, caller=caller
-        )
-
-    assert execute_tool.await_args.kwargs["lineage"] is None
+    assert run_user_lineage(run_user_id) == RunLineage(run_user_id, run_user_id, None)
+    assert run_user_lineage(None) is None

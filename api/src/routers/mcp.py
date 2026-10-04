@@ -37,6 +37,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from src.config import get_settings
 from src.core.auth import CurrentActiveUser
+from shared.run_lineage import principal_lineage
 from src.core.db_deps import DbSession
 from src.models.contracts.mcp import (
     MCPConfigRequest,
@@ -179,6 +180,7 @@ async def execute_gateway_tool(
             tool_ref,
             request.arguments,
             async_execution=request.async_,
+            lineage=await principal_lineage(db, current_user),
         )
     except Exception as exc:
         _raise_gateway_http_error(exc)

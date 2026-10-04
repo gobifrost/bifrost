@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from shared.run_lineage import RunLineage
 from src.models.contracts.executions import WorkflowExecutionResponse
 
 
@@ -15,9 +16,6 @@ class AgentWorkflowCaller:
     email: str
     name: str
     organization_id: UUID | str | None
-    # The agent run's run user (shared.run_lineage); None for runs created
-    # before it was recorded.
-    run_user_id: UUID | None
     is_platform_admin: bool = False
 
 
@@ -30,9 +28,12 @@ async def execute_agent_workflow_tool(
     execution_id: str | None = None,
     artifact_workspace_id: str | None = None,
     sync: bool = True,
+    lineage: RunLineage | None,
 ) -> WorkflowExecutionResponse:
-    """Execute a workflow tool with one canonical agent execution context."""
-    from shared.run_lineage import RunLineage
+    """Execute a workflow tool with one canonical agent execution context.
+
+    ``lineage`` says who the tool run is for (shared.run_lineage).
+    """
     from src.services.execution.service import execute_tool
 
     return await execute_tool(
@@ -48,9 +49,5 @@ async def execute_agent_workflow_tool(
         execution_id=execution_id,
         artifact_workspace_id=artifact_workspace_id,
         sync=sync,
-        lineage=(
-            RunLineage(caller.run_user_id, caller.run_user_id, None)
-            if caller.run_user_id
-            else None
-        ),
+        lineage=lineage,
     )

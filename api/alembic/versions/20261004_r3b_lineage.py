@@ -13,6 +13,9 @@ Existing rows stay NULL: their lineage can't be proven. Foreign keys are
 NOT VALID, so adding them doesn't scan the executions table; new rows are
 checked as usual. root_execution_id has no foreign key: retention may remove
 a tree's first execution before its children.
+
+Each user column gets a partial index (built CONCURRENTLY, rows with a value
+only) so deleting a user — ON DELETE SET NULL — doesn't scan executions.
 """
 from __future__ import annotations
 
@@ -47,9 +50,18 @@ def upgrade() -> None:
             postgresql_not_valid=True,
         )
     op.add_column("executions", sa.Column("root_execution_id", postgresql.UUID(as_uuid=True), nullable=True))
+    with op.get_context().autocommit_block():
+        for table, column in _USER_COLUMNS:
+            op.execute(
+                f"CREATE INDEX CONCURRENTLY ix_{table}_{column} "
+                f"ON {table} ({column}) WHERE {column} IS NOT NULL"
+            )
 
 
 def downgrade() -> None:
+    with op.get_context().autocommit_block():
+        for table, column in _USER_COLUMNS:
+            op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS ix_{table}_{column}")
     op.drop_column("executions", "root_execution_id")
     for table, column in reversed(_USER_COLUMNS):
         op.drop_constraint(f"fk_{table}_{column}", table, type_="foreignkey")

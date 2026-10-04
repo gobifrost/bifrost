@@ -122,6 +122,12 @@ class Execution(Base):
         Index("ix_executions_user", "executed_by"),
         Index("ix_executions_workflow", "workflow_name"),
         Index("ix_executions_workflow_id", "workflow_id"),
+        Index("ix_executions_run_user_id", "run_user_id", postgresql_where=run_user_id.isnot(None)),
+        Index(
+            "ix_executions_started_by_user_id",
+            "started_by_user_id",
+            postgresql_where=started_by_user_id.isnot(None),
+        ),
     )
 
 

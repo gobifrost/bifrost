@@ -34,6 +34,12 @@ REVISION = "20261004_r3b_lineage"
 USER_ROLE_ID = UUID("00000000-0000-0000-0000-000000000006")
 
 _EXECUTION_COLUMNS = ("run_user_id", "started_by_user_id", "root_execution_id")
+# Partial indexes so ON DELETE SET NULL on a user doesn't scan executions.
+_INDEXES = {
+    "ix_executions_run_user_id": "executions (run_user_id) WHERE (run_user_id IS NOT NULL)",
+    "ix_executions_started_by_user_id": "executions (started_by_user_id) WHERE (started_by_user_id IS NOT NULL)",
+    "ix_agent_runs_run_user_id": "agent_runs (run_user_id) WHERE (run_user_id IS NOT NULL)",
+}
 _FOREIGN_KEYS = {
     "fk_executions_run_user_id",
     "fk_executions_started_by_user_id",
@@ -124,7 +130,19 @@ async def _state(database_url: str) -> dict:
                     )
                 ).all()
             ]
-        return {"columns": columns, "foreign_keys": foreign_keys, "values": values}
+        indexes = {
+            name: definition
+            for name, definition in (
+                await connection.execute(
+                    sa.text(
+                        "SELECT indexname, indexdef FROM pg_indexes "
+                        "WHERE indexname = ANY(:names)"
+                    ),
+                    {"names": sorted(_INDEXES)},
+                )
+            ).all()
+        }
+        return {"columns": columns, "foreign_keys": foreign_keys, "values": values, "indexes": indexes}
 
     return await _run_in_database(database_url, read)
 
@@ -140,7 +158,7 @@ def test_lineage_columns_are_added_empty_with_unvalidated_foreign_keys() -> None
         _upgrade(database_url, PREVIOUS_REVISION)
         asyncio.run(_seed(database_url, ids))
         before = asyncio.run(_state(database_url))
-        assert before == {"columns": set(), "foreign_keys": {}, "values": []}
+        assert before == {"columns": set(), "foreign_keys": {}, "values": [], "indexes": {}}
 
         _upgrade(database_url, REVISION)
         after = asyncio.run(_state(database_url))
@@ -151,6 +169,7 @@ def test_lineage_columns_are_added_empty_with_unvalidated_foreign_keys() -> None
         # Not validated (no scan of existing rows); ON DELETE SET NULL.
         assert after["foreign_keys"] == {name: (False, "n") for name in _FOREIGN_KEYS}
         assert after["values"] == [(None, None, None)] * 3
+        assert {name: definition.split(" ON public.")[1].replace(" USING btree", "") for name, definition in after["indexes"].items()} == _INDEXES
 
         _upgrade(database_url, "head")
         assert asyncio.run(_state(database_url)) == after
