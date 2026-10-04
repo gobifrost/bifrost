@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from pathlib import Path
-from zipfile import ZipFile, ZipInfo
+from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from cryptography.fernet import Fernet
 
@@ -48,6 +48,9 @@ async def write_encrypted_payload_member(
     }
 
     info = ZipInfo(member, date_time=_ZIP_EPOCH)
+    # An explicit ZipInfo defaults to stored entries, even when its ZipFile
+    # uses compression. Recover Base64 overhead while encrypting in chunks.
+    info.compress_type = ZIP_DEFLATED
     with zf.open(info, "w", force_zip64=True) as out:
         out.write(json.dumps(header, separators=(",", ":")).encode() + b"\n")
         async for chunk in chunks:
@@ -79,6 +82,7 @@ def write_encrypted_payload_member_from_bytes(
     }
 
     info = ZipInfo(member, date_time=_ZIP_EPOCH)
+    info.compress_type = ZIP_DEFLATED
     with zf.open(info, "w", force_zip64=True) as out:
         out.write(json.dumps(header, separators=(",", ":")).encode() + b"\n")
         for offset in range(0, len(content), 8 * 1024 * 1024):
