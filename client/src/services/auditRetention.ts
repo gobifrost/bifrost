@@ -1,4 +1,5 @@
 import { authFetch } from "@/lib/api-client";
+import { ApiError, parseApiError } from "@/lib/api-error";
 import type { components } from "@/lib/v1";
 import { observePlatformJob, type PlatformJob } from "@/services/platformJobs";
 import { webSocketService } from "@/services/websocket";
@@ -25,16 +26,20 @@ export interface AuditArchivePlan {
 	expiring_rows: number;
 }
 
-async function errorMessage(response: Response): Promise<string> {
-	const body = await response.json().catch(() => ({}));
-	return typeof body.detail === "string"
-		? body.detail
-		: `Audit retention request failed: ${response.statusText}`;
+/** The server's reason for a refused request, with its status code. */
+async function requestError(response: Response): Promise<ApiError> {
+	const body = await response.json().catch(() => null);
+	return body && typeof body === "object" && "detail" in body
+		? parseApiError(body, response.status)
+		: new ApiError(
+				`Audit retention request failed: ${response.statusText}`,
+				response.status,
+			);
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
 	const response = await authFetch(url, init);
-	if (!response.ok) throw new Error(await errorMessage(response));
+	if (!response.ok) throw await requestError(response);
 	return response.json() as Promise<T>;
 }
 
@@ -88,7 +93,7 @@ export async function downloadAuditExport(
 	filename: string,
 ): Promise<void> {
 	const response = await authFetch(auditExportDownloadPath(jobId));
-	if (!response.ok) throw new Error(await errorMessage(response));
+	if (!response.ok) throw await requestError(response);
 	const blobUrl = URL.createObjectURL(await response.blob());
 	try {
 		const anchor = document.createElement("a");

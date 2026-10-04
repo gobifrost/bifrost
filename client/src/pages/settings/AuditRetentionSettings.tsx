@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { Archive, Eye, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -24,6 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SettingsToggleRow } from "@/components/shared/SettingsToggleRow";
 import { SettingsLoadError } from "@/components/shared/SettingsLoadError";
+import { ApiError, getErrorMessage } from "@/lib/api-error";
 import {
 	formatAuditDay,
 	formatAuditTime,
@@ -51,6 +52,42 @@ const TERMINAL = new Set([
 
 type Draft = { hotDays: string; archiveDays: string; forever: boolean };
 type FieldError = { field: "hot" | "archive"; message: string };
+type FailedSave = {
+	edit: Draft;
+	action: "save" | "preview";
+	message: string;
+	/** Network and server errors can be retried; a refused request cannot. */
+	retryable: boolean;
+};
+
+const ARCHIVE_INPUT_ID = "audit-retention-archive-days";
+const FOREVER_SWITCH_ID = "audit-retention-forever";
+
+function failure(
+	edit: Draft,
+	action: FailedSave["action"],
+	error: unknown,
+): FailedSave {
+	return {
+		edit,
+		action,
+		message: getErrorMessage(error, "Unknown error"),
+		retryable: !(
+			error instanceof ApiError &&
+			error.statusCode !== undefined &&
+			error.statusCode < 500
+		),
+	};
+}
+
+/** Focus the control a confirmation came from, once it is enabled again. */
+function restoreFocus(pending: MutableRefObject<string | null>) {
+	if (!pending.current) return;
+	const target = document.getElementById(pending.current);
+	if (!target || target.hasAttribute("disabled")) return;
+	target.focus();
+	pending.current = null;
+}
 
 type RunState =
 	| { kind: "idle" }
@@ -145,7 +182,7 @@ export function AuditRetentionSettings() {
 	const [validationError, setValidationError] = useState<FieldError | null>(
 		null,
 	);
-	const [failedSave, setFailedSave] = useState<Draft | null>(null);
+	const [failedSave, setFailedSave] = useState<FailedSave | null>(null);
 	const [confirm, setConfirm] = useState<{
 		settings: AuditRetentionSettingsUpdate;
 		preview: AuditExpiryPreview;
@@ -153,6 +190,9 @@ export function AuditRetentionSettings() {
 	const [run, setRun] = useState<RunState>({ kind: "idle" });
 	const savePending = useRef(false);
 	const stopWatching = useRef<(() => void) | null>(null);
+	// The control to focus after the shorten dialog closes and saving ends.
+	const returnFocusTo = useRef<string | null>(null);
+	const dialogOpen = confirm !== null;
 
 	const showSaved = (next: AuditRetentionStatus) => {
 		setStatus(next);
@@ -196,8 +236,8 @@ export function AuditRetentionSettings() {
 		try {
 			showSaved(await updateAuditRetention(settings));
 			toast.success("Audit retention saved");
-		} catch {
-			setFailedSave(edit);
+		} catch (error) {
+			setFailedSave(failure(edit, "save", error));
 		} finally {
 			savePending.current = false;
 			setSaving(false);
@@ -228,9 +268,13 @@ export function AuditRetentionSettings() {
 		setSaving(true);
 		try {
 			const preview = await previewAuditExpiry(next.archive_days);
+			returnFocusTo.current =
+				saved.archive_days === null
+					? FOREVER_SWITCH_ID
+					: ARCHIVE_INPUT_ID;
 			setConfirm({ settings: next, preview });
-		} catch {
-			setFailedSave(edit);
+		} catch (error) {
+			setFailedSave(failure(edit, "preview", error));
 		} finally {
 			savePending.current = false;
 			setSaving(false);
@@ -289,7 +333,11 @@ export function AuditRetentionSettings() {
 		});
 	};
 
-	const disabled = loading || saving || loadError || confirm !== null;
+	const disabled = loading || saving || loadError || dialogOpen;
+
+	useEffect(() => {
+		if (!disabled) restoreFocus(returnFocusTo);
+	}, [disabled]);
 	const busyRun =
 		run.kind === "starting" ||
 		run.kind === "previewing" ||
@@ -357,7 +405,7 @@ export function AuditRetentionSettings() {
 							Keep in archive (days)
 						</Label>
 						<Input
-							id="audit-retention-archive-days"
+							id={ARCHIVE_INPUT_ID}
 							type="number"
 							min={1}
 							value={draft.archiveDays}
@@ -386,7 +434,7 @@ export function AuditRetentionSettings() {
 				)}
 
 				<SettingsToggleRow
-					id="audit-retention-forever"
+					id={FOREVER_SWITCH_ID}
 					label="Keep archives forever"
 					description="Archived events are never deleted."
 					checked={draft.forever}
@@ -401,18 +449,24 @@ export function AuditRetentionSettings() {
 
 				{failedSave && (
 					<div role="alert" className="space-y-3">
-						<p className="text-sm text-destructive">
-							Couldn't save audit retention settings. Your edit is
-							ready to retry.
+						<p className="text-sm text-destructive [overflow-wrap:anywhere]">
+							{failedSave.action === "save"
+								? "Couldn't save audit retention settings"
+								: "Couldn't check what this change deletes"}
+							: {failedSave.message}
+							{failedSave.retryable &&
+								" Your edit is ready to retry."}
 						</p>
-						<Button
-							type="button"
-							variant="outline"
-							className="min-h-11"
-							onClick={() => void saveDraft(failedSave)}
-						>
-							Retry save
-						</Button>
+						{failedSave.retryable && (
+							<Button
+								type="button"
+								variant="outline"
+								className="min-h-11"
+								onClick={() => void saveDraft(failedSave.edit)}
+							>
+								Retry save
+							</Button>
+						)}
 					</div>
 				)}
 
@@ -471,18 +525,23 @@ export function AuditRetentionSettings() {
 			</CardContent>
 
 			<AlertDialog
-				open={confirm !== null}
+				open={dialogOpen}
 				onOpenChange={(open) => {
 					if (!open) cancelShortening();
 				}}
 			>
-				<AlertDialogContent>
+				<AlertDialogContent
+					onCloseAutoFocus={(event) => {
+						event.preventDefault();
+						restoreFocus(returnFocusTo);
+					}}
+				>
 					<AlertDialogHeader>
 						<AlertDialogTitle>
 							Shorten the archive window?
 						</AlertDialogTitle>
 						<AlertDialogDescription>
-							{confirm && expiryWarning(confirm.preview)}
+							{confirm && expiryWarning(confirm)}
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -510,7 +569,16 @@ export function AuditRetentionSettings() {
 	);
 }
 
-function expiryWarning(preview: AuditExpiryPreview): string {
+function expiryWarning({
+	preview,
+	settings,
+}: {
+	preview: AuditExpiryPreview;
+	settings: AuditRetentionSettingsUpdate;
+}): string {
+	if (preview.expiring_rows === 0) {
+		return `No archived events are old enough to delete yet. From now on, archived events older than ${settings.archive_days} days are deleted at the daily run.`;
+	}
 	const range =
 		preview.expiring_from && preview.expiring_to
 			? ` (${formatAuditDay(preview.expiring_from)}–${formatAuditDay(preview.expiring_to)})`

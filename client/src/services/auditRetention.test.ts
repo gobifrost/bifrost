@@ -20,6 +20,7 @@ vi.mock("@/services/platformJobs", () => ({
 	observePlatformJob: (...args: unknown[]) => observePlatformJob(...args),
 }));
 
+import { ApiError } from "@/lib/api-error";
 import {
 	auditExportDownloadPath,
 	createAuditExport,
@@ -189,5 +190,33 @@ describe("audit retention service", () => {
 		stop();
 		expect(unsubscribe).toHaveBeenCalledOnce();
 		expect(cancelObservation).toHaveBeenCalledOnce();
+	});
+
+	it("rejects with the status and a readable reason for validation errors", async () => {
+		authFetchMock.mockResolvedValueOnce(
+			json(
+				{
+					detail: [
+						{
+							type: "value_error",
+							loc: ["body"],
+							msg: "Value error, archive_days must be at least hot_days",
+						},
+					],
+				},
+				422,
+			),
+		);
+
+		const error = await updateAuditRetention({
+			hot_days: 90,
+			archive_days: 30,
+		}).catch((caught: unknown) => caught);
+
+		expect(error).toBeInstanceOf(ApiError);
+		expect((error as ApiError).statusCode).toBe(422);
+		expect((error as ApiError).message).toContain(
+			"archive_days must be at least hot_days",
+		);
 	});
 });

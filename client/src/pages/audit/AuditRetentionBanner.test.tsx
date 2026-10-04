@@ -47,6 +47,21 @@ describe("AuditRetentionBanner", () => {
 		expect(screen.queryByText(/archived through/)).not.toBeInTheDocument();
 	});
 
+	it("says when there are no audit events yet", () => {
+		render(
+			<AuditRetentionBanner
+				retention={{
+					...retention,
+					oldest_in_database: null,
+					archived_through: null,
+				}}
+				onExport={vi.fn()}
+			/>,
+		);
+
+		expect(screen.getByText("No audit events yet.")).toBeInTheDocument();
+	});
+
 	it("renders nothing without retention", () => {
 		const { container } = render(
 			<AuditRetentionBanner retention={null} onExport={vi.fn()} />,

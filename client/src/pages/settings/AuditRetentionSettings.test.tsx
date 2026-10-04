@@ -33,6 +33,7 @@ vi.mock("@/services/auditRetention", () => ({
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+import { ApiError } from "@/lib/api-error";
 import { AuditRetentionSettings } from "./AuditRetentionSettings";
 import {
 	formatAuditDay,
@@ -203,6 +204,7 @@ describe("AuditRetentionSettings", () => {
 				archive_days: 180,
 			}),
 		);
+		await waitFor(() => expect(archive).toHaveFocus());
 	});
 
 	it("restores the saved archive window when shortening is cancelled", async () => {
@@ -292,5 +294,105 @@ describe("AuditRetentionSettings", () => {
 		expect(await screen.findByRole("alert")).toHaveTextContent(
 			"Archive storage is unreachable.",
 		);
+	});
+
+	it("says when shortening deletes nothing yet", async () => {
+		previewExpiry.mockResolvedValue({
+			expiring_segments: 0,
+			expiring_rows: 0,
+			expiring_from: null,
+			expiring_to: null,
+		});
+		const { archive } = await renderLoaded();
+
+		fireEvent.change(archive, { target: { value: "180" } });
+		fireEvent.blur(archive);
+
+		expect(await screen.findByRole("alertdialog")).toHaveTextContent(
+			"No archived events are old enough to delete yet. From now on, archived events older than 180 days are deleted at the daily run.",
+		);
+	});
+
+	it("confirms when one edit changes both windows and shortens the archive", async () => {
+		const user = userEvent.setup();
+		const { database, archive } = await renderLoaded();
+
+		fireEvent.change(database, { target: { value: "60" } });
+		fireEvent.change(archive, { target: { value: "180" } });
+		fireEvent.blur(archive);
+
+		await screen.findByRole("alertdialog");
+		expect(previewExpiry).toHaveBeenCalledWith(180);
+		expect(updateRetention).not.toHaveBeenCalled();
+		await user.click(
+			screen.getByRole("button", { name: "Delete and save" }),
+		);
+		await waitFor(() =>
+			expect(updateRetention).toHaveBeenCalledWith({
+				hot_days: 60,
+				archive_days: 180,
+			}),
+		);
+	});
+
+	it("lengthens the archive window without confirmation", async () => {
+		const { archive } = await renderLoaded();
+
+		fireEvent.change(archive, { target: { value: "730" } });
+		fireEvent.blur(archive);
+
+		await waitFor(() =>
+			expect(updateRetention).toHaveBeenCalledWith({
+				hot_days: 90,
+				archive_days: 730,
+			}),
+		);
+		expect(previewExpiry).not.toHaveBeenCalled();
+		expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+	});
+
+	it("returns focus to the archive field when shortening is cancelled", async () => {
+		const user = userEvent.setup();
+		const { archive } = await renderLoaded();
+
+		fireEvent.change(archive, { target: { value: "180" } });
+		fireEvent.blur(archive);
+		await screen.findByRole("alertdialog");
+		await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+		await waitFor(() => expect(archive).toHaveFocus());
+		expect(archive).toHaveValue(365);
+	});
+
+	it("shows why the server refused a save, without offering a retry", async () => {
+		updateRetention.mockRejectedValueOnce(
+			new ApiError("archive_days must be at least hot_days", 422),
+		);
+		const { database } = await renderLoaded();
+
+		fireEvent.change(database, { target: { value: "30" } });
+		fireEvent.blur(database);
+
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"Couldn't save audit retention settings: archive_days must be at least hot_days",
+		);
+		expect(
+			screen.queryByRole("button", { name: "Retry save" }),
+		).not.toBeInTheDocument();
+	});
+
+	it("offers a retry when the save could not reach the server", async () => {
+		const user = userEvent.setup();
+		updateRetention.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+		const { database } = await renderLoaded();
+
+		fireEvent.change(database, { target: { value: "30" } });
+		fireEvent.blur(database);
+
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"Couldn't save audit retention settings: Failed to fetch",
+		);
+		await user.click(screen.getByRole("button", { name: "Retry save" }));
+		await waitFor(() => expect(updateRetention).toHaveBeenCalledTimes(2));
 	});
 });

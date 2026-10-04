@@ -30,7 +30,9 @@ export function AuditRetentionBanner({
 					className="mt-0.5 size-4 shrink-0 text-muted-foreground"
 				/>
 				<p className="min-w-0 text-muted-foreground [overflow-wrap:anywhere]">
-					{sentences.join(" ")}
+					{sentences.length > 0
+						? sentences.join(" ")
+						: "No audit events yet."}
 				</p>
 			</div>
 			<Button

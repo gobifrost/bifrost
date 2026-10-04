@@ -116,6 +116,13 @@ describe("AuditExportDialog", () => {
 		expect(screen.getByRole("alert")).toHaveTextContent(
 			"An export covers at most 366 days.",
 		);
+		for (const label of ["Start date", "End date"]) {
+			const input = screen.getByLabelText(label);
+			expect(input).toHaveAttribute("aria-invalid", "true");
+			expect(input).toHaveAccessibleDescription(
+				"An export covers at most 366 days.",
+			);
+		}
 		expect(createExport).not.toHaveBeenCalled();
 	});
 

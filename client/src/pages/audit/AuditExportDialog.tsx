@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Download, Loader2 } from "lucide-react";
 
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
@@ -75,6 +75,7 @@ export function AuditExportDialog({
 	const [downloading, setDownloading] = useState(false);
 	const [downloadError, setDownloadError] = useState<string | null>(null);
 	const stopWatching = useRef<(() => void) | null>(null);
+	const rangeErrorId = useId();
 
 	useEffect(() => () => stopWatching.current?.(), []);
 
@@ -166,6 +167,9 @@ export function AuditExportDialog({
 								max={endDate || undefined}
 								disabled={!editing}
 								aria-invalid={rangeError !== null}
+								aria-describedby={
+									rangeError ? rangeErrorId : undefined
+								}
 								onChange={(event) => {
 									setStartDate(event.target.value);
 									setRangeError(null);
@@ -183,6 +187,9 @@ export function AuditExportDialog({
 								min={startDate || undefined}
 								disabled={!editing}
 								aria-invalid={rangeError !== null}
+								aria-describedby={
+									rangeError ? rangeErrorId : undefined
+								}
 								onChange={(event) => {
 									setEndDate(event.target.value);
 									setRangeError(null);
@@ -192,7 +199,11 @@ export function AuditExportDialog({
 						</div>
 					</div>
 					{rangeError && (
-						<p role="alert" className="text-sm text-destructive">
+						<p
+							id={rangeErrorId}
+							role="alert"
+							className="text-sm text-destructive"
+						>
 							{rangeError}
 						</p>
 					)}
