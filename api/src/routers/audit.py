@@ -9,6 +9,7 @@ organizations that permission reaches (decision R3b P2).
 """
 
 import logging
+from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -172,8 +173,22 @@ async def download_audit_export(job_id: UUID, user: CurrentActiveUser, db: DbSes
         )
     start = payload.request.start_date.date().isoformat()
     end = payload.request.end_date.date().isoformat()
+    # Read the first chunk before answering, so a missing file is a 404, not a truncated 200.
+    chunks = AuditArchiveStore(get_settings()).iter_chunks(job.result["export_key"])
+    try:
+        first = await anext(chunks, b"")
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Export file not found; run it again."
+        )
+
+    async def body() -> AsyncIterator[bytes]:
+        yield first
+        async for chunk in chunks:
+            yield chunk
+
     return StreamingResponse(
-        AuditArchiveStore(get_settings()).iter_chunks(job.result["export_key"]),
+        body(),
         media_type="application/gzip",
         headers={"Content-Disposition": f'attachment; filename="audit-export-{start}-{end}.jsonl.gz"'},
     )

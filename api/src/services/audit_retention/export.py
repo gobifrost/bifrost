@@ -144,7 +144,13 @@ async def build_export(
             return compressor.compress(b"".join(encode_line(row) for row in matching))
 
         for index, (object_key, sha256) in enumerate(segments, start=1):
-            chunk = write(_segment_rows(object_key, await store.get(object_key), sha256))
+            try:
+                blob = await store.get(object_key)
+            except FileNotFoundError as exc:
+                raise PlatformJobFailure(
+                    "archive_missing", f"Archived segment {object_key} is cataloged but not in storage"
+                ) from exc
+            chunk = write(_segment_rows(object_key, blob, sha256))
             if chunk:
                 yield chunk
             await context.report(

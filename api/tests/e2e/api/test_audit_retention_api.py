@@ -9,7 +9,7 @@ import pytest_asyncio
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.orm import AuditArchiveSegment
+from src.models.orm import AuditArchiveSegment, AuditLog
 
 SETTINGS = "/api/maintenance/audit-retention/settings"
 RUN = "/api/maintenance/audit-retention/run"
@@ -26,7 +26,7 @@ def restore_defaults(e2e_client, platform_admin):
 
 @pytest_asyncio.fixture
 async def archived_2001(db_session: AsyncSession):
-    """A cataloged 2001 segment; the preview reads only the catalog."""
+    """A cataloged 2001 segment with no object behind it."""
     segment = AuditArchiveSegment(
         id=uuid4(),
         organization_id=None,
@@ -105,13 +105,28 @@ class TestAuditRetentionApi:
         status = e2e_client.get(SETTINGS, headers=platform_admin.headers)
         assert status.json()["last_run"]["id"] == body["job_id"]
 
-    async def test_preview_counts_expiring_segments(self, e2e_client, platform_admin, archived_2001):
+    async def test_preview_counts_expiring_segments_and_old_rows(
+        self, e2e_client, platform_admin, archived_2001, db_session
+    ):
         expiring = e2e_client.get(f"{PREVIEW}?archive_days=1", headers=platform_admin.headers)
         assert expiring.status_code == 200, expiring.text
         preview = expiring.json()
         assert preview["expiring_segments"] >= 1
         assert preview["expiring_rows"] >= 3
         assert preview["expiring_from"] <= "2001-01-01"
+
+        # An old event not yet archived is archived and deleted by the same run.
+        old = AuditLog(id=uuid4(), action=f"test.preview.{uuid4().hex}", created_at=datetime(2001, 1, 3, tzinfo=UTC))
+        db_session.add(old)
+        await db_session.commit()
+        try:
+            with_old = e2e_client.get(f"{PREVIEW}?archive_days=1", headers=platform_admin.headers).json()
+        finally:
+            await db_session.execute(delete(AuditLog).where(AuditLog.id == old.id))
+            await db_session.commit()
+        assert with_old["expiring_rows"] == preview["expiring_rows"] + 1
+        assert with_old["expiring_segments"] == preview["expiring_segments"] + 1
+        assert with_old["expiring_from"] <= "2001-01-01" < "2001-01-03" <= with_old["expiring_to"]
 
         forever = e2e_client.get(PREVIEW, headers=platform_admin.headers)
         assert forever.status_code == 200, forever.text

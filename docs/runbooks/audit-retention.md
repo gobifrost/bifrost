@@ -42,14 +42,17 @@ go. The card also shows the oldest event in the database, what the archive
 holds, and the last run.
 
 - **Preview** runs the job as a dry run: how many events would be archived
-  (by day) and how many archived events would be deleted. Nothing changes.
+  (by day) and how many events would be deleted. The deletions include events
+  still in the database that are already older than the archive window: one
+  run archives them and then deletes them. Nothing changes.
 - **Run now** queues a real run. It is the same job as the daily one. A manual
   run is deduplicated, so pressing it while one is queued or running reuses that
   job.
 - **Shortening the archive window** (a smaller `archive_days`, or turning off
-  "Keep archives forever") opens a confirmation first. It shows the exact number
-  of archived events the change will delete, from a live count. Confirming
-  saves the setting; the deletion happens at the next run, not at save.
+  "Keep archives forever") opens a confirmation first. It shows the number of
+  events the change will delete, archived or still in the database, from a live
+  count. Confirming saves the setting; the deletion happens at the next run, not
+  at save.
 
 Each settings change is audited as `settings.audit_retention.update`.
 
@@ -159,6 +162,7 @@ Failed attempts leave data where it was.
 | `archive_verify_failed` | The segment read back from storage did not match its checksum or ids. Nothing was deleted. The job fails with `error_retryable` set; it is not retried within the run. | Check object storage health, then Run now. The segment is rebuilt and re-uploaded. |
 | `archive_delete_mismatch` | The delete removed a different number of rows than the segment holds. The transaction rolled back, so the catalog row and the delete both reverted. | Run now. If it repeats for the same segment, look at the job's checkpoint (`pending.key`) and at anything else deleting from `audit_logs`. |
 | `archive_corrupt` | An **export** read an archived segment that failed its checksum or could not be decoded. The archive itself is not modified. | Restore that object from backup or bucket versioning (the catalog has its `object_key` and `sha256`). Do not delete the catalog row. |
+| `archive_missing` | An **export** found a catalog row whose object is not in storage. | List the prefix of that `object_key` to confirm the object is really gone. If it is, delete that catalog row: the events it described are no longer stored. This typically follows an expiry that was interrupted while the archive window was being lengthened. |
 | `handler_error` | An unexpected error, including a storage error mid-run. See the API/scheduler log. Nothing unverified was deleted. | Read the logs, fix, Run now. |
 
 Other endings:
@@ -174,6 +178,9 @@ Other endings:
 - **Shortening the archive window permanently deletes archived events** at the
   next run (the confirmation dialog shows the count). There is no undo short of
   restoring the bucket from backup. Setting it back does not bring them back.
+- **Downgrading after the first archive run** drops the catalog and leaves the
+  objects under `_audit/v1/`. Archived events can then be recovered only by
+  reading those objects directly.
 - **Uncataloged objects can exist.** If an upload succeeded but its commit then
   failed, and the rows later changed (so a rebuilt segment has a different
   checksum), the first object stays in storage with no catalog row. It is

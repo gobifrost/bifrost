@@ -291,6 +291,16 @@ class TestAuditArchiver:
         assert [(d["day"], d["rows"]) for d in plan["days"]] == [("2001-01-01", 2), ("2001-01-02", 1)]
         assert plan["estimated_bytes"] > 0
         assert plan["expiring_segments"] == 0
+        # Rows still in Postgres past the expiry are archived and expired in the same run.
+        expiring = await plan_archive(db_session, cutoff=CUTOFF, expiry=datetime(2001, 1, 2, tzinfo=UTC))
+        assert (
+            expiring["expiring_rows"], expiring["expiring_segments"], expiring["expiring_from"], expiring["expiring_to"]
+        ) == (2, 1, "2001-01-01", "2001-01-01")
+        expiring = await plan_archive(db_session, cutoff=CUTOFF, expiry=CUTOFF)
+        await db_session.commit()
+        assert (
+            expiring["expiring_rows"], expiring["expiring_segments"], expiring["expiring_from"], expiring["expiring_to"]
+        ) == (3, 2, "2001-01-01", "2001-01-02")
         assert await _remaining(db_session, old_rows) == set(old_rows.ids)
         count = await db_session.scalar(
             select(func.count()).select_from(AuditArchiveSegment).where(

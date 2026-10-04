@@ -80,7 +80,7 @@ def upgrade() -> None:
 
     with op.get_context().autocommit_block():
         op.execute(
-            "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_audit_logs_created_id "
+            "CREATE INDEX CONCURRENTLY ix_audit_logs_created_id "
             "ON audit_logs (created_at, id)"
         )
 

@@ -8,11 +8,11 @@ A runner that lost its lease therefore can never delete anything.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, func, literal_column, select
+from sqlalchemy import delete, func, literal_column, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import get_db_context
@@ -202,10 +202,16 @@ async def expire_segments(
 
 
 async def plan_expiry(db: AsyncSession, *, expiry: datetime | None) -> dict[str, Any]:
-    """Archived segments a run would delete at ``expiry``, from the catalog only. JSON-ready."""
+    """Events a run would delete at ``expiry``. JSON-ready.
+
+    A run archives every event older than its cutoff before it expires, so
+    events still in Postgres that are older than ``expiry`` are archived and
+    deleted in the same run. They count alongside the cataloged segments, one
+    segment per organization and UTC day.
+    """
     if expiry is None:
         return {"expiring_segments": 0, "expiring_rows": 0, "expiring_from": None, "expiring_to": None}
-    count, total, first_day, last_day = (
+    segments, archived, first_day, last_day = (
         await db.execute(
             select(
                 func.count(AuditArchiveSegment.id),
@@ -215,11 +221,25 @@ async def plan_expiry(db: AsyncSession, *, expiry: datetime | None) -> dict[str,
             ).where(AuditArchiveSegment.last_created_at < expiry)
         )
     ).one()
+    day = func.date_trunc("day", func.timezone("UTC", AuditLog.created_at))
+    current, oldest, newest, current_segments = (
+        await db.execute(
+            select(
+                func.count(),
+                func.min(AuditLog.created_at),
+                func.max(AuditLog.created_at),
+                func.count(tuple_(AuditLog.organization_id, day).distinct()),
+            ).where(AuditLog.created_at < expiry)
+        )
+    ).one()
+    days = [d for d in (first_day, last_day) if d is not None] + [
+        at.astimezone(timezone.utc).date() for at in (oldest, newest) if at is not None
+    ]
     return {
-        "expiring_segments": count,
-        "expiring_rows": int(total),
-        "expiring_from": first_day.isoformat() if first_day else None,
-        "expiring_to": last_day.isoformat() if last_day else None,
+        "expiring_segments": segments + current_segments,
+        "expiring_rows": int(archived) + current,
+        "expiring_from": min(days).isoformat() if days else None,
+        "expiring_to": max(days).isoformat() if days else None,
     }
 
 

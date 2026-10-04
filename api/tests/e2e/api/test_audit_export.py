@@ -204,7 +204,7 @@ def _lines(response) -> list[dict[str, Any]]:
 @pytest.mark.asyncio
 class TestAuditExport:
     async def test_admin_exports_both_sources_with_snapshot_names(
-        self, e2e_client, platform_admin, seeded, db_session
+        self, e2e_client, platform_admin, seeded, db_session, store
     ):
         # Archived lines keep the name they were archived with; current rows read it live.
         await db_session.execute(
@@ -227,6 +227,12 @@ class TestAuditExport:
         ]
         assert {line["actor_email"] for line in lines} == {seeded.actor_email}
         assert {line["schema"] for line in lines} == {"audit.v1"}
+
+        # A file gone from storage is a 404, not a truncated download.
+        await store.delete(export_key(UUID(job["id"])))
+        missing = _download(e2e_client, platform_admin, job["id"])
+        assert missing.status_code == 404, missing.text
+        assert missing.json()["detail"] == "Export file not found; run it again."
 
         # The same export, seven days on.
         await db_session.execute(
@@ -275,6 +281,15 @@ class TestAuditExport:
 
         assert job["status"] == "failed", job
         assert job["error"]["code"] == "archive_corrupt"
+        assert seeded.keys[0] in job["error"]["message"]
+
+    async def test_missing_segment_fails_the_export(self, e2e_client, platform_admin, seeded, store):
+        await store.delete(seeded.keys[0])
+
+        job = _export(e2e_client, platform_admin, YEAR_2001, seeded)
+
+        assert job["status"] == "failed", job
+        assert job["error"]["code"] == "archive_missing"
         assert seeded.keys[0] in job["error"]["message"]
 
 
