@@ -247,6 +247,9 @@ IDENTITY_MODELS: set[str] = {
     "WorkflowPermissionGrant",
     "Event",
     "AuditLog",
+    # The catalog of archived audit segments: belongs with AuditLog, read by
+    # date range and reach, never name-resolved through the cascade.
+    "AuditArchiveSegment",
     # A Solution install belongs to a scope (organization_id) but is never
     # resolved by name with cascade — it is identity, like Organization.
     "Solution",
