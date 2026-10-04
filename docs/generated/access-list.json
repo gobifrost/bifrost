@@ -1764,8 +1764,8 @@
   },
   {
     "access_class": "permission",
-    "boundary": "platform",
-    "current_gate": "superuser",
+    "boundary": "organization",
+    "current_gate": "evaluator",
     "inline_checks": [],
     "inline_effect": null,
     "intended_change": null,
@@ -1773,8 +1773,8 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/audit",
-    "permission": "metrics.read",
-    "reason": "Platform-admin-only operation."
+    "permission": "roleassignments.read",
+    "reason": "Reads the audit log. Platform Admins read everything; other holders of this permission (who may see who has what access) read only report-only access checks in the organizations it reaches. Decided by the evaluator (src.services.authorization.enforce)."
   },
   {
     "access_class": "permission",
