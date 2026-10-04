@@ -61,6 +61,7 @@ class TestSchedulerDiagnostics:
             "scheduler_diagnostics_cleanup",
             "summary_backfill_reconciliation",
             "artifact_retention_cleanup",
+            "audit_archive",
             "workspace_bundle_preview_cleanup",
             "workflow_operation_usage_flush",
         }
@@ -75,6 +76,7 @@ class TestSchedulerDiagnostics:
             assert tasks[task_id]["execution_mode"] == "durable_job"
             assert tasks[task_id]["last_run"]["status"] == "enqueued"
         assert tasks["artifact_retention_cleanup"]["execution_mode"] == "durable_job"
+        assert tasks["audit_archive"]["execution_mode"] == "durable_job"
         deadline = time.monotonic() + 20
         history = {}
         while time.monotonic() < deadline:

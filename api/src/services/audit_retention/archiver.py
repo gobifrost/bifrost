@@ -189,6 +189,28 @@ async def expire_segments(
         rows += sum(count for _, count in removed)
 
 
+async def plan_expiry(db: AsyncSession, *, expiry: datetime | None) -> dict[str, Any]:
+    """Archived segments a run would delete at ``expiry``, from the catalog only. JSON-ready."""
+    if expiry is None:
+        return {"expiring_segments": 0, "expiring_rows": 0, "expiring_from": None, "expiring_to": None}
+    count, total, first_day, last_day = (
+        await db.execute(
+            select(
+                func.count(AuditArchiveSegment.id),
+                func.coalesce(func.sum(AuditArchiveSegment.row_count), 0),
+                func.min(AuditArchiveSegment.day),
+                func.max(AuditArchiveSegment.day),
+            ).where(AuditArchiveSegment.last_created_at < expiry)
+        )
+    ).one()
+    return {
+        "expiring_segments": count,
+        "expiring_rows": int(total),
+        "expiring_from": first_day.isoformat() if first_day else None,
+        "expiring_to": last_day.isoformat() if last_day else None,
+    }
+
+
 async def plan_archive(
     db: AsyncSession,
     *,
@@ -210,34 +232,13 @@ async def plan_archive(
         )
     ).all()
     days = [{"day": d.date().isoformat(), "rows": n, "bytes": int(size)} for d, n, size in eligible]
-
-    expiring_segments = expiring_rows = 0
-    expiring_from = expiring_to = None
-    if expiry is not None:
-        count, total, first_day, last_day = (
-            await db.execute(
-                select(
-                    func.count(AuditArchiveSegment.id),
-                    func.coalesce(func.sum(AuditArchiveSegment.row_count), 0),
-                    func.min(AuditArchiveSegment.day),
-                    func.max(AuditArchiveSegment.day),
-                ).where(AuditArchiveSegment.last_created_at < expiry)
-            )
-        ).one()
-        expiring_segments, expiring_rows = count, int(total)
-        expiring_from = first_day.isoformat() if first_day else None
-        expiring_to = last_day.isoformat() if last_day else None
-
     return {
         "cutoff": cutoff.isoformat(),
         "expiry": expiry.isoformat() if expiry else None,
         "eligible_rows": sum(d["rows"] for d in days),
         "estimated_bytes": sum(d["bytes"] for d in days),
         "days": days,
-        "expiring_segments": expiring_segments,
-        "expiring_rows": expiring_rows,
-        "expiring_from": expiring_from,
-        "expiring_to": expiring_to,
+        **await plan_expiry(db, expiry=expiry),
     }
 
 

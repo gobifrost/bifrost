@@ -1,6 +1,10 @@
 """Contracts for audit event retention settings."""
 
+from datetime import date, datetime
+
 from pydantic import BaseModel, Field, model_validator
+
+from src.models.contracts.platform_jobs import PlatformJobPublic
 
 
 def _check_windows(hot_days: int, archive_days: int | None) -> None:
@@ -37,3 +41,29 @@ class AuditRetentionSettingsUpdate(BaseModel):
     def _archive_not_shorter(self) -> "AuditRetentionSettingsUpdate":
         _check_windows(self.hot_days, self.archive_days)
         return self
+
+
+class AuditRetentionInfo(BaseModel):
+    hot_days: int
+    archive_days: int | None
+    oldest_in_database: datetime | None
+    archived_through: datetime | None
+    archived_segments: int
+    archived_rows: int
+
+
+class AuditRetentionStatus(BaseModel):
+    settings: AuditRetentionSettings
+    info: AuditRetentionInfo
+    last_run: PlatformJobPublic | None
+
+
+class AuditArchiveRunRequest(BaseModel):
+    dry_run: bool = False
+
+
+class AuditExpiryPreview(BaseModel):
+    expiring_segments: int
+    expiring_rows: int
+    expiring_from: date | None
+    expiring_to: date | None
