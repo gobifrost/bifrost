@@ -21,8 +21,9 @@ from src.jobs.platform.audit_archive import (
     AuditArchivePayload,
     run_audit_archive,
 )
-from src.jobs.platform.base import PlatformJobFailure
+from src.jobs.platform.base import PlatformJobCancelled, PlatformJobFailure
 from src.models.contracts.audit_retention import AuditRetentionSettings
+from src.services.audit_retention.archiver import LeaseLost
 from src.services.audit_retention.format import ArchiveRow, ArchiveVerifyError, Segment
 
 FROZEN_CUTOFF = datetime(2020, 3, 1, tzinfo=UTC)
@@ -239,3 +240,59 @@ async def test_verify_error_becomes_operator_failure(
 
     assert failure.value.code == "archive_verify_failed"
     assert "Nothing was deleted" in failure.value.message
+
+
+@pytest.mark.asyncio
+async def test_failure_keeps_counts_archived_before_it(
+    calls: Calls, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls.batches = [[_row(datetime(2019, 6, 1, tzinfo=UTC)), _row(datetime(2019, 6, 2, tzinfo=UTC))]]
+    archived: list[Segment] = []
+
+    async def second_segment_corrupt(
+        store: object,
+        segment: Segment,
+        *,
+        job_id: UUID,
+        lease_token: UUID,
+    ) -> None:
+        if archived:
+            raise ArchiveVerifyError("sha256 mismatch")
+        archived.append(segment)
+
+    monkeypatch.setattr(audit_archive, "archive_segment", second_segment_corrupt)
+
+    with pytest.raises(PlatformJobFailure) as failure:
+        await run_audit_archive(FakeContext(), AuditArchivePayload())
+
+    result = failure.value.result
+    assert result is not None
+    assert (result["archived_rows"], result["archived_segments"]) == (1, 1)
+    assert result["pending"]["rows"] == 1
+    assert result["pending"]["key"] != archived[0].key
+
+
+@pytest.mark.asyncio
+async def test_lease_lost_during_expiry_cancels(
+    calls: Calls, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class ExpiringSettings(FakeSettingsService):
+        async def get_settings(self) -> AuditRetentionSettings:
+            return AuditRetentionSettings(hot_days=90, archive_days=365)
+
+    async def lease_lost(
+        store: object,
+        *,
+        expiry: datetime,
+        job_id: UUID,
+        lease_token: UUID,
+        limit: int = 100,
+    ) -> tuple[int, int]:
+        raise LeaseLost(str(job_id))
+
+    calls.batches = []
+    monkeypatch.setattr(audit_archive, "AuditRetentionSettingsService", ExpiringSettings)
+    monkeypatch.setattr(audit_archive, "expire_segments", lease_lost)
+
+    with pytest.raises(PlatformJobCancelled):
+        await run_audit_archive(FakeContext(), AuditArchivePayload())

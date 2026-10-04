@@ -16,10 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.auth import Context, CurrentSuperuser
 from src.core.database import get_db
-from src.jobs.platform.audit_archive import (
-    AUDIT_ARCHIVE_DEFINITION,
-    enqueue_manual_audit_archive,
-)
+from src.jobs.platform.audit_archive import enqueue_manual_audit_archive
 from src.jobs.platform.system_maintenance import (
     ARTIFACT_RETENTION_CLEANUP_DEFINITION,
     EmptyMaintenancePayload,
@@ -53,14 +50,17 @@ from src.models.contracts.notifications import (
 from src.models.contracts.platform_jobs import PlatformJobAccepted
 from src.models.orm import (
     Application,
-    PlatformJob,
     Workflow,
 )
 from src.models.orm.file_index import FileIndex
 from src.services.app_dependencies import parse_dependencies
 from src.services.artifact_retention import ArtifactRetentionSettingsService
 from src.services.audit import emit_audit
-from src.services.audit_retention.archiver import plan_expiry, retention_info
+from src.services.audit_retention.archiver import (
+    latest_audit_archive_job,
+    plan_expiry,
+    retention_info,
+)
 from src.services.audit_retention.settings import AuditRetentionSettingsService
 from src.services.notification_service import get_notification_service
 from src.services.platform_jobs import (
@@ -157,12 +157,7 @@ async def cleanup_artifact_retention(
 async def _audit_retention_status(
     db: AsyncSession, settings: AuditRetentionSettings
 ) -> AuditRetentionStatus:
-    last_run = await db.scalar(
-        select(PlatformJob)
-        .where(PlatformJob.job_type == AUDIT_ARCHIVE_DEFINITION.job_type)
-        .order_by(PlatformJob.created_at.desc())
-        .limit(1)
-    )
+    last_run = await latest_audit_archive_job(db)
     return AuditRetentionStatus(
         settings=settings,
         info=AuditRetentionInfo(**await retention_info(db, settings)),
@@ -214,7 +209,7 @@ async def update_audit_retention_settings(
     status_code=status.HTTP_202_ACCEPTED,
     summary="Archive aged audit events now, or preview the run",
 )
-async def run_audit_archive(
+async def start_audit_archive(
     body: AuditArchiveRunRequest,
     response: Response,
     user: CurrentSuperuser,

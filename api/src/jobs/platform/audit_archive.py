@@ -85,10 +85,8 @@ async def run_audit_archive(context: PlatformJobContext, payload: AuditArchivePa
         if not rows:
             break
         for segment in build_segments(rows):
-            await context.save_checkpoint(
-                {**state, "pending": {"key": segment.key, "rows": len(segment.rows)}},
-                phase="Archiving",
-            )
+            pending = {**state, "pending": {"key": segment.key, "rows": len(segment.rows)}}
+            await context.save_checkpoint(pending, phase="Archiving")
             try:
                 await archive_segment(
                     store, segment, job_id=context.job_id, lease_token=context.lease_token
@@ -98,12 +96,14 @@ async def run_audit_archive(context: PlatformJobContext, payload: AuditArchivePa
                     "archive_verify_failed",
                     f"{segment.key}: {exc}. Nothing was deleted.",
                     retryable=True,
+                    result=pending,
                 ) from exc
             except DeleteMismatch as exc:
                 raise PlatformJobFailure(
                     "archive_delete_mismatch",
                     f"{exc}. The delete was rolled back.",
                     retryable=True,
+                    result=pending,
                 ) from exc
             except LeaseLost as exc:
                 raise PlatformJobCancelled from exc
@@ -116,9 +116,12 @@ async def run_audit_archive(context: PlatformJobContext, payload: AuditArchivePa
 
     if expiry is not None:
         await context.save_checkpoint(state, phase="Expiring archives")
-        segments, rows_expired = await expire_segments(
-            store, expiry=expiry, job_id=context.job_id, lease_token=context.lease_token
-        )
+        try:
+            segments, rows_expired = await expire_segments(
+                store, expiry=expiry, job_id=context.job_id, lease_token=context.lease_token
+            )
+        except LeaseLost as exc:
+            raise PlatformJobCancelled from exc
         state["expired_segments"] += segments
         state["expired_rows"] += rows_expired
 

@@ -262,3 +262,13 @@ async def retention_info(db: AsyncSession, settings: AuditRetentionSettings) -> 
         "archived_segments": segments,
         "archived_rows": int(rows),
     }
+
+
+async def latest_audit_archive_job(db: AsyncSession) -> PlatformJob | None:
+    """The newest ``audit.archive`` run, scheduled or manual, dry run or not."""
+    return await db.scalar(
+        select(PlatformJob)
+        .where(PlatformJob.job_type == "audit.archive")
+        .order_by(PlatformJob.created_at.desc())
+        .limit(1)
+    )
