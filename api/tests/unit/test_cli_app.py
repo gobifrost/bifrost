@@ -17,6 +17,8 @@ def test_scaffold_is_a_vite_project_with_standard_ignored_env(tmp_path: Path) ->
     app_source = (root / "src" / "App.tsx").read_text()
     assert "live Bifrost environment" in app_source
     assert "install's own workflow" not in app_source
+    assert '"workflows/hello.py::main"' in app_source
+    assert "<NavLink" in app_source
 
 
 def test_deploy_archive_never_contains_env_or_generated_files(tmp_path: Path) -> None:
