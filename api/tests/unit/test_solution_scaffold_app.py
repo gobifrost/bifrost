@@ -90,6 +90,33 @@ def test_scaffold_files_shape_and_dev_wiring() -> None:
     assert "useWorkflow" in app
 
 
+def test_scaffold_app_ships_top_nav_shell() -> None:
+    """App.tsx is the navigation shell new Apps copy: one header, a NavLink row
+    driven by one NAV list, `main` as the only scroller, nested routes with a
+    catch-all, and semantic token classes instead of inline styles."""
+    app = _v2_scaffold_files("my-app")["src/App.tsx"]
+
+    assert app.count("<BifrostHeader") == 1
+    assert "const NAV = [" in app
+    assert "NAV.map(" in app
+    assert "<NavLink" in app
+    assert "isActive" in app
+    assert "overflow-x-auto whitespace-nowrap" in app
+    assert 'className="flex h-full min-h-0 flex-col' in app
+    assert '<main className="min-h-0 flex-1 overflow-auto">' in app
+    assert "<Outlet />" in app
+    assert "<Route element={<Shell />}>" in app
+    assert 'path="*"' in app
+    # cn() is shipped by the scaffold itself; App.tsx must not import UI it lacks.
+    assert 'from "@/lib/utils"' in app
+    assert "@/components/" not in app
+    # Mutation: disabled while running, error beside it in the destructive token.
+    assert "disabled={wf.loading}" in app
+    assert "text-destructive" in app
+    assert "style={{" not in app
+    assert "crimson" not in app
+
+
 def test_scaffold_ships_tailwind_v4_shadcn_and_theme() -> None:
     """A v2 app with no Tailwind renders UNSTYLED — so the scaffold ships Tailwind
     v4 + the shadcn token layer + theme wiring by DEFAULT (this is the fix for the

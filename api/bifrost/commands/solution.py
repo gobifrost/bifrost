@@ -863,8 +863,52 @@ if (import.meta.env.DEV) {
 }
 """
     app_tsx = """\
-import { Routes, Route, Link } from "react-router-dom";
+import { Link, NavLink, Outlet, Route, Routes } from "react-router-dom";
 import { BifrostHeader, useWorkflowMutation } from "bifrost";
+
+import { cn } from "@/lib/utils";
+
+// One list drives the nav row. To add a section, add an entry here and a
+// matching <Route> below. Paths are relative to the App's base URL.
+const NAV = [
+  { to: "/", label: "Home", end: true },
+  { to: "/about", label: "About" },
+];
+
+// The shell renders once: header, nav row, then `main` as the only scroller.
+// Pages render into <Outlet />.
+function Shell() {
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
+      <BifrostHeader title="My App" />
+      <nav
+        aria-label="Primary"
+        className="flex gap-1 overflow-x-auto whitespace-nowrap border-b border-border px-4"
+      >
+        {NAV.map((item) => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            end={item.end}
+            className={({ isActive }) =>
+              cn(
+                "border-b-2 px-3 py-2 text-sm transition-colors",
+                isActive
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground",
+              )
+            }
+          >
+            {item.label}
+          </NavLink>
+        ))}
+      </nav>
+      <main className="min-h-0 flex-1 overflow-auto">
+        <Outlet />
+      </main>
+    </div>
+  );
+}
 
 function Home() {
   // Workflow hooks (pick by intent — same mental model as React Query):
@@ -878,39 +922,63 @@ function Home() {
   // ids per install, so a hardcoded UUID won't resolve on a deployed install.)
   const wf = useWorkflowMutation<{ message: string }>("functions/hello.py::main");
   return (
-    <main style={{ padding: 24 }}>
-      <h1>Hello from your Bifrost app</h1>
-      <p>
-        <Link to="/about">About</Link>
-      </p>
-      <button onClick={() => wf.mutate({})} disabled={wf.loading}>
-        {wf.loading ? "Running…" : "Run workflow"}
-      </button>
-      {wf.error && <pre style={{ color: "crimson" }}>{wf.error.message}</pre>}
-      {wf.data && <pre>{JSON.stringify(wf.data, null, 2)}</pre>}
-    </main>
+    <section className="mx-auto w-full max-w-3xl space-y-4 p-4 md:p-6">
+      <h1 className="text-lg font-semibold">Hello from your Bifrost app</h1>
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          onClick={() => wf.mutate({})}
+          disabled={wf.loading}
+          className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+        >
+          {wf.loading ? "Running…" : "Run workflow"}
+        </button>
+        {wf.error && (
+          <p role="alert" className="text-sm text-destructive">
+            {wf.error.message}
+          </p>
+        )}
+      </div>
+      {wf.data && (
+        <pre className="overflow-x-auto rounded-md border border-border bg-muted p-3 text-sm">
+          {JSON.stringify(wf.data, null, 2)}
+        </pre>
+      )}
+    </section>
   );
 }
 
 function About() {
   return (
-    <main style={{ padding: 24 }}>
-      <h1>About</h1>
-      <p>This route is at /about — refresh works because the URL is real.</p>
-      <Link to="/">Home</Link>
-    </main>
+    <section className="mx-auto w-full max-w-3xl space-y-2 p-4 md:p-6">
+      <h1 className="text-lg font-semibold">About</h1>
+      <p className="text-sm text-muted-foreground">
+        This route is at /about. Refresh works because the URL is real.
+      </p>
+    </section>
+  );
+}
+
+function NotFound() {
+  return (
+    <section className="mx-auto w-full max-w-3xl space-y-2 p-4 md:p-6">
+      <h1 className="text-lg font-semibold">Page not found</h1>
+      <Link to="/" className="text-sm text-primary hover:underline">
+        Back to Home
+      </Link>
+    </section>
   );
 }
 
 export default function App() {
   return (
-    <>
-      <BifrostHeader title="My App" />
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/about" element={<About />} />
-      </Routes>
-    </>
+    <Routes>
+      <Route element={<Shell />}>
+        <Route index element={<Home />} />
+        <Route path="about" element={<About />} />
+        <Route path="*" element={<NotFound />} />
+      </Route>
+    </Routes>
   );
 }
 """
