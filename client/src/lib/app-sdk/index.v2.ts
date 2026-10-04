@@ -13,7 +13,12 @@ export { BifrostProvider, useBifrostContext } from "./provider";
 export type { BifrostContextValue, BifrostProviderProps } from "./provider";
 
 export { BifrostHeader } from "./bifrost-header";
-export type { BifrostHeaderProps } from "./bifrost-header";
+export type {
+  BifrostHeaderNav,
+  BifrostHeaderProps,
+  BifrostNavItem,
+  BifrostNavLinkProps,
+} from "./bifrost-header";
 
 // Primary workflow hooks — React-Query-shaped (auto-running query + imperative
 // mutation). These are what apps should reach for; `useWorkflow` below is the

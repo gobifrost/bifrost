@@ -1,7 +1,10 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { MemoryRouter, NavLink, useLocation } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BifrostHeader } from "./bifrost-header";
+import type { BifrostHeaderNav } from "./bifrost-header";
 import { BifrostProvider } from "./provider";
 
 // BifrostHeader fires an authed `GET /api/auth/me` on mount. Without a stub
@@ -12,6 +15,45 @@ import { BifrostProvider } from "./provider";
 // its timeout) — surfacing as a spurious cross-file failure. Resolve every
 // header fetch locally so the suite never touches the network.
 const noNetwork: typeof fetch = async () => new Response(null, { status: 404 });
+
+// react-router's NavLink is passed straight through: it must satisfy the
+// header's link contract (a type error here means apps can't pass it).
+const NAV: BifrostHeaderNav = {
+  items: [
+    { label: "Home", to: "/", end: true },
+    { label: "About", to: "/about" },
+  ],
+  link: NavLink,
+};
+
+// happy-dom evaluates matchMedia against its viewport and fires resize, so the
+// header's breakpoint is exercised for real.
+function setViewportWidth(width: number) {
+  act(() => {
+    (window as unknown as { happyDOM: { setViewport(v: { width: number }): void } }).happyDOM.setViewport({
+      width,
+    });
+  });
+}
+
+function Location() {
+  return <span data-testid="location">{useLocation().pathname}</span>;
+}
+
+function renderAt(
+  path: string,
+  header: ReactNode,
+  { fetchImpl = noNetwork, onLogout }: { fetchImpl?: typeof fetch; onLogout?: () => void } = {},
+) {
+  return render(
+    <BifrostProvider baseUrl="https://dev.example" token="t" fetchImpl={fetchImpl} onLogout={onLogout} supportsTheme>
+      <MemoryRouter initialEntries={[path]}>
+        {header}
+        <Location />
+      </MemoryRouter>
+    </BifrostProvider>,
+  );
+}
 
 describe("BifrostHeader (SDK, self-contained)", () => {
   it("renders the title + back-to-Bifrost link and logs out via the user menu", () => {
@@ -85,7 +127,7 @@ describe("BifrostHeader (SDK, self-contained)", () => {
     expect(screen.queryByText("Account")).toBeNull();
   });
 
-  it("keeps one row on narrow viewports: the title truncates instead of the header wrapping", () => {
+  it("keeps one row on wide viewports: the title truncates instead of the bar wrapping", () => {
     const { container } = render(
       <BifrostProvider baseUrl="https://dev.example" token="t" fetchImpl={noNetwork} supportsTheme>
         <BifrostHeader title="A very long app title that should not force the app viewport wider" />
@@ -95,12 +137,14 @@ describe("BifrostHeader (SDK, self-contained)", () => {
     const header = container.querySelector("header")!;
     const title = screen.getByText(/very long app title/i);
     const left = title.parentElement!;
+    const bar = left.parentElement!;
     const right = screen.getByRole("button", { name: /account menu/i }).closest("div")!.parentElement!;
 
-    // Exactly two flex children (title side, controls side) that never wrap.
-    expect(Array.from(header.children)).toEqual([left, right]);
-    expect(header.style.flexWrap).toBe("nowrap");
-    expect(header.style.alignItems).toBe("center");
+    // Without `nav` the header is just the bar: title side + controls side.
+    expect(Array.from(header.children)).toEqual([bar]);
+    expect(Array.from(bar.children)).toEqual([left, right]);
+    expect(bar.style.flexWrap).toBe("nowrap");
+    expect(bar.style.alignItems).toBe("center");
     // The title side takes only leftover space and may shrink to nothing...
     expect(left.style.flex).toBe("1 1 0%");
     expect(left.style.minWidth).toBe("0");
@@ -110,37 +154,145 @@ describe("BifrostHeader (SDK, self-contained)", () => {
     expect(title.style.overflow).toBe("hidden");
     expect(title.style.textOverflow).toBe("ellipsis");
     expect(title.style.minWidth).toBe("0");
-    // The controls keep their content width.
     expect(right.style.flex).toBe("0 1 auto");
     expect(right.contains(screen.getByRole("button", { name: /theme/i }))).toBe(true);
   });
 
-  it("compacts the user menu to the avatar below the 640px breakpoint", () => {
-    render(
-      <BifrostProvider baseUrl="https://dev.example" token="t" fetchImpl={noNetwork}>
-        <BifrostHeader title="Compact" />
-      </BifrostProvider>,
+  it("renders nav as a tab row on wide viewports, marking the active route", () => {
+    renderAt("/about", <BifrostHeader title="Tabs" nav={NAV} />);
+
+    const row = screen.getByRole("navigation", { name: "Primary" });
+    const home = within(row).getByRole("link", { name: "Home" });
+    const about = within(row).getByRole("link", { name: "About" });
+    expect(home.getAttribute("href")).toBe("/");
+    expect(home.classList.contains("bfh-tab")).toBe(true);
+    // The router marks the active link; the header styles that attribute.
+    expect(about.getAttribute("aria-current")).toBe("page");
+    expect(home.getAttribute("aria-current")).toBeNull();
+    expect(document.getElementById("bifrost-header-style-light")!.textContent).toContain(
+      '.bfh-tab[aria-current="page"]',
     );
+    // Wide viewports keep the inline controls; there is no menu button.
+    expect(screen.getByRole("button", { name: /account menu/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open menu" })).toBeNull();
+  });
 
-    const trigger = screen.getByRole("button", { name: /account menu/i });
-    const accountName = screen.getByText("Account");
-    const chevron = trigger.querySelector(".bfh-account-chevron");
-    expect(trigger.contains(accountName)).toBe(true);
-    expect(accountName.classList.contains("bfh-account-name")).toBe(true);
-    expect(chevron).not.toBeNull();
+  it("switches layout live and closes the open panel when the viewport widens", () => {
+    // Mount wide first: happy-dom's MediaQueryList only reports a change after
+    // its first observed flip away from `false`.
+    renderAt("/", <BifrostHeader title="Resizing" />);
+    try {
+      setViewportWidth(390);
+      fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
 
-    // The scoped sheet hides exactly the name + chevron under the breakpoint,
-    // leaving the avatar as the (still accessibly named) trigger.
-    const sheet = (document.getElementById("bifrost-header-style-light") as HTMLStyleElement).sheet!;
-    const media = Array.from(sheet.cssRules).find(
-      (rule): rule is CSSMediaRule => rule instanceof CSSMediaRule,
-    )!;
-    expect(media.media.mediaText).toBe("(max-width: 639.98px)");
-    const hidden = media.cssRules[0] as CSSStyleRule;
-    expect(hidden.style.display).toBe("none");
-    expect(hidden.selectorText).toContain(".bfh-account-name");
-    expect(hidden.selectorText).toContain(".bfh-account-chevron");
-    expect(hidden.selectorText).not.toContain("bfh-trigger");
+      setViewportWidth(1024);
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(screen.getByRole("button", { name: /account menu/i })).toBeInTheDocument();
+
+      setViewportWidth(390);
+      expect(screen.queryByRole("dialog")).toBeNull();
+    } finally {
+      setViewportWidth(1024);
+    }
+  });
+
+  describe("below the 640px breakpoint", () => {
+    beforeEach(() => setViewportWidth(390));
+    afterEach(() => setViewportWidth(1024));
+
+    it("collapses to one row: back link, title and a single menu button", () => {
+      const { container } = renderAt("/", <BifrostHeader title="Phone" nav={NAV} action={<button type="button">Export</button>} />);
+
+      const header = container.querySelector("header")!;
+      const bar = screen.getByText("Phone").parentElement!.parentElement!;
+      expect(Array.from(header.children)).toEqual([bar]);
+      const menuButton = screen.getByRole("button", { name: "Open menu" });
+      expect(menuButton.getAttribute("aria-expanded")).toBe("false");
+      expect(within(bar).getAllByRole("button")).toEqual([menuButton]);
+      expect(within(bar).getAllByRole("link").map((a) => a.textContent)).toEqual(["Bifrost"]);
+      expect(screen.queryByRole("navigation")).toBeNull();
+      expect(screen.queryByText("Export")).toBeNull();
+    });
+
+    it("opens a panel with the nav links, action, theme toggle and account section", async () => {
+      const onLogout = vi.fn();
+      const me: typeof fetch = async () =>
+        new Response(JSON.stringify({ name: "Alex Rivera", email: "alex@example.com" }), { status: 200 });
+      renderAt(
+        "/about",
+        <BifrostHeader title="Phone" nav={NAV} action={<button type="button">Export</button>} />,
+        { fetchImpl: me, onLogout },
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+      const panel = screen.getByRole("dialog", { name: "Menu" });
+      expect(screen.getByRole("button", { name: "Close menu" }).getAttribute("aria-expanded")).toBe("true");
+      const links = within(panel).getAllByRole("link");
+      expect(links.map((a) => a.textContent)).toEqual(["Home", "About"]);
+      expect(links[1].getAttribute("aria-current")).toBe("page");
+      expect(within(panel).getByRole("button", { name: "Export" })).toBeInTheDocument();
+      expect(within(panel).getByRole("button", { name: "Dark mode" })).toBeInTheDocument();
+      expect(await within(panel).findByText("Alex Rivera")).toBeInTheDocument();
+      expect(within(panel).getByText("alex@example.com")).toBeInTheDocument();
+      // Focus moves into the panel.
+      expect(document.activeElement).toBe(links[0]);
+
+      fireEvent.click(within(panel).getByRole("button", { name: "Log out" }));
+      expect(onLogout).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("keeps Tab inside the panel", () => {
+      renderAt("/", <BifrostHeader title="Phone" nav={NAV} />);
+      fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+      const panel = screen.getByRole("dialog", { name: "Menu" });
+      const first = within(panel).getByRole("link", { name: "Home" });
+      const last = within(panel).getByRole("button", { name: "Log out" });
+
+      last.focus();
+      fireEvent.keyDown(document, { key: "Tab" });
+      expect(document.activeElement).toBe(first);
+      fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+      expect(document.activeElement).toBe(last);
+    });
+
+    it("closes on Escape and returns focus to the menu button", () => {
+      renderAt("/", <BifrostHeader title="Phone" nav={NAV} />);
+      fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Open menu" }));
+    });
+
+    it("closes when a nav link is followed", () => {
+      renderAt("/", <BifrostHeader title="Phone" nav={NAV} />);
+      fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+      fireEvent.click(within(screen.getByRole("dialog")).getByRole("link", { name: "About" }));
+
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(screen.getByTestId("location").textContent).toBe("/about");
+    });
+
+    it("closes when the backdrop is tapped", () => {
+      const { container } = renderAt("/", <BifrostHeader title="Phone" />);
+      fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+      fireEvent.click(container.querySelector(".bfh-backdrop")!);
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("without nav, the panel still holds the theme toggle and account", () => {
+      renderAt("/", <BifrostHeader title="Phone" />);
+      fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+      const panel = screen.getByRole("dialog", { name: "Menu" });
+
+      expect(within(panel).queryByRole("navigation")).toBeNull();
+      expect(within(panel).getByRole("button", { name: "Dark mode" })).toBeInTheDocument();
+      expect(within(panel).getByText("Account")).toBeInTheDocument();
+      expect(within(panel).getByRole("button", { name: "Log out" })).toBeInTheDocument();
+    });
   });
 
   it("styles itself inline (no dependency on Tailwind/theme CSS variables)", () => {
