@@ -32,7 +32,7 @@
  */
 import { ArrowLeft, ChevronDown, LogOut, Menu, Moon, Sun, X } from "lucide-react";
 import type { ComponentType, CSSProperties, ReactNode } from "react";
-import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 
 import { useBifrostContext } from "./provider";
 
@@ -421,19 +421,20 @@ export function BifrostHeader({ title, logo, action, nav, className }: BifrostHe
   const themeKey = dark ? "dark" : "light";
   ensureStyle(C, themeKey);
 
-  const narrow = useSyncExternalStore(subscribeNarrow, isNarrow);
+  // The user menu belongs to the layout it was opened in.
+  const [open, setOpen] = useState(false);
+  // Close the old layout's menu in the viewport subscription. Resetting state
+  // during rendering can discard the external-store bookkeeping needed for
+  // the next viewport change in production React.
+  const subscribeLayout = useCallback((onChange: () => void) => subscribeNarrow(() => {
+    setOpen(false);
+    onChange();
+  }), []);
+  const narrow = useSyncExternalStore(subscribeLayout, isNarrow);
 
   const [me, setMe] = useState<Me | null>(null);
   const [authExpired, setAuthExpired] = useState(false);
   const [fetchedLogo, setFetchedLogo] = useState<string | null>(null);
-  // The user menu (wide) or the menu panel (narrow). Crossing the breakpoint
-  // closes it: the open menu belongs to the layout it was opened in.
-  const [open, setOpen] = useState(false);
-  const [openedNarrow, setOpenedNarrow] = useState(narrow);
-  if (openedNarrow !== narrow) {
-    setOpenedNarrow(narrow);
-    setOpen(false);
-  }
   const menuRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const panelTriggerRef = useRef<HTMLButtonElement | null>(null);

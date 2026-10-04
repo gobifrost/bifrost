@@ -535,6 +535,8 @@ services:
       CI: "true"
     volumes:
       - ./client/e2e:/app/e2e
+      # SDK browser fixtures compile the current source with production React.
+      - ./client/src/lib/app-sdk:/app/src/lib/app-sdk:ro
       - ./client/playwright.config.ts:/app/playwright.config.ts:ro
       - ./client/package.json:/app/package.json:ro
       - ./client/tsconfig.json:/app/tsconfig.json:ro

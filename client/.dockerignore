@@ -45,6 +45,15 @@ playwright-report/
 test-results/
 playwright-results/
 e2e/
+# The browser runner installs the isolated React 18 SDK fixture's locked peers.
+# Keep test sources/auth states excluded from production build contexts.
+!e2e/
+e2e/*
+!e2e/fixtures/
+e2e/fixtures/*
+!e2e/fixtures/sdk-header/
+e2e/fixtures/sdk-header/*
+!e2e/fixtures/sdk-header/package*.json
 playwright.config.ts
 Dockerfile.playwright
 

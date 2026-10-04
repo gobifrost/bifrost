@@ -19,6 +19,11 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 
+# The web SDK supports React >=18; the platform client itself uses React 19.
+# Keep React 18 isolated for production SDK regressions.
+COPY e2e/fixtures/sdk-header/package*.json /opt/sdk-header-react18/
+RUN cd /opt/sdk-header-react18 && npm ci --ignore-scripts
+
 # Cache the exact Monaco CDN assets used by the app editor tests. The product
 # runtime loads Monaco from jsDelivr, but E2E runs should not depend on live CDN
 # timing. Keep this version aligned with client/src/lib/monaco-setup.ts.
