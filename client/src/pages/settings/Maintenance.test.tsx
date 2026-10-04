@@ -30,6 +30,10 @@ vi.mock("@/pages/settings/ArtifactRetentionSettings", () => ({
 	),
 }));
 
+vi.mock("@/pages/settings/AuditRetentionSettings", () => ({
+	AuditRetentionSettings: () => <section>Audit retention settings</section>,
+}));
+
 vi.mock("@/components/ImportDialog", () => ({
 	ImportDialog: ({
 		open,

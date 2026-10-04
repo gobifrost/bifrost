@@ -27,7 +27,6 @@ from src.services.authorization.context import (
     RoleGrant,
 )
 from src.services.authorization.enforce import (
-    EVERYTHING,
     NARROWER_PERMISSIONS,
     Caller,
     decide_for,
@@ -43,6 +42,7 @@ from src.services.authorization.enforce import (
     require_unprotected,
 )
 from src.services.authorization.evaluator import GLOBAL, HOME, TargetKind, cross_org, decide
+from src.services.authorization.reach import EVERYTHING
 
 ORG_A = UUID("00000000-0000-0000-0000-00000000a001")
 ORG_B = UUID("00000000-0000-0000-0000-00000000a002")

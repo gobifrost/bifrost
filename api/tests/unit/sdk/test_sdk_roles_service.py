@@ -26,7 +26,7 @@ import pytest
 from fastapi import HTTPException, Response
 
 from shared.sdk_roles import RoleServiceError
-from src.services.authorization.enforce import EVERYTHING
+from src.services.authorization.reach import EVERYTHING
 from tests.helpers.authorization import admin_caller
 
 

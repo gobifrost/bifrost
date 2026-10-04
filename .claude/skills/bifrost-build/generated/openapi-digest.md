@@ -113,6 +113,8 @@
 | POST | `/api/applications/{app_id}/validate` |
 | GET | `/api/applications/{slug}` |
 | GET | `/api/audit` |
+| POST | `/api/audit/exports` |
+| GET | `/api/audit/exports/{job_id}/download` |
 | DELETE | `/api/branding` |
 | GET | `/api/branding` |
 | PUT | `/api/branding` |
@@ -315,6 +317,10 @@
 | POST | `/api/maintenance/artifact-retention/cleanup` |
 | GET | `/api/maintenance/artifact-retention/settings` |
 | PUT | `/api/maintenance/artifact-retention/settings` |
+| GET | `/api/maintenance/audit-retention/preview` |
+| POST | `/api/maintenance/audit-retention/run` |
+| GET | `/api/maintenance/audit-retention/settings` |
+| PUT | `/api/maintenance/audit-retention/settings` |
 | POST | `/api/maintenance/cleanup-orphaned` |
 | POST | `/api/maintenance/index-docs` |
 | POST | `/api/maintenance/preflight` |

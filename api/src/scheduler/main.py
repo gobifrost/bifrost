@@ -512,6 +512,20 @@ class Scheduler:
         except ImportError:
             logger.warning("Artifact retention cleanup not available")
 
+        # Audit archive - daily at 2:30 AM UTC
+        from src.jobs.schedulers.audit_archive import archive_audit_events_schedule
+
+        scheduler.add_job(
+            self._run_scheduled_task,
+            CronTrigger(hour=2, minute=30),
+            id="audit_archive",
+            name="Archive aged audit events to object storage",
+            replace_existing=True,
+            args=["audit_archive", archive_audit_events_schedule],
+            **misfire_options,
+        )
+        logger.info("Audit archive scheduled (daily at 2:30 AM)")
+
         # Event cleanup - daily at 3:00 AM UTC (30-day retention)
         try:
             from src.jobs.schedulers.event_cleanup import cleanup_old_events

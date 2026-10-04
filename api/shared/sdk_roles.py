@@ -48,7 +48,8 @@ if TYPE_CHECKING:
         RolePublic,
         RoleUsersResponse,
     )
-    from src.services.authorization.enforce import Caller, OrgReach
+    from src.services.authorization.enforce import Caller
+    from src.services.authorization.reach import OrgReach
 
 logger = logging.getLogger(__name__)
 

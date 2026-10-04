@@ -118,6 +118,14 @@ def test_operators_see_access_checks_in_their_reach_only(e2e_client, world) -> N
     assert organizations == [world["customer"]["id"]] * 2
 
 
+def test_operators_do_not_see_the_retention_window(e2e_client, world) -> None:
+    body = _ok(
+        e2e_client.get("/api/audit", headers=world["operator"].headers, params={"action": "access.check"})
+    )
+
+    assert body["retention"] is None
+
+
 def test_operators_read_nothing_else_in_the_audit_log(e2e_client, world) -> None:
     for params in ({"execution_id": world["run"]}, {"action": "user.", "execution_id": world["run"]}):
         assert e2e_client.get("/api/audit", headers=world["operator"].headers, params=params).status_code == 403

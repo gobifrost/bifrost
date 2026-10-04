@@ -61,7 +61,6 @@ from src.services.authorization.context import (
 )
 from src.services.authorization.enforce import (
     Caller,
-    OrgReach,
     allows_operation,
     held_permissions_by_user,
     operation_reach,
@@ -70,6 +69,7 @@ from src.services.authorization.enforce import (
     require_operation,
     require_unprotected,
 )
+from src.services.authorization.reach import OrgReach
 from src.services.authorization.privilege import (
     is_privileged_principal,
     may_change_role_assignment,

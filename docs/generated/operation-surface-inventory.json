@@ -9968,7 +9968,7 @@
     "cli": 155,
     "manifest": 16,
     "mcp": 94,
-    "rest": 654,
+    "rest": 660,
     "sdk": 19
   },
   "schema_version": 1,
@@ -11491,6 +11491,20 @@
         "status": "missing_surface"
       },
       {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/audit/exports",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/audit/exports/{job_id}/download",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
         "method": "DELETE",
         "operation_id": "",
         "path": "/api/branding",
@@ -12383,6 +12397,34 @@
         "method": "PUT",
         "operation_id": "",
         "path": "/api/maintenance/artifact-retention/settings",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/maintenance/audit-retention/preview",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/maintenance/audit-retention/run",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/maintenance/audit-retention/settings",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "PUT",
+        "operation_id": "",
+        "path": "/api/maintenance/audit-retention/settings",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

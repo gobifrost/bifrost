@@ -22,7 +22,7 @@ import pytest
 from fastapi import HTTPException
 
 from shared.sdk_organizations import OrganizationServiceError
-from src.services.authorization.enforce import EVERYTHING
+from src.services.authorization.reach import EVERYTHING
 
 
 def _stub_user(email: str = "admin@test.local"):

@@ -252,6 +252,10 @@ _OPERATOR_AT_CUSTOMER_ORG = {
     # Report-only access checks in the audit log (R3b decision P2); the
     # route admits nothing else to a non-Platform-Admin.
     ("GET /api/audit", "roleassignments.read"),
+    # Exporting those same access checks, archived and current, and
+    # downloading the export while the reach it was made with is unchanged.
+    ("POST /api/audit/exports", "roleassignments.read"),
+    ("GET /api/audit/exports/{job_id}/download", "roleassignments.read"),
 }
 _IDENTITY_CUSTOM_AT_HOME = {
     (key, permission)

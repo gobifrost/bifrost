@@ -31,6 +31,7 @@ from src.models.orm.form_publications import FormPublication
 from src.models.orm.app_roles import AppRole
 from src.models.orm.applications import Application
 from src.models.orm.audit import AuditLog
+from src.models.orm.audit_archive import AuditArchiveSegment
 from src.models.orm.base import Base
 from src.models.orm.branding import GlobalBranding
 from src.models.orm.config import Config, SystemConfig
@@ -166,6 +167,7 @@ __all__ = [
     "MemoryEntry",
     # Audit
     "AuditLog",
+    "AuditArchiveSegment",
     # MFA
     "UserMFAMethod",
     "MFARecoveryCode",

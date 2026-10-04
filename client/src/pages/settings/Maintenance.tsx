@@ -31,6 +31,7 @@ import { authFetch } from "@/lib/api-client";
 import { exportAll } from "@/services/exportImport";
 import { ImportDialog } from "@/components/ImportDialog";
 import { ArtifactRetentionSettings } from "@/pages/settings/ArtifactRetentionSettings";
+import { AuditRetentionSettings } from "@/pages/settings/AuditRetentionSettings";
 
 type ScanResultType = "none" | "docs" | "app-deps";
 
@@ -314,6 +315,7 @@ export function Maintenance() {
 	return (
 		<div className="space-y-6">
 			<ArtifactRetentionSettings />
+			<AuditRetentionSettings />
 
 			{/* Export/Import Card */}
 			<Card>

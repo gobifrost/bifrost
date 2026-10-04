@@ -42,7 +42,7 @@ from src.core.log_safety import log_safe
 
 if TYPE_CHECKING:
     from src.models import OrganizationPublic
-    from src.services.authorization.enforce import OrgReach
+    from src.services.authorization.reach import OrgReach
 
 logger = logging.getLogger(__name__)
 
