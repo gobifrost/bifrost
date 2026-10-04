@@ -21,6 +21,7 @@ git-sync module already imports these collectors). Reuse, not replication.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import os
@@ -28,7 +29,7 @@ import tempfile
 import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -165,52 +166,92 @@ MAX_SOLUTION_ARCHIVE_ENTRIES = 10_000
 MAX_SOLUTION_ENTRY_BYTES = 128 * 1024 * 1024
 MAX_SOLUTION_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024
 MAX_SOLUTION_COMPRESSION_RATIO = 100
+# Backup payloads stay inside the archive and are decrypted one chunk at a time.
+# These budgets do not increase the source/metadata extraction limits above.
+MAX_SOLUTION_BACKUP_ARCHIVE_BYTES = 32 * 1024 * 1024 * 1024
+MAX_SOLUTION_BACKUP_ENTRY_BYTES = 32 * 1024 * 1024 * 1024
+MAX_SOLUTION_BACKUP_UNCOMPRESSED_BYTES = 64 * 1024 * 1024 * 1024
+_PAYLOAD_PREFIX = ".bifrost/file-payloads/"
 
 
 def _validate_zip_members(z: zipfile.ZipFile) -> None:
     infos = z.infolist()
     if len(infos) > MAX_SOLUTION_ARCHIVE_ENTRIES:
         raise ValueError("Solution archive has too many entries")
+    backup = any(info.filename == ".bifrost/secrets.enc" for info in infos)
     total = 0
+    source_total = 0
+    seen: set[str] = set()
     for info in infos:
-        if info.file_size > MAX_SOLUTION_ENTRY_BYTES:
+        if info.filename in seen:
+            raise ValueError(f"Solution archive has a duplicate member: {info.filename}")
+        seen.add(info.filename)
+        payload = backup and info.filename.startswith(_PAYLOAD_PREFIX)
+        entry_limit = MAX_SOLUTION_BACKUP_ENTRY_BYTES if payload else MAX_SOLUTION_ENTRY_BYTES
+        if info.file_size > entry_limit:
             raise ValueError(f"Solution archive entry is too large: {info.filename}")
         if info.compress_size and info.file_size / info.compress_size > MAX_SOLUTION_COMPRESSION_RATIO:
             raise ValueError(f"Solution archive compression ratio is unsafe: {info.filename}")
         total += info.file_size
-        if total > MAX_SOLUTION_UNCOMPRESSED_BYTES:
+        if not payload:
+            source_total += info.file_size
+        if (
+            source_total > MAX_SOLUTION_UNCOMPRESSED_BYTES
+            or total > MAX_SOLUTION_BACKUP_UNCOMPRESSED_BYTES
+        ):
             raise ValueError("Solution archive expands beyond the allowed size")
 
 
-def _safe_extract(data: bytes, dest: str) -> None:
-    """Extract ``data`` (zip bytes) into ``dest``, rejecting zip-slip members.
+def _validate_archive_size(z: zipfile.ZipFile, size: int) -> None:
+    limit = (
+        MAX_SOLUTION_BACKUP_ARCHIVE_BYTES
+        if ".bifrost/secrets.enc" in z.namelist()
+        else MAX_SOLUTION_ARCHIVE_BYTES
+    )
+    if size > limit:
+        raise ValueError("Solution archive exceeds the compressed upload limit")
 
-    A member whose resolved path escapes ``dest`` (``../evil``, an absolute path,
-    a symlink-style traversal) raises ``ValueError`` BEFORE anything is written —
-    so a malicious zip can never plant a file outside the temp root.
-    """
+
+def _extract_workspace(z: zipfile.ZipFile, dest: str) -> None:
+    """Validate every member, then extract source/metadata without payload copies."""
+    _validate_zip_members(z)
     dest_real = os.path.realpath(dest)
+    for member in z.namelist():
+        target = os.path.realpath(os.path.join(dest, member))
+        if not (target == dest_real or target.startswith(dest_real + os.sep)):
+            raise ValueError(f"unsafe path in zip: {member}")
+    for info in z.infolist():
+        if not info.filename.startswith(_PAYLOAD_PREFIX):
+            z.extract(info, dest)
+
+
+async def _validate_payload_integrity(z: zipfile.ZipFile) -> None:
+    """Check skipped members' ZIP checksums before installation can write.
+
+    Read bounded chunks without extracting another encrypted copy. Yield between
+    chunks so the install job remains cancellable while scanning a large backup.
+    """
+    for info in z.infolist():
+        if info.filename.startswith(_PAYLOAD_PREFIX):
+            with z.open(info) as source:
+                while source.read(8 * 1024 * 1024):
+                    await asyncio.sleep(0)
+
+
+def _safe_extract(data: bytes, dest: str) -> None:
+    """Extract bounded workspace content; runtime payloads remain in the ZIP."""
     with zipfile.ZipFile(io.BytesIO(data)) as z:
-        _validate_zip_members(z)
-        for member in z.namelist():
-            target = os.path.realpath(os.path.join(dest, member))
-            if not (target == dest_real or target.startswith(dest_real + os.sep)):
-                raise ValueError(f"unsafe path in zip: {member}")
-        z.extractall(dest)
+        _validate_archive_size(z, len(data))
+        _extract_workspace(z, dest)
 
 
 def _safe_extract_path(zip_path: Path, dest: str) -> None:
-    """Extract a zip file from disk, rejecting zip-slip members."""
-    dest_real = os.path.realpath(dest)
-    if zip_path.stat().st_size > MAX_SOLUTION_ARCHIVE_BYTES:
+    """Extract bounded workspace content from a disk-backed archive."""
+    if zip_path.stat().st_size > MAX_SOLUTION_BACKUP_ARCHIVE_BYTES:
         raise ValueError("Solution archive exceeds the compressed upload limit")
     with zipfile.ZipFile(zip_path) as z:
-        _validate_zip_members(z)
-        for member in z.namelist():
-            target = os.path.realpath(os.path.join(dest, member))
-            if not (target == dest_real or target.startswith(dest_real + os.sep)):
-                raise ValueError(f"unsafe path in zip: {member}")
-        z.extractall(dest)
+        _validate_archive_size(z, zip_path.stat().st_size)
+        _extract_workspace(z, dest)
 
 
 def _parse_workspace(workspace: Path) -> PreviewResult:
@@ -493,8 +534,13 @@ async def install_zip(
             replace flag is not set.  Caller maps this to 409.
     Re-raises the deploy exceptions for the endpoint to map.
     """
-    with tempfile.TemporaryDirectory(prefix="bifrost-zip-install-") as tmp:
-        _safe_extract(data, tmp)
+    with (
+        tempfile.TemporaryDirectory(prefix="bifrost-zip-install-") as tmp,
+        zipfile.ZipFile(io.BytesIO(data)) as payload_archive,
+    ):
+        _validate_archive_size(payload_archive, len(data))
+        _extract_workspace(payload_archive, tmp)
+        await _validate_payload_integrity(payload_archive)
         return await _install_workspace(
             db,
             Path(tmp),
@@ -506,6 +552,7 @@ async def install_zip(
             replace_secrets=replace_secrets,
             replace_data=replace_data,
             reactivate=reactivate,
+            payload_archive=payload_archive,
         )
 
 
@@ -523,8 +570,13 @@ async def install_zip_path(
     reactivate: bool = False,
 ) -> Solution:
     """Install a Solution zip from disk without buffering the upload."""
-    with tempfile.TemporaryDirectory(prefix="bifrost-zip-install-") as tmp:
-        _safe_extract_path(zip_path, tmp)
+    with (
+        tempfile.TemporaryDirectory(prefix="bifrost-zip-install-") as tmp,
+        zipfile.ZipFile(zip_path) as payload_archive,
+    ):
+        _validate_archive_size(payload_archive, zip_path.stat().st_size)
+        _extract_workspace(payload_archive, tmp)
+        await _validate_payload_integrity(payload_archive)
         return await _install_workspace(
             db,
             Path(tmp),
@@ -536,6 +588,7 @@ async def install_zip_path(
             replace_secrets=replace_secrets,
             replace_data=replace_data,
             reactivate=reactivate,
+            payload_archive=payload_archive,
         )
 
 
@@ -545,7 +598,7 @@ def validate_install_zip(zip_path: Path, *, password: str | None) -> PreviewResu
     Runs the caller-input checks that must return a 4xx on the request itself —
     NOT as a failed background job. Raises before any job row exists:
 
-    * ``ValueError`` / ``zipfile.BadZipFile`` — the zip is corrupt, zip-slips,
+    * ``ValueError`` / ``zipfile.BadZipFile`` — source/metadata is corrupt, zip-slips,
       or is not a Solution workspace (missing ``bifrost.solution.yaml`` slug/name).
     * ``BadExportPassword`` — the zip carries a ``.bifrost/secrets.enc`` blob and
       the password is missing or wrong. We decrypt-check here so a wrong password
@@ -557,6 +610,8 @@ def validate_install_zip(zip_path: Path, *, password: str | None) -> PreviewResu
     synchronous conflict checks (e.g. the inactive-install 409 prompt needs the
     slug) without re-extracting the zip.
 
+    Encrypted payload checksums are scanned in the install job before any writes,
+    rather than reading the entire backup during request-time validation.
     The heavier build-time gates (unmet dependencies, content collisions,
     downgrade, git-connected) intentionally stay in the job — they require the
     built bundle / lock-held DB state and surface as a failed job, exactly as the
@@ -599,6 +654,7 @@ async def _install_workspace(
     replace_secrets: bool,
     replace_data: bool,
     reactivate: bool,
+    payload_archive: zipfile.ZipFile | None = None,
 ) -> Solution:
     from src.services.solutions.write_lock import solution_write_lock
 
@@ -712,6 +768,7 @@ async def _install_workspace(
                 replace_secrets=replace_secrets,
                 replace_data=replace_data,
                 deployer_email=deployer_email,
+                payload_archive=payload_archive,
             )
             await db.commit()
 
@@ -901,6 +958,7 @@ async def _apply_content(
     replace_secrets: bool,
     replace_data: bool,
     deployer_email: str,
+    payload_archive: zipfile.ZipFile | None = None,
 ) -> None:
     """Apply decrypted content (config values + table rows) from a full-backup zip.
 
@@ -949,6 +1007,7 @@ async def _apply_content(
             solution_files=content.solution_files,
             workspace=workspace,
             password=password,
+            payload_archive=payload_archive,
         )
 
 
@@ -959,6 +1018,7 @@ async def _apply_solution_files(
     solution_files: list[Any],
     workspace: Path,
     password: str | None,
+    payload_archive: zipfile.ZipFile | None = None,
 ) -> None:
     """Restore solution-owned file sidecars from the decrypted secrets blob.
 
@@ -974,7 +1034,10 @@ async def _apply_solution_files(
         write_solution_file,
         write_solution_file_from_chunks,
     )
-    from src.services.solutions.file_payloads import iter_encrypted_payload_file
+    from src.services.solutions.file_payloads import (
+        iter_encrypted_payload_file,
+        iter_encrypted_payload_stream,
+    )
 
     def _safe_payload_path(raw: str) -> Path:
         root = os.path.realpath(workspace)
@@ -1012,10 +1075,33 @@ async def _apply_solution_files(
                 raise BadExportPassword(
                     "this bundle carries file payloads — a password is required"
                 )
-            chunks = iter_encrypted_payload_file(
-                _safe_payload_path(payload),
-                password=password,
-            )
+            if payload_archive is not None:
+                member = PurePosixPath(payload)
+                if (
+                    not payload.startswith(_PAYLOAD_PREFIX)
+                    or member.is_absolute()
+                    or ".." in member.parts
+                    or str(member) != payload
+                    or "\\" in payload
+                ):
+                    raise ValueError(f"unsafe solution file payload path: {payload}")
+
+                async def archive_chunks(member_name: str) -> AsyncIterator[bytes]:
+                    try:
+                        source = payload_archive.open(member_name)
+                    except KeyError as exc:
+                        raise FileNotFoundError(
+                            f"solution file payload not found: {member_name}"
+                        ) from exc
+                    with source:
+                        async for chunk in iter_encrypted_payload_stream(source, password=password):
+                            yield chunk
+
+                chunks = archive_chunks(payload)
+            else:
+                chunks = iter_encrypted_payload_file(
+                    _safe_payload_path(payload), password=password,
+                )
             await write_solution_file_from_chunks(
                 db,
                 solution.id,

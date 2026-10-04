@@ -549,32 +549,45 @@ async def test_table_content_rejects_bad_ids_before_replacing_rows(db_session) -
 
 
 @pytest.mark.e2e
-async def test_encrypted_backup_restores_document_graph_with_source_ids(db_session) -> None:
-    """The encrypted export/install path preserves relationship target IDs."""
+async def test_encrypted_backup_restores_document_graph_with_source_ids(db_session, tmp_path) -> None:
+    """A disk-backed encrypted restore preserves IDs, links and attachment bytes."""
+    import hashlib
+
     from sqlalchemy import select
 
     from src.models.orm.solutions import Solution
     from src.models.orm.tables import Document, Table
+    from src.services.solution_files import SolutionFileEntry, read_solution_file
     from src.services.solutions.deploy import SolutionBundle
     from src.services.solutions.export import build_workspace_zip
+    from src.services.solutions.zip_install import install_zip_path
 
     table_name = f"graph_{uuid4().hex[:8]}"
     manifest_table_id = str(uuid4())
     row_ids = ["folder-source-id", "document-source-id", "attachment-source-id"]
+    file_path = "documents/guide.pdf"
+    file_content = b"%PDF-synthetic restore attachment\n" * 100
     rows = [
         {"name": "Runbooks"},
         {"name": "Getting started", "parent_id": row_ids[0]},
-        {"name": "Guide.pdf", "attachment_parent_id": row_ids[1]},
+        {"name": "Guide.pdf", "attachment_parent_id": row_ids[1], "file_path": file_path},
     ]
     backup = SolutionBundle(
         solution=Solution(slug=f"graph-{uuid4().hex[:8]}", name="Graph backup", organization_id=None),
         tables=[{"id": manifest_table_id, "name": table_name, "schema": {"columns": []}, "policies": None}],
         table_data={table_name: rows},
         table_document_ids={table_name: row_ids},
+        file_locations=["shared"],
+        solution_files=[SolutionFileEntry(
+            location="shared", path=file_path,
+            sha256=hashlib.sha256(file_content).hexdigest(), size=len(file_content),
+            content_bytes=file_content,
+        )],
     )
-    archive = build_workspace_zip(backup, password="backup-password")
+    archive = tmp_path / "backup.zip"
+    archive.write_bytes(build_workspace_zip(backup, password="backup-password"))
 
-    installed = await install_zip(
+    installed = await install_zip_path(
         db_session,
         archive,
         organization_id=None,
@@ -592,3 +605,5 @@ async def test_encrypted_backup_restores_document_graph_with_source_ids(db_sessi
     assert set(by_id) == set(row_ids)
     assert by_id["document-source-id"]["parent_id"] == "folder-source-id"
     assert by_id["attachment-source-id"]["attachment_parent_id"] == "document-source-id"
+    assert by_id["attachment-source-id"]["file_path"] == file_path
+    assert await read_solution_file(db_session, installed.id, "shared", file_path) == file_content

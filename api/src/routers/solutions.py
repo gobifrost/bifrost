@@ -127,7 +127,10 @@ from src.services.solutions.workspace_bundle_import import (
     WorkspaceBundleDecisionError,
     require_workspace_config_values,
 )
-from src.services.solutions.zip_install import MAX_SOLUTION_ARCHIVE_BYTES
+from src.services.solutions.zip_install import (
+    MAX_SOLUTION_ARCHIVE_BYTES,
+    MAX_SOLUTION_BACKUP_ARCHIVE_BYTES,
+)
 from src.services.platform_jobs import ACTIVE_PLATFORM_JOB_STATUSES
 from src.services.application_sdk_status import (
     CurrentApplicationSdkMetadata,
@@ -514,7 +517,10 @@ def _same_workspace_bundle_decisions(
     )
 
 
-async def _spool_upload_to_temp(file: UploadFile, *, prefix: str) -> Path:
+async def _spool_upload_to_temp(
+    file: UploadFile, *, prefix: str, max_bytes: int | None = None,
+) -> Path:
+    limit = MAX_SOLUTION_ARCHIVE_BYTES if max_bytes is None else max_bytes
     tmp = tempfile.NamedTemporaryFile(prefix=prefix, suffix=".zip", delete=False)
     path = Path(tmp.name)
     try:
@@ -522,7 +528,7 @@ async def _spool_upload_to_temp(file: UploadFile, *, prefix: str) -> Path:
             compressed_size = 0
             while chunk := await file.read(UPLOAD_CHUNK_SIZE):
                 compressed_size += len(chunk)
-                if compressed_size > MAX_SOLUTION_ARCHIVE_BYTES:
+                if compressed_size > limit:
                     raise HTTPException(
                         status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                         detail="Solution archive exceeds the compressed upload limit.",
@@ -2951,7 +2957,9 @@ async def install_preview(
                 detail=f"Invalid organization_id: {organization_id}",
             ) from exc
 
-    zip_path = await _spool_upload_to_temp(file, prefix="bifrost-solution-preview-")
+    zip_path = await _spool_upload_to_temp(
+        file, prefix="bifrost-solution-preview-", max_bytes=MAX_SOLUTION_BACKUP_ARCHIVE_BYTES,
+    )
     try:
         result = preview_zip_path(zip_path)
     except (ValueError, zipfile.BadZipFile) as exc:
@@ -3227,10 +3235,12 @@ async def install_solution(
             detail="config_values must be a JSON object mapping key → value",
         )
 
-    zip_path = await _spool_upload_to_temp(file, prefix="bifrost-solution-install-")
-    # Fail-fast validation BEFORE the job row exists: a corrupt zip / non-workspace
-    # / wrong-or-missing secrets password returns a synchronous 4xx, not a failed
-    # job (mirrors deploy's synchronous preview_zip_path guard).
+    zip_path = await _spool_upload_to_temp(
+        file, prefix="bifrost-solution-install-", max_bytes=MAX_SOLUTION_BACKUP_ARCHIVE_BYTES,
+    )
+    # Fail-fast validation BEFORE the job row exists: corrupt source/metadata,
+    # a non-workspace or a wrong/missing password returns a synchronous 4xx.
+    # The job scans encrypted payload checksums before any installation writes.
     try:
         preview = validate_install_zip(zip_path, password=password)
     except BadExportPassword as exc:

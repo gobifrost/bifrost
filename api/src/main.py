@@ -356,11 +356,16 @@ def create_app() -> FastAPI:
 
     # This route accepts multipart uploads.  The cap must run before
     # Starlette constructs UploadFile and spills a body to disk.
-    from src.services.solutions.zip_install import MAX_SOLUTION_ARCHIVE_BYTES
+    from src.services.solutions.zip_install import (
+        MAX_SOLUTION_ARCHIVE_BYTES,
+        MAX_SOLUTION_BACKUP_ARCHIVE_BYTES,
+    )
     app.add_middleware(
         RouteBodyLimitMiddleware,
         limits={
             ("POST", "/api/solutions/import-workspace/preview"): MAX_SOLUTION_ARCHIVE_BYTES,
+            ("POST", "/api/solutions/install/preview"): MAX_SOLUTION_BACKUP_ARCHIVE_BYTES,
+            ("POST", "/api/solutions/install"): MAX_SOLUTION_BACKUP_ARCHIVE_BYTES,
         },
     )
 
