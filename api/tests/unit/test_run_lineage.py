@@ -206,3 +206,17 @@ async def test_principal_lineage_by_principal_shape(db_session: AsyncSession) ->
     assert await principal_lineage(db_session, global_embed) == RunLineage(global_identity, global_identity, None)
     assert await principal_lineage(db_session, principal()) == RunLineage(person.id, person.id, None)
     assert await principal_lineage(db_session, system) == person_lineage(SYSTEM_USER_ID)
+
+
+async def test_principal_lineage_reads_the_run_user_a_bridge_token_carries(db_session: AsyncSession) -> None:
+    org = await _org(db_session)
+    org_identity = await _identity_id(db_session, org.id)
+    bridge = UserPrincipal(
+        user_id=UUID(SYSTEM_USER_ID),
+        email="system@lineage.example",
+        organization_id=org.id,
+        run_user_id=org_identity,
+        started_by_user_id=org_identity,
+    )
+
+    assert await principal_lineage(db_session, bridge) == RunLineage(org_identity, org_identity, None)

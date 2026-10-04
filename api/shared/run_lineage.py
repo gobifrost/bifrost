@@ -11,7 +11,8 @@ run tree, and the tree's first execution. One rule per way a run starts:
 | Schedule, webhook, topic, endpoint key             | the workflow's identity, else its organization's       | its own id      |
 |                                                    | default identity (global workflow: global identity)    |                 |
 | Anonymous or embedded form/app, service            | the default identity of the principal's organization   | its own id      |
-| Agent tool call                                    | the agent run's run user                               | its own id      |
+| Agent tool call (incl. system tools via the MCP    | the agent run's run user                               | its own id      |
+| bridge, which carries it as a token claim)         |                                                        |                 |
 
 A child whose parent recorded no lineage (started before lineage was
 recorded) records none. Nothing decides on lineage yet; it is attribution.
@@ -118,4 +119,11 @@ async def principal_lineage(session: AsyncSession, principal: UserPrincipal) -> 
         return await identity_lineage(session, principal.organization_id)
     if principal.engine_execution_id is not None:
         return await child_lineage(session, principal.engine_execution_id)
+    if principal.run_user_id is not None:
+        # The MCP bridge calling for an agent run: the agent run's user.
+        return RunLineage(
+            run_user_id=principal.run_user_id,
+            started_by_user_id=principal.started_by_user_id or principal.run_user_id,
+            root_execution_id=None,
+        )
     return person_lineage(principal.user_id)

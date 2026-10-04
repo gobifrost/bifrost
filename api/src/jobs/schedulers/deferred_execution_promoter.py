@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select, update
 
+from shared.run_lineage import RunLineage
 from src.core.database import get_db_context
 from src.models.enums import ExecutionStatus
 from src.models.orm.executions import Execution
@@ -89,11 +90,9 @@ async def promote_due_executions() -> tuple[int, int]:
                     file_path=None,
                     execution_record_exists=True,
                     lineage=(
-                        {
-                            "run_user_id": str(row.run_user_id),
-                            "started_by_user_id": str(row.started_by_user_id),
-                            "root_execution_id": str(row.root_execution_id),
-                        }
+                        RunLineage(
+                            row.run_user_id, row.started_by_user_id, row.root_execution_id
+                        ).bound(row.id)
                         if row.run_user_id is not None
                         else None
                     ),

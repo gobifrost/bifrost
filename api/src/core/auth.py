@@ -14,7 +14,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from src.core.db_deps import DbSession
-from src.core.principal import UserPrincipal
+from src.core.principal import UserPrincipal, run_lineage_fields
 from src.core.security import decode_token
 from shared.role_cache import get_user_roles
 
@@ -225,6 +225,7 @@ async def get_current_user_optional(
         service_attempt_id=payload.get("service_attempt_id"),
         capability_fingerprint=payload.get("capability_fingerprint"),
         token_exp=payload.get("exp"),
+        **run_lineage_fields(payload),
     )
 
 
@@ -619,4 +620,5 @@ async def get_current_user_ws(websocket) -> UserPrincipal | None:
         service_attempt_id=payload.get("service_attempt_id"),
         capability_fingerprint=payload.get("capability_fingerprint"),
         token_exp=payload.get("exp"),
+        **run_lineage_fields(payload),
     )
