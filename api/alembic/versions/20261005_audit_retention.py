@@ -1,7 +1,7 @@
 """Audit retention: archive segment catalog, existing-install policy, paging index
 
 Revision ID: 20261005_audit_retention
-Revises: 20261004_r3b_lineage
+Revises: 20261004_agent_run_cancel_req_at
 Create Date: 2026-10-05
 
 audit_archive_segments catalogs audit events archived to object storage.
@@ -26,7 +26,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "20261005_audit_retention"
-down_revision: Union[str, None] = "20261004_r3b_lineage"
+down_revision: Union[str, None] = "20261004_agent_run_cancel_req_at"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
