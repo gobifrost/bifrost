@@ -44,6 +44,7 @@ from shared.table_documents import (
 from src.core.constants import SYSTEM_USER_UUID
 from src.core.principal import UserPrincipal
 from src.models.orm.tables import Document, Table
+from src.services.access_check_policies import check_table_write
 from src.services.audit import emit_table_policy_deny
 from src.services.table_policy_loader import load_resolved_table_policies
 from src.core.pubsub import (
@@ -130,9 +131,11 @@ async def require_update_policy(
         table.organization_id,
         table.solution_id,
     )
-    if evaluate_action("update", policies, old_row, user) and evaluate_action(
+    allowed = evaluate_action("update", policies, old_row, user) and evaluate_action(
         "update", policies, new_row, user
-    ):
+    )
+    await check_table_write(db, "update", table, [old_row, new_row], policies, allowed_today=allowed)
+    if allowed:
         return
 
     raw_id = old_row.get("id")

@@ -21,6 +21,7 @@ from uuid import UUID
 
 from sqlalchemy import select, text
 
+from src.services.access_check_policies import check_file
 from src.services.audit import emit_file_policy_deny
 
 if TYPE_CHECKING:
@@ -187,7 +188,7 @@ async def authorize_file_policy(
     }.get(action, action)
 
     service = FilePolicyService(db)
-    return await service.is_allowed(
+    allowed = await service.is_allowed(
         cast(FileAction, policy_action),
         organization_id=policy_organization_id,
         location=location,
@@ -195,6 +196,16 @@ async def authorize_file_policy(
         user=user,
         solution_id=resolved_solution_id,
     )
+    await check_file(
+        db,
+        policy_action,
+        organization_id=policy_organization_id,
+        location=location,
+        path=path,
+        solution_id=resolved_solution_id,
+        allowed_today=allowed,
+    )
+    return allowed
 
 
 async def deny_file_policy(

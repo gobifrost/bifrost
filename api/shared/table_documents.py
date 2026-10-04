@@ -31,6 +31,7 @@ from src.models.contracts.tables import (
     DocumentQuery,
 )
 from src.models.orm.tables import Document, Table
+from src.services.access_check_policies import check_table_rows, check_table_write
 from src.services.audit import emit_table_policy_deny
 from src.services.table_policy_loader import load_resolved_table_policies
 
@@ -64,7 +65,9 @@ async def check_table_action_or_403(
         table.organization_id,
         table.solution_id,
     )
-    if evaluate_action(action, policies, row, user):
+    allowed = evaluate_action(action, policies, row, user)
+    await check_table_write(db, action, table, [row], policies, allowed_today=allowed)
+    if allowed:
         return
 
     # Resolve the row id only when it's actually a UUID.
@@ -499,6 +502,7 @@ async def query_table_documents(
 
     repo = DocumentRepository(db, table)
     documents, total = await repo.query(query_params, extra_where=read_filter)
+    await check_table_rows(db, table, policies, [_row_from_doc(d) for d in documents])
     return DocumentListResponse(
         table_id=table.id,
         documents=[DocumentPublic.model_validate(d) for d in documents],
