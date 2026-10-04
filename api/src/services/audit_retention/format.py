@@ -64,6 +64,8 @@ class ArchiveRow:
 
     @classmethod
     def from_line(cls, line: dict[str, Any]) -> ArchiveRow:
+        if not isinstance(line, dict):
+            raise ValueError(f"audit archive line is not an object: {type(line).__name__}")
         if line["schema"] != SCHEMA:
             raise ValueError(f"unsupported audit archive schema: {line['schema']!r}")
         return cls(
@@ -145,8 +147,13 @@ def verify_segment(blob: bytes, *, sha256: str, ids: Sequence[UUID]) -> list[Arc
         raise ArchiveVerifyError("stored object checksum does not match")
     try:
         text = gzip.decompress(blob).decode()
-        rows = [ArchiveRow.from_line(json.loads(line)) for line in text.splitlines()]
-    except (OSError, EOFError, UnicodeDecodeError, ValueError, KeyError) as exc:
+        # Split on "\n" only: str.splitlines() also splits on U+2028/U+2029/U+0085,
+        # which ensure_ascii=False leaves unescaped inside JSON strings.
+        lines = text.split("\n")
+        if not lines[-1]:
+            lines.pop()
+        rows = [ArchiveRow.from_line(json.loads(line)) for line in lines]
+    except (OSError, EOFError, ValueError, KeyError, TypeError, AttributeError) as exc:
         raise ArchiveVerifyError(f"stored object is unreadable: {exc}") from exc
     if [r.id for r in rows] != list(ids):
         raise ArchiveVerifyError(f"stored object holds {len(rows)} rows that do not match the {len(ids)} expected ids")
