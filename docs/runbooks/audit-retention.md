@@ -58,7 +58,7 @@ Each settings change is audited as `settings.audit_retention.update`.
 `audit.archive` runs at 02:30 UTC. It uses the shared platform-job system, so
 progress and status appear in the notification stream and under
 Diagnostics → Scheduler. One run at a time (`max_concurrency = 1`); timeout 2
-hours; up to 3 attempts after a runner loss.
+hours; 3 attempts in total, retried only after a runner loss.
 
 Phases:
 
@@ -72,9 +72,12 @@ Phases:
 2. **Expiring archives.** Skipped if `archive_days` is unset. Deletes expired
    segment objects and their catalog rows 100 at a time, inside the
    lease-holding transaction. If an object delete fails, the catalog change
-   rolls back.
+   rolls back. Objects deleted earlier in that page are already gone while
+   their catalog rows come back; the next run repeats those deletes, which is
+   safe, and no export can read in between because of the shared lock.
 3. **Export cleanup.** Deletes exported files older than 7 days, and any export
-   file with no matching job.
+   file with no matching job. It runs at the end of a successful, non-dry
+   archive run.
 
 **After a crash or runner loss** the job is requeued with its checkpoint. The
 windows stay as the first attempt set them. Segments already committed are gone
@@ -119,15 +122,21 @@ expiry both walk the catalog, not the bucket.
 
 ## Export
 
-The **Export** button on the audit page queues an `audit.query` job that writes
-archived and current events to one `.jsonl.gz` file, with the same line format.
+The **Export** button on the audit page (Platform Admin only) queues an
+`audit.query` job that writes archived and current events to one `.jsonl.gz`
+file, with the same line format. The same job is available through
+`POST /api/audit/exports`, which is how Operators export.
 
 - Range: at most 366 days per export. Filters: optional organization and
   action prefix.
-- **Platform Admins** export everything. **Operators** (roles that read
-  access checks) export only `access.check` events, only in organizations
-  they reach; asking for another organization returns 403.
-- Only the person who requested an export can download it.
+- **Platform Admins** export everything.
+- **Operators** (roles that read access checks) have no Export button; they
+  call `POST /api/audit/exports`. A non-admin request must set `action` to a
+  value starting with `access.check`, otherwise it gets 403. Rows are limited
+  to organizations the caller reaches; asking for another organization
+  returns 403.
+- Only the person who requested an export can download it. Downloading
+  someone else's export, or one that has not finished, returns 404.
 - Downloads expire **7 days** after the job finishes (410 Gone). Run it again.
 - If the requester's reach changed since the export was made, the download
   returns 403 "Your access changed since this export was made; run it again."
@@ -156,9 +165,9 @@ Other endings:
 
 - **Cancelled**: a manual cancel stops the run at the next checkpoint. Segments
   already committed stay archived; the next run continues from the database.
-- **Lease lost**: another runner took over. The old runner stops and ends
-  cancelled; it could not delete anything because its transaction needs the
-  current lease.
+- **Lease lost**: another runner took over. The old runner stops without
+  changing the job, and deletes nothing, because every delete needs the
+  current lease. The job then continues under the new lease or is requeued.
 
 ## Warnings
 
