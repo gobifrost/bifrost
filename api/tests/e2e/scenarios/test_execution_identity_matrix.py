@@ -17,6 +17,7 @@ import pytest
 
 from tests.e2e.scenarios import rule
 from tests.e2e.scenarios.observe import (
+    READ_KNOBS,
     WRITE_KNOBS,
     cell_id,
     expected_cells,
@@ -136,14 +137,15 @@ def test_customer_runs_stay_in_customer_reach(matrix_runs: dict) -> None:
     assert not _unexplained(violations), "\n".join(_unexplained(violations))
 
 
-def test_unattended_customer_workflow_stays_home(matrix_runs: dict) -> None:
-    """A Contoso workflow nobody called writes only in Contoso."""
+def test_unattended_customer_workflow_stays_in_its_identitys_reach(matrix_runs: dict) -> None:
+    """A Contoso workflow nobody called writes only in Contoso or Global."""
+    reach = rule.REACH["mi:contoso"]
     violations = []
     for start in RUN_STARTS:
         if start.person is not None or start.probe != "contoso":
             continue
         for cell, _run_key, _target, where in _write_cells(start, matrix_runs):
-            if where is not None and where != "contoso":
+            if where is not None and not set(where.split("+")) <= reach:
                 violations.append(cell)
     assert not _unexplained(violations), "\n".join(_unexplained(violations))
 
@@ -217,6 +219,78 @@ def test_every_run_records_its_lineage(matrix_runs: dict, async_session_factory)
             if observed != (expected, expected, root):
                 mismatches.append(f"{run_key}: {observed} != {(expected, expected, root)}")
     assert not mismatches, "\n".join(mismatches)
+
+
+async def _access_check_failures(session_factory, execution_ids: list[str]) -> set[tuple[str, str, Any]]:
+    """(execution, resource type, target) of every report-only access check
+    that the model would block."""
+    from sqlalchemy import select
+
+    from src.core.database import close_db
+    from src.models.orm.audit import AuditLog
+
+    try:
+        async with session_factory() as session:
+            rows = await session.execute(
+                select(AuditLog.execution_id, AuditLog.resource_type, AuditLog.details["inputs"]["target"]).where(
+                    AuditLog.action == "access.check",
+                    AuditLog.outcome == "failure",
+                    AuditLog.execution_id.in_([UUID(e) for e in execution_ids]),
+                )
+            )
+            return {(str(execution), kind, target) for execution, kind, target in rows}
+    finally:
+        await close_db()
+
+
+def test_access_checks_predict_the_rule(matrix_runs: dict, scenario_world: dict, async_session_factory) -> None:
+    """Blocking exactly what the report-only checks flag yields the rule.
+
+    (a) every check the model would block is a target the rule denies;
+    (b) every attempt the server let through that the rule denies, and every
+    child it started outside the reach, was flagged. Reach is per target, so
+    one flag per (run, target) covers every knob.
+    """
+    label_of = {org_id: label for label, org_id in scenario_world["org_ids"].items()}
+
+    def label(target: Any) -> str:
+        return "global" if target is None else "*" if target == "*" else label_of.get(target, target)
+
+    trees = {start: _tree_runs(start, matrix_runs["runs"]) for start in RUN_STARTS}
+    ids = [run["execution"]["execution_id"] for runs in trees.values() for _, run in runs]
+    flagged = {
+        (execution, kind, label(target))
+        for execution, kind, target in asyncio.run(_access_check_failures(async_session_factory, ids))
+    }
+    problems = []
+    for start, runs in trees.items():
+        user = start.user
+        observed, _ = _start_cells(start, matrix_runs)
+        for run_key, run in runs:
+            execution = run["execution"]["execution_id"]
+            for kind, target in sorted((k, t) for e, k, t in flagged if e == execution):
+                allowed = rule.REACH[user] == rule.EVERYWHERE if target == "*" else rule.expected_allowed(user, target)
+                if allowed:
+                    problems.append(f"{run_key}: {kind} flagged at {target}, which the rule allows")
+            for target in rule.TARGETS:
+                if rule.expected_allowed(user, target):
+                    continue
+                let_through = any(
+                    observed[cell_id(run_key, knob, target)] not in (None, False)
+                    for knob in (*WRITE_KNOBS, *READ_KNOBS)
+                )
+                if let_through and (execution, "scope_switch", target) not in flagged:
+                    problems.append(f"{run_key}: reached {target} unflagged")
+            child_prefix = f"{run_key}>"
+            for cell, spawned in observed.items():
+                child_key, knob, _ = cell.split("|")
+                if knob != "spawn" or not child_key.startswith(child_prefix) or ">" in child_key[len(child_prefix):]:
+                    continue
+                org = child_key.split("[", 1)[1].split(",", 1)[0]
+                if spawned and org != "-" and not rule.expected_allowed(user, org):
+                    if (execution, "child_run", org) not in flagged:
+                        problems.append(f"{child_key}: started outside the reach, unflagged")
+    assert not problems, "\n".join(problems)
 
 
 # Functional journeys: these hold today and must hold unchanged after R3b.

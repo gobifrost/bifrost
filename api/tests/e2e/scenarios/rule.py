@@ -1,7 +1,7 @@
 """The execution-identity rule and the starts it is checked against.
 
 The rule (managed-identity model): an attempt to act in a target org is
-allowed iff the target is in the run user's reach. The run user is the person
+allowed iff the target is in the run user's reach (Global is in everyone's). The run user is the person
 who called the run; with no caller it is the managed identity (MI) of the
 workflow's org. Child runs and ``run_as`` keep the original user's reach. The
 workflow adds powers (every probe here is Full), never reach.
@@ -14,18 +14,20 @@ from dataclasses import dataclass, field
 TARGETS = ("contoso", "fabrikam", "provider", "global")
 EVERYWHERE = frozenset(TARGETS)
 
-# Reach of each run user. "staff" are provider-org members, who become
-# Operators at every customer org with the Operator migration.
+# Reach of each run user: home, every org a role of theirs is placed on, and
+# Global, which is in everyone's reach. "staff" are provider-org members, who
+# become Operators at every customer org with the Operator migration. The
+# global identity has no home, so it reaches Global only.
 REACH: dict[str, frozenset[str]] = {
     "admin": EVERYWHERE,
     "staff": EVERYWHERE,
-    "customer": frozenset({"contoso"}),
-    "hr": frozenset({"contoso"}),
-    "external": frozenset({"contoso"}),
-    "custom_base": frozenset({"contoso"}),
-    "fabrikam_customer": frozenset({"fabrikam"}),
+    "customer": frozenset({"contoso", "global"}),
+    "hr": frozenset({"contoso", "global"}),
+    "external": frozenset({"contoso", "global"}),
+    "custom_base": frozenset({"contoso", "global"}),
+    "fabrikam_customer": frozenset({"fabrikam", "global"}),
     "mi:provider": EVERYWHERE,
-    "mi:contoso": frozenset({"contoso"}),
+    "mi:contoso": frozenset({"contoso", "global"}),
     "mi:global": frozenset({"global"}),
 }
 PLATFORM_ADMINS = frozenset({"admin", "mi:provider"})
