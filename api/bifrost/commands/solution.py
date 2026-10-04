@@ -57,26 +57,6 @@ from bifrost.solution_descriptor import (
     load_descriptor,
 )
 
-# The scaffold's sample workflow. It lives at the SOLUTION ROOT (not under the
-# app dir) so its ``path::fn`` ref resolves the same way everywhere: workflow
-# refs are workspace-root-relative, so the app's ``functions/hello.py::main``
-# means ``<solution-root>/functions/hello.py``. ``bifrost solution start``
-# discovers it from the root and runs it locally, so the scaffold's button works
-# on first run with no deploy.
-_SAMPLE_WORKFLOW_PATH = "functions/hello.py"
-_SAMPLE_WORKFLOW_REF = f"{_SAMPLE_WORKFLOW_PATH}::main"
-_SAMPLE_WORKFLOW_SOURCE = '''\
-from bifrost import workflow
-
-
-@workflow
-async def main():
-    """The scaffold's sample function — `bifrost solution start` runs this
-    locally so the app's first-run button works with no deploy."""
-    return {"message": "Hello from your Bifrost solution"}
-'''
-
-
 @click.group(name="solution", help="Manage Solution installs (installable surfaces).")
 def solution_group() -> None:
     pass
@@ -617,33 +597,6 @@ def _scaffold_app(slug: str, path: str | None) -> pathlib.Path:
     # Register the app in .bifrost/apps.yaml so `bifrost deploy` finds it (the
     # deployer reads this manifest). Without this the scaffold would be source
     # with no way to deploy — a papercut. Keyed by a fresh UUID (app identity).
-
-    # Write the sample workflow at the SOLUTION ROOT (not under the app dir), so
-    # its ``path::fn`` ref (``functions/hello.py::main``) resolves the same way
-    # everywhere — refs are workspace-root-relative. ``solution start`` discovers
-    # it from the root and runs the app's first-run button locally. Don't clobber
-    # an existing file (a re-scaffold of a second app must not overwrite edits).
-    sample_dest = root / _SAMPLE_WORKFLOW_PATH
-    if not sample_dest.exists():
-        sample_dest.parent.mkdir(parents=True, exist_ok=True)
-        sample_dest.write_text(_SAMPLE_WORKFLOW_SOURCE)
-        # Index the sample in .bifrost/workflows.yaml so `bifrost deploy` creates
-        # a Workflow ROW for it — without this, deploy bundles the source but the
-        # app's `functions/hello.py::main` ref 404s on a deployed install (the
-        # source has no row to resolve). Keyed by a fresh UUID (workflow identity).
-        wf_manifest = root / ".bifrost" / "workflows.yaml"
-        wf_manifest.parent.mkdir(parents=True, exist_ok=True)
-        wf_data = yaml.safe_load(wf_manifest.read_text()) if wf_manifest.is_file() else None
-        wf_data = wf_data or {"workflows": {}}
-        wf_id = str(_uuid.uuid4())
-        wf_data.setdefault("workflows", {})[wf_id] = {
-            "id": wf_id,
-            "name": "hello",
-            "path": _SAMPLE_WORKFLOW_PATH,
-            "function_name": "main",
-        }
-        wf_manifest.write_text(yaml.safe_dump(wf_data, sort_keys=False))
-
     manifest = root / ".bifrost" / "apps.yaml"
     manifest.parent.mkdir(parents=True, exist_ok=True)
     data = yaml.safe_load(manifest.read_text()) if manifest.is_file() else None
@@ -660,8 +613,6 @@ def _scaffold_app(slug: str, path: str | None) -> pathlib.Path:
 
     click.echo(f"Scaffolded standalone_v2 app at {app_dir}")
     click.echo(f"Registered it in {manifest} (id {app_id}).")
-    if sample_dest.exists():
-        click.echo(f"Sample workflow at {sample_dest} (ref {_SAMPLE_WORKFLOW_REF}).")
     return app_dir
 
 
@@ -864,7 +815,7 @@ if (import.meta.env.DEV) {
 """
     app_tsx = """\
 import { Link, NavLink, Outlet, Route, Routes } from "react-router-dom";
-import { BifrostHeader, useWorkflowMutation } from "bifrost";
+import { BifrostHeader } from "bifrost";
 
 import { cn } from "@/lib/utils";
 
@@ -911,39 +862,29 @@ function Shell() {
 }
 
 function Home() {
-  // Workflow hooks (pick by intent — same mental model as React Query):
-  //   useWorkflowQuery(ref)    → READ: auto-runs on mount, has { data, refresh }.
-  //   useWorkflowMutation(ref) → ACTION: runs on mutate(), has { mutate }.
-  // This sample is a button (an action), so it uses the mutation hook. The ref
-  // is a portable `path::function` ref (e.g. "functions/hello.py::main",
-  // shipped with this scaffold) or a workflow name — both resolve to THIS
-  // install's own workflow when deployed, and `bifrost solution start` runs
-  // both from your local files. (Avoid raw UUID refs: deploy remaps entity
-  // ids per install, so a hardcoded UUID won't resolve on a deployed install.)
-  const wf = useWorkflowMutation<{ message: string }>("functions/hello.py::main");
+  // This button is a placeholder: wire it to one of your workflows.
+  // Workflow hooks from "bifrost" (pick by intent, like React Query):
+  //   useWorkflowQuery(ref)    → READ: runs on mount; returns { data, refresh }.
+  //   useWorkflowMutation(ref) → ACTION: runs on mutate(); returns
+  //                              { mutate, loading, error, data }.
+  // A ref is a portable `path::function` ref (e.g. "workflows/my_workflow.py::main")
+  // or a workflow name. Avoid raw UUID refs: deploy remaps entity ids per
+  // install, so a hardcoded UUID won't resolve once deployed.
+  //
+  // A button is an action, so it uses the mutation hook:
+  //   const wf = useWorkflowMutation<{ message: string }>("workflows/my_workflow.py::main");
+  //   <button onClick={() => wf.mutate({})} disabled={wf.loading}>…</button>
+  //   {wf.error && <p role="alert" className="text-sm text-destructive">{wf.error.message}</p>}
+  //   {wf.data && <pre>{JSON.stringify(wf.data, null, 2)}</pre>}
   return (
     <section className="mx-auto w-full max-w-3xl space-y-4 p-4 md:p-6">
       <h1 className="text-lg font-semibold">Hello from your Bifrost app</h1>
-      <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={() => wf.mutate({})}
-          disabled={wf.loading}
-          className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-        >
-          {wf.loading ? "Running…" : "Run workflow"}
-        </button>
-        {wf.error && (
-          <p role="alert" className="text-sm text-destructive">
-            {wf.error.message}
-          </p>
-        )}
-      </div>
-      {wf.data && (
-        <pre className="overflow-x-auto rounded-md border border-border bg-muted p-3 text-sm">
-          {JSON.stringify(wf.data, null, 2)}
-        </pre>
-      )}
+      <button
+        type="button"
+        className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+      >
+        Run workflow
+      </button>
     </section>
   );
 }

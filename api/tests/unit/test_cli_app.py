@@ -2,6 +2,7 @@ import zipfile
 from pathlib import Path
 
 from bifrost.commands.app import _scaffold, _zip_project
+from bifrost.commands.solution import _v2_scaffold_files
 
 
 def test_scaffold_is_a_vite_project_with_standard_ignored_env(tmp_path: Path) -> None:
@@ -14,10 +15,10 @@ def test_scaffold_is_a_vite_project_with_standard_ignored_env(tmp_path: Path) ->
     readme = (root / "README.md").read_text()
     assert "bifrost app start" in readme
     assert "standalone" not in readme.lower()
+    # One starter App.tsx for both scaffolds: the App scaffold ships the
+    # Solution scaffold's shell and unwired starter button verbatim.
     app_source = (root / "src" / "App.tsx").read_text()
-    assert "live Bifrost environment" in app_source
-    assert "install's own workflow" not in app_source
-    assert '"workflows/hello.py::main"' in app_source
+    assert app_source == _v2_scaffold_files("my-app")["src/App.tsx"]
     assert "<NavLink" in app_source
 
 

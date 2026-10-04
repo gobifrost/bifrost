@@ -141,7 +141,7 @@ bifrost solution scaffold-app <new-slug> --path apps/<new-slug>
 Use a TEMPORARY slug (e.g. `<oldslug>-v2`); the live slug is swapped in at cutover (step 7). The
 scaffold writes a working `standalone_v2` skeleton: portable `package.json` (the CLI supplies the
 selected instance's `bifrost` SDK at start), `vite.config.ts` (tokenless local dev), `main.tsx` (BifrostProvider + BrowserRouter +
-basename, reads platform boot or dev env), `App.tsx` (imports `BifrostHeader`, `useWorkflow`).
+basename, reads platform boot or dev env), `App.tsx` (a `BifrostHeader` nav shell and an unwired starter button whose comment shows how to call a workflow with `useWorkflowQuery` / `useWorkflowMutation`).
 
 ### 3. Port the pages
 

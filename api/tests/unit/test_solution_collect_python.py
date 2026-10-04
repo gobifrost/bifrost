@@ -2,9 +2,8 @@
 regardless of which folder the developer put it in.
 
 Shakeout HIGH (2026-06-08): _collect_python_files only scanned a fixed allow-list
-(workflows/, modules/, shared/), so a workflow under functions/ — exactly where
-`solution scaffold-app` writes its sample (functions/hello.py) and where
-`solution start` discovers it — deployed with a Workflow ROW but ZERO code. The
+(workflows/, modules/, shared/), so a workflow under functions/ — a folder
+`solution start` discovers — deployed with a Workflow ROW but ZERO code. The
 collector must be layout-agnostic (like the local function host), excluding only
 generated/dep/manifest dirs and the separately-bundled app source dirs.
 """
@@ -24,7 +23,7 @@ def _write(p: pathlib.Path, body: str) -> None:
 
 def test_collects_python_from_any_folder(tmp_path: pathlib.Path) -> None:
     _write(tmp_path / "bifrost.solution.yaml", "slug: s\nname: S\nscope: org\n")
-    _write(tmp_path / "functions/hello.py", "x = 1\n")     # the scaffold's location
+    _write(tmp_path / "functions/hello.py", "x = 1\n")     # outside the old allow-list
     _write(tmp_path / "modules/calc.py", "y = 2\n")        # already-allowed
     _write(tmp_path / "shared/util.py", "z = 3\n")         # already-allowed
     _write(tmp_path / "lib/helpers.py", "w = 4\n")         # an arbitrary dir
