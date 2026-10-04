@@ -152,6 +152,7 @@ async def start_audit_export(
     responses={200: {"content": {"application/gzip": {}}}},
 )
 async def download_audit_export(job_id: UUID, user: CurrentActiveUser, db: DbSession) -> StreamingResponse:
+    current = operation_reach(await load_caller(db, user), "GET /api/audit/exports/{job_id}/download")
     job = await db.get(PlatformJob, job_id)
     if (
         job is None
@@ -165,7 +166,6 @@ async def download_audit_export(job_id: UUID, user: CurrentActiveUser, db: DbSes
     if job.completed_at < datetime.now(timezone.utc) - timedelta(days=EXPORT_TTL_DAYS):
         raise HTTPException(status_code=status.HTTP_410_GONE, detail="Export expired; run it again.")
     payload = AuditQueryPayload.model_validate(job.payload)
-    current = operation_reach(await load_caller(db, user), "GET /api/audit/exports/{job_id}/download")
     if ReachSnapshot.of(current) != payload.reach and not current.everything:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

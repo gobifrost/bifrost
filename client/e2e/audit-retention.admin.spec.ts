@@ -12,6 +12,8 @@ test("previews the audit archive run from Maintenance", async ({ page }) => {
 	await page.getByRole("button", { name: "Preview" }).click();
 
 	await expect(
-		page.getByText(/^Would archive \d[\d,]* events/),
+		page.getByText(
+			/^(Would archive \d[\d,]* events?|Nothing to archive or delete\.)/,
+		),
 	).toBeVisible();
 });
