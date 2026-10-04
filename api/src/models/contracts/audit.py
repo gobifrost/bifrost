@@ -8,6 +8,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_serializer
 
+from src.models.contracts.audit_retention import AuditRetentionInfo
+
 
 class AuditLogActor(BaseModel):
     """Who performed the action."""
@@ -72,4 +74,7 @@ class AuditLogListResponse(BaseModel):
     )
     continuation_token: str | None = Field(
         None, description="Opaque token for next page (null when no more)"
+    )
+    retention: AuditRetentionInfo | None = Field(
+        None, description="What the database holds and what is archived"
     )

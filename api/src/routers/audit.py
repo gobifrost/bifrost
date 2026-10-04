@@ -24,6 +24,7 @@ from src.models import User as UserORM
 from src.models.contracts.audit import AuditLogGroup
 from src.models.orm.audit import AuditLog
 from src.repositories.audit_logs import AuditLogRepository, GroupBy
+from src.services.audit_retention.archiver import audit_retention_info
 from src.services.authorization.enforce import load_caller, operation_reach
 
 ACCESS_CHECK_ACTIONS = "access.check"
@@ -86,6 +87,8 @@ async def list_audit_logs(
         "organizations": organizations,
     }
 
+    retention = await audit_retention_info(db)
+
     if group_by is not None:
         grouped = await repo.group(group_by, **filters)
         samples = await _entries(db, [group.sample for group in grouped])
@@ -95,10 +98,13 @@ async def list_audit_logs(
                 AuditLogGroup(key=group.key, count=group.count, last_seen=group.last_seen, sample=sample)
                 for group, sample in zip(grouped, samples, strict=True)
             ],
+            retention=retention,
         )
 
     rows, next_token = await repo.list(**filters, limit=limit, continuation_token=continuation_token)
-    return AuditLogListResponse(entries=await _entries(db, rows), continuation_token=next_token)
+    return AuditLogListResponse(
+        entries=await _entries(db, rows), continuation_token=next_token, retention=retention
+    )
 
 
 async def _entries(db: AsyncSession, rows: list[AuditLog]) -> list[AuditLogEntry]:

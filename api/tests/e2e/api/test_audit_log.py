@@ -176,3 +176,15 @@ class TestAuditLogPagination:
         assert resp.status_code == 200
         body = resp.json()
         assert len(body["entries"]) <= 1
+
+
+@pytest.mark.e2e
+class TestAuditLogRetentionWindow:
+    """The list states how far back the database goes."""
+
+    def test_list_reports_retention_window(self, e2e_client, platform_admin):
+        resp = e2e_client.get("/api/audit?limit=1", headers=platform_admin.headers)
+        assert resp.status_code == 200
+        retention = resp.json()["retention"]
+        assert retention["hot_days"] == 90
+        assert retention["oldest_in_database"] is not None

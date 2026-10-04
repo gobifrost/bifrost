@@ -16,7 +16,7 @@ from sqlalchemy import delete, func, literal_column, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import get_db_context
-from src.models.contracts.audit_retention import AuditRetentionSettings
+from src.models.contracts.audit_retention import AuditRetentionInfo, AuditRetentionSettings
 from src.models.orm import AuditArchiveSegment, AuditLog, Organization, PlatformJob, User
 from src.services.audit_retention.format import (
     SCHEMA_VERSION,
@@ -25,6 +25,7 @@ from src.services.audit_retention.format import (
     line_size,
     verify_segment,
 )
+from src.services.audit_retention.settings import AuditRetentionSettingsService
 from src.services.audit_retention.store import AuditArchiveStore
 
 BATCH_ROWS = 5000
@@ -262,6 +263,12 @@ async def retention_info(db: AsyncSession, settings: AuditRetentionSettings) -> 
         "archived_segments": segments,
         "archived_rows": int(rows),
     }
+
+
+async def audit_retention_info(db: AsyncSession) -> AuditRetentionInfo:
+    """The retention window as configured now, for callers that have no settings loaded."""
+    settings = await AuditRetentionSettingsService(db).get_settings()
+    return AuditRetentionInfo(**await retention_info(db, settings))
 
 
 async def latest_audit_archive_job(db: AsyncSession) -> PlatformJob | None:
