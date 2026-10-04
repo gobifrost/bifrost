@@ -28,7 +28,7 @@ import { ApiError, getErrorMessage } from "@/lib/api-error";
 import {
 	formatAuditDay,
 	formatAuditTime,
-	formatCount,
+	formatEvents,
 } from "@/pages/audit/auditRetentionFormat";
 import {
 	getAuditRetention,
@@ -139,12 +139,15 @@ function shortensArchive(
 }
 
 function planSummary(plan: AuditArchivePlan): string {
+	if (plan.eligible_rows === 0 && plan.expiring_rows === 0) {
+		return "Nothing to archive or delete.";
+	}
 	const first = plan.days[0];
 	const last = plan.days[plan.days.length - 1];
 	const range = first
 		? ` from ${formatAuditDay(first.day)}–${formatAuditDay(last.day)}`
 		: "";
-	return `Would archive ${formatCount(plan.eligible_rows)} events${range}; would delete ${formatCount(plan.expiring_rows)} archived events.`;
+	return `Would archive ${formatEvents(plan.eligible_rows)}${range}; would delete ${formatEvents(plan.expiring_rows)}.`;
 }
 
 function lastRunSummary(job: PlatformJob): string {
@@ -152,7 +155,7 @@ function lastRunSummary(job: PlatformJob): string {
 	const result = job.result;
 	const archived =
 		result && !result.dry_run && typeof result.archived_rows === "number"
-			? `: archived ${formatCount(result.archived_rows)} events`
+			? `: archived ${formatEvents(result.archived_rows)}`
 			: "";
 	const kind = result?.dry_run ? "Last preview" : "Last run";
 	return `${kind} ${job.status} ${formatAuditTime(when)}${archived}.`;
@@ -163,7 +166,7 @@ function storedSummary(info: AuditRetentionStatus["info"]): string {
 		? `Database holds events since ${formatAuditTime(info.oldest_in_database)}.`
 		: "Database holds no events.";
 	const archive = info.archived_through
-		? `Archive holds ${formatCount(info.archived_rows)} events through ${formatAuditTime(info.archived_through)}.`
+		? `Archive holds ${formatEvents(info.archived_rows)} through ${formatAuditTime(info.archived_through)}.`
 		: "Archive is empty.";
 	return `${database} ${archive}`;
 }
@@ -577,11 +580,11 @@ function expiryWarning({
 	settings: AuditRetentionSettingsUpdate;
 }): string {
 	if (preview.expiring_rows === 0) {
-		return `No archived events are old enough to delete yet. From now on, archived events older than ${settings.archive_days} days are deleted at the daily run.`;
+		return `No events are old enough to delete yet. From now on, archived events older than ${settings.archive_days} days are deleted at the daily run.`;
 	}
 	const range =
 		preview.expiring_from && preview.expiring_to
 			? ` (${formatAuditDay(preview.expiring_from)}–${formatAuditDay(preview.expiring_to)})`
 			: "";
-	return `This permanently deletes ${formatCount(preview.expiring_rows)} archived events${range} at the next daily run.`;
+	return `This permanently deletes ${formatEvents(preview.expiring_rows)}${range} at the next daily run.`;
 }

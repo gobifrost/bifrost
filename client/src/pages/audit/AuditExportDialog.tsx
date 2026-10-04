@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { formatEvents } from "./auditRetentionFormat";
 import {
 	createAuditExport,
 	downloadAuditExport,
@@ -32,7 +33,7 @@ type ExportState =
 	| { kind: "form" }
 	| { kind: "submitting" }
 	| { kind: "preparing"; jobId: string }
-	| { kind: "ready"; jobId: string }
+	| { kind: "ready"; jobId: string; rows: number }
 	| { kind: "failed"; message: string };
 
 /** The export request for whole local days, or why the range is not exportable. */
@@ -115,7 +116,7 @@ export function AuditExportDialog({
 			stopWatching.current = null;
 			setState(
 				job.status === "succeeded"
-					? { kind: "ready", jobId }
+					? { kind: "ready", jobId, rows: job.result?.rows as number }
 					: {
 							kind: "failed",
 							message:
@@ -245,6 +246,14 @@ export function AuditExportDialog({
 								className="size-4 animate-spin motion-reduce:animate-none"
 							/>
 							Preparing export…
+						</p>
+					)}
+					{state.kind === "ready" && (
+						<p
+							role="status"
+							className="text-sm text-muted-foreground"
+						>
+							{formatEvents(state.rows)} ready.
 						</p>
 					)}
 					{state.kind === "failed" && (

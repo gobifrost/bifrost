@@ -10,6 +10,7 @@ export function formatAuditDay(day: string): string {
 	});
 }
 
-export function formatCount(value: number): string {
-	return value.toLocaleString();
+/** A count of events: "1 event", "4,200 events". */
+export function formatEvents(count: number): string {
+	return `${count.toLocaleString()} ${count === 1 ? "event" : "events"}`;
 }

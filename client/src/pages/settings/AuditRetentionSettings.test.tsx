@@ -191,7 +191,7 @@ describe("AuditRetentionSettings", () => {
 		const dialog = await screen.findByRole("alertdialog");
 		expect(previewExpiry).toHaveBeenCalledWith(180);
 		expect(dialog).toHaveTextContent(
-			`This permanently deletes 40 archived events (${formatAuditDay("2025-01-01")}–${formatAuditDay("2025-01-02")}) at the next daily run.`,
+			`This permanently deletes 40 events (${formatAuditDay("2025-01-01")}–${formatAuditDay("2025-01-02")}) at the next daily run.`,
 		);
 		expect(updateRetention).not.toHaveBeenCalled();
 
@@ -263,11 +263,48 @@ describe("AuditRetentionSettings", () => {
 
 		expect(
 			await screen.findByText(
-				`Would archive 1,200 events from ${formatAuditDay("2026-06-01")}–${formatAuditDay("2026-07-05")}; would delete 40 archived events.`,
+				`Would archive 1,200 events from ${formatAuditDay("2026-06-01")}–${formatAuditDay("2026-07-05")}; would delete 40 events.`,
 			),
 		).toBeInTheDocument();
 		expect(stopWatching).toHaveBeenCalled();
 	});
+
+	it.each([
+		{
+			eligible_rows: 1,
+			days: [{ day: "2026-06-01", rows: 1, bytes: 1 }],
+			expiring_rows: 1,
+			summary: `Would archive 1 event from ${formatAuditDay("2026-06-01")}–${formatAuditDay("2026-06-01")}; would delete 1 event.`,
+		},
+		{
+			eligible_rows: 0,
+			days: [],
+			expiring_rows: 0,
+			summary: "Nothing to archive or delete.",
+		},
+	])(
+		"summarises a preview of $eligible_rows and $expiring_rows events",
+		async ({ summary, ...result }) => {
+			const user = userEvent.setup();
+			await renderLoaded();
+
+			await user.click(screen.getByRole("button", { name: "Preview" }));
+			await waitFor(() => expect(watchJob).toHaveBeenCalled());
+			const onUpdate = watchJob.mock.calls[0][1] as (
+				job: PlatformJob,
+			) => void;
+			act(() =>
+				onUpdate(
+					job({
+						status: "succeeded",
+						result: { dry_run: true, ...result },
+					}),
+				),
+			);
+
+			expect(await screen.findByText(summary)).toBeInTheDocument();
+		},
+	);
 
 	it("shows why a preview failed", async () => {
 		const user = userEvent.setup();
@@ -309,7 +346,7 @@ describe("AuditRetentionSettings", () => {
 		fireEvent.blur(archive);
 
 		expect(await screen.findByRole("alertdialog")).toHaveTextContent(
-			"No archived events are old enough to delete yet. From now on, archived events older than 180 days are deleted at the daily run.",
+			"No events are old enough to delete yet. From now on, archived events older than 180 days are deleted at the daily run.",
 		);
 	});
 

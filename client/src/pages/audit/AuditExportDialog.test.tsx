@@ -147,6 +147,9 @@ describe("AuditExportDialog", () => {
 		expect(watchJob).toHaveBeenCalledWith("job-1", expect.any(Function));
 
 		finish({ status: "succeeded", result: { rows: 12 } });
+		expect(await screen.findByRole("status")).toHaveTextContent(
+			"12 events ready.",
+		);
 		await user.click(
 			await screen.findByRole("button", { name: "Download" }),
 		);
