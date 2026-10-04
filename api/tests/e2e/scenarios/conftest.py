@@ -28,6 +28,8 @@ from tests.e2e.scenarios import rule
 from tests.e2e.scenarios.workflow_sources import journey_sources, probe_source
 
 PROVIDER_ORG_ID = "00000000-0000-0000-0000-000000000002"
+USER_ROLE_ID = "00000000-0000-0000-0000-000000000006"
+PLATFORM_OPERATOR_ROLE_ID = "00000000-0000-0000-0000-000000000007"
 ENGINE_USER_ID = "00000000-0000-0000-0000-000000000001"
 TERMINAL = {"Success", "Failed", "CompletedWithErrors", "Cancelled", "Timeout"}
 ALL_ACTIONS = ["read", "create", "update", "delete"]
@@ -110,7 +112,6 @@ def scenario_world(
     org2,
     org1_user,
     org2_user,
-    provider_org_user,
     async_session_factory,
 ):
     client, admin = e2e_client, platform_admin
@@ -173,9 +174,24 @@ def scenario_world(
         200,
         204,
     )
+    # Provider staff hold the Platform Operator role at every customer org,
+    # as in production since the Operator migration.
+    staff = _create_person(client, admin, tag=tag, key="staff", org_id=str(PROVIDER_ORG_ID))
+    _ok(
+        client.put(
+            f"/api/users/{staff.user_id}/role-assignments",
+            headers=admin.headers,
+            json={
+                "base_role_id": USER_ROLE_ID,
+                "additional": [
+                    {"role_id": PLATFORM_OPERATOR_ROLE_ID, "boundaries": [{"kind": "managed_organizations"}]}
+                ],
+            },
+        )
+    )
     people = {
         "admin": admin,
-        "staff": provider_org_user,
+        "staff": staff,
         "customer": org1_user,
         "hr": hr,
         "external": external,
@@ -568,7 +584,7 @@ def scenario_world(
     for config_id in config_ids:
         client.delete(f"/api/config/{config_id}", headers=admin.headers)
     client.delete(f"/api/integrations/{integ['id']}", headers=admin.headers)
-    for person in (hr, external, custom_base):
+    for person in (hr, external, custom_base, staff):
         client.delete(f"/api/users/{person.user_id}", headers=admin.headers)
     for role_id in created_roles:
         client.delete(f"/api/roles/{role_id}", headers=admin.headers)

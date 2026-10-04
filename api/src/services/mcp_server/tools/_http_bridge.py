@@ -85,6 +85,10 @@ def _token_from_context(context: "MCPContext") -> str:
         "is_external": bool(getattr(context, "is_external", False)),
         "org_id": str(context.org_id) if context.org_id else None,
     }
+    if context.run_user_id:
+        # Run lineage of the agent run (attribution and access checks only).
+        claims["engine_run_user_id"] = str(context.run_user_id)
+        claims["engine_started_by_user_id"] = str(context.run_user_id)
     return create_access_token(data=claims)
 
 

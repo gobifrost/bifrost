@@ -38,6 +38,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared import access_checks
 from src.core.log_safety import log_safe
 
 logger = logging.getLogger(__name__)
@@ -160,6 +161,7 @@ async def build_oauth_data(
     # An external never receives it (global third-party credential — OPEN-E).
     client_secret = None
     if provider.encrypted_client_secret and not external:
+        access_checks.note("secret", None, kind="integration_client_secret", name=provider.provider_name)
         try:
             raw = provider.encrypted_client_secret
             client_secret = await asyncio.to_thread(
@@ -226,6 +228,9 @@ async def build_oauth_data(
     elif token:
         # Use stored token (existing behavior)
         if token.encrypted_access_token:
+            access_checks.note(
+                "secret", token.organization_id, kind="oauth_access_token", name=provider.provider_name
+            )
             try:
                 raw = token.encrypted_access_token
                 access_token = await asyncio.to_thread(
@@ -235,6 +240,9 @@ async def build_oauth_data(
                 logger.warning("Failed to decrypt access_token")
 
         if token.encrypted_refresh_token:
+            access_checks.note(
+                "secret", token.organization_id, kind="oauth_refresh_token", name=provider.provider_name
+            )
             try:
                 raw = token.encrypted_refresh_token
                 refresh_token = await asyncio.to_thread(

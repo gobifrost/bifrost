@@ -188,6 +188,7 @@ def install_request_context_middleware(app: FastAPI) -> None:
     has necessarily happened) to feed the workflow-operation-usage counter
     for engine-token requests carrying an ``engine_workflow_id`` claim.
     """
+    from shared import access_checks
     from src.core.rate_limit import get_client_ip
     from src.core.request_actor import (
         actor_from_token_payload,
@@ -262,6 +263,14 @@ def install_request_context_middleware(app: FastAPI) -> None:
             )
         actor_token = set_actor(actor)
         scope_token = set_request_scope(request.scope)
+        # Report-only access checks must never affect the request: a token
+        # whose lineage claims cannot be read is simply not judged.
+        try:
+            checks_token = access_checks.start_collecting(payload)
+        except ValueError:
+            logger.warning("access checks skipped: unreadable lineage claims")
+            checks_token = None
+        collector = access_checks.current()
         # Attribution only (see mint_engine_token docstring): feeds the
         # workflow-operation-usage counter below, never read for authorization.
         engine_workflow_id = payload.get("engine_workflow_id") if payload else None
@@ -280,13 +289,46 @@ def install_request_context_middleware(app: FastAPI) -> None:
                     await _record_workflow_operation_usage(
                         engine_workflow_id, operation_key
                     )
+            if collector is not None:
+                _judge_after_response(request, response, collector)
         finally:
+            access_checks.stop_collecting(checks_token)
             # Reset context after request
             set_request_user(None)
             set_request_session_id(None)
             clear_actor(actor_token)
             clear_request_scope(scope_token)
         return response
+
+
+def _judge_after_response(request: Request, response, collector) -> None:
+    """Judge and write a run's report-only access checks after the response
+    is sent (see ``shared.access_checks``), so the client never waits for it."""
+    from starlette.background import BackgroundTask, BackgroundTasks
+
+    route = request.scope.get("route")
+    path = getattr(route, "path", None) or request.url.path
+    operation = getattr(route, "operation_id", None) or f"{request.method} {path}"
+    judge = BackgroundTask(_judge_access_checks, collector, operation=operation, route=(request.method, path))
+    if response.background is None:
+        response.background = judge
+        return
+    tasks = BackgroundTasks()
+    tasks.add_task(response.background)
+    tasks.add_task(judge)
+    response.background = tasks
+
+
+async def _judge_access_checks(collector, *, operation: str, route: tuple[str, str]) -> None:
+    """Never raises: a failure here is logged, never surfaced."""
+    from src.core.database import get_db_context
+    from src.services import access_check_writer
+
+    try:
+        async with get_db_context() as db:
+            await access_check_writer.flush(db, collector, operation=operation, route=route)
+    except Exception as exc:
+        logger.warning("access checks not written (operation=%s): %s", operation, type(exc).__name__)
 
 
 async def _record_workflow_operation_usage(workflow_id: str, operation_key: str) -> None:

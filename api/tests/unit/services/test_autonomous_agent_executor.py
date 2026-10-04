@@ -463,6 +463,37 @@ class TestAutonomousAgentExecutor:
         assert captured_context.is_platform_admin is True
 
     @pytest.mark.asyncio
+    async def test_system_tool_of_an_agent_nobody_started_carries_its_run_user(
+        self,
+        mock_session,
+        mock_agent,
+    ):
+        identity = uuid4()
+        captured_context = None
+
+        async def system_tool(context, **_arguments):
+            nonlocal captured_context
+            captured_context = context
+            return "ok"
+
+        executor = AutonomousAgentExecutor(mock_session)
+        executor._caller_user_id = None
+        executor._caller = None
+        executor._run_user_id = identity
+
+        with patch(
+            "src.services.mcp_server.server.get_system_tool_function",
+            return_value=system_tool,
+        ):
+            await executor._execute_system_tool(
+                ToolCallRequest(id="tc1", name="specialist_system_tool", arguments={}),
+                mock_agent,
+            )
+
+        assert captured_context is not None
+        assert captured_context.run_user_id == identity
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("child_result", "expected_status", "expected_error"),
         [

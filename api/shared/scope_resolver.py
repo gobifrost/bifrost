@@ -25,6 +25,8 @@ from __future__ import annotations
 from typing import Final
 from uuid import UUID
 
+from shared.access_checks import note as note_access_target
+
 
 class ScopeNotAllowed(Exception):
     """Raised when a caller requests a scope they are not authorized to use.
@@ -115,22 +117,20 @@ def resolve_effective_scope(
     )
 
     if isinstance(requested_scope, _Unset):
-        return caller_org_id
-
-    if requested_scope is None:
+        resolved = caller_org_id
+    elif requested_scope is None:
         if not bypass:
             raise ScopeNotAllowed(
                 "Explicit global scope requested; platform admin or "
                 "provider-org membership required"
             )
-        return None
-
-    if requested_scope == caller_org_id:
-        return requested_scope
-
-    if not bypass:
+        resolved = None
+    elif requested_scope == caller_org_id or bypass:
+        resolved = requested_scope
+    else:
         raise ScopeNotAllowed(
             "Requested scope is not the caller's organization; "
             "platform admin or provider-org membership required"
         )
-    return requested_scope
+    note_access_target("scope_switch", resolved)
+    return resolved

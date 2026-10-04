@@ -856,6 +856,7 @@ class EventProcessor:
     ) -> None:
         """Queue an agent run for an event delivery targeting an agent."""
         from shared.run_lineage import identity_lineage
+        from src.services.access_check_entry import check_agent_run_entry
         from src.services.execution.agent_run_service import enqueue_agent_run
 
         subscription = delivery.subscription
@@ -887,6 +888,8 @@ class EventProcessor:
         }
 
         org_id = str(agent.organization_id) if agent.organization_id else None
+        lineage = await identity_lineage(self.session, agent.organization_id)
+        await check_agent_run_entry(lineage.run_user_id, agent.id, agent.organization_id)
 
         run_id = await enqueue_agent_run(
             agent_id=str(agent.id),
@@ -895,7 +898,7 @@ class EventProcessor:
             input_data=parameters,
             org_id=org_id,
             event_delivery_id=str(delivery.id),
-            lineage=await identity_lineage(self.session, agent.organization_id),
+            lineage=lineage,
         )
 
         delivery.agent_run_id = uuid.UUID(run_id)

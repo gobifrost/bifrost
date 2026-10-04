@@ -9,6 +9,22 @@ tests/unit/test_import_hygiene.py enforces this.
 from dataclasses import dataclass, field
 from uuid import UUID
 
+_LINEAGE_CLAIMS = {
+    "run_user_id": "engine_run_user_id",
+    "started_by_user_id": "engine_started_by_user_id",
+    "root_execution_id": "engine_root_execution_id",
+    "workflow_id": "engine_workflow_id",
+}
+
+
+def run_lineage_fields(payload: dict) -> dict[str, UUID | None]:
+    """The principal's run lineage fields from a decoded token payload."""
+    return {
+        field: UUID(value) if (value := payload.get(claim)) else None
+        for field, claim in _LINEAGE_CLAIMS.items()
+    }
+
+
 # Role names that grant platform-admin-equivalent privileges to a non-superuser
 # user. Used by the agents domain (agent_runs/agents/agent_tuning) to admit
 # role-based admins in addition to token superusers. The canonical
@@ -78,6 +94,13 @@ class UserPrincipal:
     # token was minted for. See is_service_principal (solution_scope).
     service_id: str | None = None
     service_attempt_id: str | None = None
+    # Run lineage claims (mint_engine_token, and the MCP bridge for agent
+    # runs): who the run is for, who started its tree, its first execution
+    # and the workflow. Observation and attribution only; never authorization.
+    run_user_id: UUID | None = None
+    started_by_user_id: UUID | None = None
+    root_execution_id: UUID | None = None
+    workflow_id: UUID | None = None
 
     @property
     def is_platform_admin(self) -> bool:

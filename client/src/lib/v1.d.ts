@@ -3365,7 +3365,7 @@ export interface paths {
         };
         /**
          * List audit log entries
-         * @description List audit log entries with filters (Platform admin only)
+         * @description List audit log entries with filters, or group them with group_by. Platform Admins read everything; Platform Operators read access checks in the organizations they reach.
          */
         get: operations["list_audit_logs_api_audit_get"];
         put?: never;
@@ -13286,8 +13286,31 @@ export interface components {
             } | null;
         };
         /**
+         * AuditLogGroup
+         * @description Entries sharing one value of the requested ``group_by``.
+         */
+        AuditLogGroup: {
+            /**
+             * Key
+             * @description The group's value (null when entries have none)
+             */
+            key?: string | null;
+            /**
+             * Count
+             * @description Matching entries in the group
+             */
+            count: number;
+            /**
+             * Last Seen
+             * @description Newest entry's time
+             */
+            last_seen: string;
+            /** @description Newest entry in the group */
+            sample: components["schemas"]["AuditLogEntry"];
+        };
+        /**
          * AuditLogListResponse
-         * @description Paginated audit log list response.
+         * @description Paginated audit log list response, or groups when ``group_by`` is set.
          */
         AuditLogListResponse: {
             /**
@@ -13295,6 +13318,11 @@ export interface components {
              * @description Audit log entries, newest first
              */
             entries: components["schemas"]["AuditLogEntry"][];
+            /**
+             * Groups
+             * @description Groups, largest first (only with group_by; entries is then empty)
+             */
+            groups?: components["schemas"]["AuditLogGroup"][] | null;
             /**
              * Continuation Token
              * @description Opaque token for next page (null when no more)
@@ -35621,6 +35649,8 @@ export interface operations {
                 end_date?: string | null;
                 /** @description Free-text search on actor, organization, action, resource type, IP address, and event details */
                 search?: string | null;
+                /** @description Group matching entries by this field (counts and newest entry per group) */
+                group_by?: ("workflow" | "action" | "resource_type" | "outcome" | "user" | "organization") | null;
                 limit?: number;
                 /** @description Pagination cursor */
                 continuation_token?: string | null;

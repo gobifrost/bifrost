@@ -1296,6 +1296,7 @@ class AutonomousAgentExecutor:
                         and self._caller.get("name")
                         else agent.name
                     ),
+                    run_user_id=self._run_user_id,
                     session=db,
                 )
 

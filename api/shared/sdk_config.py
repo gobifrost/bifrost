@@ -26,6 +26,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared import access_checks
 from src.core.log_safety import log_safe
 from src.models.contracts.cli import CLIConfigValue
 from shared.scope_resolver import (
@@ -180,6 +181,8 @@ async def get_sdk_config_value(
 
     if config_type == "secret" and raw_value:
         from src.core.security import decrypt_secret
+
+        access_checks.note("secret", org_id, kind="config", name=key)
 
         try:
             raw_value = decrypt_secret(raw_value)

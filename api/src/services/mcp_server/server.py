@@ -143,6 +143,9 @@ class MCPContext:
     is_external: bool = False
     user_email: str = ""
     user_name: str = ""
+    # Who an agent run is for (its run lineage). The REST bridge carries it as
+    # a token claim so child runs and access checks see the agent run's user.
+    run_user_id: UUID | str | None = None
 
     # Knowledge namespaces accessible to this user (from agent.knowledge_sources)
     accessible_namespaces: list[str] = field(default_factory=list)
@@ -158,6 +161,8 @@ class MCPContext:
             self.user_id = UUID(self.user_id)
         if isinstance(self.org_id, str) and self.org_id:
             self.org_id = UUID(self.org_id)
+        if isinstance(self.run_user_id, str) and self.run_user_id:
+            self.run_user_id = UUID(self.run_user_id)
 
     @property
     def has_scope_bypass(self) -> bool:

@@ -6,12 +6,14 @@ via emit_audit(); reads are exposed via the /api/audit endpoint.
 """
 
 import base64
+import builtins
 import logging
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
-from sqlalchemy import Text, and_, cast, or_, select
+from sqlalchemy import ColumnElement, Select, String, Text, and_, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.orm.audit import AuditLog
@@ -30,6 +32,81 @@ def _decode_cursor(token: str) -> tuple[datetime, UUID]:
     raw = base64.urlsafe_b64decode(token.encode()).decode()
     ts_str, id_str = raw.split("|", 1)
     return datetime.fromisoformat(ts_str), UUID(id_str)
+
+
+GroupBy = Literal["workflow", "action", "resource_type", "outcome", "user", "organization"]
+_MAX_GROUPS = 500
+
+
+@dataclass(frozen=True)
+class AuditLogGroupRow:
+    key: str | None
+    count: int
+    last_seen: datetime
+    sample: AuditLog
+
+
+def _group_key(group_by: GroupBy) -> ColumnElement[Any]:
+    """The grouping key, as text (None when the entry has no value)."""
+    if group_by == "workflow":
+        return AuditLog.details["workflow_id"].astext
+    column = {
+        "action": AuditLog.action,
+        "resource_type": AuditLog.resource_type,
+        "outcome": AuditLog.outcome,
+        "user": AuditLog.user_id,
+        "organization": AuditLog.organization_id,
+    }[group_by]
+    return cast(column, String)
+
+
+def _filtered(
+    query: Select[Any],
+    *,
+    action_prefix: str | None,
+    resource_type: str | None,
+    outcome: str | None,
+    user_id: UUID | None,
+    execution_id: UUID | None,
+    start_date: datetime | None,
+    end_date: datetime | None,
+    search: str | None,
+    organizations: ColumnElement[bool] | None,
+) -> Select[Any]:
+    if action_prefix:
+        query = query.where(AuditLog.action.startswith(action_prefix))
+    if resource_type:
+        query = query.where(AuditLog.resource_type == resource_type)
+    if outcome:
+        query = query.where(AuditLog.outcome == outcome)
+    if user_id:
+        query = query.where(AuditLog.user_id == user_id)
+    if execution_id:
+        query = query.where(AuditLog.execution_id == execution_id)
+    if start_date:
+        query = query.where(AuditLog.created_at >= start_date)
+    if end_date:
+        query = query.where(AuditLog.created_at <= end_date)
+    if organizations is not None:
+        query = query.where(organizations)
+    if search:
+        like = f"%{search}%"
+        query = query.outerjoin(User, User.id == AuditLog.user_id).outerjoin(
+            Organization,
+            Organization.id == AuditLog.organization_id,
+        )
+        query = query.where(
+            or_(
+                User.email.ilike(like),
+                User.name.ilike(like),
+                Organization.name.ilike(like),
+                AuditLog.action.ilike(like),
+                AuditLog.resource_type.ilike(like),
+                AuditLog.ip_address.ilike(like),
+                cast(AuditLog.details, Text).ilike(like),
+            )
+        )
+    return query
 
 
 class AuditLogRepository:
@@ -86,6 +163,7 @@ class AuditLogRepository:
         start_date: datetime | None = None,
         end_date: datetime | None = None,
         search: str | None = None,
+        organizations: ColumnElement[bool] | None = None,
         limit: int = 50,
         continuation_token: str | None = None,
     ) -> tuple[list[AuditLog], str | None]:
@@ -100,39 +178,18 @@ class AuditLogRepository:
         """
         limit = max(1, min(limit, 500))
 
-        query = select(AuditLog)
-
-        if action_prefix:
-            query = query.where(AuditLog.action.startswith(action_prefix))
-        if resource_type:
-            query = query.where(AuditLog.resource_type == resource_type)
-        if outcome:
-            query = query.where(AuditLog.outcome == outcome)
-        if user_id:
-            query = query.where(AuditLog.user_id == user_id)
-        if execution_id:
-            query = query.where(AuditLog.execution_id == execution_id)
-        if start_date:
-            query = query.where(AuditLog.created_at >= start_date)
-        if end_date:
-            query = query.where(AuditLog.created_at <= end_date)
-        if search:
-            like = f"%{search}%"
-            query = query.outerjoin(User, User.id == AuditLog.user_id).outerjoin(
-                Organization,
-                Organization.id == AuditLog.organization_id,
-            )
-            query = query.where(
-                or_(
-                    User.email.ilike(like),
-                    User.name.ilike(like),
-                    Organization.name.ilike(like),
-                    AuditLog.action.ilike(like),
-                    AuditLog.resource_type.ilike(like),
-                    AuditLog.ip_address.ilike(like),
-                    cast(AuditLog.details, Text).ilike(like),
-                )
-            )
+        query = _filtered(
+            select(AuditLog),
+            action_prefix=action_prefix,
+            resource_type=resource_type,
+            outcome=outcome,
+            user_id=user_id,
+            execution_id=execution_id,
+            start_date=start_date,
+            end_date=end_date,
+            search=search,
+            organizations=organizations,
+        )
 
         if continuation_token:
             try:
@@ -159,3 +216,55 @@ class AuditLogRepository:
             rows = rows[:limit]
 
         return rows, next_token
+
+    async def group(
+        self,
+        group_by: GroupBy,
+        *,
+        action_prefix: str | None = None,
+        resource_type: str | None = None,
+        outcome: str | None = None,
+        user_id: UUID | None = None,
+        execution_id: UUID | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        search: str | None = None,
+        organizations: ColumnElement[bool] | None = None,
+    ) -> builtins.list[AuditLogGroupRow]:
+        """Matching entries grouped by ``group_by``: count, newest time and
+        newest entry per group, largest groups first (at most 500)."""
+        key = _group_key(group_by)
+        filters = {
+            "action_prefix": action_prefix,
+            "resource_type": resource_type,
+            "outcome": outcome,
+            "user_id": user_id,
+            "execution_id": execution_id,
+            "start_date": start_date,
+            "end_date": end_date,
+            "search": search,
+            "organizations": organizations,
+        }
+        counts = (
+            await self.session.execute(
+                _filtered(
+                    select(key.label("key"), func.count().label("count"), func.max(AuditLog.created_at)),
+                    **filters,
+                )
+                .group_by(key)
+                .order_by(func.count().desc(), key)
+                .limit(_MAX_GROUPS)
+            )
+        ).all()
+        samples = (
+            await self.session.execute(
+                _filtered(select(key.label("key"), AuditLog), **filters)
+                .distinct(key)
+                .order_by(key, AuditLog.created_at.desc(), AuditLog.id.desc())
+            )
+        ).all()
+        newest = {row.key: row.AuditLog for row in samples}
+        return [
+            AuditLogGroupRow(key=row.key, count=row.count, last_seen=row[2], sample=newest[row.key])
+            for row in counts
+        ]
