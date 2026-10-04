@@ -19,7 +19,7 @@ def test_scaffold_is_a_vite_project_with_standard_ignored_env(tmp_path: Path) ->
     # Solution scaffold's shell and unwired starter button verbatim.
     app_source = (root / "src" / "App.tsx").read_text()
     assert app_source == _v2_scaffold_files("my-app")["src/App.tsx"]
-    assert "<NavLink" in app_source
+    assert "link: NavLink" in app_source
 
 
 def test_deploy_archive_never_contains_env_or_generated_files(tmp_path: Path) -> None:

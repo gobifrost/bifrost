@@ -4,7 +4,10 @@
 
 - `BifrostContextValue` (type)
 - `BifrostHeader` (value)
+- `BifrostHeaderNav` (type)
 - `BifrostHeaderProps` (type)
+- `BifrostNavItem` (type)
+- `BifrostNavLinkProps` (type)
 - `BifrostProvider` (value)
 - `BifrostProviderProps` (type)
 - `BifrostUser` (type)

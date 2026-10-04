@@ -4,12 +4,12 @@ Applies to V2 Apps (independent or Solution-owned). `references/app-quality.md` 
 
 ## What the host gives you, and what it does not
 
-The platform mounts a `standalone_v2` App into a full-viewport container (`h-dvh w-full overflow-hidden`) with **no platform chrome**: no sidebar, no top bar, no page padding. The scaffold's `index.html` puts `h-full` on `html`, `body`, and `#root`. The optional `BifrostHeader` from `bifrost` supplies a one-line header: back-to-Bifrost link, logo, title, an `action` slot, the theme toggle (only when `supportsTheme`), and the user menu (name/email from `/api/auth/me`, log out). It supplies **no navigation**.
+The platform mounts a `standalone_v2` App into a full-viewport container (`h-dvh w-full overflow-hidden`) with **no platform chrome**: no sidebar, no top bar, no page padding. The scaffold's `index.html` puts `h-full` on `html`, `body`, and `#root`. The optional `BifrostHeader` from `bifrost` supplies a one-line header: back-to-Bifrost link, logo, title, an `action` slot, the theme toggle (only when `supportsTheme`), and the user menu (name/email from `/api/auth/me`, log out). Its optional `nav` prop holds the App's section links: a tab row under the title bar on wide screens, and the panel behind a single menu button below 640px, where the header collapses to one row (back link, title, menu button).
 
 Consequences:
 
 - The App owns scrolling. Nothing scrolls unless an element inside the App has `overflow-auto`.
-- The App owns navigation. There is exactly one place to put it, and it is the App's job to make it consistent.
+- The App owns navigation. There is exactly one place to put it, and it is the App's job to make it consistent. For a top nav, that place is `BifrostHeader`'s `nav` prop.
 - The App owns routing under the host basename; the scaffold passes `basename` to `BrowserRouter`.
 
 ## One navigation pattern per App
@@ -18,7 +18,7 @@ Consequences:
 
 | Sections | Pattern | Structure |
 |---|---|---|
-| 1-5 flat sections | **Top nav row** directly under `BifrostHeader` | `header` -> `nav` (horizontal links) -> `main` |
+| 1-5 flat sections | **Top nav** via `BifrostHeader`'s `nav` prop | `header` (title bar + tab row; menu button on phones) -> `main` |
 | 6+ sections or grouped hierarchy | **Left sidebar** | `header` on top; below it `aside` (nav) + `main` side by side |
 
 **Why:** Users learn one place to look. The scaffold's `App.tsx` demonstrates `<Link>` inline inside page content, which is an example, not a pattern; copying it per page produces an App where every screen navigates differently.
@@ -27,7 +27,6 @@ Consequences:
 // src/App.tsx — top-nav pattern for a small app
 import { NavLink, Outlet, Route, Routes } from "react-router-dom";
 import { BifrostHeader } from "bifrost";
-import { cn } from "@/lib/utils";
 
 const NAV = [
   { to: "/", label: "Overview", end: true },
@@ -35,29 +34,12 @@ const NAV = [
   { to: "/devices", label: "Devices" },
 ];
 
+// The header renders NAV with the router's NavLink, so the active section is
+// marked; on phones the same links move into its menu panel.
 function Shell() {
   return (
     <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-      <BifrostHeader title="Service Portal" />
-      <nav aria-label="Primary" className="flex gap-1 border-b border-border px-4">
-        {NAV.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.end}
-            className={({ isActive }) =>
-              cn(
-                "border-b-2 px-3 py-2 text-sm transition-colors",
-                isActive
-                  ? "border-primary text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground",
-              )
-            }
-          >
-            {item.label}
-          </NavLink>
-        ))}
-      </nav>
+      <BifrostHeader title="Service Portal" nav={{ items: NAV, link: NavLink }} />
       <main className="min-h-0 flex-1 overflow-auto">
         <Outlet />
       </main>
@@ -84,7 +66,7 @@ For the sidebar pattern, the shell's lower region is `<div className="flex min-h
 
 ## Navigation rules in detail
 
-- **Active state is required.** Use `NavLink` and its `isActive` render prop (with `end` on the index route) so the current section is visibly marked. Plain `Link` in a nav bar has no active state.
+- **Active state is required.** Pass react-router's `NavLink` as `nav.link` (with `end: true` on the index item) so the current section is marked; the header styles the link the router marks `aria-current="page"`. A sidebar uses `NavLink` and its `isActive` render prop. Plain `Link` in a nav bar has no active state.
 - **Routes are relative to the basename.** Write `to="/tickets"`, never `/apps/<slug>/tickets` or an absolute URL. Use `useNavigate()` for programmatic moves and `<Link>`/`<NavLink>` for anchors; never `window.location` or `<a href>` for in-app routes (they reload the host).
 - **Use nested routes and `<Outlet />`** so the shell renders once and only the page changes. A shell re-mounted per page flashes and loses scroll position.
 - **Every App has a catch-all** (`path="*"`) that renders a not-found state with a link back to the index.
@@ -94,7 +76,7 @@ For the sidebar pattern, the shell's lower region is `<div className="flex min-h
 
 ## Mobile and narrow widths
 
-**Rule:** Below `md`, the top-nav row scrolls horizontally (`overflow-x-auto whitespace-nowrap`) or collapses to a menu button that opens the same `NAV` list in a sheet; a sidebar collapses to the same sheet. The page content never shrinks below readable; tables become stacked cards or get `overflow-x-auto` on the table wrapper only.
+**Rule:** Below 640px, `BifrostHeader` with `nav` already collapses the top nav into its menu button (the panel also holds the action slot, theme toggle and account); do not add a second menu. A sidebar collapses to a sheet opened from the page. The page content never shrinks below readable; tables become stacked cards or get `overflow-x-auto` on the table wrapper only.
 
 **Why:** Apps are opened from phones in the field; a 56 px sidebar squeezing a table to 200 px is the most common failed acceptance.
 
