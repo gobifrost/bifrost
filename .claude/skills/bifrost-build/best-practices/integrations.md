@@ -89,7 +89,7 @@ headers = {"Authorization": f"Bearer {integ.oauth.access_token}"}
 logger.info("calling PSA tenant %s", integ.entity_id)
 ```
 
-## One client module per integration, with timeouts and error mapping
+## One shared module per outside system
 
 **Rule:** Put the HTTP client for an external system in a module (`modules/<system>/client.py`) that owns base URL, auth header, `httpx.Timeout`, pagination, rate-limit handling, and error translation. Workflows call module methods, never `httpx` directly.
 
@@ -147,6 +147,6 @@ class PsaClient:
 - Results filtered to tenant and (for end users) contact, server-side and locally; projected fields only.
 - Provider roll-ups are role-restricted and label rows by org.
 - No token or secret in results, logs, tables, files, or URLs.
-- One client module per system: timeouts, paging, 429, error mapping.
+- One shared module per outside system: timeouts, paging, 429, error mapping.
 - Requests built from parameters, never string-built filters.
 - Mapping mutation only in explicit admin workflows.

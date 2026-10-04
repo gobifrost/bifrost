@@ -7,6 +7,7 @@ Read the file for every area the change touches, before writing code:
 | Read | When the change involves |
 |---|---|
 | `security.md` | Any workflow, form, app, agent, or table/file policy. Always read this one first. |
+| `workspace.md` | Any change to the Workspace or to something it shares with Solutions: finding what exists, who depends on it, duplicates, centralizing |
 | `workflows.md` | Python workflows, tools, data providers, scheduled/webhook/topic subscribers |
 | `integrations.md` | `integrations.get()`, OAuth, or any call to an external API |
 | `data.md` | Tables, table/file policies, claims, managed files, configs, secrets |

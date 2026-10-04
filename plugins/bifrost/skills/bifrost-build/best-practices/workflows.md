@@ -142,11 +142,32 @@ For schedules, make the unit of work resumable (store a cursor/high-water mark i
 await events.emit("billing.credit_issued", {"credit_id": credit.id, "org_id": context.org_id})
 ```
 
-## Nested executions carry their own identity
+## Loop over shared code; start another workflow only for a reason
 
-**Rule:** `workflows.execute(ref, input_data)` starts a separate execution with its own registration, access check, and (for loose fallbacks) its own org context. Pass what the child needs in `input_data`; do not assume it can read the parent's parameters, form inputs, or `solution_id`.
+**Rule:** To reuse logic, import it from a shared module and call it, in a loop when there are many items. Start a separate run with `workflows.execute(ref, input_data)` only when you need what a run gives you. `execute` returns the new run's execution id at once and never its result:
 
-**Why:** A child run is authorized against the child's registration. If it is global and the parent is org-scoped, the child's `context.org_id` may differ from what you expect; verify by executing in the real context.
+- **Hand off and move on:** a form, app button, or endpoint must return now while long work continues, or the work should happen later (`delay_seconds`, `scheduled_at`).
+- **Each item stands alone:** one item's failure, timeout, or memory use must not stop the others, and each item should show up in history on its own so it can be inspected and rerun.
+- **Calling something you don't own:** the target is a registered workflow with its own access settings (another Solution's, or a shared Workspace workflow), and you need its access check rather than its source.
+
+When you do start one, pass everything it needs in `input_data`; it is a separate run with its own access check and cannot see the caller's parameters or form inputs.
+
+**Why:** Every run costs a queue round trip, a worker slot, a database row, logs, and a module load, and a caller that needs the result has to poll `workflows.get()` while holding its own slot. A loop over a function in the same run does the same work for a fraction of that, returns its result directly, and keeps one history entry.
+
+```python
+# Bad: one run per device, then polling to learn whether they worked.
+ids = [await workflows.execute("sync_device", {"device_id": d["id"]}) for d in devices]
+
+# Good: shared code, one run.
+from modules.rmm.sync import sync_device
+
+for device in devices:
+    await sync_device(client, device["id"])
+
+# Good: hand off long work and return to the user now.
+execution_id = await workflows.execute("rebuild_report", {"report_id": report_id})
+return {"started": execution_id}
+```
 
 ## Agent tools: bounded, descriptive, side-effect-honest
 
