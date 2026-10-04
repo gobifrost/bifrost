@@ -8,7 +8,6 @@ never sign in. `users.identity_kind` marks them.
 
 from __future__ import annotations
 
-from enum import StrEnum
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -17,16 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.builtin_roles import USER_ROLE_ID
 from src.core.constants import PROVIDER_ORG_ID
+from src.models.enums import IdentityKind
 from src.models.orm.organizations import Organization
 from src.models.orm.users import User
 
 IDENTITY_EMAIL_DOMAIN = "identities.bifrost.internal"
-
-
-class IdentityKind(StrEnum):
-    ORG_DEFAULT = "org_default"
-    GLOBAL_DEFAULT = "global_default"
-    CUSTOM = "custom"
 
 
 def is_identity(user: User) -> bool:

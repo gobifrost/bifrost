@@ -330,6 +330,7 @@ async def test_run_threads_user_id_from_caller(
         input_data={"task": "x"},
         run_id=str(uuid4()),
         _caller={"user_id": str(user_id), "email": "a@b"},
+        run_user_id=None,
     )
 
     # The executor stored the parsed UUID; resolve_agent_tools saw it
@@ -373,6 +374,7 @@ async def test_run_treats_missing_caller_as_autonomous(
         input_data={"task": "x"},
         run_id=str(uuid4()),
         _caller=None,
+        run_user_id=None,
     )
 
     assert executor._caller_user_id is None
@@ -413,6 +415,7 @@ async def test_run_treats_caller_without_user_id_as_autonomous(
         input_data={"task": "x"},
         run_id=str(uuid4()),
         _caller={"email": "webhook@source.example", "name": "webhook"},
+        run_user_id=None,
     )
 
     assert executor._caller_user_id is None
@@ -453,6 +456,7 @@ async def test_run_invalid_user_id_falls_back_to_autonomous(
         input_data={"task": "x"},
         run_id=str(uuid4()),
         _caller={"user_id": "not-a-uuid"},
+        run_user_id=None,
     )
 
     assert result["status"] == "completed"

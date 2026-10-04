@@ -74,6 +74,7 @@ from src.services.execution.agent_helpers import (
     parse_mcp_tool_name,
     resolve_agent_tools,
 )
+from shared.run_lineage import run_user_lineage
 from src.services.execution.agent_workflow_tools import (
     AgentWorkflowCaller,
     execute_agent_workflow_tool,
@@ -150,6 +151,7 @@ class AgentExecutor:
         self._active_budget: AgentRunBudget | None = None
         self._active_llm_model: str | None = None
         self._active_failover_path: list[str] | None = None
+        self._run_user_id: UUID | None = None
 
     @asynccontextmanager
     async def _db(self):
@@ -244,6 +246,7 @@ class AgentExecutor:
         attachment_ids: list[UUID] | None = None,
         model_profile_id: UUID | None = None,
         user_message_id: UUID | None = None,
+        run_user_id: UUID | None,
     ) -> AsyncIterator[ChatStreamChunk]:
         """
         Process a user message and generate a response.
@@ -260,6 +263,8 @@ class AgentExecutor:
             user: Current user for permission-aware agent routing
             user_message_id: Persisted user message id when the caller already
                 inserted the user row before invoking chat.
+            run_user_id: Who the chat run is for (shared.run_lineage); its tool
+                calls and delegations run for the same user.
 
         Yields:
             ChatStreamChunk objects with response content, tool calls, etc.
@@ -268,6 +273,7 @@ class AgentExecutor:
 
         start_time = time.time()
         self._knowledge_search_budget.reset()
+        self._run_user_id = run_user_id
         router = AgentRouter(
             self._session_factory,
             user_id=user.user_id if user else None,
@@ -1463,6 +1469,7 @@ class AgentExecutor:
                 ),
                 execution_id=execution_id,
                 artifact_workspace_id=str(conversation.id) if conversation else None,
+                lineage=run_user_lineage(self._run_user_id),
             )
 
             duration_ms = int((time.time() - start_time) * 1000)
@@ -1949,6 +1956,7 @@ class AgentExecutor:
                 caller=caller,
                 _shared_usage=self._active_usage,
                 _shared_budget=self._active_budget,
+                run_user_id=self._run_user_id,
             )
             metadata = {
                 "child_run_id": str(outcome.child_run_id),

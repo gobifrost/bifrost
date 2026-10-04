@@ -23,6 +23,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from pydantic import BaseModel
 
+from shared.run_lineage import RunLineage, unattended_lineage
 from src.core.constants import SYSTEM_USER_ID, SYSTEM_USER_EMAIL
 from src.core.log_safety import log_safe
 from src.sdk.context import ExecutionContext
@@ -134,6 +135,9 @@ async def execute_endpoint(
 
         logger.debug(f"API key validated for workflow: {log_safe(workflow_id)} (key_id: {key_id})")
 
+        # No person started this run: it is for the workflow's identity.
+        lineage = await unattended_lineage(db, wf_uuid)
+
         # If no cache hit, load from DB and module
         if workflow_metadata is None:
             logger.debug(f"Cache miss for endpoint workflow: {log_safe(workflow_id)}")
@@ -218,6 +222,7 @@ async def execute_endpoint(
             input_data=input_data,
             api_key_id=workflow_metadata.workflow_id,
             file_path=workflow_metadata.file_path,
+            lineage=lineage,
         )
 
     # Execute synchronously
@@ -229,6 +234,7 @@ async def execute_endpoint(
         timeout_seconds=workflow_metadata.timeout_seconds,
         api_key_id=workflow_metadata.workflow_id,
         file_path=workflow_metadata.file_path,
+        lineage=lineage,
     )
 
 
@@ -251,6 +257,8 @@ async def _execute_async(
     input_data: dict[str, Any],
     api_key_id: str | None = None,
     file_path: str | None = None,
+    *,
+    lineage: RunLineage,
 ) -> EndpointExecuteResponse:
     """Execute workflow asynchronously via queue."""
     from src.services.execution.async_executor import enqueue_workflow_execution
@@ -262,6 +270,7 @@ async def _execute_async(
         form_id=None,
         api_key_id=api_key_id,
         file_path=file_path,
+        lineage=lineage,
     )
 
     logger.info(f"Queued async workflow execution: {log_safe(workflow_name)} ({execution_id})")
@@ -281,6 +290,8 @@ async def _execute_sync(
     timeout_seconds: int,
     api_key_id: str | None = None,
     file_path: str | None = None,
+    *,
+    lineage: RunLineage,
 ) -> EndpointExecuteResponse:
     """
     Execute workflow synchronously via queue.
@@ -313,6 +324,7 @@ async def _execute_sync(
         api_key_id=api_key_id,
         sync=True,
         is_platform_admin=context.is_platform_admin,
+        lineage=lineage.bound(execution_id),
     )
 
     # Queue execution with sync=True
@@ -325,6 +337,7 @@ async def _execute_sync(
         sync=True,
         api_key_id=api_key_id,
         file_path=file_path,
+        lineage=lineage,
     )
 
     logger.info(f"Queued sync workflow execution: {log_safe(workflow_name)} ({execution_id})")

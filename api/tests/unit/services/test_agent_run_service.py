@@ -49,6 +49,7 @@ class TestEnqueueAgentRun:
             agent_id=str(uuid4()),
             trigger_type="event",
             input_data={"ticket_id": 123},
+            lineage=None,
         )
 
         queued_run = db_session.add.call_args.args[0]
@@ -74,6 +75,7 @@ class TestEnqueueAgentRun:
             agent_id=None,
             trigger_type="chat",
             before_queue_publish=before_publish,
+            lineage=None,
         )
 
         before_publish.assert_awaited_once_with(run_id)
@@ -95,6 +97,7 @@ class TestEnqueueAgentRun:
             output_schema={"action": {"type": "string"}},
             org_id=org_id,
             caller_user_id=str(uuid4()),
+            lineage=None,
         )
 
         redis.set.assert_awaited_once()
@@ -115,6 +118,7 @@ class TestEnqueueAgentRun:
             trigger_type="chat",
             conversation_id=conversation_id,
             input_data={"content": "hello"},
+            lineage=None,
         )
 
         queued_run = db_session.add.call_args.args[0]
@@ -137,6 +141,7 @@ class TestEnqueueAgentRun:
             agent_id=str(uuid4()),
             trigger_type="sdk",
             run_id=expected_run_id,
+            lineage=None,
         )
 
         assert run_id == expected_run_id
@@ -153,6 +158,7 @@ class TestEnqueueAgentRun:
             agent_id=str(uuid4()),
             trigger_type="sdk",
             sync=True,
+            lineage=None,
         )
 
         assert mock_publish.call_args.args[1]["sync"] is True
@@ -178,6 +184,7 @@ class TestEnqueueAgentRun:
             await enqueue_agent_run(
                 agent_id=str(uuid4()),
                 trigger_type="sdk",
+                lineage=None,
             )
 
         failed_run = db_session.add.call_args.args[0]
@@ -185,3 +192,22 @@ class TestEnqueueAgentRun:
         assert failed_run.error == "Agent run could not be queued"
         assert failed_run.completed_at is not None
         redis.delete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@patch("src.services.execution.agent_run_service.publish_message")
+@patch("src.services.execution.agent_run_service.get_redis")
+async def test_queued_run_records_its_run_user(mock_get_redis, mock_publish, db_session):
+    from shared.run_lineage import person_lineage
+
+    _redis_context(mock_get_redis)
+    person = uuid4()
+
+    await enqueue_agent_run(
+        agent_id=str(uuid4()),
+        trigger_type="api",
+        input_data={},
+        lineage=person_lineage(person),
+    )
+
+    assert db_session.add.call_args.args[0].run_user_id == person

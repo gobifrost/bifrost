@@ -337,11 +337,15 @@ async def test_emit_topic_payload_under_event_key():
 
     payload = {"user_id": "u1", "email": "u@example.com", "reason": "created"}
 
-    with patch(
-        "src.services.execution.async_executor.enqueue_system_workflow_execution",
-        new_callable=AsyncMock,
-        return_value=str(uuid.uuid4()),
-    ) as mock_enqueue:
+    with (
+        patch(
+            "src.services.execution.async_executor.enqueue_system_workflow_execution",
+            new_callable=AsyncMock,
+            return_value=str(uuid.uuid4()),
+        ) as mock_enqueue,
+        # Who the run is for is covered in test_processor_delivery.py.
+        patch("shared.run_lineage.unattended_lineage", new_callable=AsyncMock),
+    ):
         event_mock = MagicMock()
         event_mock.id = uuid.uuid4()
         event_mock.event_type = "user.invited"

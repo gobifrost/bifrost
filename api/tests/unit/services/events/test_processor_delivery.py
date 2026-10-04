@@ -65,3 +65,40 @@ async def test_queue_service_target_fails_loudly():
 
     with pytest.raises(ValueError, match="type='service'"):
         await processor._queue_workflow_execution(delivery, event)
+
+
+@pytest.mark.asyncio
+async def test_queued_workflow_runs_for_the_workflow_identity(monkeypatch):
+    """No person started it: the run is for the workflow's identity."""
+    from shared.run_lineage import RunLineage
+
+    session = AsyncMock()
+    processor = p.EventProcessor(session)
+    workflow_id = uuid.uuid4()
+    identity = uuid.uuid4()
+    delivery = SimpleNamespace(
+        id=uuid.uuid4(),
+        workflow=SimpleNamespace(id=workflow_id, type="workflow", name="nightly", organization_id=None),
+        subscription=None,
+    )
+    event = SimpleNamespace(
+        id=uuid.uuid4(),
+        event_type="schedule",
+        data={},
+        headers=None,
+        received_at=None,
+        source_ip=None,
+        organization_id=None,
+    )
+    lineage = RunLineage(identity, identity, None)
+    resolve = AsyncMock(return_value=lineage)
+    monkeypatch.setattr("shared.run_lineage.unattended_lineage", resolve)
+    enqueue = AsyncMock(return_value=str(uuid.uuid4()))
+    monkeypatch.setattr(
+        "src.services.execution.async_executor.enqueue_system_workflow_execution", enqueue
+    )
+
+    await processor._queue_workflow_execution(delivery, event)
+
+    resolve.assert_awaited_once_with(session, workflow_id)
+    assert enqueue.await_args.kwargs["lineage"] == lineage

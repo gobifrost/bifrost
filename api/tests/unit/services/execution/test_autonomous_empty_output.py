@@ -91,7 +91,7 @@ async def test_blank_responses_fallback_once_then_hand_off_with_usage(
         ],
     ):
         executor = AutonomousAgentExecutor(mock_session)
-        result = await executor.run(agent=mock_agent, run_id=str(uuid4()))
+        result = await executor.run(agent=mock_agent, run_id=str(uuid4()), run_user_id=None)
 
     # One bounded fallback happened (two billed attempts), then a handoff —
     # the run completes durably instead of stalling with empty output.
@@ -138,7 +138,7 @@ async def test_incident_shaped_blank_ends_durably_over_budget(
         ],
     ):
         executor = AutonomousAgentExecutor(mock_session)
-        result = await executor.run(agent=mock_agent, run_id=str(uuid4()))
+        result = await executor.run(agent=mock_agent, run_id=str(uuid4()), run_user_id=None)
 
     assert mock_llm.complete.call_count == 1  # no second 131K call
     assert result["status"] == "budget_exceeded"
@@ -186,7 +186,7 @@ async def test_repetitive_no_tool_output_hands_off_after_one_retry(
         ],
     ):
         executor = AutonomousAgentExecutor(mock_session)
-        result = await executor.run(agent=mock_agent, run_id=str(uuid4()))
+        result = await executor.run(agent=mock_agent, run_id=str(uuid4()), run_user_id=None)
 
     assert mock_llm.complete.call_count == 2
     assert result["status"] == "completed"

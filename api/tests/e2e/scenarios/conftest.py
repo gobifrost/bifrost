@@ -67,9 +67,51 @@ def _create_person(client, admin, *, tag, key, org_id, is_external=False) -> E2E
     return user
 
 
+async def _identities(session_factory, contoso_id: str) -> dict[str, str]:
+    """The identities unattended scenario runs use, by rule label."""
+    from sqlalchemy import select
+
+    from src.core.database import close_db
+    from src.models.enums import IdentityKind
+    from src.models.orm.users import User
+
+    wanted = {
+        "mi:provider": (IdentityKind.ORG_DEFAULT, UUID(PROVIDER_ORG_ID)),
+        "mi:contoso": (IdentityKind.ORG_DEFAULT, UUID(contoso_id)),
+        "mi:global": (IdentityKind.GLOBAL_DEFAULT, None),
+    }
+    _reset_loop_singletons()
+    try:
+        async with session_factory() as session:
+            return {
+                label: str(
+                    (
+                        await session.execute(
+                            select(User.id).where(
+                                User.identity_kind == kind, User.organization_id == org
+                            )
+                            if org
+                            else select(User.id).where(User.identity_kind == kind)
+                        )
+                    ).scalar_one()
+                )
+                for label, (kind, org) in wanted.items()
+            }
+    finally:
+        await close_db()
+        _reset_loop_singletons()
+
+
 @pytest.fixture(scope="module")
 def scenario_world(
-    e2e_client, platform_admin, org1, org2, org1_user, org2_user, provider_org_user
+    e2e_client,
+    platform_admin,
+    org1,
+    org2,
+    org1_user,
+    org2_user,
+    provider_org_user,
+    async_session_factory,
 ):
     client, admin = e2e_client, platform_admin
     tag = uuid4().hex[:6]
@@ -440,6 +482,18 @@ def scenario_world(
         endpoint_keys[probe] = key["raw_key"]
         key_ids.append(key["id"])
 
+    # An existing global workflow with unattended triggers runs unattended as
+    # the provider organization's identity (the identities migration);
+    # "global_new" keeps the global identity.
+    identities = asyncio.run(_identities(async_session_factory, org1["id"]))
+    _ok(
+        client.patch(
+            f"/api/workflows/{workflows['global']['id']}",
+            headers=admin.headers,
+            json={"run_identity_id": identities[rule.PROBE_MI["global"]]},
+        )
+    )
+
     form = _ok(
         client.post(
             "/api/forms",
@@ -496,6 +550,7 @@ def scenario_world(
         "endpoint_keys": endpoint_keys,
         "form_id": form["id"],
         "agent_id": agent["id"],
+        "identities": identities,
         "started": started,
     }
     yield world
@@ -995,6 +1050,7 @@ def matrix_runs(scenario_world, async_session_factory) -> dict[str, Any]:
         str(person.user_id): f"person:{key}" for key, person in world["people"].items()
     }
     labels[ENGINE_USER_ID] = "engine"
+    labels.update({identity: label for label, identity in world["identities"].items()})
     return {
         "runs": runs,
         "labels": labels,

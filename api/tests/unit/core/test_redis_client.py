@@ -213,3 +213,27 @@ class TestRedisClientSingleton:
         # Close without connecting
         await close_redis_client()
         assert module._redis_client is None
+
+
+
+@pytest.mark.asyncio
+async def test_set_pending_execution_stores_lineage():
+    from src.core.redis_client import RedisClient
+
+    client = RedisClient()
+    client._redis = AsyncMock()
+    lineage = {"run_user_id": "u", "started_by_user_id": "u", "root_execution_id": "e1"}
+
+    await client.set_pending_execution(
+        execution_id="e1",
+        workflow_id="wf",
+        parameters={},
+        org_id=None,
+        user_id="u",
+        user_name="n",
+        user_email="",
+        lineage=lineage,
+    )
+
+    _, _, payload = client._redis.setex.await_args.args
+    assert json.loads(payload)["lineage"] == lineage

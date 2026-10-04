@@ -30,6 +30,7 @@ async def test_publish_pending_writes_redis_then_publishes():
             sync=False,
             is_platform_admin=False,
             file_path=None,
+            lineage=None,
         )
 
     redis.set_pending_execution.assert_awaited_once()
@@ -75,6 +76,7 @@ async def test_publish_pending_includes_file_path_when_present():
             sync=True,
             is_platform_admin=False,
             file_path="workflows/foo.py",
+            lineage=None,
         )
     _, message = pub.await_args.args
     q.assert_not_awaited()
@@ -130,6 +132,7 @@ async def test_publish_pending_carries_authorized_dispatch_metadata():
             is_platform_admin=False,
             file_path=None,
             dispatch_metadata=dispatch_metadata,
+            lineage=None,
         )
 
     _, message = publish.await_args.args
@@ -174,6 +177,7 @@ async def test_enqueue_code_execution_sync_skips_ui_queue_tracking():
             parameters={"x": 1},
             execution_id="exec-sync",
             sync=True,
+            lineage=None,
         )
 
     assert execution_id == "exec-sync"
@@ -216,6 +220,7 @@ async def test_enqueue_code_execution_async_tracks_ui_queue():
             parameters={"x": 1},
             execution_id="exec-async",
             sync=False,
+            lineage=None,
         )
 
     assert execution_id == "exec-async"
@@ -223,3 +228,60 @@ async def test_enqueue_code_execution_async_tracks_ui_queue():
     assert redis.set_pending_execution.await_args.kwargs["sync"] is False
     add.assert_awaited_once_with("exec-async")
     publish.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_publish_pending_stores_the_lineage():
+    redis = AsyncMock()
+    lineage = {"run_user_id": "u", "started_by_user_id": "u", "root_execution_id": "e1"}
+    with (
+        patch("src.services.execution.async_executor.get_redis_client", return_value=redis),
+        patch("src.services.execution.async_executor.add_to_queue", new=AsyncMock()),
+        patch("src.services.execution.async_executor.publish_message", new=AsyncMock()),
+    ):
+        await _publish_pending(
+            execution_id="e1",
+            workflow_id="wf",
+            parameters={},
+            org_id=None,
+            user_id="u",
+            user_name="n",
+            user_email="",
+            form_id=None,
+            startup=None,
+            form_inputs={},
+            embed={},
+            api_key_id=None,
+            sync=False,
+            is_platform_admin=False,
+            file_path=None,
+            lineage=lineage,
+        )
+
+    assert redis.set_pending_execution.await_args.kwargs["lineage"] == lineage
+
+
+@pytest.mark.asyncio
+async def test_enqueue_workflow_execution_binds_lineage_to_the_execution():
+    from src.services.execution.async_executor import enqueue_workflow_execution
+    from shared.run_lineage import person_lineage
+
+    person = "00000000-0000-0000-0000-00000000aaaa"
+    context = _context()
+    context.event = None
+    with patch(
+        "src.services.execution.async_executor._publish_pending", new=AsyncMock()
+    ) as publish:
+        execution_id = await enqueue_workflow_execution(
+            context=context,
+            workflow_id="wf",
+            parameters={},
+            execution_id="00000000-0000-0000-0000-00000000bbbb",
+            lineage=person_lineage(person),
+        )
+
+    assert publish.await_args.kwargs["lineage"] == {
+        "run_user_id": person,
+        "started_by_user_id": person,
+        "root_execution_id": execution_id,
+    }

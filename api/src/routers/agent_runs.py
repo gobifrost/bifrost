@@ -13,6 +13,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import desc, func, literal_column, or_, select, update
 
+from shared.run_lineage import principal_lineage
 from shared.scope_resolver import has_scope_bypass
 from src.core.auth import CurrentActiveUser
 from src.core.database import get_session_factory
@@ -561,6 +562,7 @@ async def rerun_agent_run(
         caller_email=user.email,
         caller_name=getattr(user, "name", None),
         sync=False,
+        lineage=await principal_lineage(db, user),
     )
 
     return AgentRunRerunResponse(run_id=UUID(new_run_id))
@@ -975,6 +977,7 @@ async def execute_agent_run(
         caller_email=user.email,
         caller_name=getattr(user, "name", None),
         sync=True,
+        lineage=await principal_lineage(db, user),
     )
 
     # Wait for the result

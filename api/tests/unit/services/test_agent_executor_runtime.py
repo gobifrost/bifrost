@@ -121,6 +121,7 @@ async def test_chat_stream_contract_is_driven_by_pydantic_runtime(
                 "Hello",
                 stream=True,
                 enable_routing=False,
+                run_user_id=None,
             )
         ]
 
@@ -170,6 +171,7 @@ async def test_chat_resolves_explicit_model_profile_id(
                 stream=False,
                 enable_routing=False,
                 model_profile_id=profile_id,
+                run_user_id=None,
             )
         ]
 
@@ -216,6 +218,7 @@ async def test_chat_omitted_model_profile_uses_default_resolution(
                 "Hello",
                 stream=False,
                 enable_routing=False,
+                run_user_id=None,
             )
         ]
 
@@ -258,6 +261,7 @@ async def test_chat_reapplies_agent_instructions_when_stored_history_exists(
                 "Current ticket",
                 stream=False,
                 enable_routing=False,
+                run_user_id=None,
             )
         ]
 
@@ -358,6 +362,7 @@ async def test_unknown_capabilities_still_offer_agent_tools(
                 "Hello",
                 stream=False,
                 enable_routing=False,
+                run_user_id=None,
             )
         ]
 
@@ -434,6 +439,7 @@ async def test_chat_maps_pydantic_tool_events_to_existing_bifrost_contract(
                 "Check the ticket",
                 stream=True,
                 enable_routing=False,
+                run_user_id=None,
             )
         ]
 
@@ -490,6 +496,7 @@ async def test_chat_uses_persisted_user_message_without_duplication(
                 stream=True,
                 enable_routing=True,
                 user_message_id=user_message_id,
+                run_user_id=None,
             )
         ]
 

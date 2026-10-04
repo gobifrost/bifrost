@@ -3,6 +3,8 @@ import asyncio
 import json
 
 import pytest
+
+from shared.run_lineage import RunLineage
 from pydantic_ai.usage import RunUsage
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -170,6 +172,7 @@ class TestAutonomousAgentExecutor:
             agent=mock_agent,
             input_data={"message": "hello"},
             run_id=str(uuid4()),
+            run_user_id=None,
         )
 
         assert result["status"] == "completed"
@@ -236,6 +239,7 @@ class TestAutonomousAgentExecutor:
         executor = AutonomousAgentExecutor(mock_session)
         shared_usage = RunUsage()
         shared_budget = AgentRunBudget(max_requests=10, max_total_tokens=20_000)
+        run_user_id = uuid4()
 
         with (
             patch.object(
@@ -262,6 +266,7 @@ class TestAutonomousAgentExecutor:
                 caller=caller,
                 _shared_usage=shared_usage,
                 _shared_budget=shared_budget,
+                run_user_id=run_user_id,
             )
 
         assert outcome.status == "completed"
@@ -274,6 +279,8 @@ class TestAutonomousAgentExecutor:
         assert child_run.caller_user_id == caller["user_id"]
         assert child_run.caller_email == caller["email"]
         assert child_run.caller_name == caller["name"]
+        # A delegated run keeps the delegating run's user.
+        assert child_run.run_user_id == run_user_id
         assert child_run.status == "completed"
         assert child_run.completed_at is not None
         mock_enqueue_summarize.assert_awaited_once_with(child_run.id)
@@ -287,6 +294,7 @@ class TestAutonomousAgentExecutor:
             _caller=caller,
             _shared_usage=shared_usage,
             _shared_budget=shared_budget,
+            run_user_id=run_user_id,
         )
 
     @pytest.mark.asyncio
@@ -301,6 +309,7 @@ class TestAutonomousAgentExecutor:
         executor = AutonomousAgentExecutor(mock_session)
         executor._tool_workflow_id_map = {"specialist_tool": workflow_id}
         executor._caller_user_id = caller_user_id
+        executor._run_user_id = caller_user_id
         executor._caller = {
             "user_id": str(caller_user_id),
             "email": "person@example.com",
@@ -341,6 +350,7 @@ class TestAutonomousAgentExecutor:
             execution_id=None,
             artifact_workspace_id=None,
             sync=True,
+            lineage=RunLineage(caller_user_id, caller_user_id, None),
         )
 
     @pytest.mark.asyncio
@@ -350,8 +360,11 @@ class TestAutonomousAgentExecutor:
         mock_agent,
     ):
         workflow_id = uuid4()
+        identity_id = uuid4()
         executor = AutonomousAgentExecutor(mock_session)
         executor._tool_workflow_id_map = {"scheduled_tool": workflow_id}
+        # An event-started run is for its organization's identity.
+        executor._run_user_id = identity_id
 
         with patch(
             "src.services.execution.service.execute_tool",
@@ -385,6 +398,7 @@ class TestAutonomousAgentExecutor:
             execution_id=None,
             artifact_workspace_id=None,
             sync=True,
+            lineage=RunLineage(identity_id, identity_id, None),
         )
 
     def test_global_caller_scope_does_not_fall_back_to_agent_org(
@@ -545,6 +559,7 @@ class TestAutonomousAgentExecutor:
                 parent_agent=mock_agent,
                 tool_call=tool_call,
                 parent_run_id=str(uuid4()),
+                run_user_id=None,
             )
 
         assert outcome.status == expected_status
@@ -598,6 +613,7 @@ class TestAutonomousAgentExecutor:
                     arguments={"task": "Crash"},
                 ),
                 parent_run_id=str(uuid4()),
+                run_user_id=None,
             )
 
         assert outcome.status == "failed"
@@ -657,6 +673,7 @@ class TestAutonomousAgentExecutor:
                     arguments={"task": "Take too long"},
                 ),
                 parent_run_id=str(uuid4()),
+                run_user_id=None,
             )
 
         assert outcome.status == "timeout"
@@ -705,6 +722,7 @@ class TestAutonomousAgentExecutor:
             run_id=str(uuid4()),
             _shared_usage=shared_usage,
             _shared_budget=AgentRunBudget(max_requests=10, max_total_tokens=50_000),
+            run_user_id=None,
         )
 
         assert result["status"] == "completed"
@@ -732,6 +750,7 @@ class TestAutonomousAgentExecutor:
                     arguments={"task": "Cross a boundary"},
                 ),
                 parent_run_id=str(uuid4()),
+                run_user_id=None,
             )
 
         mock_session._mock_session.add.assert_not_called()
@@ -766,6 +785,7 @@ class TestAutonomousAgentExecutor:
                     arguments={"task": "Use a stale parent relationship"},
                 ),
                 parent_run_id=str(uuid4()),
+                run_user_id=None,
             )
 
         statement = mock_session._mock_session.execute.await_args.args[0]
@@ -820,6 +840,7 @@ class TestAutonomousAgentExecutor:
                     arguments={"task": "Wait"},
                 ),
                 parent_run_id=str(uuid4()),
+                run_user_id=None,
             )
 
         assert created_runs[0].status == "cancelled"
@@ -892,6 +913,7 @@ class TestAutonomousAgentExecutor:
             agent=mock_agent,
             input_data={"task": "analyze"},
             run_id=str(uuid4()),
+            run_user_id=None,
         )
 
         # Verify steps were buffered (Redis-first: steps are in _pending_steps, not DB)
@@ -950,6 +972,7 @@ class TestAutonomousAgentExecutor:
                 agent=mock_agent,
                 input_data={"task": "do something"},
                 run_id=str(uuid4()),
+                run_user_id=None,
             )
 
         assert result["status"] == "completed"
@@ -1028,7 +1051,7 @@ class TestAutonomousAgentExecutor:
             )
 
             executor = AutonomousAgentExecutor(mock_session)
-            await executor.run(agent=mock_agent, run_id=str(uuid4()))
+            await executor.run(agent=mock_agent, run_id=str(uuid4()), run_user_id=None)
 
         tool_result = next(
             step["content"]
@@ -1068,6 +1091,7 @@ class TestAutonomousAgentExecutor:
             result = await executor.run(
                 agent=mock_agent,
                 run_id=str(uuid4()),
+                run_user_id=None,
             )
 
         assert result["status"] == "completed"
@@ -1089,6 +1113,7 @@ class TestAutonomousAgentExecutor:
         result = await executor.run(
             agent=mock_agent,
             run_id=str(uuid4()),
+            run_user_id=None,
         )
 
         assert result["status"] == "failed"
@@ -1124,6 +1149,7 @@ class TestAutonomousAgentExecutor:
             agent=mock_agent,
             output_schema={"type": "object", "properties": {"result": {"type": "integer"}}},
             run_id=str(uuid4()),
+            run_user_id=None,
         )
 
         assert result["status"] == "completed"
@@ -1189,6 +1215,7 @@ class TestAutonomousAgentExecutor:
             result = await executor.run(
                 agent=mock_agent,
                 run_id=str(uuid4()),
+                run_user_id=None,
             )
 
         assert result["status"] == "completed"
@@ -1273,6 +1300,7 @@ class TestAutonomousAgentExecutor:
             agent=mock_agent,
             input_data={"task": "Delegate work"},
             run_id=str(uuid4()),
+            run_user_id=None,
         )
 
         assert result["status"] == "completed"
@@ -1366,6 +1394,7 @@ class TestAutonomousAgentExecutor:
             agent=mock_agent,
             input_data={"task": "Triage this ticket"},
             run_id=str(uuid4()),
+            run_user_id=None,
         )
 
         assert result["status"] == "completed"
@@ -1443,6 +1472,7 @@ class TestAutonomousAgentExecutor:
                 agent=mock_agent,
                 input_data={"task": "Delegate"},
                 run_id=str(uuid4()),
+                run_user_id=None,
             )
 
         assert result["status"] == "completed"
@@ -1499,6 +1529,7 @@ class TestAutonomousAgentExecutor:
             agent=mock_agent,
             input_data={"task": "Deep delegation"},
             run_id=str(uuid4()),
+            run_user_id=None,
         )
 
         assert result["status"] == "completed"
@@ -1576,6 +1607,7 @@ class TestAutonomousAgentExecutor:
                 agent=mock_agent,
                 input_data={"task": "Delegate to slow agent"},
                 run_id=str(uuid4()),
+                run_user_id=None,
             )
 
         assert result["status"] == "completed"
@@ -1615,6 +1647,7 @@ class TestAutonomousAgentExecutor:
         result = await executor.run(
             agent=mock_agent,
             run_id=str(uuid4()),
+            run_user_id=None,
         )
 
         assert result["status"] == "completed"
@@ -1690,6 +1723,7 @@ class TestAutonomousAgentExecutor:
             agent=mock_agent,
             input_data={"task": "Delegate"},
             run_id=parent_run_id,
+            run_user_id=None,
         )
 
         assert result["status"] == "completed"
@@ -1762,6 +1796,7 @@ class TestAutonomousAgentExecutor:
             result = await executor.run(
                 agent=mock_agent,
                 run_id=str(uuid4()),
+                run_user_id=None,
             )
 
         assert result["status"] == "cancelled"
@@ -1790,6 +1825,7 @@ class TestAutonomousAgentExecutor:
         result = await executor.run(
             agent=mock_agent,
             run_id=str(uuid4()),
+            run_user_id=None,
         )
 
         assert result["status"] == "completed"

@@ -527,6 +527,7 @@ def mint_engine_token(
     caller_email: str | None = None,
     caller_name: str | None = None,
     engine_workflow_id: str | None = None,
+    lineage: dict[str, str] | None = None,
 ) -> tuple[str, str]:
     """
     Mint a short-lived, execution-scoped engine token parent-side.
@@ -552,6 +553,10 @@ def mint_engine_token(
     per-workflow catalog-operation-usage counter
     (``src.core.app_wiring._record_workflow_operation_usage``) and is never
     read for authorization.
+
+    ``lineage`` (the execution's bound run lineage) is emitted as
+    ``engine_run_user_id``, ``engine_started_by_user_id`` and
+    ``engine_root_execution_id`` — likewise **attribution only**.
 
     Returns:
         (token, expires_at_iso): JWT string and ISO-8601 expiry timestamp.
@@ -579,6 +584,10 @@ def mint_engine_token(
     token_data.update(
         {key: value for key, value in caller_claims.items() if value is not None}
     )
+    if lineage is not None:
+        token_data["engine_run_user_id"] = lineage["run_user_id"]
+        token_data["engine_started_by_user_id"] = lineage["started_by_user_id"]
+        token_data["engine_root_execution_id"] = lineage["root_execution_id"]
 
     # timeout_seconds == 0 means "no timeout" everywhere else in the engine
     # (process_pool, execution_cleanup, and the 24h BLPOP cap in

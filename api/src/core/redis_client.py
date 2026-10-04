@@ -18,7 +18,7 @@ import json
 import logging
 from decimal import Decimal
 from datetime import datetime, timezone
-from typing import Any, Awaitable, TypedDict, cast
+from typing import Any, Awaitable, NotRequired, TypedDict, cast
 
 import redis.asyncio as redis
 
@@ -68,6 +68,9 @@ class PendingExecution(TypedDict):
     is_platform_admin: bool  # Whether the caller is a platform admin
     event: dict[str, Any] | None  # EventContext fields if event-triggered; None otherwise
     artifact_workspace_id: str | None
+    # Run lineage bound to this execution (shared.run_lineage). Absent on
+    # records written before lineage was recorded.
+    lineage: NotRequired[dict[str, str] | None]
     created_at: str  # ISO format
     cancelled: bool
 
@@ -132,6 +135,8 @@ class RedisClient:
         is_platform_admin: bool = False,
         event: dict[str, Any] | None = None,
         artifact_workspace_id: str | None = None,
+        *,
+        lineage: dict[str, str] | None,
     ) -> None:
         """
         Store pending execution in Redis.
@@ -152,6 +157,7 @@ class RedisClient:
             startup: Optional startup data from launch workflow (available via context.startup)
             api_key_id: Optional workflow ID whose API key triggered this execution
             sync: If True, worker will push result to Redis for sync execution
+            lineage: Run lineage bound to this execution (RunLineage.bound)
         """
         redis_client = await self._get_redis()
         key = f"{PENDING_KEY_PREFIX}{execution_id}{PENDING_KEY_SUFFIX}"
@@ -174,6 +180,7 @@ class RedisClient:
             "is_platform_admin": is_platform_admin,
             "event": event,
             "artifact_workspace_id": artifact_workspace_id,
+            "lineage": lineage,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "cancelled": False,
         }

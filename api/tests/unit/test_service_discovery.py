@@ -296,6 +296,7 @@ async def test_run_workflow_rejects_service_via_dispatch_metadata():
         await run_workflow(
             context=_execution_context(),
             workflow_id=str(uuid4()),
+            lineage=None,
             dispatch_metadata={
                 "name": "telegram_bridge",
                 "timeout_seconds": 1800,
@@ -332,6 +333,7 @@ async def test_run_workflow_rejects_service_via_metadata_cache(monkeypatch):
         await execution_service.run_workflow(
             context=_execution_context(),
             workflow_id=str(uuid4()),
+            lineage=None,
         )
 
 

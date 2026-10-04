@@ -38,6 +38,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.run_lineage import RunLineage, lineage_columns, principal_lineage
 from src.core.org_filter import resolve_target_org
 from src.core.principal import UserPrincipal
 
@@ -90,6 +91,7 @@ async def insert_scheduled_execution(
     form_id: UUID | None,
     api_key_id: UUID | None,
     is_platform_admin: bool,
+    lineage: RunLineage | None,
 ) -> UUID:
     """Insert a SCHEDULED execution row.
 
@@ -114,6 +116,7 @@ async def insert_scheduled_execution(
             form_id=form_id,
             api_key_id=api_key_id,
             execution_context={"is_platform_admin": is_platform_admin},
+            **lineage_columns(lineage.bound(exec_id) if lineage else None),
         )
     )
     await db.commit()
@@ -318,6 +321,9 @@ async def execute_sdk_workflow(
         exec_is_admin = run_as_user.is_superuser
         logger.info(f"Impersonating user: {exec_user_id} ({exec_user_email})")
 
+    # Who the run is for: the authenticated caller, never the run_as user.
+    lineage = await principal_lineage(session, principal)
+
     # Determine execution org_id
     # Priority order:
     # 0. Explicit org_id override (admin only, checked above)
@@ -359,6 +365,7 @@ async def execute_sdk_workflow(
             form_id=UUID(request.form_id) if request.form_id else None,
             api_key_id=None,  # API-key-triggered scheduling not supported in v1
             is_platform_admin=exec_is_admin,
+            lineage=lineage,
         )
         return WorkflowExecutionResponse(
             execution_id=str(exec_id),
@@ -414,6 +421,7 @@ async def execute_sdk_workflow(
                 script_name=request.script_name or "inline_script",
                 input_data=request.input_data,
                 transient=request.transient,
+                lineage=lineage,
             )
         elif workflow and workflow.type == "data_provider":
             # Only short-circuit on the sync/transient hot path. A non-transient
@@ -460,6 +468,7 @@ async def execute_sdk_workflow(
                 transient=request.transient,
                 sync=True,
                 dispatch_metadata=dispatch_metadata,
+                lineage=lineage,
             )
             from src.models import WorkflowExecutionResponse
 
@@ -485,6 +494,7 @@ async def execute_sdk_workflow(
                 transient=request.transient,
                 sync=request.sync or False,
                 dispatch_metadata=dispatch_metadata,
+                lineage=lineage,
             )
         else:
             # This shouldn't happen due to earlier validation

@@ -13,7 +13,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from shared.identities import IdentityKind
+from src.models.enums import IdentityKind
 from src.core.constants import PROVIDER_ORG_ID
 from src.models.orm.users import User
 from src.models.orm.workflows import Workflow

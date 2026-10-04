@@ -67,6 +67,14 @@ class Execution(Base):
 
     executed_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), default=None)
     executed_by_name: Mapped[str] = mapped_column(String(255))
+    # Run lineage: who this run is for, who started its run tree, and the
+    # tree's first execution. Recorded by shared.run_lineage; nothing decides
+    # on it yet. NULL on rows created before lineage was recorded.
+    run_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), default=None)
+    started_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
+    root_execution_id: Mapped[UUID | None] = mapped_column(default=None)
     organization_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("organizations.id"), default=None
     )
@@ -88,7 +96,7 @@ class Execution(Base):
     )
 
     # Relationships
-    executed_by_user: Mapped["User"] = relationship(back_populates="executions")
+    executed_by_user: Mapped["User"] = relationship(back_populates="executions", foreign_keys=[executed_by])
     workflow: Mapped["Workflow | None"] = relationship(
         foreign_keys=[workflow_id]
     )  # The workflow that was executed
@@ -114,6 +122,12 @@ class Execution(Base):
         Index("ix_executions_user", "executed_by"),
         Index("ix_executions_workflow", "workflow_name"),
         Index("ix_executions_workflow_id", "workflow_id"),
+        Index("ix_executions_run_user_id", "run_user_id", postgresql_where=run_user_id.isnot(None)),
+        Index(
+            "ix_executions_started_by_user_id",
+            "started_by_user_id",
+            postgresql_where=started_by_user_id.isnot(None),
+        ),
     )
 
 
