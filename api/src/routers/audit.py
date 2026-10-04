@@ -87,7 +87,8 @@ async def list_audit_logs(
         "organizations": organizations,
     }
 
-    retention = await audit_retention_info(db)
+    # The retention window is platform-wide, so only a caller who reaches everything sees it.
+    retention = await audit_retention_info(db) if organizations is None else None
 
     if group_by is not None:
         grouped = await repo.group(group_by, **filters)

@@ -8,6 +8,7 @@ Covers:
 - Access control (non-platform-admin denied)
 """
 
+from datetime import datetime
 from uuid import uuid4
 
 import pytest
@@ -187,4 +188,5 @@ class TestAuditLogRetentionWindow:
         assert resp.status_code == 200
         retention = resp.json()["retention"]
         assert retention["hot_days"] == 90
-        assert retention["oldest_in_database"] is not None
+        assert retention["archive_days"] == 365
+        datetime.fromisoformat(retention["oldest_in_database"])
