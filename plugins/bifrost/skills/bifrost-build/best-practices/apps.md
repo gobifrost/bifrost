@@ -161,16 +161,25 @@ const create = useWorkflowMutation<{ id: string }>("functions/tickets.py::create
 
 ## Identity in the browser is for display only
 
-**Rule:** Read the signed-in user with `useBifrostContext().authedFetch("/api/auth/me")` (fields: `id`, `email`, `name`, `is_superuser`, `roles`) to greet the user, label "mine", or show and hide controls by role (show "Approve" when `roles` includes the approver role). Never send `email`/`id`/roles from the browser to a workflow as input; the workflow reads `context` itself. Showing or hiding a control is convenience, not security: the workflow's access level and roles, its own checks on `context`, and table policies are the gate.
+**Rule:** Read the signed-in user with `useUser()` from `bifrost` (`id`, `email`, `name`, `roles`, `hasRole()`, `organizationId`, `isPlatformAdmin`, `isLoading`, `error`) to greet the user, label "mine", or decide what to show. Wrap a control only some roles should see in `<RequireRole role="...">` (it renders nothing while loading; `fallback` for the others). Never send `email`/`id`/roles from the browser to a workflow as input; the workflow reads `context` itself. Showing or hiding a control is convenience, not security: the workflow's access level and roles, its own checks on `context`, and table policies are the gate.
 
 **Why:** Anything the browser sends can be edited; anything the browser hides can be unhidden. A workflow that accepts the viewer's email as a parameter lets anyone act as anyone.
 
 ```tsx
+import { RequireRole, useUser } from "bifrost";
+
+const user = useUser();
+
 // Bad: identity as input.
-mutate({ email: me.email, ticket_id });
+mutate({ email: user.email, ticket_id });
 
 // Good: the workflow already knows who is calling.
 mutate({ ticket_id });
+
+// Show Approve to approvers; the approve workflow's roles still decide.
+<RequireRole role="Approver">
+  <Button onClick={() => approve.mutate({ ticket_id })}>Approve</Button>
+</RequireRole>
 ```
 
 ## Scope and app identity are host-provided
@@ -192,4 +201,4 @@ mutate({ ticket_id });
 - Shell `flex h-full min-h-0 flex-col`; `main` scrolls; lists content-sized until capped.
 - Semantic tokens only; both themes verified or `supportsTheme` removed.
 - Loading/empty/error/denied states on every data view; mutations disabled while running; input preserved.
-- Identity from `/api/auth/me` for display only; roles may hide controls, but the workflow and policies enforce; no identity or scope sent as workflow input.
+- Identity from `useUser()` for display only; `<RequireRole>` may hide controls, but the workflow and policies enforce; no identity or scope sent as workflow input.

@@ -25,7 +25,7 @@ async def my_open_tickets() -> dict:
 
 If a workflow legitimately acts on *another* user (an admin tool), take the target as a parameter, name it `target_user_id`, and check `context.is_platform_admin` or a role-based registration before acting. Never let the same parameter double as the actor.
 
-Apps follow the same rule. An App can fetch the signed-in user for display (`authedFetch("/api/auth/me")` returns `id`, `email`, `name`, `is_superuser`), but it must never send that identity back to a workflow as input. The workflow already has it. See `apps.md`.
+Apps follow the same rule. An App can read the signed-in user for display (`useUser()`), but it must never send that identity back to a workflow as input. The workflow already has it. See `apps.md`.
 
 ## Know who the execution context is for each trigger
 
