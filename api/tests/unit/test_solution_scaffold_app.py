@@ -90,24 +90,23 @@ def test_scaffold_files_shape_and_dev_wiring() -> None:
 
 
 def test_scaffold_app_ships_top_nav_shell() -> None:
-    """App.tsx is the navigation shell new Apps copy: one header, a NavLink row
-    driven by one NAV list, `main` as the only scroller, nested routes with a
-    catch-all, and semantic token classes instead of inline styles."""
+    """App.tsx is the navigation shell new Apps copy: one header carrying the
+    NAV list (rendered with the router's NavLink, collapsed into its menu on
+    phones), `main` as the only scroller, nested routes with a catch-all, and
+    semantic token classes instead of inline styles."""
     app = _v2_scaffold_files("my-app")["src/App.tsx"]
 
     assert app.count("<BifrostHeader") == 1
     assert "const NAV = [" in app
-    assert "NAV.map(" in app
-    assert "<NavLink" in app
-    assert "isActive" in app
-    assert "overflow-x-auto whitespace-nowrap" in app
+    assert "nav={{ items: NAV, link: NavLink }}" in app
+    # The header owns the nav; the shell must not render a second nav row.
+    assert "<nav" not in app
     assert 'className="flex h-full min-h-0 flex-col' in app
     assert '<main className="min-h-0 flex-1 overflow-auto">' in app
     assert "<Outlet />" in app
     assert "<Route element={<Shell />}>" in app
     assert 'path="*"' in app
-    # cn() is shipped by the scaffold itself; App.tsx must not import UI it lacks.
-    assert 'from "@/lib/utils"' in app
+    # App.tsx must not import UI components the scaffold doesn't ship.
     assert "@/components/" not in app
     assert "style={{" not in app
     assert "crimson" not in app

@@ -817,43 +817,20 @@ if (import.meta.env.DEV) {
 import { Link, NavLink, Outlet, Route, Routes } from "react-router-dom";
 import { BifrostHeader } from "bifrost";
 
-import { cn } from "@/lib/utils";
-
-// One list drives the nav row. To add a section, add an entry here and a
+// One list drives the navigation. To add a section, add an entry here and a
 // matching <Route> below. Paths are relative to the App's base URL.
 const NAV = [
   { to: "/", label: "Home", end: true },
   { to: "/about", label: "About" },
 ];
 
-// The shell renders once: header, nav row, then `main` as the only scroller.
-// Pages render into <Outlet />.
+// The shell renders once: the header, then `main` as the only scroller. The
+// header shows NAV as a tab row on wide screens and inside its menu button on
+// phones; NavLink marks the active section. Pages render into <Outlet />.
 function Shell() {
   return (
     <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-      <BifrostHeader title="My App" />
-      <nav
-        aria-label="Primary"
-        className="flex gap-1 overflow-x-auto whitespace-nowrap border-b border-border px-4"
-      >
-        {NAV.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.end}
-            className={({ isActive }) =>
-              cn(
-                "border-b-2 px-3 py-2 text-sm transition-colors",
-                isActive
-                  ? "border-primary text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground",
-              )
-            }
-          >
-            {item.label}
-          </NavLink>
-        ))}
-      </nav>
+      <BifrostHeader title="My App" nav={{ items: NAV, link: NavLink }} />
       <main className="min-h-0 flex-1 overflow-auto">
         <Outlet />
       </main>

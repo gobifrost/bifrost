@@ -36,13 +36,21 @@ Showing or hiding a control is convenience, not security: the workflow (its acce
 
 ## Header
 
-`BifrostHeader` provides optional Bifrost chrome and account/theme controls:
+`BifrostHeader` provides optional Bifrost chrome and account/theme controls, plus the App's section links when given `nav`:
 
 ```tsx
+import { NavLink } from "react-router-dom";
 import { BifrostHeader } from "bifrost";
 
-<BifrostHeader title="Operations" />
+const NAV = [
+  { to: "/", label: "Overview", end: true },
+  { to: "/tickets", label: "Tickets" },
+];
+
+<BifrostHeader title="Operations" nav={{ items: NAV, link: NavLink }} />
 ```
+
+`nav.link` is the router's link component; the SDK has no router of its own. On wide screens the links form a tab row under the title bar. Below 640px the header is one row: a menu button labelled "Open menu" on the left, then the truncated title. The button opens a panel with Back to Bifrost, the links, the `action` slot, the theme toggle and the account section. Without `nav`, phones still get the menu button for theme and account.
 
 The platform does not insert it automatically. Compose it into the app's own layout and avoid adding a second competing top-level header.
 
