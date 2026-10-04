@@ -238,14 +238,18 @@ class S3StorageClient:
 
             async def ensure_upload() -> str:
                 nonlocal upload_id
-                if upload_id is None:
-                    created = await s3.create_multipart_upload(
-                        Bucket=self.settings.s3_bucket,
-                        Key=path,
-                        ContentType=content_type or self.guess_content_type(path),
-                    )
-                    upload_id = created["UploadId"]
-                return upload_id
+                if upload_id is not None:
+                    return upload_id
+                created = await s3.create_multipart_upload(
+                    Bucket=self.settings.s3_bucket,
+                    Key=path,
+                    ContentType=content_type or self.guess_content_type(path),
+                )
+                created_upload_id = created.get("UploadId")
+                if not isinstance(created_upload_id, str) or not created_upload_id:
+                    raise ValueError("Object storage did not return a valid multipart upload ID")
+                upload_id = created_upload_id
+                return created_upload_id
 
             async def upload_part(data: bytes) -> None:
                 nonlocal part_number
