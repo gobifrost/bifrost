@@ -6,6 +6,7 @@ via emit_audit(); reads are exposed via the /api/audit endpoint.
 """
 
 import base64
+import builtins
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -229,7 +230,7 @@ class AuditLogRepository:
         end_date: datetime | None = None,
         search: str | None = None,
         organizations: ColumnElement[bool] | None = None,
-    ) -> list[AuditLogGroupRow]:
+    ) -> builtins.list[AuditLogGroupRow]:
         """Matching entries grouped by ``group_by``: count, newest time and
         newest entry per group, largest groups first (at most 500)."""
         key = _group_key(group_by)
