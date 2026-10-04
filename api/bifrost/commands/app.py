@@ -42,8 +42,8 @@ def _scaffold(root: pathlib.Path, slug: str) -> None:
     if root.exists() and any(root.iterdir()):
         raise click.ClickException(f"{root} is not empty.")
     root.mkdir(parents=True, exist_ok=True)
-    # The V2 runtime skeleton is shared with Solution Apps; only its local
-    # workflow/deploy language differs. This keeps both runtimes on one SDK
+    # The V2 runtime skeleton is shared with Solution Apps; only its start and
+    # deploy command names differ. This keeps both runtimes on one SDK
     # mount contract while App projects remain ordinary Vite repositories.
     from bifrost.commands.solution import _v2_scaffold_files
 
@@ -51,12 +51,6 @@ def _scaffold(root: pathlib.Path, slug: str) -> None:
         "bifrost solution start": "bifrost app start",
         "bifrost deploy": "bifrost app deploy",
         "standalone_v2 app": "V2 App",
-        "this Solution's own workflow": "the live platform workflow",
-        "THIS install's own workflow": "the live platform workflow",
-        "both from your local files": "against your live Bifrost environment",
-        '"functions/hello.py::main",\n  // shipped with this scaffold) or a workflow name — both resolve to THIS\n  // install\'s own workflow when deployed, and `bifrost app start` runs\n  // against your live Bifrost environment. (Avoid raw UUID refs: deploy remaps entity\n  // ids per install, so a hardcoded UUID won\'t resolve on a deployed install.)':
-            '"workflows/hello.py::main") or a workflow name. Replace this sample\n  // with a workflow that exists in the live Bifrost environment selected by\n  // `bifrost app start`. App identity and runtime organization scope are passed\n  // separately, so the same source can be debugged against an authorized org.',
-        '"functions/hello.py::main")': '"workflows/hello.py::main")',
     }
     for rel, content in _v2_scaffold_files(slug).items():
         for old, new in replacements.items():

@@ -84,10 +84,9 @@ def test_scaffold_files_shape_and_dev_wiring() -> None:
     assert "registerUnmount" not in main
     assert 'searchParams.get("m")' not in main
 
-    # App.tsx composes the optional platform header + shows a workflow call.
+    # App.tsx composes the optional platform header.
     app = files["src/App.tsx"]
     assert "BifrostHeader" in app
-    assert "useWorkflow" in app
 
 
 def test_scaffold_app_ships_top_nav_shell() -> None:
@@ -110,11 +109,27 @@ def test_scaffold_app_ships_top_nav_shell() -> None:
     # cn() is shipped by the scaffold itself; App.tsx must not import UI it lacks.
     assert 'from "@/lib/utils"' in app
     assert "@/components/" not in app
-    # Mutation: disabled while running, error beside it in the destructive token.
-    assert "disabled={wf.loading}" in app
-    assert "text-destructive" in app
     assert "style={{" not in app
     assert "crimson" not in app
+
+
+def test_scaffold_app_starter_button_is_an_unwired_placeholder() -> None:
+    """The starter button calls no workflow: a fresh App or Solution has no
+    workflow to call, so a default ref would fail on first click. The comment
+    beside it shows how to wire it with the workflow hooks."""
+    app = _v2_scaffold_files("my-app")["src/App.tsx"]
+
+    code = "\n".join(
+        line for line in app.splitlines() if not line.lstrip().startswith("//")
+    )
+    assert "Run workflow" in code
+    assert "useWorkflow" not in code
+    assert "onClick" not in code
+    assert "hello.py" not in app
+    # The wiring guidance names both hooks and the mutation pattern.
+    assert "useWorkflowQuery(ref)" in app
+    assert "useWorkflowMutation(ref)" in app
+    assert "wf.mutate({})" in app
 
 
 def test_scaffold_ships_tailwind_v4_shadcn_and_theme() -> None:
@@ -184,10 +199,8 @@ def test_scaffold_app_nested_path_anchors_manifests_at_root(tmp_path, monkeypatc
 
     # Manifests at the root — and no stray src/.bifrost.
     assert (tmp_path / ".bifrost" / "apps.yaml").is_file()
-    assert (tmp_path / ".bifrost" / "workflows.yaml").is_file()
     assert not (tmp_path / "src" / ".bifrost").exists()
-    # Sample workflow at the root, app files at the nested path.
-    assert (tmp_path / "functions" / "hello.py").is_file()
+    # App files at the nested path.
     assert (tmp_path / "src" / "apps" / "dash" / "package.json").is_file()
 
     data = yaml.safe_load((tmp_path / ".bifrost" / "apps.yaml").read_text())
