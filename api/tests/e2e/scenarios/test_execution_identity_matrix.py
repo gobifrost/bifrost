@@ -9,7 +9,9 @@ the rule cannot hide a mistake in the product.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
+from uuid import UUID
 
 import pytest
 
@@ -170,6 +172,51 @@ def test_children_never_exceed_original_reach(matrix_runs: dict) -> None:
             ):
                 violations.append(cell)
     assert not _unexplained(violations), "\n".join(_unexplained(violations))
+
+
+async def _lineage_rows(session_factory, execution_ids: list[str]) -> dict[str, tuple]:
+    from sqlalchemy import select
+
+    from src.core.database import close_db
+    from src.models.orm.executions import Execution
+
+    try:
+        async with session_factory() as session:
+            rows = await session.execute(
+                select(
+                    Execution.id,
+                    Execution.run_user_id,
+                    Execution.started_by_user_id,
+                    Execution.root_execution_id,
+                ).where(Execution.id.in_([UUID(e) for e in execution_ids]))
+            )
+            return {
+                str(row[0]): tuple(str(v) if v else None for v in row[1:]) for row in rows
+            }
+    finally:
+        await close_db()
+
+
+def test_every_run_records_its_lineage(matrix_runs: dict, async_session_factory) -> None:
+    """Every run in a start's tree runs for the start's user, rooted at its first run."""
+    trees = {
+        start: _tree_runs(start, matrix_runs["runs"]) for start in RUN_STARTS
+    }
+    ids = [
+        run["execution"]["execution_id"] for runs in trees.values() for _, run in runs
+    ]
+    rows = asyncio.run(_lineage_rows(async_session_factory, ids))
+    labels = matrix_runs["labels"]
+    mismatches = []
+    for start, runs in trees.items():
+        expected = rule.expected_identity(start.user, None)[0]
+        root = matrix_runs["runs"][start.key]["execution"]["execution_id"]
+        for run_key, run in runs:
+            run_user, started_by, run_root = rows[run["execution"]["execution_id"]]
+            observed = (labels.get(run_user, run_user), labels.get(started_by, started_by), run_root)
+            if observed != (expected, expected, root):
+                mismatches.append(f"{run_key}: {observed} != {(expected, expected, root)}")
+    assert not mismatches, "\n".join(mismatches)
 
 
 # Functional journeys: these hold today and must hold unchanged after R3b.
