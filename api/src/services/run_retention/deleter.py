@@ -196,8 +196,10 @@ def _iso(value: datetime | None) -> str | None:
 async def plan_run_retention(db: AsyncSession, *, cutoff: datetime) -> dict[str, Any]:
     """What a run would delete at ``cutoff``, from SQL aggregates only. JSON-ready.
 
-    Agent runs count whether or not they are leaves yet: a run deletes children
-    before parents, so every finished old run goes eventually.
+    It counts every finished run past the window, agent runs whether or not
+    they are leaves yet. A parent whose child is unfinished or younger stays
+    until that child is deleted, so the agent run count can be higher than
+    what a run deletes.
     """
     workflow_runs, oldest_workflow_run = (
         await db.execute(

@@ -172,14 +172,18 @@ async def get_usage_report(
 
     # 3. Get usage by workflow (only if source includes executions).
     # AI usage is attributed by workflow id: the run's while it is kept, the
-    # id stamped on the usage row once retention deletes the run.
+    # id stamped on the usage row once retention deletes the run. Kept inline
+    # runs have no workflow id and group by their run's name; deleted inline
+    # runs leave no name behind and share one row.
     by_workflow: list[WorkflowUsage] = []
     if source in ("executions", "all"):
         wf = func.coalesce(AIUsage.workflow_id, Execution.workflow_id)
+        inline_name = case((wf.is_(None), Execution.workflow_name), else_=None)
         workflow_query = (
             select(
                 wf.label("workflow_id"),
-                Workflow.name.label("workflow_name"),
+                inline_name.label("inline_name"),
+                func.coalesce(Workflow.name, func.max(Execution.workflow_name)).label("workflow_name"),
                 func.count(func.distinct(AIUsage.execution_id)).label("execution_count"),
                 func.coalesce(func.sum(AIUsage.input_tokens), 0).label("input_tokens"),
                 func.coalesce(func.sum(AIUsage.output_tokens), 0).label("output_tokens"),
@@ -198,7 +202,7 @@ async def get_usage_report(
         if filter_org_id:
             workflow_query = workflow_query.where(AIUsage.organization_id == filter_org_id)
 
-        workflow_query = workflow_query.group_by(wf, Workflow.name).order_by(
+        workflow_query = workflow_query.group_by(wf, inline_name, Workflow.name).order_by(
             func.sum(AIUsage.cost).desc()
         ).limit(50)
 
@@ -210,22 +214,24 @@ async def get_usage_report(
             id_match = [runs.c.workflow_id.in_(known_ids)]
             if None in workflow_ids:
                 id_match.append(runs.c.workflow_id.is_(None))
+            run_inline_name = case((runs.c.workflow_id.is_(None), runs.c.workflow_name), else_=None)
             resources = {
-                row.workflow_id: row
+                (row.workflow_id, row.inline_name): row
                 for row in (
                     await db.execute(
                         select(
                             runs.c.workflow_id,
+                            run_inline_name.label("inline_name"),
                             func.coalesce(func.sum(runs.c.total_cpu_seconds), 0.0).label("cpu_seconds"),
                             func.coalesce(func.max(runs.c.max_peak_memory_bytes), 0).label("memory_bytes"),
                         )
                         .where(or_(*id_match))
-                        .group_by(runs.c.workflow_id)
+                        .group_by(runs.c.workflow_id, run_inline_name)
                     )
                 ).all()
             }
         for row in workflow_rows:
-            resource = resources.get(row.workflow_id)
+            resource = resources.get((row.workflow_id, row.inline_name))
             by_workflow.append(
                 WorkflowUsage(
                     workflow_name=row.workflow_name or "Inline or deleted workflow",

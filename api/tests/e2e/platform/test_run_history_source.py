@@ -5,7 +5,8 @@ Every finished run is counted once, in ``executions`` while kept and in
 ``workflow_run_daily`` after retention deletes it, so every reader reports the
 same totals before and after the deletion loop. The seeded runs finished in
 2001 and the cutoff is 2002, so only this test's rows are eligible. One run is
-renamed and one starts on 2001-01-02, just outside the windows the tests read.
+renamed, one starts on 2001-01-02, just outside the windows the tests read, and
+one was cancelled before it started, so it has only a completion time.
 """
 
 from dataclasses import dataclass
@@ -83,6 +84,17 @@ async def seeded(db_session: AsyncSession):
         )
         for name, status, started, ms, cpu, cores, rss, mem in runs
     ]
+    executions.append(
+        Execution(
+            id=uuid4(),
+            workflow_name=wf_name,
+            workflow_id=workflow.id,
+            organization_id=org.id,
+            status=ExecutionStatus.CANCELLED,
+            executed_by_name="History Test",
+            completed_at=DAY.replace(hour=14),
+        )
+    )
     db_session.add_all(executions)
     await db_session.flush()
     usage = [(0, "0.01"), (0, "0.02"), (2, "0.04"), (3, "0.08")]
@@ -128,7 +140,7 @@ async def _assert_rolled_up(db: AsyncSession, seeded: Seeded) -> None:
         select(func.sum(WorkflowRunDaily.run_count)).where(WorkflowRunDaily.workflow_id == seeded.workflow_id)
     )
     await db.commit()
-    assert (kept, rolled) == (0, 5)
+    assert (kept, rolled) == (0, 6)
 
 
 async def test_totals_identical_before_and_after_deletion(db_session, seeded, run_retention_lease):
@@ -148,7 +160,7 @@ async def test_totals_identical_before_and_after_deletion(db_session, seeded, ru
     await _delete_all_expired(run_retention_lease)
     await _assert_rolled_up(db_session, seeded)
     after = await totals()
-    assert before == after == (4, seeded.total_ms, seeded.total_cpu, seeded.max_cores, seeded.max_rss)
+    assert before == after == (5, seeded.total_ms, seeded.total_cpu, seeded.max_cores, seeded.max_rss)
 
 
 async def test_usage_report_identical_before_and_after_deletion(
@@ -221,11 +233,63 @@ async def test_workflow_resource_report_identical_before_and_after_deletion(
     after = both()
     assert before == after
     workflow_id = str(seeded.workflow_id)
-    assert after[0] == (4, seeded.total_cpu, seeded.ai_cost, {
-        seeded.wf_name: (workflow_id, 3, 1, Decimal("0.07")),
+    assert after[0] == (5, seeded.total_cpu, seeded.ai_cost, {
+        seeded.wf_name: (workflow_id, 4, 1, Decimal("0.07")),
         f"{seeded.wf_name}-renamed": (workflow_id, 1, 0, Decimal("0.08")),
     })
     assert after[1] == (1, 0.5, Decimal("0.04"), {seeded.wf_name: (workflow_id, 1, 1, Decimal("0.04"))})
+
+
+async def test_usage_report_names_kept_inline_runs_and_merges_deleted_ones(
+    db_session, run_retention_lease, e2e_client, platform_admin
+):
+    org_id = uuid4()
+    org = Organization(id=org_id, name=f"Inline Org {uuid4().hex[:12]}", created_by="test")
+    db_session.add(org)
+    await db_session.flush()
+    names = [f"rr-inline-{uuid4().hex[:12]}" for _ in range(2)]
+    execution_ids = [uuid4() for _ in names]
+    executions = [
+        Execution(
+            id=execution_id, workflow_name=name, organization_id=org_id, status=ExecutionStatus.SUCCESS,
+            executed_by_name="History Test", started_at=DAY.replace(hour=10), completed_at=DAY.replace(hour=11),
+        )
+        for execution_id, name in zip(execution_ids, names, strict=True)
+    ]
+    db_session.add_all(executions)
+    await db_session.flush()
+    db_session.add_all([
+        AIUsage(execution_id=execution_id, organization_id=org_id, provider="openai", model="m",
+                input_tokens=10, output_tokens=5, cost=Decimal(cost), timestamp=DAY.replace(hour=10))
+        for execution_id, cost in zip(execution_ids, ("0.01", "0.02"), strict=True)
+    ])
+    await db_session.commit()
+
+    def rows():
+        response = e2e_client.get(
+            "/api/reports/usage",
+            headers=platform_admin.headers,
+            params={"start_date": "2001-01-01", "end_date": "2001-01-01", "source": "executions",
+                    "org_id": str(org_id)},
+        )
+        assert response.status_code == 200, response.text
+        return {
+            row["workflow_name"]: (row["execution_count"], Decimal(row["ai_cost"]))
+            for row in response.json()["by_workflow"]
+        }
+
+    try:
+        assert rows() == {names[0]: (1, Decimal("0.01")), names[1]: (1, Decimal("0.02"))}
+        await _delete_all_expired(run_retention_lease)
+        # Deleted inline runs leave no name on their usage, so they share one row.
+        assert rows() == {"Inline or deleted workflow": (2, Decimal("0.03"))}
+    finally:
+        await db_session.rollback()
+        await db_session.execute(delete(AIUsage).where(AIUsage.execution_id.in_(execution_ids)))
+        await db_session.execute(delete(Execution).where(Execution.id.in_(execution_ids)))
+        await db_session.execute(delete(WorkflowRunDaily).where(WorkflowRunDaily.organization_id == org_id))
+        await db_session.execute(delete(Organization).where(Organization.id == org_id))
+        await db_session.commit()
 
 
 async def test_workflows_view_window_cap_is_366_days_and_runs_view_31(e2e_client, platform_admin):

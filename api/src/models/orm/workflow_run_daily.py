@@ -43,7 +43,7 @@ class WorkflowRunDaily(Base):
     max_peak_cpu_cores: Mapped[float | None] = mapped_column(Float, default=None)
     max_peak_process_rss_bytes: Mapped[int | None] = mapped_column(BigInteger, default=None)
     max_peak_memory_bytes: Mapped[int | None] = mapped_column(BigInteger, default=None)
-    total_ai_cost: Mapped[Decimal] = mapped_column(Numeric(12, 8), default=Decimal("0"), server_default=text("0"))
+    total_ai_cost: Mapped[Decimal] = mapped_column(Numeric(16, 8), default=Decimal("0"), server_default=text("0"))
     total_ai_calls: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=text("NOW()")

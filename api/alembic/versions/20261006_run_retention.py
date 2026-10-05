@@ -61,7 +61,7 @@ def upgrade() -> None:
         sa.Column("max_peak_cpu_cores", sa.Float(), nullable=True),
         sa.Column("max_peak_process_rss_bytes", sa.BigInteger(), nullable=True),
         sa.Column("max_peak_memory_bytes", sa.BigInteger(), nullable=True),
-        sa.Column("total_ai_cost", sa.Numeric(12, 8), nullable=False, server_default=sa.text("0")),
+        sa.Column("total_ai_cost", sa.Numeric(16, 8), nullable=False, server_default=sa.text("0")),
         sa.Column("total_ai_calls", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("NOW()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("NOW()"), nullable=False),
@@ -77,6 +77,11 @@ def upgrade() -> None:
     )
     op.create_index("ix_workflow_run_daily_day", "workflow_run_daily", ["day"])
 
+    # Dropping a foreign key removes its RI triggers on the referenced executions
+    # and agent_runs tables (gigabytes each) and takes ACCESS EXCLUSIVE locks on
+    # them. Fail fast instead of queueing behind long reads; the init container
+    # retries the migration.
+    op.execute("SET LOCAL lock_timeout = '5s'")
     op.drop_constraint("ai_usage_execution_id_fkey", "ai_usage", type_="foreignkey")
     op.drop_constraint("ai_usage_agent_run_id_fkey", "ai_usage", type_="foreignkey")
     op.add_column("ai_usage", sa.Column("workflow_id", postgresql.UUID(as_uuid=True), nullable=True))

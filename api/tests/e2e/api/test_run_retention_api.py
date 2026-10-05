@@ -166,6 +166,11 @@ class TestRunRetentionApi:
     async def test_run_deletes_expired_runs_and_rolls_them_up(
         self, e2e_client, platform_admin, finished_2001, db_session
     ):
+        """A real, non-dry run over the shared test database.
+
+        It deletes everything finished more than the window ago, not only this
+        test's seed, so it relies on pytest running serially (no xdist).
+        """
         before = e2e_client.get(SETTINGS, headers=platform_admin.headers).json()["info"]
         assert before["oldest_finished_run"] is not None
         assert datetime.fromisoformat(before["oldest_finished_run"]) <= datetime(2001, 1, 1, 10, tzinfo=UTC)

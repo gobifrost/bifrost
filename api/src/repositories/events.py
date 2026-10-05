@@ -395,21 +395,6 @@ class EventRepository(BaseRepository[Event]):
         result = await self.session.execute(stmt)
         return result.scalar() or 0
 
-    async def get_old_events(
-        self,
-        older_than_days: int = 30,
-        limit: int = 1000,
-    ) -> Sequence[Event]:
-        """Get events older than specified days (for cleanup)."""
-        cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
-
-        result = await self.session.execute(
-            select(Event)
-            .where(Event.created_at < cutoff)
-            .limit(limit)
-        )
-        return result.scalars().all()
-
 
 class EventDeliveryRepository(BaseRepository[EventDelivery]):
     """Repository for event delivery tracking."""

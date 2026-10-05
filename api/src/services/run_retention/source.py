@@ -49,17 +49,21 @@ def workflow_run_source(
 ) -> Subquery:
     """Kept runs started in ``[start, end]`` plus rolled-up days starting in ``[start, end)``.
 
-    Kept runs give one row each with ``run_count = 1``, whatever their status,
-    and their AI usage pre-aggregated by execution. A rolled-up
+    A kept run is placed by ``coalesce(started_at, completed_at)``, the instant
+    the rollup takes its day from, so a run that finished without starting is
+    counted the same before and after deletion. Kept runs give one row each
+    with ``run_count = 1``, whatever their status, and their AI usage
+    pre-aggregated by execution. A rolled-up
     ``workflow_run_daily`` row is included when its day's UTC midnight falls in
     ``[start, end)``, so a window ending at midnight leaves the next day out;
     its ``last_started_at`` is that midnight. ``start`` and ``end`` must be
     timezone-aware.
     """
     filters = (organization_id, workflow_id, workflow_name_like, status)
+    run_at = func.coalesce(Execution.started_at, Execution.completed_at)
     kept_conditions = (
-        Execution.started_at >= start,
-        Execution.started_at <= end,
+        run_at >= start,
+        run_at <= end,
         *_filters(Execution, *filters),
     )
 
@@ -85,7 +89,7 @@ def workflow_run_source(
             Execution.peak_cpu_cores.label("max_peak_cpu_cores"),
             Execution.peak_process_rss_bytes.label("max_peak_process_rss_bytes"),
             Execution.peak_memory_bytes.label("max_peak_memory_bytes"),
-            Execution.started_at.label("last_started_at"),
+            run_at.label("last_started_at"),
             func.coalesce(ai_per_run.c.ai_cost, Decimal("0")).label("ai_cost"),
             func.coalesce(ai_per_run.c.ai_calls, 0).label("ai_calls"),
         )
