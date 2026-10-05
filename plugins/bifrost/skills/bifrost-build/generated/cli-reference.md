@@ -1978,6 +1978,118 @@ Options:
   --help  Show this message and exit.
 ```
 
+## `retention`
+
+```
+Usage: retention [OPTIONS] COMMAND [ARGS]...
+
+  Show and change how long runs, events, and audit events are kept.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  preview  Show what a retention run would do now, without changing...
+  run      Run retention now: delete expired runs and events, or archive...
+  set      Change a retention window.
+  show     Show the retention windows, what the oldest data is, and the...
+```
+
+### `retention preview`
+
+```
+Usage: retention preview [OPTIONS] {runs|audit}
+
+  Show what a retention run would do now, without changing anything.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `retention run`
+
+```
+Usage: retention run [OPTIONS] {runs|audit}
+
+  Run retention now: delete expired runs and events, or archive aged audit
+  events.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `retention set`
+
+```
+Usage: retention set [OPTIONS] COMMAND [ARGS]...
+
+  Change a retention window.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  audit  Set the audit database window, the archive window, or both.
+  runs   Set how long finished runs and their events are kept.
+```
+
+#### `retention set audit`
+
+```
+Usage: retention set audit [OPTIONS]
+
+  Set the audit database window, the archive window, or both.
+
+  A window you leave out keeps its current value.
+
+  Examples:
+    bifrost retention set audit --database 60
+    bifrost retention set audit --archive forever
+
+Options:
+  --database INTEGER      Days audit events stay in the database before they
+                          are archived.
+  --archive DAYS|FOREVER  Days archived audit events are kept before deletion,
+                          or 'forever'.
+  --json                  Emit JSON instead of human-readable output.
+  --help                  Show this message and exit.
+```
+
+#### `retention set runs`
+
+```
+Usage: retention set runs [OPTIONS]
+
+  Set how long finished runs and their events are kept.
+
+  Examples:
+    bifrost retention set runs --days 60
+    bifrost retention set runs --forever
+
+Options:
+  --days INTEGER  Keep finished runs and events this many days (30 to 3650).
+  --forever       Keep finished runs and events forever.
+  --json          Emit JSON instead of human-readable output.
+  --help          Show this message and exit.
+```
+
+### `retention show`
+
+```
+Usage: retention show [OPTIONS]
+
+  Show the retention windows, what the oldest data is, and the last run of
+  each.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
 ## `roles`
 
 ```

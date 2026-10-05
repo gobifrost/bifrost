@@ -779,6 +779,7 @@ Entity mutation commands (see 'bifrost <entity> --help'):
    services     Manage supervised services
    audit        Read the audit log and explain access decisions
    users        Ask what a user's access would be (users access check)
+   retention    Show and change run, event, and audit retention
 
 Workspace/file targets:
   _repo source files:

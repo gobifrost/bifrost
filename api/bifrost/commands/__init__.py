@@ -29,6 +29,7 @@ from .integrations import integrations_group
 from .orgs import orgs_group
 from .policy_rules import policy_rule_group
 from .requirements import requirements_group
+from .retention import retention_group
 from .roles import roles_group
 from .services import services_group
 from .tables import tables_group
@@ -55,6 +56,7 @@ ENTITY_GROUPS: dict[str, click.Group] = {
     "services": services_group,
     "audit": audit_group,
     "users": users_group,
+    "retention": retention_group,
 }
 
 
