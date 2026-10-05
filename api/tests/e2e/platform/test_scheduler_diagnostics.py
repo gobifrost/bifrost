@@ -54,7 +54,7 @@ class TestSchedulerDiagnostics:
             "solution_update_check",
             "model_catalog_refresh",
             "solution_export_job_cleanup",
-            "event_cleanup",
+            "run_retention",
             "stuck_event_cleanup",
             "worker_metrics_sampling",
             "worker_metrics_cleanup",
@@ -77,6 +77,7 @@ class TestSchedulerDiagnostics:
             assert tasks[task_id]["last_run"]["status"] == "enqueued"
         assert tasks["artifact_retention_cleanup"]["execution_mode"] == "durable_job"
         assert tasks["audit_archive"]["execution_mode"] == "durable_job"
+        assert tasks["run_retention"]["execution_mode"] == "durable_job"
         deadline = time.monotonic() + 20
         history = {}
         while time.monotonic() < deadline:

@@ -1,9 +1,8 @@
 """
-Event Cleanup Scheduler
+Stuck Event Delivery Cleanup
 
-Automatically cleans up old events and event deliveries.
-- Maintains 30-day retention for event logs (daily)
-- Marks stuck deliveries as failed (every 5 minutes)
+Marks event deliveries stuck in QUEUED as failed (every 5 minutes). Old events
+are deleted by the run.retention platform job.
 """
 
 import logging
@@ -15,67 +14,12 @@ from sqlalchemy import select
 from src.core.database import get_db_context
 from src.models.enums import EventDeliveryStatus, EventStatus
 from src.models.orm.events import Event
-from src.repositories.events import EventDeliveryRepository, EventRepository
+from src.repositories.events import EventDeliveryRepository
 
 logger = logging.getLogger(__name__)
 
-# Default retention period in days
-EVENT_RETENTION_DAYS = 30
-
 # Timeout for stuck deliveries (matches workflow execution timeout)
 STUCK_DELIVERY_TIMEOUT_MINUTES = 5
-
-
-async def cleanup_old_events() -> dict[str, Any]:
-    """
-    Delete events older than the retention period.
-
-    Removes event records and their associated deliveries
-    to maintain storage efficiency.
-
-    Returns:
-        Summary of cleanup results
-    """
-    start_time = datetime.now(timezone.utc)
-    logger.info("▶ Event cleanup starting")
-
-    results: dict[str, Any] = {
-        "retention_days": EVENT_RETENTION_DAYS,
-        "events_deleted": 0,
-        "errors": [],
-    }
-
-    try:
-        async with get_db_context() as db:
-            repo = EventRepository(db)
-
-            # Delete old events (cascade will handle deliveries)
-            deleted_count = await repo.delete_old_events(
-                older_than_days=EVENT_RETENTION_DAYS
-            )
-
-            results["events_deleted"] = deleted_count
-
-            await db.commit()
-
-        # Calculate duration
-        end_time = datetime.now(timezone.utc)
-        duration_seconds = (end_time - start_time).total_seconds()
-        results["duration_seconds"] = duration_seconds
-        results["start_time"] = start_time.isoformat()
-        results["end_time"] = end_time.isoformat()
-
-        # Log completion
-        logger.info(
-            f"✓ Event cleanup completed: "
-            f"{deleted_count} events deleted ({duration_seconds:.1f}s)"
-        )
-
-    except Exception as e:
-        logger.error(f"✗ Event cleanup failed: {e}", exc_info=True)
-        results["errors"].append({"error": str(e)})
-
-    return results
 
 
 async def cleanup_stuck_events() -> dict[str, Any]:
