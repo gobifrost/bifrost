@@ -23,9 +23,16 @@ import logging
 import pathlib
 import sys
 import uuid
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+import pytest_asyncio
+from sqlalchemy import delete
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.models.orm import PlatformJob
 
 logger = logging.getLogger(__name__)
 
@@ -287,3 +294,50 @@ def make_solution_without_configs(e2e_client, platform_admin):
         return r.json()
 
     return _make
+
+
+@dataclass
+class PlatformJobLease:
+    job_id: uuid.UUID
+    token: uuid.UUID
+
+
+@pytest_asyncio.fixture
+async def run_retention_lease(db_session: AsyncSession):
+    """A running ``run.retention`` job row whose lease the test holds."""
+    now = datetime.now(UTC)
+    job = PlatformJob(
+        id=uuid.uuid4(),
+        job_type="run.retention",
+        payload_version=1,
+        payload={"dry_run": False},
+        priority=100,
+        requested_by_user_id=str(uuid.uuid4()),
+        requested_by_email="retention@example.com",
+        requested_by_name="Retention Test",
+        title="Remove expired runs and events",
+        status="running",
+        phase="Deleting",
+        progress_percent=0,
+        max_attempts=3,
+        timeout_seconds=3600,
+        execution_backend="local",
+        memory_required_bytes=256 * 1024 * 1024,
+        retry_on_runner_loss=True,
+        attempt=1,
+        lease_owner="test-run-retention",
+        lease_token=uuid.uuid4(),
+        heartbeat_at=now,
+        # Far enough out that scheduler lease recovery never reclaims it mid-test.
+        lease_expires_at=now + timedelta(hours=1),
+    )
+    db_session.add(job)
+    await db_session.commit()
+    held = PlatformJobLease(job_id=job.id, token=job.lease_token)
+    db_session.expunge_all()
+
+    yield held
+
+    await db_session.rollback()
+    await db_session.execute(delete(PlatformJob).where(PlatformJob.id == held.job_id))
+    await db_session.commit()

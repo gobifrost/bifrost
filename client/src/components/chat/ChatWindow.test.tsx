@@ -145,8 +145,12 @@ vi.mock("./ChatInput", () => ({
 	),
 }));
 
+const toolCardProps = vi.hoisted(() => vi.fn());
 vi.mock("./ToolExecutionCard", () => ({
-	ToolExecutionCard: () => <div data-marker="tool-card" />,
+	ToolExecutionCard: (props: Record<string, unknown>) => {
+		toolCardProps(props);
+		return <div data-marker="tool-card" />;
+	},
 }));
 vi.mock("./ToolExecutionBadge", () => ({
 	ToolExecutionBadge: () => <div data-marker="tool-badge" />,
@@ -311,6 +315,63 @@ describe("ChatWindow — messages render & send", () => {
 		// Stubbed ChatMessage emits a data-marker for each message.
 		expect(screen.getByText("ping")).toBeInTheDocument();
 		expect(screen.getByText("pong")).toBeInTheDocument();
+	});
+
+	it("hands a workflow tool card its tool call message", async () => {
+		const toolCallMessage = {
+			id: "m-3",
+			role: "tool_call",
+			tool_call_id: "tc-1",
+			tool_name: "run_task",
+			tool_state: "completed",
+			tool_result: { answer: 42 },
+			execution_id: "exec-1",
+			created_at: "2026-04-20T00:00:02Z",
+		};
+		messagesRef.data = [
+			{
+				id: "m-1",
+				role: "user",
+				content: "ping",
+				created_at: "2026-04-20T00:00:00Z",
+			},
+			{
+				id: "m-2",
+				role: "assistant",
+				content: "",
+				tool_calls: [{ id: "tc-1", name: "run_task", arguments: {} }],
+				created_at: "2026-04-20T00:00:01Z",
+			},
+			toolCallMessage,
+			{
+				id: "m-4",
+				role: "tool",
+				content: "{}",
+				tool_call_id: "tc-1",
+				execution_id: "exec-1",
+				created_at: "2026-04-20T00:00:03Z",
+			},
+			{
+				id: "m-5",
+				role: "assistant",
+				content: "Done.",
+				duration_ms: 1000,
+				created_at: "2026-04-20T00:00:04Z",
+			},
+		];
+		toolCardProps.mockClear();
+
+		const { user } = renderWithProviders(
+			<ChatWindow conversationId="c-1" />,
+		);
+		await user.click(screen.getByRole("button", { expanded: false }));
+
+		expect(toolCardProps).toHaveBeenCalledWith(
+			expect.objectContaining({
+				executionId: "exec-1",
+				toolCallMessage,
+			}),
+		);
 	});
 
 	it("keeps routed activity after its user message despite clock skew", () => {

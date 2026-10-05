@@ -19,7 +19,6 @@ from src.models.contracts.audit_retention import AuditRetentionSettings
 from src.models.orm import AuditArchiveSegment, AuditLog, Organization, PlatformJob
 from src.services.audit_retention.archiver import (
     DeleteMismatch,
-    LeaseLost,
     archive_segment,
     expire_segments,
     plan_archive,
@@ -36,6 +35,7 @@ from src.services.audit_retention.store import (
     ArchiveStorageUnavailable,
     AuditArchiveStore,
 )
+from src.services.platform_job_lease import LeaseLost
 
 CUTOFF = datetime(2002, 1, 1, tzinfo=UTC)
 

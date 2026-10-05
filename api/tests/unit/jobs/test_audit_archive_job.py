@@ -23,8 +23,8 @@ from src.jobs.platform.audit_archive import (
 )
 from src.jobs.platform.base import PlatformJobCancelled, PlatformJobFailure
 from src.models.contracts.audit_retention import AuditRetentionSettings
-from src.services.audit_retention.archiver import LeaseLost
 from src.services.audit_retention.format import ArchiveRow, ArchiveVerifyError, Segment
+from src.services.platform_job_lease import LeaseLost
 
 FROZEN_CUTOFF = datetime(2020, 3, 1, tzinfo=UTC)
 

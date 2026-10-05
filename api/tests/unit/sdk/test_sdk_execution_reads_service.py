@@ -514,13 +514,22 @@ class TestRouterBoundaries:
             assert await get_execution(execution_id, ctx) == "EXEC"
         mock_get.assert_awaited_once_with(ctx.db, ctx.user, execution_id)
 
-        with patch(
-            "shared.sdk_execution_reads.get_sdk_execution",
-            new=AsyncMock(side_effect=SdkExecutionReadError(404, "missing")),
+        async def retention_suffix(db: object) -> str:
+            return " Finished runs are removed after 30 days."
+
+        with (
+            patch(
+                "shared.sdk_execution_reads.get_sdk_execution",
+                new=AsyncMock(side_effect=SdkExecutionReadError(404, "missing")),
+            ),
+            patch("src.routers.executions.run_not_found_suffix", retention_suffix),
         ):
             with pytest.raises(HTTPException) as exc_info:
                 await get_execution(execution_id, ctx)
         assert exc_info.value.status_code == 404
+        assert exc_info.value.detail == (
+            f"Execution {execution_id} not found. Finished runs are removed after 30 days."
+        )
 
         with patch(
             "shared.sdk_execution_reads.get_sdk_execution",

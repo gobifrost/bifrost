@@ -9968,7 +9968,7 @@
     "cli": 155,
     "manifest": 16,
     "mcp": 94,
-    "rest": 660,
+    "rest": 665,
     "sdk": 19
   },
   "schema_version": 1,
@@ -12457,6 +12457,34 @@
         "status": "missing_surface"
       },
       {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/maintenance/run-retention/preview",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/maintenance/run-retention/run",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/maintenance/run-retention/settings",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "PUT",
+        "operation_id": "",
+        "path": "/api/maintenance/run-retention/settings",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
         "method": "POST",
         "operation_id": "",
         "path": "/api/maintenance/scan-app-dependencies",
@@ -13097,6 +13125,13 @@
         "method": "PUT",
         "operation_id": "",
         "path": "/api/roles/{role_id}/permissions",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/run-retention",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

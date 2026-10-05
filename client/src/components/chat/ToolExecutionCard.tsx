@@ -31,7 +31,11 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useExecutionStream } from "@/hooks/useExecutionStream";
 import { useExecutionStreamStore } from "@/stores/executionStreamStore";
-import { useExecution, useExecutionLogs } from "@/hooks/useExecutions";
+import {
+	isNotFoundError,
+	useExecution,
+	useExecutionLogs,
+} from "@/hooks/useExecutions";
 import {
 	Popover,
 	PopoverContent,
@@ -44,11 +48,13 @@ import {
 } from "@/components/ui/collapsible";
 import { PrettyInputDisplay } from "@/components/execution/PrettyInputDisplay";
 import { ToolOutputDisplay } from "@/components/chat/ToolOutputDisplay";
+import { RunRemovedNotice } from "@/components/execution/RunRemovedNotice";
 import type { components } from "@/lib/v1";
 import { useReducedMotion } from "framer-motion";
 
 type ToolCall = components["schemas"]["ToolCall"];
 type ExecutionStatus = components["schemas"]["ExecutionStatus"];
+type MessagePublic = components["schemas"]["MessagePublic"];
 
 // Stable empty array to prevent re-render loops in Zustand selectors
 const EMPTY_LOGS: { level: string; message: string; timestamp?: string }[] = [];
@@ -124,6 +130,8 @@ interface ToolExecutionCardProps {
 	execution?: ToolExecutionState;
 	/** Whether a tool result message exists (indicates completion for non-execution tools) */
 	hasResultMessage?: boolean;
+	/** The tool call message, whose recorded outcome stands in for a removed execution */
+	toolCallMessage?: Pick<MessagePublic, "tool_state" | "tool_result">;
 	className?: string;
 }
 
@@ -168,6 +176,15 @@ const statusConfig: Record<
 	},
 };
 
+/** Map a tool call message's recorded state to a finished card status */
+function recordedToolStatus(
+	toolState: MessagePublic["tool_state"],
+): ToolExecutionStatus | undefined {
+	if (toolState === "completed") return "success";
+	if (toolState === "error") return "failed";
+	return undefined;
+}
+
 /**
  * Check if result is a CallToolResult structure and extract content.
  */
@@ -211,6 +228,7 @@ export function ToolExecutionCard({
 	isStreaming = false,
 	execution,
 	hasResultMessage = false,
+	toolCallMessage,
 	className,
 }: ToolExecutionCardProps) {
 	// Auto-expand results when execution completes
@@ -223,12 +241,23 @@ export function ToolExecutionCard({
 	const resolvedToolCall = toolCall ?? execution?.toolCall;
 
 	// Fetch execution data from API (disabled during streaming)
-	const { data: apiExecution, isLoading: isLoadingExecution } = useExecution(
+	const {
+		data: apiExecution,
+		isLoading: isLoadingExecution,
+		error: executionError,
+	} = useExecution(
 		resolvedExecutionId,
 		{ disablePolling: isStreaming }, // Disable polling during streaming
 	);
 
-	// Determine status: streaming state > API data > legacy execution > has result > pending
+	// Run retention removed the execution: the tool call message's recorded
+	// outcome is all that remains.
+	const executionRemoved = isNotFoundError(executionError);
+	const removedToolCall = executionRemoved ? toolCallMessage : undefined;
+	const recordedStatus = recordedToolStatus(removedToolCall?.tool_state);
+
+	// Determine status: streaming state > API data > legacy execution >
+	// recorded tool call outcome > has result > pending
 	const status: ToolExecutionStatus =
 		isStreaming && streamingState
 			? streamingState.status
@@ -236,9 +265,8 @@ export function ToolExecutionCard({
 				? mapExecutionStatus(apiExecution.status)
 				: execution?.status
 					? execution.status
-					: hasResultMessage
-						? "success"
-						: "pending";
+					: (recordedStatus ??
+						(hasResultMessage ? "success" : "pending"));
 
 	// Determine completion status (needed for log fetching)
 	const isComplete =
@@ -260,7 +288,10 @@ export function ToolExecutionCard({
 	// Fetch persisted logs when result section is expanded and execution is complete
 	const { data: persistedLogs } = useExecutionLogs(
 		resolvedExecutionId,
-		isComplete && isResultOpen && !!resolvedExecutionId,
+		isComplete &&
+			isResultOpen &&
+			!!resolvedExecutionId &&
+			!executionRemoved,
 	);
 
 	// Determine logs to display: streaming logs > persisted logs > streaming state logs > legacy logs
@@ -272,17 +303,28 @@ export function ToolExecutionCard({
 				? persistedLogs
 				: baseLogs;
 
-	// Determine result: streaming state > API data > legacy execution
+	// Determine result: streaming state > API data > legacy execution >
+	// recorded tool call outcome
 	const result =
 		isStreaming && streamingState?.result !== undefined
 			? streamingState.result
-			: (apiExecution?.result ?? execution?.result);
+			: (apiExecution?.result ??
+				execution?.result ??
+				(recordedStatus === "success"
+					? removedToolCall?.tool_result
+					: undefined));
 
-	// Determine error: streaming state > API data > legacy execution
+	// Determine error: streaming state > API data > legacy execution >
+	// recorded tool call outcome
 	const error =
 		isStreaming && streamingState?.error
 			? streamingState.error
-			: (apiExecution?.error_message ?? execution?.error);
+			: (apiExecution?.error_message ??
+				execution?.error ??
+				(recordedStatus === "failed"
+					? (removedToolCall?.tool_result as { error?: string } | null)
+							?.error
+					: undefined));
 
 	// Determine duration: streaming state > API data > legacy execution
 	const durationMs =
@@ -421,6 +463,12 @@ export function ToolExecutionCard({
 					</Popover>
 				</div>
 			</div>
+
+			{executionRemoved && (
+				<div className="px-3 pb-3 sm:px-4">
+					<RunRemovedNotice variant="inline" />
+				</div>
+			)}
 
 			{/* Live Logs (while running) */}
 			{status === "running" && displayLogs.length > 0 && (

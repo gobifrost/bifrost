@@ -13,8 +13,13 @@ import {
 	CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { ExecutionReadError } from "@/components/execution/ExecutionReadError";
+import { RunRemovedNotice } from "@/components/execution/RunRemovedNotice";
 import { PageLoader } from "@/components/PageLoader";
-import { useExecution, cancelExecution } from "@/hooks/useExecutions";
+import {
+	useExecution,
+	cancelExecution,
+	isNotFoundError,
+} from "@/hooks/useExecutions";
 import { useAuth } from "@/contexts/AuthContext";
 import { executeWorkflowWithContext } from "@/hooks/useWorkflows";
 import { useWorkflowsMetadata } from "@/hooks/useWorkflows";
@@ -556,15 +561,36 @@ export function ExecutionDetails({
 	}
 
 	if (!execution) {
+		const backLabel = usageReturn ? "Back to usage" : "Back to history";
+		if (isNotFoundError(error)) {
+			return (
+				<div
+					className={
+						embedded
+							? "p-4"
+							: "mx-auto max-w-2xl space-y-3 p-4 sm:p-6"
+					}
+				>
+					<RunRemovedNotice variant="page" />
+					{!embedded && (
+						<Button
+							variant="ghost"
+							className="min-h-11"
+							onClick={handleBackToHistory}
+						>
+							{backLabel}
+						</Button>
+					)}
+				</div>
+			);
+		}
 		return (
 			<div className={embedded ? "p-4" : "mx-auto max-w-2xl p-4 sm:p-6"}>
 				<ExecutionReadError
 					pending={isFetching}
 					onRetry={() => void refetch()}
 					onBack={embedded ? undefined : handleBackToHistory}
-					backLabel={
-						usageReturn ? "Back to usage" : "Back to history"
-					}
+					backLabel={backLabel}
 				/>
 			</div>
 		);

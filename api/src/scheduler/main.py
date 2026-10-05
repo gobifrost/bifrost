@@ -526,21 +526,19 @@ class Scheduler:
         )
         logger.info("Audit archive scheduled (daily at 2:30 AM)")
 
-        # Event cleanup - daily at 3:00 AM UTC (30-day retention)
-        try:
-            from src.jobs.schedulers.event_cleanup import cleanup_old_events
-            scheduler.add_job(
-                self._run_scheduled_task,
-                CronTrigger(hour=3, minute=0),  # Daily at 3:00 AM UTC
-                id="event_cleanup",
-                name="Cleanup old events (30-day retention)",
-                replace_existing=True,
-                args=["event_cleanup", cleanup_old_events],
-                **misfire_options,
-            )
-            logger.info("Event cleanup job scheduled (daily at 3:00 AM)")
-        except ImportError:
-            logger.warning("Event cleanup job not available")
+        # Run retention - daily at 3:00 AM UTC
+        from src.jobs.schedulers.run_retention import delete_expired_runs_schedule
+
+        scheduler.add_job(
+            self._run_scheduled_task,
+            CronTrigger(hour=3, minute=0),
+            id="run_retention",
+            name="Delete finished runs and events past the retention window",
+            replace_existing=True,
+            args=["run_retention", delete_expired_runs_schedule],
+            **misfire_options,
+        )
+        logger.info("Run retention scheduled (daily at 3:00 AM)")
 
         # Stuck event delivery cleanup - every 5 minutes (run immediately at startup)
         try:

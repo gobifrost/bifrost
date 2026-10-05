@@ -55,12 +55,6 @@ class ExecutionMetricsDaily(Base):
     total_time_saved: Mapped[int] = mapped_column(BigInteger, default=0)
     total_value: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
 
-    # AI usage aggregates (nullable for existing records)
-    total_ai_input_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    total_ai_output_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    total_ai_cost: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
-    total_ai_calls: Mapped[int | None] = mapped_column(Integer, nullable=True)
-
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=text("NOW()")

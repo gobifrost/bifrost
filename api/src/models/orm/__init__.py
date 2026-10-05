@@ -67,6 +67,7 @@ from src.models.orm.user_invites import UserInvite
 from src.models.orm.workflow_operation_usage import WorkflowOperationUsage
 from src.models.orm.workflow_permissions import WorkflowPermissionGrant
 from src.models.orm.workflow_roles import WorkflowRole
+from src.models.orm.workflow_run_daily import WorkflowRunDaily
 from src.models.orm.workflows import Workflow
 from src.models.orm.file_index import FileIndex, SolutionFileIndex
 from src.models.orm.file_metadata import FileMetadata, FilePolicy
@@ -180,6 +181,7 @@ __all__ = [
     "KnowledgeStorageDaily",
     "PlatformMetricsSnapshot",
     "WorkflowROIDaily",
+    "WorkflowRunDaily",
     # Workspace
     "FileIndex",
     "SolutionFileIndex",

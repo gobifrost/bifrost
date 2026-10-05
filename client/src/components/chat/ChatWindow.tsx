@@ -58,6 +58,8 @@ interface MessageWithToolCardsProps {
 	message: MessagePublic;
 	/** Map of tool_call_id -> tool result message (for getting execution_id) */
 	toolResultMessages: Map<string, MessagePublic>;
+	/** Map of tool_call_id -> tool call message (its recorded outcome) */
+	toolCallMessages: Map<string, MessagePublic>;
 	/** Conversation ID for retrieving saved tool execution state */
 	conversationId: string;
 	isStreaming?: boolean;
@@ -66,6 +68,7 @@ interface MessageWithToolCardsProps {
 function MessageWithToolCards({
 	message,
 	toolResultMessages,
+	toolCallMessages,
 	conversationId,
 	isStreaming,
 }: MessageWithToolCardsProps) {
@@ -159,6 +162,9 @@ function MessageWithToolCards({
 									toolCall={tc}
 									execution={savedExecution}
 									hasResultMessage={!!resultMsg}
+									toolCallMessage={toolCallMessages.get(
+										tc.id,
+									)}
 								/>
 							),
 						)}
@@ -270,6 +276,18 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 		for (const msg of messages) {
 			// Tool result messages have tool_call_id set
 			if (msg.tool_call_id) {
+				map.set(msg.tool_call_id, msg);
+			}
+		}
+		return map;
+	}, [messages]);
+
+	// Tool call messages keep the tool's outcome after run retention removes
+	// the execution it ran as.
+	const toolCallMessages = useMemo(() => {
+		const map = new Map<string, MessagePublic>();
+		for (const msg of messages) {
+			if (msg.role === "tool_call" && msg.tool_call_id) {
 				map.set(msg.tool_call_id, msg);
 			}
 		}
@@ -663,6 +681,7 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 				key={msg.id}
 				message={msg}
 				toolResultMessages={toolResultMessages}
+				toolCallMessages={toolCallMessages}
 				conversationId={conversationId}
 				isStreaming={
 					(msg as ChatRuntimeMessage).is_streaming ||

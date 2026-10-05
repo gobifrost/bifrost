@@ -70,6 +70,7 @@ from src.services.execution.tuning_service import (
     append_user_message_and_reply,
     get_or_create_conversation,
 )
+from src.services.run_retention.settings import run_not_found_suffix
 
 logger = logging.getLogger(__name__)
 
@@ -527,7 +528,10 @@ async def get_agent_run(
     try:
         return await get_sdk_agent_run(db, user, run_id=run_id)
     except SdkAgentRunError as e:
-        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
+        detail = e.detail
+        if e.status_code == status.HTTP_404_NOT_FOUND:
+            detail = f"Agent run {run_id} not found." + await run_not_found_suffix(db)
+        raise HTTPException(status_code=e.status_code, detail=detail) from None
 
 
 @router.post("/{run_id}/rerun")

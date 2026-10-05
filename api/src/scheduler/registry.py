@@ -32,7 +32,7 @@ SCHEDULED_TASKS: tuple[ScheduledTaskDefinition, ...] = (
     ScheduledTaskDefinition("solution_export_job_cleanup", "Clean Up Solution Export Artifacts", "Hourly"),
     ScheduledTaskDefinition("audit_archive", "Archive Audit Events", "Daily at 02:30 UTC", "durable_job"),
     ScheduledTaskDefinition("artifact_retention_cleanup", "Clean Up Artifacts", "Daily at 03:30 UTC", "durable_job"),
-    ScheduledTaskDefinition("event_cleanup", "Clean Up Old Events", "Daily at 03:00 UTC"),
+    ScheduledTaskDefinition("run_retention", "Run Retention", "Daily at 03:00 UTC", "durable_job"),
     ScheduledTaskDefinition("stuck_event_cleanup", "Clean Up Stuck Event Deliveries", "Every 5 minutes"),
     ScheduledTaskDefinition("worker_metrics_sampling", "Sample Worker Metrics", "Every minute"),
     ScheduledTaskDefinition("worker_metrics_cleanup", "Clean Up Worker Metrics", "Daily at 04:00 UTC"),

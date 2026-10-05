@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.auth import Context, CurrentSuperuser
 from src.core.database import get_db
 from src.jobs.platform.audit_archive import enqueue_manual_audit_archive
+from src.jobs.platform.run_retention import enqueue_manual_run_retention
 from src.jobs.platform.system_maintenance import (
     ARTIFACT_RETENTION_CLEANUP_DEFINITION,
     EmptyMaintenancePayload,
@@ -48,6 +49,14 @@ from src.models.contracts.notifications import (
     NotificationStatus,
 )
 from src.models.contracts.platform_jobs import PlatformJobAccepted
+from src.models.contracts.run_retention import (
+    RunRetentionInfo,
+    RunRetentionPreview,
+    RunRetentionRunRequest,
+    RunRetentionSettings,
+    RunRetentionSettingsUpdate,
+    RunRetentionStatus,
+)
 from src.models.orm import (
     Application,
     Workflow,
@@ -63,6 +72,12 @@ from src.services.audit_retention.archiver import (
 )
 from src.services.audit_retention.settings import AuditRetentionSettingsService
 from src.services.notification_service import get_notification_service
+from src.services.run_retention.deleter import (
+    latest_run_retention_job,
+    plan_run_retention,
+    run_retention_info,
+)
+from src.services.run_retention.settings import RunRetentionSettingsService
 from src.services.platform_jobs import (
     ensure_platform_job_notification,
     enqueue_platform_job,
@@ -243,6 +258,101 @@ async def preview_audit_expiry(
         else None
     )
     return AuditExpiryPreview(**await plan_expiry(db, expiry=expiry))
+
+
+async def _run_retention_status(
+    db: AsyncSession, settings: RunRetentionSettings
+) -> RunRetentionStatus:
+    last_run = await latest_run_retention_job(db)
+    return RunRetentionStatus(
+        settings=settings,
+        info=RunRetentionInfo(**await run_retention_info(db, settings)),
+        last_run=platform_job_to_public(last_run) if last_run else None,
+    )
+
+
+@router.get(
+    "/run-retention/settings",
+    response_model=RunRetentionStatus,
+    summary="Get run retention settings and status",
+)
+async def get_run_retention_settings(
+    user: CurrentSuperuser,
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> RunRetentionStatus:
+    settings = await RunRetentionSettingsService(db).get_settings()
+    return await _run_retention_status(db, settings)
+
+
+@router.put(
+    "/run-retention/settings",
+    response_model=RunRetentionStatus,
+    summary="Update run retention settings",
+)
+async def update_run_retention_settings(
+    body: RunRetentionSettingsUpdate,
+    user: CurrentSuperuser,
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> RunRetentionStatus:
+    service = RunRetentionSettingsService(db)
+    before = await service.get_settings()
+    after = await service.update_settings(
+        RunRetentionSettings(**body.model_dump()), updated_by=user.email
+    )
+    await emit_audit(
+        db,
+        "settings.run_retention.update",
+        resource_type="system_config",
+        details={"before": before.model_dump(), "after": after.model_dump()},
+    )
+    await db.commit()
+    return await _run_retention_status(db, after)
+
+
+@router.post(
+    "/run-retention/run",
+    response_model=PlatformJobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Delete expired runs and events now, or preview the run",
+)
+async def start_run_retention(
+    body: RunRetentionRunRequest,
+    response: Response,
+    user: CurrentSuperuser,
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> PlatformJobAccepted:
+    job, reused = await enqueue_manual_run_retention(db, user, dry_run=body.dry_run)
+    response.headers["Location"] = f"/api/platform-jobs/{job.id}"
+    return PlatformJobAccepted(
+        job_id=job.id,
+        notification_id=job.notification_id,
+        status=job.status,
+        reused=reused,
+    )
+
+
+@router.get(
+    "/run-retention/preview",
+    response_model=RunRetentionPreview,
+    summary="Preview how many runs and events a retention window would delete",
+)
+async def preview_run_retention(
+    user: CurrentSuperuser,
+    days: int | None = Query(
+        None, ge=30, le=3650, description="Retention window in days; omit to keep forever."
+    ),
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> RunRetentionPreview:
+    if days is None:
+        return RunRetentionPreview(days=None, cutoff=None, workflow_runs=0, agent_runs=0, events=0)
+    plan = await plan_run_retention(db, cutoff=datetime.now(timezone.utc) - timedelta(days=days))
+    return RunRetentionPreview(
+        days=days,
+        cutoff=plan["cutoff"],
+        workflow_runs=plan["workflow_runs"],
+        agent_runs=plan["agent_runs"],
+        events=plan["events"],
+    )
 
 
 @router.get(

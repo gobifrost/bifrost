@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import select, func, case, desc
+from sqlalchemy import ColumnElement, Subquery, select, func, case, desc
 
 from src.models import (
     DashboardMetricsResponse,
@@ -43,6 +43,7 @@ from src.models import ExecutionMetricsDaily, Organization
 from src.models.orm import PlatformMetricsSnapshot as PlatformMetricsSnapshotORM
 from src.models.enums import ExecutionStatus
 from src.services.roi_settings_service import ROISettingsService
+from src.services.run_retention.source import all_time_run_totals, workflow_run_source
 from shared.execution_timeseries import get_execution_time_series
 
 logger = logging.getLogger(__name__)
@@ -526,7 +527,10 @@ async def get_workflow_metrics(
     """
     Get workflow-level execution metrics.
 
-    Platform admin only.
+    Platform admin only. Reads the run history source (kept runs plus the
+    daily rollup of runs retention deleted). Rolled-up days contribute their
+    daily peak memory to the memory average and their daily mean duration to
+    the maximum duration, since individual runs are no longer stored.
 
     Args:
         days: Number of days to aggregate (default 30)
@@ -537,21 +541,28 @@ async def get_workflow_metrics(
         Workflow metrics sorted by the specified field (descending)
     """
     try:
-        start_date = datetime.now(timezone.utc) - timedelta(days=days)
+        now = datetime.now(timezone.utc)
+        runs = workflow_run_source(start=now - timedelta(days=days), end=now)
 
         # Define aggregation columns
-        total_executions = func.count(ExecutionModel.id).label("total_executions")
+        total_executions = func.sum(runs.c.run_count).label("total_executions")
         success_count = func.sum(
-            case((ExecutionModel.status == ExecutionStatus.SUCCESS.value, 1), else_=0)
+            case((runs.c.status == ExecutionStatus.SUCCESS, runs.c.run_count), else_=0)
         ).label("success_count")
         failed_count = func.sum(
-            case((ExecutionModel.status == ExecutionStatus.FAILED.value, 1), else_=0)
+            case((runs.c.status == ExecutionStatus.FAILED, runs.c.run_count), else_=0)
         ).label("failed_count")
-        avg_memory = func.avg(ExecutionModel.peak_memory_bytes).label("avg_memory")
-        avg_duration = func.avg(ExecutionModel.duration_ms).label("avg_duration")
-        avg_cpu = func.avg(ExecutionModel.cpu_total_seconds).label("avg_cpu")
-        peak_memory = func.max(ExecutionModel.peak_memory_bytes).label("peak_memory")
-        max_duration = func.max(ExecutionModel.duration_ms).label("max_duration")
+        avg_memory = func.avg(runs.c.max_peak_memory_bytes).label("avg_memory")
+        # Average over the runs that report the value, as avg() did: a kept
+        # run without a duration (still in flight) does not drag it down.
+        avg_duration = (
+            func.sum(runs.c.total_duration_ms) / func.nullif(_runs_with(runs.c.total_duration_ms, runs), 0)
+        ).label("avg_duration")
+        avg_cpu = (
+            func.sum(runs.c.total_cpu_seconds) / func.nullif(_runs_with(runs.c.total_cpu_seconds, runs), 0)
+        ).label("avg_cpu")
+        peak_memory = func.max(runs.c.max_peak_memory_bytes).label("peak_memory")
+        max_duration = func.max(runs.c.total_duration_ms / runs.c.run_count).label("max_duration")
 
         # Map sort_by to columns
         sort_columns = {
@@ -564,7 +575,7 @@ async def get_workflow_metrics(
 
         query = (
             select(
-                ExecutionModel.workflow_name,
+                runs.c.workflow_name,
                 total_executions,
                 success_count,
                 failed_count,
@@ -574,9 +585,7 @@ async def get_workflow_metrics(
                 peak_memory,
                 max_duration,
             )
-            .where(ExecutionModel.created_at >= start_date)
-            .where(ExecutionModel.workflow_name.isnot(None))
-            .group_by(ExecutionModel.workflow_name)
+            .group_by(runs.c.workflow_name)
             .order_by(desc(order_col))
             .limit(limit)
         )
@@ -623,6 +632,11 @@ async def get_workflow_metrics(
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
+
+def _runs_with(column: ColumnElement, runs: Subquery) -> ColumnElement:
+    """Runs in the source that carry ``column``; rolled-up rows always do."""
+    return func.sum(case((column.isnot(None), runs.c.run_count), else_=0))
 
 
 async def _get_recent_failures(
@@ -704,21 +718,14 @@ async def _compute_metrics_directly(
     form_count = counts_row.form_count or 0
     provider_count = counts_row.provider_count or 0
 
-    # Single query for all execution stats using conditional aggregation
+    # All-time run counts: kept executions plus runs retention rolled up.
+    all_time = await all_time_run_totals(ctx.db)
+    total_executions = all_time["total"]
+    success_count = all_time["success"]
+    failed_count = all_time["failed"]
+
+    # Current state and duration come from kept executions.
     exec_stats_query = select(
-        func.count(ExecutionModel.id).label("total"),
-        func.sum(
-            case(
-                (ExecutionModel.status == ExecutionStatus.SUCCESS.value, 1),
-                else_=0,
-            )
-        ).label("success_count"),
-        func.sum(
-            case(
-                (ExecutionModel.status == ExecutionStatus.FAILED.value, 1),
-                else_=0,
-            )
-        ).label("failed_count"),
         func.sum(
             case(
                 (ExecutionModel.status == ExecutionStatus.RUNNING.value, 1),
@@ -741,9 +748,6 @@ async def _compute_metrics_directly(
     exec_result = await ctx.db.execute(exec_stats_query)
     exec_row = exec_result.one()
 
-    total_executions = exec_row.total or 0
-    success_count = exec_row.success_count or 0
-    failed_count = exec_row.failed_count or 0
     running_count = exec_row.running_count or 0
     pending_count = exec_row.pending_count or 0
     avg_duration_ms = exec_row.avg_duration_ms or 0

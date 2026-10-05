@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Sequence
 from uuid import UUID
 
-from sqlalchemy import case, delete, func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import joinedload, selectinload
 
 from src.models.enums import EventDeliveryStatus, EventSourceType, EventStatus
@@ -394,31 +394,6 @@ class EventRepository(BaseRepository[Event]):
 
         result = await self.session.execute(stmt)
         return result.scalar() or 0
-
-    async def get_old_events(
-        self,
-        older_than_days: int = 30,
-        limit: int = 1000,
-    ) -> Sequence[Event]:
-        """Get events older than specified days (for cleanup)."""
-        cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
-
-        result = await self.session.execute(
-            select(Event)
-            .where(Event.created_at < cutoff)
-            .limit(limit)
-        )
-        return result.scalars().all()
-
-    async def delete_old_events(self, older_than_days: int = 30) -> int:
-        """Delete events older than specified days. Returns count deleted."""
-        cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
-
-        result = await self.session.execute(
-            delete(Event).where(Event.created_at < cutoff)
-        )
-        await self.session.flush()
-        return result.rowcount or 0
 
 
 class EventDeliveryRepository(BaseRepository[EventDelivery]):

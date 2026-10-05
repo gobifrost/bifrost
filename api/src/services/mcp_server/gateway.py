@@ -39,6 +39,7 @@ from src.services.mcp_client.errors import (
     ToolDispatchError,
 )
 from src.services.mcp_server.config_service import MCPConfig, MCPConfigService
+from src.services.run_retention.settings import run_not_found_suffix
 from src.services.tool_schema import validate_arguments_against_schema
 
 if TYPE_CHECKING:
@@ -757,9 +758,11 @@ class MCPAgentGatewayService:
                 "result_page": None,
             }
 
+        async with get_db_context() as db:
+            suffix = await run_not_found_suffix(db)
         raise GatewayError(
             "EXECUTION_NOT_FOUND_OR_FORBIDDEN",
-            "Execution not found or you do not have access.",
+            "Execution not found or you do not have access." + suffix,
         )
 
     @staticmethod

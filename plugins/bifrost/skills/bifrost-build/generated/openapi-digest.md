@@ -325,6 +325,10 @@
 | POST | `/api/maintenance/index-docs` |
 | POST | `/api/maintenance/preflight` |
 | POST | `/api/maintenance/reimport` |
+| GET | `/api/maintenance/run-retention/preview` |
+| POST | `/api/maintenance/run-retention/run` |
+| GET | `/api/maintenance/run-retention/settings` |
+| PUT | `/api/maintenance/run-retention/settings` |
 | POST | `/api/maintenance/scan-app-dependencies` |
 | GET | `/api/maintenance/status` |
 | GET | `/api/mcp-connections` |
@@ -450,6 +454,7 @@
 | DELETE | `/api/roles/{role_id}/workflows` |
 | GET | `/api/roles/{role_id}/workflows` |
 | POST | `/api/roles/{role_id}/workflows` |
+| GET | `/api/run-retention` |
 | POST | `/api/schedules/validate` |
 | POST | `/api/sdk/ai/complete` |
 | GET | `/api/sdk/ai/info` |

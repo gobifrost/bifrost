@@ -6,7 +6,7 @@ import {
 	SheetTitle,
 } from "@/components/ui/sheet";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
-import { useExecution } from "@/hooks/useExecutions";
+import { isNotFoundError, useExecution } from "@/hooks/useExecutions";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 /**
@@ -59,6 +59,7 @@ import {
 } from "@/lib/agent-run-navigation";
 import { useAgentRun } from "@/services/agentRuns";
 import { VariablesTreeView } from "@/components/ui/variables-tree-view";
+import { RunRemovedNotice } from "@/components/execution/RunRemovedNotice";
 
 import { DidNarrative } from "./DidNarrative";
 import { isEmptyJson } from "./JsonTree";
@@ -497,6 +498,7 @@ function ActivityTreeRow({
 		data: rawChild,
 		isLoading,
 		isError,
+		error: childError,
 		isFetching,
 		refetch,
 	} = useAgentRun(open ? (item.childRunId ?? undefined) : undefined, {
@@ -506,9 +508,12 @@ function ActivityTreeRow({
 				: false,
 	});
 	const child = rawChild as unknown as AgentRunDetailResponse | undefined;
-	const { data: workflowExecution } = useExecution(
+	const { data: workflowExecution, error: executionError } = useExecution(
 		item.executionId ?? undefined,
 	);
+	// Run retention removed the delegated run or the workflow execution.
+	const removed =
+		isNotFoundError(childError) || isNotFoundError(executionError);
 	const agentName = child?.agent_name ?? item.agentName;
 	const title =
 		item.kind === "delegation"
@@ -682,7 +687,11 @@ function ActivityTreeRow({
 					</button>
 				</div>
 			</div>
-			{isError ? (
+			{removed ? (
+				<div className="pe-3 ps-14 pb-2">
+					<RunRemovedNotice variant="inline" />
+				</div>
+			) : isError ? (
 				<div
 					role="alert"
 					className="mx-3 mb-2 rounded-[var(--bf-radius-control)] bg-[var(--bf-warning-soft)] p-3 text-sm"
@@ -755,6 +764,7 @@ function ActivityDetailPanel({
 		data: rawChild,
 		isLoading,
 		isError,
+		error: childError,
 		isFetching,
 		refetch,
 	} = useAgentRun(
@@ -767,7 +777,12 @@ function ActivityDetailPanel({
 		},
 	);
 	const child = rawChild as unknown as AgentRunDetailResponse | undefined;
-	const { data: execution } = useExecution(item.executionId ?? undefined);
+	const { data: execution, error: executionError } = useExecution(
+		item.executionId ?? undefined,
+	);
+	// Run retention removed the delegated run or the workflow execution.
+	const removed =
+		isNotFoundError(childError) || isNotFoundError(executionError);
 	const title =
 		execution?.workflow_name ??
 		child?.agent_name ??
@@ -859,7 +874,11 @@ function ActivityDetailPanel({
 				</SheetHeader>
 			)}
 			<div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-2">
-				{isError ? (
+				{removed ? (
+					<div className="mt-3">
+						<RunRemovedNotice variant="inline" />
+					</div>
+				) : isError ? (
 					<div
 						role="alert"
 						className="mt-3 rounded-[var(--bf-radius-control)] bg-[var(--bf-warning-soft)] p-3 text-sm"

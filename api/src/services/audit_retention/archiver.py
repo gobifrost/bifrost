@@ -27,13 +27,10 @@ from src.services.audit_retention.format import (
 )
 from src.services.audit_retention.settings import AuditRetentionSettingsService
 from src.services.audit_retention.store import AuditArchiveStore
+from src.services.platform_job_lease import hold_lease
 
 BATCH_ROWS = 5000
 BATCH_BYTES = 64 * 1024 * 1024
-
-
-class LeaseLost(Exception):
-    """The job no longer holds its lease; another runner owns the work."""
 
 
 class DeleteMismatch(Exception):
@@ -98,21 +95,6 @@ async def select_batch(
     return rows
 
 
-async def _hold_lease(db: AsyncSession, job_id: UUID, lease_token: UUID) -> None:
-    # Holding the job row lock fences lease recovery until this transaction ends.
-    held = await db.execute(
-        select(PlatformJob.id)
-        .where(
-            PlatformJob.id == job_id,
-            PlatformJob.lease_token == lease_token,
-            PlatformJob.status == "running",
-        )
-        .with_for_update()
-    )
-    if held.scalar_one_or_none() is None:
-        raise LeaseLost(str(job_id))
-
-
 async def commit_segment(
     db: AsyncSession,
     segment: Segment,
@@ -121,7 +103,7 @@ async def commit_segment(
     lease_token: UUID,
 ) -> None:
     """Catalog a verified segment and delete its rows, under the job's lease."""
-    await _hold_lease(db, job_id, lease_token)
+    await hold_lease(db, job_id, lease_token)
     first, last = segment.rows[0], segment.rows[-1]
     db.add(
         AuditArchiveSegment(
@@ -177,7 +159,7 @@ async def expire_segments(
     segments = rows = 0
     while True:
         async with get_db_context() as db:
-            await _hold_lease(db, job_id, lease_token)
+            await hold_lease(db, job_id, lease_token)
             page = (
                 await db.execute(
                     select(AuditArchiveSegment.id)

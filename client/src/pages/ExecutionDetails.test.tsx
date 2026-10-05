@@ -15,9 +15,16 @@ import {
 const mockUseExecution = vi.fn();
 const mockUseExecutionStream = vi.fn();
 let mockStreamState: unknown;
-vi.mock("@/hooks/useExecutions", () => ({
+vi.mock("@/hooks/useExecutions", async (importOriginal) => ({
+	isNotFoundError: (
+		await importOriginal<typeof import("@/hooks/useExecutions")>()
+	).isNotFoundError,
 	useExecution: (...args: unknown[]) => mockUseExecution(...args),
 	cancelExecution: vi.fn(),
+}));
+
+vi.mock("@/services/runRetention", () => ({
+	useRunRetentionDays: () => 30,
 }));
 
 const mockUseWorkflowsMetadata = vi.fn();
@@ -540,6 +547,45 @@ it("offers retry when initial execution loading fails", async () => {
 	);
 	await user.click(screen.getByRole("button", { name: "Retry execution" }));
 	expect(refetch).toHaveBeenCalledOnce();
+});
+
+it("says a removed run is gone instead of offering retry", async () => {
+	mockUseExecution.mockReturnValue({
+		data: undefined,
+		isLoading: false,
+		error: {
+			detail: "Execution x not found. Finished runs are removed after 30 days.",
+		},
+		isFetching: false,
+		refetch: vi.fn(),
+	});
+	await renderPage();
+	expect(screen.getByRole("status")).toHaveTextContent(
+		"This run isn't available. Finished runs are removed after 30 days (retention). It may also be outside your access.",
+	);
+	expect(
+		screen.queryByRole("button", { name: "Retry execution" }),
+	).not.toBeInTheDocument();
+	expect(
+		screen.getByRole("button", { name: "Back to history" }),
+	).toBeInTheDocument();
+});
+
+it("keeps retry for a server error", async () => {
+	mockUseExecution.mockReturnValue({
+		data: undefined,
+		isLoading: false,
+		error: { detail: "Internal server error" },
+		isFetching: false,
+		refetch: vi.fn(),
+	});
+	await renderPage();
+	expect(screen.getByRole("alert")).toHaveTextContent(
+		"Could not load execution",
+	);
+	expect(
+		screen.getByRole("button", { name: "Retry execution" }),
+	).toBeInTheDocument();
 });
 
 it("retains cached execution content after a failed refresh", async () => {
