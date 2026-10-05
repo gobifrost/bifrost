@@ -73,7 +73,7 @@ def _target_org(target: Any) -> UUID | None:
     return target if isinstance(target, UUID) else None
 
 
-def _judge(run_user: RunUser, powers: Powers, note: Note, entry: AccessEntry | None) -> Trace:
+def judge(run_user: RunUser, powers: Powers, note: Note, entry: AccessEntry | None) -> Trace:
     facts = note.facts
     if note.kind in ("scope_switch", "child_run"):
         return check_target(run_user, powers, note.target, entry)
@@ -184,7 +184,7 @@ async def _write(db: AsyncSession, collector: Collector, *, operation: str, rout
             await writer.gap(note.kind, note.facts["gap"], run_user.user_id)
             continue
         try:
-            trace = _judge(run_user, powers, note, entry)
+            trace = judge(run_user, powers, note, entry)
         except Exception as exc:
             logger.warning("access check could not be judged (kind=%s): %s", note.kind, type(exc).__name__)
             await writer.gap(note.kind, f"observer_error:{type(exc).__name__}", run_user.user_id)

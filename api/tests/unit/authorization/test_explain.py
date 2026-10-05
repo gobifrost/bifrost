@@ -24,6 +24,7 @@ from src.services.authorization.explain import (
     Powers,
     RunUser,
     check_entry,
+    check_operation,
     check_policy,
     check_run_as,
     check_secret,
@@ -181,3 +182,76 @@ def test_trace_serialises_for_the_audit_log() -> None:
     assert data["outcome"] == "failure"
     assert data["enforced"] is False
     assert data["steps"][2]["key"] == "target"
+
+
+def test_operation_without_workflow_is_the_persons_own_decision() -> None:
+    trace = check_operation(_user(), None, CONTOSO, WRITE_TABLES, workflow_access=None)
+
+    assert [s.key for s in trace.steps] == ["run_user", "powers", "target", "permission"]
+    assert trace.steps[1].status == "not_applicable" and trace.steps[1].reason == "no_workflow"
+    # The user base role holds no tables.readwrite, so the person alone is stopped.
+    assert "tables.readwrite" not in USER_BASE_PERMISSIONS
+    assert trace.steps[3].status == "stopped"
+    assert trace.steps[3].facts == {"permission": "tables.readwrite"}
+
+
+def test_operation_outside_reach_stops_at_target() -> None:
+    trace = check_operation(_user(), None, FABRIKAM, WRITE_TABLES, workflow_access=None)
+
+    assert _stopped_at(trace) == "target"
+    assert trace.outcome == "failure" and trace.steps[-1].status == "not_reached"
+
+
+def test_operator_reaches_customer_org_through_managed_boundary() -> None:
+    trace = check_operation(_operator(), None, FABRIKAM, WRITE_TABLES, workflow_access=None)
+
+    assert trace.steps[2].status == "passed" and trace.steps[2].reason.endswith("@managed_organizations")
+
+
+def test_workflow_access_denied_stops_first() -> None:
+    trace = check_operation(_user(), FULL, CONTOSO, WRITE_TABLES, workflow_access=False)
+
+    assert [s.key for s in trace.steps] == ["workflow_access", "run_user", "powers", "target", "permission"]
+    assert _stopped_at(trace) == "workflow_access"
+    assert trace.steps[0].reason == "no_access"
+
+
+def test_workflow_access_granted_to_a_person_passes() -> None:
+    trace = check_operation(_user(), FULL, CONTOSO, WRITE_TABLES, workflow_access=True)
+
+    assert trace.steps[0].label == "Workflow access"
+    assert trace.steps[0].status == "passed" and trace.steps[0].reason == "access"
+
+
+def test_identity_workflow_access_not_applicable() -> None:
+    trace = check_operation(_user(kind="org_default"), FULL, CONTOSO, WRITE_TABLES, workflow_access=None)
+
+    assert trace.steps[0].status == "not_applicable" and trace.steps[0].reason == "unattended"
+    assert trace.outcome == "success"
+
+
+def test_full_workflow_passes_permission() -> None:
+    trace = check_operation(_user(), FULL, CONTOSO, WRITE_TABLES, workflow_access=True)
+
+    assert trace.steps[-1].status == "passed" and trace.steps[-1].reason == "full"
+
+
+def test_restricted_workflow_without_grant_follows_the_roles() -> None:
+    trace = check_operation(_user(), RESTRICTED, CONTOSO, WRITE_TABLES, workflow_access=True)
+
+    assert trace.steps[-1].status == "stopped"
+    assert trace.steps[-1].reason != "full"
+
+
+def test_restricted_workflow_grant_adds_the_permission() -> None:
+    granted = Powers(WorkflowPermissionMode.RESTRICTED, (WorkflowGrant(permission="tables.readwrite"),))
+
+    trace = check_operation(_user(), granted, CONTOSO, WRITE_TABLES, workflow_access=True)
+
+    assert trace.steps[-1].status == "passed"
+
+
+def test_global_target_is_in_everyones_reach() -> None:
+    trace = check_operation(_user(), None, None, WRITE_TABLES, workflow_access=None)
+
+    assert trace.steps[2].status == "passed" and trace.steps[2].reason == "global"

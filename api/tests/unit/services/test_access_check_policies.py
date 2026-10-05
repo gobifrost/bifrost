@@ -14,7 +14,7 @@ from src.models.contracts.policies import TablePolicies
 from src.models.orm.organizations import Organization
 from src.models.orm.tables import Table
 from src.models.orm.users import Role, User, UserRole
-from src.services.access_check_policies import check_table_rows, check_table_write
+from src.services.access_check_policies import check_file, check_table_rows, check_table_write
 
 ADMIN_RULE = {"name": "admins", "actions": ["read", "create"], "when": {"eq": [{"user": "is_platform_admin"}, True]}}
 HR_RULE = {"name": "hr", "actions": ["create"], "when": {"call": "has_role", "args": ["HR"]}}
@@ -245,3 +245,27 @@ async def test_batch_deletes_are_checked_for_the_run_user(db_session, world) -> 
         access_checks.stop_collecting(token)
 
     assert (note.facts["action"], note.facts["today"], note.facts["model"]) == ("delete", False, True)
+
+
+@pytest.mark.parametrize("solution_id", [None, uuid4()])
+async def test_a_file_check_records_where_it_was_made(db_session, world, solution_id) -> None:
+    token = _collecting(world["person"].id)
+    try:
+        await check_file(
+            db_session,
+            "read",
+            organization_id=world["org"].id,
+            location="documents",
+            path="a.txt",
+            solution_id=solution_id,
+            allowed_today=True,
+        )
+        collector = access_checks.current()
+        assert collector is not None
+        [note] = collector.notes
+    finally:
+        access_checks.stop_collecting(token)
+
+    assert note.kind == "policy" and note.target == world["org"].id
+    assert note.facts["solution_id"] == (None if solution_id is None else str(solution_id))
+    assert (note.facts["location"], note.facts["path"], note.facts["action"]) == ("documents", "a.txt", "read")
