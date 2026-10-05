@@ -52,6 +52,8 @@ import type {
 interface AppCodeEditorLayoutProps {
 	/** Application UUID */
 	appId: string;
+	/** Owning Solution forwarded to the app preview. */
+	solutionId?: string | null;
 	/** Application name for display */
 	appName?: string;
 	/** Application slug for building base path */
@@ -80,6 +82,7 @@ type OpenFile = {
  */
 export function AppCodeEditorLayout({
 	appId,
+	solutionId,
 	appName = "App",
 	appSlug,
 	onSave,
@@ -666,6 +669,7 @@ export function AppCodeEditorLayout({
 						<div className="flex-1 min-h-0 overflow-hidden">
 							<BundledAppShell
 								appId={appId}
+								solutionId={solutionId}
 								appSlug={appSlug || ""}
 								isPreview={true}
 							/>

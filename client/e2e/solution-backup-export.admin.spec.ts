@@ -168,8 +168,16 @@ test.describe("Solution backup export (admin)", () => {
 			await deploySolution(api, page, solutionId, slug);
 			await seedSolutionFile(api, solutionId);
 
-			await page.goto(`/solutions/${solutionId}`);
-			await expect(page.getByTestId("solution-detail")).toBeVisible({ timeout: 15000 });
+			await page.goto(`/solutions/${solutionId}?tab=exports&from=docs`);
+			const exportsTab = page.getByRole("tab", { name: "Exports" });
+			await expect(exportsTab).toHaveAttribute("aria-selected", "true");
+			await expect(page.getByText("No backup exports queued yet.")).toBeVisible();
+			await page.getByRole("tab", { name: "Overview", exact: true }).click();
+			await expect(page).toHaveURL(/tab=overview&from=docs/);
+			await page.goBack();
+			await expect(exportsTab).toHaveAttribute("aria-selected", "true");
+			await page.reload();
+			await expect(exportsTab).toHaveAttribute("aria-selected", "true");
 
 			await page.getByRole("button", { name: "More solution actions" }).click();
 			await page.getByRole("menuitem", { name: "Export Solution" }).click();
@@ -182,7 +190,6 @@ test.describe("Solution backup export (admin)", () => {
 			await expect(dialog.getByRole("checkbox", { name: "Solution-owned files" })).toBeChecked();
 			await dialog.getByRole("button", { name: "Queue backup" }).click();
 
-			const exportsTab = page.getByRole("tab", { name: "Exports" });
 			await expect(exportsTab).toHaveAttribute("aria-selected", "true", { timeout: 10000 });
 
 			let exportJobId = "";
@@ -222,8 +229,7 @@ test.describe("Solution backup export (admin)", () => {
 				.toBe("completed");
 
 			await page.reload();
-			await expect(page.getByTestId("solution-detail")).toBeVisible({ timeout: 15000 });
-			await page.getByRole("tab", { name: "Exports" }).click();
+			await expect(exportsTab).toHaveAttribute("aria-selected", "true");
 			await expect(page.getByText("completed", { exact: true })).toBeVisible({
 				timeout: 10000,
 			});

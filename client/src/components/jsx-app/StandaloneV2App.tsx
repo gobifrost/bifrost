@@ -26,6 +26,8 @@ export interface BifrostAppBootstrap {
 	orgScope: string | null;
 	/** Installed app id used to scope portable workflow references. */
 	appId: string;
+	/** Owning Solution supplied by the host, or null for an unowned app. */
+	solutionId?: string | null;
 	/** Ask the platform to log out. */
 	onLogout: () => void;
 	/** Platform theme at mount time. */
@@ -215,6 +217,7 @@ function loadLegacyOrUnmarkedModule(
 
 interface StandaloneV2AppProps {
 	appId: string;
+	solutionId?: string | null;
 	appSlug: string;
 	isPreview: boolean;
 	entry: string;
@@ -241,6 +244,7 @@ interface StandaloneBundleManifest {
 
 export function StandaloneV2App({
 	appId,
+	solutionId = null,
 	appSlug,
 	isPreview,
 	entry,
@@ -256,8 +260,8 @@ export function StandaloneV2App({
 		[entry, css, baseUrl, runtimeContract],
 	);
 	const sourceKey = useMemo(
-		() => JSON.stringify({ appId, isPreview, assets: sourceAssets }),
-		[appId, isPreview, sourceAssets],
+		() => JSON.stringify({ appId, solutionId, isPreview, assets: sourceAssets }),
+		[appId, solutionId, isPreview, sourceAssets],
 	);
 	const [loadedSourceKey, setLoadedSourceKey] = useState(sourceKey);
 	const [isBootstrapping, setIsBootstrapping] = useState(true);
@@ -329,6 +333,7 @@ export function StandaloneV2App({
 			token: bootstrapToken,
 			orgScope,
 			appId,
+			solutionId,
 			onLogout: () => {
 				clearAuthTokens();
 				window.location.assign("/login");
@@ -467,7 +472,7 @@ export function StandaloneV2App({
 			}
 			mountEl.replaceChildren();
 		};
-	}, [appId, appSlug, isPreview, assets, sourceKey, scope, isAuthenticated]);
+	}, [appId, solutionId, appSlug, isPreview, assets, sourceKey, scope, isAuthenticated]);
 
 	if (!isAuthenticated) {
 		return (

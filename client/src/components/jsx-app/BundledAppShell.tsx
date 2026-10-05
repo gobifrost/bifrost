@@ -147,6 +147,7 @@ export interface BundleManifest {
 
 interface BundledAppShellProps {
 	appId: string;
+	solutionId?: string | null;
 	appSlug: string;
 	isPreview: boolean;
 	appName?: string | null;
@@ -307,6 +308,7 @@ export function prepareAppBundle({
 
 export function BundledAppShell({
 	appId,
+	solutionId,
 	appSlug,
 	isPreview,
 	appName,
@@ -693,6 +695,7 @@ export function BundledAppShell({
 		return (
 			<StandaloneV2App
 				appId={appId}
+				solutionId={solutionId}
 				appSlug={appSlug}
 				isPreview={isPreview}
 				entry={v2Mount.entry}

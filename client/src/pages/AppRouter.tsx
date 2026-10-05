@@ -152,6 +152,7 @@ export function AppRouter({ preview = false }: AppRouterProps) {
 			// previous app's v2 mount state into the next (Codex #10).
 			key={application.id}
 			appId={application.id}
+			solutionId={application.solution_id}
 			appSlug={application.slug}
 			appName={application.name}
 			appLogo={application.logo}

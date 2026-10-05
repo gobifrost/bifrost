@@ -10,6 +10,7 @@ const state = vi.hoisted(() => ({
 }));
 
 const authFetch = vi.hoisted(() => vi.fn());
+const bundledAppShell = vi.hoisted(() => vi.fn());
 const toast = vi.hoisted(() => ({
 	success: vi.fn(),
 	error: vi.fn(),
@@ -75,12 +76,16 @@ vi.mock("./DependencyPanel", () => ({
 	DependencyPanel: () => <div>Package manager</div>,
 }));
 vi.mock("@/components/jsx-app/BundledAppShell", () => ({
-	BundledAppShell: () => <div>Running app preview</div>,
+	BundledAppShell: (props: unknown) => {
+		bundledAppShell(props);
+		return <div>Running app preview</div>;
+	},
 }));
 
 beforeEach(() => {
 	state.desktop = false;
 	state.resolveSave = null;
+	bundledAppShell.mockClear();
 	authFetch.mockReset();
 	toast.success.mockReset();
 	toast.error.mockReset();
@@ -94,6 +99,17 @@ beforeEach(() => {
 });
 
 describe("App editor responsive workspace", () => {
+	it("forwards the owning Solution to the app preview", async () => {
+		const user = userEvent.setup();
+		renderWithProviders(
+			<AppCodeEditorLayout appId="fixture" solutionId="solution-1" />,
+		);
+		await user.click(screen.getByRole("button", { name: "App preview" }));
+		expect(bundledAppShell).toHaveBeenCalledWith(
+			expect.objectContaining({ solutionId: "solution-1", isPreview: true }),
+		);
+	});
+
 	it("preserves one code buffer while switching mobile tools and desktop layout", async () => {
 		state.desktop = false;
 		const user = userEvent.setup();

@@ -166,7 +166,7 @@ describe("StandaloneV2App", () => {
 			(_el: HTMLElement, _boot: BifrostAppBootstrap) => teardown,
 		);
 		const view = render(
-			<StandaloneV2App {...props("bootstrap")} appOrgId="org-42" />,
+			<StandaloneV2App {...props("bootstrap")} appOrgId="org-42" solutionId="solution-42" />,
 		);
 		const root = view.getByTestId("solution-v2-app-root");
 
@@ -179,6 +179,7 @@ describe("StandaloneV2App", () => {
 			basename: "/apps/dash",
 			orgScope: null,
 			appId: "app-1",
+			solutionId: "solution-42",
 		});
 		expect(window.__BIFROST_APP__).toBeUndefined();
 

@@ -104,9 +104,11 @@ it("leaves standalone apps full-page", () => {
 			name: "Sample",
 			is_published: true,
 			app_model: "standalone_v2",
+			solution_id: "solution-1",
 		},
 	});
 	renderRoute();
+	expect(state.shell).toHaveBeenCalledWith(expect.objectContaining({ solutionId: "solution-1" }));
 	expect(screen.getByText("App content")).toBeInTheDocument();
 	expect(
 		screen.queryByRole("region", { name: "App chrome" }),
