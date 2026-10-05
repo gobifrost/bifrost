@@ -519,6 +519,63 @@ Options:
   --help               Show this message and exit.
 ```
 
+## `audit`
+
+```
+Usage: audit [OPTIONS] COMMAND [ARGS]...
+
+  Read the audit log and explain access decisions.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  explain  Explain a stored access check: how it was decided then, and...
+  list     List audit log entries, or count them with --group-by.
+```
+
+### `audit explain`
+
+```
+Usage: audit explain [OPTIONS] EVENT_ID
+
+  Explain a stored access check: how it was decided then, and how it would be
+  now.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `audit list`
+
+```
+Usage: audit list [OPTIONS]
+
+  List audit log entries, or count them with --group-by.
+
+Options:
+  --action TEXT                   Action prefix, e.g. 'user.' or
+                                  'access.check'.
+  --outcome [success|failure]     Only successes or failures.
+  --resource-type TEXT            Only events on this resource type.
+  --user TEXT                     Acting user: UUID or email.
+  --execution TEXT                Workflow execution ID.
+  --since TEXT                    Start of the time range (ISO 8601,
+                                  inclusive).
+  --until TEXT                    End of the time range (ISO 8601, inclusive).
+  --search TEXT                   Free-text search on actor, organization,
+                                  action, resource type, IP, and details.
+  --group-by [workflow|action|resource_type|outcome|user|organization]
+                                  Count matching events per value instead of
+                                  listing them.
+  --limit INTEGER RANGE           Maximum entries to return (server default
+                                  50).  [1<=x<=500]
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
 ## `claims`
 
 ```
@@ -2838,6 +2895,61 @@ Options:
                                   --scope are synonyms.)
   --json                          Emit JSON instead of human-readable output.
   --help                          Show this message and exit.
+```
+
+## `users`
+
+```
+Usage: users [OPTIONS] COMMAND [ARGS]...
+
+  Ask what a user's access would be.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  access  Check a user's access.
+```
+
+### `users access`
+
+```
+Usage: users access [OPTIONS] COMMAND [ARGS]...
+
+  Check a user's access.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  check  Show how the access model decides USER performing --operation in...
+```
+
+#### `users access check`
+
+```
+Usage: users access check [OPTIONS] USER
+
+  Show how the access model decides USER performing --operation in --org.
+
+  USER is a UUID or an email.
+
+  Examples:
+
+    bifrost users access check ada@contoso.test --org global --operation
+    tables.documents.create   bifrost users access check ada@contoso.test
+    --org Contoso --operation tables.documents.create --workflow "Sync
+    Invoices"
+
+Options:
+  --org TEXT        Organization UUID or name, or 'global'.  [required]
+  --operation TEXT  Catalog operation id or 'METHOD /api/path'.  [required]
+  --workflow TEXT   Workflow whose powers apply (UUID, name, or path::func).
+                    Omit to act directly.
+  --json            Emit JSON instead of human-readable output.
+  --help            Show this message and exit.
 ```
 
 ## `workflows`
