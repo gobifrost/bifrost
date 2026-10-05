@@ -78,6 +78,7 @@ def test_scaffold_files_shape_and_dev_wiring() -> None:
     assert "return () => root.unmount()" in main
     assert "VITE_BIFROST_TOKEN" in main
     assert "BrowserRouter basename={bootstrap.basename}" in main
+    assert "solutionId={bootstrap.solutionId}" in main
     assert "if (import.meta.env.DEV)" in main
     assert "import.meta.url" in main
     assert "__BIFROST_APP__" not in main

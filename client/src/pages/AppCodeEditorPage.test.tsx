@@ -17,6 +17,7 @@ const mockMutateAsync = vi.fn();
 const mockReset = vi.fn();
 const mockNavigate = vi.fn();
 const mockParams = vi.fn();
+const mockEditorLayout = vi.fn();
 
 let mockPublishState: Record<string, unknown>;
 
@@ -50,7 +51,10 @@ vi.mock("react-router-dom", async () => {
 });
 
 vi.mock("@/components/app-code-editor/AppCodeEditorLayout", () => ({
-	AppCodeEditorLayout: () => <div>Code editor</div>,
+	AppCodeEditorLayout: (props: unknown) => {
+		mockEditorLayout(props);
+		return <div>Code editor</div>;
+	},
 }));
 vi.mock("@/components/app-builder/AppInfoDialog", () => ({
 	AppInfoDialog: () => null,
@@ -81,6 +85,7 @@ beforeEach(() => {
 			id: "app-1",
 			name: "Covi Portal",
 			slug: "portal",
+			solution_id: "solution-1",
 			has_unpublished_changes: true,
 			is_solution_managed: false,
 		},
@@ -101,6 +106,13 @@ beforeEach(() => {
 });
 
 describe("AppCodeEditorPage publish flow", () => {
+	it("passes the loaded app's owning Solution to the preview layout", () => {
+		renderWithProviders(<AppCodeEditorPage />);
+		expect(mockEditorLayout).toHaveBeenCalledWith(
+			expect.objectContaining({ appId: "app-1", solutionId: "solution-1" }),
+		);
+	});
+
 	it("queues once and closes the dialog for WebSocket notification progress", async () => {
 		const { user } = renderWithProviders(<AppCodeEditorPage />);
 

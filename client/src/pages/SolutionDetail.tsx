@@ -17,7 +17,7 @@ import {
 	PageWorkspace,
 } from "@/components/layout/PageWorkspace";
 import { GeneratedEndpointKeyDialog } from "@/components/solutions/GeneratedEndpointKeyDialog";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -2323,9 +2323,22 @@ export function SolutionDetail() {
 	const queryClient = useQueryClient();
 	const { data: organizations } = useOrganizations();
 
-	// Land on Overview — the install's description + at-a-glance status. Contents
-	// (entities) and Configuration are one click away.
-	const [tab, setTab] = useState<TabKey>("overview");
+	const [searchParams, setSearchParams] = useSearchParams();
+	const requestedTab = searchParams.get("tab");
+	const tab: TabKey =
+		requestedTab === "contents" ||
+		requestedTab === "access" ||
+		requestedTab === "configuration" ||
+		requestedTab === "exports"
+			? requestedTab
+			: "overview";
+	const setTab = (nextTab: TabKey) => {
+		setSearchParams((current) => {
+			const next = new URLSearchParams(current);
+			next.set("tab", nextTab);
+			return next;
+		});
+	};
 	const [editOpen, setEditOpen] = useState(false);
 	const [updateOpen, setUpdateOpen] = useState(false);
 	const [syncConfirmOpen, setSyncConfirmOpen] = useState(false);
@@ -2947,6 +2960,7 @@ export function SolutionDetail() {
 					{/* Tabs (3): Overview · Contents · Configuration */}
 					<Tabs
 						value={tab}
+						activationMode="manual"
 						onValueChange={(v) => setTab(v as TabKey)}
 						className="flex min-h-0 flex-1 flex-col"
 					>

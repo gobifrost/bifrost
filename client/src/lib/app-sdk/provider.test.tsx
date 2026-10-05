@@ -35,6 +35,18 @@ function Probe() {
 }
 
 describe("BifrostProvider", () => {
+  it("exposes the owning Solution and follows host ownership changes", () => {
+    function Owner() {
+      const { solutionId } = useBifrostContext();
+      return <output aria-label="Owning Solution">{solutionId ?? "none"}</output>;
+    }
+    const view = render(<BifrostProvider baseUrl="/" token="t" solutionId="solution-a"><Owner /></BifrostProvider>);
+    expect(screen.getByRole("status", { name: "Owning Solution" })).toHaveTextContent("solution-a");
+    view.rerender(<BifrostProvider baseUrl="/" token="t" solutionId="solution-b"><Owner /></BifrostProvider>);
+    expect(screen.getByRole("status", { name: "Owning Solution" })).toHaveTextContent("solution-b");
+    view.rerender(<BifrostProvider baseUrl="/" token="t"><Owner /></BifrostProvider>);
+    expect(screen.getByRole("status", { name: "Owning Solution" })).toHaveTextContent("none");
+  });
   it("provides baseUrl, token, and orgScope via context", () => {
     render(
 			<BifrostProvider

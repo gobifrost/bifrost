@@ -252,6 +252,7 @@ describe("BundledAppShell — app_model render branch", () => {
 			<BundledAppShell
 				appId="app-prepared"
 				appSlug="prepared"
+				solutionId="solution-prepared"
 				isPreview={false}
 			/>,
 		);
@@ -260,6 +261,7 @@ describe("BundledAppShell — app_model render branch", () => {
 			await screen.findByTestId("solution-v2-app-root"),
 		).toBeInTheDocument();
 		expect(mockAuthFetch).toHaveBeenCalledTimes(1);
+		expect(mockStandaloneV2App).toHaveBeenCalledWith(expect.objectContaining({ solutionId: "solution-prepared" }));
 	});
 
 	it("mounts the standalone v2 app same-document (no iframe) and injects auth", async () => {

@@ -13,7 +13,9 @@ import {
 	within,
 } from "@/test-utils";
 import { act } from "@testing-library/react";
+import { useContext } from "react";
 import { SolutionDetail } from "./SolutionDetail";
+import { UNSAFE_NavigationContext, useLocation } from "react-router-dom";
 
 const APP_LOGO_DATA_URL =
 	"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=";
@@ -305,6 +307,47 @@ beforeEach(() => {
 		claims_captured: 0,
 		config_declarations_captured: 0,
 	});
+});
+
+it("opens a bookmarked Exports tab and keeps tab navigation in the URL", async () => {
+	function Location() { return <output aria-label="Current tab URL">{useLocation().search}</output>; }
+	const { user } = renderWithProviders(<><SolutionDetail /><Location /></>, { initialEntries: ["/solutions/sol-1?tab=exports&from=docs"] });
+	const exports = await screen.findByRole("tab", { name: "Exports" });
+	expect(exports).toHaveAttribute("aria-selected", "true");
+	expect(await screen.findByText("No backup exports queued yet.")).toBeInTheDocument();
+	await user.click(screen.getByRole("tab", { name: /^Overview/ }));
+	expect(screen.getByRole("status", { name: "Current tab URL" })).toHaveTextContent("tab=overview");
+	expect(screen.getByRole("status", { name: "Current tab URL" })).toHaveTextContent("from=docs");
+});
+
+it("adds one history entry per tab selection so Back returns to the bookmarked tab", async () => {
+	function HistoryControls() {
+		const { navigator } = useContext(UNSAFE_NavigationContext);
+		return <button onClick={() => navigator.go(-1)}>Browser Back</button>;
+	}
+	const { user } = renderWithProviders(<><HistoryControls /><SolutionDetail /></>, {
+		initialEntries: ["/solutions/sol-1?tab=exports"],
+	});
+	await screen.findByText("No backup exports queued yet.");
+	await user.click(screen.getByRole("tab", { name: "Overview" }));
+	await user.click(screen.getByRole("button", { name: "Browser Back" }));
+	expect(screen.getByRole("tab", { name: "Exports" })).toHaveAttribute("aria-selected", "true");
+});
+
+it("keeps the bookmarked tab while focusing another tab and changes it on activation", async () => {
+	const { user } = renderWithProviders(<SolutionDetail />, {
+		initialEntries: ["/solutions/sol-1?tab=exports"],
+	});
+	await screen.findByText("No backup exports queued yet.");
+	act(() => screen.getByRole("tab", { name: "Overview" }).focus());
+	expect(screen.getByRole("tab", { name: "Exports" })).toHaveAttribute("aria-selected", "true");
+	await user.keyboard("{Enter}");
+	expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+});
+
+it("keeps Overview as the default for an unknown tab bookmark", async () => {
+	renderWithProviders(<SolutionDetail />, { initialEntries: ["/solutions/sol-1?tab=unknown"] });
+	expect(await screen.findByRole("tab", { name: /^Overview/ })).toHaveAttribute("aria-selected", "true");
 });
 
 describe("SolutionDetail", () => {

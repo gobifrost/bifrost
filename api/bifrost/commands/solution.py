@@ -758,6 +758,8 @@ export interface BifrostAppBootstrap {
   token: string;
   orgScope: string | null;
   appId: string | null;
+  /** Owning Solution supplied by the platform host. */
+  solutionId?: string | null;
   onLogout: () => void;
   theme: "light" | "dark";
 }
@@ -781,6 +783,7 @@ export function mount(mountEl: HTMLElement, bootstrap: BifrostAppBootstrap) {
         token={bootstrap.token}
         orgScope={bootstrap.orgScope}
         appId={bootstrap.appId}
+        solutionId={bootstrap.solutionId}
         theme={bootstrap.theme}
         supportsTheme
         onLogout={bootstrap.onLogout}

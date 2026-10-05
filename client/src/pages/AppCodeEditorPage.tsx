@@ -422,6 +422,7 @@ export function AppCodeEditorPage() {
 					<AppCodeEditorLayout
 						key={existingApp.id}
 						appId={existingApp.id}
+						solutionId={existingApp.solution_id}
 						appName={existingApp.name}
 						appSlug={existingApp.slug}
 						readOnly={isManaged}

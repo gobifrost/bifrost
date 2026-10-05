@@ -90,7 +90,19 @@ content-hashed entry through its canonical URL, without per-mount query
 parameters, then invokes the entry's exported `mount(mountEl, bootstrap)` for
 each visit. `mount` must return a teardown function (normally
 `root.unmount()`). Bootstrap includes the basename, API base URL, viewer token,
-organization scope, app id, theme, and logout callback.
+organization scope, app id, theme, and logout callback. The optional
+`solutionId` identifies the owning Solution, or is null for an unowned App.
+Forward it to `BifrostProvider` alongside `appId`; Apps can then read it from
+`useBifrostContext()` without inferring ownership from URLs or install-specific
+constants. This applies to both the live App and its editor preview. It does
+not grant access to Solution administration; those routes retain their
+platform-administrator checks.
+
+Solution Detail tabs accept `?tab=overview`, `contents`, `access`,
+`configuration`, or `exports`. Links to an owning Solution's backup history
+can use `/solutions/${solutionId}?tab=exports`. Missing or unknown tab values
+open Overview, and changing tabs preserves other query parameters and browser
+history.
 
 Current scaffolds declare the contract in `index.html`:
 

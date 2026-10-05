@@ -45,6 +45,8 @@ export interface BifrostContextValue {
    * when the host doesn't supply it.
    */
   appId: string | null;
+	/** Owning Solution supplied by the platform host, or null for an unowned app. */
+	solutionId?: string | null;
 	/** `fetch` that joins `baseUrl`, follows token rotation, and retries one 401. */
   authedFetch: typeof fetch;
   /** Log the user out. No-op if the app did not supply `onLogout`. */
@@ -95,6 +97,8 @@ export interface BifrostProviderProps {
   orgScope?: string | null;
   /** This app's id (forwarded to execute so path refs resolve to this install). */
   appId?: string | null;
+	/** Owning Solution supplied by the platform host. */
+	solutionId?: string | null;
   /** Override `fetch` (tests / non-browser). Defaults to global `fetch`. */
   fetchImpl?: typeof fetch;
   /** Called when the app requests logout (e.g. a platform "log out" action). */
@@ -149,6 +153,7 @@ export function BifrostProvider({
   token,
   orgScope = null,
   appId = null,
+	solutionId = null,
   fetchImpl,
   onLogout,
   supportsTheme = false,
@@ -251,6 +256,7 @@ export function BifrostProvider({
 			},
       orgScope,
       appId,
+			solutionId,
       authedFetch,
       logout,
       theme,
@@ -263,6 +269,7 @@ export function BifrostProvider({
 		token,
 		orgScope,
 		appId,
+		solutionId,
 		fetchImpl,
 		onLogout,
 		theme,
