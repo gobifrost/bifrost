@@ -22,13 +22,27 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
         "manifest": 16,
         "mcp": 94,
         "rest": 665,
-        "sdk": 19,
+        "sdk": 21,
     }
     for surface, rows in inventory["uncataloged"].items():
         assert rows, f"expected {surface} inventory coverage"
         for row in rows:
             assert row["status"]
             assert row["reason"]
+
+
+def test_organization_listing_is_available_to_application_sdks() -> None:
+    inventory = build_operation_inventory(app, REPO_ROOT)
+    operation = next(
+        row for row in inventory["catalog_operations"]
+        if row["operation"]["operation_id"] == "organizations.list"
+    )
+
+    assert operation["observed"]["sdk"] == {
+        "status": "exact_parity",
+        "binding": {"method": "GET", "path": "/api/organizations"},
+    }
+    assert "sdk" not in operation["operation"]["exclusions"]
 
 
 def test_documentation_mcp_tool_is_dispositioned_not_pending() -> None:

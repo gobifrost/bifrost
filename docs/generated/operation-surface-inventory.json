@@ -8005,8 +8005,11 @@
           "status": "exact_parity"
         },
         "sdk": {
-          "binding": null,
-          "status": "intentionally_unsupported"
+          "binding": {
+            "method": "GET",
+            "path": "/api/organizations"
+          },
+          "status": "exact_parity"
         }
       },
       "operation": {
@@ -8024,8 +8027,7 @@
         },
         "exclusions": {
           "manifest": "Organization records are deployment-local, not portable manifest content.",
-          "native_builder": "Organization lifecycle belongs to platform Settings, not a coding target.",
-          "sdk": "Organization administration is not available to application SDKs."
+          "native_builder": "Organization lifecycle belongs to platform Settings, not a coding target."
         },
         "manifest": null,
         "mcp": {
@@ -9969,7 +9971,7 @@
     "manifest": 16,
     "mcp": 94,
     "rest": 665,
-    "sdk": 19
+    "sdk": 21
   },
   "schema_version": 1,
   "uncataloged": {
@@ -14285,6 +14287,12 @@
       }
     ],
     "sdk": [
+      {
+        "method": "GET",
+        "path": "/api/branding",
+        "reason": "Application runtime SDK binding; not an administration operation.",
+        "status": "transport_only"
+      },
       {
         "method": "GET",
         "path": "/api/executions/{id}",

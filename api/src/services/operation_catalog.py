@@ -2926,7 +2926,6 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         exclusions={
             "native_builder": _ORGANIZATION_BUILDER_EXCLUSION,
             "manifest": "Organization records are deployment-local, not portable manifest content.",
-            "sdk": _ORGANIZATION_SDK_EXCLUSION,
         },
     ),
     OperationDefinition(

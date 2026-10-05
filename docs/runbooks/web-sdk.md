@@ -154,3 +154,62 @@ when it wants familiar platform chrome.
 The header must remain self-contained: no Tailwind, shadcn, or `@/` imports.
 It carries its own minimal inline styling so it works in local dev, deployed
 apps, and apps that do not include the main Bifrost client CSS.
+
+## Branding and organizations
+
+Both hooks run inside `BifrostProvider` and use its API URL, authentication,
+and organization scope. They return `data`, `loading`, `error`, and `refetch()`.
+
+```tsx
+import { useBranding, useOrganizations } from "bifrost";
+
+function OrganizationHeader() {
+  const branding = useBranding();
+  const organizations = useOrganizations();
+
+  if (branding.loading || organizations.loading) return <p>Loading…</p>;
+  if (branding.error || organizations.error) return <p>Unable to load settings.</p>;
+
+  return (
+    <header>
+      {branding.rectangleLogoUrl && (
+        <img src={branding.rectangleLogoUrl} alt={branding.applicationName ?? "Logo"} />
+      )}
+      <select aria-label="Organization">
+        {organizations.data?.map((org) => (
+          <option key={org.id} value={org.id}>{org.name}</option>
+        ))}
+      </select>
+      <button style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
+        Continue
+      </button>
+    </header>
+  );
+}
+```
+
+`useBranding()` reads public global platform branding and applies the same
+light/dark CSS variables as the main client, including `--primary`,
+`--primary-foreground`, `--ring`, `--bf-primary-hover`, and
+`--bf-activity-gradient`. The provider's `.dark` theme class selects the dark
+palette. An unset primary color uses the platform's standard palette. Apps
+still own their CSS and layout.
+
+It exposes `squareLogoUrl`, `rectangleLogoUrl`, `applicationName`,
+`primaryColor` (the stored color), `palette` (both themes), and `colors` (the
+current theme's palette). Logo URLs, including those in `data`, resolve against
+the configured API URL so local apps load images from Bifrost. Missing logos
+and an unset application name remain null. To consume branding without
+changing document styles, use `useBranding({ applyTheme: false })` and apply
+`colors.primary`, `colors.primaryForeground`, and `colors.primaryHover`
+directly. A failed request is exposed through `error`.
+
+`useOrganizations({ enabled, includeInactive })` reads only the organizations
+returned by the existing `/api/organizations` endpoint. It defaults to loading
+active organizations. Set `enabled: false` to defer loading, or
+`includeInactive: true` to request disabled organizations too. Server-side
+permissions remain authoritative; a refused request appears in `error`.
+
+These hooks are compatible SDK additions. Existing deployed Apps need an
+explicit SDK update or redeploy to import them; the wire-contract version is
+unchanged.

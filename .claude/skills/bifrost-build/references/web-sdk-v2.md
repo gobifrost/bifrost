@@ -34,6 +34,51 @@ Showing or hiding a control is convenience, not security: the workflow (its acce
 
 `supportsTheme` declares that the entire app responds to host light/dark state. Read the theme contract in `app-quality.md` before retaining it.
 
+## Branding and organization selection
+
+Use `useBranding()` for platform colors and logos. It reads public global branding,
+resolves logo URLs against the provider's API URL, and applies the main client's
+light/dark CSS variables by default. Style controls with `--primary`,
+`--primary-foreground`, `--ring`, and `--bf-primary-hover`; the provider's `.dark`
+class selects the dark palette. Keep the app's layout and CSS in its own source.
+
+The hook exposes `squareLogoUrl`, `rectangleLogoUrl`, `applicationName`,
+`primaryColor`, `palette` (both themes), and `colors` (the current theme).
+Missing logos and an unset application name are null. For an app that owns its
+color tokens, use `useBranding({ applyTheme: false })` and consume `colors`
+directly. An unset primary color uses the platform's standard palette.
+
+Use `useOrganizations({ enabled, includeInactive })` for organization lists and
+pickers. Both options are optional; it loads active organizations by default.
+The existing endpoint decides which organizations the caller can read. Defer
+loading with `enabled: false` when the UI does not need the list, and request
+disabled organizations with `includeInactive: true` when needed.
+
+Both hooks expose nullable `data`, `loading`, `error`, and `refetch()`; render
+loading and error states before consuming the response. Permission failures
+remain errors. Selecting an organization is an app decision: listing
+organizations does not change the provider scope or grant access to their data.
+
+```tsx
+import { useBranding, useOrganizations } from "bifrost";
+
+const branding = useBranding();
+const organizations = useOrganizations();
+
+// After handling loading and error states:
+{branding.rectangleLogoUrl && (
+  <img src={branding.rectangleLogoUrl} alt="Platform logo" />
+)}
+<select aria-label="Organization">
+  {organizations.data?.map((org) => (
+    <option key={org.id} value={org.id}>{org.name}</option>
+  ))}
+</select>
+```
+
+Refresh the App's SDK against an instance containing these hooks before
+importing them; see **Keeping an existing app current** above.
+
 ## Header
 
 `BifrostHeader` provides optional Bifrost chrome and account/theme controls, plus the App's section links when given `nav`:
@@ -55,6 +100,12 @@ const NAV = [
 The platform does not insert it automatically. Compose it into the app's own layout and avoid adding a second competing top-level header.
 
 ## Workflow hooks
+
+Use the direct SDK capability for platform reads and table/file operations:
+`useUser`, `useBranding`, `useOrganizations`, `useTable`/`tables`, and
+`useFiles`/`files`. These capabilities can be consumed without packaging a
+wrapper workflow. Use workflows for integration calls, secret-bearing work,
+and custom business logic that must execute on the server.
 
 Prefer portable `path::function` locators such as `functions/orders.py::list_orders`.
 
