@@ -374,7 +374,7 @@ class Event(Base):
         Index("ix_events_received_at", "received_at"),
         Index("ix_events_status", "status"),
         Index("ix_events_event_type", "event_type"),
-        # For cleanup job: events older than 30 days
+        # For the run.retention job's `created_at < cutoff` query (configurable window)
         Index(
             "ix_events_created_at",
             "created_at",

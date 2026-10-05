@@ -83,9 +83,12 @@ remain leader-only scheduler work.
 
 The elected leader retains only short trigger and housekeeping callbacks:
 workflow schedule processing, deferred execution promotion, stuck execution and
-event cleanup, metric snapshots, knowledge-storage metrics, artifact retention,
+stuck event-delivery cleanup, metric snapshots, knowledge-storage metrics, artifact retention,
 and diagnostics/backfill reconciliation. Recurring OAuth, webhook, and Solution
-update callbacks enqueue singleton high-priority platform jobs. User-initiated
+update callbacks enqueue singleton high-priority platform jobs. The daily
+maintenance callbacks `audit.archive` and `run.retention` (finished runs and
+events past the retention window) enqueue deduplicated platform jobs that take
+a resource lock, so they never overlap a manual run. User-initiated
 long-running work is claimed by any replica.
 
 A handler may release its scheduler slot in `waiting` state after dispatching
