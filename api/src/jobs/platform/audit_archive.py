@@ -22,7 +22,6 @@ from src.models.orm.platform_jobs import PlatformJob
 from src.scheduler.registry import ScheduledTaskOutcome
 from src.services.audit_retention.archiver import (
     DeleteMismatch,
-    LeaseLost,
     archive_segment,
     expire_segments,
     plan_archive,
@@ -32,6 +31,7 @@ from src.services.audit_retention.export import EXPORT_TTL_DAYS, cleanup_expired
 from src.services.audit_retention.format import ArchiveVerifyError, build_segments
 from src.services.audit_retention.settings import AuditRetentionSettingsService
 from src.services.audit_retention.store import ArchiveStorageUnavailable, AuditArchiveStore
+from src.services.platform_job_lease import LeaseLost
 from src.services.platform_jobs import (
     enqueue_platform_job,
     ensure_platform_job_notification,
