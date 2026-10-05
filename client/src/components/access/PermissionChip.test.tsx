@@ -75,6 +75,57 @@ describe("PermissionChip", () => {
 		expect(screen.getByText("Platform-wide")).toBeInTheDocument();
 	});
 
+	it("draws a varying grant solid with a dashed edge and says why in the tooltip", async () => {
+		const user = userEvent.setup();
+		render(
+			<PermissionChip
+				grant={{ ...grant, scope: "varies" }}
+				catalogEntry={entry}
+				place={contoso}
+			/>,
+		);
+
+		const chip = screen.getByRole("button", { name: /Tables/ });
+		expect(chip).toHaveAttribute("data-variant", "varies");
+		expect(chip).toHaveClass(
+			"before:border-dashed",
+			"bg-[var(--bf-power-soft)]",
+		);
+		expect(chip).not.toHaveClass(
+			"before:bg-[image:var(--bf-bridge-vertical)]",
+		);
+		expect(screen.queryByText("Platform-wide")).not.toBeInTheDocument();
+
+		await user.hover(chip);
+
+		expect(await screen.findByRole("tooltip")).toHaveTextContent(
+			"Some operations in this area are platform-wide and apply only through a Global placement.",
+		);
+	});
+
+	it("does not add the varies note to other grants", async () => {
+		const user = userEvent.setup();
+		render(
+			<PermissionChip
+				grant={grant}
+				catalogEntry={entry}
+				place={contoso}
+			/>,
+		);
+
+		await user.hover(screen.getByRole("button", { name: /Tables/ }));
+
+		expect(await screen.findByRole("tooltip")).not.toHaveTextContent(
+			"Some operations",
+		);
+	});
+
+	it("keeps chip text at full opacity so it stays readable", () => {
+		render(<PermissionChip grant={grant} catalogEntry={entry} />);
+
+		expect(screen.getByText("read").className).not.toContain("opacity");
+	});
+
 	it("uses the warning tone for a privileged permission", () => {
 		render(
 			<PermissionChip

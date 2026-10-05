@@ -12,13 +12,21 @@ import type {
 	Place,
 } from "@/services/access";
 
-type ChipVariant = "per_organization" | "platform_wide" | "privileged";
+type CatalogScope = PermissionCatalogEntry["scope"];
+type ChipVariant = CatalogScope | "privileged";
+type ChipGrant = Omit<AccessGrant, "scope"> & { scope: CatalogScope };
 
 const BRIDGE_EDGE =
 	"relative pl-3 before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-[image:var(--bf-bridge-vertical)]";
 
+const VARIES_EDGE =
+	"relative pl-3 before:absolute before:inset-y-1 before:left-0 before:border-l-2 before:border-dashed before:border-current";
+
+const VARIES_NOTE =
+	"Some operations in this area are platform-wide and apply only through a Global placement.";
+
 function chipVariant(
-	grant: AccessGrant,
+	grant: ChipGrant,
 	catalogEntry: PermissionCatalogEntry | undefined,
 ): ChipVariant {
 	if (catalogEntry?.privileged.includes(grant.permission))
@@ -49,20 +57,22 @@ function sourceLine(source: AccessGrantSource, place: Place | undefined) {
 
 /**
  * One permission a person holds. Solid when it applies per organization,
- * edged with the bridge gradient when it is platform-wide, and in the warning
- * tone when it is privileged. Hover or focus lists the roles that give it.
+ * edged with the bridge gradient when it is platform-wide, edged with a dashed
+ * line when it varies by operation, and in the warning tone when it is
+ * privileged. Hover or focus lists the roles that give it.
  */
 export function PermissionChip({
 	grant,
 	catalogEntry,
 	place,
 }: {
-	grant: AccessGrant;
+	grant: ChipGrant;
 	catalogEntry?: PermissionCatalogEntry;
 	place?: Place;
 }) {
 	const variant = chipVariant(grant, catalogEntry);
 	const platformWide = grant.scope === "platform_wide";
+	const varies = grant.scope === "varies";
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
@@ -78,14 +88,13 @@ export function PermissionChip({
 							variant !== "privileged" &&
 								"bg-[var(--bf-power-soft)] text-[var(--bf-power)]",
 							platformWide && BRIDGE_EDGE,
+							varies && VARIES_EDGE,
 						)}
 					>
 						<span>{catalogEntry?.title ?? grant.domain}</span>
-						<span className="font-normal opacity-80">
-							{grant.action}
-						</span>
+						<span className="font-normal">{grant.action}</span>
 						{platformWide && (
-							<span className="text-[0.65rem] font-semibold uppercase tracking-wide">
+							<span className="text-xs font-semibold">
 								Platform-wide
 							</span>
 						)}
@@ -100,6 +109,7 @@ export function PermissionChip({
 						</li>
 					))}
 				</ul>
+				{varies && <p className="mt-1">{VARIES_NOTE}</p>}
 			</TooltipContent>
 		</Tooltip>
 	);
