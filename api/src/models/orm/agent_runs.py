@@ -108,7 +108,11 @@ class AgentRun(Base):
     steps: Mapped[list["AgentRunStep"]] = relationship(
         back_populates="run", cascade="all, delete-orphan", order_by="AgentRunStep.step_number"
     )
-    ai_usages: Mapped[list["AIUsage"]] = relationship(back_populates="agent_run")
+    ai_usages: Mapped[list["AIUsage"]] = relationship(
+        back_populates="agent_run",
+        primaryjoin="AIUsage.agent_run_id == AgentRun.id",
+        foreign_keys="AIUsage.agent_run_id",
+    )
     conversation = relationship("Conversation", lazy="select")
     child_runs: Mapped[list["AgentRun"]] = relationship(
         back_populates="parent_run",
@@ -126,6 +130,7 @@ class AgentRun(Base):
         Index("ix_agent_runs_status", "status"),
         Index("ix_agent_runs_trigger_type", "trigger_type"),
         Index("ix_agent_runs_created_at", "created_at"),
+        Index("ix_agent_runs_completed_id", "completed_at", "id"),
         Index("ix_agent_runs_parent_run_id", "parent_run_id"),
         Index("ix_agent_runs_agent_verdict_status", "agent_id", "verdict", "status"),
         Index("ix_agent_runs_run_user_id", "run_user_id", postgresql_where=run_user_id.isnot(None)),

@@ -108,7 +108,11 @@ class Execution(Base):
     )
     form: Mapped["Form | None"] = relationship(back_populates="executions")
     logs: Mapped[list["ExecutionLog"]] = relationship(back_populates="execution")
-    ai_usages: Mapped[list["AIUsage"]] = relationship(back_populates="execution")
+    ai_usages: Mapped[list["AIUsage"]] = relationship(
+        back_populates="execution",
+        primaryjoin="AIUsage.execution_id == Execution.id",
+        foreign_keys="AIUsage.execution_id",
+    )
 
     __table_args__ = (
         Index("ix_executions_org_status", "organization_id", "status"),
@@ -118,6 +122,7 @@ class Execution(Base):
             id.desc(),
         ),
         Index("ix_executions_created", "created_at"),
+        Index("ix_executions_completed_id", "completed_at", "id"),
         Index("ix_executions_started_at", "started_at"),
         Index("ix_executions_user", "executed_by"),
         Index("ix_executions_workflow", "workflow_name"),

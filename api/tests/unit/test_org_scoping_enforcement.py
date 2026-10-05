@@ -234,6 +234,9 @@ IDENTITY_MODELS: set[str] = {
     "Execution",
     "ExecutionMetricsDaily",
     "WorkflowROIDaily",
+    # Rollup of deleted runs by (day, org, workflow, status): aggregated
+    # telemetry like WorkflowROIDaily, read by date range, never name-resolved.
+    "WorkflowRunDaily",
     "KnowledgeStorageDaily",
     "User",
     "AIUsage",

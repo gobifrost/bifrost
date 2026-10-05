@@ -21,6 +21,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.orm.base import Base
@@ -81,18 +82,20 @@ class AIUsage(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
     # Context - at least one must be set
-    execution_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("executions.id", ondelete="CASCADE"), default=None
-    )
+    # Plain stamp, no FK: usage outlives its run (run retention).
+    execution_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), default=None)
     conversation_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("conversations.id", ondelete="CASCADE"), default=None
     )
-    agent_run_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("agent_runs.id", ondelete="CASCADE"), default=None
-    )
+    # Plain stamp, no FK: usage outlives its run (run retention).
+    agent_run_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), default=None)
     message_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("messages.id", ondelete="SET NULL"), default=None
     )
+    # Stamped by run retention just before the run is deleted.
+    workflow_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), default=None)
+    # Stamped by run retention just before the run is deleted.
+    agent_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), default=None)
 
     # Usage details
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -130,9 +133,17 @@ class AIUsage(Base):
     )
 
     # Relationships
-    execution: Mapped["Execution | None"] = relationship(back_populates="ai_usages")
+    execution: Mapped["Execution | None"] = relationship(
+        back_populates="ai_usages",
+        primaryjoin="AIUsage.execution_id == Execution.id",
+        foreign_keys="AIUsage.execution_id",
+    )
     conversation: Mapped["Conversation | None"] = relationship(back_populates="ai_usages")
-    agent_run: Mapped["AgentRun | None"] = relationship(back_populates="ai_usages")
+    agent_run: Mapped["AgentRun | None"] = relationship(
+        back_populates="ai_usages",
+        primaryjoin="AIUsage.agent_run_id == AgentRun.id",
+        foreign_keys="AIUsage.agent_run_id",
+    )
     message: Mapped["Message | None"] = relationship()
     organization: Mapped["Organization | None"] = relationship()
     user: Mapped["User | None"] = relationship()
