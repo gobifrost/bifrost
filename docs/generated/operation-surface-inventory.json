@@ -9970,7 +9970,7 @@
     "cli": 163,
     "manifest": 16,
     "mcp": 94,
-    "rest": 665,
+    "rest": 667,
     "sdk": 21
   },
   "schema_version": 1,
@@ -11578,6 +11578,13 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/audit/exports/{job_id}/download",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/audit/{event_id}/explain",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -13881,6 +13888,13 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/tools/system",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/users/{user_id}/access/check",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
