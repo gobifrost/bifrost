@@ -6,7 +6,7 @@ Create Date: 2026-10-06
 
 workflow_run_daily holds one row per (day, organization, workflow name and id,
 status) for finished workflow runs that run retention has deleted, so run
-counts and resource peaks keep their history. organization_id and workflow_id
+counts, resource peaks and AI cost keep their history. organization_id and workflow_id
 carry no foreign keys: history must outlive the organization and the workflow.
 The unique key is NULLS NOT DISTINCT so rows with no organization or workflow
 still collapse into one.
@@ -61,6 +61,8 @@ def upgrade() -> None:
         sa.Column("max_peak_cpu_cores", sa.Float(), nullable=True),
         sa.Column("max_peak_process_rss_bytes", sa.BigInteger(), nullable=True),
         sa.Column("max_peak_memory_bytes", sa.BigInteger(), nullable=True),
+        sa.Column("total_ai_cost", sa.Numeric(12, 8), nullable=False, server_default=sa.text("0")),
+        sa.Column("total_ai_calls", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("NOW()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("NOW()"), nullable=False),
         sa.UniqueConstraint(

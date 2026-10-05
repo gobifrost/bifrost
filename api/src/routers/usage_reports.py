@@ -15,7 +15,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import case, exists, func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.auth import Context, CurrentActiveUser, RequirePlatformAdmin
@@ -204,24 +204,26 @@ async def get_usage_report(
 
         workflow_rows = (await db.execute(workflow_query)).all()
         workflow_ids = {row.workflow_id for row in workflow_rows}
-        known_ids = [workflow_id for workflow_id in workflow_ids if workflow_id is not None]
-        id_match = [runs.c.workflow_id.in_(known_ids)]
-        if None in workflow_ids:
-            id_match.append(runs.c.workflow_id.is_(None))
-        resources = {
-            row.workflow_id: row
-            for row in (
-                await db.execute(
-                    select(
-                        runs.c.workflow_id,
-                        func.coalesce(func.sum(runs.c.total_cpu_seconds), 0.0).label("cpu_seconds"),
-                        func.coalesce(func.max(runs.c.max_peak_memory_bytes), 0).label("memory_bytes"),
+        resources = {}
+        if workflow_ids:
+            known_ids = [workflow_id for workflow_id in workflow_ids if workflow_id is not None]
+            id_match = [runs.c.workflow_id.in_(known_ids)]
+            if None in workflow_ids:
+                id_match.append(runs.c.workflow_id.is_(None))
+            resources = {
+                row.workflow_id: row
+                for row in (
+                    await db.execute(
+                        select(
+                            runs.c.workflow_id,
+                            func.coalesce(func.sum(runs.c.total_cpu_seconds), 0.0).label("cpu_seconds"),
+                            func.coalesce(func.max(runs.c.max_peak_memory_bytes), 0).label("memory_bytes"),
+                        )
+                        .where(or_(*id_match))
+                        .group_by(runs.c.workflow_id)
                     )
-                    .where(or_(*id_match))
-                    .group_by(runs.c.workflow_id)
-                )
-            ).all()
-        }
+                ).all()
+            }
         for row in workflow_rows:
             resource = resources.get(row.workflow_id)
             by_workflow.append(
@@ -645,12 +647,11 @@ async def _workflow_resource_workflows(
     workflow: str | None,
     status: ExecutionStatus | None,
 ) -> WorkflowResourceReport:
-    """The workflows view over kept runs plus the daily rollup.
+    """The workflows view over the run history source: kept runs plus the daily rollup.
 
-    AI cost belongs to a workflow id (the run's while kept, the id stamped on
-    the usage row once the run is deleted), so it is summed per workflow id
-    over usage timestamped in the window and joined to the workflow rows. The
-    status filter narrows the runs, not the AI usage, which carries no status.
+    AI cost and calls come from the source too (per run while kept, rolled up
+    with the run once deleted), so they follow the same filters and rows as
+    the run counts.
     """
     runs = workflow_run_source(
         start=started_after,
@@ -673,71 +674,42 @@ async def _workflow_resource_workflows(
             func.max(runs.c.max_peak_cpu_cores).label("max_peak_cpu_cores"),
             func.max(runs.c.max_peak_process_rss_bytes).label("max_peak_process_rss_bytes"),
             func.max(runs.c.last_started_at).label("last_started_at"),
+            func.sum(runs.c.ai_cost).label("total_ai_cost"),
+            func.sum(runs.c.ai_calls).label("total_ai_calls"),
         )
         .group_by(runs.c.workflow_id, runs.c.workflow_name)
         .cte("grouped_workflows")
     )
 
-    ai_workflow_id = func.coalesce(AIUsage.workflow_id, Execution.workflow_id)
-    ai_conditions = [
-        AIUsage.execution_id.isnot(None),
-        AIUsage.timestamp >= started_after,
-        AIUsage.timestamp <= started_before,
-        exists().where(grouped.c.workflow_id.is_not_distinct_from(ai_workflow_id)),
-    ]
-    if org_id is not None:
-        ai_conditions.append(AIUsage.organization_id == org_id)
-    ai = (
-        select(
-            ai_workflow_id.label("workflow_id"),
-            func.coalesce(func.sum(AIUsage.cost), Decimal("0")).label("ai_cost"),
-            func.count(AIUsage.id).label("ai_calls"),
-        )
-        .select_from(AIUsage)
-        .outerjoin(Execution, AIUsage.execution_id == Execution.id)
-        .where(*ai_conditions)
-        .group_by(ai_workflow_id)
-        .cte("workflow_ai")
-    )
-
-    run_totals = (
+    totals = (
         await db.execute(
             select(
                 func.coalesce(func.sum(grouped.c.run_count), 0).label("run_count"),
                 func.coalesce(func.sum(grouped.c.total_cpu_seconds), 0.0).label("total_cpu_seconds"),
                 func.coalesce(func.sum(grouped.c.total_duration_ms), 0).label("total_duration_ms"),
+                func.coalesce(func.sum(grouped.c.total_ai_cost), Decimal("0")).label("total_ai_cost"),
+                func.coalesce(func.sum(grouped.c.total_ai_calls), 0).label("total_ai_calls"),
                 func.count().label("workflow_count"),
             ).select_from(grouped)
         )
     ).one()
-    ai_totals = (
-        await db.execute(
-            select(
-                func.coalesce(func.sum(ai.c.ai_cost), Decimal("0")).label("total_ai_cost"),
-                func.coalesce(func.sum(ai.c.ai_calls), 0).label("total_ai_calls"),
-            ).select_from(ai)
-        )
-    ).one()
     summary = WorkflowResourceSummaryModel(
-        run_count=int(run_totals.run_count),
-        total_cpu_seconds=float(run_totals.total_cpu_seconds),
-        total_duration_ms=int(run_totals.total_duration_ms),
-        total_ai_cost=Decimal(str(ai_totals.total_ai_cost)),
-        total_ai_calls=int(ai_totals.total_ai_calls),
+        run_count=int(totals.run_count),
+        total_cpu_seconds=float(totals.total_cpu_seconds),
+        total_duration_ms=int(totals.total_duration_ms),
+        total_ai_cost=Decimal(str(totals.total_ai_cost)),
+        total_ai_calls=int(totals.total_ai_calls),
     )
 
-    ai_cost = func.coalesce(ai.c.ai_cost, Decimal("0"))
     workflow_sort = {
         "cpu": grouped.c.total_cpu_seconds.desc(),
         "elapsed": grouped.c.total_duration_ms.desc(),
         "memory": grouped.c.max_peak_process_rss_bytes.desc().nullslast(),
-        "ai": ai_cost.desc(),
+        "ai": grouped.c.total_ai_cost.desc(),
         "started": grouped.c.last_started_at.desc().nullslast(),
     }[sort]
     workflow_rows = await db.execute(
-        select(grouped, ai_cost.label("total_ai_cost"))
-        .select_from(grouped)
-        .outerjoin(ai, ai.c.workflow_id.is_not_distinct_from(grouped.c.workflow_id))
+        select(grouped)
         .order_by(workflow_sort, grouped.c.workflow_name.asc(), grouped.c.workflow_id.asc())
         .offset((page - 1) * page_size)
         .limit(page_size)
@@ -760,7 +732,7 @@ async def _workflow_resource_workflows(
         summary=summary,
         runs=[],
         workflows=workflows,
-        total=int(run_totals.workflow_count),
+        total=int(totals.workflow_count),
         page=page,
         page_size=page_size,
     )

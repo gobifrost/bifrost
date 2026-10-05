@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import select, func, case, desc
+from sqlalchemy import ColumnElement, Subquery, select, func, case, desc
 
 from src.models import (
     DashboardMetricsResponse,
@@ -553,11 +553,13 @@ async def get_workflow_metrics(
             case((runs.c.status == ExecutionStatus.FAILED, runs.c.run_count), else_=0)
         ).label("failed_count")
         avg_memory = func.avg(runs.c.max_peak_memory_bytes).label("avg_memory")
+        # Average over the runs that report the value, as avg() did: a kept
+        # run without a duration (still in flight) does not drag it down.
         avg_duration = (
-            func.coalesce(func.sum(runs.c.total_duration_ms), 0) / func.sum(runs.c.run_count)
+            func.sum(runs.c.total_duration_ms) / func.nullif(_runs_with(runs.c.total_duration_ms, runs), 0)
         ).label("avg_duration")
         avg_cpu = (
-            func.coalesce(func.sum(runs.c.total_cpu_seconds), 0.0) / func.sum(runs.c.run_count)
+            func.sum(runs.c.total_cpu_seconds) / func.nullif(_runs_with(runs.c.total_cpu_seconds, runs), 0)
         ).label("avg_cpu")
         peak_memory = func.max(runs.c.max_peak_memory_bytes).label("peak_memory")
         max_duration = func.max(runs.c.total_duration_ms / runs.c.run_count).label("max_duration")
@@ -630,6 +632,11 @@ async def get_workflow_metrics(
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
+
+def _runs_with(column: ColumnElement, runs: Subquery) -> ColumnElement:
+    """Runs in the source that carry ``column``; rolled-up rows always do."""
+    return func.sum(case((column.isnot(None), runs.c.run_count), else_=0))
 
 
 async def _get_recent_failures(

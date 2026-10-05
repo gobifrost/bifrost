@@ -42,13 +42,21 @@ FINISHED_AGENT_STATUSES: tuple[str, ...] = (
 )
 
 ROLLUP_SQL = text("""
+WITH ai AS (
+    SELECT execution_id, coalesce(sum(cost), 0) AS ai_cost, count(*) AS ai_calls
+      FROM ai_usage WHERE execution_id = ANY(:ids)
+     GROUP BY execution_id
+)
 INSERT INTO workflow_run_daily
        (day, organization_id, workflow_id, workflow_name, status, run_count, total_duration_ms,
-        total_cpu_seconds, max_peak_cpu_cores, max_peak_process_rss_bytes, max_peak_memory_bytes)
-SELECT (timezone('UTC', coalesce(started_at, completed_at)))::date, organization_id, workflow_id,
-       workflow_name, status, count(*), coalesce(sum(duration_ms), 0), coalesce(sum(cpu_total_seconds), 0),
-       max(peak_cpu_cores), max(peak_process_rss_bytes), max(peak_memory_bytes)
-  FROM executions WHERE id = ANY(:ids)
+        total_cpu_seconds, max_peak_cpu_cores, max_peak_process_rss_bytes, max_peak_memory_bytes,
+        total_ai_cost, total_ai_calls)
+SELECT (timezone('UTC', coalesce(e.started_at, e.completed_at)))::date, e.organization_id, e.workflow_id,
+       e.workflow_name, e.status, count(*), coalesce(sum(e.duration_ms), 0), coalesce(sum(e.cpu_total_seconds), 0),
+       max(e.peak_cpu_cores), max(e.peak_process_rss_bytes), max(e.peak_memory_bytes),
+       coalesce(sum(ai.ai_cost), 0), coalesce(sum(ai.ai_calls), 0)
+  FROM executions e LEFT JOIN ai ON ai.execution_id = e.id
+ WHERE e.id = ANY(:ids)
  GROUP BY 1, 2, 3, 4, 5
 ON CONFLICT (day, organization_id, workflow_id, workflow_name, status) DO UPDATE SET
        run_count = workflow_run_daily.run_count + EXCLUDED.run_count,
@@ -57,6 +65,8 @@ ON CONFLICT (day, organization_id, workflow_id, workflow_name, status) DO UPDATE
        max_peak_cpu_cores = GREATEST(workflow_run_daily.max_peak_cpu_cores, EXCLUDED.max_peak_cpu_cores),
        max_peak_process_rss_bytes = GREATEST(workflow_run_daily.max_peak_process_rss_bytes, EXCLUDED.max_peak_process_rss_bytes),
        max_peak_memory_bytes = GREATEST(workflow_run_daily.max_peak_memory_bytes, EXCLUDED.max_peak_memory_bytes),
+       total_ai_cost = workflow_run_daily.total_ai_cost + EXCLUDED.total_ai_cost,
+       total_ai_calls = workflow_run_daily.total_ai_calls + EXCLUDED.total_ai_calls,
        updated_at = NOW()
 """)
 

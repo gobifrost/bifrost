@@ -287,6 +287,8 @@ async def test_workflow_batch_rolls_up_stamps_and_deletes(db_session, seeded, ru
     assert (daily["Success"].max_peak_cpu_cores, daily["Success"].max_peak_process_rss_bytes,
             daily["Success"].max_peak_memory_bytes) == (0.5, 100, 90)
     assert daily["Failed"].max_peak_cpu_cores == 0.9
+    assert (daily["Success"].total_ai_cost, daily["Success"].total_ai_calls) == (Decimal("0.01"), 1)
+    assert (daily["Failed"].total_ai_cost, daily["Failed"].total_ai_calls) == (Decimal("0"), 0)
     await db_session.commit()
     assert await delete_workflow_run_batch(cutoff=CUTOFF, job_id=lease.job_id, lease_token=lease.token) == 0
 
@@ -300,6 +302,9 @@ async def test_second_rollup_into_same_key_increments(db_session, seeded, run_re
         peak_process_rss_bytes=300, peak_memory_bytes=50,
     )
     db_session.add(third)
+    await db_session.flush()
+    db_session.add(AIUsage(execution_id=third.id, provider="openai", model="m", input_tokens=1, output_tokens=1,
+                           cost=Decimal("0.02")))
     await db_session.commit()
     seeded.execution_ids.append(third.id)
     db_session.expunge_all()
@@ -315,6 +320,7 @@ async def test_second_rollup_into_same_key_increments(db_session, seeded, run_re
     assert (success.run_count, success.total_duration_ms, success.total_cpu_seconds) == (2, 7000, 1.75)
     assert (success.max_peak_cpu_cores, success.max_peak_process_rss_bytes, success.max_peak_memory_bytes) == (
         0.7, 300, 90)
+    assert (success.total_ai_cost, success.total_ai_calls) == (Decimal("0.03"), 2)
     assert await _daily_rows(db_session, seeded) == 2
 
 

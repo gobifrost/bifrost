@@ -2,13 +2,14 @@
 WorkflowRunDaily ORM model.
 
 Per-day rollup of finished workflow runs deleted by run retention, so run
-counts and resource peaks keep their history after the runs are gone.
+counts, resource peaks and AI cost keep their history after the runs are gone.
 """
 
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, Date, DateTime, Enum as SQLAlchemyEnum, Float, Index, Integer, String, UniqueConstraint, text
+from sqlalchemy import BigInteger, Date, DateTime, Enum as SQLAlchemyEnum, Float, Index, Integer, Numeric, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.enums import ExecutionStatus
@@ -42,6 +43,8 @@ class WorkflowRunDaily(Base):
     max_peak_cpu_cores: Mapped[float | None] = mapped_column(Float, default=None)
     max_peak_process_rss_bytes: Mapped[int | None] = mapped_column(BigInteger, default=None)
     max_peak_memory_bytes: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    total_ai_cost: Mapped[Decimal] = mapped_column(Numeric(12, 8), default=Decimal("0"), server_default=text("0"))
+    total_ai_calls: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=text("NOW()")
     )

@@ -4,7 +4,8 @@ One run history source: kept executions plus the daily rollup.
 Every finished run is counted once, in ``executions`` while kept and in
 ``workflow_run_daily`` after retention deletes it, so every reader reports the
 same totals before and after the deletion loop. The seeded runs finished in
-2001 and the cutoff is 2002, so only this test's rows are eligible.
+2001 and the cutoff is 2002, so only this test's rows are eligible. One run is
+renamed and one starts on 2001-01-02, just outside the windows the tests read.
 """
 
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ from src.services.run_retention.source import all_time_run_totals, workflow_run_
 
 CUTOFF = datetime(2002, 1, 1, tzinfo=UTC)
 DAY = datetime(2001, 1, 1, tzinfo=UTC)
+NEXT_DAY = datetime(2001, 1, 2, tzinfo=UTC)
 
 
 @dataclass
@@ -55,36 +57,39 @@ async def seeded(db_session: AsyncSession):
     db_session.add_all([org, workflow])
     await db_session.flush()
 
+    jan_1 = (DAY.replace(hour=hour) for hour in range(10, 14))
     runs = [
-        (ExecutionStatus.SUCCESS, 10, 4000, 1.5, 0.5, 100, 90),
-        (ExecutionStatus.SUCCESS, 11, 2000, 0.25, 0.75, 300, 50),
-        (ExecutionStatus.FAILED, 12, 1000, 0.5, 1.25, 200, 70),
+        (wf_name, ExecutionStatus.SUCCESS, next(jan_1), 4000, 1.5, 0.5, 100, 90),
+        (wf_name, ExecutionStatus.SUCCESS, next(jan_1), 2000, 0.25, 0.75, 300, 50),
+        (wf_name, ExecutionStatus.FAILED, next(jan_1), 1000, 0.5, 1.25, 200, 70),
+        (f"{wf_name}-renamed", ExecutionStatus.SUCCESS, next(jan_1), 500, 0.125, 0.25, 50, 10),
+        (wf_name, ExecutionStatus.SUCCESS, NEXT_DAY.replace(hour=15), 9000, 4.0, 2.0, 999, 999),
     ]
     executions = [
         Execution(
             id=uuid4(),
-            workflow_name=wf_name,
+            workflow_name=name,
             workflow_id=workflow.id,
             organization_id=org.id,
             status=status,
             executed_by_name="History Test",
-            started_at=DAY.replace(hour=hour),
-            completed_at=DAY.replace(hour=hour, second=5),
+            started_at=started,
+            completed_at=started + timedelta(seconds=5),
             duration_ms=ms,
             cpu_total_seconds=cpu,
             peak_cpu_cores=cores,
             peak_process_rss_bytes=rss,
             peak_memory_bytes=mem,
         )
-        for status, hour, ms, cpu, cores, rss, mem in runs
+        for name, status, started, ms, cpu, cores, rss, mem in runs
     ]
     db_session.add_all(executions)
     await db_session.flush()
+    usage = [(0, "0.01"), (0, "0.02"), (2, "0.04"), (3, "0.08")]
     db_session.add_all([
-        AIUsage(execution_id=executions[0].id, organization_id=org.id, provider="openai", model="m",
-                input_tokens=10, output_tokens=5, cost=Decimal("0.01"), timestamp=DAY.replace(hour=10)),
-        AIUsage(execution_id=executions[0].id, organization_id=org.id, provider="openai", model="m",
-                input_tokens=20, output_tokens=5, cost=Decimal("0.02"), timestamp=DAY.replace(hour=10)),
+        AIUsage(execution_id=executions[i].id, organization_id=org.id, provider="openai", model="m",
+                input_tokens=10, output_tokens=5, cost=Decimal(cost), timestamp=DAY.replace(hour=10))
+        for i, cost in usage
     ])
     await db_session.commit()
 
@@ -93,11 +98,11 @@ async def seeded(db_session: AsyncSession):
         workflow_id=workflow.id,
         wf_name=wf_name,
         execution_ids=[e.id for e in executions],
-        total_ms=7000,
-        total_cpu=2.25,
+        total_ms=7500,
+        total_cpu=2.375,
         max_cores=1.25,
         max_rss=300,
-        ai_cost=Decimal("0.03"),
+        ai_cost=Decimal("0.15"),
     )
     db_session.expunge_all()
 
@@ -106,7 +111,7 @@ async def seeded(db_session: AsyncSession):
     await db_session.rollback()
     await db_session.execute(delete(AIUsage).where(AIUsage.execution_id.in_(data.execution_ids)))
     await db_session.execute(delete(Execution).where(Execution.id.in_(data.execution_ids)))
-    await db_session.execute(delete(WorkflowRunDaily).where(WorkflowRunDaily.workflow_name == data.wf_name))
+    await db_session.execute(delete(WorkflowRunDaily).where(WorkflowRunDaily.workflow_id == data.workflow_id))
     await db_session.execute(delete(Workflow).where(Workflow.id == data.workflow_id))
     await db_session.execute(delete(Organization).where(Organization.id == data.org_id))
     await db_session.commit()
@@ -120,14 +125,16 @@ async def _delete_all_expired(lease) -> None:
 async def _assert_rolled_up(db: AsyncSession, seeded: Seeded) -> None:
     kept = await db.scalar(select(func.count()).select_from(Execution).where(Execution.id.in_(seeded.execution_ids)))
     rolled = await db.scalar(
-        select(func.sum(WorkflowRunDaily.run_count)).where(WorkflowRunDaily.workflow_name == seeded.wf_name)
+        select(func.sum(WorkflowRunDaily.run_count)).where(WorkflowRunDaily.workflow_id == seeded.workflow_id)
     )
     await db.commit()
-    assert (kept, rolled) == (0, 3)
+    assert (kept, rolled) == (0, 5)
 
 
 async def test_totals_identical_before_and_after_deletion(db_session, seeded, run_retention_lease):
-    window = dict(start=DAY, end=datetime(2001, 1, 2, tzinfo=UTC), workflow_name_like=seeded.wf_name)
+    # The window ends at 2001-01-02 midnight: the run starting that day is out,
+    # kept or rolled up.
+    window = dict(start=DAY, end=NEXT_DAY, workflow_name_like=seeded.wf_name)
 
     async def totals():
         src = workflow_run_source(**window)
@@ -141,7 +148,7 @@ async def test_totals_identical_before_and_after_deletion(db_session, seeded, ru
     await _delete_all_expired(run_retention_lease)
     await _assert_rolled_up(db_session, seeded)
     after = await totals()
-    assert before == after == (3, seeded.total_ms, seeded.total_cpu, seeded.max_cores, seeded.max_rss)
+    assert before == after == (4, seeded.total_ms, seeded.total_cpu, seeded.max_cores, seeded.max_rss)
 
 
 async def test_usage_report_identical_before_and_after_deletion(
@@ -173,13 +180,13 @@ async def test_usage_report_identical_before_and_after_deletion(
     after = report()
     assert before == after
     _, _, (_, ai_cost, execution_count, cpu_seconds) = after
-    assert (Decimal(ai_cost), execution_count, cpu_seconds) == (seeded.ai_cost, 1, seeded.total_cpu)
+    assert (Decimal(ai_cost), execution_count, cpu_seconds) == (seeded.ai_cost, 3, seeded.total_cpu)
 
 
 async def test_workflow_resource_report_identical_before_and_after_deletion(
     db_session, seeded, run_retention_lease, e2e_client, platform_admin
 ):
-    def report():
+    def report(**extra):
         response = e2e_client.get(
             "/api/reports/workflow-resources",
             headers=platform_admin.headers,
@@ -188,41 +195,55 @@ async def test_workflow_resource_report_identical_before_and_after_deletion(
                 "started_after": "2001-01-01T00:00:00Z",
                 "started_before": "2001-01-02T00:00:00Z",
                 "workflow": seeded.wf_name,
+                **extra,
             },
         )
         assert response.status_code == 200, response.text
         body = response.json()
-        (row,) = body["workflows"]
-        return (
-            body["summary"]["run_count"],
-            body["summary"]["total_cpu_seconds"],
-            body["summary"]["total_ai_cost"],
-            row["workflow_id"],
-            row["failed_count"],
-            row["total_ai_cost"],
+        # AI cost rolls up with its runs, so the rows always add up to the summary.
+        assert sum(Decimal(row["total_ai_cost"]) for row in body["workflows"]) == Decimal(
+            body["summary"]["total_ai_cost"]
         )
+        rows = {
+            row["workflow_name"]: (row["workflow_id"], row["run_count"], row["failed_count"],
+                                   Decimal(row["total_ai_cost"]))
+            for row in body["workflows"]
+        }
+        summary = body["summary"]
+        return summary["run_count"], summary["total_cpu_seconds"], Decimal(summary["total_ai_cost"]), rows
 
-    before = report()
+    def both():
+        return report(), report(status="Failed")
+
+    before = both()
     await _delete_all_expired(run_retention_lease)
     await _assert_rolled_up(db_session, seeded)
-    after = report()
+    after = both()
     assert before == after
-    run_count, cpu, summary_ai, workflow_id, failed, ai = after
-    assert (run_count, cpu, workflow_id, failed) == (3, seeded.total_cpu, str(seeded.workflow_id), 1)
-    assert Decimal(summary_ai) == Decimal(ai) == seeded.ai_cost
+    workflow_id = str(seeded.workflow_id)
+    assert after[0] == (4, seeded.total_cpu, seeded.ai_cost, {
+        seeded.wf_name: (workflow_id, 3, 1, Decimal("0.07")),
+        f"{seeded.wf_name}-renamed": (workflow_id, 1, 0, Decimal("0.08")),
+    })
+    assert after[1] == (1, 0.5, Decimal("0.04"), {seeded.wf_name: (workflow_id, 1, 1, Decimal("0.04"))})
 
 
-async def test_workflows_view_accepts_a_year_and_runs_view_a_month(e2e_client, platform_admin):
-    year = {"started_after": "2001-01-01T00:00:00Z", "started_before": "2002-01-01T00:00:00Z"}
-    workflows = e2e_client.get(
-        "/api/reports/workflow-resources", headers=platform_admin.headers, params={**year, "view": "workflows"}
-    )
-    assert workflows.status_code == 200, workflows.text
-    runs = e2e_client.get(
-        "/api/reports/workflow-resources", headers=platform_admin.headers, params={**year, "view": "runs"}
-    )
+async def test_workflows_view_window_cap_is_366_days_and_runs_view_31(e2e_client, platform_admin):
+    def get(view: str, started_before: str):
+        return e2e_client.get(
+            "/api/reports/workflow-resources",
+            headers=platform_admin.headers,
+            params={"view": view, "started_after": "2001-01-01T00:00:00Z", "started_before": started_before},
+        )
+
+    assert get("workflows", "2002-01-02T00:00:00Z").status_code == 200
+    too_long = get("workflows", "2002-01-03T00:00:00Z")
+    assert too_long.status_code == 422
+    assert "366 days for the workflows view" in too_long.json()["detail"]
+    assert get("runs", "2001-02-01T00:00:00Z").status_code == 200
+    runs = get("runs", "2001-02-02T00:00:00Z")
     assert runs.status_code == 422
-    assert "runs view" in runs.json()["detail"]
+    assert "31 days for the runs view" in runs.json()["detail"]
 
 
 async def test_all_time_totals_identical_before_and_after_deletion(db_session, seeded, run_retention_lease):
@@ -244,11 +265,15 @@ async def test_workflow_metrics_count_kept_and_rolled_up_runs(db_session, e2e_cl
         started_at=now - timedelta(minutes=5), completed_at=now - timedelta(minutes=4),
         duration_ms=3000, cpu_total_seconds=0.5, peak_memory_bytes=100,
     )
+    in_flight = Execution(
+        id=uuid4(), workflow_name=name, status=ExecutionStatus.RUNNING, executed_by_name="History Test",
+        started_at=now - timedelta(minutes=1),
+    )
     rolled = WorkflowRunDaily(
         day=(now - timedelta(days=2)).date(), workflow_name=name, status=ExecutionStatus.FAILED,
         run_count=2, total_duration_ms=1000, total_cpu_seconds=1.0, max_peak_memory_bytes=300,
     )
-    db_session.add_all([kept, rolled])
+    db_session.add_all([kept, in_flight, rolled])
     await db_session.commit()
     try:
         response = e2e_client.get(
@@ -256,10 +281,11 @@ async def test_workflow_metrics_count_kept_and_rolled_up_runs(db_session, e2e_cl
         )
         assert response.status_code == 200, response.text
         (row,) = [w for w in response.json()["workflows"] if w["workflow_name"] == name]
-        assert (row["total_executions"], row["success_count"], row["failed_count"]) == (3, 1, 2)
+        # The in-flight run counts but has no duration or CPU, so the averages skip it.
+        assert (row["total_executions"], row["success_count"], row["failed_count"]) == (4, 1, 2)
         assert (row["avg_duration_ms"], row["avg_cpu_seconds"]) == (1333, 0.5)
         assert (row["peak_memory_bytes"], row["avg_memory_bytes"]) == (300, 200)
     finally:
-        await db_session.execute(delete(Execution).where(Execution.id == kept.id))
+        await db_session.execute(delete(Execution).where(Execution.id.in_([kept.id, in_flight.id])))
         await db_session.execute(delete(WorkflowRunDaily).where(WorkflowRunDaily.workflow_name == name))
         await db_session.commit()

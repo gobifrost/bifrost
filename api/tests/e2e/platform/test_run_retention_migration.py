@@ -43,12 +43,14 @@ async def test_columns_added_and_dropped(db_session: AsyncSession) -> None:
     result = await db_session.execute(
         text(
             "SELECT table_name, column_name FROM information_schema.columns "
-            "WHERE table_name IN ('ai_usage', 'execution_metrics_daily')"
+            "WHERE table_name IN ('ai_usage', 'execution_metrics_daily', 'workflow_run_daily')"
         )
     )
     columns = {(row[0], row[1]) for row in result}
     assert ("ai_usage", "workflow_id") in columns
     assert ("ai_usage", "agent_id") in columns
+    assert ("workflow_run_daily", "total_ai_cost") in columns
+    assert ("workflow_run_daily", "total_ai_calls") in columns
     assert ("execution_metrics_daily", "total_ai_cost") not in columns
     assert ("execution_metrics_daily", "total_ai_calls") not in columns
     assert ("execution_metrics_daily", "total_ai_input_tokens") not in columns
