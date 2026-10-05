@@ -56,6 +56,8 @@ def _print_list(response: dict[str, Any]) -> None:
         ]
     if rows:
         click.echo("\n".join(_columns(rows, "  ")))
+    else:
+        click.echo("No groups." if response["groups"] is not None else "No entries.")
 
 
 @audit_group.command("list")

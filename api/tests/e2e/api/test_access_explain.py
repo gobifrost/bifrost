@@ -102,6 +102,95 @@ def _scope_switch(user_id: uuid.UUID | None, home: str, target: str | None) -> d
     }
 
 
+def _stored_trace(user_id: uuid.UUID, home: str, outcome: str, decision: dict) -> dict:
+    """The trace the writer stores for a run user of a Full workflow (the platform
+    default): run user and powers pass, ``decision`` is the step that decides."""
+    return {
+        "outcome": outcome,
+        "enforced": False,
+        "steps": [
+            {
+                "key": "run_user",
+                "label": "Run user",
+                "status": "passed",
+                "reason": "person",
+                "facts": {
+                    "user_id": str(user_id),
+                    "identity_kind": None,
+                    "home_organization_id": home,
+                    "is_platform_admin": False,
+                },
+            },
+            {"key": "powers", "label": "Workflow powers", "status": "passed", "reason": "full", "facts": {"grants": []}},
+            decision,
+        ],
+    }
+
+
+def _file_policy_check(user_id: uuid.UUID, home: str, path: str) -> dict:
+    """A ``policy`` row for a file read the model denied: no policy covers the
+    path, so the model decides deny now as it did then."""
+    decision = {
+        "key": "policy",
+        "label": "Policy",
+        "status": "stopped",
+        "reason": "denied",
+        "facts": {"today": True, "missing": []},
+    }
+    return {
+        "action": "access.check",
+        "resource_type": "policy",
+        "outcome": "failure",
+        "user_id": user_id,
+        "organization_id": uuid.UUID(home),
+        "operation_id": "workspace.files.read",
+        "details": {
+            "enforced": False,
+            "workflow_id": None,
+            "trace": _stored_trace(user_id, home, "failure", decision),
+            "inputs": {
+                "operation": "workspace.files.read",
+                "target": home,
+                "location": "workspace",
+                "path": path,
+                "action": "read",
+                "solution_id": None,
+                "today": True,
+                "model": False,
+                "missing": [],
+            },
+            "today": "allowed",
+        },
+    }
+
+
+def _entry_check(user_id: uuid.UUID, home: str, agent_id: str, allowed: bool) -> dict:
+    """An ``entry`` row for an agent run opening its agent as ``user_id``."""
+    subject = f"agent:{agent_id}"
+    decision = {
+        "key": "entry",
+        "label": "Entry",
+        "status": "passed" if allowed else "stopped",
+        "reason": "access" if allowed else "no_access",
+        "facts": {"subject": subject},
+    }
+    return {
+        "action": "access.check",
+        "resource_type": "entry",
+        "outcome": "success" if allowed else "failure",
+        "user_id": user_id,
+        "organization_id": uuid.UUID(home),
+        "operation_id": "event.agent_run",
+        "details": {
+            "enforced": False,
+            "workflow_id": None,
+            "trace": _stored_trace(user_id, home, "success" if allowed else "failure", decision),
+            "inputs": {"operation": "event.agent_run", "target": home, "allowed": allowed, "subject": subject},
+            "today": "allowed",
+        },
+    }
+
+
 def _person(e2e_client, admin: dict, organization_id: str, name: str) -> dict:
     return _ok(
         e2e_client.post(
@@ -297,3 +386,49 @@ def test_what_if_with_workflow_uses_powers(e2e_client, platform_admin, world) ->
         assert (_steps(body)["powers"]["status"], _steps(body)["powers"]["reason"]) == ("passed", "full")
     finally:
         e2e_client.delete(f"/api/files/editor?path={path}", headers=admin)
+
+
+def test_file_policy_check_is_judged_again(e2e_client, platform_admin, async_session_factory, world) -> None:
+    person_id = uuid.UUID(world["person"]["id"])
+    row = _file_policy_check(person_id, world["contoso"]["id"], f"explain-{world['tag']}/uncovered.txt")
+    (event_id,) = asyncio.run(_seed(async_session_factory, [row]))
+    try:
+        body = _ok(_explain(e2e_client, platform_admin.headers, str(event_id)))
+    finally:
+        asyncio.run(_delete(async_session_factory, [event_id]))
+
+    assert body["now_unavailable"] is None
+    assert (body["then"]["outcome"], body["now"]["outcome"], body["changed"]) == ("failure", "failure", False)
+    assert _steps(body["now"])["policy"]["reason"] == "denied"
+
+
+def test_entry_check_is_judged_again(e2e_client, platform_admin, async_session_factory, world) -> None:
+    """An agent the person may open, then made role-based with no roles: the same stored entry flips."""
+    admin = platform_admin.headers
+    person_id, contoso = uuid.UUID(world["person"]["id"]), world["contoso"]["id"]
+    agent = _ok(
+        e2e_client.post(
+            "/api/agents",
+            headers=admin,
+            json={
+                "name": f"Explain Agent {world['tag']}",
+                "system_prompt": "Say hello.",
+                "channels": ["chat"],
+                "access_level": "authenticated",
+                "organization_id": contoso,
+            },
+        ),
+        201,
+    )
+    (event_id,) = asyncio.run(_seed(async_session_factory, [_entry_check(person_id, contoso, agent["id"], True)]))
+    try:
+        unchanged = _ok(_explain(e2e_client, admin, str(event_id)))
+        _ok(e2e_client.put(f"/api/agents/{agent['id']}", headers=admin, json={"access_level": "role_based"}))
+        flipped = _ok(_explain(e2e_client, admin, str(event_id)))
+    finally:
+        asyncio.run(_delete(async_session_factory, [event_id]))
+        e2e_client.delete(f"/api/agents/{agent['id']}", headers=admin)
+
+    assert (unchanged["then"]["outcome"], unchanged["now"]["outcome"], unchanged["changed"]) == ("success", "success", False)
+    assert (flipped["now"]["outcome"], flipped["changed"]) == ("failure", True)
+    assert _steps(flipped["now"])["entry"]["reason"] == "no_access"

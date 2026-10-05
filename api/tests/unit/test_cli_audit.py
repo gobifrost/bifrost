@@ -180,6 +180,14 @@ class TestAuditList:
             ["3", "-", "2026-10-04T09:00:00+00:00"],
         ]
 
+    def test_says_so_when_there_are_no_entries(self, fake_client: _FakeClient) -> None:
+        fake_client.respond("/api/audit", {"entries": [], "groups": None, "continuation_token": None})
+        assert _invoke(["list"]).output.strip() == "No entries."
+
+    def test_says_so_when_there_are_no_groups(self, fake_client: _FakeClient) -> None:
+        fake_client.respond("/api/audit", {"entries": [], "groups": [], "continuation_token": None})
+        assert _invoke(["list", "--group-by", "action"]).output.strip() == "No groups."
+
     def test_rejects_an_unknown_group_by(self, fake_client: _FakeClient) -> None:
         result = CliRunner().invoke(audit_group, ["list", "--group-by", "color"], standalone_mode=False)
         assert isinstance(result.exception, Exception) and "color" in str(result.exception)
