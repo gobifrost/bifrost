@@ -15,7 +15,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.auth import Context, CurrentActiveUser, RequirePlatformAdmin
@@ -214,7 +214,11 @@ async def get_usage_report(
             id_match = [runs.c.workflow_id.in_(known_ids)]
             if None in workflow_ids:
                 id_match.append(runs.c.workflow_id.is_(None))
-            run_inline_name = case((runs.c.workflow_id.is_(None), runs.c.workflow_name), else_=None)
+            # Usage of a deleted inline run has no name left, so its rolled-up
+            # resources join the same nameless row.
+            run_inline_name = case(
+                (and_(runs.c.workflow_id.is_(None), runs.c.kept), runs.c.workflow_name), else_=None
+            )
             resources = {
                 (row.workflow_id, row.inline_name): row
                 for row in (

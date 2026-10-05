@@ -12,7 +12,21 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import DateTime, Integer, Subquery, case, cast, func, literal, select, union_all
+from sqlalchemy import (
+    DateTime,
+    Integer,
+    Subquery,
+    and_,
+    case,
+    cast,
+    false,
+    func,
+    literal,
+    or_,
+    select,
+    true,
+    union_all,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.enums import ExecutionStatus
@@ -53,17 +67,21 @@ def workflow_run_source(
     the rollup takes its day from, so a run that finished without starting is
     counted the same before and after deletion. Kept runs give one row each
     with ``run_count = 1``, whatever their status, and their AI usage
-    pre-aggregated by execution. A rolled-up
+    pre-aggregated by execution. ``kept`` is true for kept runs and false for
+    rolled-up rows. A rolled-up
     ``workflow_run_daily`` row is included when its day's UTC midnight falls in
     ``[start, end)``, so a window ending at midnight leaves the next day out;
     its ``last_started_at`` is that midnight. ``start`` and ``end`` must be
     timezone-aware.
     """
     filters = (organization_id, workflow_id, workflow_name_like, status)
-    run_at = func.coalesce(Execution.started_at, Execution.completed_at)
+    # Spelled out rather than coalesce() so Postgres can combine the
+    # started_at and completed_at indexes.
     kept_conditions = (
-        run_at >= start,
-        run_at <= end,
+        or_(
+            and_(Execution.started_at >= start, Execution.started_at <= end),
+            and_(Execution.started_at.is_(None), Execution.completed_at >= start, Execution.completed_at <= end),
+        ),
         *_filters(Execution, *filters),
     )
 
@@ -89,9 +107,10 @@ def workflow_run_source(
             Execution.peak_cpu_cores.label("max_peak_cpu_cores"),
             Execution.peak_process_rss_bytes.label("max_peak_process_rss_bytes"),
             Execution.peak_memory_bytes.label("max_peak_memory_bytes"),
-            run_at.label("last_started_at"),
+            func.coalesce(Execution.started_at, Execution.completed_at).label("last_started_at"),
             func.coalesce(ai_per_run.c.ai_cost, Decimal("0")).label("ai_cost"),
             func.coalesce(ai_per_run.c.ai_calls, 0).label("ai_calls"),
+            true().label("kept"),
         )
         .select_from(Execution)
         .outerjoin(ai_per_run, ai_per_run.c.execution_id == Execution.id)
@@ -113,6 +132,7 @@ def workflow_run_source(
         day_start.label("last_started_at"),
         WorkflowRunDaily.total_ai_cost,
         WorkflowRunDaily.total_ai_calls,
+        false().label("kept"),
     ).where(day_start >= start, day_start < end, *_filters(WorkflowRunDaily, *filters))
 
     return union_all(kept, rolled_up).subquery("workflow_runs")

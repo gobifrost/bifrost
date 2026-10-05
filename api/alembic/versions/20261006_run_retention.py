@@ -79,8 +79,8 @@ def upgrade() -> None:
 
     # Dropping a foreign key removes its RI triggers on the referenced executions
     # and agent_runs tables (gigabytes each) and takes ACCESS EXCLUSIVE locks on
-    # them. Fail fast instead of queueing behind long reads; the init container
-    # retries the migration.
+    # them. Fail fast instead of queueing behind long reads: a lock timeout fails
+    # the migration, and the pod restart policy re-runs the init container.
     op.execute("SET LOCAL lock_timeout = '5s'")
     op.drop_constraint("ai_usage_execution_id_fkey", "ai_usage", type_="foreignkey")
     op.drop_constraint("ai_usage_agent_run_id_fkey", "ai_usage", type_="foreignkey")

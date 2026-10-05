@@ -253,8 +253,9 @@ async def test_usage_report_names_kept_inline_runs_and_merges_deleted_ones(
         Execution(
             id=execution_id, workflow_name=name, organization_id=org_id, status=ExecutionStatus.SUCCESS,
             executed_by_name="History Test", started_at=DAY.replace(hour=10), completed_at=DAY.replace(hour=11),
+            cpu_total_seconds=cpu, peak_memory_bytes=memory,
         )
-        for execution_id, name in zip(execution_ids, names, strict=True)
+        for execution_id, name, cpu, memory in zip(execution_ids, names, (0.5, 0.25), (100, 200), strict=True)
     ]
     db_session.add_all(executions)
     await db_session.flush()
@@ -274,15 +275,20 @@ async def test_usage_report_names_kept_inline_runs_and_merges_deleted_ones(
         )
         assert response.status_code == 200, response.text
         return {
-            row["workflow_name"]: (row["execution_count"], Decimal(row["ai_cost"]))
+            row["workflow_name"]: (row["execution_count"], Decimal(row["ai_cost"]), row["cpu_seconds"],
+                                   row["memory_bytes"])
             for row in response.json()["by_workflow"]
         }
 
     try:
-        assert rows() == {names[0]: (1, Decimal("0.01")), names[1]: (1, Decimal("0.02"))}
+        assert rows() == {
+            names[0]: (1, Decimal("0.01"), 0.5, 100),
+            names[1]: (1, Decimal("0.02"), 0.25, 200),
+        }
         await _delete_all_expired(run_retention_lease)
-        # Deleted inline runs leave no name on their usage, so they share one row.
-        assert rows() == {"Inline or deleted workflow": (2, Decimal("0.03"))}
+        # Deleted inline runs leave no name on their usage, so they share one
+        # row, and their rolled-up CPU and memory join it.
+        assert rows() == {"Inline or deleted workflow": (2, Decimal("0.03"), 0.75, 200)}
     finally:
         await db_session.rollback()
         await db_session.execute(delete(AIUsage).where(AIUsage.execution_id.in_(execution_ids)))
