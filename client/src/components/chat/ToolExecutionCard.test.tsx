@@ -15,16 +15,23 @@ import { renderWithProviders, screen } from "@/test-utils";
 
 // Execution data hooks: return no data by default so behavior falls through
 // to props. Individual tests can override via mockReturnValue.
-const mockUseExecution = vi.fn<() => { data: unknown; isLoading: boolean }>(
-	() => ({ data: undefined, isLoading: false }),
-);
+const mockUseExecution = vi.fn<
+	() => { data: unknown; isLoading: boolean; error?: unknown }
+>(() => ({ data: undefined, isLoading: false }));
 const mockUseExecutionLogs = vi.fn<() => { data: unknown }>(() => ({
 	data: undefined,
 }));
 
-vi.mock("@/hooks/useExecutions", () => ({
+vi.mock("@/hooks/useExecutions", async (importOriginal) => ({
+	isNotFoundError: (
+		await importOriginal<typeof import("@/hooks/useExecutions")>()
+	).isNotFoundError,
 	useExecution: () => mockUseExecution(),
 	useExecutionLogs: () => mockUseExecutionLogs(),
+}));
+
+vi.mock("@/services/runRetention", () => ({
+	useRunRetentionDays: () => 30,
 }));
 
 vi.mock("@/hooks/useExecutionStream", () => ({
@@ -206,5 +213,60 @@ describe("ToolExecutionCard — result expansion", () => {
 			configurable: true,
 			value: originalScrollTo,
 		});
+	});
+});
+
+describe("ToolExecutionCard — removed execution", () => {
+	const removed = {
+		data: undefined,
+		isLoading: false,
+		error: {
+			detail: "Execution exec-1 not found. Finished runs are removed after 30 days.",
+		},
+	};
+
+	it("shows the tool call's own result once its execution is removed", async () => {
+		mockUseExecution.mockReturnValue(removed);
+		const { user } = renderWithProviders(
+			<ToolExecutionCard
+				toolCall={makeToolCall()}
+				executionId="exec-1"
+				hasResultMessage
+				toolCallMessage={{
+					tool_state: "completed",
+					tool_result: { answer: 42 },
+				}}
+			/>,
+		);
+
+		expect(screen.getByText("Success")).toBeInTheDocument();
+		expect(
+			screen.getByText("Removed after 30 days (retention)"),
+		).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: /result/i }));
+		expect(await screen.findByTestId("pretty-input")).toHaveTextContent(
+			JSON.stringify({ answer: 42 }),
+		);
+	});
+
+	it("shows the tool call's own error once its execution is removed", () => {
+		mockUseExecution.mockReturnValue(removed);
+		renderWithProviders(
+			<ToolExecutionCard
+				toolCall={makeToolCall()}
+				executionId="exec-1"
+				hasResultMessage
+				toolCallMessage={{
+					tool_state: "error",
+					tool_result: { error: "boom" },
+				}}
+			/>,
+		);
+
+		expect(screen.getByText("Failed")).toBeInTheDocument();
+		expect(screen.getByRole("alert")).toHaveTextContent("boom");
+		expect(
+			screen.getByText("Removed after 30 days (retention)"),
+		).toBeInTheDocument();
 	});
 });

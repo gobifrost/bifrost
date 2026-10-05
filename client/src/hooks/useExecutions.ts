@@ -67,6 +67,26 @@ export function useExecutions(
 }
 
 /**
+ * Whether a run read failed because the run does not exist: it was removed by
+ * run retention, never existed, or is outside the caller's access. Matches an
+ * Error whose message carries the 404 status and a FastAPI `{ detail }` body
+ * saying "not found".
+ */
+export function isNotFoundError(error: unknown): boolean {
+	if (error instanceof Error && error.message.includes("404")) {
+		return true;
+	}
+	if (error && typeof error === "object" && "detail" in error) {
+		const detail = (error as Record<string, unknown>).detail;
+		return (
+			typeof detail === "string" &&
+			detail.toLowerCase().includes("not found")
+		);
+	}
+	return false;
+}
+
+/**
  * Hook to fetch a single execution by ID
  * @param executionId - The execution ID to fetch
  * @param options - Options object with optional disablePolling flag
@@ -91,49 +111,26 @@ export function useExecution(
 			// Keep data fresh for 5 seconds to avoid duplicate requests
 			// (e.g., from React Strict Mode double-mounting)
 			staleTime: 5000,
-			// Retry on 404 for a short period (Redis-first architecture)
-			// The execution may be in Redis pending but not yet in PostgreSQL
-			retry: (failureCount, error) => {
-				// Only retry 404s up to 5 times (10 seconds total with 2s interval)
-				// Check for 404 in multiple error formats:
-				// - Error instance with message containing "404"
-				// - FastAPI HTTPException format: { detail: "...not found..." }
-				// - Generic object with detail property
-				let is404 = false;
-				if (error instanceof Error && error.message.includes("404")) {
-					is404 = true;
-				} else if (
-					error &&
-					typeof error === "object" &&
-					"detail" in error
-				) {
-					const detail = (error as Record<string, unknown>).detail;
-					if (
-						typeof detail === "string" &&
-						detail.toLowerCase().includes("not found")
-					) {
-						is404 = true;
-					}
-				}
-				if (is404) {
-					return failureCount < 5;
-				}
-				// Don't retry other errors
-				return false;
-			},
-			retryDelay: 2000, // Retry every 2 seconds
+			// Retry 404s briefly (Redis-first architecture): the execution may be
+			// pending in Redis but not yet in PostgreSQL. Five retries at 2s.
+			retry: (failureCount, error) =>
+				isNotFoundError(error) && failureCount < 5,
+			retryDelay: 2000,
 			refetchInterval: (query) => {
 				// Disable polling if WebSocket is handling updates
 				if (disablePolling) {
 					return false;
 				}
-
-				// Poll every 2 seconds if status is Pending or Running
-				// Also poll if we haven't got data yet (waiting for worker to create record)
-				const status = query.state.data?.status;
-				if (!query.state.data) {
-					return 2000; // Poll while waiting for execution to appear
+				// A removed run stays removed.
+				if (query.state.error && isNotFoundError(query.state.error)) {
+					return false;
 				}
+				// Poll while waiting for the worker to create the record, but
+				// not once the read has failed.
+				if (!query.state.data) {
+					return query.state.error ? false : 2000;
+				}
+				const status = query.state.data.status;
 				return status === "Pending" || status === "Running"
 					? 2000
 					: false;

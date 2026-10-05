@@ -5,7 +5,10 @@ import { Route, Routes, useLocation } from "react-router-dom";
 import type { components } from "@/lib/v1";
 import { renderWithProviders, screen } from "@/test-utils";
 
-vi.mock("@/hooks/useExecutions", () => ({
+vi.mock("@/hooks/useExecutions", async (importOriginal) => ({
+	isNotFoundError: (
+		await importOriginal<typeof import("@/hooks/useExecutions")>()
+	).isNotFoundError,
 	useExecution: (id: string | undefined) => ({
 		data:
 			id === "execution-428950"
@@ -14,7 +17,17 @@ vi.mock("@/hooks/useExecutions", () => ({
 						result: { ticket_id: 428950 },
 					}
 				: undefined,
+		error:
+			id === "execution-removed"
+				? {
+						detail: "Execution execution-removed not found. Finished runs are removed after 30 days.",
+					}
+				: null,
 	}),
+}));
+
+vi.mock("@/services/runRetention", () => ({
+	useRunRetentionDays: () => 30,
 }));
 
 const mockUseAgentRun = vi.hoisted(() => vi.fn());
@@ -808,6 +821,70 @@ describe("Timeline activity view", () => {
 			"child-1",
 			expect.any(Object),
 		);
+	});
+
+	it("names a tool whose execution was removed", () => {
+		renderWithProviders(
+			<Timeline
+				steps={[
+					step(
+						"tool_call",
+						{ tool_name: "lookup_ticket", arguments: {} },
+						1,
+					),
+					step(
+						"tool_result",
+						{
+							tool_name: "lookup_ticket",
+							result: { ok: true },
+							execution_id: "execution-removed",
+						},
+						2,
+					),
+				]}
+			/>,
+		);
+
+		expect(screen.getByText("lookup_ticket")).toBeInTheDocument();
+		expect(
+			screen.getByText("Removed after 30 days (retention)"),
+		).toBeInTheDocument();
+	});
+
+	it("says a removed delegated run is gone instead of offering retry", async () => {
+		mockUseAgentRun.mockImplementation((runId: string | undefined) => ({
+			data: undefined,
+			isLoading: false,
+			isError: runId === "child-1",
+			error:
+				runId === "child-1"
+					? {
+							detail: "Agent run child-1 not found. Finished runs are removed after 30 days.",
+						}
+					: null,
+			isFetching: false,
+			refetch: vi.fn(),
+		}));
+		const { user } = renderWithProviders(
+			<Timeline
+				steps={[]}
+				childRunIds={["child-1"]}
+				childRuns={[childReference()]}
+			/>,
+		);
+		await user.click(
+			screen.getByRole("button", {
+				name: /^show details for troubleshooting specialist$/i,
+			}),
+		);
+
+		expect(
+			screen.getByText("Removed after 30 days (retention)"),
+		).toBeInTheDocument();
+		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: "Retry delegated run" }),
+		).not.toBeInTheDocument();
 	});
 
 	it("refreshes an expanded delegation only while the child is active", async () => {

@@ -41,6 +41,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { RunDetailHeading } from "@/components/execution/RunDetailHeading";
+import { RunRemovedNotice } from "@/components/execution/RunRemovedNotice";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -48,6 +49,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAgent } from "@/hooks/useAgents";
 import { useAgentRunUpdates } from "@/hooks/useAgentRunUpdates";
+import { isNotFoundError } from "@/hooks/useExecutions";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import {
 	createAgentRunNavigationState,
@@ -168,6 +170,7 @@ export function AgentRunDetailPage() {
 		data: rawRun,
 		isLoading,
 		isError: runError,
+		error: runReadError,
 		isFetching: runFetching,
 		refetch: refetchRun,
 	} = useAgentRun(runId);
@@ -580,12 +583,16 @@ export function AgentRunDetailPage() {
 				<h1 className="font-display text-2xl font-semibold">
 					Agent run
 				</h1>
-				<FleetReadError
-					resource="run details"
-					cached={false}
-					pending={runFetching}
-					onRetry={() => void refetchRun()}
-				/>
+				{isNotFoundError(runReadError) ? (
+					<RunRemovedNotice variant="page" />
+				) : (
+					<FleetReadError
+						resource="run details"
+						cached={false}
+						pending={runFetching}
+						onRetry={() => void refetchRun()}
+					/>
+				)}
 			</div>
 		);
 	}

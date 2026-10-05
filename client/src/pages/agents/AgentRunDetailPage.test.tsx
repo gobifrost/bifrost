@@ -55,8 +55,15 @@ vi.mock("@/hooks/useMediaQuery", () => ({
 }));
 
 const mockUseExecution = vi.fn();
-vi.mock("@/hooks/useExecutions", () => ({
+vi.mock("@/hooks/useExecutions", async (importOriginal) => ({
+	isNotFoundError: (
+		await importOriginal<typeof import("@/hooks/useExecutions")>()
+	).isNotFoundError,
 	useExecution: (id: string | undefined) => mockUseExecution(id),
+}));
+
+vi.mock("@/services/runRetention", () => ({
+	useRunRetentionDays: () => 30,
 }));
 
 vi.mock("@/hooks/useAgentRunUpdates", () => ({
@@ -748,6 +755,25 @@ it("distinguishes failed run reads from missing runs and offers retry", async ()
 	);
 	await user.click(screen.getByRole("button", { name: "Retry run details" }));
 	expect(refetch).toHaveBeenCalledOnce();
+});
+it("says a removed run is gone instead of offering retry", async () => {
+	mockUseAgentRun.mockReturnValue({
+		isLoading: false,
+		isError: true,
+		error: {
+			detail: "Agent run x not found. Finished runs are removed after 30 days.",
+		},
+		isFetching: false,
+		refetch: vi.fn(),
+	});
+	await renderPage();
+	expect(screen.getByRole("status")).toHaveTextContent(
+		"This run isn't available. Finished runs are removed after 30 days (retention). It may also be outside your access.",
+	);
+	expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+	expect(
+		screen.queryByRole("button", { name: "Retry run details" }),
+	).not.toBeInTheDocument();
 });
 it("retains the execution when refreshing its run fails", async () => {
 	mockUseAgentRun.mockReturnValue({
