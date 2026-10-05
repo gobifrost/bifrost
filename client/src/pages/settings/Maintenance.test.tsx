@@ -34,6 +34,10 @@ vi.mock("@/pages/settings/AuditRetentionSettings", () => ({
 	AuditRetentionSettings: () => <section>Audit retention settings</section>,
 }));
 
+vi.mock("@/pages/settings/RunRetentionSettings", () => ({
+	RunRetentionSettings: () => <section>Run retention settings</section>,
+}));
+
 vi.mock("@/components/ImportDialog", () => ({
 	ImportDialog: ({
 		open,
@@ -71,6 +75,17 @@ afterEach(() => {
 });
 
 describe("Maintenance", () => {
+	it("shows the run history card after the audit retention card", () => {
+		renderWithProviders(<Maintenance />);
+
+		const audit = screen.getByText("Audit retention settings");
+		const runs = screen.getByText("Run retention settings");
+		expect(
+			audit.compareDocumentPosition(runs) &
+				Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
+	});
+
 	it("runs selected documentation and app dependency actions in fixed queue order and shows the last results", async () => {
 		mockAuthFetch
 			.mockResolvedValueOnce(

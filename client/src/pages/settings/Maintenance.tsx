@@ -32,6 +32,7 @@ import { exportAll } from "@/services/exportImport";
 import { ImportDialog } from "@/components/ImportDialog";
 import { ArtifactRetentionSettings } from "@/pages/settings/ArtifactRetentionSettings";
 import { AuditRetentionSettings } from "@/pages/settings/AuditRetentionSettings";
+import { RunRetentionSettings } from "@/pages/settings/RunRetentionSettings";
 
 type ScanResultType = "none" | "docs" | "app-deps";
 
@@ -316,6 +317,7 @@ export function Maintenance() {
 		<div className="space-y-6">
 			<ArtifactRetentionSettings />
 			<AuditRetentionSettings />
+			<RunRetentionSettings />
 
 			{/* Export/Import Card */}
 			<Card>
