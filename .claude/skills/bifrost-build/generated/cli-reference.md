@@ -1788,6 +1788,33 @@ Options:
   --help                        Show this message and exit.
 ```
 
+## `permissions`
+
+```
+Usage: permissions [OPTIONS] COMMAND [ARGS]...
+
+  Inspect the permission catalog.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  list  List permission domains by area, with scope and enforcement.
+```
+
+### `permissions list`
+
+```
+Usage: permissions list [OPTIONS]
+
+  List permission domains by area, with scope and enforcement.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
 ## `policy-rule`
 
 ```

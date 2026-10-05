@@ -1919,6 +1919,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/permissions/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List permission domains
+         * @description Every permission domain with its title, area, guidance, actions, scope and enforcement
+         */
+        get: operations["get_permission_catalog_api_permissions_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/executions": {
         parameters: {
             query?: never;
@@ -23292,6 +23312,36 @@ export interface components {
             affected_entities?: components["schemas"]["AffectedEntity"][];
         };
         /**
+         * PermissionCatalogEntry
+         * @description One permission domain as the roles and access screens present it.
+         */
+        PermissionCatalogEntry: {
+            /** Domain */
+            domain: string;
+            /** Title */
+            title: string;
+            /**
+             * Area
+             * @enum {string}
+             */
+            area: "Identity & access" | "Automation" | "Data & content" | "Integrations & secrets" | "Platform";
+            /** Description */
+            description: string;
+            /** Who Should Hold */
+            who_should_hold: string;
+            /** Actions */
+            actions: string[];
+            /** Privileged */
+            privileged: string[];
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "per_organization" | "platform_wide" | "varies";
+            /** Enforced */
+            enforced: boolean;
+        };
+        /**
          * PlatformJobAccepted
          * @description Response returned immediately after a platform job is enqueued.
          */
@@ -33178,6 +33228,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_permission_catalog_api_permissions_catalog_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PermissionCatalogEntry"][];
                 };
             };
         };

@@ -398,6 +398,7 @@
 | POST | `/api/packages/install` |
 | GET | `/api/packages/updates` |
 | DELETE | `/api/packages/{package_name}` |
+| GET | `/api/permissions/catalog` |
 | GET | `/api/platform-jobs` |
 | GET | `/api/platform-jobs/{job_id}` |
 | POST | `/api/platform-jobs/{job_id}/cancel` |

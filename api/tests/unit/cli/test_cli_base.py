@@ -217,6 +217,7 @@ class TestSubgroupRegistration:
         assert set(ENTITY_GROUPS) == {
             "orgs",
             "roles",
+            "permissions",
             "workflows",
             "forms",
             "agents",

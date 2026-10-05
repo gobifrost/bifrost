@@ -27,6 +27,7 @@ from .files import files_group
 from .forms import forms_group
 from .integrations import integrations_group
 from .orgs import orgs_group
+from .permissions import permissions_group
 from .policy_rules import policy_rule_group
 from .requirements import requirements_group
 from .retention import retention_group
@@ -41,6 +42,7 @@ from .workflows import workflows_group
 ENTITY_GROUPS: dict[str, click.Group] = {
     "orgs": orgs_group,
     "roles": roles_group,
+    "permissions": permissions_group,
     "workflows": workflows_group,
     "forms": forms_group,
     "agents": agents_group,
