@@ -137,8 +137,10 @@ class TestShow:
         fake_client.respond("GET", AUDIT, _audit_status(hot_days=90, archive_days=None))
         assert _invoke(["show"]).output.splitlines() == [
             "Runs and events: kept 30 days (oldest finished run 2026-09-04)",
-            "Audit: 90 days in the database, archive kept forever "
-            "(oldest in database 2026-07-10, archived through 2026-07-09)",
+            (
+                "Audit: 90 days in the database, archive kept forever "
+                + "(oldest in database 2026-07-10, archived through 2026-07-09)"
+            ),
         ]
 
     def test_forever_and_a_finite_archive_window(self, fake_client: _FakeClient) -> None:

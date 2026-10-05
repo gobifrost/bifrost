@@ -226,7 +226,7 @@ async def explain_access_check(event_id: UUID, user: CurrentActiveUser, db: DbSe
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Only access checks can be explained"
         )
-    then = AccessTrace.model_validate(cast("dict[str, Any]", row.details)["trace"])
+    then = AccessTrace.model_validate(cast(dict[str, Any], row.details)["trace"])
     now, now_unavailable = await rerun(db, row)
     return AccessExplanation(
         event=(await _entries(db, [row]))[0],

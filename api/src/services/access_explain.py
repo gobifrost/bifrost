@@ -67,7 +67,7 @@ def stored_note(row: AuditLog) -> Note:
     facts.pop("operation")
     stored_target = facts.pop("target")
     target: NoteTarget = ALL_ORGS if stored_target == ALL_ORGS else _uuid(stored_target)
-    return Note(cast("NoteKind", row.resource_type), target, facts)
+    return Note(cast(NoteKind, row.resource_type), target, facts)
 
 
 async def rerun(db: AsyncSession, row: AuditLog) -> tuple[Trace | None, NowUnavailable | None]:
