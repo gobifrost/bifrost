@@ -24,6 +24,7 @@ from src.services.authorization.enforce import (
     require_operation,
     require_unprotected,
 )
+from src.services.access_explain import entry_for_key, test_access
 from src.services.events import emit_event
 from src.services.user_invite_service import UserInviteService
 from src.services.user_mfa_reset import reset_user_mfa as reset_user_mfa_service
@@ -33,6 +34,8 @@ from src.services.user_role_assignments import (
     replace_role_assignments as replace_role_assignments_service,
 )
 from src.models import User as UserORM, UserRole as UserRoleORM, FormRole as FormRoleORM
+from src.models import Organization as OrganizationORM
+from src.models.orm.workflows import Workflow as WorkflowORM
 from src.models import (
     BulkUserOperation,
     BulkUserResponse,
@@ -42,6 +45,7 @@ from src.models import (
     UserRolesResponse,
     UserFormsResponse,
 )
+from src.models.contracts.access_checks import AccessCheckRequest, AccessTrace
 from src.models.contracts.role_assignments import (
     UserRoleAssignmentsResponse,
     UserRoleAssignmentsUpdate,
@@ -576,3 +580,54 @@ async def replace_role_assignments(
         )
     except RoleAssignmentError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
+
+
+@router.post(
+    "/{user_id}/access/check",
+    response_model=AccessTrace,
+    summary="Test a user's access",
+    description=(
+        "What the managed-identity model decides for this user performing an access-list operation "
+        "in an organization (or Global), directly or through a workflow. Report-only; nothing is "
+        "recorded."
+    ),
+)
+async def check_user_access(
+    user_id: UUID,
+    body: AccessCheckRequest,
+    user: CurrentActiveUser,
+    db: DbSession,
+) -> AccessTrace:
+    operation = "POST /api/users/{user_id}/access/check"
+    caller = await load_caller(db, user)
+    reach = operation_reach(caller, operation)
+    subject = await db.get(UserORM, user_id)
+    if subject is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    require_operation(caller, operation, org_target(subject.organization_id))
+    entry = entry_for_key(body.operation)
+    if entry is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown operation {body.operation!r}: use an access-list catalog id or \"METHOD /api/path\"",
+        )
+    target = body.organization_id if isinstance(body.organization_id, UUID) else None
+    if target is not None:
+        if await db.get(OrganizationORM, target) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
+        if not reach.covers(target):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only test access in organizations you reach",
+            )
+    if body.workflow_id is not None:
+        workflow = await db.get(WorkflowORM, body.workflow_id)
+        if workflow is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found")
+        if not reach.covers(workflow.organization_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only test workflows in organizations you reach",
+            )
+    trace = await test_access(db, subject.id, target, entry, body.workflow_id)
+    return AccessTrace.model_validate(trace.as_dict())

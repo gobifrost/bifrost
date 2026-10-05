@@ -256,6 +256,10 @@ _OPERATOR_AT_CUSTOMER_ORG = {
     # downloading the export while the reach it was made with is unchanged.
     ("POST /api/audit/exports", "roleassignments.read"),
     ("GET /api/audit/exports/{job_id}/download", "roleassignments.read"),
+    # Explaining those access checks, and testing what the model decides for
+    # a user, inside the operator's reach.
+    ("GET /api/audit/{event_id}/explain", "roleassignments.read"),
+    ("POST /api/users/{user_id}/access/check", "roleassignments.read"),
 }
 _IDENTITY_CUSTOM_AT_HOME = {
     (key, permission)

@@ -1641,6 +1641,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/{user_id}/access/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test a user's access
+         * @description What the managed-identity model decides for this user performing an access-list operation in an organization (or Global), directly or through a workflow. Report-only; nothing is recorded.
+         */
+        post: operations["check_user_access_api_users__user_id__access_check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/roles": {
         parameters: {
             query?: never;
@@ -3405,6 +3425,26 @@ export interface paths {
         };
         /** Download a finished audit export */
         get: operations["download_audit_export_api_audit_exports__job_id__download_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/audit/{event_id}/explain": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Explain an access check
+         * @description A stored access check as decided then, and judged again now against the run user's current roles and the workflow's current powers. Platform Operators explain access checks in the organizations they reach.
+         */
+        get: operations["explain_access_check_api_audit__event_id__explain_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -11828,6 +11868,79 @@ export interface components {
              * @default 0
              */
             call_count: number;
+        };
+        /**
+         * AccessCheckRequest
+         * @description A what-if: could this user do this operation in this organization?
+         */
+        AccessCheckRequest: {
+            /**
+             * Organization Id
+             * @description Organization to act in, or "global".
+             */
+            organization_id: string | "global";
+            /**
+             * Operation
+             * @description Access-list operation: a catalog id (e.g. tables.documents.create) or "METHOD /api/path".
+             */
+            operation: string;
+            /**
+             * Workflow Id
+             * @description Workflow whose powers apply; omit for the user acting directly.
+             */
+            workflow_id?: string | null;
+        };
+        /**
+         * AccessExplanation
+         * @description A stored access check, as decided then and judged again now.
+         */
+        AccessExplanation: {
+            event: components["schemas"]["AuditLogEntry"];
+            then: components["schemas"]["AccessTrace"];
+            now: components["schemas"]["AccessTrace"] | null;
+            /** Now Unavailable */
+            now_unavailable: ("rows_not_stored" | "run_user_missing" | "workflow_missing" | "solution_not_recorded") | null;
+            /** Changed */
+            changed: boolean | null;
+        };
+        /**
+         * AccessStep
+         * @description One step of an access trace.
+         */
+        AccessStep: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "passed" | "stopped" | "not_applicable" | "not_reached";
+            /** Reason */
+            reason: string;
+            /**
+             * Facts
+             * @default {}
+             */
+            facts: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * AccessTrace
+         * @description What the managed-identity model decides, step by step.
+         */
+        AccessTrace: {
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "success" | "failure";
+            /** Enforced */
+            enforced: boolean;
+            /** Steps */
+            steps: components["schemas"]["AccessStep"][];
         };
         /**
          * AccessibleTool
@@ -32215,6 +32328,41 @@ export interface operations {
             };
         };
     };
+    check_user_access_api_users__user_id__access_check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccessCheckRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccessTrace"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "roles.list": {
         parameters: {
             query?: {
@@ -36071,6 +36219,37 @@ export interface operations {
                 };
                 content: {
                     "application/gzip": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    explain_access_check_api_audit__event_id__explain_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccessExplanation"];
                 };
             };
             /** @description Validation Error */

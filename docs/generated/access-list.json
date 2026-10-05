@@ -1806,6 +1806,20 @@
   },
   {
     "access_class": "permission",
+    "boundary": "organization",
+    "current_gate": "evaluator",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "GET",
+    "operation_id": null,
+    "path": "/api/audit/{event_id}/explain",
+    "permission": "roleassignments.read",
+    "reason": "Explains a stored access check: as decided then, and judged again now. Platform Admins explain any audit event; other holders of this permission explain only access checks in the organizations it reaches. Decided by the evaluator (src.services.authorization.enforce)."
+  },
+  {
+    "access_class": "permission",
     "boundary": "platform",
     "current_gate": "superuser",
     "inline_checks": [],
@@ -8687,6 +8701,20 @@
     "path": "/api/users/{user_id}",
     "permission": "users.lifecycle.readwrite",
     "reason": "Updates a user. Classified by its most privileged fields (organization_id moves the user, at the source and destination; email/is_verified/is_external change identity); name, password, mfa_enabled and is_active are users.readwrite support changes, and is_superuser takes a Platform Admin. Every supplied field is decided. Decided by the evaluator (src.services.authorization.enforce) at the user's organization; protected users only for a Platform Admin."
+  },
+  {
+    "access_class": "permission",
+    "boundary": "organization",
+    "current_gate": "evaluator",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "POST",
+    "operation_id": null,
+    "path": "/api/users/{user_id}/access/check",
+    "permission": "roleassignments.read",
+    "reason": "Tests what the managed-identity model decides for a user performing an operation in an organization, directly or through a workflow; report-only, nothing is recorded. Decided by the evaluator (src.services.authorization.enforce) at the user's organization; the target organization and the workflow must be in the caller's reach."
   },
   {
     "access_class": "permission",

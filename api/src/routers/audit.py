@@ -11,6 +11,7 @@ organizations that permission reaches (decision R3b P2).
 import logging
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
+from typing import Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
@@ -25,12 +26,14 @@ from src.jobs.platform.audit_query import AUDIT_QUERY_DEFINITION, enqueue_audit_
 from src.models import AuditLogActor, AuditLogEntry, AuditLogListResponse
 from src.models import Organization as OrganizationORM
 from src.models import User as UserORM
+from src.models.contracts.access_checks import AccessExplanation, AccessTrace
 from src.models.contracts.audit import AuditLogGroup
 from src.models.contracts.audit_retention import AuditExportRequest
 from src.models.contracts.platform_jobs import PlatformJobAccepted
 from src.models.orm.audit import AuditLog
 from src.models.orm.platform_jobs import PlatformJob
 from src.repositories.audit_logs import AuditLogRepository, GroupBy
+from src.services.access_explain import rerun
 from src.services.audit_retention.archiver import audit_retention_info
 from src.services.audit_retention.export import (
     ACCESS_CHECK_ACTIONS,
@@ -38,6 +41,7 @@ from src.services.audit_retention.export import (
     AuditQueryPayload,
     ReachSnapshot,
 )
+from src.services.audit_retention.settings import AuditRetentionSettingsService
 from src.services.audit_retention.store import AuditArchiveStore
 from src.services.authorization.enforce import load_caller, operation_reach
 from src.services.authorization.reach import OrgReach
@@ -191,6 +195,45 @@ async def download_audit_export(job_id: UUID, user: CurrentActiveUser, db: DbSes
         body(),
         media_type="application/gzip",
         headers={"Content-Disposition": f'attachment; filename="audit-export-{start}-{end}.jsonl.gz"'},
+    )
+
+
+@router.get(
+    "/{event_id}/explain",
+    response_model=AccessExplanation,
+    summary="Explain an access check",
+    description=(
+        "A stored access check as decided then, and judged again now against the run user's current "
+        "roles and the workflow's current powers. Platform Operators explain access checks in the "
+        "organizations they reach."
+    ),
+)
+async def explain_access_check(event_id: UUID, user: CurrentActiveUser, db: DbSession) -> AccessExplanation:
+    reach = operation_reach(await load_caller(db, user), "GET /api/audit/{event_id}/explain")
+    row = await db.get(AuditLog, event_id)
+    if row is None:
+        hot_days = (await AuditRetentionSettingsService(db).get_settings()).hot_days
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"Audit event not found. Events older than {hot_days} days are archived; "
+                "export that day from the audit log to see them."
+            ),
+        )
+    if not reach.everything and (row.action != "access.check" or not reach.covers(row.organization_id)):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot read this audit event")
+    if row.action != "access.check":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Only access checks can be explained"
+        )
+    then = AccessTrace.model_validate(cast("dict[str, Any]", row.details)["trace"])
+    now, now_unavailable = await rerun(db, row)
+    return AccessExplanation(
+        event=(await _entries(db, [row]))[0],
+        then=then,
+        now=None if now is None else AccessTrace.model_validate(now.as_dict()),
+        now_unavailable=now_unavailable,
+        changed=None if now is None else now.outcome != then.outcome,
     )
 
 
