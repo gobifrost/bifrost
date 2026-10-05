@@ -10,6 +10,7 @@ import {
 } from "@tanstack/react-query";
 import { $api, apiClient } from "@/lib/api-client";
 import { invalidateAuthorization } from "@/lib/authorization";
+import { USER_ACCESS_QUERY_KEY } from "@/services/access";
 
 export interface UsersPageParams {
 	scope?: string | null;
@@ -150,6 +151,7 @@ export function useReplaceUserRoleAssignments() {
 			queryClient.invalidateQueries({
 				queryKey: ["get", "/api/roles/{role_id}/users"],
 			});
+			queryClient.invalidateQueries({ queryKey: USER_ACCESS_QUERY_KEY });
 			void invalidateAuthorization(queryClient);
 		},
 	});
@@ -182,6 +184,7 @@ export function useUpdateUser() {
 			queryClient.invalidateQueries({
 				queryKey: ["get", "/api/users/{user_id}/role-assignments"],
 			});
+			queryClient.invalidateQueries({ queryKey: USER_ACCESS_QUERY_KEY });
 		},
 	});
 }

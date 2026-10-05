@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
 	DataTable,
 	DataTableBody,
@@ -511,31 +511,27 @@ export function Roles() {
 					</div>
 				) : rolesQuery.isError &&
 				  !rolesQuery.data ? null : roles.length === 0 ? (
-					<Card>
-						<CardContent className="flex flex-col items-center justify-center py-12 text-center">
-							<UserCog className="h-12 w-12 text-muted-foreground" />
-							<h3 className="mt-4 text-lg font-semibold">
-								{searchTerm
-									? "No roles match your search"
-									: "No roles found"}
-							</h3>
-							<p className="mt-2 text-sm text-muted-foreground">
-								{searchTerm
-									? "Try adjusting your search term or clear the filter"
-									: "Get started by creating your first role"}
-							</p>
-							{canManage && (
-								<Button
-									variant="outline"
-									onClick={handleAdd}
-									className="mt-4"
-								>
+					<EmptyState
+						icon={UserCog}
+						title={
+							searchTerm
+								? "No roles match your search"
+								: "No roles found"
+						}
+						description={
+							searchTerm
+								? "Try adjusting your search term or clear the filter"
+								: "Get started by creating your first role"
+						}
+						action={
+							canManage && (
+								<Button variant="outline" onClick={handleAdd}>
 									<Plus className="h-4 w-4" />
 									Create role
 								</Button>
-							)}
-						</CardContent>
-					</Card>
+							)
+						}
+					/>
 				) : compactLayout ? (
 					<RoleMobileList
 						roles={roles}

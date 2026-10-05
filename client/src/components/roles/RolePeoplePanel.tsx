@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, Users } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { ListPagination } from "@/components/pagination/ListPagination";
@@ -7,6 +7,7 @@ import { SearchBox } from "@/components/search/SearchBox";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRoleUsersPage } from "@/hooks/useRoles";
 import { getErrorMessage } from "@/lib/api-error";
@@ -82,11 +83,14 @@ export function RolePeoplePanel({ roleId }: { roleId: string }) {
 					<Skeleton className="h-12 w-full" />
 				</div>
 			) : users.length === 0 ? (
-				<p className="rounded-[var(--bf-radius-surface)] border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
-					{search
-						? "No one with this role matches your search."
-						: "No one has this role yet."}
-				</p>
+				<EmptyState
+					icon={Users}
+					title={
+						search
+							? "No one with this role matches your search."
+							: "No one has this role yet."
+					}
+				/>
 			) : (
 				<div className="rounded-[var(--bf-radius-surface)] border bg-card">
 					<ul aria-label="People with this role" className="divide-y">
