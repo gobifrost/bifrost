@@ -328,7 +328,7 @@ describe("RunRetentionSettings", () => {
 		await waitFor(() => expect(updateRetention).toHaveBeenCalledTimes(2));
 	});
 
-	it("previews a run from the job's result", async () => {
+	it("previews a run from the job's result, counts in the status line only", async () => {
 		const { user } = renderWithProviders(<RunRetentionSettings />);
 		await screen.findByLabelText("Keep finished runs and events (days)");
 		await waitFor(() =>
@@ -341,8 +341,9 @@ describe("RunRetentionSettings", () => {
 		await waitFor(() =>
 			expect(watchJob).toHaveBeenCalledWith("job-1", expect.any(Function)),
 		);
-		completeJob({
-			status: "succeeded",
+		const preview = {
+			status: "succeeded" as const,
+			completed_at: LAST_RUN_AT,
 			result: {
 				dry_run: true,
 				cutoff: "2026-08-06T03:00:00Z",
@@ -350,13 +351,19 @@ describe("RunRetentionSettings", () => {
 				agent_runs: 1,
 				events: 4000,
 			},
-		});
+		};
+		getRetention.mockResolvedValue(status(60, job(preview)));
+		completeJob(preview);
 
+		expect(await screen.findByRole("status")).toHaveTextContent(
+			/^Would delete 12,345 workflow runs, 1 agent run and 4,000 events\.$/,
+		);
 		expect(
 			await screen.findByText(
-				"Would delete 12,345 workflow runs, 1 agent run and 4,000 events.",
+				`Last preview ${formatRelativeTime(LAST_RUN_AT)}.`,
 			),
 		).toBeInTheDocument();
+		expect(screen.getAllByText(/Would delete/)).toHaveLength(1);
 		expect(stopWatching).toHaveBeenCalled();
 	});
 

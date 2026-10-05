@@ -154,10 +154,9 @@ function lastRunSummary(job: PlatformJob): string {
 	if (job.status !== "succeeded" || !result) {
 		return `${kind} ${when} ${job.status}.`;
 	}
+	// A preview's counts are in the status line right below.
+	if (result.dry_run) return `${kind} ${when}.`;
 	if (result.skipped) return `${kind} ${when}: skipped, runs are kept forever.`;
-	if (result.dry_run) {
-		return `${kind} ${when}: ${planSummary(result as unknown as RunRetentionPlan)}`;
-	}
 	const [workflowRuns, agentRuns, events] = planParts({
 		workflow_runs: result.workflow_runs_deleted as number,
 		agent_runs: result.agent_runs_deleted as number,
