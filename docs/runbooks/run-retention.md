@@ -4,8 +4,8 @@ Finished workflow runs, finished agent runs and events are deleted once they are
 older than an administrator-set window (30 days by default, or kept forever).
 Cost and resource history survive the deletion. Code:
 `api/src/services/run_retention/`, `api/src/jobs/platform/run_retention.py`,
-`api/src/jobs/schedulers/run_retention.py`. It replaces the old fixed 30-day
-event cleanup (`event_cleanup`).
+`api/src/jobs/schedulers/run_retention.py`. It replaces the old 30-day event
+purge in `event_cleanup` (that module still exists for stuck event deliveries).
 
 ## What is deleted
 
@@ -84,7 +84,7 @@ values). Any signed-in user can read the single number through
 shared platform-job system: progress and status are in the notification stream
 and under Diagnostics → Scheduler. It takes the resource lock `run.retention`
 (one run at a time, manual runs included), times out after 2 hours, makes up to
-3 attempts, and is retried only after a runner loss.
+3 attempts, and is retried only after a runner loss (a failed run is not retried).
 
 1. On first start it reads the setting and fixes `cutoff = start - days` in the
    job checkpoint. A resumed attempt uses the same cutoff, whatever the setting
@@ -110,7 +110,7 @@ the lease. A failed batch changes nothing.
 
 | Code / ending | Meaning | What to do |
 | --- | --- | --- |
-| `run_delete_mismatch` | A batch deleted a different number of rows than it selected. The batch was rolled back (so were the rollup and the `ai_usage` stamps). Retryable; the job retries up to its attempt limit. | Run now. If it repeats, something else is deleting from `executions`, `agent_runs` or `events` concurrently; look at the job log and at that writer. |
+| `run_delete_mismatch` | A batch deleted a different number of rows than it selected. The batch was rolled back (so were the rollup and the `ai_usage` stamps). The job ends `failed` with the counts so far; nothing in the failing batch was deleted, and it is not retried automatically. | Investigate, then Run now (it continues from the database). If it repeats, something else is deleting from `executions`, `agent_runs` or `events` concurrently; look at the job log and at that writer. |
 | `handler_error` | An unexpected error. See the scheduler log. Earlier committed batches stay committed. | Read the logs, fix, Run now. |
 | Cancelled (lease lost) | Another runner took over the job. The old runner stops without changing anything, because every delete needs the current lease; the job continues under the new lease or is requeued. | Nothing. |
 | Cancelled (manual) | A manual cancel stops the run between batches. Batches already committed stay deleted and rolled up. | Run now continues from the database. |
@@ -239,10 +239,11 @@ scan the whole table and the job is slow.
 
 ## Smoke check after a deploy
 
-`prod_smoke/checks/<date>_run_retention.sql` covers: the policy row (none means
+The operator-local `prod_smoke/checks/<date>_run_retention.sql` (kept with the
+operator's smoke-test notes, not in this repository) covers: the policy row (none means
 30 days); the last three `run.retention` jobs with status and counts; the oldest
-finished workflow run and agent run (within 31 days, or a shrinking backlog while
+finished workflow run and agent run (within 31 days, or its date advancing each night while
 the cap still applies); `workflow_run_daily` `sum(run_count)` and `max(day)` (the
 sum must grow by exactly the workflow runs deleted); the `ai_usage` row count
-(must not drop between runs); `n_dead_tup` and `last_autovacuum` for `executions`;
+(an estimate; must not drop between runs); `n_dead_tup` and `last_autovacuum` for `executions`;
 and the oldest event.
