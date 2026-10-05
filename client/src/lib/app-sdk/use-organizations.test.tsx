@@ -43,7 +43,9 @@ function Organizations({
 					? "loading"
 					: error
 						? `error:${error.message}`
-						: (data?.map((organization) => organization.name).join(",") ?? "empty")}
+						: (data
+								?.map((organization) => organization.name)
+								.join(",") ?? "empty")}
 			</output>
 			<button onClick={() => void refetch()}>refresh</button>
 		</>
@@ -60,7 +62,11 @@ describe("useOrganizations", () => {
 		});
 
 		render(
-			<BifrostProvider baseUrl="https://api.example" token="token" fetchImpl={fetchImpl}>
+			<BifrostProvider
+				baseUrl="https://api.example"
+				token="token"
+				fetchImpl={fetchImpl}
+			>
 				<Organizations includeInactive />
 			</BifrostProvider>,
 		);
@@ -74,22 +80,25 @@ describe("useOrganizations", () => {
 			<BifrostProvider
 				baseUrl="/"
 				token="token"
-				fetchImpl={vi.fn(async () => new Response("forbidden", { status: 403 }))}
+				fetchImpl={vi.fn(
+					async () => new Response("forbidden", { status: 403 }),
+				)}
 			>
 				<Organizations />
 			</BifrostProvider>,
 		);
 
 		await waitFor(() =>
-			expect(screen.getByRole("status", { name: "organizations" })).toHaveTextContent(
-				"error:403",
-			),
+			expect(
+				screen.getByRole("status", { name: "organizations" }),
+			).toHaveTextContent("error:403"),
 		);
 	});
 
 	it("does not fetch while disabled, clears prior data, and fetches after enabling", async () => {
-		const fetchImpl = vi.fn(async () =>
-			new Response(JSON.stringify(ORGANIZATIONS), { status: 200 }),
+		const fetchImpl = vi.fn(
+			async () =>
+				new Response(JSON.stringify(ORGANIZATIONS), { status: 200 }),
 		);
 		const view = render(
 			<BifrostProvider baseUrl="/" token="token" fetchImpl={fetchImpl}>
@@ -104,7 +113,9 @@ describe("useOrganizations", () => {
 			</BifrostProvider>,
 		);
 		await waitFor(() =>
-			expect(screen.getByRole("status", { name: "organizations" })).toHaveTextContent("empty"),
+			expect(
+				screen.getByRole("status", { name: "organizations" }),
+			).toHaveTextContent("empty"),
 		);
 		expect(fetchImpl).toHaveBeenCalledTimes(1);
 
@@ -131,9 +142,13 @@ describe("useOrganizations", () => {
 			</BifrostProvider>,
 		);
 		await screen.findByText("Acme");
-		await act(async () => screen.getByRole("button", { name: "refresh" }).click());
+		await act(async () =>
+			screen.getByRole("button", { name: "refresh" }).click(),
+		);
 		await waitFor(() =>
-			expect(screen.getByRole("status", { name: "organizations" })).toHaveTextContent("error:"),
+			expect(
+				screen.getByRole("status", { name: "organizations" }),
+			).toHaveTextContent("error:"),
 		);
 		expect(fetchImpl).toHaveBeenCalledTimes(2);
 	});
@@ -143,22 +158,42 @@ describe("useOrganizations", () => {
 		const fetchImpl = vi
 			.fn()
 			.mockImplementationOnce(() => oldResponse.promise)
-			.mockResolvedValueOnce(new Response(JSON.stringify([{ ...ORGANIZATIONS[0], name: "New scope" }])));
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify([
+						{ ...ORGANIZATIONS[0], name: "New scope" },
+					]),
+				),
+			);
 		const view = render(
-			<BifrostProvider baseUrl="https://api.example" token="one" orgScope="org-old" fetchImpl={fetchImpl}>
+			<BifrostProvider
+				baseUrl="https://api.example"
+				token="one"
+				orgScope="org-old"
+				fetchImpl={fetchImpl}
+			>
 				<Organizations />
 			</BifrostProvider>,
 		);
 		await waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
 
 		view.rerender(
-			<BifrostProvider baseUrl="https://api.example" token="two" orgScope="org-new" fetchImpl={fetchImpl}>
+			<BifrostProvider
+				baseUrl="https://api.example"
+				token="two"
+				orgScope="org-new"
+				fetchImpl={fetchImpl}
+			>
 				<Organizations />
 			</BifrostProvider>,
 		);
 		await screen.findByText("New scope");
-		await act(async () => oldResponse.resolve(new Response(JSON.stringify(ORGANIZATIONS))));
-		expect(screen.getByRole("status", { name: "organizations" })).toHaveTextContent("New scope");
+		await act(async () =>
+			oldResponse.resolve(new Response(JSON.stringify(ORGANIZATIONS))),
+		);
+		expect(
+			screen.getByRole("status", { name: "organizations" }),
+		).toHaveTextContent("New scope");
 	});
 
 	it("surfaces network failures", async () => {
@@ -166,7 +201,9 @@ describe("useOrganizations", () => {
 			<BifrostProvider
 				baseUrl="/"
 				token="token"
-				fetchImpl={vi.fn(async () => Promise.reject(new Error("offline")))}
+				fetchImpl={vi.fn(async () =>
+					Promise.reject(new Error("offline")),
+				)}
 			>
 				<Organizations />
 			</BifrostProvider>,

@@ -15,6 +15,31 @@
 
 export const wireSurface = {
   http: {
+		// use-branding.ts: public platform branding, shared with the main client
+		"GET /api/branding": {
+			responseFields: [
+				"application_name",
+				"primary_color",
+				"square_logo_url",
+				"rectangle_logo_url",
+				"terminology",
+			],
+		},
+		// use-organizations.ts: caller-visible organizations (server authorization)
+		"GET /api/organizations": {
+			queryParams: ["include_inactive"],
+			responseFields: [
+				"id",
+				"name",
+				"domain",
+				"is_active",
+				"is_provider",
+				"settings",
+				"created_at",
+				"created_by",
+				"updated_at",
+			],
+		},
     // use-workflow.ts: useWorkflow().run()
     "POST /api/workflows/execute": {
       requestBody: ["workflow_id", "input_data", "app_id"],

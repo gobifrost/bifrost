@@ -22,9 +22,10 @@ export interface UseOrganizationsResult {
  * Lists the organizations visible to the current caller and provider scope.
  * Server authorization remains authoritative; a 403 is returned as `error`.
  */
-export function useOrganizations(
-	{ enabled = true, includeInactive = false }: UseOrganizationsOptions = {},
-): UseOrganizationsResult {
+export function useOrganizations({
+	enabled = true,
+	includeInactive = false,
+}: UseOrganizationsOptions = {}): UseOrganizationsResult {
 	return useApiQuery<Organization[]>(
 		`/api/organizations?include_inactive=${includeInactive}`,
 		{ enabled },

@@ -23,7 +23,10 @@ export interface UseBrandingResult {
 	colors: ReturnType<typeof createBrandPalette>["light"];
 }
 
-function resolveLogoUrl(url: string | null | undefined, baseUrl: string): string | null {
+function resolveLogoUrl(
+	url: string | null | undefined,
+	baseUrl: string,
+): string | null {
 	if (!url || !url.startsWith("/")) return url ?? null;
 	if (baseUrl === "/") return url;
 	return `${baseUrl.replace(/\/$/, "")}${url}`;
@@ -36,7 +39,10 @@ function resolveBrandingUrls(
 	return {
 		...branding,
 		square_logo_url: resolveLogoUrl(branding.square_logo_url, baseUrl),
-		rectangle_logo_url: resolveLogoUrl(branding.rectangle_logo_url, baseUrl),
+		rectangle_logo_url: resolveLogoUrl(
+			branding.rectangle_logo_url,
+			baseUrl,
+		),
 	};
 }
 
@@ -46,9 +52,9 @@ function resolveBrandingUrls(
  * Logo URLs returned by the API are rooted at the Bifrost backend rather than
  * the app's own Vite origin, which keeps externally developed apps branded.
  */
-export function useBranding(
-	{ applyTheme = true }: UseBrandingOptions = {},
-): UseBrandingResult {
+export function useBranding({
+	applyTheme = true,
+}: UseBrandingOptions = {}): UseBrandingResult {
 	const { baseUrl, theme } = useBifrostContext();
 	const query = useApiQuery<BrandingSettings>("/api/branding");
 	const data = useMemo(

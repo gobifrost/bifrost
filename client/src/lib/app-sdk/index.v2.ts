@@ -67,3 +67,15 @@ export { useFiles } from "./use-files";
 export { useUser, RequireRole } from "./use-user";
 export type { BifrostUser, RequireRoleProps } from "./use-user";
 export type { UseFilesOptions, UseFilesResult } from "./use-files";
+
+export { useBranding } from "./use-branding";
+export type { UseBrandingOptions, UseBrandingResult } from "./use-branding";
+export type { BrandingSettings } from "./branding-theme";
+export type { BrandPalette, BrandPaletteTheme } from "./brand-palette";
+
+export { useOrganizations } from "./use-organizations";
+export type {
+	Organization,
+	UseOrganizationsOptions,
+	UseOrganizationsResult,
+} from "./use-organizations";

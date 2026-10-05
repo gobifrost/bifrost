@@ -194,31 +194,34 @@ export function BifrostProvider({
     [theme, setTheme],
   );
 
-  const value = useMemo<BifrostContextValue>(() => {
-    const baseFetch = fetchImpl ?? globalThis.fetch;
-		const currentToken = () => {
-			const auth = platformAuth();
-			return auth ? auth.getAccessToken() : token;
-		};
-		const authedFetch: typeof fetch = async (input, init) => {
+	const currentToken = useCallback(() => {
+		const auth = platformAuth();
+		return auth ? auth.getAccessToken() : token;
+	}, [token]);
+
+	// Theme controls do not change authentication. Keep data-hook requests
+	// stable when the host or the app switches between light and dark.
+	const authedFetch = useMemo<typeof fetch>(() => {
+		const baseFetch = fetchImpl ?? globalThis.fetch;
+		const authenticatedFetch: typeof fetch = async (input, init) => {
 			const callerHeaders = new Headers(init?.headers);
 			const managesAuthorization = !callerHeaders.has("Authorization");
 			const requestWithToken = (accessToken: string | null) => {
 				const headers = new Headers(callerHeaders);
 				if (managesAuthorization && accessToken) {
 					headers.set("Authorization", `Bearer ${accessToken}`);
-      }
-      if (orgScope && !headers.has("X-Bifrost-Org")) {
-        headers.set("X-Bifrost-Org", orgScope);
-      }
-      // Same context signal the tables/files transport sends: the server's
-      // auth layer resolves it to the install scope (ctx.solution_id), so a
-      // workflow path::fn ref scopes to THIS install without body plumbing.
-      if (appId && !headers.has("X-Bifrost-App")) {
-        headers.set("X-Bifrost-App", appId);
-      }
-      return baseFetch(joinUrl(baseUrl, input), { ...init, headers });
-    };
+				}
+				if (orgScope && !headers.has("X-Bifrost-Org")) {
+					headers.set("X-Bifrost-Org", orgScope);
+				}
+				// Same context signal the tables/files transport sends: the server's
+				// auth layer resolves it to the install scope (ctx.solution_id), so a
+				// workflow path::fn ref scopes to THIS install without body plumbing.
+				if (appId && !headers.has("X-Bifrost-App")) {
+					headers.set("X-Bifrost-App", appId);
+				}
+				return baseFetch(joinUrl(baseUrl, input), { ...init, headers });
+			};
 
 			const attemptedToken = currentToken();
 			let response = await requestWithToken(attemptedToken);
@@ -248,29 +251,33 @@ export function BifrostProvider({
 			if (response.status === 401) auth.handleAuthenticationFailure();
 			return response;
 		};
-    const logout = () => onLogout?.();
-    return {
-      baseUrl: baseUrl.replace(/\/$/, ""),
+		return authenticatedFetch;
+	}, [baseUrl, currentToken, orgScope, appId, fetchImpl]);
+
+	const value = useMemo<BifrostContextValue>(() => {
+		const logout = () => onLogout?.();
+		return {
+			baseUrl: baseUrl.replace(/\/$/, ""),
 			get token() {
 				return currentToken() ?? "";
 			},
-      orgScope,
-      appId,
+			orgScope,
+			appId,
 			solutionId,
-      authedFetch,
-      logout,
-      theme,
-      setTheme,
-      toggleTheme,
-      supportsTheme,
-    };
+			authedFetch,
+			logout,
+			theme,
+			setTheme,
+			toggleTheme,
+			supportsTheme,
+		};
 	}, [
 		baseUrl,
-		token,
+		currentToken,
 		orgScope,
 		appId,
 		solutionId,
-		fetchImpl,
+		authedFetch,
 		onLogout,
 		theme,
 		setTheme,

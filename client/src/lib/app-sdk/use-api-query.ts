@@ -28,7 +28,10 @@ async function httpError(response: Response): Promise<Error> {
 	const body = await response.text();
 	let detail = body;
 	try {
-		const parsed = JSON.parse(body) as { detail?: unknown; message?: unknown };
+		const parsed = JSON.parse(body) as {
+			detail?: unknown;
+			message?: unknown;
+		};
 		detail =
 			typeof parsed.detail === "string"
 				? parsed.detail
@@ -124,7 +127,10 @@ export function useApiQuery<T>(
 					setState({
 						data: null,
 						loading: false,
-						error: error instanceof Error ? error : new Error(String(error)),
+						error:
+							error instanceof Error
+								? error
+								: new Error(String(error)),
 					});
 				}
 			},
@@ -143,13 +149,17 @@ export function useApiQuery<T>(
 		setState((previous) => ({ ...previous, loading: true, error: null }));
 		try {
 			const data = await readJson<T>(authedFetch, path, true);
-			if (requestId.current === id) setState({ data, loading: false, error: null });
+			if (requestId.current === id)
+				setState({ data, loading: false, error: null });
 		} catch (error: unknown) {
 			if (requestId.current === id) {
 				setState({
 					data: null,
 					loading: false,
-					error: error instanceof Error ? error : new Error(String(error)),
+					error:
+						error instanceof Error
+							? error
+							: new Error(String(error)),
 				});
 			}
 		}

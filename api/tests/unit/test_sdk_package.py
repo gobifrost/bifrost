@@ -34,6 +34,11 @@ _SRC_FILES = [
     "files.ts",
     "use-files.ts",
     "use-user.tsx",
+    "use-api-query.ts",
+    "use-branding.ts",
+    "use-organizations.ts",
+    "branding-theme.ts",
+    "brand-palette.ts",
     "bifrost-header.tsx",
 ]
 
@@ -148,7 +153,7 @@ def test_build_sdk_tarball_shape_and_exports():
         for sym in (
             "BifrostProvider", "useWorkflow", "useWorkflowQuery",
             "useWorkflowMutation", "useTable", "tables", "BifrostHeader",
-            "useUser", "RequireRole",
+            "useUser", "RequireRole", "useBranding", "useOrganizations",
         ):
             assert sym in bundle, f"{sym} missing from bundle"
         # React + lucide stay external (imported, not inlined).

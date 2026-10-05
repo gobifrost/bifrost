@@ -19,8 +19,17 @@ afterEach(() => {
 });
 
 function Branding({ applyTheme = true }: { applyTheme?: boolean }) {
-	const { data, loading, error, squareLogoUrl, rectangleLogoUrl, applicationName, palette, colors, refetch } =
-		useBranding({ applyTheme });
+	const {
+		data,
+		loading,
+		error,
+		squareLogoUrl,
+		rectangleLogoUrl,
+		applicationName,
+		palette,
+		colors,
+		refetch,
+	} = useBranding({ applyTheme });
 	return (
 		<>
 			<output aria-label="branding">
@@ -42,42 +51,56 @@ describe("useBranding", () => {
 			return new Response(JSON.stringify(BRANDING), { status: 200 });
 		});
 		render(
-			<BifrostProvider baseUrl="https://api.example/" token="token" fetchImpl={fetchImpl}>
+			<BifrostProvider
+				baseUrl="https://api.example/"
+				token="token"
+				fetchImpl={fetchImpl}
+			>
 				<Branding applyTheme={false} />
 			</BifrostProvider>,
 		);
 
 		const palette = createBrandPalette(BRANDING.primary_color);
 		await waitFor(() =>
-			expect(screen.getByRole("status", { name: "branding" })).toHaveTextContent(
+			expect(
+				screen.getByRole("status", { name: "branding" }),
+			).toHaveTextContent(
 				`https://api.example${BRANDING.square_logo_url}|https://api.example${BRANDING.square_logo_url}|https://api.example${BRANDING.rectangle_logo_url}|Acme Desk|true|${palette.light.primary}`,
 			),
 		);
 	});
 
 	it("keeps logo paths root-relative for a same-origin provider", async () => {
-		const fetchImpl = vi.fn(async () => new Response(JSON.stringify(BRANDING)));
+		const fetchImpl = vi.fn(
+			async () => new Response(JSON.stringify(BRANDING)),
+		);
 		render(
 			<BifrostProvider baseUrl="/" token="token" fetchImpl={fetchImpl}>
 				<Branding applyTheme={false} />
 			</BifrostProvider>,
 		);
 		await waitFor(() =>
-			expect(screen.getByRole("status", { name: "branding" })).toHaveTextContent(
+			expect(
+				screen.getByRole("status", { name: "branding" }),
+			).toHaveTextContent(
 				`${BRANDING.square_logo_url}|${BRANDING.square_logo_url}|${BRANDING.rectangle_logo_url}`,
 			),
 		);
 	});
 
 	it("applies theme by default and does not apply it when opted out", async () => {
-		const fetchImpl = vi.fn(async () => new Response(JSON.stringify(BRANDING)));
+		const fetchImpl = vi.fn(
+			async () => new Response(JSON.stringify(BRANDING)),
+		);
 		const { unmount } = render(
 			<BifrostProvider baseUrl="/" token="token" fetchImpl={fetchImpl}>
 				<Branding />
 			</BifrostProvider>,
 		);
 		await screen.findByText(/Acme Desk/);
-		expect(document.querySelector("style#bifrost-branding-theme")).not.toBeNull();
+		expect(
+			document.querySelector("style#bifrost-branding-theme"),
+		).not.toBeNull();
 		unmount();
 		document.querySelector("style#bifrost-branding-theme")?.remove();
 
@@ -87,14 +110,17 @@ describe("useBranding", () => {
 			</BifrostProvider>,
 		);
 		await screen.findByText(/Acme Desk/);
-		expect(document.querySelector("style#bifrost-branding-theme")).toBeNull();
+		expect(
+			document.querySelector("style#bifrost-branding-theme"),
+		).toBeNull();
 	});
 
 	it("uses the default palette when branding has no color or logos", async () => {
 		function Defaults() {
-			const { data, squareLogoUrl, rectangleLogoUrl, palette } = useBranding({
-				applyTheme: false,
-			});
+			const { data, squareLogoUrl, rectangleLogoUrl, palette } =
+				useBranding({
+					applyTheme: false,
+				});
 			return (
 				<output aria-label="defaults">
 					{data ? "loaded" : "empty"}|{squareLogoUrl ?? "none"}|
@@ -103,7 +129,11 @@ describe("useBranding", () => {
 			);
 		}
 		render(
-			<BifrostProvider baseUrl="/" token="token" fetchImpl={vi.fn(async () => new Response("{}"))}>
+			<BifrostProvider
+				baseUrl="/"
+				token="token"
+				fetchImpl={vi.fn(async () => new Response("{}"))}
+			>
 				<Defaults />
 			</BifrostProvider>,
 		);
@@ -115,7 +145,9 @@ describe("useBranding", () => {
 		const fetchImpl = vi.fn(async () => {
 			calls += 1;
 			return new Response(
-				JSON.stringify(calls === 1 ? BRANDING : { primary_color: "#3366ff" }),
+				JSON.stringify(
+					calls === 1 ? BRANDING : { primary_color: "#3366ff" },
+				),
 			);
 		});
 		render(
@@ -124,15 +156,27 @@ describe("useBranding", () => {
 			</BifrostProvider>,
 		);
 		await screen.findByText(/Acme Desk/);
-		expect(document.documentElement.style.getPropertyValue("--logo-square-url")).toContain(
-			BRANDING.square_logo_url,
+		expect(
+			document.documentElement.style.getPropertyValue(
+				"--logo-square-url",
+			),
+		).toContain(BRANDING.square_logo_url);
+		await act(async () =>
+			screen.getByRole("button", { name: "refresh" }).click(),
 		);
-		await act(async () => screen.getByRole("button", { name: "refresh" }).click());
 		await waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(2));
 		await waitFor(() =>
-			expect(document.documentElement.style.getPropertyValue("--logo-square-url")).toBe(""),
+			expect(
+				document.documentElement.style.getPropertyValue(
+					"--logo-square-url",
+				),
+			).toBe(""),
 		);
-		expect(document.documentElement.style.getPropertyValue("--logo-rectangle-url")).toBe("");
+		expect(
+			document.documentElement.style.getPropertyValue(
+				"--logo-rectangle-url",
+			),
+		).toBe("");
 	});
 
 	it("exposes a failed branding request without applying a default theme", async () => {
@@ -140,17 +184,24 @@ describe("useBranding", () => {
 			<BifrostProvider
 				baseUrl="/"
 				token="token"
-				fetchImpl={vi.fn(async () => new Response(JSON.stringify({ detail: "forbidden" }), { status: 403 }))}
+				fetchImpl={vi.fn(
+					async () =>
+						new Response(JSON.stringify({ detail: "forbidden" }), {
+							status: 403,
+						}),
+				)}
 			>
 				<Branding />
 			</BifrostProvider>,
 		);
 		await waitFor(() =>
-			expect(screen.getByRole("status", { name: "branding" })).toHaveTextContent(
-				"error:403 Request failed: forbidden",
-			),
+			expect(
+				screen.getByRole("status", { name: "branding" }),
+			).toHaveTextContent("error:403 Request failed: forbidden"),
 		);
-		expect(document.querySelector("style#bifrost-branding-theme")).toBeNull();
+		expect(
+			document.querySelector("style#bifrost-branding-theme"),
+		).toBeNull();
 	});
 
 	it("selects the shared dark palette without refetching branding", async () => {
@@ -158,7 +209,9 @@ describe("useBranding", () => {
 			const { setTheme } = useBifrostContext();
 			return <button onClick={() => setTheme("dark")}>dark</button>;
 		}
-		const fetchImpl = vi.fn(async () => new Response(JSON.stringify(BRANDING)));
+		const fetchImpl = vi.fn(
+			async () => new Response(JSON.stringify(BRANDING)),
+		);
 		render(
 			<BifrostProvider baseUrl="/" token="token" fetchImpl={fetchImpl}>
 				<Branding applyTheme={false} />
@@ -166,8 +219,12 @@ describe("useBranding", () => {
 			</BifrostProvider>,
 		);
 		await screen.findByText(/Acme Desk/);
-		await act(async () => screen.getByRole("button", { name: "dark" }).click());
-		expect(screen.getByRole("status", { name: "branding" })).toHaveTextContent(
+		await act(async () =>
+			screen.getByRole("button", { name: "dark" }).click(),
+		);
+		expect(
+			screen.getByRole("status", { name: "branding" }),
+		).toHaveTextContent(
 			createBrandPalette(BRANDING.primary_color).dark.primary,
 		);
 		expect(fetchImpl).toHaveBeenCalledTimes(1);
