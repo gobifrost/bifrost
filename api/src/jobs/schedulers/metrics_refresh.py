@@ -23,6 +23,7 @@ from src.models import (
 )
 from src.models.enums import ExecutionStatus
 from src.models.orm.ai_usage import AIUsage
+from src.services.run_retention.source import all_time_run_totals
 
 logger = logging.getLogger(__name__)
 
@@ -80,14 +81,8 @@ async def refresh_metrics_snapshot() -> dict[str, Any]:
             counts_result = await db.execute(counts_query)
             counts = counts_result.one()
 
-            # All-time execution stats
-            all_time_query = select(
-                func.count(ExecutionModel.id).label("total"),
-                func.sum(case((ExecutionModel.status == ExecutionStatus.SUCCESS.value, 1), else_=0)).label("success"),
-                func.sum(case((ExecutionModel.status == ExecutionStatus.FAILED.value, 1), else_=0)).label("failed"),
-            )
-            all_time_result = await db.execute(all_time_query)
-            all_time = all_time_result.one()
+            # All-time run stats: kept executions plus runs retention rolled up.
+            all_time = await all_time_run_totals(db)
 
             # Last 24 hours execution stats
             last_24h_query = select(
@@ -139,8 +134,8 @@ async def refresh_metrics_snapshot() -> dict[str, Any]:
             ai_24h = ai_24h_result.one()
 
             # Calculate success rates
-            total_all_time = all_time.total or 0
-            success_all_time = all_time.success or 0
+            total_all_time = all_time["total"]
+            success_all_time = all_time["success"]
             success_rate_all_time = (success_all_time / total_all_time * 100) if total_all_time > 0 else 0.0
 
             total_24h = last_24h.total or 0
@@ -161,7 +156,7 @@ async def refresh_metrics_snapshot() -> dict[str, Any]:
                     # All time
                     total_executions=total_all_time,
                     total_success=success_all_time,
-                    total_failed=all_time.failed or 0,
+                    total_failed=all_time["failed"],
                     # Last 24 hours
                     executions_24h=total_24h,
                     success_24h=success_24h,
