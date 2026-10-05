@@ -42,6 +42,7 @@ from src.repositories.execution_logs import (
     decode_execution_log_cursor,
 )
 from src.services.operation_catalog import operation_route
+from src.services.run_retention.settings import run_not_found_suffix
 
 logger = logging.getLogger(__name__)
 
@@ -534,7 +535,7 @@ async def get_execution(
         if e.status_code == 404:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Execution {execution_id} not found",
+                detail=f"Execution {execution_id} not found." + await run_not_found_suffix(ctx.db),
             )
         raise
 
@@ -555,7 +556,7 @@ async def get_execution_result(
     if error == "NotFound":
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Execution {execution_id} not found",
+            detail=f"Execution {execution_id} not found." + await run_not_found_suffix(ctx.db),
         )
     elif error == "Forbidden":
         raise HTTPException(
@@ -583,7 +584,7 @@ async def get_execution_logs(
     if error == "NotFound":
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Execution {execution_id} not found",
+            detail=f"Execution {execution_id} not found." + await run_not_found_suffix(ctx.db),
         )
     elif error == "Forbidden":
         raise HTTPException(
@@ -610,7 +611,7 @@ async def get_execution_variables(
     if error == "NotFound":
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Execution {execution_id} not found",
+            detail=f"Execution {execution_id} not found." + await run_not_found_suffix(ctx.db),
         )
     elif error == "Forbidden":
         raise HTTPException(

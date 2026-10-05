@@ -7281,6 +7281,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/maintenance/run-retention/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get run retention settings and status */
+        get: operations["get_run_retention_settings_api_maintenance_run_retention_settings_get"];
+        /** Update run retention settings */
+        put: operations["update_run_retention_settings_api_maintenance_run_retention_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/maintenance/run-retention/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Delete expired runs and events now, or preview the run */
+        post: operations["start_run_retention_api_maintenance_run_retention_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/maintenance/run-retention/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Preview how many runs and events a retention window would delete */
+        get: operations["preview_run_retention_api_maintenance_run_retention_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/maintenance/status": {
         parameters: {
             query?: never;
@@ -7395,6 +7447,26 @@ export interface paths {
          * @description Run validation checks including unregistered function detection (Platform admin only)
          */
         post: operations["run_preflight_api_maintenance_preflight_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/run-retention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the run retention window
+         * @description The retention window, for wording about removed runs. Any signed-in user.
+         */
+        get: operations["get_run_retention_api_run_retention_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -24689,6 +24761,66 @@ export interface components {
              * @description Workflow IDs assigned to the role
              */
             workflow_ids: string[];
+        };
+        /** RunRetentionInfo */
+        RunRetentionInfo: {
+            /** Days */
+            days: number | null;
+            /** Oldest Finished Run */
+            oldest_finished_run: string | null;
+            /** Rolled Up Runs */
+            rolled_up_runs: number;
+            /** Rolled Up Through */
+            rolled_up_through: string | null;
+        };
+        /** RunRetentionPreview */
+        RunRetentionPreview: {
+            /** Days */
+            days: number | null;
+            /** Cutoff */
+            cutoff: string | null;
+            /** Workflow Runs */
+            workflow_runs: number;
+            /** Agent Runs */
+            agent_runs: number;
+            /** Events */
+            events: number;
+        };
+        /** RunRetentionPublic */
+        RunRetentionPublic: {
+            /** Days */
+            days: number | null;
+        };
+        /** RunRetentionRunRequest */
+        RunRetentionRunRequest: {
+            /**
+             * Dry Run
+             * @default false
+             */
+            dry_run: boolean;
+        };
+        /** RunRetentionSettings */
+        RunRetentionSettings: {
+            /**
+             * Days
+             * @description Days a finished run or event is kept; null keeps them forever.
+             * @default 30
+             */
+            days: number | null;
+        };
+        /** RunRetentionSettingsUpdate */
+        RunRetentionSettingsUpdate: {
+            /**
+             * Days
+             * @description Days a finished run or event is kept; null keeps them forever.
+             */
+            days: number | null;
+        };
+        /** RunRetentionStatus */
+        RunRetentionStatus: {
+            settings: components["schemas"]["RunRetentionSettings"];
+            info: components["schemas"]["RunRetentionInfo"];
+            last_run: components["schemas"]["PlatformJobPublic"] | null;
         };
         /**
          * SDKIntegrationsDeleteMappingRequest
@@ -42943,6 +43075,124 @@ export interface operations {
             };
         };
     };
+    get_run_retention_settings_api_maintenance_run_retention_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRetentionStatus"];
+                };
+            };
+        };
+    };
+    update_run_retention_settings_api_maintenance_run_retention_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunRetentionSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRetentionStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_run_retention_api_maintenance_run_retention_run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunRetentionRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_run_retention_api_maintenance_run_retention_preview_get: {
+        parameters: {
+            query?: {
+                /** @description Retention window in days; omit to keep forever. */
+                days?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRetentionPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_maintenance_status_api_maintenance_status_get: {
         parameters: {
             query?: never;
@@ -43059,6 +43309,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PreflightResponse"];
+                };
+            };
+        };
+    };
+    get_run_retention_api_run_retention_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRetentionPublic"];
                 };
             };
         };

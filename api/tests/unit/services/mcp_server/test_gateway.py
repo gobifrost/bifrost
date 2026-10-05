@@ -453,6 +453,36 @@ async def test_get_execution_hides_another_users_redis_only_receipt():
 
 
 @pytest.mark.asyncio
+async def test_get_execution_missing_everywhere_names_the_retention_window():
+    service = MCPAgentGatewayService(_context())
+    db = AsyncMock()
+    db_result = MagicMock()
+    db_result.scalar_one_or_none.return_value = None
+    db.execute.return_value = db_result
+    db_context = MagicMock()
+    db_context.__aenter__ = AsyncMock(return_value=db)
+    db_context.__aexit__ = AsyncMock(return_value=None)
+    redis = MagicMock()
+    redis.get_pending_execution = AsyncMock(return_value=None)
+
+    async def suffix(db: object) -> str:
+        return " Finished runs are removed after 45 days."
+
+    with (
+        patch("src.core.database.get_db_context", return_value=db_context),
+        patch("src.core.redis_client.get_redis_client", return_value=redis),
+        patch("src.services.mcp_server.gateway.run_not_found_suffix", suffix),
+    ):
+        with pytest.raises(GatewayError) as exc_info:
+            await service.get_execution(str(uuid4()))
+
+    assert exc_info.value.code == "EXECUTION_NOT_FOUND_OR_FORBIDDEN"
+    assert exc_info.value.message == (
+        "Execution not found or you do not have access. Finished runs are removed after 45 days."
+    )
+
+
+@pytest.mark.asyncio
 async def test_get_execution_returns_owned_queued_agent_run():
     context = _context()
     service = MCPAgentGatewayService(context)
