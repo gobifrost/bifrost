@@ -269,6 +269,7 @@ def test_access_check_what_if(e2e_client, platform_admin, world) -> None:
         _check(e2e_client, operator, person, organization_id=str(PROVIDER_ORG_ID), operation=CATALOG_ID).status_code
         == 403
     )
+    assert _check(e2e_client, operator, person, organization_id="global", operation=CATALOG_ID).status_code == 403
     assert _check(e2e_client, operator, person, organization_id=fabrikam, operation=CATALOG_ID).status_code == 200
 
 

@@ -15,6 +15,7 @@ from sqlalchemy import select
 from src.config import get_settings
 from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
+from src.services.access_explain import entry_for_key, test_access
 from src.services.authorization.enforce import (
     Caller,
     load_caller,
@@ -24,7 +25,6 @@ from src.services.authorization.enforce import (
     require_operation,
     require_unprotected,
 )
-from src.services.access_explain import entry_for_key, test_access
 from src.services.events import emit_event
 from src.services.user_invite_service import UserInviteService
 from src.services.user_mfa_reset import reset_user_mfa as reset_user_mfa_service
@@ -33,9 +33,7 @@ from src.services.user_role_assignments import (
     get_role_assignments as get_role_assignments_service,
     replace_role_assignments as replace_role_assignments_service,
 )
-from src.models import User as UserORM, UserRole as UserRoleORM, FormRole as FormRoleORM
-from src.models import Organization as OrganizationORM
-from src.models.orm.workflows import Workflow as WorkflowORM
+from src.models import User as UserORM, UserRole as UserRoleORM, FormRole as FormRoleORM, Organization as OrganizationORM
 from src.models import (
     BulkUserOperation,
     BulkUserResponse,
@@ -55,6 +53,7 @@ from src.models.contracts.user_invites import (
     CreateInviteResponse,
     SendInviteRequest,
 )
+from src.models.orm.workflows import Workflow as WorkflowORM
 from src.services.operation_catalog import operation_route
 
 logger = logging.getLogger(__name__)
@@ -612,14 +611,13 @@ async def check_user_access(
             detail=f"Unknown operation {body.operation!r}: use an access-list catalog id or \"METHOD /api/path\"",
         )
     target = body.organization_id if isinstance(body.organization_id, UUID) else None
-    if target is not None:
-        if await db.get(OrganizationORM, target) is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
-        if not reach.covers(target):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You can only test access in organizations you reach",
-            )
+    if target is not None and await db.get(OrganizationORM, target) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
+    if not reach.covers(target):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only test access in organizations you reach",
+        )
     if body.workflow_id is not None:
         workflow = await db.get(WorkflowORM, body.workflow_id)
         if workflow is None:
