@@ -117,7 +117,9 @@ describe("run retention service", () => {
 
 		expect(error).toBeInstanceOf(ApiError);
 		expect((error as ApiError).statusCode).toBe(422);
-		expect((error as ApiError).message).toContain("days must be at least 30");
+		expect((error as ApiError).message).toContain(
+			"days must be at least 30",
+		);
 	});
 
 	it("falls back to the status text when the error has no detail", async () => {

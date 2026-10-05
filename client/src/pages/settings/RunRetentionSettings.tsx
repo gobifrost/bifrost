@@ -27,7 +27,10 @@ import { SettingsToggleRow } from "@/components/shared/SettingsToggleRow";
 import { SettingsLoadError } from "@/components/shared/SettingsLoadError";
 import { ApiError, getErrorMessage } from "@/lib/api-error";
 import { formatRelativeTime } from "@/lib/utils";
-import { formatAuditDay, formatAuditTime } from "@/pages/audit/auditRetentionFormat";
+import {
+	formatAuditDay,
+	formatAuditTime,
+} from "@/pages/audit/auditRetentionFormat";
 import { watchAuditJob } from "@/services/auditRetention";
 import type { PlatformJob } from "@/services/platformJobs";
 import {
@@ -156,7 +159,8 @@ function lastRunSummary(job: PlatformJob): string {
 	}
 	// A preview's counts are in the status line right below.
 	if (result.dry_run) return `${kind} ${when}.`;
-	if (result.skipped) return `${kind} ${when}: skipped, runs are kept forever.`;
+	if (result.skipped)
+		return `${kind} ${when}: skipped, runs are kept forever.`;
 	const [workflowRuns, agentRuns, events] = planParts({
 		workflow_runs: result.workflow_runs_deleted as number,
 		agent_runs: result.agent_runs_deleted as number,
@@ -175,10 +179,7 @@ function storedSummary(info: RunRetentionStatus["info"]): string {
 	return `${oldest} ${rolledUp}`;
 }
 
-function shortenWarning(
-	preview: RunRetentionPreview,
-	days: number,
-): string {
+function shortenWarning(preview: RunRetentionPreview, days: number): string {
 	if (isEmpty(preview)) {
 		return `Nothing is old enough to delete yet. From now on, finished runs and events older than ${days} days are deleted at the daily run.`;
 	}
@@ -239,7 +240,10 @@ export function RunRetentionSettings() {
 
 	useEffect(() => () => stopWatching.current?.(), []);
 
-	const commit = async (settings: RunRetentionSettingsUpdate, edit: Draft) => {
+	const commit = async (
+		settings: RunRetentionSettingsUpdate,
+		edit: Draft,
+	) => {
 		savePending.current = true;
 		setSaving(true);
 		try {
@@ -360,8 +364,8 @@ export function RunRetentionSettings() {
 			<CardHeader>
 				<CardTitle>Run history</CardTitle>
 				<CardDescription>
-					How long finished workflow runs, agent runs and events are kept.
-					Older ones are deleted for good at the daily run.
+					How long finished workflow runs, agent runs and events are
+					kept. Older ones are deleted for good at the daily run.
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-5">
@@ -392,7 +396,9 @@ export function RunRetentionSettings() {
 						max={MAX_DAYS}
 						value={draft.days}
 						disabled={disabled || draft.forever}
-						onChange={(event) => editDraft({ days: event.target.value })}
+						onChange={(event) =>
+							editDraft({ days: event.target.value })
+						}
 						onBlur={() => void saveDraft(draft)}
 						aria-invalid={validationError !== null}
 						aria-describedby="run-retention-days-help"
@@ -402,8 +408,8 @@ export function RunRetentionSettings() {
 						id="run-retention-days-help"
 						className="text-xs text-muted-foreground"
 					>
-						Counted from when the run finished or the event happened.
-						Changes save when you leave the field.
+						Counted from when the run finished or the event
+						happened. Changes save when you leave the field.
 					</p>
 				</div>
 				{validationError && (
@@ -433,7 +439,8 @@ export function RunRetentionSettings() {
 								? "Couldn't save run history settings"
 								: "Couldn't check what this change deletes"}
 							: {failedSave.message}
-							{failedSave.retryable && " Your edit is ready to retry."}
+							{failedSave.retryable &&
+								" Your edit is ready to retry."}
 						</p>
 						{failedSave.retryable && (
 							<Button
@@ -522,13 +529,18 @@ export function RunRetentionSettings() {
 					}}
 				>
 					<AlertDialogHeader>
-						<AlertDialogTitle>Shorten the run history window?</AlertDialogTitle>
+						<AlertDialogTitle>
+							Shorten the run history window?
+						</AlertDialogTitle>
 						<AlertDialogDescription>
-							{confirm && shortenWarning(confirm.preview, confirm.days)}
+							{confirm &&
+								shortenWarning(confirm.preview, confirm.days)}
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
-						<AlertDialogCancel className="min-h-11">Cancel</AlertDialogCancel>
+						<AlertDialogCancel className="min-h-11">
+							Cancel
+						</AlertDialogCancel>
 						<AlertDialogAction
 							variant="destructive"
 							className="min-h-11"

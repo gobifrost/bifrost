@@ -202,7 +202,9 @@ describe("RunRetentionSettings", () => {
 		);
 		expect(updateRetention).not.toHaveBeenCalled();
 
-		await user.click(screen.getByRole("button", { name: "Delete and save" }));
+		await user.click(
+			screen.getByRole("button", { name: "Delete and save" }),
+		);
 		await waitFor(() =>
 			expect(updateRetention).toHaveBeenCalledWith({ days: 30 }),
 		);
@@ -332,14 +334,19 @@ describe("RunRetentionSettings", () => {
 		const { user } = renderWithProviders(<RunRetentionSettings />);
 		await screen.findByLabelText("Keep finished runs and events (days)");
 		await waitFor(() =>
-			expect(screen.getByRole("button", { name: "Preview" })).toBeEnabled(),
+			expect(
+				screen.getByRole("button", { name: "Preview" }),
+			).toBeEnabled(),
 		);
 
 		await user.click(screen.getByRole("button", { name: "Preview" }));
 
 		expect(startRetention).toHaveBeenCalledWith(true);
 		await waitFor(() =>
-			expect(watchJob).toHaveBeenCalledWith("job-1", expect.any(Function)),
+			expect(watchJob).toHaveBeenCalledWith(
+				"job-1",
+				expect.any(Function),
+			),
 		);
 		const preview = {
 			status: "succeeded" as const,
@@ -371,7 +378,9 @@ describe("RunRetentionSettings", () => {
 		const { user } = renderWithProviders(<RunRetentionSettings />);
 		await screen.findByLabelText("Keep finished runs and events (days)");
 		await waitFor(() =>
-			expect(screen.getByRole("button", { name: "Preview" })).toBeEnabled(),
+			expect(
+				screen.getByRole("button", { name: "Preview" }),
+			).toBeEnabled(),
 		);
 
 		await user.click(screen.getByRole("button", { name: "Preview" }));
@@ -386,14 +395,18 @@ describe("RunRetentionSettings", () => {
 			},
 		});
 
-		expect(await screen.findByText("Nothing to delete.")).toBeInTheDocument();
+		expect(
+			await screen.findByText("Nothing to delete."),
+		).toBeInTheDocument();
 	});
 
 	it("says when a preview ran while runs are kept forever", async () => {
 		const { user } = renderWithProviders(<RunRetentionSettings />);
 		await screen.findByLabelText("Keep finished runs and events (days)");
 		await waitFor(() =>
-			expect(screen.getByRole("button", { name: "Preview" })).toBeEnabled(),
+			expect(
+				screen.getByRole("button", { name: "Preview" }),
+			).toBeEnabled(),
 		);
 
 		await user.click(screen.getByRole("button", { name: "Preview" }));
@@ -414,7 +427,9 @@ describe("RunRetentionSettings", () => {
 		const { user } = renderWithProviders(<RunRetentionSettings />);
 		await screen.findByLabelText("Keep finished runs and events (days)");
 		await waitFor(() =>
-			expect(screen.getByRole("button", { name: "Run now" })).toBeEnabled(),
+			expect(
+				screen.getByRole("button", { name: "Run now" }),
+			).toBeEnabled(),
 		);
 
 		await user.click(screen.getByRole("button", { name: "Run now" }));
@@ -465,7 +480,9 @@ describe("RunRetentionSettings", () => {
 			),
 		).toBeInTheDocument();
 		await waitFor(() =>
-			expect(screen.getByRole("button", { name: "Run now" })).toBeEnabled(),
+			expect(
+				screen.getByRole("button", { name: "Run now" }),
+			).toBeEnabled(),
 		);
 
 		await user.click(screen.getByRole("button", { name: "Run now" }));

@@ -22,12 +22,10 @@ test("changes the run history window and previews a run from Maintenance", async
 
 	await card.getByRole("button", { name: "Preview" }).click();
 	await expect(
-		card
-			.getByRole("status")
-			.filter({
-				hasText:
-					/^(Would delete \d[\d,]* workflow runs?|Nothing to delete\.)/,
-			}),
+		card.getByRole("status").filter({
+			hasText:
+				/^(Would delete \d[\d,]* workflow runs?|Nothing to delete\.)/,
+		}),
 	).toBeVisible();
 
 	// Shortening it back asks first, because deletion is permanent.
