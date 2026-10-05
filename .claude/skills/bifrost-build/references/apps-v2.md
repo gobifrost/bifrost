@@ -73,6 +73,11 @@ Use `../generated/web-sdk-surface.md` to confirm SDK exports. Do not guess an ex
 
 ## App-to-workflow contract
 
+Choose the direct SDK capabilities in `web-sdk-v2.md` before adding a workflow
+for a platform read or table/file operation. Branding, organization lists,
+viewer identity, documents, and managed files already have SDK APIs. Keep
+integration credentials and server-side business logic in workflows.
+
 Reference workflows with portable path/function locators:
 
 ```tsx
