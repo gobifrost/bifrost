@@ -28,9 +28,8 @@ export function RunRemovedNotice({ variant }: { variant: "page" | "inline" }) {
 				This run isn't available.
 			</span>{" "}
 			{known
-				? `Finished runs are removed after ${days} days (retention). `
-				: ""}
-			It may also be outside your access.
+				? `Finished runs are removed after ${days} days (retention). It may also be outside your access.`
+				: "It may be outside your access."}
 		</p>
 	);
 }

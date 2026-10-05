@@ -25,7 +25,7 @@ describe("RunRemovedNotice", () => {
 		mockUseRunRetentionDays.mockReturnValue(null);
 		renderWithProviders(<RunRemovedNotice variant="page" />);
 		expect(screen.getByRole("status")).toHaveTextContent(
-			/^This run isn't available\. It may also be outside your access\.$/,
+			/^This run isn't available\. It may be outside your access\.$/,
 		);
 	});
 

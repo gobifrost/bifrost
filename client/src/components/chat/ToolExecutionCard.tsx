@@ -288,7 +288,10 @@ export function ToolExecutionCard({
 	// Fetch persisted logs when result section is expanded and execution is complete
 	const { data: persistedLogs } = useExecutionLogs(
 		resolvedExecutionId,
-		isComplete && isResultOpen && !!resolvedExecutionId,
+		isComplete &&
+			isResultOpen &&
+			!!resolvedExecutionId &&
+			!executionRemoved,
 	);
 
 	// Determine logs to display: streaming logs > persisted logs > streaming state logs > legacy logs

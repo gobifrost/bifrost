@@ -18,7 +18,9 @@ import { renderWithProviders, screen } from "@/test-utils";
 const mockUseExecution = vi.fn<
 	() => { data: unknown; isLoading: boolean; error?: unknown }
 >(() => ({ data: undefined, isLoading: false }));
-const mockUseExecutionLogs = vi.fn<() => { data: unknown }>(() => ({
+const mockUseExecutionLogs = vi.fn<
+	(executionId: string | undefined, enabled: boolean) => { data: unknown }
+>(() => ({
 	data: undefined,
 }));
 
@@ -27,7 +29,8 @@ vi.mock("@/hooks/useExecutions", async (importOriginal) => ({
 		await importOriginal<typeof import("@/hooks/useExecutions")>()
 	).isNotFoundError,
 	useExecution: () => mockUseExecution(),
-	useExecutionLogs: () => mockUseExecutionLogs(),
+	useExecutionLogs: (executionId: string | undefined, enabled: boolean) =>
+		mockUseExecutionLogs(executionId, enabled),
 }));
 
 vi.mock("@/services/runRetention", () => ({
@@ -247,6 +250,8 @@ describe("ToolExecutionCard — removed execution", () => {
 		expect(await screen.findByTestId("pretty-input")).toHaveTextContent(
 			JSON.stringify({ answer: 42 }),
 		);
+		// The open result section never asks for the removed run's logs.
+		expect(mockUseExecutionLogs).toHaveBeenLastCalledWith("exec-1", false);
 	});
 
 	it("shows the tool call's own error once its execution is removed", () => {
