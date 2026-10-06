@@ -77,6 +77,7 @@ VALID_BODIES: dict[tuple[str, str], dict] = {
     ("POST", "/api/users/{user_id}/invite/send"): {
         "registration_url": "https://example.com/accept-invite?token=deny-probe"
     },
+    ("POST", "/api/users/{user_id}/access/check"): {"organization_id": "global", "operation": "tables.update"},
     ("PUT", "/api/users/{user_id}/role-assignments"): {"base_role_id": _PROBE_ID},
     ("POST", "/auth/admin/revoke-user"): {"user_id": _PROBE_ID},
 }

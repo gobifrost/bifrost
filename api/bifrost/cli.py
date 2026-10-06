@@ -777,6 +777,9 @@ Entity mutation commands (see 'bifrost <entity> --help'):
    policy-rule  Manage reusable table/file policy rules
    requirements Manage workspace Python requirements.txt (install/list/remove)
    services     Manage supervised services
+   audit        Read the audit log and explain access decisions
+   users        Ask what a user's access would be (users access check)
+   retention    Show and change run, event, and audit retention
 
 Workspace/file targets:
   _repo source files:

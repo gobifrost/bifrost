@@ -225,21 +225,75 @@ def _permission_step(
     )
 
 
-def check_target(
-    run_user: RunUser, powers: Powers, target: TargetOrg, entry: AccessEntry | None
-) -> Trace:
-    """Acting in ``target``: in reach, and the power held there."""
+def _target_step(run_user: RunUser, target: TargetOrg) -> Step:
     inside, via = in_reach(run_user, target)
-    target_step = Step(
+    return Step(
         "target",
         "Target in reach",
         "passed" if inside else "stopped",
         via,
         {"organization_id": None if target is None else str(target)},
     )
+
+
+def check_target(
+    run_user: RunUser, powers: Powers, target: TargetOrg, entry: AccessEntry | None
+) -> Trace:
+    """Acting in ``target``: in reach, and the power held there."""
     org = target if isinstance(target, UUID) else None
     return _trace(
-        [_run_user_step(run_user), _powers_step(powers), target_step, _permission_step(run_user, powers, org, entry)]
+        [
+            _run_user_step(run_user),
+            _powers_step(powers),
+            _target_step(run_user, target),
+            _permission_step(run_user, powers, org, entry),
+        ]
+    )
+
+
+def _workflow_access_step(run_user: RunUser, workflow_access: bool | None) -> Step:
+    label = "Workflow access"
+    if run_user.identity_kind:
+        return Step("workflow_access", label, "not_applicable", "unattended")
+    allowed = bool(workflow_access)
+    return Step("workflow_access", label, "passed" if allowed else "stopped", "access" if allowed else "no_access")
+
+
+def check_operation(
+    run_user: RunUser,
+    powers: Powers | None,
+    target: UUID | None,
+    entry: AccessEntry,
+    *,
+    workflow_access: bool | None,
+) -> Trace:
+    """What-if: ``run_user`` performing ``entry`` in ``target``, directly
+    (``powers`` None) or through a workflow. ``workflow_access`` is read only
+    for a person starting a workflow."""
+    if powers is None:
+        decision = decide(run_user.ctx, entry, _evaluator_target(run_user, target))
+        return _trace(
+            [
+                _run_user_step(run_user),
+                Step("powers", "Workflow powers", "not_applicable", "no_workflow"),
+                _target_step(run_user, target),
+                Step(
+                    "permission",
+                    "Permission",
+                    "passed" if decision.allowed else "stopped",
+                    decision.rule,
+                    {"permission": entry.permission},
+                ),
+            ]
+        )
+    return _trace(
+        [
+            _workflow_access_step(run_user, workflow_access),
+            _run_user_step(run_user),
+            _powers_step(powers),
+            _target_step(run_user, target),
+            _permission_step(run_user, powers, target, entry),
+        ]
     )
 
 

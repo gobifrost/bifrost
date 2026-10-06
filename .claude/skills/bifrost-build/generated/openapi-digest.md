@@ -115,6 +115,7 @@
 | GET | `/api/audit` |
 | POST | `/api/audit/exports` |
 | GET | `/api/audit/exports/{job_id}/download` |
+| GET | `/api/audit/{event_id}/explain` |
 | DELETE | `/api/branding` |
 | GET | `/api/branding` |
 | PUT | `/api/branding` |
@@ -572,6 +573,7 @@
 | DELETE | `/api/users/{user_id}` |
 | GET | `/api/users/{user_id}` |
 | PATCH | `/api/users/{user_id}` |
+| POST | `/api/users/{user_id}/access/check` |
 | GET | `/api/users/{user_id}/forms` |
 | DELETE | `/api/users/{user_id}/invite` |
 | POST | `/api/users/{user_id}/invite/regenerate` |

@@ -453,6 +453,50 @@ async def test_resolve_config_by_key_uuid_and_ambiguous() -> None:
 
 
 # ---------------------------------------------------------------------------
+# User refs (email)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_by_email_matches_exactly_ignoring_case() -> None:
+    uid = uuid4()
+    client = FakeClient(
+        {
+            "/api/users": [
+                {"id": str(uid), "email": "Ada@Contoso.test", "organization_id": None},
+                {"id": str(uuid4()), "email": "ada@contoso.test.au", "organization_id": None},
+            ]
+        }
+    )
+    assert await resolve_ref(client, "user", "ada@contoso.test") == str(uid)
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_not_found() -> None:
+    client = FakeClient(
+        {"/api/users": [{"id": str(uuid4()), "email": "other@contoso.test", "organization_id": None}]}
+    )
+    with pytest.raises(RefNotFoundError):
+        await resolve_ref(client, "user", "ada@contoso.test")
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_ambiguous_surfaces_candidates() -> None:
+    first, second = uuid4(), uuid4()
+    client = FakeClient(
+        {
+            "/api/users": [
+                {"id": str(first), "email": "ada@contoso.test", "organization_id": None},
+                {"id": str(second), "email": "ADA@contoso.test", "organization_id": None},
+            ]
+        }
+    )
+    with pytest.raises(AmbiguousRefError) as exc_info:
+        await resolve_ref(client, "user", "ada@contoso.test")
+    assert {c["uuid"] for c in exc_info.value.candidates} == {str(first), str(second)}
+
+
+# ---------------------------------------------------------------------------
 # Cache behavior
 # ---------------------------------------------------------------------------
 

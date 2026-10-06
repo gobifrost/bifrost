@@ -9967,10 +9967,10 @@
     }
   ],
   "counts": {
-    "cli": 155,
+    "cli": 163,
     "manifest": 16,
     "mcp": 94,
-    "rest": 665,
+    "rest": 667,
     "sdk": 21
   },
   "schema_version": 1,
@@ -10019,6 +10019,24 @@
           "apps",
           "source",
           "export"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "kind": "operation",
+        "path": [
+          "audit",
+          "explain"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "kind": "operation",
+        "path": [
+          "audit",
+          "list"
         ],
         "reason": "CLI operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -10351,6 +10369,53 @@
         "status": "missing_surface"
       },
       {
+        "kind": "operation",
+        "path": [
+          "retention",
+          "preview"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "kind": "operation",
+        "path": [
+          "retention",
+          "run"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "kind": "operation",
+        "path": [
+          "retention",
+          "set",
+          "audit"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "kind": "operation",
+        "path": [
+          "retention",
+          "set",
+          "runs"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "kind": "operation",
+        "path": [
+          "retention",
+          "show"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
         "kind": "lifecycle",
         "path": [
           "run"
@@ -10668,6 +10733,16 @@
         ],
         "reason": "Local authentication, source-control, or lifecycle command.",
         "status": "transport_only"
+      },
+      {
+        "kind": "operation",
+        "path": [
+          "users",
+          "access",
+          "check"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
       },
       {
         "kind": "lifecycle",
@@ -11503,6 +11578,13 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/audit/exports/{job_id}/download",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/audit/{event_id}/explain",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -13806,6 +13888,13 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/tools/system",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/users/{user_id}/access/check",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

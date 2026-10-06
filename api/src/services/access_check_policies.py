@@ -35,35 +35,46 @@ from src.services.authorization.explain import load_powers, load_run_user
 _PRINCIPAL = "run_user_principal"
 
 
+async def load_policy_principal(
+    db: AsyncSession, run_user_id: UUID, workflow_id: UUID | None
+) -> UserPrincipal | None:
+    """``run_user_id`` as a policy principal; None when the user is gone."""
+    run_user = await load_run_user(db, run_user_id)
+    if run_user is None:
+        return None
+    powers = await load_powers(db, workflow_id)
+    email, is_external, is_provider = (
+        await db.execute(
+            select(User.email, User.is_external, Organization.is_provider)
+            .outerjoin(Organization, Organization.id == User.organization_id)
+            .where(User.id == run_user.user_id)
+        )
+    ).one()
+    role_ids, role_names = await get_user_roles(run_user.user_id, db)
+    return UserPrincipal(
+        user_id=run_user.user_id,
+        email=email,
+        organization_id=run_user.home,
+        # The policy admin predicate: a Platform Admin, or a Full workflow.
+        is_superuser=run_user.is_platform_admin or powers.mode is WorkflowPermissionMode.FULL,
+        is_provider_org=bool(is_provider),
+        is_external=bool(is_external),
+        role_ids=list(role_ids),
+        role_names=list(role_names),
+    )
+
+
 async def _run_user_principal(db: AsyncSession, collector: access_checks.Collector) -> UserPrincipal | None:
     """The run user as a policy principal, loaded once per request; None when
     the request carries no run user or the user is gone (the writer records
     the gap)."""
     if _PRINCIPAL in collector.cache:
         return collector.cache[_PRINCIPAL]
-    principal = None
-    run_user = None if collector.run_user_id is None else await load_run_user(db, collector.run_user_id)
-    if run_user is not None:
-        powers = await load_powers(db, collector.workflow_id)
-        email, is_external, is_provider = (
-            await db.execute(
-                select(User.email, User.is_external, Organization.is_provider)
-                .outerjoin(Organization, Organization.id == User.organization_id)
-                .where(User.id == run_user.user_id)
-            )
-        ).one()
-        role_ids, role_names = await get_user_roles(run_user.user_id, db)
-        principal = UserPrincipal(
-            user_id=run_user.user_id,
-            email=email,
-            organization_id=run_user.home,
-            # The policy admin predicate: a Platform Admin, or a Full workflow.
-            is_superuser=run_user.is_platform_admin or powers.mode is WorkflowPermissionMode.FULL,
-            is_provider_org=bool(is_provider),
-            is_external=bool(is_external),
-            role_ids=list(role_ids),
-            role_names=list(role_names),
-        )
+    principal = (
+        None
+        if collector.run_user_id is None
+        else await load_policy_principal(db, collector.run_user_id, collector.workflow_id)
+    )
     collector.cache[_PRINCIPAL] = principal
     return principal
 
@@ -197,7 +208,13 @@ async def check_file(
         return
     from src.services.file_policy_service import FilePolicyService
 
-    facts = {"location": location, "path": path, "action": action, "today": allowed_today}
+    facts = {
+        "location": location,
+        "path": path,
+        "action": action,
+        "solution_id": str(solution_id) if solution_id else None,
+        "today": allowed_today,
+    }
     try:
         async with db.begin_nested():
             principal = await _policy_principal(db, collector, None, organization_id, solution_id)

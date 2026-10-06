@@ -416,3 +416,117 @@ def test_journey_settings_fallback(matrix_runs: dict) -> None:
 def test_module_runtime(matrix_runs: dict, record_testsuite_property) -> None:
     """Record how long building the world and running every start took."""
     record_testsuite_property("scenario_runs_seconds", round(matrix_runs["elapsed"], 1))
+
+
+# Explaining the journeys: nothing changes between a journey's checks being
+# recorded and being explained, so "now" re-runs to exactly "then".
+
+
+async def _access_check_ids(session_factory, execution_ids: list[str]) -> list[UUID]:
+    """Ids of every access check the given executions recorded, any outcome."""
+    from sqlalchemy import select
+
+    from src.core.database import close_db
+    from src.models.orm.audit import AuditLog
+
+    try:
+        async with session_factory() as session:
+            rows = await session.execute(
+                select(AuditLog.id).where(
+                    AuditLog.action == "access.check",
+                    AuditLog.execution_id.in_([UUID(e) for e in execution_ids]),
+                )
+            )
+            return list(rows.scalars())
+    finally:
+        await close_db()
+
+
+def _steps(trace: dict) -> list[tuple[str, str, str]]:
+    return [(s["key"], s["status"], s["reason"]) for s in trace["steps"]]
+
+
+def test_journey_access_checks_explain_unchanged(
+    matrix_runs: dict, scenario_world: dict, async_session_factory
+) -> None:
+    """Every access check a journey recorded explains with now equal to then."""
+    world = scenario_world
+    ids = asyncio.run(
+        _access_check_ids(
+            async_session_factory,
+            [run["execution_id"] for run in matrix_runs["journeys"].values()],
+        )
+    )
+    assert ids, "the journeys recorded no access checks"
+    problems = []
+    rerun = 0
+    for event_id in ids:
+        resp = world["client"].get(f"/api/audit/{event_id}/explain", headers=world["admin"].headers)
+        assert resp.status_code == 200, resp.text
+        explained = resp.json()
+        what = f"{event_id} ({explained['event']['resource_type']})"
+        if explained["now"] is None:
+            if explained["now_unavailable"] != "rows_not_stored":
+                problems.append(f"{what}: now unavailable ({explained['now_unavailable']})")
+            continue
+        rerun += 1
+        if explained["changed"] is not False:
+            problems.append(f"{what}: changed is {explained['changed']!r}")
+        then, now = explained["then"], explained["now"]
+        if (now["outcome"], _steps(now)) != (then["outcome"], _steps(then)):
+            problems.append(f"{what}: then {then['outcome']} {_steps(then)}, now {now['outcome']} {_steps(now)}")
+    assert rerun, "every journey check was unavailable; none was judged again"
+    assert not problems, "\n".join(problems)
+
+
+# What-if for each journey: (journey, run user, workflow, target, operation).
+# The journey's workflow (Full powers) is passed, so the outcome is decided by
+# reach, which is what the rule models. J7 reads with the person's own token.
+TABLE_WRITE = "POST /api/tables/{table_id}/documents"
+TABLE_READ = "POST /api/tables/{table_id}/documents/query"
+CONFIG_READ = "POST /api/sdk/config/get"
+WHAT_IFS = [
+    ("J1", "hr", "journey_onboard", "contoso", TABLE_WRITE),
+    ("J2", "hr", "journey_onboard", "fabrikam", TABLE_WRITE),
+    ("J3", "staff", "journey_onboard", "contoso", TABLE_WRITE),
+    ("J4", "mi:provider", "journey_dispatcher", "contoso", TABLE_WRITE),
+    ("J5", "mi:provider", "journey_fleet", "contoso", TABLE_WRITE),
+    ("J5", "mi:provider", "journey_fleet", "fabrikam", TABLE_WRITE),
+    ("J6", "mi:provider", "journey_global_switch", "provider", TABLE_WRITE),
+    ("J7", "customer", None, "contoso", TABLE_READ),
+    ("J7", "customer", None, "fabrikam", TABLE_READ),
+    ("J8", "fabrikam_customer", "journey_reader", "global", CONFIG_READ),
+]
+
+
+@pytest.mark.parametrize(
+    ("journey", "user", "workflow", "target", "operation"),
+    WHAT_IFS,
+    ids=[f"{j}-{u}-{t}" for j, u, _, t, _ in WHAT_IFS],
+)
+def test_journey_what_if_matches_rule(
+    journey: str,
+    user: str,
+    workflow: str | None,
+    target: str,
+    operation: str,
+    scenario_world: dict,
+) -> None:
+    """The what-if for each journey's attempt agrees with the rule."""
+    world = scenario_world
+    user_id = world["identities"][user] if user.startswith("mi:") else world["people"][user].user_id
+    resp = world["client"].post(
+        f"/api/users/{user_id}/access/check",
+        headers=world["admin"].headers,
+        json={
+            "organization_id": world["targets"][target],
+            "operation": operation,
+            "workflow_id": world["workflows"][workflow]["id"] if workflow else None,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    trace = resp.json()
+    allowed = rule.expected_allowed(user, target)
+    assert trace["outcome"] == ("success" if allowed else "failure"), _steps(trace)
+    target_step = next(s for s in trace["steps"] if s["key"] == "target")
+    assert target_step["status"] == ("passed" if allowed else "stopped"), _steps(trace)
