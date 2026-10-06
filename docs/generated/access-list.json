@@ -8724,11 +8724,11 @@
     "inline_effect": null,
     "intended_change": null,
     "mcp_tool": null,
-    "method": "POST",
+    "method": "GET",
     "operation_id": null,
-    "path": "/api/users/{user_id}/access/check",
+    "path": "/api/users/{user_id}/access",
     "permission": "roleassignments.read",
-    "reason": "Tests what the managed-identity model decides for a user performing an operation in an organization, directly or through a workflow; report-only, nothing is recorded. Decided by the evaluator (src.services.authorization.enforce) at the user's organization; the target organization and the workflow must be in the caller's reach."
+    "reason": "Reads what a user can do and where: their permissions grouped by place, with the role each comes through. Decided by the evaluator (src.services.authorization.enforce) at the user's organization, like reading their role assignments."
   },
   {
     "access_class": "permission",
@@ -8738,11 +8738,11 @@
     "inline_effect": null,
     "intended_change": null,
     "mcp_tool": null,
-    "method": "GET",
+    "method": "POST",
     "operation_id": null,
-    "path": "/api/users/{user_id}/access",
+    "path": "/api/users/{user_id}/access/check",
     "permission": "roleassignments.read",
-    "reason": "Reads what a user can do and where: their permissions grouped by place, with the role each comes through. Decided by the evaluator (src.services.authorization.enforce) at the user's organization, like reading their role assignments."
+    "reason": "Tests what the managed-identity model decides for a user performing an operation in an organization, directly or through a workflow; report-only, nothing is recorded. Decided by the evaluator (src.services.authorization.enforce) at the user's organization; the target organization and the workflow must be in the caller's reach."
   },
   {
     "access_class": "permission",

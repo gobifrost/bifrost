@@ -1641,6 +1641,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/{user_id}/access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get what a user can do, and where
+         * @description The user's permissions grouped by place (home, selected organizations, all customer organizations, Global) with the role each comes through.
+         */
+        get: operations["get_user_access_api_users__user_id__access_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users/{user_id}/access/check": {
         parameters: {
             query?: never;
@@ -11922,6 +11942,46 @@ export interface components {
             now_unavailable: ("rows_not_stored" | "run_user_missing" | "workflow_missing" | "solution_not_recorded") | null;
             /** Changed */
             changed: boolean | null;
+        };
+        /** AccessGrant */
+        AccessGrant: {
+            /** Permission */
+            permission: string;
+            /** Domain */
+            domain: string;
+            /** Action */
+            action: string;
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "per_organization" | "platform_wide" | "varies";
+            /** Sources */
+            sources: components["schemas"]["AccessGrantSource"][];
+        };
+        /**
+         * AccessGrantSource
+         * @description The role a permission is held through.
+         */
+        AccessGrantSource: {
+            /**
+             * Role Id
+             * Format: uuid
+             */
+            role_id: string;
+            /** Role Name */
+            role_name: string;
+            /**
+             * Via
+             * @enum {string}
+             */
+            via: "base" | "additional";
+        };
+        /** AccessRow */
+        AccessRow: {
+            place: components["schemas"]["Place"];
+            /** Grants */
+            grants: components["schemas"]["AccessGrant"][];
         };
         /**
          * AccessStep
@@ -22830,6 +22890,16 @@ export interface components {
             /** Total Value */
             total_value: number;
         };
+        /** OrganizationRef */
+        OrganizationRef: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+        };
         /**
          * OrganizationUpdate
          * @description Input for updating an organization (all fields optional).
@@ -23340,6 +23410,23 @@ export interface components {
             scope: "per_organization" | "platform_wide" | "varies";
             /** Enforced */
             enforced: boolean;
+        };
+        /**
+         * Place
+         * @description Somewhere a person's roles apply, with the label the screens show.
+         */
+        Place: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "home" | "organization" | "managed_organizations" | "platform";
+            /** Organization Id */
+            organization_id?: string | null;
+            /** Organization Name */
+            organization_name?: string | null;
+            /** Label */
+            label: string;
         };
         /**
          * PlatformJobAccepted
@@ -28412,6 +28499,29 @@ export interface components {
              */
             output_tokens: number;
         };
+        /** UserAccessMap */
+        UserAccessMap: {
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+            /** Name */
+            name?: string | null;
+            /** Email */
+            email: string;
+            home_organization?: components["schemas"]["OrganizationRef"] | null;
+            /** Is Platform Admin */
+            is_platform_admin: boolean;
+            /** Is Protected */
+            is_protected: boolean;
+            /** Privileged Permissions */
+            privileged_permissions: string[];
+            /** Reach */
+            reach: components["schemas"]["Place"][];
+            /** Rows */
+            rows: components["schemas"]["AccessRow"][];
+        };
         /**
          * UserFormsResponse
          * @description Response model for getting forms accessible to a user
@@ -32398,6 +32508,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserRoleAssignmentsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_user_access_api_users__user_id__access_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserAccessMap"];
                 };
             };
             /** @description Validation Error */

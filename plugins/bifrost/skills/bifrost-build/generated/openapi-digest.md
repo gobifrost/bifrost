@@ -574,6 +574,7 @@
 | DELETE | `/api/users/{user_id}` |
 | GET | `/api/users/{user_id}` |
 | PATCH | `/api/users/{user_id}` |
+| GET | `/api/users/{user_id}/access` |
 | POST | `/api/users/{user_id}/access/check` |
 | GET | `/api/users/{user_id}/forms` |
 | DELETE | `/api/users/{user_id}/invite` |
