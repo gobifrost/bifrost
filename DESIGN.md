@@ -20,6 +20,14 @@ Shared header/action/filter/table/inspector patterns provide consistency, with e
 
 Retain existing Radix-backed component APIs and V1 runtime exports. Source-copy registry components are visual references, not automatic replacements for richer product contracts. Preserve portaled overlays, keyboard semantics, refs and compound components. Keep customer-authored content outside blanket page-layout selectors.
 
+## Copy
+
+Anything that isn't a sentence is Title Case: buttons, headings, tabs, labels, badges, menu items, column headers, and display names ("Save Roles", "Effective Access", "All Customer Organizations"). Short words stay lower case inside a name ("Sign Out of All Devices", "Takes Effect with R3b"). Sentences keep sentence case: descriptions, help text, errors, toasts, tooltips, and empty-state messages that read as a sentence.
+
+A heading names the thing; what it shows or why belongs in its description ("Effective Access", not "What they can do, and where").
+
+Permissions are named the way Microsoft Graph names them: `{Verb} {Resource}`, from the permission catalog's `names`. Verbs are Read, Read All, Read and Write, and an action's own verb for `execute` (Run Workflows, Publish Apps). The Platform Admin wildcard is All Permissions. Show these names wherever a permission appears, in the UI and in CLI output; never the raw `domain.action` string as the label.
+
 ## Verification
 
 Every coverage-ledger item requires an individual source review and applicable rendered evidence. Test themes, branding, widths, states and important interactions. A build or token replacement is not proof that a page has been redesigned.

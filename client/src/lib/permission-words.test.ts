@@ -1,10 +1,24 @@
 import { describe, expect, it } from "vitest";
 
-import {
-	actionWord,
-	permissionActionWord,
-	permissionParts,
-} from "./permission-words";
+import type { PermissionCatalogEntry } from "@/services/access";
+
+import { permissionDisplayName, permissionParts } from "./permission-words";
+
+const users: PermissionCatalogEntry = {
+	domain: "users",
+	title: "Users",
+	area: "Identity & Access",
+	description: "",
+	who_should_hold: "",
+	actions: ["read", "readwrite"],
+	names: {
+		"users.read": "Read Users",
+		"users.readwrite": "Read and Write Users",
+	},
+	privileged: ["users.readwrite"],
+	scope: "per_organization",
+	enforced: true,
+};
 
 describe("permissionParts", () => {
 	it("splits a dotted domain from its action", () => {
@@ -24,23 +38,24 @@ describe("permissionParts", () => {
 	});
 });
 
-describe("actionWord", () => {
-	it("says view, manage and run instead of read, readwrite and execute", () => {
-		expect(actionWord("read")).toBe("view");
-		expect(actionWord("readwrite")).toBe("manage");
-		expect(actionWord("execute")).toBe("run");
+describe("permissionDisplayName", () => {
+	it("uses the catalog's Graph-style name", () => {
+		expect(permissionDisplayName("users.readwrite", users)).toBe(
+			"Read and Write Users",
+		);
+		expect(permissionDisplayName("users.read", users)).toBe("Read Users");
 	});
 
-	it("keeps the meaning of .all", () => {
-		expect(actionWord("read.all")).toBe("view all");
-		expect(actionWord("readwrite.all")).toBe("manage all");
+	it("names Platform Admin's wildcard All Permissions", () => {
+		expect(permissionDisplayName("*", undefined)).toBe("All Permissions");
 	});
-});
 
-describe("permissionActionWord", () => {
-	it("words the action of a whole permission", () => {
-		expect(permissionActionWord("roles.readwrite")).toBe("manage");
-		expect(permissionActionWord("workflows.execute")).toBe("run");
-		expect(permissionActionWord("agentruns.read.all")).toBe("view all");
+	it("shows a permission the catalog doesn't name as written", () => {
+		expect(permissionDisplayName("users.read.all", users)).toBe(
+			"users.read.all",
+		);
+		expect(permissionDisplayName("tables.read", undefined)).toBe(
+			"tables.read",
+		);
 	});
 });

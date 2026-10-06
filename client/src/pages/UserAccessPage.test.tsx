@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Route, Routes, useLocation } from "react-router-dom";
 
-import { renderWithProviders, screen, within } from "@/test-utils";
+import { act, renderWithProviders, screen, within } from "@/test-utils";
 import { ApiError } from "@/lib/api-error";
 import {
 	canAnywhere,
@@ -70,6 +70,22 @@ vi.mock("@/components/users/UserRoleAssignmentsPanel", () => ({
 	UserRoleAssignmentsPanel: () => <p>Role assignments editor</p>,
 }));
 
+// The account actions' rules and dialogs are the Users list's own (see
+// Users.test.tsx); here the page only has to offer them for this person.
+const accountActions = vi.hoisted(() => ({
+	options: undefined as { onDeleted?: () => void } | undefined,
+	menuPropsFor: vi.fn(),
+}));
+vi.mock("@/components/users/useUserAccountActions", () => ({
+	useUserAccountActions: (options: { onDeleted?: () => void }) => {
+		accountActions.options = options;
+		return {
+			menuPropsFor: accountActions.menuPropsFor,
+			dialogs: <p>Account action dialogs</p>,
+		};
+	},
+}));
+
 import { UserAccessPage } from "./UserAccessPage";
 
 const PROVIDER = "org-provider";
@@ -112,7 +128,7 @@ const accessMap: UserAccessMap = {
 			kind: "home",
 			organization_id: "org-1",
 			organization_name: "Contoso",
-			label: "Contoso (home)",
+			label: "Contoso (Home)",
 		},
 		{
 			kind: "platform",
@@ -127,7 +143,7 @@ const accessMap: UserAccessMap = {
 				kind: "home",
 				organization_id: "org-1",
 				organization_name: "Contoso",
-				label: "Contoso (home)",
+				label: "Contoso (Home)",
 			},
 			grants: [
 				{
@@ -147,11 +163,15 @@ const accessMap: UserAccessMap = {
 const catalog: PermissionCatalogEntry[] = [
 	{
 		domain: "roles",
-		title: "Role definitions",
-		area: "Identity & access",
+		title: "Roles",
+		area: "Identity & Access",
 		description: "",
 		who_should_hold: "",
 		actions: ["read", "readwrite"],
+		names: {
+			"roles.read": "Read Roles",
+			"roles.readwrite": "Read and Write Roles",
+		},
 		privileged: ["roles.readwrite"],
 		scope: "platform_wide",
 		enforced: true,
@@ -159,10 +179,14 @@ const catalog: PermissionCatalogEntry[] = [
 	{
 		domain: "users",
 		title: "Users",
-		area: "Identity & access",
+		area: "Identity & Access",
 		description: "",
 		who_should_hold: "",
 		actions: ["read", "readwrite"],
+		names: {
+			"users.read": "Read Users",
+			"users.readwrite": "Read and Write Users",
+		},
 		privileged: ["users.readwrite"],
 		scope: "per_organization",
 		enforced: true,
@@ -170,10 +194,11 @@ const catalog: PermissionCatalogEntry[] = [
 	{
 		domain: "tables",
 		title: "Tables",
-		area: "Data & content",
+		area: "Data & Content",
 		description: "",
 		who_should_hold: "",
 		actions: ["read"],
+		names: { "tables.read": "Read Tables" },
 		privileged: [],
 		scope: "per_organization",
 		enforced: true,
@@ -201,6 +226,23 @@ function renderPage(path = "/users/user-1") {
 }
 
 beforeEach(() => {
+	accountActions.menuPropsFor.mockReset();
+	accountActions.menuPropsFor.mockReturnValue({
+		status: "active",
+		isActive: true,
+		isSelf: false,
+		canSupport: true,
+		canDelete: true,
+		isProtected: false,
+		onResend: vi.fn(),
+		onRegenerate: vi.fn(),
+		onCopyLink: vi.fn(),
+		onRevoke: vi.fn(),
+		onResetMfa: vi.fn(),
+		onSignOut: vi.fn(),
+		onToggleActive: vi.fn(),
+		onDelete: vi.fn(),
+	});
 	authz.summary = adminSummary();
 	authz.loading = false;
 	mockUseUser.mockReturnValue({
@@ -234,8 +276,56 @@ describe("UserAccessPage", () => {
 			within(reach)
 				.getAllByRole("listitem")
 				.map((item) => item.textContent),
-		).toEqual(["Contoso (home)", "Global"]);
+		).toEqual(["Contoso (Home)", "Global"]);
 		expect(screen.queryByText(/^Protected:/)).not.toBeInTheDocument();
+	});
+
+	it("offers the Users list's account actions, without Edit Profile", async () => {
+		const { user } = renderPage();
+
+		await user.click(
+			screen.getByRole("button", { name: "Avery Example actions" }),
+		);
+
+		expect(accountActions.menuPropsFor).toHaveBeenCalledWith(person);
+		for (const name of [
+			"Reset MFA",
+			"Sign Out of All Devices",
+			"Disable",
+			"Delete",
+		]) {
+			expect(screen.getByRole("menuitem", { name })).toBeInTheDocument();
+		}
+		expect(
+			screen.queryByRole("menuitem", { name: "Edit Profile" }),
+		).not.toBeInTheDocument();
+		expect(screen.getByText("Account action dialogs")).toBeInTheDocument();
+	});
+
+	it("returns to the Users list once the person is deleted", () => {
+		renderPage();
+
+		act(() => accountActions.options?.onDeleted?.());
+
+		expect(
+			screen.getByRole("status", { name: "location" }),
+		).toHaveTextContent(/^\/users$/);
+	});
+
+	it("names its sections, with what each shows in the description", () => {
+		renderPage();
+
+		expect(
+			screen.getByRole("heading", { level: 2, name: "Effective Access" }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				"What this person can do, in each organization their roles reach. Hover a permission to see which role grants it.",
+			),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("heading", { level: 2, name: "Role Assignments" }),
+		).toBeInTheDocument();
 	});
 
 	it("opens on the access map above the role assignments", () => {
@@ -245,12 +335,12 @@ describe("UserAccessPage", () => {
 			"aria-selected",
 			"true",
 		);
-		const table = screen.getByRole("table", { name: "Access by place" });
+		const table = screen.getByRole("table", { name: "Access by Place" });
 		expect(
-			within(table).getByRole("rowheader", { name: "Contoso (home)" }),
+			within(table).getByRole("rowheader", { name: "Contoso (Home)" }),
 		).toBeInTheDocument();
 		expect(
-			within(table).getByRole("columnheader", { name: "Data & content" }),
+			within(table).getByRole("columnheader", { name: "Data & Content" }),
 		).toBeInTheDocument();
 		expect(screen.getByText("Role assignments editor")).toBeInTheDocument();
 		expect(mockUseUserAccessMap).toHaveBeenLastCalledWith("user-1");
@@ -289,7 +379,7 @@ describe("UserAccessPage", () => {
 
 		expect(
 			screen.getByText(
-				"Protected: holds Role definitions (manage) and Users (manage). Only a Platform Admin can change this account.",
+				"Protected: holds Read and Write Roles and Read and Write Users. Only a Platform Admin can change this account.",
 			),
 		).toBeInTheDocument();
 	});
@@ -325,11 +415,11 @@ describe("UserAccessPage", () => {
 
 		expect(screen.queryByRole("table")).not.toBeInTheDocument();
 		const records = within(
-			screen.getByRole("list", { name: "Access by place" }),
+			screen.getByRole("list", { name: "Access by Place" }),
 		).getAllByRole("listitem");
 		expect(records).toHaveLength(1);
 		expect(
-			within(records[0]).getByRole("heading", { name: "Contoso (home)" }),
+			within(records[0]).getByRole("heading", { name: "Contoso (Home)" }),
 		).toBeInTheDocument();
 	});
 
@@ -408,7 +498,7 @@ describe("UserAccessPage", () => {
 			screen.getByRole("heading", { name: "You can't view this person" }),
 		).toBeInTheDocument();
 		expect(
-			screen.getByRole("link", { name: "Back to users" }),
+			screen.getByRole("link", { name: "Back to Users" }),
 		).toHaveAttribute("href", "/users");
 	});
 
@@ -422,7 +512,7 @@ describe("UserAccessPage", () => {
 		renderPage();
 
 		expect(
-			screen.getByRole("heading", { name: "User not found" }),
+			screen.getByRole("heading", { name: "User Not Found" }),
 		).toBeInTheDocument();
 	});
 
@@ -441,7 +531,7 @@ describe("UserAccessPage", () => {
 		expect(
 			screen.getByRole("heading", { name: "Couldn't load this person" }),
 		).toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: "Try again" }));
+		await user.click(screen.getByRole("button", { name: "Try Again" }));
 		expect(refetch).toHaveBeenCalledOnce();
 	});
 });

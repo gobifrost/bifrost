@@ -10,7 +10,7 @@ const places: Place[] = [
 		kind: "home",
 		organization_id: "org-1",
 		organization_name: "Contoso",
-		label: "Contoso (home)",
+		label: "Contoso (Home)",
 	},
 	{
 		kind: "organization",
@@ -22,7 +22,7 @@ const places: Place[] = [
 		kind: "managed_organizations",
 		organization_id: null,
 		organization_name: null,
-		label: "All customer organizations",
+		label: "All Customer Organizations",
 	},
 	{
 		kind: "platform",

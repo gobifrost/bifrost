@@ -96,18 +96,25 @@ vi.mock("@/services/access", () => {
 	) => ({
 		domain,
 		title,
-		area: "Identity & access",
+		area: "Identity & Access",
 		description: "",
 		who_should_hold: "",
 		actions: ["read", "readwrite"],
+		names: {
+			[`${domain}.read`]: `Read ${title}`,
+			[`${domain}.readwrite`]: `Read and Write ${title}`,
+		},
 		privileged,
 		scope,
 		enforced: true,
 	});
 	const catalog = [
+		entry("agents", "Agents", "per_organization"),
+		entry("agentruns", "Agent Runs", "per_organization"),
+		entry("forms", "Forms", "per_organization"),
 		entry("organizations", "Organizations", "platform_wide"),
 		entry("users", "Users", "per_organization", ["users.readwrite"]),
-		entry("secrets", "Secrets", "per_organization", ["secrets.read"]),
+		entry("secrets", "Secret Values", "per_organization", ["secrets.read"]),
 	];
 	return { usePermissionCatalog: () => ({ data: catalog }) };
 });
@@ -262,11 +269,11 @@ beforeEach(() => {
 describe("UserRoleAssignmentsPanel", () => {
 	it("assigns Platform Operator for all customer organizations in one save", async () => {
 		const { user } = render();
-		const save = screen.getByRole("button", { name: "Save roles" });
+		const save = screen.getByRole("button", { name: "Save Roles" });
 		expect(save).toBeDisabled();
 		expect(screen.getByText("No additional roles.")).toBeInTheDocument();
 
-		await user.click(screen.getByRole("button", { name: "Add role" }));
+		await user.click(screen.getByRole("button", { name: "Add Role" }));
 		await user.click(
 			await screen.findByRole("option", { name: /Platform Operator/ }),
 		);
@@ -275,7 +282,7 @@ describe("UserRoleAssignmentsPanel", () => {
 			name: "Where Platform Operator applies",
 		});
 		expect(
-			within(places).getByText("All customer organizations"),
+			within(places).getByText("All Customer Organizations"),
 		).toBeInTheDocument();
 		expect(
 			screen.getByText(/Support for customer organizations/),
@@ -304,7 +311,7 @@ describe("UserRoleAssignmentsPanel", () => {
 
 	it("assigns Secrets Reader with its fixed places and no picker", async () => {
 		const { user } = render();
-		await user.click(screen.getByRole("button", { name: "Add role" }));
+		await user.click(screen.getByRole("button", { name: "Add Role" }));
 		await user.click(
 			await screen.findByRole("option", { name: /Secrets Reader/ }),
 		);
@@ -321,7 +328,7 @@ describe("UserRoleAssignmentsPanel", () => {
 			}),
 		).not.toBeInTheDocument();
 
-		await user.click(screen.getByRole("button", { name: "Save roles" }));
+		await user.click(screen.getByRole("button", { name: "Save Roles" }));
 		await waitFor(() => expect(state.mutateAsync).toHaveBeenCalled());
 		expect(state.mutateAsync.mock.calls[0][0].body.additional).toEqual([
 			{
@@ -337,12 +344,12 @@ describe("UserRoleAssignmentsPanel", () => {
 
 	it("offers Operator only its allowed places, never the provider org", async () => {
 		const { user } = render();
-		await user.click(screen.getByRole("button", { name: "Add role" }));
+		await user.click(screen.getByRole("button", { name: "Add Role" }));
 		await user.click(
 			await screen.findByRole("option", { name: /Platform Operator/ }),
 		);
 		await user.click(
-			screen.getByRole("radio", { name: "Selected organizations" }),
+			screen.getByRole("radio", { name: "Selected Organizations" }),
 		);
 		await user.click(
 			screen.getByRole("button", {
@@ -382,7 +389,7 @@ describe("UserRoleAssignmentsPanel", () => {
 
 	it("warns before adding Platform Admin, which applies platform-wide with no choice", async () => {
 		const { user } = render();
-		await user.click(screen.getByRole("button", { name: "Add role" }));
+		await user.click(screen.getByRole("button", { name: "Add Role" }));
 		await user.click(
 			await screen.findByRole("option", { name: /Platform Admin/ }),
 		);
@@ -403,7 +410,7 @@ describe("UserRoleAssignmentsPanel", () => {
 			}),
 		).not.toBeInTheDocument();
 
-		await user.click(screen.getByRole("button", { name: "Save roles" }));
+		await user.click(screen.getByRole("button", { name: "Save Roles" }));
 		await waitFor(() => expect(state.mutateAsync).toHaveBeenCalled());
 		expect(state.mutateAsync.mock.calls[0][0].body).toEqual({
 			base_role_id: USER_ROLE,
@@ -477,7 +484,7 @@ describe("UserRoleAssignmentsPanel", () => {
 
 		expect(
 			screen.getByText(
-				"Billing Forms replaces User as Alice's base role. In Contoso, they'll have only Billing Forms's permissions (none) instead of User's (view agents, view agent runs, view forms).",
+				"Billing Forms replaces User as Alice's base role. In Contoso, they'll have only Billing Forms's permissions (none) instead of User's (Read Agents, Read Agent Runs, Read Forms).",
 			),
 		).toBeInTheDocument();
 
@@ -519,7 +526,7 @@ describe("UserRoleAssignmentsPanel", () => {
 			screen.queryByRole("button", { name: "Remove Platform Operator" }),
 		).not.toBeInTheDocument();
 
-		await user.click(screen.getByRole("button", { name: "Add role" }));
+		await user.click(screen.getByRole("button", { name: "Add Role" }));
 		await user.click(
 			await screen.findByRole("option", { name: /Help desk/ }),
 		);
@@ -571,7 +578,7 @@ describe("UserRoleAssignmentsPanel", () => {
 				name: "Add where Platform Operator applies",
 			}),
 		).not.toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: "Add role" }));
+		await user.click(screen.getByRole("button", { name: "Add Role" }));
 		expect(
 			screen.queryByRole("option", { name: /Platform Operator/ }),
 		).not.toBeInTheDocument();
@@ -580,7 +587,7 @@ describe("UserRoleAssignmentsPanel", () => {
 		await user.click(
 			screen.getByRole("button", { name: "Remove Platform Operator" }),
 		);
-		await user.click(screen.getByRole("button", { name: "Save roles" }));
+		await user.click(screen.getByRole("button", { name: "Save Roles" }));
 		await waitFor(() => expect(state.mutateAsync).toHaveBeenCalled());
 		expect(state.mutateAsync.mock.calls[0][0].body.additional).toEqual([]);
 	});
@@ -601,10 +608,10 @@ describe("UserRoleAssignmentsPanel", () => {
 			screen.getByText("You can view these roles but not change them."),
 		).toBeInTheDocument();
 		expect(
-			screen.queryByRole("button", { name: "Add role" }),
+			screen.queryByRole("button", { name: "Add Role" }),
 		).not.toBeInTheDocument();
 		expect(
-			screen.queryByRole("button", { name: "Save roles" }),
+			screen.queryByRole("button", { name: "Save Roles" }),
 		).not.toBeInTheDocument();
 		expect(
 			screen.queryByRole("button", { name: "Close" }),
@@ -618,7 +625,7 @@ describe("UserRoleAssignmentsPanel", () => {
 			screen.getByText("You can't change your own roles."),
 		).toBeInTheDocument();
 		expect(
-			screen.queryByRole("button", { name: "Save roles" }),
+			screen.queryByRole("button", { name: "Save Roles" }),
 		).not.toBeInTheDocument();
 	});
 
@@ -627,11 +634,11 @@ describe("UserRoleAssignmentsPanel", () => {
 			detail: "Platform Operator applies only at managed organizations or at customer organizations",
 		});
 		const { user } = render();
-		await user.click(screen.getByRole("button", { name: "Add role" }));
+		await user.click(screen.getByRole("button", { name: "Add Role" }));
 		await user.click(
 			await screen.findByRole("option", { name: /Platform Operator/ }),
 		);
-		await user.click(screen.getByRole("button", { name: "Save roles" }));
+		await user.click(screen.getByRole("button", { name: "Save Roles" }));
 
 		expect(
 			await screen.findByText(/applies only at managed organizations/),
@@ -645,17 +652,17 @@ describe("UserRoleAssignmentsPanel", () => {
 
 	it("discards unsaved changes", async () => {
 		const { user } = render();
-		await user.click(screen.getByRole("button", { name: "Add role" }));
+		await user.click(screen.getByRole("button", { name: "Add Role" }));
 		await user.click(
 			await screen.findByRole("option", { name: /Help desk/ }),
 		);
 		await user.click(
-			screen.getByRole("button", { name: "Discard changes" }),
+			screen.getByRole("button", { name: "Discard Changes" }),
 		);
 
 		expect(screen.getByText("No additional roles.")).toBeInTheDocument();
 		expect(
-			screen.getByRole("button", { name: "Save roles" }),
+			screen.getByRole("button", { name: "Save Roles" }),
 		).toBeDisabled();
 	});
 
@@ -679,7 +686,7 @@ describe("UserRoleAssignmentsPanel", () => {
 			within(screen.getByRole("list", { name: "What User grants" }))
 				.getAllByRole("listitem")
 				.map((item) => item.firstElementChild!.firstChild!.textContent),
-		).toEqual(["agents", "agentruns", "forms"]);
+		).toEqual(["Read Agents", "Read Agent Runs", "Read Forms"]);
 	});
 
 	it("omits the base role's grants when the viewer isn't told them", () => {
@@ -754,13 +761,13 @@ describe("UserRoleAssignmentsPanel", () => {
 			});
 			expect(
 				within(presets).getByRole("radio", {
-					name: "Selected organizations",
+					name: "Selected Organizations",
 				}),
 			).toBeChecked();
 
 			await user.click(
 				within(presets).getByRole("radio", {
-					name: "All organizations",
+					name: "All Organizations",
 				}),
 			);
 			const places = screen.getByRole("list", {
@@ -770,10 +777,10 @@ describe("UserRoleAssignmentsPanel", () => {
 				within(places)
 					.getAllByRole("listitem")
 					.map((item) => item.textContent),
-			).toEqual(["All customer organizations", "Provider", "Global"]);
+			).toEqual(["All Customer Organizations", "Provider", "Global"]);
 
 			await user.click(
-				screen.getByRole("button", { name: "Save roles" }),
+				screen.getByRole("button", { name: "Save Roles" }),
 			);
 			await waitFor(() => expect(state.mutateAsync).toHaveBeenCalled());
 			expect(state.mutateAsync.mock.calls[0][0].body.additional).toEqual([
@@ -797,11 +804,11 @@ describe("UserRoleAssignmentsPanel", () => {
 
 			await user.click(
 				screen.getByRole("radio", {
-					name: "All customer organizations",
+					name: "All Customer Organizations",
 				}),
 			);
 			await user.click(
-				screen.getByRole("radio", { name: "Selected organizations" }),
+				screen.getByRole("radio", { name: "Selected Organizations" }),
 			);
 
 			expect(
@@ -814,13 +821,13 @@ describe("UserRoleAssignmentsPanel", () => {
 					.map((item) => item.textContent),
 			).toEqual(["Contoso", "Fabrikam"]);
 			expect(
-				screen.getByRole("button", { name: "Save roles" }),
+				screen.getByRole("button", { name: "Save Roles" }),
 			).toBeDisabled();
 		});
 
 		it("offers All organizations only when the role can apply everywhere, provider org included", async () => {
 			const { user } = render();
-			await user.click(screen.getByRole("button", { name: "Add role" }));
+			await user.click(screen.getByRole("button", { name: "Add Role" }));
 			await user.click(
 				await screen.findByRole("option", {
 					name: /Platform Operator/,
@@ -835,7 +842,7 @@ describe("UserRoleAssignmentsPanel", () => {
 				)
 					.getAllByRole("radio")
 					.map((radio) => radio.textContent),
-			).toEqual(["Selected organizations", "All customer organizations"]);
+			).toEqual(["Selected Organizations", "All Customer Organizations"]);
 		});
 
 		it("offers someone who isn't a Platform Admin only selected organizations", async () => {
@@ -847,7 +854,7 @@ describe("UserRoleAssignmentsPanel", () => {
 				assignable_roles: [supportRole],
 			};
 			const { user } = render(makeUser({ organization_id: "org-a" }));
-			await user.click(screen.getByRole("button", { name: "Add role" }));
+			await user.click(screen.getByRole("button", { name: "Add Role" }));
 			await user.click(
 				await screen.findByRole("option", { name: /Help desk/ }),
 			);
@@ -873,7 +880,7 @@ describe("UserRoleAssignmentsPanel", () => {
 				)
 					.getAllByRole("listitem")
 					.map((item) => item.textContent),
-			).toEqual(["Contoso", "All customer organizations"]);
+			).toEqual(["Contoso", "All Customer Organizations"]);
 			expect(
 				screen.queryByRole("button", {
 					name: "Remove Contoso from Help desk",
@@ -890,7 +897,7 @@ describe("UserRoleAssignmentsPanel", () => {
 				"billing-forms",
 			);
 			await user.click(
-				screen.getByRole("button", { name: "Save roles" }),
+				screen.getByRole("button", { name: "Save Roles" }),
 			);
 			await waitFor(() => expect(state.mutateAsync).toHaveBeenCalled());
 			expect(state.mutateAsync.mock.calls[0][0].body.additional).toEqual([
@@ -903,7 +910,7 @@ describe("UserRoleAssignmentsPanel", () => {
 			const { user } = render(makeUser({ organization_id: "org-a" }));
 
 			await user.click(
-				screen.getByRole("radio", { name: "Selected organizations" }),
+				screen.getByRole("radio", { name: "Selected Organizations" }),
 			);
 
 			expect(
@@ -926,7 +933,7 @@ describe("UserRoleAssignmentsPanel", () => {
 
 			await user.click(
 				screen.getByRole("button", {
-					name: "Some permissions need Global",
+					name: "Some Permissions Need Global",
 				}),
 			);
 			const details = await screen.findByRole("dialog");
@@ -937,11 +944,11 @@ describe("UserRoleAssignmentsPanel", () => {
 			await user.keyboard("{Escape}");
 
 			await user.click(
-				screen.getByRole("radio", { name: "All organizations" }),
+				screen.getByRole("radio", { name: "All Organizations" }),
 			);
 			expect(
 				screen.queryByRole("button", {
-					name: "Some permissions need Global",
+					name: "Some Permissions Need Global",
 				}),
 			).not.toBeInTheDocument();
 		});
@@ -951,7 +958,7 @@ describe("UserRoleAssignmentsPanel", () => {
 			const { user } = render(makeUser({ organization_id: "org-a" }));
 
 			screen
-				.getByRole("button", { name: "Some permissions need Global" })
+				.getByRole("button", { name: "Some Permissions Need Global" })
 				.focus();
 			await user.keyboard("{Enter}");
 
@@ -976,7 +983,7 @@ describe("UserRoleAssignmentsPanel", () => {
 							.map((part) => part.textContent)
 							.join(" "),
 					),
-			).toEqual(["Organizations view Platform-wide", "Users view"]);
+			).toEqual(["Read Organizations Platform-Wide", "Read Users"]);
 		});
 	});
 });

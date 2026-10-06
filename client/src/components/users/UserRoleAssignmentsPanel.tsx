@@ -44,7 +44,7 @@ import { getErrorMessage } from "@/lib/api-error";
 import { orgTarget } from "@/lib/authorization";
 import { PLATFORM_ADMIN_ROLE_ID } from "@/lib/builtin-roles";
 import { motionSeconds } from "@/lib/motion";
-import { permissionActionWord, permissionParts } from "@/lib/permission-words";
+import { permissionDisplayName, permissionParts } from "@/lib/permission-words";
 import {
 	offeredPresets,
 	placeKey,
@@ -85,9 +85,9 @@ interface RoleInfo {
 type PresetChoice = PlacementPreset | "custom";
 
 const PRESET_LABELS: Record<PresetChoice, string> = {
-	selected: "Selected organizations",
-	customers: "All customer organizations",
-	all: "All organizations",
+	selected: "Selected Organizations",
+	customers: "All Customer Organizations",
+	all: "All Organizations",
 	custom: "Custom",
 };
 
@@ -101,25 +101,20 @@ const PRESET_ICONS = {
 /** Grant chips shown before "+N more". */
 const GRANTS_SHOWN = 4;
 
-const DOMAIN_WORDS: Record<string, string> = {
-	agentruns: "agent runs",
-	configs: "configuration",
-	filepolicies: "file policies",
-	mcp: "MCP servers",
-	policyrules: "policy rules",
-	roleassignments: "role assignments",
-	"users.lifecycle": "user lifecycle",
-};
-
-/** "agents.read" → "view agents". */
-function describePermission(permission: string): string {
-	const { domain } = permissionParts(permission);
-	return `${permissionActionWord(permission)} ${DOMAIN_WORDS[domain] ?? domain.replace(/\./g, " ")}`;
-}
-
-function describePermissions(permissions: string[]): string {
+/** "Read Agents, Read and Write Tables", or "none". */
+function describePermissions(
+	permissions: string[],
+	catalog: Map<string, PermissionCatalogEntry>,
+): string {
 	return permissions.length > 0
-		? permissions.map(describePermission).join(", ")
+		? permissions
+				.map((permission) =>
+					permissionDisplayName(
+						permission,
+						catalog.get(permissionParts(permission).domain),
+					),
+				)
+				.join(", ")
 		: "none";
 }
 
@@ -245,8 +240,8 @@ function GrantChips({
 					onClick={() => setExpanded(!expanded)}
 				>
 					{expanded
-						? "Show fewer"
-						: `+${permissions.length - GRANTS_SHOWN} more`}
+						? "Show Fewer"
+						: `+${permissions.length - GRANTS_SHOWN} More`}
 				</button>
 			)}
 		</div>
@@ -341,14 +336,14 @@ function PlatformWideWarning({
 						className="h-auto min-h-8 gap-1.5 whitespace-normal py-1 focus-visible:ring-2 focus-visible:ring-ring"
 					>
 						<AlertTriangle aria-hidden="true" />
-						Some permissions need Global
+						Some Permissions Need Global
 					</button>
 				</Badge>
 			</PopoverTrigger>
 			<PopoverContent
 				align="end"
 				collisionPadding={16}
-				aria-label="Platform-wide permissions"
+				aria-label="Platform-Wide Permissions"
 				className="w-72 max-w-[calc(100vw-2rem)] text-sm"
 			>
 				<ul className="space-y-1.5">
@@ -387,7 +382,7 @@ function OrganizationPicker({
 					aria-label={`Add where ${roleName} applies`}
 				>
 					<Plus aria-hidden="true" className="size-4" />
-					Add organization
+					Add Organization
 				</Button>
 			</PopoverTrigger>
 			<PopoverContent variant="picker" className="p-0" align="start">
@@ -440,7 +435,7 @@ function AddRolePicker({
 					className="min-h-11 sm:min-h-9"
 				>
 					<Plus aria-hidden="true" className="size-4" />
-					Add role
+					Add Role
 				</Button>
 			</PopoverTrigger>
 			<PopoverContent variant="picker" className="p-0" align="start">
@@ -534,7 +529,7 @@ function AdditionalRoleCard({
 	onRemove,
 	onPlacesChange,
 }: AdditionalRoleCardProps) {
-	const name = info?.name ?? "Unknown role";
+	const name = info?.name ?? "Unknown Role";
 	// Listed but not grantable: the user holds a role they could no longer be
 	// given (e.g. Platform Operator outside the provider org). It can only be
 	// removed.
@@ -627,7 +622,7 @@ function AdditionalRoleCard({
 					<>
 						<div className="flex flex-wrap items-center justify-between gap-2">
 							<span className="text-xs font-medium text-muted-foreground">
-								Where it applies
+								Where It Applies
 							</span>
 							{platformWide.length > 0 && (
 								<PlatformWideWarning entries={platformWide} />
@@ -917,7 +912,7 @@ export function UserRoleAssignmentsPanel({
 					disabled={assignmentsQuery.isFetching}
 					onClick={() => void assignmentsQuery.refetch()}
 				>
-					Retry roles
+					Retry Roles
 				</Button>
 			</div>
 		);
@@ -966,10 +961,10 @@ export function UserRoleAssignmentsPanel({
 		newCustomBase &&
 		`${newCustomBase.name} replaces ${data.base_role.name} as ${user.name || user.email}'s base role. ` +
 			`In ${user.organization_id ? orgName(user.organization_id) : "their organization"}, ` +
-			`they'll have only ${newCustomBase.name}'s permissions (${describePermissions(newCustomBase.permissions)}) ` +
+			`they'll have only ${newCustomBase.name}'s permissions (${describePermissions(newCustomBase.permissions, catalog)}) ` +
 			`instead of ${data.base_role.name}'s` +
 			(savedBasePermissions
-				? ` (${describePermissions(savedBasePermissions)}).`
+				? ` (${describePermissions(savedBasePermissions, catalog)}).`
 				: " permissions.");
 
 	const updateRole = (roleId: string, places: RolePlace[]) =>
@@ -1015,7 +1010,7 @@ export function UserRoleAssignmentsPanel({
 				? "You can view these roles but not change them."
 				: null;
 
-	const baseRoleName = roleInfo.get(draft.baseRoleId)?.name ?? "Base role";
+	const baseRoleName = roleInfo.get(draft.baseRoleId)?.name ?? "Base Role";
 
 	return (
 		<>
@@ -1044,7 +1039,7 @@ export function UserRoleAssignmentsPanel({
 						id="base-role-heading"
 						className="text-sm font-semibold"
 					>
-						Base role
+						Base Role
 					</h3>
 					<p
 						id="base-role-help"
@@ -1058,7 +1053,7 @@ export function UserRoleAssignmentsPanel({
 						{canChangeBase ? (
 							<Combobox
 								id="base-role"
-								aria-label="Base role"
+								aria-label="Base Role"
 								aria-describedby="base-role-help"
 								value={draft.baseRoleId}
 								onValueChange={(value) =>
@@ -1109,7 +1104,7 @@ export function UserRoleAssignmentsPanel({
 							id="additional-roles-heading"
 							className="text-sm font-semibold"
 						>
-							Additional roles
+							Additional Roles
 						</h3>
 						<p className="text-xs leading-5 text-muted-foreground">
 							Extra access on top of the base role. Each one
@@ -1121,7 +1116,7 @@ export function UserRoleAssignmentsPanel({
 							No additional roles.
 						</p>
 					) : (
-						<ul className="space-y-3" aria-label="Additional roles">
+						<ul className="space-y-3" aria-label="Additional Roles">
 							{draft.additional.map((role) => (
 								<li key={role.roleId}>
 									<AdditionalRoleCard
@@ -1220,7 +1215,7 @@ export function UserRoleAssignmentsPanel({
 							aria-live="polite"
 							className="text-xs text-muted-foreground sm:mr-auto"
 						>
-							Unsaved changes
+							Unsaved Changes
 						</p>
 					)}
 					<Button
@@ -1233,7 +1228,7 @@ export function UserRoleAssignmentsPanel({
 							setSaveError(null);
 						}}
 					>
-						Discard changes
+						Discard Changes
 					</Button>
 					<Button
 						type="button"
@@ -1244,7 +1239,7 @@ export function UserRoleAssignmentsPanel({
 						{replace.isPending && (
 							<Loader2 className="mr-2 h-4 w-4 motion-safe:animate-spin" />
 						)}
-						Save roles
+						Save Roles
 					</Button>
 				</div>
 			)}

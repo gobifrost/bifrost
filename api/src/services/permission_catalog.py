@@ -1,7 +1,7 @@
 """The permission catalog: every permission domain with where and how the
 platform checks it, derived from the access list.
 
-Titles, areas and guidance live on ``PERMISSION_DOMAINS``; what the routes
+Titles, names, areas and guidance live on ``PERMISSION_DOMAINS``; what the routes
 actually check (actions, scope, enforcement) comes from ``ACCESS_LIST`` so
 the catalog cannot drift from it.
 """
@@ -15,6 +15,7 @@ from src.models.contracts.permissions import (
     PRIVILEGED_PERMISSIONS,
     PermissionCatalogEntry,
     parse_permission,
+    permission_display_name,
 )
 from src.services.access_list import ACCESS_LIST
 
@@ -53,6 +54,7 @@ def build_catalog(access_list: list[AccessEntry] = ACCESS_LIST) -> list[Permissi
             scope = "platform_wide"
         else:
             scope = "varies"
+        sorted_actions = sorted(actions, key=_action_sort_key)
         catalog.append(
             PermissionCatalogEntry(
                 domain=domain,
@@ -60,7 +62,11 @@ def build_catalog(access_list: list[AccessEntry] = ACCESS_LIST) -> list[Permissi
                 area=info.area,
                 description=info.description,
                 who_should_hold=info.who_should_hold,
-                actions=sorted(actions, key=_action_sort_key),
+                actions=sorted_actions,
+                names={
+                    f"{domain}.{action}": permission_display_name(f"{domain}.{action}")
+                    for action in sorted_actions
+                },
                 privileged=privileged,
                 scope=scope,
                 enforced=any(e.current_gate == CurrentGate.EVALUATOR for e in entries),

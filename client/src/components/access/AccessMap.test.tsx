@@ -30,6 +30,10 @@ function entry(
 		description: "",
 		who_should_hold: "",
 		actions: ["read", "readwrite"],
+		names: {
+			[`${domain}.read`]: `Read ${title}`,
+			[`${domain}.readwrite`]: `Read and Write ${title}`,
+		},
 		privileged: [],
 		scope: "per_organization",
 		enforced: true,
@@ -40,14 +44,14 @@ function entry(
 // Sorted by area, then title, as the server sends it.
 const catalog: PermissionCatalogEntry[] = [
 	entry("workflows", "Workflows", "Automation"),
-	entry("tables", "Tables", "Data & content"),
-	entry("organizations", "Organizations", "Identity & access", {
+	entry("tables", "Tables", "Data & Content"),
+	entry("organizations", "Organizations", "Identity & Access", {
 		scope: "platform_wide",
 	}),
-	entry("users", "Users", "Identity & access", {
+	entry("users", "Users", "Identity & Access", {
 		privileged: ["users.readwrite"],
 	}),
-	entry("secrets", "Secrets", "Integrations & secrets", {
+	entry("secrets", "Secrets", "Integrations & Secrets", {
 		privileged: ["secrets.read"],
 	}),
 	entry("settings", "Settings", "Platform"),
@@ -78,7 +82,7 @@ const home: Place = {
 	kind: "home",
 	organization_id: "org-1",
 	organization_name: "Contoso",
-	label: "Contoso (home)",
+	label: "Contoso (Home)",
 };
 const fabrikam: Place = {
 	kind: "organization",
@@ -106,7 +110,7 @@ describe("AccessMap", () => {
 	it("lays out places as rows and only the areas they hold as columns", () => {
 		render(<AccessMap rows={rows} catalog={catalog} />);
 
-		const table = screen.getByRole("table", { name: "Access by place" });
+		const table = screen.getByRole("table", { name: "Access by Place" });
 		expect(
 			within(table)
 				.getAllByRole("columnheader")
@@ -114,24 +118,24 @@ describe("AccessMap", () => {
 		).toEqual([
 			"Place",
 			"Automation",
-			"Data & content",
-			"Identity & access",
+			"Data & Content",
+			"Identity & Access",
 		]);
 		expect(
 			within(table)
 				.getAllByRole("rowheader")
 				.map((cell) => cell.textContent),
-		).toEqual(["Contoso (home)", "Fabrikam", "Global"]);
+		).toEqual(["Contoso (Home)", "Fabrikam", "Global"]);
 	});
 
 	it("puts each permission in its place's row under its area", () => {
 		render(<AccessMap rows={rows} catalog={catalog} />);
 
-		const contoso = screen.getByRole("row", { name: /Contoso \(home\)/ });
+		const contoso = screen.getByRole("row", { name: /Contoso \(Home\)/ });
 		const cells = within(contoso).getAllByRole("cell");
 		expect(cells[0]).toHaveTextContent("None");
 		expect(
-			within(cells[1]).getByRole("button", { name: /Tables/ }),
+			within(cells[1]).getByRole("button", { name: "Read Tables" }),
 		).toHaveAttribute("data-variant", "per_organization");
 		expect(
 			within(cells[2]).getByRole("button", { name: /Users/ }),
@@ -146,7 +150,7 @@ describe("AccessMap", () => {
 			name: /Organizations/,
 		});
 		expect(chip).toHaveAttribute("data-variant", "platform_wide");
-		expect(within(chip).getByText("Platform-wide")).toBeInTheDocument();
+		expect(within(chip).getByText("Platform-Wide")).toBeInTheDocument();
 	});
 
 	const everything: AccessGrant = {
@@ -155,7 +159,7 @@ describe("AccessMap", () => {
 		action: "*",
 	};
 	const allOrganizations: AccessRow = {
-		place: { ...global, label: "All organizations" },
+		place: { ...global, label: "All Organizations" },
 		grants: [everything],
 	};
 	const tooltip =
@@ -183,16 +187,16 @@ describe("AccessMap", () => {
 			.getAllByRole("columnheader")
 			.slice(1)
 			.map((cell) => cell.textContent);
-		expect(areas).toEqual(["Data & content", "Integrations & secrets"]);
+		expect(areas).toEqual(["Data & Content", "Integrations & Secrets"]);
 		const place = screen.getByRole("rowheader", {
-			name: "All organizations",
+			name: "All Organizations",
 		});
 		expect(place).toHaveAttribute("rowspan", "2");
 		const spanRow = place.closest("tr")!;
 		const [span] = within(spanRow).getAllByRole("cell");
 		expect(span).toHaveAttribute("colspan", String(areas.length));
 		const chip = within(span).getByRole("button", {
-			name: "Every permission",
+			name: "All Permissions",
 		});
 		expect(chip).toHaveAttribute("data-variant", "privileged");
 		expect(chip).toHaveClass(
@@ -227,10 +231,10 @@ describe("AccessMap", () => {
 		render(<AccessMap catalog={catalog} rows={[allOrganizations]} />);
 
 		const [record] = within(
-			screen.getByRole("list", { name: "Access by place" }),
+			screen.getByRole("list", { name: "Access by Place" }),
 		).getAllByRole("listitem");
 		expect(
-			within(record).getByRole("button", { name: "Every permission" }),
+			within(record).getByRole("button", { name: "All Permissions" }),
 		).toHaveClass("w-full");
 		expect(
 			within(record).queryByText("Permissions"),
@@ -243,14 +247,14 @@ describe("AccessMap", () => {
 
 		expect(screen.queryByRole("table")).not.toBeInTheDocument();
 		const records = within(
-			screen.getByRole("list", { name: "Access by place" }),
+			screen.getByRole("list", { name: "Access by Place" }),
 		).getAllByRole("listitem");
 		expect(records).toHaveLength(3);
 		expect(
-			within(records[0]).getByRole("heading", { name: "Contoso (home)" }),
+			within(records[0]).getByRole("heading", { name: "Contoso (Home)" }),
 		).toBeInTheDocument();
 		expect(
-			within(records[0]).getByText("Data & content"),
+			within(records[0]).getByText("Data & Content"),
 		).toBeInTheDocument();
 		expect(
 			within(records[0]).getByRole("button", { name: /Tables/ }),
@@ -263,7 +267,7 @@ describe("AccessMap", () => {
 	it("says so when the person holds nothing anywhere", () => {
 		render(<AccessMap rows={[]} catalog={catalog} />);
 
-		expect(screen.getByText("No permissions yet")).toBeInTheDocument();
+		expect(screen.getByText("No Permissions Yet")).toBeInTheDocument();
 		expect(screen.queryByRole("table")).not.toBeInTheDocument();
 	});
 });

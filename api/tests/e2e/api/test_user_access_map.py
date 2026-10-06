@@ -83,7 +83,7 @@ def test_platform_admin_reads_a_customer_users_map(e2e_client, platform_admin, w
     assert body["user_id"] == world["customer_user"]["id"]
     assert body["home_organization"] == {"id": customer["id"], "name": customer["name"]}
     assert body["is_platform_admin"] is False
-    assert [p["label"] for p in body["reach"]] == [f"{customer['name']} (home)", "Global"]
+    assert [p["label"] for p in body["reach"]] == [f"{customer['name']} (Home)", "Global"]
     [row] = body["rows"]
     assert row["place"]["kind"] == "home"
     grants = {g["permission"]: g for g in row["grants"]}
@@ -99,7 +99,7 @@ def test_platform_admins_map_is_the_wildcard_for_all_organizations(e2e_client, p
     assert body["is_protected"] is True
     platform_rows = [row for row in body["rows"] if row["place"]["kind"] == "platform"]
     [row] = platform_rows
-    assert row["place"]["label"] == "All organizations"
+    assert row["place"]["label"] == "All Organizations"
     assert [g["permission"] for g in row["grants"]] == ["*"]
 
 
@@ -116,7 +116,7 @@ def test_operators_own_map_shows_where_the_role_applies(e2e_client, platform_adm
     body = _ok(e2e_client.get(f"/api/users/{world['operator_row']['id']}/access", headers=platform_admin.headers))
 
     places = [row["place"]["label"] for row in body["rows"]]
-    assert "All customer organizations" in places
+    assert "All Customer Organizations" in places
     managed = next(row for row in body["rows"] if row["place"]["kind"] == "managed_organizations")
     assert all(
         [(s["role_name"], s["via"]) for s in g["sources"]] == [("Platform Operator", "additional")]

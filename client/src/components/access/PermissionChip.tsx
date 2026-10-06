@@ -4,7 +4,7 @@ import {
 	TooltipContent,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { actionWord } from "@/lib/permission-words";
+import { permissionDisplayName } from "@/lib/permission-words";
 import { cn } from "@/lib/utils";
 import type {
 	AccessGrant,
@@ -93,13 +93,15 @@ export function PermissionChip({
 							varies && VARIES_EDGE,
 						)}
 					>
-						<span>{catalogEntry?.title ?? grant.domain}</span>
-						<span className="font-normal">
-							{actionWord(grant.action)}
+						<span>
+							{permissionDisplayName(
+								grant.permission,
+								catalogEntry,
+							)}
 						</span>
 						{platformWide && (
 							<span className="text-xs font-semibold">
-								Platform-wide
+								Platform-Wide
 							</span>
 						)}
 					</button>

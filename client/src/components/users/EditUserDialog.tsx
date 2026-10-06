@@ -50,7 +50,7 @@ function EditUserDialogContent({
 				<div className="flex items-start gap-3">
 					<div className="min-w-0 flex-1">
 						<DialogTitle className="flex flex-wrap items-center gap-2 text-pretty break-words">
-							{canSave ? "Edit User" : "User details"}
+							{canSave ? "Edit User" : "User Details"}
 							{user.is_protected && (
 								<Badge variant="warning">Protected</Badge>
 							)}
@@ -82,7 +82,7 @@ function EditUserDialogContent({
 					) : (
 						<ShieldAlert className="h-4 w-4" />
 					)}
-					<AlertTitle>Protected account</AlertTitle>
+					<AlertTitle>Protected Account</AlertTitle>
 					<AlertDescription>
 						{authorization.isPlatformAdmin
 							? "This person holds privileged access. Only Platform Admins can change their profile, sign-in, or roles."

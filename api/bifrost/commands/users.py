@@ -20,6 +20,7 @@ from bifrost.client import BifrostClient
 from bifrost.refs import RefResolver
 
 from .base import EntityGroup, entity_group, output_result, pass_resolver, run_async
+from .permissions import SCOPE_LABELS, permission_names
 
 users_group = entity_group("users", "Show and change what a user can do, and ask what their access would be.")
 
@@ -33,17 +34,16 @@ def _print_trace(trace: dict[str, Any]) -> None:
     click.echo(f"Outcome: {trace['outcome']}{note}")
 
 
-_SCOPE_LABELS = {"per_organization": "per-org", "platform_wide": "platform-wide", "varies": "varies"}
-
-
-def _print_access_map(access_map: dict[str, Any]) -> None:
+def _print_access_map(access_map: dict[str, Any], names: dict[str, str]) -> None:
     click.echo("Reach: " + ", ".join(place["label"] for place in access_map["reach"]))
     for row in access_map["rows"]:
         click.echo()
         click.echo(row["place"]["label"])
         for grant in row["grants"]:
+            permission = grant["permission"]
             sources = "; ".join(f"{source['role_name']}, {source['via']}" for source in grant["sources"])
-            click.echo(f"  {grant['permission']}  {_SCOPE_LABELS[grant['scope']]}  ({sources})")
+            name = f"{names[permission]}  " if permission in names else ""
+            click.echo(f"  {name}{permission}  {SCOPE_LABELS[grant['scope']]}  ({sources})")
 
 
 class _AccessGroup(EntityGroup):
@@ -89,7 +89,10 @@ async def show_access(
     user_id = await resolver.resolve("user", user_ref)
     response = await client.get(f"/api/users/{user_id}/access")
     response.raise_for_status()
-    output_result(response.json(), ctx=ctx, human=_print_access_map)
+    catalog = await client.get("/api/permissions/catalog")
+    catalog.raise_for_status()
+    names = permission_names(catalog.json())
+    output_result(response.json(), ctx=ctx, human=lambda access_map: _print_access_map(access_map, names))
 
 
 @access_group.command("check")
@@ -159,7 +162,7 @@ def _boundary_label(boundary: dict[str, Any]) -> str:
     if boundary["kind"] == "organization":
         return boundary["organization_name"]
     if boundary["kind"] == "managed_organizations":
-        return "All customer organizations"
+        return "All Customer Organizations"
     return "Global"
 
 

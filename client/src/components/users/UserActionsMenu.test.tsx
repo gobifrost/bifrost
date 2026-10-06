@@ -13,7 +13,6 @@ function makeProps(
 		isSelf: false,
 		canSupport: true,
 		canDelete: true,
-		canEditProfile: true,
 		onResend: vi.fn(),
 		onRegenerate: vi.fn(),
 		onCopyLink: vi.fn(),
@@ -106,7 +105,7 @@ describe("UserActionsMenu", () => {
 		expect(onResetMfa).toHaveBeenCalledTimes(1);
 		await user.click(screen.getByRole("button", { name: /user actions/i }));
 		await user.click(
-			screen.getByRole("menuitem", { name: "Sign out of all devices" }),
+			screen.getByRole("menuitem", { name: "Sign Out of All Devices" }),
 		);
 		expect(onSignOut).toHaveBeenCalledTimes(1);
 	});
@@ -119,7 +118,7 @@ describe("UserActionsMenu", () => {
 			screen.queryByRole("menuitem", { name: "Reset MFA" }),
 		).not.toBeInTheDocument();
 		expect(
-			screen.queryByRole("menuitem", { name: "Sign out of all devices" }),
+			screen.queryByRole("menuitem", { name: "Sign Out of All Devices" }),
 		).not.toBeInTheDocument();
 	});
 
@@ -158,27 +157,27 @@ describe("UserActionsMenu", () => {
 		).not.toBeInTheDocument();
 	});
 
-	it("opens the profile editor from Edit profile", async () => {
+	it("opens the profile editor from Edit Profile", async () => {
 		const user = userEvent.setup();
 		const onEditProfile = vi.fn();
 		render(<UserActionsMenu {...makeProps({ onEditProfile })} />);
 		await user.click(screen.getByRole("button", { name: /user actions/i }));
 		await user.click(
-			screen.getByRole("menuitem", { name: "Edit profile" }),
+			screen.getByRole("menuitem", { name: "Edit Profile" }),
 		);
 		expect(onEditProfile).toHaveBeenCalledOnce();
 	});
 
-	it("hides Edit profile when the caller can change no profile field", async () => {
+	it("leaves out Edit Profile where no profile editor is offered", async () => {
 		const user = userEvent.setup();
 		render(
 			<UserActionsMenu
-				{...makeProps({ canSupport: false, canEditProfile: false })}
+				{...makeProps({ canSupport: false, onEditProfile: undefined })}
 			/>,
 		);
 		await user.click(screen.getByRole("button", { name: /user actions/i }));
 		expect(
-			screen.queryByRole("menuitem", { name: "Edit profile" }),
+			screen.queryByRole("menuitem", { name: "Edit Profile" }),
 		).not.toBeInTheDocument();
 		expect(
 			screen.getByRole("menuitem", { name: "Delete" }),
@@ -198,7 +197,7 @@ describe("UserActionsMenu", () => {
 		);
 		await user.click(screen.getByRole("button", { name: /user actions/i }));
 		expect(
-			screen.getByRole("menuitem", { name: "Edit profile" }),
+			screen.getByRole("menuitem", { name: "Edit Profile" }),
 		).not.toHaveAttribute("data-disabled");
 		expect(
 			screen.queryByRole("menuitem", { name: "Delete" }),
@@ -208,7 +207,11 @@ describe("UserActionsMenu", () => {
 	it("renders nothing when the caller can change nothing", () => {
 		render(
 			<UserActionsMenu
-				{...makeProps({ canSupport: false, canDelete: false })}
+				{...makeProps({
+					canSupport: false,
+					canDelete: false,
+					onEditProfile: undefined,
+				})}
 			/>,
 		);
 		expect(

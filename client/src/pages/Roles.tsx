@@ -196,7 +196,7 @@ function RoleGrants({ role, catalog }: { role: Role; catalog: Catalog }) {
 	if (permissions.length === 0)
 		return (
 			<span className="text-sm text-muted-foreground">
-				No permissions
+				No Permissions
 			</span>
 		);
 	const hidden = permissions.length - GRANTS_SHOWN;
@@ -235,7 +235,7 @@ function RolePlaces({ role }: { role: Role }) {
 		: [];
 	if (places.length === 0)
 		return (
-			<span className="text-sm text-muted-foreground">Not placed</span>
+			<span className="text-sm text-muted-foreground">Not Placed</span>
 		);
 	return (
 		<ul
@@ -514,7 +514,7 @@ export function Roles() {
 								onClick={handleAdd}
 							>
 								<Plus className="h-4 w-4 mr-1.5" />
-								Create role
+								Create Role
 							</Button>
 						)}
 					</>
@@ -560,7 +560,7 @@ export function Roles() {
 						title={
 							searchTerm
 								? "No roles match your search"
-								: "No roles found"
+								: "No Roles Found"
 						}
 						description={
 							searchTerm
@@ -571,7 +571,7 @@ export function Roles() {
 							canManage && (
 								<Button variant="outline" onClick={handleAdd}>
 									<Plus className="h-4 w-4" />
-									Create role
+									Create Role
 								</Button>
 							)
 						}

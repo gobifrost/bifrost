@@ -33,8 +33,6 @@ interface Props {
 	canSupport: boolean;
 	/** Permanent deletion (users.lifecycle.readwrite). */
 	canDelete: boolean;
-	/** The caller can change at least one profile field (people can always edit their own name). */
-	canEditProfile: boolean;
 	/** A protected user: the caller's actions show disabled, with why. */
 	isProtected?: boolean;
 	onResend: () => void;
@@ -45,8 +43,12 @@ interface Props {
 	onSignOut: () => void;
 	onToggleActive: () => void;
 	onDelete: () => void;
-	/** Opens the profile editor; people can always edit their own name. */
-	onEditProfile: () => void;
+	/**
+	 * Opens the profile editor, offered when the caller can change at least
+	 * one profile field (people can always edit their own name). Left out
+	 * where the profile is already on screen.
+	 */
+	onEditProfile?: () => void;
 }
 
 export function UserActionsMenu({
@@ -56,7 +58,6 @@ export function UserActionsMenu({
 	isSelf,
 	canSupport,
 	canDelete,
-	canEditProfile,
 	isProtected = false,
 	onResend,
 	onRegenerate,
@@ -72,7 +73,7 @@ export function UserActionsMenu({
 	const hasActiveInvite = status === "pending" || status === "expired";
 	// What the caller's roles don't grant is hidden; what protection blocks
 	// shows disabled, with the reason.
-	if (!canSupport && !canDelete && !isSelf) return null;
+	if (!canSupport && !canDelete && !onEditProfile) return null;
 
 	return (
 		<DropdownMenu>
@@ -99,7 +100,7 @@ export function UserActionsMenu({
 						<DropdownMenuSeparator />
 					</>
 				)}
-				{canEditProfile && (
+				{onEditProfile && (
 					<>
 						<DropdownMenuItem
 							className="min-h-11 lg:min-h-9"
@@ -107,7 +108,7 @@ export function UserActionsMenu({
 							disabled={isProtected && !isSelf}
 						>
 							<Pencil className="h-4 w-4" />
-							Edit profile
+							Edit Profile
 						</DropdownMenuItem>
 						{(showInviteActions || canSupport || canDelete) && (
 							<DropdownMenuSeparator />
@@ -122,7 +123,7 @@ export function UserActionsMenu({
 							disabled={isProtected}
 						>
 							<Mail className="h-4 w-4" />
-							{hasActiveInvite ? "Resend invite" : "Send invite"}
+							{hasActiveInvite ? "Resend Invite" : "Send Invite"}
 						</DropdownMenuItem>
 						<DropdownMenuItem
 							className="min-h-11 lg:min-h-9"
@@ -130,7 +131,7 @@ export function UserActionsMenu({
 							disabled={isProtected}
 						>
 							<RefreshCw className="h-4 w-4" />
-							Generate registration link
+							Generate Registration Link
 						</DropdownMenuItem>
 						<DropdownMenuItem
 							className="min-h-11 lg:min-h-9"
@@ -138,7 +139,7 @@ export function UserActionsMenu({
 							disabled={isProtected}
 						>
 							<LinkIcon className="h-4 w-4" />
-							Copy registration link
+							Copy Registration Link
 						</DropdownMenuItem>
 						{hasActiveInvite && (
 							<DropdownMenuItem
@@ -148,7 +149,7 @@ export function UserActionsMenu({
 								className="min-h-11 lg:min-h-9"
 							>
 								<Ban className="h-4 w-4" />
-								Revoke invite
+								Revoke Invite
 							</DropdownMenuItem>
 						)}
 						<DropdownMenuSeparator />
@@ -170,7 +171,7 @@ export function UserActionsMenu({
 							disabled={isSelf || isProtected}
 						>
 							<LogOut className="h-4 w-4" />
-							Sign out of all devices
+							Sign Out of All Devices
 						</DropdownMenuItem>
 						<DropdownMenuSeparator />
 						<DropdownMenuItem

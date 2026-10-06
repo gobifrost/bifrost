@@ -317,7 +317,12 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # AuditLogListResponse, RunRetentionStatus and AuditRetentionStatus. The
     # commands ship with these DTOs, so no released CLI parses an older shape
     # (greenfield coverage). Fingerprint refreshed only.
-    "e16da597805e66db9e37a3d185b5084249d6030223b700cfe29734d22a1a23a9"
+    #
+    # PermissionCatalogEntry gained `names` and Title Case `area` values
+    # (2026-10-06, Graph-style permission display names). Same unreleased
+    # commands as above, so no released CLI parses the older shape.
+    # Fingerprint refreshed only.
+    "9cacb5b441195dd167c6fde2f4a2c040ca92f16db80d518aa712bd39b3b16c39"
 )
 
 

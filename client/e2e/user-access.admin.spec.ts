@@ -3,7 +3,7 @@
  *
  * A Platform Admin opens a customer user from the Users list. The access map
  * shows the organization their role is placed on; the admin moves that role to
- * "All customer organizations" with the placement preset, saves, and the map
+ * "All Customer Organizations" with the placement preset, saves, and the map
  * gains that row. The Roles list then shows the role's holders and placement.
  */
 
@@ -110,30 +110,43 @@ test.describe("Person access page", () => {
 			page.getByRole("heading", { name: USER_NAME }),
 		).toBeVisible();
 
-		const map = page.getByRole("table", { name: "Access by place" });
+		// The header carries the Users list's account actions; the Profile
+		// tab is the profile editor.
+		await page
+			.getByRole("button", { name: `${USER_NAME} actions` })
+			.click();
+		await expect(
+			page.getByRole("menuitem", { name: "Reset MFA" }),
+		).toBeVisible();
+		await expect(
+			page.getByRole("menuitem", { name: "Edit Profile" }),
+		).toHaveCount(0);
+		await page.keyboard.press("Escape");
+
+		const map = page.getByRole("table", { name: "Access by Place" });
 		await expect(
 			map.getByRole("rowheader", { name: new RegExp(ORG_NAME) }),
 		).toBeVisible();
 		await expect(
-			map.getByRole("rowheader", { name: "All customer organizations" }),
+			map.getByRole("rowheader", { name: "All Customer Organizations" }),
 		).toHaveCount(0);
 
 		await page
 			.getByRole("radiogroup", { name: `Placement for ${ROLE_NAME}` })
-			.getByRole("radio", { name: "All customer organizations" })
+			.getByRole("radio", { name: "All Customer Organizations" })
 			.click();
-		await page.getByRole("button", { name: "Save roles" }).click();
+		await page.getByRole("button", { name: "Save Roles" }).click();
 		await expect(page.getByText("Roles saved")).toBeVisible();
 
 		await expect(
-			map.getByRole("rowheader", { name: "All customer organizations" }),
+			map.getByRole("rowheader", { name: "All Customer Organizations" }),
 		).toBeVisible();
 
 		await page.reload();
 		await expect(
 			page
-				.getByRole("table", { name: "Access by place" })
-				.getByRole("rowheader", { name: "All customer organizations" }),
+				.getByRole("table", { name: "Access by Place" })
+				.getByRole("rowheader", { name: "All Customer Organizations" }),
 		).toBeVisible();
 
 		await page.goto("/roles");
@@ -150,7 +163,7 @@ test.describe("Person access page", () => {
 		await expect(
 			row
 				.getByRole("list", { name: `Where ${ROLE_NAME} applies` })
-				.getByText("All customer organizations"),
+				.getByText("All Customer Organizations"),
 		).toBeVisible();
 	});
 });

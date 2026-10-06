@@ -1,10 +1,9 @@
-/** Plain words for permissions: what a person can do, not the wire vocabulary. */
+/** Permission names as people read them: "Read and Write Users", not the wire vocabulary. */
 
-const ACTION_WORDS: Record<string, string> = {
-	read: "view",
-	readwrite: "manage",
-	execute: "run",
-};
+import type { PermissionCatalogEntry } from "@/services/access";
+
+/** Platform Admin's one permission: everything except reading secrets. */
+export const WILDCARD = "*";
 
 const ALL_SUFFIX = ".all";
 
@@ -20,16 +19,15 @@ export function permissionParts(permission: string) {
 	};
 }
 
-/** "read" → "view", "readwrite.all" → "manage all". */
-export function actionWord(action: string): string {
-	const all = action.endsWith(ALL_SUFFIX);
-	const base = all ? action.slice(0, -ALL_SUFFIX.length) : action;
-	const word = ACTION_WORDS[base] ?? base;
-	return all ? `${word} all` : word;
-}
-
-/** "roles.readwrite" → "manage", "agentruns.read.all" → "view all". */
-export function permissionActionWord(permission: string): string {
-	const { action, all } = permissionParts(permission);
-	return actionWord(all ? `${action}${ALL_SUFFIX}` : action);
+/**
+ * "users.readwrite" → "Read and Write Users": the catalog's Graph-style name,
+ * from the permission's domain entry. The wildcard is "All Permissions"; a
+ * permission the catalog doesn't name shows as written.
+ */
+export function permissionDisplayName(
+	permission: string,
+	entry: PermissionCatalogEntry | undefined,
+): string {
+	if (permission === WILDCARD) return "All Permissions";
+	return entry?.names[permission] ?? permission;
 }

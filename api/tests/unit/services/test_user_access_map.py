@@ -105,9 +105,9 @@ def _summary(access_map: UserAccessMap) -> list[tuple[str, str, list[str]]]:
 def test_a_customer_has_a_home_row_and_global_in_reach_without_a_global_row() -> None:
     access_map = _build(_ctx(CONTOSO, {"tables.read", "forms.read"}))
 
-    assert _summary(access_map) == [("home", "Contoso (home)", ["forms.read", "tables.read"])]
+    assert _summary(access_map) == [("home", "Contoso (Home)", ["forms.read", "tables.read"])]
     assert [(p.kind, p.label) for p in access_map.reach] == [
-        ("home", "Contoso (home)"),
+        ("home", "Contoso (Home)"),
         ("platform", "Global"),
     ]
     assert access_map.home_organization is not None
@@ -133,7 +133,7 @@ def test_a_role_at_another_organization_adds_a_row_and_reach() -> None:
     access_map = _build(_ctx(CONTOSO, {"tables.read"}, helpdesk))
 
     assert _summary(access_map) == [
-        ("home", "Contoso (home)", ["tables.read"]),
+        ("home", "Contoso (Home)", ["tables.read"]),
         ("organization", "Fabrikam", ["tables.read"]),
     ]
     fabrikam = access_map.rows[1]
@@ -142,7 +142,7 @@ def test_a_role_at_another_organization_adds_a_row_and_reach() -> None:
     assert [(s.role_name, s.via) for s in fabrikam.grants[0].sources] == [
         ("Helpdesk", "additional")
     ]
-    assert [p.label for p in access_map.reach] == ["Contoso (home)", "Fabrikam", "Global"]
+    assert [p.label for p in access_map.reach] == ["Contoso (Home)", "Fabrikam", "Global"]
 
 
 def test_the_same_permission_through_two_roles_lists_both_sources_base_first() -> None:
@@ -163,7 +163,7 @@ def test_a_role_at_managed_organizations_is_one_row_for_all_customers() -> None:
     access_map = _build(_ctx(CONTOSO, set(), operator))
 
     assert _summary(access_map) == [
-        ("managed_organizations", "All customer organizations", ["users.read"])
+        ("managed_organizations", "All Customer Organizations", ["users.read"])
     ]
     assert [p.kind for p in access_map.reach] == ["home", "managed_organizations", "platform"]
 
@@ -173,7 +173,7 @@ def test_reach_lists_a_placement_whose_role_carries_no_permissions() -> None:
     access_map = _build(_ctx(CONTOSO, set(), sharing))
 
     assert access_map.rows == []
-    assert [p.label for p in access_map.reach] == ["Contoso (home)", "Fabrikam", "Global"]
+    assert [p.label for p in access_map.reach] == ["Contoso (Home)", "Fabrikam", "Global"]
 
 
 def test_a_platform_admin_is_one_wildcard_row_for_all_organizations() -> None:
@@ -183,7 +183,7 @@ def test_a_platform_admin_is_one_wildcard_row_for_all_organizations() -> None:
     assert access_map.is_platform_admin and access_map.is_protected
     assert access_map.privileged_permissions == ["*"]
     [row] = access_map.rows
-    assert (row.place.kind, row.place.label) == ("platform", "All organizations")
+    assert (row.place.kind, row.place.label) == ("platform", "All Organizations")
     [grant] = row.grants
     assert (grant.permission, grant.domain, grant.action, grant.scope) == (
         "*",
@@ -192,7 +192,7 @@ def test_a_platform_admin_is_one_wildcard_row_for_all_organizations() -> None:
         "platform_wide",
     )
     assert [(s.role_name, s.via) for s in grant.sources] == [("Platform Admin", "additional")]
-    assert access_map.reach[-1].label == "All organizations"
+    assert access_map.reach[-1].label == "All Organizations"
 
 
 def test_the_wildcard_does_not_claim_secrets_but_an_explicit_grant_shows() -> None:
@@ -206,8 +206,8 @@ def test_the_wildcard_does_not_claim_secrets_but_an_explicit_grant_shows() -> No
     with_secrets = _build(_ctx(None, set(), admin, reader))
     assert _summary(with_secrets) == [
         ("organization", "Contoso", ["secrets.read"]),
-        ("managed_organizations", "All customer organizations", ["secrets.read"]),
-        ("platform", "All organizations", ["*", "secrets.read"]),
+        ("managed_organizations", "All Customer Organizations", ["secrets.read"]),
+        ("platform", "All Organizations", ["*", "secrets.read"]),
     ]
 
 
@@ -217,7 +217,7 @@ def test_a_global_user_has_a_global_base_row_and_no_home_label() -> None:
     assert _summary(access_map) == [("platform", "Global", ["settings.read"])]
     assert access_map.home_organization is None
     assert [(p.kind, p.label) for p in access_map.reach] == [("platform", "Global")]
-    assert not any("(home)" in p.label for p in access_map.reach)
+    assert not any("(Home)" in p.label for p in access_map.reach)
 
 
 def test_scope_is_copied_from_the_catalog() -> None:

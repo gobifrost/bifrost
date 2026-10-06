@@ -276,7 +276,7 @@ describe("Users — registration links", () => {
 
 		await user.click(screen.getByRole("button", { name: "Alice actions" }));
 		await user.click(
-			screen.getByRole("menuitem", { name: "Edit profile" }),
+			screen.getByRole("menuitem", { name: "Edit Profile" }),
 		);
 
 		expect(await screen.findByRole("dialog")).toBeInTheDocument();
@@ -507,7 +507,7 @@ describe("Users", () => {
 		const { user } = renderWithProviders(<Users />);
 		expect(screen.queryByRole("table")).not.toBeInTheDocument();
 		const records = screen.getByRole("list", { name: "Users" });
-		expect(within(records).getByText("Platform admin")).toBeVisible();
+		expect(within(records).getByText("Platform Admin")).toBeVisible();
 		expect(within(records).getByText("dev@gobifrost.com")).toBeVisible();
 		await user.click(
 			screen.getByRole("checkbox", { name: "Select Dev Admin" }),
@@ -558,7 +558,7 @@ describe("Users", () => {
 		expect(
 			screen.getByRole("checkbox", { name: "Select Dev Admin" }),
 		).toBeChecked();
-		await user.click(screen.getByRole("button", { name: "Retry users" }));
+		await user.click(screen.getByRole("button", { name: "Retry Users" }));
 		expect(mockRefetch).toHaveBeenCalledOnce();
 	});
 });
@@ -611,7 +611,7 @@ describe("Users — permission-driven actions", () => {
 		const { user } = renderUsersRoute();
 
 		expect(
-			screen.getByRole("button", { name: "Create user" }),
+			screen.getByRole("button", { name: "Create User" }),
 		).toBeInTheDocument();
 		await user.click(
 			screen.getByRole("button", { name: "Ordinary Person actions" }),
@@ -692,13 +692,13 @@ describe("Users — permission-driven actions", () => {
 			screen.getByRole("button", { name: "Ordinary Person actions" }),
 		);
 		await user.click(
-			screen.getByRole("menuitem", { name: "Sign out of all devices" }),
+			screen.getByRole("menuitem", { name: "Sign Out of All Devices" }),
 		);
 		expect(screen.getByRole("alertdialog")).toHaveTextContent(
 			"Signs Ordinary Person out on every device. They can sign in again right away.",
 		);
 		await user.click(
-			screen.getByRole("button", { name: "Sign out everywhere" }),
+			screen.getByRole("button", { name: "Sign Out Everywhere" }),
 		);
 
 		await waitFor(() =>
@@ -725,7 +725,7 @@ describe("Users — permission-driven actions", () => {
 		).toBeInTheDocument();
 		for (const name of [
 			"Reset MFA",
-			"Sign out of all devices",
+			"Sign Out of All Devices",
 			"Disable",
 		]) {
 			expect(screen.getByRole("menuitem", { name })).toHaveAttribute(
@@ -763,7 +763,7 @@ describe("Users — permission-driven actions", () => {
 			),
 		).toBeInTheDocument();
 		expect(
-			screen.queryByRole("button", { name: "Create user" }),
+			screen.queryByRole("button", { name: "Create User" }),
 		).not.toBeInTheDocument();
 		expect(
 			screen.queryByRole("checkbox", {

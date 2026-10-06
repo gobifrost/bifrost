@@ -1,12 +1,9 @@
 import { Badge } from "@/components/ui/badge";
-import { permissionActionWord, permissionParts } from "@/lib/permission-words";
+import { permissionDisplayName, WILDCARD } from "@/lib/permission-words";
 import { cn } from "@/lib/utils";
 import type { PermissionCatalogEntry } from "@/services/access";
 
 import { BRIDGE_EDGE } from "./PermissionChip";
-
-/** Platform Admin's one permission: everything except reading secrets. */
-const WILDCARD = "*";
 
 /**
  * One permission a role grants, in the access map's power colours: the warning
@@ -19,6 +16,7 @@ export function GrantChip({
 	permission: string;
 	entry: PermissionCatalogEntry | undefined;
 }) {
+	const name = permissionDisplayName(permission, entry);
 	if (permission === WILDCARD)
 		return (
 			<Badge
@@ -26,7 +24,7 @@ export function GrantChip({
 				data-variant="privileged"
 				className={cn("h-auto min-h-6", BRIDGE_EDGE)}
 			>
-				Every permission
+				{name}
 			</Badge>
 		);
 	const privileged = !!entry?.privileged.includes(permission);
@@ -42,12 +40,9 @@ export function GrantChip({
 				platformWide && BRIDGE_EDGE,
 			)}
 		>
-			<span>{entry?.title ?? permissionParts(permission).domain}</span>
-			<span className="font-normal">
-				{permissionActionWord(permission)}
-			</span>
+			<span>{name}</span>
 			{platformWide && (
-				<span className="text-xs font-semibold">Platform-wide</span>
+				<span className="text-xs font-semibold">Platform-Wide</span>
 			)}
 		</Badge>
 	);

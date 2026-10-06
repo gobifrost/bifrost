@@ -52,9 +52,9 @@ _REACH_RANK = {"home": 0, "organization": 1, "managed_organizations": 2, "platfo
 
 def _place_for(ctx: AuthorizationContext, boundary: Boundary, names: Mapping[UUID, str]) -> Place:
     if boundary.kind == BoundaryKind.PLATFORM:
-        return Place(kind="platform", label="All organizations" if ctx.is_platform_admin else "Global")
+        return Place(kind="platform", label="All Organizations" if ctx.is_platform_admin else "Global")
     if boundary.kind == BoundaryKind.MANAGED_ORGANIZATIONS:
-        return Place(kind="managed_organizations", label="All customer organizations")
+        return Place(kind="managed_organizations", label="All Customer Organizations")
     organization_id = boundary.organization_id
     if organization_id is None:
         raise ValueError("An organization boundary must carry an organization id")
@@ -64,7 +64,7 @@ def _place_for(ctx: AuthorizationContext, boundary: Boundary, names: Mapping[UUI
             kind="home",
             organization_id=organization_id,
             organization_name=name,
-            label=f"{name} (home)",
+            label=f"{name} (Home)",
         )
     return Place(
         kind="organization",

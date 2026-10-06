@@ -257,7 +257,7 @@ describe("UserProfileForm", () => {
 		expect(screen.getByLabelText("Account Status")).toBeEnabled();
 		expect(screen.getByLabelText("Organization")).toBeDisabled();
 		expect(screen.getByLabelText("Organization")).toHaveValue("Acme");
-		expect(screen.getByLabelText("External user")).toBeDisabled();
+		expect(screen.getByLabelText("External User")).toBeDisabled();
 		expect(
 			screen.getAllByText(
 				/only people who can create, move, or delete users/i,

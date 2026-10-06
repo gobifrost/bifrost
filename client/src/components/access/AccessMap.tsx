@@ -16,6 +16,7 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { permissionDisplayName, WILDCARD } from "@/lib/permission-words";
 import { cn } from "@/lib/utils";
 import type {
 	AccessGrant,
@@ -26,7 +27,6 @@ import type {
 import { BRIDGE_EDGE, PermissionChip } from "./PermissionChip";
 import { PlaceLabel } from "./PlaceLabel";
 
-const WILDCARD = "*";
 /** The one column heading when the only thing held is the wildcard. */
 const WILDCARD_ONLY_HEADING = "Permissions";
 
@@ -71,7 +71,7 @@ function WildcardChip() {
 							BRIDGE_EDGE,
 						)}
 					>
-						Every permission
+						{permissionDisplayName(WILDCARD, undefined)}
 					</button>
 				</Badge>
 			</TooltipTrigger>
@@ -180,7 +180,7 @@ function DesktopMap({ rows, layout }: { rows: AccessRow[]; layout: Layout }) {
 		layout.columns.length > 0 ? layout.columns : [WILDCARD_ONLY_HEADING];
 	return (
 		<DataTable>
-			<caption className="sr-only">Access by place</caption>
+			<caption className="sr-only">Access by Place</caption>
 			<DataTableHeader>
 				<DataTableRow className="hover:bg-transparent">
 					<DataTableHead className="w-56">Place</DataTableHead>
@@ -205,7 +205,7 @@ function DesktopMap({ rows, layout }: { rows: AccessRow[]; layout: Layout }) {
 function MobileMap({ rows, layout }: { rows: AccessRow[]; layout: Layout }) {
 	return (
 		<ul
-			aria-label="Access by place"
+			aria-label="Access by Place"
 			className="divide-y divide-border/60 overflow-hidden rounded-[var(--bf-radius-surface)] border bg-card"
 		>
 			{rows.map((row) => {
@@ -253,7 +253,7 @@ const SWATCH = "relative h-3 w-5 shrink-0 rounded-sm";
 function Legend() {
 	return (
 		<ul
-			aria-label="How to read permissions"
+			aria-label="How to Read Permissions"
 			className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground"
 		>
 			<li className="inline-flex items-center gap-1.5">
@@ -261,21 +261,21 @@ function Legend() {
 					aria-hidden="true"
 					className={`${SWATCH} bg-[var(--bf-power-soft)]`}
 				/>
-				Per organization
+				Per Organization
 			</li>
 			<li className="inline-flex items-center gap-1.5">
 				<span
 					aria-hidden="true"
 					className={`${SWATCH} bg-[var(--bf-power-soft)] before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:rounded-l-sm before:bg-[image:var(--bf-bridge-vertical)]`}
 				/>
-				Platform-wide
+				Platform-Wide
 			</li>
 			<li className="inline-flex items-center gap-1.5">
 				<span
 					aria-hidden="true"
 					className={`${SWATCH} bg-[var(--bf-power-soft)] text-[var(--bf-power)] before:absolute before:inset-y-0.5 before:left-0 before:border-l-2 before:border-dashed before:border-current`}
 				/>
-				Varies by operation
+				Varies by Operation
 			</li>
 			<li className="inline-flex items-center gap-1.5">
 				<span
@@ -305,7 +305,7 @@ export function AccessMap({
 		return (
 			<EmptyState
 				icon={KeyRound}
-				title="No permissions yet"
+				title="No Permissions Yet"
 				description="Their roles don't grant anything anywhere. Assign a role to give them access."
 			/>
 		);

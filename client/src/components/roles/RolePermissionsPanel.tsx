@@ -12,11 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useRolePermissions, useUpdateRolePermissions } from "@/hooks/useRoles";
 import { getErrorMessage } from "@/lib/api-error";
 import { PLATFORM_ADMIN_ROLE_ID } from "@/lib/builtin-roles";
-import {
-	actionWord,
-	permissionActionWord,
-	permissionParts,
-} from "@/lib/permission-words";
+import { permissionDisplayName, permissionParts } from "@/lib/permission-words";
 import {
 	usePermissionCatalog,
 	type PermissionCatalogEntry,
@@ -43,12 +39,13 @@ function permissionsFor(domain: string, level: Level, vocabulary: Set<string>) {
 	return vocabulary.has(read) ? [read, readwrite] : [readwrite];
 }
 
-function capitalized(word: string) {
-	return word.charAt(0).toUpperCase() + word.slice(1);
-}
+const NO_ACCESS = "No Access";
 
-function levelLabel(level: Level) {
-	return level === "none" ? "No access" : capitalized(actionWord(level));
+/** "No Access", or the name of the level's permission ("Read and Write Roles"). */
+function levelLabel(entry: PermissionCatalogEntry, level: Level) {
+	return level === "none"
+		? NO_ACCESS
+		: permissionDisplayName(`${entry.domain}.${level}`, entry);
 }
 
 function matchesSearch(entry: PermissionCatalogEntry, term: string) {
@@ -110,7 +107,7 @@ function covers(a: string, b: string) {
 function TakesEffectLater() {
 	return (
 		<span className="rounded-full border border-border px-2 py-0.5 text-xs font-normal text-muted-foreground">
-			Takes effect with R3b
+			Takes Effect with R3b
 		</span>
 	);
 }
@@ -171,7 +168,7 @@ function DomainRow({
 	);
 }
 
-/** What a role holds in a domain it can't change here, in plain words. */
+/** What a role holds in a domain it can't change here, by name. */
 function HeldValue({
 	label,
 	privileged,
@@ -182,7 +179,7 @@ function HeldValue({
 	return (
 		<p className="flex flex-wrap items-center gap-2 text-sm sm:justify-end">
 			<span
-				className={label === "No access" ? "text-muted-foreground" : ""}
+				className={label === NO_ACCESS ? "text-muted-foreground" : ""}
 			>
 				{label}
 			</span>
@@ -240,7 +237,7 @@ export function RolePermissionsPanel({
 						if (catalogQuery.isError) void catalogQuery.refetch();
 					}}
 				>
-					Retry permissions
+					Retry Permissions
 				</Button>
 			</div>
 		);
@@ -333,7 +330,8 @@ export function RolePermissionsPanel({
 		}
 	};
 
-	const identityControl = (domain: string, title: string) => {
+	const identityControl = (entry: PermissionCatalogEntry) => {
+		const { domain } = entry;
 		const level = levelOf(domain, selected);
 		const choices: Level[] = [
 			"none",
@@ -357,7 +355,7 @@ export function RolePermissionsPanel({
 		if (!editable)
 			return (
 				<HeldValue
-					label={levelLabel(level)}
+					label={levelLabel(entry, level)}
 					privileged={isPrivileged(level)}
 				/>
 			);
@@ -366,7 +364,7 @@ export function RolePermissionsPanel({
 				value={level}
 				onValueChange={(value) => setLevel(domain, value as Level)}
 				className="flex flex-wrap gap-x-6 gap-y-1 sm:justify-end"
-				aria-label={title}
+				aria-label={entry.title}
 			>
 				{choices.map((choice) => {
 					const id = `${domain}-${choice}`;
@@ -376,7 +374,9 @@ export function RolePermissionsPanel({
 							className="flex min-h-11 items-center gap-2"
 						>
 							<RadioGroupItem id={id} value={choice} />
-							<Label htmlFor={id}>{levelLabel(choice)}</Label>
+							<Label htmlFor={id}>
+								{levelLabel(entry, choice)}
+							</Label>
 							{isPrivileged(choice) && <PrivilegedMark />}
 						</div>
 					);
@@ -385,8 +385,8 @@ export function RolePermissionsPanel({
 		);
 	};
 
-	const heldControl = (domain: string) => {
-		const all = heldByDomain.get(domain) ?? [];
+	const heldControl = (entry: PermissionCatalogEntry) => {
+		const all = heldByDomain.get(entry.domain) ?? [];
 		const held = all.filter(
 			(p) => !all.some((other) => covers(other.permission, p.permission)),
 		);
@@ -396,12 +396,10 @@ export function RolePermissionsPanel({
 					held.length > 0
 						? held
 								.map((p) =>
-									capitalized(
-										permissionActionWord(p.permission),
-									),
+									permissionDisplayName(p.permission, entry),
 								)
 								.join(", ")
-						: "No access"
+						: NO_ACCESS
 				}
 				privileged={all.some((p) => p.privileged)}
 			/>
@@ -469,11 +467,8 @@ export function RolePermissionsPanel({
 											}
 										>
 											{identityDomains.has(entry.domain)
-												? identityControl(
-														entry.domain,
-														entry.title,
-													)
-												: heldControl(entry.domain)}
+												? identityControl(entry)
+												: heldControl(entry)}
 										</DomainRow>
 									))}
 								</ul>
@@ -501,7 +496,7 @@ export function RolePermissionsPanel({
 								setSaveError(null);
 							}}
 						>
-							Discard changes
+							Discard Changes
 						</Button>
 						<Button
 							className="min-h-11"
@@ -511,7 +506,7 @@ export function RolePermissionsPanel({
 							{update.isPending && (
 								<Loader2 className="mr-2 h-4 w-4 motion-safe:animate-spin" />
 							)}
-							Save permissions
+							Save Permissions
 						</Button>
 					</div>
 				</div>

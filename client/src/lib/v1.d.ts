@@ -23394,13 +23394,17 @@ export interface components {
              * Area
              * @enum {string}
              */
-            area: "Identity & access" | "Automation" | "Data & content" | "Integrations & secrets" | "Platform";
+            area: "Identity & Access" | "Automation" | "Data & Content" | "Integrations & Secrets" | "Platform";
             /** Description */
             description: string;
             /** Who Should Hold */
             who_should_hold: string;
             /** Actions */
             actions: string[];
+            /** Names */
+            names: {
+                [key: string]: string;
+            };
             /** Privileged */
             privileged: string[];
             /**

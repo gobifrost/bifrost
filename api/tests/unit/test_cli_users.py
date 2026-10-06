@@ -51,13 +51,13 @@ ACCESS_MAP: dict[str, Any] = {
     "is_protected": False,
     "privileged_permissions": [],
     "reach": [
-        {"kind": "home", "organization_id": ORG_ID, "organization_name": "Contoso", "label": "Contoso (home)"},
-        {"kind": "managed_organizations", "organization_id": None, "organization_name": None, "label": "All customer organizations"},
+        {"kind": "home", "organization_id": ORG_ID, "organization_name": "Contoso", "label": "Contoso (Home)"},
+        {"kind": "managed_organizations", "organization_id": None, "organization_name": None, "label": "All Customer Organizations"},
         {"kind": "platform", "organization_id": None, "organization_name": None, "label": "Global"},
     ],
     "rows": [
         {
-            "place": {"kind": "home", "organization_id": ORG_ID, "organization_name": "Contoso", "label": "Contoso (home)"},
+            "place": {"kind": "home", "organization_id": ORG_ID, "organization_name": "Contoso", "label": "Contoso (Home)"},
             "grants": [
                 {
                     "permission": "tables.read",
@@ -92,6 +92,11 @@ ACCESS_MAP: dict[str, Any] = {
         },
     ],
 }
+
+CATALOG: list[dict[str, Any]] = [
+    {"domain": "tables", "names": {"tables.read": "Read Tables"}},
+    {"domain": "forms", "names": {"forms.execute": "Run Forms"}},
+]
 
 ASSIGNMENTS: dict[str, Any] = {
     "base_role": {"id": USER_ROLE_ID, "name": "User", "description": None, "is_builtin": True},
@@ -140,6 +145,7 @@ class _FakeClient:
             ],
             "/auth/authorization": {"provider_organization_id": PROVIDER_ID},
             f"/api/users/{USER_ID}/access": ACCESS_MAP,
+            "/api/permissions/catalog": CATALOG,
             f"/api/users/{USER_ID}/role-assignments": ASSIGNMENTS,
             "/api/workflows": [
                 {"id": WORKFLOW_ID, "name": "Sync Invoices", "function_name": "sync", "source_file_path": "workflows/sync.py"}
@@ -254,23 +260,27 @@ class TestUsersAccessShow:
     def test_a_user_with_no_subcommand_fetches_the_access_map(self, fake_client: _FakeClient, args: list[str]) -> None:
         result = _invoke(args)
         assert result.exit_code == 0, result.output
-        assert fake_client.calls == [("GET", f"/api/users/{USER_ID}/access", None)]
+        assert fake_client.calls == [
+            ("GET", f"/api/users/{USER_ID}/access", None),
+            ("GET", "/api/permissions/catalog", None),
+        ]
 
     def test_email_is_resolved_to_the_user_id(self, fake_client: _FakeClient) -> None:
         _invoke(["access", "ada@contoso.test"])
         assert fake_client.calls == [
             ("GET", "/api/users", {"search": "ada@contoso.test"}),
             ("GET", f"/api/users/{USER_ID}/access", None),
+            ("GET", "/api/permissions/catalog", None),
         ]
 
     def test_renders_the_reach_line_then_a_block_per_place(self, fake_client: _FakeClient) -> None:
         output = _invoke(["access", USER_ID]).output
         assert [line.split() for line in output.splitlines()] == [
-            ["Reach:", "Contoso", "(home),", "All", "customer", "organizations,", "Global"],
+            ["Reach:", "Contoso", "(Home),", "All", "Customer", "Organizations,", "Global"],
             [],
-            ["Contoso", "(home)"],
-            ["tables.read", "per-org", "(User,", "base)"],
-            ["forms.execute", "per-org", "(User,", "base;", "Helpdesk,", "additional)"],
+            ["Contoso", "(Home)"],
+            ["Read", "Tables", "tables.read", "per-org", "(User,", "base)"],
+            ["Run", "Forms", "forms.execute", "per-org", "(User,", "base;", "Helpdesk,", "additional)"],
             [],
             ["Global"],
             ["audit.read", "platform-wide", "(Auditor,", "additional)"],
@@ -278,8 +288,17 @@ class TestUsersAccessShow:
 
     def test_grants_are_indented_under_their_place(self, fake_client: _FakeClient) -> None:
         lines = _invoke(["access", USER_ID]).output.splitlines()
-        assert lines[2] == "Contoso (home)"
-        assert lines[3].startswith("  tables.read")
+        assert lines[2] == "Contoso (Home)"
+        assert lines[3].startswith("  Read Tables  tables.read")
+
+    def test_the_platform_admin_wildcard_reads_all_permissions(self, fake_client: _FakeClient) -> None:
+        wildcard = {**ACCESS_MAP["rows"][1]["grants"][0], "permission": "*", "domain": "*", "action": "*"}
+        fake_client._responses[f"/api/users/{USER_ID}/access"] = {
+            **ACCESS_MAP,
+            "rows": [{**ACCESS_MAP["rows"][1], "grants": [wildcard]}],
+        }
+        lines = _invoke(["access", USER_ID]).output.splitlines()
+        assert lines[3].startswith("  All Permissions  *")
 
     def test_json_passes_the_access_map_through(self, fake_client: _FakeClient) -> None:
         assert json.loads(_invoke(["access", USER_ID, "--json"]).output) == ACCESS_MAP
@@ -309,7 +328,7 @@ class TestUsersRolesGet:
         assert [line.split() for line in output.splitlines()] == [
             ["Base", "role:", "User"],
             ["Helpdesk", "Contoso,", "Fabrikam"],
-            ["Auditor", "All", "customer", "organizations,", "Global"],
+            ["Auditor", "All", "Customer", "Organizations,", "Global"],
         ]
 
     def test_no_additional_roles_renders_only_the_base_role(self, fake_client: _FakeClient) -> None:

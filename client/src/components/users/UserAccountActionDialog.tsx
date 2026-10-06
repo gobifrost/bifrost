@@ -32,7 +32,7 @@ const COPY: Record<
 	}
 > = {
 	disable: {
-		title: "Disable user",
+		title: "Disable User",
 		description: (name) => (
 			<>
 				Disable “{name}”? They will lose access to the platform. You can
@@ -45,7 +45,7 @@ const COPY: Record<
 		destructive: true,
 	},
 	delete: {
-		title: "Permanently delete user",
+		title: "Permanently Delete User",
 		description: (name) => (
 			<>
 				Permanently delete “{name}”? This cannot be undone. The user and
@@ -53,7 +53,7 @@ const COPY: Record<
 			</>
 		),
 		errorTitle: "User could not be deleted",
-		action: "Permanently delete",
+		action: "Permanently Delete",
 		pending: "Deleting…",
 		destructive: true,
 	},
@@ -72,7 +72,7 @@ const COPY: Record<
 		destructive: true,
 	},
 	"sign-out": {
-		title: "Sign out of all devices",
+		title: "Sign Out of All Devices",
 		description: (name) => (
 			<>
 				Signs {name} out on every device. They can sign in again right
@@ -80,7 +80,7 @@ const COPY: Record<
 			</>
 		),
 		errorTitle: "User could not be signed out",
-		action: "Sign out everywhere",
+		action: "Sign Out Everywhere",
 		pending: "Signing out…",
 		destructive: false,
 	},

@@ -32,7 +32,15 @@ function entry(
 	{
 		enforced = false,
 		description = `What ${title} covers.`,
-	}: { enforced?: boolean; description?: string } = {},
+		names = {
+			[`${domain}.read`]: `Read ${title}`,
+			[`${domain}.readwrite`]: `Read and Write ${title}`,
+		},
+	}: {
+		enforced?: boolean;
+		description?: string;
+		names?: Record<string, string>;
+	} = {},
 ): PermissionCatalogEntry {
 	return {
 		domain,
@@ -41,6 +49,7 @@ function entry(
 		description,
 		who_should_hold: "Anyone who needs it.",
 		actions: ["read", "readwrite"],
+		names,
 		privileged: [...PRIVILEGED].filter((p) => p.startsWith(`${domain}.`)),
 		scope: "per_organization",
 		enforced,
@@ -50,25 +59,26 @@ function entry(
 // Sorted by area then title, as the server sends it.
 const CATALOG: PermissionCatalogEntry[] = [
 	entry("agents", "Agents", "Automation"),
-	entry("tables", "Tables", "Data & content"),
-	entry(
-		"users.lifecycle",
-		"Move, delete & change base role",
-		"Identity & access",
-	),
-	entry("organizations", "Organizations", "Identity & access", {
+	entry("tables", "Tables", "Data & Content"),
+	entry("users.lifecycle", "User Lifecycle", "Identity & Access", {
+		names: {
+			"users.lifecycle.readwrite":
+				"Manage User Lifecycle (move, delete, change base role)",
+		},
+	}),
+	entry("organizations", "Organizations", "Identity & Access", {
 		enforced: true,
 	}),
-	entry("roleassignments", "Role assignments", "Identity & access", {
+	entry("roleassignments", "Role Assignments", "Identity & Access", {
 		enforced: true,
 	}),
-	entry("roles", "Roles", "Identity & access", {
+	entry("roles", "Roles", "Identity & Access", {
 		enforced: true,
 		description:
 			"Role definitions. Assigning roles to users is `roleassignments`.",
 	}),
-	entry("users", "Users", "Identity & access", { enforced: true }),
-	entry("configs", "Configs", "Integrations & secrets", {
+	entry("users", "Users", "Identity & Access", { enforced: true }),
+	entry("configs", "Configuration", "Integrations & Secrets", {
 		description: "Configuration values and secret references.",
 	}),
 ];
@@ -153,13 +163,13 @@ describe("RolePermissionsPanel", () => {
 		);
 
 		expect(areaHeadings()).toEqual([
-			"Identity & access",
+			"Identity & Access",
 			"Automation",
-			"Data & content",
-			"Integrations & secrets",
+			"Data & Content",
+			"Integrations & Secrets",
 		]);
 		const identity = screen.getByRole("region", {
-			name: "Identity & access",
+			name: "Identity & Access",
 		});
 		expect(
 			within(identity).getByRole("group", { name: "Users" }),
@@ -177,22 +187,24 @@ describe("RolePermissionsPanel", () => {
 		);
 
 		expect(
-			within(domain("Users")).getByRole("radio", { name: "View" }),
+			within(domain("Users")).getByRole("radio", { name: "Read Users" }),
 		).toBeChecked();
 		expect(
 			within(domain("Organizations")).getByRole("radio", {
-				name: "No access",
+				name: "No Access",
 			}),
 		).toBeChecked();
-		const save = screen.getByRole("button", { name: "Save permissions" });
+		const save = screen.getByRole("button", { name: "Save Permissions" });
 		expect(save).toBeDisabled();
 
 		await user.click(
-			within(domain("Users")).getByRole("radio", { name: "Manage" }),
+			within(domain("Users")).getByRole("radio", {
+				name: "Read and Write Users",
+			}),
 		);
 		await user.click(
 			within(domain("Organizations")).getByRole("radio", {
-				name: "View",
+				name: "Read Organizations",
 			}),
 		);
 		await user.click(save);
@@ -216,7 +228,7 @@ describe("RolePermissionsPanel", () => {
 		);
 
 		expect(
-			within(domain("Move, delete & change base role"))
+			within(domain("User Lifecycle"))
 				.getAllByRole("radio")
 				.map((radio) => radio.getAttribute("value")),
 		).toEqual(["none", "readwrite"]);
@@ -234,18 +246,20 @@ describe("RolePermissionsPanel", () => {
 		);
 
 		expect(within(domain("Roles")).queryByRole("radio")).toBeNull();
-		expect(within(domain("Roles")).getByText("No access")).toBeVisible();
+		expect(within(domain("Roles")).getByText("No Access")).toBeVisible();
 		expect(within(domain("Users")).getAllByRole("radio")).toHaveLength(3);
 		expect(within(domain("Agents")).queryByRole("radio")).toBeNull();
 	});
 
-	it("shows what the role holds in a read-only domain, in plain words", () => {
+	it("names what the role holds in a read-only domain", () => {
 		renderWithProviders(
 			<RolePermissionsPanel roleId="role-1" isBuiltin={false} />,
 		);
 
-		expect(within(domain("Agents")).getByText("Manage")).toBeVisible();
-		expect(within(domain("Tables")).getByText("No access")).toBeVisible();
+		expect(
+			within(domain("Agents")).getByText("Read and Write Agents"),
+		).toBeVisible();
+		expect(within(domain("Tables")).getByText("No Access")).toBeVisible();
 	});
 
 	it("says once on an area when every domain there takes effect with R3b", () => {
@@ -255,10 +269,10 @@ describe("RolePermissionsPanel", () => {
 
 		const automation = screen.getByRole("region", { name: "Automation" });
 		expect(
-			within(automation).getAllByText("Takes effect with R3b"),
+			within(automation).getAllByText("Takes Effect with R3b"),
 		).toHaveLength(1);
 		expect(
-			within(domain("Agents")).queryByText("Takes effect with R3b"),
+			within(domain("Agents")).queryByText("Takes Effect with R3b"),
 		).toBeNull();
 	});
 
@@ -268,18 +282,16 @@ describe("RolePermissionsPanel", () => {
 		);
 
 		const identity = screen.getByRole("region", {
-			name: "Identity & access",
+			name: "Identity & Access",
 		});
 		expect(
-			within(identity).getAllByText("Takes effect with R3b"),
+			within(identity).getAllByText("Takes Effect with R3b"),
 		).toHaveLength(1);
 		expect(
-			within(domain("Move, delete & change base role")).getByText(
-				"Takes effect with R3b",
-			),
+			within(domain("User Lifecycle")).getByText("Takes Effect with R3b"),
 		).toBeVisible();
 		expect(
-			within(domain("Users")).queryByText("Takes effect with R3b"),
+			within(domain("Users")).queryByText("Takes Effect with R3b"),
 		).toBeNull();
 	});
 
@@ -307,7 +319,7 @@ describe("RolePermissionsPanel", () => {
 		);
 
 		expect(within(domain("Roles")).queryByRole("radio")).toBeNull();
-		expect(within(domain("Roles")).getByText("No access")).toBeVisible();
+		expect(within(domain("Roles")).getByText("No Access")).toBeVisible();
 	});
 
 	it("shows only the highest level held in a read-only domain", () => {
@@ -316,8 +328,10 @@ describe("RolePermissionsPanel", () => {
 			<RolePermissionsPanel roleId="role-1" isBuiltin={false} />,
 		);
 
-		expect(within(domain("Agents")).getByText("Manage")).toBeVisible();
-		expect(within(domain("Agents")).queryByText(/View/)).toBeNull();
+		expect(
+			within(domain("Agents")).getByText("Read and Write Agents"),
+		).toBeVisible();
+		expect(within(domain("Agents")).queryByText("Read Agents")).toBeNull();
 	});
 
 	it("marks privileged choices and explains what that means", () => {
@@ -330,12 +344,12 @@ describe("RolePermissionsPanel", () => {
 		).toBeInTheDocument();
 		const users = domain("Users");
 		expect(
-			within(users).getByRole("radio", { name: "Manage" }).parentElement
-				?.textContent,
+			within(users).getByRole("radio", { name: "Read and Write Users" })
+				.parentElement?.textContent,
 		).toContain("Privileged");
 		expect(
-			within(users).getByRole("radio", { name: "View" }).parentElement
-				?.textContent,
+			within(users).getByRole("radio", { name: "Read Users" })
+				.parentElement?.textContent,
 		).not.toContain("Privileged");
 	});
 
@@ -349,9 +363,9 @@ describe("RolePermissionsPanel", () => {
 		});
 		await user.type(search, "secret");
 		await waitFor(() =>
-			expect(areaHeadings()).toEqual(["Integrations & secrets"]),
+			expect(areaHeadings()).toEqual(["Integrations & Secrets"]),
 		);
-		expect(domain("Configs")).toBeVisible();
+		expect(domain("Configuration")).toBeVisible();
 
 		await user.clear(search);
 		await user.type(search, "role assign");
@@ -377,7 +391,7 @@ describe("RolePermissionsPanel", () => {
 
 		await user.click(
 			within(domain("Organizations")).getByRole("radio", {
-				name: "View",
+				name: "Read Organizations",
 			}),
 		);
 		await user.type(
@@ -390,7 +404,7 @@ describe("RolePermissionsPanel", () => {
 			).toBeNull(),
 		);
 		await user.click(
-			screen.getByRole("button", { name: "Save permissions" }),
+			screen.getByRole("button", { name: "Save Permissions" }),
 		);
 
 		await waitFor(() => expect(state.mutateAsync).toHaveBeenCalled());
@@ -410,10 +424,14 @@ describe("RolePermissionsPanel", () => {
 		);
 
 		expect(screen.queryByRole("radio")).not.toBeInTheDocument();
-		expect(within(domain("Users")).getByText("Manage")).toBeVisible();
-		expect(within(domain("Configs")).getByText("View")).toBeVisible();
 		expect(
-			screen.queryByRole("button", { name: "Save permissions" }),
+			within(domain("Users")).getByText("Read and Write Users"),
+		).toBeVisible();
+		expect(
+			within(domain("Configuration")).getByText("Read Configuration"),
+		).toBeVisible();
+		expect(
+			screen.queryByRole("button", { name: "Save Permissions" }),
 		).not.toBeInTheDocument();
 	});
 
@@ -443,7 +461,7 @@ describe("RolePermissionsPanel", () => {
 			),
 		).toBeInTheDocument();
 		expect(screen.queryByRole("radio")).not.toBeInTheDocument();
-		expect(within(domain("Users")).getByText("View")).toBeVisible();
+		expect(within(domain("Users")).getByText("Read Users")).toBeVisible();
 	});
 
 	it("shows the server's refusal inline", async () => {
@@ -454,10 +472,10 @@ describe("RolePermissionsPanel", () => {
 			<RolePermissionsPanel roleId="role-1" isBuiltin={false} />,
 		);
 		await user.click(
-			within(domain("Roles")).getByRole("radio", { name: "View" }),
+			within(domain("Roles")).getByRole("radio", { name: "Read Roles" }),
 		);
 		await user.click(
-			screen.getByRole("button", { name: "Save permissions" }),
+			screen.getByRole("button", { name: "Save Permissions" }),
 		);
 
 		expect(

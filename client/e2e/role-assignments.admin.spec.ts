@@ -1,8 +1,8 @@
 /**
- * Roles & access — admin happy path.
+ * Role Assignments — admin happy path.
  *
  * A Platform Admin opens a person's page, assigns Platform Operator with the
- * "All customer organizations" placement preset, saves, and sees the
+ * "All Customer Organizations" placement preset, saves, and sees the
  * assignment listed; after a reload the assignment is still there. Platform
  * Admin is an additional role too: it is added with its one placement, Global
  * (no preset to choose), and removed again from the same screen. Secrets
@@ -15,7 +15,7 @@ const SUFFIX = Math.random().toString(36).slice(2, 8);
 const USER_EMAIL = `role-assign-${SUFFIX}@e2e.gobifrost.dev`;
 const USER_NAME = `Role Assign ${SUFFIX}`;
 
-test.describe("Roles & access", () => {
+test.describe("Role Assignments", () => {
 	let userId: string;
 
 	test.beforeAll(async ({ api }) => {
@@ -56,19 +56,21 @@ test.describe("Roles & access", () => {
 			page.getByRole("heading", { name: USER_NAME }),
 		).toBeVisible({ timeout: 10000 });
 		await expect(
-			page.getByRole("heading", { name: "Additional roles" }),
+			page.getByRole("heading", { name: "Additional Roles" }),
 		).toBeVisible();
-		await page.getByRole("button", { name: "Add role" }).click();
+		await page.getByRole("button", { name: "Add Role" }).click();
 		await page.getByRole("option", { name: /Platform Operator/ }).click();
 		await page
-			.getByRole("radiogroup", { name: "Placement for Platform Operator" })
-			.getByRole("radio", { name: "All customer organizations" })
+			.getByRole("radiogroup", {
+				name: "Placement for Platform Operator",
+			})
+			.getByRole("radio", { name: "All Customer Organizations" })
 			.click();
 		await expect(
-			operatorPlaces().getByText("All customer organizations"),
+			operatorPlaces().getByText("All Customer Organizations"),
 		).toBeVisible();
 
-		const save = page.getByRole("button", { name: "Save roles" });
+		const save = page.getByRole("button", { name: "Save Roles" });
 		await save.click();
 		await expect(page.getByText("Roles saved")).toBeVisible();
 		await expect(save).toBeDisabled();
@@ -76,10 +78,10 @@ test.describe("Roles & access", () => {
 
 		await page.reload();
 		await expect(
-			page.getByRole("heading", { name: "Additional roles" }),
+			page.getByRole("heading", { name: "Additional Roles" }),
 		).toBeVisible({ timeout: 10000 });
 		await expect(
-			operatorPlaces().getByText("All customer organizations"),
+			operatorPlaces().getByText("All Customer Organizations"),
 		).toBeVisible();
 	});
 
@@ -91,28 +93,30 @@ test.describe("Roles & access", () => {
 
 		await page.goto(`/users/${userId}`);
 		await expect(
-			page.getByRole("heading", { name: "Additional roles" }),
+			page.getByRole("heading", { name: "Additional Roles" }),
 		).toBeVisible({ timeout: 10000 });
 
-		await page.getByRole("button", { name: "Add role" }).click();
+		await page.getByRole("button", { name: "Add Role" }).click();
 		await page.getByRole("option", { name: /^Platform Admin/ }).click();
 		await expect(adminPlaces().getByText("Global")).toBeVisible();
 		await expect(
-			page.getByRole("radiogroup", { name: "Placement for Platform Admin" }),
+			page.getByRole("radiogroup", {
+				name: "Placement for Platform Admin",
+			}),
 		).toHaveCount(0);
-		await page.getByRole("button", { name: "Save roles" }).click();
+		await page.getByRole("button", { name: "Save Roles" }).click();
 		await expect(page.getByText("Roles saved")).toBeVisible();
 
 		await page.reload();
 		await expect(
-			page.getByRole("heading", { name: "Additional roles" }),
+			page.getByRole("heading", { name: "Additional Roles" }),
 		).toBeVisible({ timeout: 10000 });
 		await expect(adminPlaces().getByText("Global")).toBeVisible();
 
 		await page
 			.getByRole("button", { name: "Remove Platform Admin" })
 			.click();
-		await page.getByRole("button", { name: "Save roles" }).click();
+		await page.getByRole("button", { name: "Save Roles" }).click();
 		await expect(page.getByText("Roles saved")).toBeVisible();
 		await expect(adminPlaces()).toHaveCount(0);
 	});
@@ -120,10 +124,10 @@ test.describe("Roles & access", () => {
 	test("adds Secrets Reader at its fixed places", async ({ page }) => {
 		await page.goto(`/users/${userId}`);
 		await expect(
-			page.getByRole("heading", { name: "Additional roles" }),
+			page.getByRole("heading", { name: "Additional Roles" }),
 		).toBeVisible({ timeout: 10000 });
 
-		await page.getByRole("button", { name: "Add role" }).click();
+		await page.getByRole("button", { name: "Add Role" }).click();
 		await page.getByRole("option", { name: /Secrets Reader/ }).click();
 		await expect(page.getByText("Applies everywhere.")).toBeVisible();
 		await expect(
@@ -136,12 +140,12 @@ test.describe("Roles & access", () => {
 				name: "Placement for Secrets Reader",
 			}),
 		).toHaveCount(0);
-		await page.getByRole("button", { name: "Save roles" }).click();
+		await page.getByRole("button", { name: "Save Roles" }).click();
 		await expect(page.getByText("Roles saved")).toBeVisible();
 
 		await page.reload();
 		await expect(
-			page.getByRole("heading", { name: "Additional roles" }),
+			page.getByRole("heading", { name: "Additional Roles" }),
 		).toBeVisible({ timeout: 10000 });
 		await expect(page.getByText("Applies everywhere.")).toBeVisible();
 	});

@@ -17,7 +17,7 @@ const PAGE_SIZE = 25;
 
 /**
  * Who holds a built-in role, and where it applies for each of them.
- * Read-only: built-in roles are given from a person's Roles & access.
+ * Read-only: built-in roles are given from a person's Role Assignments.
  * The server lists only people in organizations where the caller can view
  * role assignments.
  */
@@ -38,10 +38,10 @@ export function RolePeoplePanel({ roleId }: { roleId: string }) {
 					id="role-people-heading"
 					className="text-base font-semibold"
 				>
-					People with this role
+					People with This Role
 				</h2>
 				<p className="text-xs text-muted-foreground">
-					Give or remove this role from a person's Roles &amp; access.
+					Give or remove this role from a person's Role Assignments.
 				</p>
 			</div>
 			<SearchBox
@@ -70,7 +70,7 @@ export function RolePeoplePanel({ roleId }: { roleId: string }) {
 						disabled={query.isFetching}
 						onClick={() => void query.refetch()}
 					>
-						Retry people
+						Retry People
 					</Button>
 				</div>
 			) : query.isLoading ? (
@@ -93,7 +93,7 @@ export function RolePeoplePanel({ roleId }: { roleId: string }) {
 				/>
 			) : (
 				<div className="rounded-[var(--bf-radius-surface)] border bg-card">
-					<ul aria-label="People with this role" className="divide-y">
+					<ul aria-label="People with This Role" className="divide-y">
 						{users.map((person) => (
 							<li
 								key={person.id}

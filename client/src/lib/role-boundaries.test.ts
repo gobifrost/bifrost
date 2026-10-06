@@ -43,7 +43,7 @@ describe("placeLabel", () => {
 
 	it("uses the access map's words for the broad places", () => {
 		expect(placeLabel("managed_organizations", "")).toBe(
-			"All customer organizations",
+			"All Customer Organizations",
 		);
 		expect(placeLabel("platform", "")).toBe("Global");
 	});
@@ -174,8 +174,8 @@ describe("placementSummary", () => {
 				false,
 			).map((place) => [place.kind, place.label]),
 		).toEqual([
-			["organization", "3 organizations"],
-			["managed_organizations", "All customer organizations"],
+			["organization", "3 Organizations"],
+			["managed_organizations", "All Customer Organizations"],
 			["platform", "Global"],
 		]);
 	});
@@ -185,7 +185,7 @@ describe("placementSummary", () => {
 			placementSummary({ ...none, organizations: 1 }, false).map(
 				(place) => place.label,
 			),
-		).toEqual(["1 organization"]);
+		).toEqual(["1 Organization"]);
 	});
 
 	it("places a base role at each holder's home organization", () => {
@@ -194,7 +194,7 @@ describe("placementSummary", () => {
 				place.kind,
 				place.label,
 			]),
-		).toEqual([["home", "Home organization"]]);
+		).toEqual([["home", "Home Organization"]]);
 	});
 
 	it("is empty for a role placed nowhere", () => {

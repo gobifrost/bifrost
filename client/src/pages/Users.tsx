@@ -30,15 +30,8 @@ import {
 	TooltipContent,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { UserAccountActionDialog } from "@/components/users/UserAccountActionDialog";
 import { SearchBox } from "@/components/search/SearchBox";
-import {
-	useDeleteUser,
-	useResetUserMfa,
-	useSignOutUserEverywhere,
-	useUsersPage,
-	useUpdateUser,
-} from "@/hooks/useUsers";
+import { useUsersPage } from "@/hooks/useUsers";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useUserSelection } from "@/hooks/useUserSelection";
 import { useOrganizations } from "@/hooks/useOrganizations";
@@ -52,7 +45,7 @@ import {
 	PROTECTED_ACCOUNT_NOTICE,
 	UserActionsMenu,
 } from "@/components/users/UserActionsMenu";
-import { RegistrationLinkDialog } from "@/components/users/RegistrationLinkDialog";
+import { useUserAccountActions } from "@/components/users/useUserAccountActions";
 import { UserStatusBadge } from "@/components/users/UserStatusBadge";
 import { Badge } from "@/components/ui/badge";
 import { BulkActionBar } from "@/components/users/BulkActionBar";
@@ -69,55 +62,16 @@ import {
 	BulkResultDialog,
 	BulkSetActiveDialog,
 } from "@/components/users/BulkUserDialogs";
-import {
-	useRegenerateInvite,
-	useResendInvite,
-	useRevokeInvite,
-	useSendInvite,
-} from "@/hooks/useUserInvites";
-import { useEventSources } from "@/services/events";
 import { orgTarget } from "@/lib/authorization";
 import { useAuthorization } from "@/services/authorization";
-import { toast } from "sonner";
 import { ListPagination } from "@/components/pagination/ListPagination";
 import type { components, components as v1 } from "@/lib/v1";
 type User = components["schemas"]["UserPublic"];
 type Organization = components["schemas"]["OrganizationPublic"];
-type UserMfaReset = components["schemas"]["UserMfaResetResponse"];
-type SecurityAction = { mode: "reset-mfa" | "sign-out"; user: User } | null;
-type RegistrationLinkDialogState = {
-	userId: string;
-	email: string;
-	url: string;
-} | null;
 
 type SortColumn = "name" | "email" | "status" | "created" | "last_login";
 type SortDirection = "asc" | "desc";
 const PAGE_SIZE = 25;
-
-const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
-
-function describeMfaReset(result: UserMfaReset): string {
-	const removed = [
-		result.totp_removed ? "the authenticator app" : null,
-		result.recovery_codes_removed > 0
-			? count(result.recovery_codes_removed, "recovery code")
-			: null,
-		result.passkeys_removed > 0
-			? count(result.passkeys_removed, "passkey")
-			: null,
-		result.trusted_devices_revoked > 0
-			? count(result.trusted_devices_revoked, "remembered device")
-			: null,
-	].filter((part) => part !== null);
-	return [
-		removed.length > 0
-			? `Removed ${removed.join(", ")}.`
-			: "They had no MFA set up.",
-		`Ended ${count(result.sessions_revoked, "session")}.`,
-		"They'll set up MFA at their next sign-in.",
-	].join(" ");
-}
 
 function SortIcon({
 	column,
@@ -153,10 +107,7 @@ export function Users() {
 	const createUserButtonRef = useRef<HTMLButtonElement>(null);
 	const navigate = useNavigate();
 	const isNarrow = useMediaQuery("(max-width: 1023px)");
-	const [selectedUser, setSelectedUser] = useState<User | undefined>();
 	const [isCreateOpen, setIsCreateOpen] = useState(false);
-	const [isDeleteOpen, setIsDeleteOpen] = useState(false);
-	const [isDisableOpen, setIsDisableOpen] = useState(false);
 	const [searchTerm, setSearchTerm] = useState("");
 	const [showDisabled, setShowDisabled] = useState(false);
 	const [filterOrgId, setFilterOrgId] = useState<string | null | undefined>(
@@ -166,9 +117,6 @@ export function Users() {
 	const [sortColumn, setSortColumn] = useState<SortColumn>("name");
 	const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 	const [offset, setOffset] = useState(0);
-	const [registrationLinkDialog, setRegistrationLinkDialog] =
-		useState<RegistrationLinkDialogState>(null);
-	const [securityAction, setSecurityAction] = useState<SecurityAction>(null);
 
 	const { scope } = useOrgScope();
 	const { user: currentUser } = useAuth();
@@ -186,25 +134,9 @@ export function Users() {
 	});
 	const users = usersQuery.data?.items ?? [];
 	const total = usersQuery.data?.total ?? 0;
-	const deleteMutation = useDeleteUser();
-	const updateMutation = useUpdateUser();
-	const resetMfaMutation = useResetUserMfa();
-	const signOutMutation = useSignOutUserEverywhere();
-	const resendMutation = useResendInvite();
-	const regenerateMutation = useRegenerateInvite();
-	const revokeMutation = useRevokeInvite();
-	const sendInviteMutation = useSendInvite();
-	const { data: eventSources } = useEventSources({
-		sourceType: "topic",
-		limit: 100,
+	const accountActions = useUserAccountActions({
+		returnFocusRef: createUserButtonRef,
 	});
-	const inviteAutomationConfigured =
-		eventSources?.items?.some(
-			(source) =>
-				source.is_active &&
-				source.event_type === "user.invited" &&
-				source.subscription_count > 0,
-		) ?? false;
 
 	const { data: organizations } = useOrganizations({
 		enabled: canSeeOrganizations,
@@ -224,19 +156,6 @@ export function Users() {
 						? "Loading…"
 						: "Not visible to you"),
 			isProvider: org?.is_provider ?? false,
-		};
-	};
-
-	// Per-row actions follow the row's organization; a protected user can be
-	// changed only by a Platform Admin.
-	const rowAbilities = (user: User) => {
-		const target = orgTarget(user.organization_id);
-		return {
-			canSupport: authorization.canAt("users.readwrite", target),
-			canDelete: authorization.canAt("users.lifecycle.readwrite", target),
-			isProtected: user.is_protected && !authorization.isPlatformAdmin,
-			canEditProfile: profileAbilities(user, isSelf(user), authorization)
-				.canSave,
 		};
 	};
 
@@ -316,163 +235,18 @@ export function Users() {
 		navigate(`/users/${user.id}`);
 	};
 
-	const handleToggleActive = (user: User) => {
-		if (user.is_active) {
-			setSelectedUser(user);
-			setIsDisableOpen(true);
-		} else {
-			handleEnableUser(user);
-		}
-	};
-
-	const handleDeleteUser = (user: User) => {
-		setSelectedUser(user);
-		setIsDeleteOpen(true);
-	};
-
-	const handleConfirmDisable = async () => {
-		if (!selectedUser) return;
-
-		await updateMutation.mutateAsync({
-			params: { path: { user_id: selectedUser.id } },
-			body: { is_active: false },
-		});
-		toast.success("User disabled", {
-			description: `${selectedUser.name || selectedUser.email} has been disabled`,
-		});
-		setIsDisableOpen(false);
-		setSelectedUser(undefined);
-	};
-	const handleEnableUser = async (user: User) => {
-		try {
-			await updateMutation.mutateAsync({
-				params: { path: { user_id: user.id } },
-				body: { is_active: true },
-			});
-			toast.success("User enabled", {
-				description: `${user.name || user.email} has been re-enabled`,
-			});
-		} catch (error) {
-			const errorMessage =
-				error instanceof Error
-					? error.message
-					: "Unknown error occurred";
-			toast.error("Failed to enable user", {
-				description: errorMessage,
-			});
-		}
-	};
-
-	const handleConfirmDelete = async () => {
-		if (!selectedUser) return;
-
-		await deleteMutation.mutateAsync({
-			params: { path: { user_id: selectedUser.id } },
-		});
-		toast.success("User permanently deleted", {
-			description: `${selectedUser.name || selectedUser.email} has been permanently removed`,
-		});
-		setIsDeleteOpen(false);
-		setSelectedUser(undefined);
-	};
-	const handleConfirmSecurityAction = async () => {
-		if (!securityAction) return;
-		const { mode, user } = securityAction;
-		const name = user.name || user.email;
-		if (mode === "reset-mfa") {
-			const result = await resetMfaMutation.mutateAsync({
-				params: { path: { user_id: user.id } },
-			});
-			toast.success(`MFA reset for ${name}`, {
-				description: describeMfaReset(result),
-			});
-		} else {
-			const result = await signOutMutation.mutateAsync({
-				body: { user_id: user.id },
-			});
-			toast.success(`${name} signed out`, {
-				description: `Ended ${count(result.sessions_revoked, "session")}.`,
-			});
-		}
-		setSecurityAction(null);
-	};
 	const isSelf = (user: User) =>
 		!!(currentUser && user.id === currentUser.id);
-
-	const showRegistrationLink = (user: User, url: string) => {
-		setRegistrationLinkDialog({
-			userId: user.id,
-			email: user.email,
-			url,
-		});
-	};
 
 	const renderUserActions = (user: User) => (
 		<UserActionsMenu
 			label={`${user.name || user.email} actions`}
-			status={user.invite_status ?? "active"}
-			isActive={user.is_active}
-			isSelf={isSelf(user)}
-			{...rowAbilities(user)}
-			onEditProfile={() => setProfileUser(user)}
-			onResend={() =>
-				resendMutation.mutate(user.id, {
-					onSuccess: (res) => {
-						toast.success(
-							res.event_emitted
-								? `Invite automation triggered for ${user.email}`
-								: "Invite regenerated (no automations — copy link from regenerate)",
-						);
-					},
-					onError: (e: unknown) =>
-						toast.error(
-							e instanceof Error
-								? e.message
-								: "Failed to resend invite",
-						),
-				})
+			{...accountActions.menuPropsFor(user)}
+			onEditProfile={
+				profileAbilities(user, isSelf(user), authorization).canSave
+					? () => setProfileUser(user)
+					: undefined
 			}
-			onRegenerate={() =>
-				regenerateMutation.mutate(user.id, {
-					onSuccess: (res) => {
-						showRegistrationLink(user, res.registration_url);
-					},
-					onError: (e: unknown) =>
-						toast.error(
-							e instanceof Error
-								? e.message
-								: "Failed to regenerate link",
-						),
-				})
-			}
-			onCopyLink={() =>
-				regenerateMutation.mutate(user.id, {
-					onSuccess: (res) => {
-						showRegistrationLink(user, res.registration_url);
-					},
-					onError: (e: unknown) =>
-						toast.error(
-							e instanceof Error
-								? e.message
-								: "Failed to copy link",
-						),
-				})
-			}
-			onRevoke={() =>
-				revokeMutation.mutate(user.id, {
-					onSuccess: () => toast.success("Invite revoked"),
-					onError: (e: unknown) =>
-						toast.error(
-							e instanceof Error
-								? e.message
-								: "Failed to revoke invite",
-						),
-				})
-			}
-			onResetMfa={() => setSecurityAction({ mode: "reset-mfa", user })}
-			onSignOut={() => setSecurityAction({ mode: "sign-out", user })}
-			onToggleActive={() => handleToggleActive(user)}
-			onDelete={() => handleDeleteUser(user)}
 		/>
 	);
 
@@ -509,7 +283,7 @@ export function Users() {
 								onClick={() => setIsCreateOpen(true)}
 							>
 								<Plus className="h-4 w-4 mr-1.5" />
-								Create user
+								Create User
 							</Button>
 						)}
 					</>
@@ -575,7 +349,7 @@ export function Users() {
 						disabled={usersQuery.isFetching}
 						onClick={() => usersQuery.refetch()}
 					>
-						Retry users
+						Retry Users
 					</Button>
 				</Alert>
 			)}
@@ -615,7 +389,7 @@ export function Users() {
 												selection.toggleAllVisible()
 											}
 										/>
-										Select page
+										Select Page
 									</label>
 								)}
 								<label className="flex min-w-0 items-center gap-2 text-sm">
@@ -640,7 +414,7 @@ export function Users() {
 												["email", "Email"],
 												["status", "Status"],
 												["created", "Created"],
-												["last_login", "Last login"],
+												["last_login", "Last Login"],
 											] as const
 										).flatMap(([column, label]) =>
 											(["asc", "desc"] as const).map(
@@ -726,7 +500,7 @@ export function Users() {
 											)}
 											{user.is_superuser && (
 												<Badge variant="outline">
-													Platform admin
+													Platform Admin
 												</Badge>
 											)}
 											{user.is_protected && (
@@ -772,7 +546,7 @@ export function Users() {
 											</div>
 											<div>
 												<dt className="text-xs text-muted-foreground">
-													Last login
+													Last Login
 												</dt>
 												<dd className="mt-1 font-mono text-xs">
 													{user.last_login
@@ -1128,7 +902,7 @@ export function Users() {
 						<h3 className="mt-4 text-lg font-semibold">
 							{searchTerm
 								? "No users match your search"
-								: "No users found"}
+								: "No Users Found"}
 						</h3>
 						<p className="mt-2 text-sm text-muted-foreground">
 							{searchTerm
@@ -1198,57 +972,7 @@ export function Users() {
 				onOpenChange={(open) => !open && setProfileUser(undefined)}
 			/>
 
-			<RegistrationLinkDialog
-				title="Registration link ready"
-				key={registrationLinkDialog?.url ?? "closed"}
-				open={registrationLinkDialog !== null}
-				email={registrationLinkDialog?.email}
-				url={registrationLinkDialog?.url}
-				canSendEmail={inviteAutomationConfigured}
-				isSendingEmail={sendInviteMutation.isPending}
-				onSendEmail={async () => {
-					if (!registrationLinkDialog) return;
-					await sendInviteMutation.mutateAsync({
-						userId: registrationLinkDialog.userId,
-						registrationUrl: registrationLinkDialog.url,
-					});
-					toast.success("Registration email sent");
-					setRegistrationLinkDialog(null);
-				}}
-				onOpenChange={(open) => {
-					if (!open) setRegistrationLinkDialog(null);
-				}}
-			/>
-
-			{isDisableOpen && selectedUser && (
-				<UserAccountActionDialog
-					mode="disable"
-					returnFocusRef={createUserButtonRef}
-					name={selectedUser.name || selectedUser.email}
-					onOpenChange={setIsDisableOpen}
-					onConfirm={handleConfirmDisable}
-				/>
-			)}
-			{securityAction && (
-				<UserAccountActionDialog
-					mode={securityAction.mode}
-					returnFocusRef={createUserButtonRef}
-					name={securityAction.user.name || securityAction.user.email}
-					onOpenChange={(open) => {
-						if (!open) setSecurityAction(null);
-					}}
-					onConfirm={handleConfirmSecurityAction}
-				/>
-			)}
-			{isDeleteOpen && selectedUser && (
-				<UserAccountActionDialog
-					mode="delete"
-					returnFocusRef={createUserButtonRef}
-					name={selectedUser.name || selectedUser.email}
-					onOpenChange={setIsDeleteOpen}
-					onConfirm={handleConfirmDelete}
-				/>
-			)}
+			{accountActions.dialogs}
 		</PageWorkspace>
 	);
 }

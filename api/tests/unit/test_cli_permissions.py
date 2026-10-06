@@ -17,16 +17,17 @@ from click.testing import CliRunner
 # Ensure the standalone bifrost package is importable.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
-from bifrost.commands.permissions import permissions_group  # noqa: E402
+from bifrost.commands.permissions import permission_names, permissions_group  # noqa: E402
 
 _CATALOG = [
     {
         "domain": "roles",
         "title": "Roles",
-        "area": "Identity & access",
+        "area": "Identity & Access",
         "description": "Role definitions.",
         "who_should_hold": "Platform admins.",
         "actions": ["read", "readwrite"],
+        "names": {"roles.read": "Read Roles", "roles.readwrite": "Read and Write Roles"},
         "privileged": ["roles.readwrite"],
         "scope": "platform_wide",
         "enforced": True,
@@ -34,10 +35,11 @@ _CATALOG = [
     {
         "domain": "tables",
         "title": "Tables",
-        "area": "Data & content",
+        "area": "Data & Content",
         "description": "Table definitions.",
         "who_should_hold": "Platform admins.",
         "actions": ["read", "readwrite"],
+        "names": {"tables.read": "Read Tables", "tables.readwrite": "Read and Write Tables"},
         "privileged": [],
         "scope": "per_organization",
         "enforced": False,
@@ -45,10 +47,11 @@ _CATALOG = [
     {
         "domain": "claims",
         "title": "Claims",
-        "area": "Data & content",
+        "area": "Data & Content",
         "description": "Claim records.",
         "who_should_hold": "Platform admins.",
         "actions": ["read"],
+        "names": {"claims.read": "Read Claims"},
         "privileged": [],
         "scope": "varies",
         "enforced": False,
@@ -78,15 +81,23 @@ def test_list_reads_the_catalog_endpoint() -> None:
     assert captured["get_path"] == "/api/permissions/catalog"
 
 
-def test_list_prints_a_table_of_area_permission_scope_enforced() -> None:
+def test_list_prints_one_row_per_permission_with_its_name() -> None:
     result = _invoke(["list"], {})
     assert result.exit_code == 0, result.output
     assert result.output.splitlines() == [
-        "AREA               PERMISSION  SCOPE          ENFORCED",
-        "Identity & access  roles       platform-wide  yes",
-        "Data & content     tables      per-org        no",
-        "Data & content     claims      varies         no",
+        "AREA               NAME                   PERMISSION        SCOPE          ENFORCED",
+        "Identity & Access  Read Roles             roles.read        platform-wide  yes",
+        "Identity & Access  Read and Write Roles   roles.readwrite   platform-wide  yes",
+        "Data & Content     Read Tables            tables.read       per-org        no",
+        "Data & Content     Read and Write Tables  tables.readwrite  per-org        no",
+        "Data & Content     Read Claims            claims.read       varies         no",
     ]
+
+
+def test_names_cover_the_catalog_and_the_wildcard() -> None:
+    names = permission_names(_CATALOG)
+    assert names["tables.readwrite"] == "Read and Write Tables"
+    assert names["*"] == "All Permissions"
 
 
 def test_list_json_prints_the_raw_catalog() -> None:

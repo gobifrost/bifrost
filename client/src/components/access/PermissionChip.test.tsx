@@ -24,10 +24,15 @@ const grant: AccessGrant = {
 const entry: PermissionCatalogEntry = {
 	domain: "tables",
 	title: "Tables",
-	area: "Data & content",
+	area: "Data & Content",
 	description: "Structured data.",
 	who_should_hold: "Anyone who works with data.",
-	actions: ["read", "readwrite"],
+	actions: ["read", "read.all", "readwrite"],
+	names: {
+		"tables.read": "Read Tables",
+		"tables.read.all": "Read All Tables",
+		"tables.readwrite": "Read and Write Tables",
+	},
 	privileged: [],
 	scope: "per_organization",
 	enforced: false,
@@ -49,7 +54,7 @@ describe("PermissionChip", () => {
 		expect(chip).not.toHaveClass(
 			"before:bg-[image:var(--bf-bridge-vertical)]",
 		);
-		expect(screen.queryByText("Platform-wide")).not.toBeInTheDocument();
+		expect(screen.queryByText("Platform-Wide")).not.toBeInTheDocument();
 	});
 
 	it("marks a platform-wide grant with the bridge edge and its label", () => {
@@ -65,6 +70,7 @@ describe("PermissionChip", () => {
 					...entry,
 					domain: "organizations",
 					title: "Organizations",
+					names: { "organizations.read": "Read Organizations" },
 				}}
 			/>,
 		);
@@ -72,7 +78,7 @@ describe("PermissionChip", () => {
 		const chip = screen.getByRole("button", { name: /Organizations/ });
 		expect(chip).toHaveAttribute("data-variant", "platform_wide");
 		expect(chip).toHaveClass("before:bg-[image:var(--bf-bridge-vertical)]");
-		expect(screen.getByText("Platform-wide")).toBeInTheDocument();
+		expect(screen.getByText("Platform-Wide")).toBeInTheDocument();
 	});
 
 	it("draws a varying grant solid with a dashed edge and says why in the tooltip", async () => {
@@ -94,7 +100,7 @@ describe("PermissionChip", () => {
 		expect(chip).not.toHaveClass(
 			"before:bg-[image:var(--bf-bridge-vertical)]",
 		);
-		expect(screen.queryByText("Platform-wide")).not.toBeInTheDocument();
+		expect(screen.queryByText("Platform-Wide")).not.toBeInTheDocument();
 
 		await user.hover(chip);
 
@@ -123,10 +129,12 @@ describe("PermissionChip", () => {
 	it("keeps chip text at full opacity so it stays readable", () => {
 		render(<PermissionChip grant={grant} catalogEntry={entry} />);
 
-		expect(screen.getByText("view").className).not.toContain("opacity");
+		expect(screen.getByText("Read Tables").className).not.toContain(
+			"opacity",
+		);
 	});
 
-	it("says what the grant lets a person do in plain words", () => {
+	it("names the grant the way the catalog does", () => {
 		render(
 			<PermissionChip
 				grant={{
@@ -138,8 +146,8 @@ describe("PermissionChip", () => {
 			/>,
 		);
 
-		expect(screen.getByText("view all")).toBeInTheDocument();
-		expect(screen.queryByText("read.all")).not.toBeInTheDocument();
+		expect(screen.getByText("Read All Tables")).toBeInTheDocument();
+		expect(screen.queryByText("tables.read.all")).not.toBeInTheDocument();
 	});
 
 	it("uses the warning tone for a privileged permission", () => {
@@ -153,13 +161,14 @@ describe("PermissionChip", () => {
 				catalogEntry={{
 					...entry,
 					domain: "secrets",
-					title: "Secrets",
+					title: "Secret Values",
+					names: { "secrets.read": "Read Secret Values" },
 					privileged: ["secrets.read"],
 				}}
 			/>,
 		);
 
-		const chip = screen.getByRole("button", { name: /Secrets/ });
+		const chip = screen.getByRole("button", { name: /Secret Values/ });
 		expect(chip).toHaveAttribute("data-variant", "privileged");
 		expect(chip).toHaveClass(
 			"bg-[var(--bf-warning-soft)]",
@@ -167,11 +176,11 @@ describe("PermissionChip", () => {
 		);
 	});
 
-	it("falls back to the domain when no catalog entry is given", () => {
+	it("shows the permission as written when no catalog entry is given", () => {
 		render(<PermissionChip grant={grant} />);
 
 		expect(
-			screen.getByRole("button", { name: /tables/ }),
+			screen.getByRole("button", { name: "tables.read" }),
 		).toBeInTheDocument();
 	});
 
@@ -219,7 +228,7 @@ describe("PermissionChip", () => {
 					kind: "managed_organizations",
 					organization_id: null,
 					organization_name: null,
-					label: "All customer organizations",
+					label: "All Customer Organizations",
 				}}
 			/>,
 		);

@@ -24,16 +24,18 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { UserActionsMenu } from "@/components/users/UserActionsMenu";
 import { UserProfileForm } from "@/components/users/UserProfileForm";
 import { UserRoleAssignmentsPanel } from "@/components/users/UserRoleAssignmentsPanel";
 import { UserStatusBadge } from "@/components/users/UserStatusBadge";
+import { useUserAccountActions } from "@/components/users/useUserAccountActions";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { useUser } from "@/hooks/useUsers";
 import { ApiError } from "@/lib/api-error";
 import { orgTarget } from "@/lib/authorization";
 import { motionSeconds } from "@/lib/motion";
-import { permissionActionWord, permissionParts } from "@/lib/permission-words";
+import { permissionDisplayName, permissionParts } from "@/lib/permission-words";
 import type { components } from "@/lib/v1";
 import {
 	usePermissionCatalog,
@@ -59,28 +61,20 @@ function initials(user: User): string {
 		.slice(0, 2);
 }
 
-/** "roles.readwrite" → "Role definitions (manage)". */
-function permissionPhrase(
-	permission: string,
-	catalog: PermissionCatalogEntry[],
-): string {
-	if (permission === "*") return "every permission";
-	const { domain } = permissionParts(permission);
-	const title =
-		catalog.find((entry) => entry.domain === domain)?.title ?? domain;
-	return `${title} (${permissionActionWord(permission)})`;
-}
-
 /** "Protected: holds …" — what makes this account protected. */
 function protectedSummary(
 	map: UserAccessMap | undefined,
 	catalog: PermissionCatalogEntry[] | undefined,
 ): string {
+	const entryFor = (permission: string) =>
+		catalog?.find(
+			(entry) => entry.domain === permissionParts(permission).domain,
+		);
 	const held =
 		map && catalog
 			? LIST.format(
 					map.privileged_permissions.map((permission) =>
-						permissionPhrase(permission, catalog),
+						permissionDisplayName(permission, entryFor(permission)),
 					),
 				)
 			: "privileged access";
@@ -110,7 +104,7 @@ function BackToUsers() {
 		<Button variant="outline" className="min-h-11" asChild>
 			<Link to="/users">
 				<ArrowLeft aria-hidden="true" className="size-4" />
-				Back to users
+				Back to Users
 			</Link>
 		</Button>
 	);
@@ -138,7 +132,7 @@ function UserUnavailable({
 	if (status === 404 || !error)
 		return (
 			<RouteUnavailableState
-				title="User not found"
+				title="User Not Found"
 				description="They may have been deleted, or the link is out of date."
 			>
 				<BackToUsers />
@@ -161,7 +155,7 @@ function UserUnavailable({
 				onClick={onRetry}
 			>
 				<RefreshCw aria-hidden="true" className="size-4" />
-				Try again
+				Try Again
 			</Button>
 		</RouteUnavailableState>
 	);
@@ -172,11 +166,13 @@ function PersonHeader({
 	homeOrganization,
 	map,
 	catalog,
+	actions,
 }: {
 	user: User;
 	homeOrganization: string | undefined;
 	map: UserAccessMap | undefined;
 	catalog: PermissionCatalogEntry[] | undefined;
+	actions: ReactNode;
 }) {
 	return (
 		<header className="min-w-0 space-y-3">
@@ -254,6 +250,7 @@ function PersonHeader({
 						</p>
 					)}
 				</div>
+				{actions}
 			</div>
 		</header>
 	);
@@ -300,6 +297,9 @@ export function UserAccessPage() {
 	const organizationsQuery = useOrganizations({
 		enabled: authorization.canAnywhere("organizations.read"),
 	});
+	const accountActions = useUserAccountActions({
+		onDeleted: () => navigate("/users"),
+	});
 
 	if (userQuery.isLoading || authorization.isLoading)
 		return (
@@ -334,7 +334,7 @@ export function UserAccessPage() {
 			organizationsQuery.data?.find(
 				(org) => org.id === person.organization_id,
 			)?.name)
-		: "Global (no organization)";
+		: "Global (No Organization)";
 
 	return (
 		<PageWorkspace className="mx-auto w-full max-w-7xl gap-5">
@@ -343,6 +343,13 @@ export function UserAccessPage() {
 				homeOrganization={homeOrganization}
 				map={map}
 				catalog={catalogQuery.data}
+				actions={
+					// The Profile tab is the profile editor, so no Edit Profile.
+					<UserActionsMenu
+						label={`${person.name || person.email} actions`}
+						{...accountActions.menuPropsFor(person)}
+					/>
+				}
 			/>
 			<Tabs
 				value={currentTab}
@@ -382,8 +389,8 @@ export function UserAccessPage() {
 								>
 									<SectionHeading
 										id="access-map-heading"
-										title="What they can do, and where"
-										description="One row for each place their roles apply. Hover or focus a permission to see which role gives it."
+										title="Effective Access"
+										description="What this person can do, in each organization their roles reach. Hover a permission to see which role grants it."
 									/>
 									{map && catalogQuery.data ? (
 										<AccessMap
@@ -420,7 +427,7 @@ export function UserAccessPage() {
 								>
 									<SectionHeading
 										id="role-assignments-heading"
-										title="Roles"
+										title="Role Assignments"
 										description="The base role applies in their home organization; additional roles apply where they're placed."
 									/>
 									<div className="flex flex-col overflow-hidden rounded-[var(--bf-radius-surface)] border bg-card">
@@ -451,6 +458,7 @@ export function UserAccessPage() {
 					</PageScrollArea>
 				</TabsContent>
 			</Tabs>
+			{accountActions.dialogs}
 		</PageWorkspace>
 	);
 }

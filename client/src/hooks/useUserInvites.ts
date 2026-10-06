@@ -7,11 +7,15 @@ import {
 	sendInviteEmail,
 } from "@/services/user-invites";
 
-const USERS_QUERY_KEYS: ReadonlyArray<string> = ["users", "/api/users"];
+/** The users list and a person's page both show invite status. */
+const USERS_QUERY_KEYS = [
+	["get", "/api/users"],
+	["get", "/api/users/{user_id}"],
+];
 
 function invalidateUsers(qc: ReturnType<typeof useQueryClient>) {
-	for (const key of USERS_QUERY_KEYS) {
-		qc.invalidateQueries({ queryKey: [key] });
+	for (const queryKey of USERS_QUERY_KEYS) {
+		qc.invalidateQueries({ queryKey });
 	}
 }
 

@@ -213,7 +213,7 @@ describe("EditUserDialog", () => {
 		expect(
 			screen.getByRole("heading", { name: /user details/i }),
 		).toBeInTheDocument();
-		expect(screen.getByText("Protected account")).toBeInTheDocument();
+		expect(screen.getByText("Protected Account")).toBeInTheDocument();
 		expect(
 			screen.getByText(/only a platform admin can change them/i),
 		).toBeInTheDocument();

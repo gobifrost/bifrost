@@ -47,7 +47,7 @@ test.describe("User Listing", () => {
 
 		// Admin should see invite/create button
 		await expect(
-			page.getByRole("button", { name: "Create user", exact: true }),
+			page.getByRole("button", { name: "Create User", exact: true }),
 		).toBeVisible();
 	});
 });
@@ -80,7 +80,7 @@ test.describe("User Details", () => {
 		await expect(page).toHaveURL(/\/users\/[0-9a-f-]+\/profile$/);
 	});
 
-	test("Edit profile opens the dialog without leaving the list", async ({
+	test("Edit Profile opens the dialog without leaving the list", async ({
 		page,
 	}) => {
 		await page.goto("/users");
@@ -88,7 +88,7 @@ test.describe("User Details", () => {
 		const userRow = page.locator("table tbody tr").first();
 		await expect(userRow).toBeVisible();
 		await userRow.getByRole("button", { name: /actions$/ }).click();
-		await page.getByRole("menuitem", { name: "Edit profile" }).click();
+		await page.getByRole("menuitem", { name: "Edit Profile" }).click();
 
 		await expect(
 			page.getByRole("dialog", { name: /edit user/i }),
@@ -178,7 +178,7 @@ test.describe("User Invitation", () => {
 				.getByRole("menuitem", { name: /generate registration link/i })
 				.click();
 			const registrationDialog = page.getByRole("dialog", {
-				name: "Registration link ready",
+				name: "Registration Link Ready",
 			});
 			await expect(registrationDialog).toBeVisible();
 			await expect(

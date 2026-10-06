@@ -48,6 +48,10 @@ function catalogEntry(
 		description: `${title}.`,
 		who_should_hold: "Anyone.",
 		actions: ["read", "readwrite"],
+		names: {
+			[`${domain}.read`]: `Read ${title}`,
+			[`${domain}.readwrite`]: `Read and Write ${title}`,
+		},
 		privileged,
 		scope: "per_organization",
 		enforced: false,
@@ -267,7 +271,7 @@ describe("Roles", () => {
 		expect(
 			within(record).getByText("Holders").nextSibling,
 		).toHaveTextContent("5");
-		expect(within(record).getByText("3 organizations")).toBeVisible();
+		expect(within(record).getByText("3 Organizations")).toBeVisible();
 		expect(within(record).getByText("Global")).toBeVisible();
 	});
 
@@ -343,11 +347,15 @@ describe("Roles", () => {
 			within(grants)
 				.getAllByRole("listitem")
 				.map((item) => item.textContent),
-		).toEqual(["Agentsview", "Formsmanage", "Rolesmanage", "Tablesview"]);
-		expect(within(grants).getByText("Roles").parentElement).toHaveAttribute(
-			"data-variant",
-			"privileged",
-		);
+		).toEqual([
+			"Read Agents",
+			"Read and Write Forms",
+			"Read and Write Roles",
+			"Read Tables",
+		]);
+		expect(
+			within(grants).getByText("Read and Write Roles").parentElement,
+		).toHaveAttribute("data-variant", "privileged");
 		const more = screen.getByRole("link", { name: "2 more permissions" });
 		expect(more).toHaveTextContent("+2");
 		expect(more).toHaveAttribute("href", "/roles/role-1/permissions");
@@ -372,7 +380,7 @@ describe("Roles", () => {
 			within(places)
 				.getAllByRole("listitem")
 				.map((item) => item.textContent),
-		).toEqual(["3 organizations", "Global"]);
+		).toEqual(["3 Organizations", "Global"]);
 		expect(
 			within(places).getByText("Global").closest("[data-place]"),
 		).toHaveClass("bg-[var(--bf-reach-soft)]");
@@ -393,7 +401,7 @@ describe("Roles", () => {
 		);
 		renderWithProviders(<Roles />);
 
-		expect(screen.getByText("Not placed")).toBeVisible();
+		expect(screen.getByText("Not Placed")).toBeVisible();
 	});
 
 	it("hides grants, holders and placements when the server leaves them out", () => {
@@ -455,7 +463,7 @@ describe("Roles", () => {
 		renderWithProviders(<Roles />);
 
 		expect(
-			screen.queryByRole("button", { name: "Create role" }),
+			screen.queryByRole("button", { name: "Create Role" }),
 		).not.toBeInTheDocument();
 		expect(
 			screen.queryByRole("button", { name: "Billing admins actions" }),

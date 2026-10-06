@@ -26,7 +26,7 @@ export interface PresetRole {
  */
 export type PlacementPreset = "selected" | "customers" | "all";
 
-/** "Contoso", "All customer organizations", "Global": the access map's words. */
+/** "Contoso", "All Customer Organizations", "Global": the access map's words. */
 export function placeLabel(
 	kind: BoundaryKind,
 	organizationName: string,
@@ -35,7 +35,7 @@ export function placeLabel(
 		case "organization":
 			return organizationName;
 		case "managed_organizations":
-			return "All customer organizations";
+			return "All Customer Organizations";
 		case "platform":
 			return "Global";
 	}
@@ -47,7 +47,7 @@ function summaryPlace(kind: Place["kind"], label: string): Place {
 
 /**
  * Where a role applies across everyone who holds it, as places for reach
- * chips: "3 organizations", "All customer organizations", "Global". A base
+ * chips: "3 Organizations", "All Customer Organizations", "Global". A base
  * role applies at each holder's home organization.
  */
 export function placementSummary(
@@ -55,14 +55,14 @@ export function placementSummary(
 	isBase: boolean,
 ): Place[] {
 	const places: Place[] = [];
-	if (isBase) places.push(summaryPlace("home", "Home organization"));
+	if (isBase) places.push(summaryPlace("home", "Home Organization"));
 	if (placements.organizations > 0)
 		places.push(
 			summaryPlace(
 				"organization",
 				placements.organizations === 1
-					? "1 organization"
-					: `${placements.organizations} organizations`,
+					? "1 Organization"
+					: `${placements.organizations} Organizations`,
 			),
 		);
 	if (placements.managed)

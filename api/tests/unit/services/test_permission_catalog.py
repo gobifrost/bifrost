@@ -3,7 +3,7 @@ domain vocabulary; these tests pin each derivation rule against a hand-built
 access list, plus the vocabulary's own completeness."""
 
 from src.models.contracts.access_list import AccessClass, AccessEntry, CurrentGate
-from src.models.contracts.permissions import PERMISSION_DOMAINS
+from src.models.contracts.permissions import PERMISSION_DOMAINS, permission_display_name
 from src.services.permission_catalog import build_catalog
 
 
@@ -105,12 +105,64 @@ def test_sorted_by_area_then_title() -> None:
     assert keys == sorted(keys)
 
 
-def test_user_lifecycle_is_titled_in_plain_words() -> None:
+def test_areas_are_title_case() -> None:
+    assert {entry.area for entry in build_catalog([])} == {
+        "Identity & Access",
+        "Automation",
+        "Data & Content",
+        "Integrations & Secrets",
+        "Platform",
+    }
+
+
+def test_names_are_verb_then_resource() -> None:
+    catalog = _by_domain(
+        [
+            _entry("/a", "tables.read", "organization"),
+            _entry("/b", "tables.readwrite", "organization"),
+            _entry("/c", "agentruns.read.all", "organization"),
+        ]
+    )
+    assert catalog["tables"].names == {
+        "tables.read": "Read Tables",
+        "tables.readwrite": "Read and Write Tables",
+    }
+    assert catalog["agentruns"].names == {"agentruns.read.all": "Read All Agent Runs"}
+
+
+def test_execute_permissions_are_named_by_their_own_verb() -> None:
+    catalog = _by_domain(
+        [
+            _entry("/a", "workflows.execute", "organization"),
+            _entry("/b", "apps.deploy.execute", "organization"),
+            _entry("/c", "solutions.build.execute", "platform"),
+        ]
+    )
+    assert catalog["workflows"].names == {"workflows.execute": "Run Workflows"}
+    assert catalog["apps.deploy"].names == {"apps.deploy.execute": "Publish Apps"}
+    assert catalog["solutions.build"].names == {"solutions.build.execute": "Build Solutions"}
+    # solutions.deploy.execute is privileged, so it is named without a route.
+    assert catalog["solutions.deploy"].names == {"solutions.deploy.execute": "Deploy Solutions"}
+
+
+def test_user_lifecycle_names_what_it_manages() -> None:
     catalog = _by_domain([])
-    assert catalog["users.lifecycle"].title == "Move, delete & change base role"
+    assert catalog["users.lifecycle"].title == "User Lifecycle"
+    assert catalog["users.lifecycle"].names == {
+        "users.lifecycle.readwrite": "Manage User Lifecycle (move, delete, change base role)"
+    }
+
+
+def test_display_name_reads_any_permission_of_a_domain() -> None:
+    assert permission_display_name("executions.read") == "Read Workflow Runs"
+    assert permission_display_name("secrets.read") == "Read Secret Values"
+    assert permission_display_name("mcp.read.all") == "Read All MCP Servers"
 
 
 def test_the_checked_in_access_list_builds_a_catalog() -> None:
     catalog = build_catalog()
     assert len(catalog) == len(PERMISSION_DOMAINS)
     assert next(e for e in catalog if e.domain == "roles").enforced is True
+    # Every action the catalog lists has a name.
+    for entry in catalog:
+        assert set(entry.names) == {f"{entry.domain}.{action}" for action in entry.actions}

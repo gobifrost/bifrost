@@ -390,7 +390,7 @@ export function UserProfileForm({
 					<div className="space-y-2 rounded-[var(--bf-radius-surface)] border p-4">
 						<div className="flex items-center justify-between gap-4">
 							<div className="space-y-0.5">
-								<Label htmlFor="external">External user</Label>
+								<Label htmlFor="external">External User</Label>
 								<p className="text-xs text-muted-foreground">
 									Sees only what the Everyone tier or an
 									explicit role grant allows — excluded from
