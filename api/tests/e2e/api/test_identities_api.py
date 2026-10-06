@@ -24,6 +24,7 @@ pytestmark = pytest.mark.e2e
 
 USER_ROLE_ID = "00000000-0000-0000-0000-000000000006"
 PLATFORM_OPERATOR_ROLE_ID = "00000000-0000-0000-0000-000000000007"
+PLATFORM_ADMIN_ROLE_ID = "00000000-0000-0000-0000-000000000005"
 
 _SOURCE = '''
 from bifrost import workflow
@@ -189,11 +190,7 @@ def test_create_custom_in_organization_and_global(e2e_client, platform_admin, wo
 
 def test_create_refuses_bad_input(e2e_client, platform_admin, world) -> None:
     admin, tag, contoso = platform_admin.headers, world["tag"], world["contoso"]
-    _ok(_create(e2e_client, admin, f"Dup {tag}", contoso["id"]), 201)
-
-    assert _create(e2e_client, admin, f"dup {tag}", contoso["id"]).status_code == 409
-    assert _create(e2e_client, admin, f"Dup {tag}", world["fabrikam"]["id"]).status_code == 201
-    assert _create(e2e_client, admin, f"Dup {tag}", str(uuid.uuid4())).status_code == 404
+    assert _create(e2e_client, admin, f"Bad {tag}", str(uuid.uuid4())).status_code == 404
     assert _create(e2e_client, admin, "   ", contoso["id"]).status_code == 422
 
 
@@ -207,10 +204,6 @@ def test_rename_default_and_custom(e2e_client, platform_admin, world) -> None:
     renamed_default = _ok(e2e_client.patch(f"/api/identities/{default['id']}", headers=admin, json={"name": f"Contoso Default {tag}"}))
     assert (renamed_default["identity_kind"], renamed_default["name"]) == ("org_default", f"Contoso Default {tag}")
 
-    clash = e2e_client.patch(f"/api/identities/{custom['id']}", headers=admin, json={"name": f"Contoso Default {tag}"})
-    assert clash.status_code == 409, clash.text
-    same = e2e_client.patch(f"/api/identities/{custom['id']}", headers=admin, json={"name": f"After {tag}"})
-    assert same.status_code == 200, same.text
     assert e2e_client.patch(f"/api/identities/{uuid.uuid4()}", headers=admin, json={"name": "Nobody"}).status_code == 404
 
     _ok(e2e_client.patch(f"/api/identities/{default['id']}", headers=admin, json={"name": default["name"]}))
@@ -277,6 +270,14 @@ def test_default_identity_base_role_is_fixed(e2e_client, platform_admin, world) 
         assert refused.json()["detail"] == "A default identity's base role is fixed"
         assert _default(e2e_client, admin, contoso["id"])["base_role"]["id"] == USER_ROLE_ID
 
+        # What the person page offers matches: a default identity keeps its base role, a custom one may change it.
+        def offered_as_base(identity_id: str) -> set[str]:
+            view = _ok(e2e_client.get(f"/api/users/{identity_id}/role-assignments", headers=admin))
+            return {role["id"] for role in view["assignable_roles"] if role["can_be_base"]}
+
+        assert offered_as_base(default["id"]) == {USER_ROLE_ID}
+        assert {USER_ROLE_ID, base["id"]} <= offered_as_base(custom["id"])
+
         allowed = e2e_client.put(
             f"/api/users/{custom['id']}/role-assignments",
             headers=admin,
@@ -315,6 +316,24 @@ def test_default_identity_base_role_is_fixed(e2e_client, platform_admin, world) 
             json={"base_role_id": USER_ROLE_ID, "additional": []},
         )
         e2e_client.delete(f"/api/roles/{base['id']}", headers=admin)
+
+
+def test_a_global_identity_takes_and_loses_platform_admin_like_any_assignment(e2e_client, platform_admin, world) -> None:
+    admin = platform_admin.headers
+    custom = _ok(_create(e2e_client, admin, f"Admin {world['tag']}", None), 201)
+    url = f"/api/users/{custom['id']}/role-assignments"
+
+    offered = _ok(e2e_client.get(url, headers=admin))["assignable_roles"]
+    assert PLATFORM_ADMIN_ROLE_ID in {role["id"] for role in offered if role["can_be_additional"]}
+    granted = e2e_client.put(
+        url, headers=admin, json={"base_role_id": USER_ROLE_ID, "additional": [{"role_id": PLATFORM_ADMIN_ROLE_ID}]}
+    )
+    assert granted.status_code == 200, granted.text
+    assert PLATFORM_ADMIN_ROLE_ID in {role["role_id"] for role in granted.json()["additional"]}
+
+    removed = e2e_client.put(url, headers=admin, json={"base_role_id": USER_ROLE_ID, "additional": []})
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["additional"] == []
 
 
 def test_operator_reads_only_what_it_reaches_and_changes_nothing(e2e_client, platform_admin, world) -> None:

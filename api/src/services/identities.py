@@ -190,31 +190,12 @@ async def list_identities(
     return await _public(session, identities)
 
 
-async def _name_in_use(
-    session: AsyncSession, organization_id: UUID | None, name: str, *, except_id: UUID | None = None
-) -> bool:
-    query = select(User.id).where(
-        User.identity_kind.is_not(None),
-        User.organization_id.is_not_distinct_from(organization_id),
-        func.lower(User.name) == name.lower(),
-    )
-    if except_id is not None:
-        query = query.where(User.id != except_id)
-    return await session.scalar(query.limit(1)) is not None
-
-
-def _name_taken(name: str) -> IdentityError:
-    return IdentityError(409, f"An identity named '{name}' already exists there")
-
-
 async def create_identity(session: AsyncSession, caller: Caller, request: IdentityCreate) -> IdentityPublic:
     """A custom identity (base role User, no additional roles) in an
     organization, or Global when ``organization_id`` is null."""
     require_operation(caller, CREATE_OPERATION, org_target(request.organization_id))
     if request.organization_id is not None and await session.get(Organization, request.organization_id) is None:
         raise IdentityError(404, "Organization not found")
-    if await _name_in_use(session, request.organization_id, request.name):
-        raise _name_taken(request.name)
 
     identity_id = uuid4()
     identity = User(
@@ -263,8 +244,6 @@ async def rename_identity(
 ) -> IdentityPublic:
     """Rename an identity of any kind."""
     identity = await _managed_identity(session, caller, identity_id, UPDATE_OPERATION)
-    if await _name_in_use(session, identity.organization_id, request.name, except_id=identity.id):
-        raise _name_taken(request.name)
     before = identity.name
     identity.name = request.name
     await session.flush()

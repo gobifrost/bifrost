@@ -146,21 +146,6 @@ class TestChange:
                 await create_identity(db_session, holder, IdentityCreate(name="Nope", organization_id=refused))
             assert getattr(error.value, "status_code", None) == 403
 
-    async def test_names_are_unique_within_an_organization_ignoring_case(self, db_session) -> None:
-        admin = admin_caller()
-        contoso, fabrikam = await _organization(db_session, "Contoso"), await _organization(db_session, "Fabrikam")
-        await create_identity(db_session, admin, IdentityCreate(name="Nightly", organization_id=contoso.id))
-
-        with pytest.raises(IdentityError) as clash:
-            await create_identity(db_session, admin, IdentityCreate(name="NIGHTLY", organization_id=contoso.id))
-        assert clash.value.status_code == 409
-        await create_identity(db_session, admin, IdentityCreate(name="Nightly", organization_id=fabrikam.id))
-
-        other = await create_identity(db_session, admin, IdentityCreate(name="Weekly", organization_id=contoso.id))
-        with pytest.raises(IdentityError) as renamed_clash:
-            await rename_identity(db_session, admin, other.id, IdentityUpdate(name="nightly"))
-        assert renamed_clash.value.status_code == 409
-
     async def test_a_privileged_identity_is_changed_only_by_a_platform_admin(self, db_session) -> None:
         from src.models import Role, RolePermission
         from src.services.user_role_assignments import insert_assignment

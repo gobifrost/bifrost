@@ -37,6 +37,7 @@ from shared.builtin_roles import (
     PLATFORM_ADMIN_ROLE_ID,
     PLATFORM_OPERATOR_ROLE_ID,
 )
+from shared.identities import is_identity
 from shared.system_account_guard import SYSTEM_ACCOUNT_ROLE_MESSAGE, is_system_account
 from src.core.constants import PROVIDER_ORG_ID
 from src.models.contracts.role_assignments import (
@@ -100,6 +101,10 @@ ADMIN_REMOVAL_MESSAGE = (
     "Move the user into an organization before removing the Platform Admin role"
 )
 DEFAULT_IDENTITY_BASE_ROLE_MESSAGE = "A default identity's base role is fixed"
+
+
+def _has_fixed_base_role(user: User) -> bool:
+    return user.identity_kind in (IdentityKind.ORG_DEFAULT, IdentityKind.GLOBAL_DEFAULT)
 
 
 class RoleAssignmentError(Exception):
@@ -351,11 +356,18 @@ def _assignable_roles(
             continue
         # A Global user can't lose Platform Admin, so it is neither offered
         # nor removable.
-        if role.id == PLATFORM_ADMIN_ROLE_ID and target.user.organization_id is None:
+        # (An identity can't be moved into an organization, so it can.)
+        if (
+            role.id == PLATFORM_ADMIN_ROLE_ID
+            and target.user.organization_id is None
+            and not is_identity(target.user)
+        ):
             continue
         can_be_base = may_change_base and (
             role.id in BASE_ROLE_IDS or not role.is_builtin
         )
+        if _has_fixed_base_role(target.user):
+            can_be_base = can_be_base and role.id == current_base.id
         can_be_additional = role.id not in BASE_ROLE_IDS and may_hold(
             role, target.user.organization_id
         )
@@ -537,7 +549,7 @@ async def replace_role_assignments(
     base_changed = request.base_role_id != user.base_role_id
     if base_changed:
         _check_base_change(caller, target, roles[user.base_role_id], roles[request.base_role_id])
-        if user.identity_kind in (IdentityKind.ORG_DEFAULT, IdentityKind.GLOBAL_DEFAULT):
+        if _has_fixed_base_role(user):
             raise RoleAssignmentError(409, DEFAULT_IDENTITY_BASE_ROLE_MESSAGE)
     if request.base_role_id in requested:
         raise RoleAssignmentError(422, "The base role can't also be an additional role")
@@ -554,7 +566,11 @@ async def replace_role_assignments(
     if PLATFORM_ADMIN_ROLE_ID in added | removed:
         if not caller.is_platform_admin:
             raise RoleAssignmentError(403, ADMIN_ROLE_MESSAGE)
-        if PLATFORM_ADMIN_ROLE_ID in removed and user.organization_id is None:
+        if (
+            PLATFORM_ADMIN_ROLE_ID in removed
+            and user.organization_id is None
+            and not is_identity(user)
+        ):
             raise RoleAssignmentError(409, ADMIN_REMOVAL_MESSAGE)
     for role_id in added | removed | rebounded:
         check_role_change(caller, roles[role_id], target.held)
