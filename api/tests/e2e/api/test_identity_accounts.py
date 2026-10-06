@@ -66,7 +66,7 @@ async def test_identity_cannot_be_registered(private_client, org1, db_session) -
 
     await db_session.refresh(identity)
     assert identity.hashed_password is None
-    assert identity.name == f"{org1['name']} identity"
+    assert identity.name == f"{org1['name']} Identity"
 
 
 def test_identity_email_domain_is_reserved(e2e_client, platform_admin, org1) -> None:
@@ -115,7 +115,7 @@ async def test_identity_is_not_edited_or_deleted_as_a_person(e2e_client, platfor
     ]
 
     await db_session.refresh(identity)
-    assert (identity.name, identity.is_active) == (f"{org1['name']} identity", True)
+    assert (identity.name, identity.is_active) == (f"{org1['name']} Identity", True)
 
 
 @pytest.mark.asyncio

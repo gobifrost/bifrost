@@ -63,7 +63,7 @@ async def test_ensure_default_identity_creates_one_ordinary_account(db_session: 
     identity = await ensure_default_identity(db_session, org)
 
     assert identity.email == f"identity-{org.id}@{IDENTITY_EMAIL_DOMAIN}"
-    assert identity.name == "Identity Test Org identity"
+    assert identity.name == "Identity Test Org Identity"
     assert identity.identity_kind == IdentityKind.ORG_DEFAULT
     assert identity.organization_id == org.id
     assert identity.base_role_id == USER_ROLE_ID

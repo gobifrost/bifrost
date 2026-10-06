@@ -55,7 +55,7 @@ async def ensure_default_identity(session: AsyncSession, organization: Organizat
         return existing
     identity = User(
         email=f"identity-{organization.id}@{IDENTITY_EMAIL_DOMAIN}",
-        name=f"{organization.name} identity",
+        name=f"{organization.name} Identity",
         is_active=True,
         is_verified=True,
         is_registered=True,

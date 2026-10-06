@@ -155,7 +155,7 @@ def test_list_has_defaults_global_first(e2e_client, platform_admin, world) -> No
 
     default = _default(e2e_client, platform_admin.headers, contoso["id"])
     assert default["identity_kind"] == "org_default"
-    assert default["name"] == f"{contoso['name']} identity"
+    assert default["name"] == f"{contoso['name']} Identity"
     assert (default["organization_id"], default["organization_name"]) == (contoso["id"], contoso["name"])
     assert default["base_role"]["name"] == "User"
     assert default["additional_roles"] == []

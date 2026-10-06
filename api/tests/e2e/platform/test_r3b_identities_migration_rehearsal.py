@@ -135,6 +135,25 @@ async def _use_custom_global_identity(database_url: str, workflow_id: str) -> No
     await _run_in_database(database_url, use)
 
 
+async def _edit_default_identity_name(database_url: str, organization_id: str, name: str) -> None:
+    async def edit(connection: AsyncConnection) -> None:
+        await connection.execute(
+            sa.text(
+                "UPDATE users SET name = :name "
+                "WHERE organization_id = CAST(:org AS uuid) AND identity_kind = 'org_default'"
+            ),
+            {"name": name, "org": organization_id},
+        )
+
+    await _run_in_database(database_url, edit)
+
+
+def _named(state: dict, names: dict[str, str]) -> dict:
+    """``state`` with the identities named as ``names`` says (by current name)."""
+    identities = {(row[0], row[1], names.get(row[2], row[2]), *row[3:]) for row in state["identities"]}
+    return {**state, "identities": identities}
+
+
 async def _state(database_url: str) -> dict:
     async def read(connection: AsyncConnection) -> dict:
         constraint = (
@@ -278,14 +297,30 @@ def test_identities_are_created_and_unattended_global_workflows_point_at_the_pro
             ids["a_sched"]: None,
         }
 
-        # Head widens only the constraint: custom identities may have no organization.
+        # Head widens the constraint (custom identities may have no
+        # organization) and renames the generated default names to Title
+        # Case, leaving an edited name alone.
+        asyncio.run(_edit_default_identity_name(database_url, ids["org_b"], "Billing Robot"))
+        edited = asyncio.run(_state(database_url))
+        assert {row[2] for row in edited["identities"]} >= {"Billing Robot", "Global identity", "Rehearsal A identity"}
+        title_cased = {
+            row[2]: row[2].removesuffix("identity") + "Identity"
+            for row in edited["identities"]
+            if row[2].endswith("identity")
+        }
         _upgrade(database_url, "head")
         at_head = asyncio.run(_state(database_url))
         assert at_head["constraint"] == (
             "CHECK (((organization_id IS NOT NULL) OR (is_superuser = true) OR (identity_kind IS NOT NULL)))"
         )
-        assert {**at_head, "constraint": after["constraint"]} == after
+        assert _named({**at_head, "constraint": after["constraint"]}, {}) == _named(edited, title_cased)
         asyncio.run(_rerun_data_step(database_url))
+        assert asyncio.run(_state(database_url)) == at_head
+
+        # The downgrade of head reverts exactly the names it changed.
+        _downgrade(database_url, REVISION)
+        assert asyncio.run(_state(database_url)) == edited
+        _upgrade(database_url, "head")
         assert asyncio.run(_state(database_url)) == at_head
 
         asyncio.run(_use_custom_global_identity(database_url, ids["g_plain"]))
