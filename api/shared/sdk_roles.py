@@ -169,7 +169,7 @@ async def get_role_placements(
 
 
 async def attach_role_summaries(session: AsyncSession, roles: list[RolePublic]) -> None:
-    """Fill the consumer counts, holders, permissions and placements of ``roles``."""
+    """Fill the consumer counts, holders, grants and placements of ``roles``."""
     if not roles:
         return
     role_ids = [role.id for role in roles]
@@ -180,7 +180,7 @@ async def attach_role_summaries(session: AsyncSession, roles: list[RolePublic]) 
     for role in roles:
         role.consumer_counts = counts[role.id]
         role.holders = holders.get(role.id, 0)
-        role.permissions = permissions[role.id]
+        role.grants = permissions[role.id]
         role.placements = placements[role.id]
 
 

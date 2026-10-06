@@ -562,7 +562,7 @@ class TestBuiltinRoleGuards:
         items, _total = await list_roles(db_session, include_builtin=True, include_counts=False)
         assert BUILTIN_ROLE_IDS <= {item.id for item in items}
         assert all(
-            item.consumer_counts is None and item.holders is None and item.permissions is None and item.placements is None
+            item.consumer_counts is None and item.holders is None and item.grants is None and item.placements is None
             for item in items
         )
 
@@ -577,7 +577,7 @@ class TestBuiltinRoleGuards:
             db_session, role_id=PLATFORM_OPERATOR_ROLE_ID, include_builtin=True, include_counts=False
         )
         assert role.is_builtin and role.consumer_counts is None
-        assert role.holders is None and role.permissions is None and role.placements is None
+        assert role.holders is None and role.grants is None and role.placements is None
 
     async def test_secrets_reader_is_hidden_and_immutable(self, db_session):
         from shared.builtin_roles import DECRYPTION_ROLE_ID

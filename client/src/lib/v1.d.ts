@@ -24952,10 +24952,10 @@ export interface components {
              */
             holders?: number | null;
             /**
-             * Permissions
+             * Grants
              * @description Permissions the role grants, sorted. Populated with consumer_counts.
              */
-            permissions?: string[] | null;
+            grants?: string[] | null;
             /** @description Where the role's assignments are placed. Populated with consumer_counts. */
             placements?: components["schemas"]["RolePlacementSummary"] | null;
         };

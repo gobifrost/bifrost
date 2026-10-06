@@ -84,7 +84,7 @@ const role = {
 		knowledge: 0,
 	},
 	holders: 5,
-	permissions: ["agents.read", "forms.readwrite"],
+	grants: ["agents.read", "forms.readwrite"],
 	placements: { organizations: 3, managed: false, platform: true },
 };
 
@@ -279,7 +279,7 @@ describe("Roles", () => {
 					...role,
 					consumer_counts: null,
 					holders: null,
-					permissions: null,
+					grants: null,
 					placements: null,
 				},
 			]),
@@ -323,7 +323,7 @@ describe("Roles", () => {
 			page([
 				{
 					...role,
-					permissions: [
+					grants: [
 						"agents.read",
 						"forms.readwrite",
 						"roles.readwrite",
@@ -403,7 +403,7 @@ describe("Roles", () => {
 					...role,
 					consumer_counts: null,
 					holders: null,
-					permissions: null,
+					grants: null,
 					placements: null,
 				},
 			]),

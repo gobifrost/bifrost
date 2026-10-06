@@ -69,7 +69,7 @@ function roleSections(roles: Role[]) {
 
 /** The list carries grants, holders and placements only for Platform Admins. */
 function hasSummaries(roles: Role[]) {
-	return roles.some((role) => role.permissions != null);
+	return roles.some((role) => role.grants != null);
 }
 
 function getSortDirection(
@@ -192,7 +192,7 @@ function MobileSortBar({
 
 /** What a role grants: the first few permissions, then a count of the rest. */
 function RoleGrants({ role, catalog }: { role: Role; catalog: Catalog }) {
-	const permissions = role.permissions ?? [];
+	const permissions = role.grants ?? [];
 	if (permissions.length === 0)
 		return (
 			<span className="text-sm text-muted-foreground">

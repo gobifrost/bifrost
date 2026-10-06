@@ -288,7 +288,7 @@ class RolePublic(RoleBase):
             "Populated with consumer_counts."
         ),
     )
-    permissions: list[str] | None = Field(
+    grants: list[str] | None = Field(
         default=None,
         description="Permissions the role grants, sorted. Populated with consumer_counts.",
     )

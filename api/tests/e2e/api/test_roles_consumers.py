@@ -328,7 +328,7 @@ class TestRoleConsumerCounts:
 
 
 # =============================================================================
-# Holders, permissions and placements on GET /api/roles
+# Holders, grants and placements on GET /api/roles
 # =============================================================================
 
 USER_ROLE_ID = "00000000-0000-0000-0000-000000000006"
@@ -358,7 +358,7 @@ def _create_user(e2e_client, headers, org_id: str) -> str:
 
 @pytest.mark.e2e
 class TestRoleAccessSummary:
-    def test_holders_permissions_and_placements(
+    def test_holders_grants_and_placements(
         self, e2e_client, platform_admin, org1
     ):
         role = _create_role(e2e_client, platform_admin.headers, "Summary")
@@ -394,7 +394,7 @@ class TestRoleAccessSummary:
 
             listed = _listed(e2e_client, platform_admin.headers, role)
             assert listed["holders"] == 2
-            assert listed["permissions"] == ["roles.read", "users.read"]
+            assert listed["grants"] == ["roles.read", "users.read"]
             assert listed["placements"] == {
                 "organizations": 1,
                 "managed": True,

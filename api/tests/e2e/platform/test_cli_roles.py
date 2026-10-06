@@ -46,12 +46,11 @@ class TestCliRoles:
         assert result.exit_code == 0, result.output
         payload = json.loads(result.output)
         assert isinstance(payload, list)
-        # Every item has an id and a name; `permissions` is the role's derived
-        # grants (a list of permission names, or null when the caller can't see them).
+        # Every item has an id and a name; no `permissions` field (R2b).
         for item in payload:
             assert "id" in item
             assert "name" in item
-            assert item["permissions"] is None or isinstance(item["permissions"], list)
+            assert "permissions" not in item
 
     def test_get_by_uuid_returns_role(
         self, cli_client, _invoke, e2e_client, platform_admin
