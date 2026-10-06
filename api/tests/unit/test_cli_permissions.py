@@ -39,7 +39,11 @@ _CATALOG = [
         "description": "Table definitions.",
         "who_should_hold": "Platform admins.",
         "actions": ["read", "readwrite"],
-        "names": {"tables.read": "Read Tables", "tables.readwrite": "Read and Write Tables"},
+        "names": {
+            "tables.read": "Read Tables",
+            "tables.read.all": "Read All Tables",
+            "tables.readwrite": "Read and Write Tables",
+        },
         "privileged": [],
         "scope": "per_organization",
         "enforced": False,
@@ -81,7 +85,8 @@ def test_list_reads_the_catalog_endpoint() -> None:
     assert captured["get_path"] == "/api/permissions/catalog"
 
 
-def test_list_prints_one_row_per_permission_with_its_name() -> None:
+def test_list_prints_one_row_per_checked_permission_with_its_name() -> None:
+    # tables.read.all is named but no route checks it, so it is not listed.
     result = _invoke(["list"], {})
     assert result.exit_code == 0, result.output
     assert result.output.splitlines() == [

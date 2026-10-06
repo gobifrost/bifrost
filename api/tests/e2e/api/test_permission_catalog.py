@@ -16,9 +16,10 @@ def test_platform_admin_reads_every_domain(e2e_client, platform_admin):
     lifecycle = next(entry for entry in entries if entry["domain"] == "users.lifecycle")
     assert lifecycle["title"] == "User Lifecycle"
     assert lifecycle["privileged"] == ["users.lifecycle.readwrite"]
-    assert lifecycle["names"] == {
-        "users.lifecycle.readwrite": "Manage User Lifecycle (move, delete, change base role)"
-    }
+    assert (
+        lifecycle["names"]["users.lifecycle.readwrite"]
+        == "Manage User Lifecycle (move, delete, change base role)"
+    )
 
 
 def test_plain_organization_user_reads_the_catalog(e2e_client, org1_user):

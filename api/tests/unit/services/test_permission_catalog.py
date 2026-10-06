@@ -3,7 +3,17 @@ domain vocabulary; these tests pin each derivation rule against a hand-built
 access list, plus the vocabulary's own completeness."""
 
 from src.models.contracts.access_list import AccessClass, AccessEntry, CurrentGate
-from src.models.contracts.permissions import PERMISSION_DOMAINS, permission_display_name
+from shared.builtin_roles import (
+    DECRYPTION_ROLE_PERMISSIONS,
+    PLATFORM_OPERATOR_PERMISSIONS,
+    USER_BASE_PERMISSIONS,
+)
+from src.models.contracts.permissions import (
+    PERMISSION_DOMAINS,
+    parse_permission,
+    permission_display_name,
+)
+from src.services.operation_catalog import OPERATION_CATALOG
 from src.services.permission_catalog import build_catalog
 
 
@@ -123,11 +133,16 @@ def test_names_are_verb_then_resource() -> None:
             _entry("/c", "agentruns.read.all", "organization"),
         ]
     )
-    assert catalog["tables"].names == {
-        "tables.read": "Read Tables",
-        "tables.readwrite": "Read and Write Tables",
-    }
-    assert catalog["agentruns"].names == {"agentruns.read.all": "Read All Agent Runs"}
+    assert catalog["tables"].names["tables.read"] == "Read Tables"
+    assert catalog["tables"].names["tables.readwrite"] == "Read and Write Tables"
+    assert catalog["agentruns"].names["agentruns.read.all"] == "Read All Agent Runs"
+
+
+def test_every_read_and_write_permission_is_named_whether_or_not_a_route_checks_it() -> None:
+    # A role can hold any well-formed permission, not only the ones routes check.
+    for entry in build_catalog([]):
+        for action in ("read", "read.all", "readwrite", "readwrite.all"):
+            assert f"{entry.domain}.{action}" in entry.names
 
 
 def test_execute_permissions_are_named_by_their_own_verb() -> None:
@@ -138,19 +153,19 @@ def test_execute_permissions_are_named_by_their_own_verb() -> None:
             _entry("/c", "solutions.build.execute", "platform"),
         ]
     )
-    assert catalog["workflows"].names == {"workflows.execute": "Run Workflows"}
-    assert catalog["apps.deploy"].names == {"apps.deploy.execute": "Publish Apps"}
-    assert catalog["solutions.build"].names == {"solutions.build.execute": "Build Solutions"}
-    # solutions.deploy.execute is privileged, so it is named without a route.
-    assert catalog["solutions.deploy"].names == {"solutions.deploy.execute": "Deploy Solutions"}
+    assert catalog["workflows"].names["workflows.execute"] == "Run Workflows"
+    assert catalog["apps.deploy"].names["apps.deploy.execute"] == "Publish Apps"
+    assert catalog["solutions.build"].names["solutions.build.execute"] == "Build Solutions"
+    assert catalog["solutions.deploy"].names["solutions.deploy.execute"] == "Deploy Solutions"
 
 
 def test_user_lifecycle_names_what_it_manages() -> None:
     catalog = _by_domain([])
     assert catalog["users.lifecycle"].title == "User Lifecycle"
-    assert catalog["users.lifecycle"].names == {
-        "users.lifecycle.readwrite": "Manage User Lifecycle (move, delete, change base role)"
-    }
+    assert (
+        catalog["users.lifecycle"].names["users.lifecycle.readwrite"]
+        == "Manage User Lifecycle (move, delete, change base role)"
+    )
 
 
 def test_display_name_reads_any_permission_of_a_domain() -> None:
@@ -165,4 +180,27 @@ def test_the_checked_in_access_list_builds_a_catalog() -> None:
     assert next(e for e in catalog if e.domain == "roles").enforced is True
     # Every action the catalog lists has a name.
     for entry in catalog:
-        assert set(entry.names) == {f"{entry.domain}.{action}" for action in entry.actions}
+        assert {f"{entry.domain}.{action}" for action in entry.actions} <= set(entry.names)
+
+
+def _named(catalog: list, permission: str) -> bool:
+    domain = parse_permission(permission).domain
+    return permission in next(e for e in catalog if e.domain == domain).names
+
+
+def test_every_permission_a_builtin_role_holds_has_a_name() -> None:
+    catalog = build_catalog()
+    held = USER_BASE_PERMISSIONS | PLATFORM_OPERATOR_PERMISSIONS | DECRYPTION_ROLE_PERMISSIONS
+    assert [p for p in sorted(held) if not _named(catalog, p)] == []
+
+
+def test_every_execute_permission_an_operation_checks_has_a_name() -> None:
+    catalog = build_catalog()
+    executes = {
+        scope
+        for operation in OPERATION_CATALOG
+        for scope in operation.action_scopes
+        if parse_permission(scope).action == "execute"
+    }
+    assert executes
+    assert [p for p in sorted(executes) if not _named(catalog, p)] == []

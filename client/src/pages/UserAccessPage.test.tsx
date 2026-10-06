@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Route, Routes, useLocation } from "react-router-dom";
 
-import { act, renderWithProviders, screen, within } from "@/test-utils";
+import { renderWithProviders, screen, waitFor, within } from "@/test-utils";
 import { ApiError } from "@/lib/api-error";
 import {
 	canAnywhere,
@@ -20,8 +20,33 @@ vi.mock("@/hooks/useMediaQuery", () => ({
 afterEach(() => mockUseMediaQuery.mockReturnValue(false));
 
 const mockUseUser = vi.fn();
+// The account actions are the Users list's own hook; only the requests are stubbed.
+const mutations = vi.hoisted(() => ({
+	deleteUser: vi.fn(),
+	resetMfa: vi.fn(),
+	idle: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+}));
 vi.mock("@/hooks/useUsers", () => ({
 	useUser: (...args: unknown[]) => mockUseUser(...args),
+	useUpdateUser: () => mutations.idle(),
+	useDeleteUser: () => ({
+		...mutations.idle(),
+		mutateAsync: mutations.deleteUser,
+	}),
+	useResetUserMfa: () => ({
+		...mutations.idle(),
+		mutateAsync: mutations.resetMfa,
+	}),
+	useSignOutUserEverywhere: () => mutations.idle(),
+}));
+vi.mock("@/hooks/useUserInvites", () => ({
+	useResendInvite: () => mutations.idle(),
+	useRegenerateInvite: () => mutations.idle(),
+	useRevokeInvite: () => mutations.idle(),
+	useSendInvite: () => mutations.idle(),
+}));
+vi.mock("@/services/events", () => ({
+	useEventSources: () => ({ data: undefined }),
 }));
 
 const mockUseUserAccessMap = vi.fn();
@@ -68,22 +93,6 @@ vi.mock("@/components/users/UserProfileForm", () => ({
 
 vi.mock("@/components/users/UserRoleAssignmentsPanel", () => ({
 	UserRoleAssignmentsPanel: () => <p>Role assignments editor</p>,
-}));
-
-// The account actions' rules and dialogs are the Users list's own (see
-// Users.test.tsx); here the page only has to offer them for this person.
-const accountActions = vi.hoisted(() => ({
-	options: undefined as { onDeleted?: () => void } | undefined,
-	menuPropsFor: vi.fn(),
-}));
-vi.mock("@/components/users/useUserAccountActions", () => ({
-	useUserAccountActions: (options: { onDeleted?: () => void }) => {
-		accountActions.options = options;
-		return {
-			menuPropsFor: accountActions.menuPropsFor,
-			dialogs: <p>Account action dialogs</p>,
-		};
-	},
 }));
 
 import { UserAccessPage } from "./UserAccessPage";
@@ -226,23 +235,8 @@ function renderPage(path = "/users/user-1") {
 }
 
 beforeEach(() => {
-	accountActions.menuPropsFor.mockReset();
-	accountActions.menuPropsFor.mockReturnValue({
-		status: "active",
-		isActive: true,
-		isSelf: false,
-		canSupport: true,
-		canDelete: true,
-		isProtected: false,
-		onResend: vi.fn(),
-		onRegenerate: vi.fn(),
-		onCopyLink: vi.fn(),
-		onRevoke: vi.fn(),
-		onResetMfa: vi.fn(),
-		onSignOut: vi.fn(),
-		onToggleActive: vi.fn(),
-		onDelete: vi.fn(),
-	});
+	mutations.deleteUser.mockReset().mockResolvedValue(undefined);
+	mutations.resetMfa.mockReset();
 	authz.summary = adminSummary();
 	authz.loading = false;
 	mockUseUser.mockReturnValue({
@@ -287,7 +281,6 @@ describe("UserAccessPage", () => {
 			screen.getByRole("button", { name: "Avery Example actions" }),
 		);
 
-		expect(accountActions.menuPropsFor).toHaveBeenCalledWith(person);
 		for (const name of [
 			"Reset MFA",
 			"Sign Out of All Devices",
@@ -299,17 +292,50 @@ describe("UserAccessPage", () => {
 		expect(
 			screen.queryByRole("menuitem", { name: "Edit Profile" }),
 		).not.toBeInTheDocument();
-		expect(screen.getByText("Account action dialogs")).toBeInTheDocument();
 	});
 
-	it("returns to the Users list once the person is deleted", () => {
-		renderPage();
+	it("returns focus to the actions button when a confirmation closes", async () => {
+		const { user } = renderPage();
+		const actions = screen.getByRole("button", {
+			name: "Avery Example actions",
+		});
 
-		act(() => accountActions.options?.onDeleted?.());
+		await user.click(actions);
+		await user.click(screen.getByRole("menuitem", { name: "Reset MFA" }));
+		await user.click(
+			within(await screen.findByRole("alertdialog")).getByRole("button", {
+				name: "Cancel",
+			}),
+		);
 
-		expect(
-			screen.getByRole("status", { name: "location" }),
-		).toHaveTextContent(/^\/users$/);
+		await waitFor(() =>
+			expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+		);
+		expect(actions).toHaveFocus();
+		expect(mutations.resetMfa).not.toHaveBeenCalled();
+	});
+
+	it("returns to the Users list once the person is deleted", async () => {
+		const { user } = renderPage();
+
+		await user.click(
+			screen.getByRole("button", { name: "Avery Example actions" }),
+		);
+		await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+		await user.click(
+			within(await screen.findByRole("alertdialog")).getByRole("button", {
+				name: "Permanently Delete",
+			}),
+		);
+
+		await waitFor(() =>
+			expect(
+				screen.getByRole("status", { name: "location" }),
+			).toHaveTextContent(/^\/users$/),
+		);
+		expect(mutations.deleteUser).toHaveBeenCalledWith({
+			params: { path: { user_id: "user-1" } },
+		});
 	});
 
 	it("names its sections, with what each shows in the description", () => {

@@ -40,13 +40,13 @@ def _render_catalog(entries: list[dict[str, Any]]) -> None:
     rows = [
         (
             entry["area"],
-            name,
+            entry["names"][permission],
             permission,
             SCOPE_LABELS[entry["scope"]],
             "yes" if entry["enforced"] else "no",
         )
         for entry in entries
-        for permission, name in entry["names"].items()
+        for permission in (f"{entry['domain']}.{action}" for action in entry["actions"])
     ]
     table = [("AREA", "NAME", "PERMISSION", "SCOPE", "ENFORCED"), *rows]
     widths = [max(len(row[col]) for row in table) for col in range(5)]
@@ -64,7 +64,7 @@ async def list_permissions(
     client: BifrostClient,
     resolver: RefResolver,  # noqa: ARG001 - kept for signature parity
 ) -> None:
-    """List every permission by area, with its name, scope and enforcement."""
+    """List checked permissions by area, with name, scope and enforcement."""
     response = await client.get("/api/permissions/catalog")
     response.raise_for_status()
     output_result(response.json(), ctx=ctx, human=_render_catalog)

@@ -1800,7 +1800,7 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  list  List every permission by area, with its name, scope and enforcement.
+  list  List checked permissions by area, with name, scope and enforcement.
 ```
 
 ### `permissions list`
@@ -1808,7 +1808,7 @@ Commands:
 ```
 Usage: permissions list [OPTIONS]
 
-  List every permission by area, with its name, scope and enforcement.
+  List checked permissions by area, with name, scope and enforcement.
 
 Options:
   --json  Emit JSON instead of human-readable output.

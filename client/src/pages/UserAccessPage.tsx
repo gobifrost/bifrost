@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { motion, useReducedMotion } from "framer-motion";
 import {
@@ -297,7 +297,9 @@ export function UserAccessPage() {
 	const organizationsQuery = useOrganizations({
 		enabled: authorization.canAnywhere("organizations.read"),
 	});
+	const actionsButtonRef = useRef<HTMLButtonElement>(null);
 	const accountActions = useUserAccountActions({
+		returnFocusRef: actionsButtonRef,
 		onDeleted: () => navigate("/users"),
 	});
 
@@ -347,6 +349,7 @@ export function UserAccessPage() {
 					// The Profile tab is the profile editor, so no Edit Profile.
 					<UserActionsMenu
 						label={`${person.name || person.email} actions`}
+						triggerRef={actionsButtonRef}
 						{...accountActions.menuPropsFor(person)}
 					/>
 				}

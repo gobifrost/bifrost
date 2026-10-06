@@ -65,8 +65,8 @@ export function useUserAccountActions({
 	returnFocusRef,
 	onDeleted,
 }: {
-	/** Where focus goes when a confirmation closes; by default, where it was. */
-	returnFocusRef?: RefObject<HTMLElement | null>;
+	/** Where focus goes when a confirmation closes. */
+	returnFocusRef: RefObject<HTMLElement | null>;
 	onDeleted?: (user: User) => void;
 }) {
 	const { user: currentUser } = useAuth();

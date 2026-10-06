@@ -14,8 +14,8 @@ from src.models.contracts.permissions import (
     PERMISSION_DOMAINS,
     PRIVILEGED_PERMISSIONS,
     PermissionCatalogEntry,
+    domain_display_names,
     parse_permission,
-    permission_display_name,
 )
 from src.services.access_list import ACCESS_LIST
 
@@ -54,7 +54,6 @@ def build_catalog(access_list: list[AccessEntry] = ACCESS_LIST) -> list[Permissi
             scope = "platform_wide"
         else:
             scope = "varies"
-        sorted_actions = sorted(actions, key=_action_sort_key)
         catalog.append(
             PermissionCatalogEntry(
                 domain=domain,
@@ -62,11 +61,8 @@ def build_catalog(access_list: list[AccessEntry] = ACCESS_LIST) -> list[Permissi
                 area=info.area,
                 description=info.description,
                 who_should_hold=info.who_should_hold,
-                actions=sorted_actions,
-                names={
-                    f"{domain}.{action}": permission_display_name(f"{domain}.{action}")
-                    for action in sorted_actions
-                },
+                actions=sorted(actions, key=_action_sort_key),
+                names=domain_display_names(domain),
                 privileged=privileged,
                 scope=scope,
                 enforced=any(e.current_gate == CurrentGate.EVALUATOR for e in entries),

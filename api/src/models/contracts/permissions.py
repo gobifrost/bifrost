@@ -339,6 +339,17 @@ def permission_display_name(permission: str) -> str:
     return f"{ACTION_VERBS[action]} {domain.title}"
 
 
+def domain_display_names(domain: str) -> dict[str, str]:
+    """The display name of every permission of ``domain`` that has one: each
+    verb-rule action, whether or not a route checks it (a role can hold any
+    well-formed permission), and each action the domain names itself."""
+    actions = dict.fromkeys([*ACTION_VERBS, *PERMISSION_DOMAINS[domain].names])
+    return {
+        f"{domain}.{action}": permission_display_name(f"{domain}.{action}")
+        for action in actions
+    }
+
+
 DECRYPT_PERMISSION = "secrets.read"
 
 WILDCARD_EXCLUDED_PERMISSIONS: frozenset[str] = frozenset({DECRYPT_PERMISSION})
@@ -385,8 +396,9 @@ class PermissionCatalogEntry(BaseModel):
     # Actions the platform checks for this domain (read, readwrite, execute,
     # with any ``.all`` variants kept as listed).
     actions: list[str]
-    # The display name of each action's permission, keyed by permission
-    # ("tables.readwrite" -> "Read and Write Tables").
+    # The display name of every permission of the domain a role could hold
+    # that has one, keyed by permission ("tables.readwrite" -> "Read and
+    # Write Tables"); not limited to ``actions``.
     names: dict[str, str]
     # The domain's permissions that make a holder a privileged principal.
     privileged: list[str]

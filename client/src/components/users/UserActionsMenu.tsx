@@ -10,6 +10,7 @@ import {
 	ShieldOff,
 	Trash2,
 } from "lucide-react";
+import type { Ref } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +27,8 @@ export const PROTECTED_ACCOUNT_NOTICE =
 
 interface Props {
 	label?: string;
+	/** The menu's trigger, for returning focus to it after a confirmation. */
+	triggerRef?: Ref<HTMLButtonElement>;
 	status: string;
 	isActive: boolean;
 	isSelf: boolean;
@@ -53,6 +56,7 @@ interface Props {
 
 export function UserActionsMenu({
 	label = "User actions",
+	triggerRef,
 	status,
 	isActive,
 	isSelf,
@@ -79,6 +83,7 @@ export function UserActionsMenu({
 		<DropdownMenu>
 			<DropdownMenuTrigger asChild>
 				<Button
+					ref={triggerRef}
 					variant="ghost"
 					size="icon"
 					aria-label={label}
