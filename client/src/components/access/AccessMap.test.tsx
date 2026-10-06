@@ -149,46 +149,75 @@ describe("AccessMap", () => {
 		expect(within(chip).getByText("Platform-wide")).toBeInTheDocument();
 	});
 
-	it("shows a Platform Admin's wildcard as every permission across the row", async () => {
+	const everything: AccessGrant = {
+		...grant("*", "platform_wide", "Platform Admin"),
+		domain: "*",
+		action: "*",
+	};
+	const allOrganizations: AccessRow = {
+		place: { ...global, label: "All organizations" },
+		grants: [everything],
+	};
+	const tooltip =
+		"Platform Admin: every permission in every organization (secret values excepted)";
+
+	it("spans a Platform Admin's wildcard across every area column as one privileged chip", async () => {
 		const user = userEvent.setup();
 		render(
 			<AccessMap
 				catalog={catalog}
 				rows={[
 					{
-						place: { ...global, label: "All organizations" },
+						place: home,
 						grants: [
-							{
-								...grant(
-									"*",
-									"platform_wide",
-									"Platform Admin",
-								),
-								domain: "*",
-								action: "*",
-							},
-							grant("secrets.read", "varies", "Secrets Reader"),
+							grant("tables.read"),
+							grant("workflows.execute"),
 						],
 					},
+					allOrganizations,
 				]}
 			/>,
 		);
 
 		const row = screen.getByRole("row", { name: /All organizations/ });
-		const [cell] = within(row).getAllByRole("cell");
-		expect(cell).toHaveAttribute("colspan", "1");
-		const wildcard = within(cell).getByRole("button", {
-			name: "All permissions",
+		const cells = within(row).getAllByRole("cell");
+		expect(cells).toHaveLength(1);
+		expect(cells[0]).toHaveAttribute("colspan", "2");
+		const chip = within(cells[0]).getByRole("button", {
+			name: "Every permission",
 		});
-		expect(wildcard).toHaveAttribute("data-variant", "platform_wide");
-		expect(
-			within(cell).getByRole("button", { name: /Secrets/ }),
-		).toBeInTheDocument();
-
-		await user.hover(wildcard);
-		expect(await screen.findByRole("tooltip")).toHaveTextContent(
-			"Platform Admin in all organizations",
+		expect(chip).toHaveAttribute("data-variant", "privileged");
+		expect(chip).toHaveClass(
+			"w-full",
+			"bg-[var(--bf-warning-soft)]",
+			"text-[var(--bf-warning)]",
 		);
+
+		await user.hover(chip);
+		expect(await screen.findByRole("tooltip")).toHaveTextContent(tooltip);
+	});
+
+	it("derives no area columns from the wildcard", () => {
+		render(<AccessMap catalog={catalog} rows={[allOrganizations]} />);
+
+		expect(
+			screen.getAllByRole("columnheader").map((cell) => cell.textContent),
+		).toEqual(["Place", "Permissions"]);
+	});
+
+	it("keeps the wildcard full width in the narrow record list", () => {
+		mockUseMediaQuery.mockReturnValue(true);
+		render(<AccessMap catalog={catalog} rows={[allOrganizations]} />);
+
+		const [record] = within(
+			screen.getByRole("list", { name: "Access by place" }),
+		).getAllByRole("listitem");
+		expect(
+			within(record).getByRole("button", { name: "Every permission" }),
+		).toHaveClass("w-full");
+		expect(
+			within(record).queryByText("Permissions"),
+		).not.toBeInTheDocument();
 	});
 
 	it("lists one record per place on narrow screens", () => {

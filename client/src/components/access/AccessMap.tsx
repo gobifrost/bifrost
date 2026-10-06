@@ -61,36 +61,27 @@ function layoutFor(
 	};
 }
 
-/** A Platform Admin's wildcard: every permission, wherever they are placed. */
-function WildcardChip({ grant, row }: { grant: AccessGrant; row: AccessRow }) {
+/** A Platform Admin's wildcard: one privileged chip across the whole row. */
+function WildcardChip() {
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
-				<Badge
-					asChild
-					variant="secondary"
-					className={cn(
-						"h-auto min-h-5 cursor-default bg-[var(--bf-power-soft)] text-[var(--bf-power)]",
-						BRIDGE_EDGE,
-					)}
-				>
-					<button type="button" data-variant="platform_wide">
-						All permissions
+				<Badge asChild variant="warning">
+					<button
+						type="button"
+						data-variant="privileged"
+						className={cn(
+							"h-auto min-h-6 w-full cursor-default justify-start",
+							BRIDGE_EDGE,
+						)}
+					>
+						Every permission
 					</button>
 				</Badge>
 			</TooltipTrigger>
 			<TooltipContent>
-				<ul className="space-y-0.5">
-					{grant.sources.map((source) => (
-						<li key={`${source.role_id}:${source.via}`}>
-							{source.role_name} in{" "}
-							{row.place.label.toLowerCase()}
-						</li>
-					))}
-				</ul>
-				<p className="mt-1">
-					Decrypting secrets is granted separately.
-				</p>
+				Platform Admin: every permission in every organization (secret
+				values excepted)
 			</TooltipContent>
 		</Tooltip>
 	);
@@ -118,11 +109,7 @@ function Chips({
 		<div className="flex flex-wrap gap-1.5">
 			{grants.map((grant) =>
 				grant.permission === WILDCARD ? (
-					<WildcardChip
-						key={grant.permission}
-						grant={grant}
-						row={row}
-					/>
+					<WildcardChip key={grant.permission} />
 				) : (
 					<PermissionChip
 						key={grant.permission}
