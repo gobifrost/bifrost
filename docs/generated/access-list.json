@@ -6075,9 +6075,9 @@
     "reason": "Platform-admin-only operation."
   },
   {
-    "access_class": "permission",
-    "boundary": "platform",
-    "current_gate": "evaluator",
+    "access_class": "personal",
+    "boundary": null,
+    "current_gate": "authenticated",
     "inline_checks": [],
     "inline_effect": null,
     "intended_change": null,
@@ -6085,8 +6085,8 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/permissions/catalog",
-    "permission": "roles.read",
-    "reason": "Reads the permission domains and what the platform checks for each; the catalog is global (not per organization). Decided by the evaluator (src.services.authorization.enforce)."
+    "permission": null,
+    "reason": "The permission vocabulary (titles, areas, scopes) the access screens render; the same for every signed-in user, so no permission is checked."
   },
   {
     "access_class": "personal",

@@ -77,6 +77,8 @@ from src.services.authorization.privilege import (
 
 GET_OPERATION = "GET /api/users/{user_id}/role-assignments"
 PUT_OPERATION = "PUT /api/users/{user_id}/role-assignments"
+# The access map is read exactly as the role assignments are.
+ACCESS_OPERATION = "GET /api/users/{user_id}/access"
 
 CEILING_MESSAGE = (
     "You can only assign or remove roles that carry no permissions, on users "

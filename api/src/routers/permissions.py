@@ -1,15 +1,14 @@
 """
 Permissions Router
 
-The permission catalog the roles and access screens are built from.
+The permission catalog the roles and access screens are built from,
+readable by any signed-in user (it is vocabulary, the same for everyone).
 """
 
 from fastapi import APIRouter
 
 from src.core.auth import CurrentActiveUser
-from src.core.db_deps import DbSession
 from src.models.contracts.permissions import PermissionCatalogEntry
-from src.services.authorization.enforce import GLOBAL, authorize_operation
 from src.services.permission_catalog import build_catalog
 
 router = APIRouter(prefix="/api/permissions", tags=["Permissions"])
@@ -23,7 +22,5 @@ router = APIRouter(prefix="/api/permissions", tags=["Permissions"])
 )
 async def get_permission_catalog(
     user: CurrentActiveUser,
-    db: DbSession,
 ) -> list[PermissionCatalogEntry]:
-    await authorize_operation(db, user, "GET /api/permissions/catalog", GLOBAL)
     return build_catalog()

@@ -43,9 +43,7 @@ from src.services.authorization.context import (
 from src.services.authorization.enforce import Caller
 from src.services.authorization.privilege import is_privileged_principal
 from src.services.permission_catalog import build_catalog
-from src.services.user_role_assignments import require_assignment_target
-
-GET_OPERATION = "GET /api/users/{user_id}/access"
+from src.services.user_role_assignments import ACCESS_OPERATION, require_assignment_target
 
 _PlaceKey = tuple[str, UUID | None]
 
@@ -176,7 +174,7 @@ async def get_user_access_map(
 ) -> UserAccessMap:
     """The access map of ``user_id``, gated like reading their role
     assignments: ``roleassignments.read`` at the user's organization."""
-    target = await require_assignment_target(db, caller, user_id, GET_OPERATION)
+    target = await require_assignment_target(db, caller, user_id, ACCESS_OPERATION)
     user = target.user
     ctx = await build_authorization_context(db, user_id)
 
