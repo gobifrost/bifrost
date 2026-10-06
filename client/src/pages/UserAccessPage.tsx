@@ -12,6 +12,10 @@ import {
 } from "lucide-react";
 
 import { AccessMap } from "@/components/access/AccessMap";
+import { IdentityActions } from "@/components/identities/IdentityActions";
+import { IdentityGlyph } from "@/components/identities/IdentityGlyph";
+import { IdentityKindBadge } from "@/components/identities/IdentityKindBadge";
+import { IdentityProfileForm } from "@/components/identities/IdentityProfileForm";
 import { ReachChip } from "@/components/access/ReachChip";
 import { ListLoadError } from "@/components/layout/ListLoadError";
 import {
@@ -37,6 +41,7 @@ import { orgTarget } from "@/lib/authorization";
 import { motionSeconds } from "@/lib/motion";
 import { permissionDisplayName, permissionParts } from "@/lib/permission-words";
 import type { components } from "@/lib/v1";
+import type { IdentityKind } from "@/services/identities";
 import {
 	usePermissionCatalog,
 	useUserAccessMap,
@@ -163,12 +168,15 @@ function UserUnavailable({
 
 function PersonHeader({
 	user,
+	identityKind,
 	homeOrganization,
 	map,
 	catalog,
 	actions,
 }: {
 	user: User;
+	/** Set for an identity, which shows a glyph and kind instead of an email. */
+	identityKind: IdentityKind | null;
 	homeOrganization: string | undefined;
 	map: UserAccessMap | undefined;
 	catalog: PermissionCatalogEntry[] | undefined;
@@ -177,22 +185,32 @@ function PersonHeader({
 	return (
 		<header className="min-w-0 space-y-3">
 			<Link
-				to="/users"
+				to={identityKind ? "/users/identities" : "/users"}
 				className="inline-flex min-h-11 items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
 			>
 				<ChevronLeft className="size-4" aria-hidden="true" />
-				Users
+				{identityKind ? "Identities" : "Users"}
 			</Link>
 			<div className="flex min-w-0 items-start gap-4">
-				<Avatar className="h-12 w-12 sm:h-14 sm:w-14">
-					<AvatarFallback className="font-display text-base font-semibold text-foreground sm:text-lg">
-						{initials(user)}
-					</AvatarFallback>
-				</Avatar>
+				{identityKind ? (
+					<IdentityGlyph />
+				) : (
+					<Avatar className="h-12 w-12 sm:h-14 sm:w-14">
+						<AvatarFallback className="font-display text-base font-semibold text-foreground sm:text-lg">
+							{initials(user)}
+						</AvatarFallback>
+					</Avatar>
+				)}
 				<div className="min-w-0 flex-1 space-y-3">
 					<div className="space-y-1">
 						<h1 className="flex flex-wrap items-center gap-2 font-display text-2xl font-semibold tracking-tight [overflow-wrap:anywhere] sm:text-3xl">
 							{user.name || user.email}
+							{identityKind && (
+								<IdentityKindBadge
+									kind={identityKind}
+									withNoun
+								/>
+							)}
 							{!user.is_active && (
 								<Badge variant="outline">Disabled</Badge>
 							)}
@@ -204,9 +222,11 @@ function PersonHeader({
 								)}
 						</h1>
 						<p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-							<span className="[overflow-wrap:anywhere]">
-								{user.email}
-							</span>
+							{!identityKind && (
+								<span className="[overflow-wrap:anywhere]">
+									{user.email}
+								</span>
+							)}
 							{homeOrganization && (
 								<span className="inline-flex items-center gap-1.5">
 									<Building2
@@ -331,6 +351,20 @@ export function UserAccessPage() {
 		return <Navigate to={`/users/${person.id}/profile`} replace />;
 
 	const map = accessQuery.data;
+	// The server's IdentityKind enum; null for people.
+	const identityKind = (person.identity_kind ?? null) as IdentityKind | null;
+	const sectionCopy = identityKind
+		? {
+				access: "What this identity can do, in each organization its roles reach. Hover a permission to see which role grants it.",
+				roles:
+					identityKind === "custom"
+						? "The base role applies in its home organization; additional roles apply where they're placed."
+						: "A default identity's base role is fixed; additional roles apply where they're placed.",
+			}
+		: {
+				access: "What this person can do, in each organization their roles reach. Hover a permission to see which role grants it.",
+				roles: "The base role applies in their home organization; additional roles apply where they're placed.",
+			};
 	const currentTab: Tab = tab === "profile" ? "profile" : "access";
 	const homeOrganization = person.organization_id
 		? (map?.home_organization?.name ??
@@ -343,16 +377,24 @@ export function UserAccessPage() {
 		<PageWorkspace className="mx-auto w-full max-w-7xl gap-5">
 			<PersonHeader
 				user={person}
+				identityKind={identityKind}
 				homeOrganization={homeOrganization}
 				map={map}
 				catalog={catalogQuery.data}
 				actions={
-					// The Profile tab is the profile editor, so no Edit Profile.
-					<UserActionsMenu
-						label={`${person.name || person.email} actions`}
-						triggerRef={actionsButtonRef}
-						{...accountActions.menuPropsFor(person)}
-					/>
+					identityKind ? (
+						<IdentityActions
+							identity={person}
+							onDeleted={() => navigate("/users/identities")}
+						/>
+					) : (
+						// The Profile tab is the profile editor, so no Edit Profile.
+						<UserActionsMenu
+							label={`${person.name || person.email} actions`}
+							triggerRef={actionsButtonRef}
+							{...accountActions.menuPropsFor(person)}
+						/>
+					)
 				}
 			/>
 			<Tabs
@@ -394,7 +436,7 @@ export function UserAccessPage() {
 									<SectionHeading
 										id="access-map-heading"
 										title="Effective Access"
-										description="What this person can do, in each organization their roles reach. Hover a permission to see which role grants it."
+										description={sectionCopy.access}
 									/>
 									{map && catalogQuery.data ? (
 										<AccessMap
@@ -432,7 +474,7 @@ export function UserAccessPage() {
 									<SectionHeading
 										id="role-assignments-heading"
 										title="Role Assignments"
-										description="The base role applies in their home organization; additional roles apply where they're placed."
+										description={sectionCopy.roles}
 									/>
 									<div className="flex flex-col overflow-hidden rounded-[var(--bf-radius-surface)] border bg-card">
 										<UserRoleAssignmentsPanel
@@ -453,11 +495,18 @@ export function UserAccessPage() {
 				>
 					<PageScrollArea className="lg:overflow-auto">
 						<Disclosure>
-							<UserProfileForm
-								key={person.id}
-								user={person}
-								variant="page"
-							/>
+							{identityKind ? (
+								<IdentityProfileForm
+									key={person.id}
+									identity={person}
+								/>
+							) : (
+								<UserProfileForm
+									key={person.id}
+									user={person}
+									variant="page"
+								/>
+							)}
 						</Disclosure>
 					</PageScrollArea>
 				</TabsContent>

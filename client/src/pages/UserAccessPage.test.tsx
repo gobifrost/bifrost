@@ -91,6 +91,22 @@ vi.mock("@/components/users/UserProfileForm", () => ({
 	),
 }));
 
+const identityMutations = vi.hoisted(() => ({
+	rename: vi.fn(),
+	remove: vi.fn(),
+}));
+vi.mock("@/services/identities", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/services/identities")>()),
+	useRenameIdentity: () => ({
+		mutateAsync: identityMutations.rename,
+		isPending: false,
+	}),
+	useDeleteIdentity: () => ({
+		mutateAsync: identityMutations.remove,
+		isPending: false,
+	}),
+}));
+
 vi.mock("@/components/users/UserRoleAssignmentsPanel", () => ({
 	UserRoleAssignmentsPanel: () => <p>Role assignments editor</p>,
 }));
@@ -235,6 +251,8 @@ function renderPage(path = "/users/user-1") {
 }
 
 beforeEach(() => {
+	identityMutations.rename.mockReset().mockResolvedValue(undefined);
+	identityMutations.remove.mockReset().mockResolvedValue(undefined);
 	mutations.deleteUser.mockReset().mockResolvedValue(undefined);
 	mutations.resetMfa.mockReset();
 	authz.summary = adminSummary();
@@ -563,5 +581,158 @@ describe("UserAccessPage", () => {
 		).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Try Again" }));
 		expect(refetch).toHaveBeenCalledOnce();
+	});
+});
+
+const identity = {
+	...person,
+	id: "identity-1",
+	email: "identity-1@identities.bifrost.internal",
+	name: "Contoso Identity",
+	identity_kind: "org_default",
+};
+
+function showIdentity(overrides: Partial<typeof identity> = {}) {
+	mockUseUser.mockReturnValue({
+		data: { ...identity, ...overrides },
+		isLoading: false,
+		isError: false,
+	});
+}
+
+describe("UserAccessPage for an identity", () => {
+	it("introduces the identity by glyph and kind, without an email", () => {
+		showIdentity();
+		renderPage("/users/identity-1");
+
+		expect(
+			screen.getByRole("heading", { level: 1, name: /Contoso Identity/ }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("img", { name: "Identity" }),
+		).toBeInTheDocument();
+		expect(screen.getByText("Default Identity")).toBeInTheDocument();
+		expect(screen.queryByText(identity.email)).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("link", { name: "Identities" }),
+		).toHaveAttribute("href", "/users/identities");
+	});
+
+	it("describes access and roles as the identity's", () => {
+		showIdentity();
+		renderPage("/users/identity-1");
+
+		expect(
+			screen.getByText(
+				"What this identity can do, in each organization its roles reach. Hover a permission to see which role grants it.",
+			),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				"A default identity's base role is fixed; additional roles apply where they're placed.",
+			),
+		).toBeInTheDocument();
+	});
+
+	it("offers no account actions on a default identity", () => {
+		showIdentity();
+		renderPage("/users/identity-1");
+
+		expect(
+			screen.queryByRole("button", { name: "Contoso Identity actions" }),
+		).not.toBeInTheDocument();
+	});
+
+	it("offers only Delete on a custom identity, and returns to Identities after", async () => {
+		showIdentity({ name: "Backup Runner", identity_kind: "custom" });
+		const { user } = renderPage("/users/identity-1");
+
+		await user.click(
+			screen.getByRole("button", { name: "Backup Runner actions" }),
+		);
+		expect(
+			screen.getAllByRole("menuitem").map((item) => item.textContent),
+		).toEqual(["Delete"]);
+		await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+		await user.click(
+			within(await screen.findByRole("alertdialog")).getByRole("button", {
+				name: "Delete Identity",
+			}),
+		);
+
+		await waitFor(() =>
+			expect(
+				screen.getByRole("status", { name: "location" }),
+			).toHaveTextContent(/^\/users\/identities$/),
+		);
+		expect(identityMutations.remove).toHaveBeenCalledWith({
+			params: { path: { identity_id: "identity-1" } },
+		});
+	});
+
+	it("shows which workflows keep a custom identity from being deleted", async () => {
+		identityMutations.remove.mockRejectedValue({
+			detail: "Can't delete Backup Runner: these workflows run as it: Nightly Sync",
+		});
+		showIdentity({ name: "Backup Runner", identity_kind: "custom" });
+		const { user } = renderPage("/users/identity-1");
+
+		await user.click(
+			screen.getByRole("button", { name: "Backup Runner actions" }),
+		);
+		await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+		const dialog = await screen.findByRole("alertdialog");
+		await user.click(
+			within(dialog).getByRole("button", { name: "Delete Identity" }),
+		);
+
+		expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+			"Can't delete Backup Runner: these workflows run as it: Nightly Sync",
+		);
+		// The confirmation is modal, so the rest of the page is hidden behind it.
+		expect(
+			screen.getByRole("status", { name: "location", hidden: true }),
+		).toHaveTextContent("/users/identity-1");
+	});
+
+	it("edits only the name on the Profile tab", async () => {
+		showIdentity();
+		const { user } = renderPage("/users/identity-1/profile");
+
+		expect(screen.queryByText(/^Profile form for/)).not.toBeInTheDocument();
+		expect(screen.queryByText("Email Address")).not.toBeInTheDocument();
+		const name = screen.getByRole("textbox", { name: "Name" });
+		expect(name).toHaveValue("Contoso Identity");
+		await user.clear(name);
+		await user.type(name, "Contoso Automation");
+		await user.click(screen.getByRole("button", { name: "Save Name" }));
+
+		expect(identityMutations.rename).toHaveBeenCalledWith({
+			params: { path: { identity_id: "identity-1" } },
+			body: { name: "Contoso Automation" },
+		});
+	});
+
+	it("shows the name read-only to someone who can't rename identities", () => {
+		authz.summary = {
+			...adminSummary(),
+			is_platform_admin: false,
+			grants: [
+				{
+					permission: "users.read",
+					boundary: {
+						kind: "managed_organizations",
+						organization_id: null,
+					},
+				},
+			],
+		};
+		showIdentity();
+		renderPage("/users/identity-1/profile");
+
+		expect(screen.getByRole("textbox", { name: "Name" })).toBeDisabled();
+		expect(
+			screen.queryByRole("button", { name: "Save Name" }),
+		).not.toBeInTheDocument();
 	});
 });

@@ -64,6 +64,9 @@ const SolutionDetail = lazyWithReload(() =>
 const Users = lazyWithReload(() =>
 	import("@/pages/Users").then((m) => ({ default: m.Users })),
 );
+const Identities = lazyWithReload(() =>
+	import("@/pages/Identities").then((m) => ({ default: m.Identities })),
+);
 const UserAccessPage = lazyWithReload(() =>
 	import("@/pages/UserAccessPage").then((m) => ({
 		default: m.UserAccessPage,
@@ -485,6 +488,16 @@ const routeElements = (
 						requirePermission={{ permission: "users.read" }}
 					>
 						<Users />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="users/identities"
+				element={
+					<ProtectedRoute
+						requirePermission={{ permission: "users.read" }}
+					>
+						<Identities />
 					</ProtectedRoute>
 				}
 			/>

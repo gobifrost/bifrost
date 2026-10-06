@@ -50,6 +50,7 @@ import { UserStatusBadge } from "@/components/users/UserStatusBadge";
 import { Badge } from "@/components/ui/badge";
 import { BulkActionBar } from "@/components/users/BulkActionBar";
 import { UserEmailCell } from "@/components/users/UserEmailCell";
+import { UsersViewTabs } from "@/components/users/UsersViewTabs";
 import { ListPageHeader } from "@/components/layout/ListPageHeader";
 import { ListToolbar } from "@/components/layout/ListToolbar";
 import {
@@ -254,6 +255,7 @@ export function Users() {
 		<PageWorkspace className="max-w-7xl mx-auto">
 			<ListPageHeader
 				title="Users"
+				titleSlot={<UsersViewTabs />}
 				description={
 					scope.type !== "global"
 						? `Users for ${scope.orgName}`
