@@ -40,6 +40,7 @@ export function ProductUpdatesPreview({
 }) {
 	const [searchParams, setSearchParams] = useSearchParams();
 	const { user } = useAuth();
+	const showControls = searchParams.get("controls") === "1";
 	const state = readPreviewState(searchParams.get("state"));
 	const selectedAdmin = searchParams.get("admin") ?? "current";
 	const adminId =
@@ -149,76 +150,88 @@ export function ProductUpdatesPreview({
 					description="New features, improvements, and fixes in Bifrost."
 				/>
 
-				<details className="rounded-[var(--bf-radius-surface)] border bg-muted/20 px-4 py-3">
-					<summary className="cursor-pointer font-medium">
-						Preview Controls
-					</summary>
-					<div className="mt-3">
-						<Alert>
-							<Megaphone aria-hidden="true" />
-							<AlertTitle>Development Fixture</AlertTitle>
-							<AlertDescription className="flex flex-wrap items-center gap-3">
-								<label className="flex items-center gap-2">
-									<span>State</span>
-									<select
-										aria-label="Preview state"
-										className="h-9 rounded-[var(--bf-radius-control)] border bg-background px-2"
-										value={state}
-										onChange={(event) =>
-											change("state", event.target.value)
-										}
-									>
-										{previewStates.map((option) => (
-											<option
-												key={option.value}
-												value={option.value}
-											>
-												{option.label}
+				{showControls && (
+					<details className="rounded-[var(--bf-radius-surface)] border bg-muted/20 px-4 py-3">
+						<summary className="cursor-pointer font-medium">
+							Preview Controls
+						</summary>
+						<div className="mt-3">
+							<Alert>
+								<Megaphone aria-hidden="true" />
+								<AlertTitle>Development Fixture</AlertTitle>
+								<AlertDescription className="flex flex-wrap items-center gap-3">
+									<label className="flex items-center gap-2">
+										<span>State</span>
+										<select
+											aria-label="Preview state"
+											className="h-9 rounded-[var(--bf-radius-control)] border bg-background px-2"
+											value={state}
+											onChange={(event) =>
+												change(
+													"state",
+													event.target.value,
+												)
+											}
+										>
+											{previewStates.map((option) => (
+												<option
+													key={option.value}
+													value={option.value}
+												>
+													{option.label}
+												</option>
+											))}
+										</select>
+									</label>
+									<label className="flex items-center gap-2">
+										<span>Admin</span>
+										<select
+											aria-label="Preview admin"
+											className="h-9 rounded-[var(--bf-radius-control)] border bg-background px-2"
+											value={selectedAdmin}
+											onChange={(event) =>
+												change(
+													"admin",
+													event.target.value,
+												)
+											}
+										>
+											<option value="current">
+												Current Admin
 											</option>
-										))}
-									</select>
-								</label>
-								<label className="flex items-center gap-2">
-									<span>Admin</span>
-									<select
-										aria-label="Preview admin"
-										className="h-9 rounded-[var(--bf-radius-control)] border bg-background px-2"
-										value={selectedAdmin}
-										onChange={(event) =>
-											change("admin", event.target.value)
-										}
-									>
-										<option value="current">
-											Current Admin
-										</option>
-										<option value="admin-b">Admin B</option>
-									</select>
-								</label>
-								<label className="flex items-center gap-2">
-									<span>Bundle</span>
-									<select
-										aria-label="Preview bundle"
-										className="h-9 rounded-[var(--bf-radius-control)] border bg-background px-2"
-										value={channel}
-										onChange={(event) =>
-											change(
-												"channel",
-												event.target.value,
-											)
-										}
-									>
-										<option value="dev">Dev</option>
-										<option value="stable">Stable</option>
-									</select>
-								</label>
-								<span>
-									Receipts use stable entry UUIDs across Dev
-									and Stable.
-								</span>
-							</AlertDescription>
-						</Alert>
-					</div>
-				</details>
+											<option value="admin-b">
+												Admin B
+											</option>
+										</select>
+									</label>
+									<label className="flex items-center gap-2">
+										<span>Bundle</span>
+										<select
+											aria-label="Preview bundle"
+											className="h-9 rounded-[var(--bf-radius-control)] border bg-background px-2"
+											value={channel}
+											onChange={(event) =>
+												change(
+													"channel",
+													event.target.value,
+												)
+											}
+										>
+											<option value="dev">Dev</option>
+											<option value="stable">
+												Stable
+											</option>
+										</select>
+									</label>
+									<span>
+										Receipts use stable entry UUIDs across
+										Dev and Stable.
+									</span>
+								</AlertDescription>
+							</Alert>
+						</div>
+					</details>
+				)}
 
 				{state === "future" && (
 					<Alert>

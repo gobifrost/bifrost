@@ -51,6 +51,7 @@ describe("ProductUpdatesPreview", () => {
 			initialEntries: ["/?admin=admin-a"],
 		});
 		await screen.findByRole("heading", { name: "Readable Update" });
+		expect(screen.queryByText("Preview Controls")).not.toBeInTheDocument();
 
 		expect(
 			screen.getByText("Preview · Draft Backfill"),
@@ -114,7 +115,7 @@ describe("ProductUpdatesPreview", () => {
 	it("recovers from the failure fixture when switching back to normal", async () => {
 		const { user } = renderWithProviders(
 			<ProductUpdatesPreview adapter={adapter()} />,
-			{ initialEntries: ["/?state=failure"] },
+			{ initialEntries: ["/?state=failure&controls=1"] },
 		);
 
 		expect(

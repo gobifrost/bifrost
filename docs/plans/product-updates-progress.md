@@ -156,3 +156,11 @@ Modal and history now use shared UpdateGroups rendering: one date heading per lo
 Verification: focused component tests passed (3 files / 13 tests) using `docker exec -w /app bifrost-debug-3fc9b38f-client-1 npm test -- src/components/layout/ProductUpdateContent.test.tsx src/components/layout/ProductUpdatesDialog.test.tsx src/pages/ProductUpdatesPreview.test.tsx`; shared grouping coverage exercises multiple dates and same-day membership. `./test.sh client preview` passed in 9.9 seconds, asserting one date heading in modal and history plus the existing mobile bounds and receipt/new-tab flow. Screenshots refreshed and desktop/mobile modal inspected. `docker exec -w /app bifrost-debug-3fc9b38f-client-1 npx tsc -b --pretty false` passed. Scoped ESLint passed for ProductUpdateContent, its test, ProductUpdatesDialog and ProductUpdatesPreview in the debug client, and the actual browser spec through the whole-client Playwright image mount. Full suites were not run; no backend or API contracts changed.
 
 The first browser date-count assertion also counted Radix's dialog title, which is an h2. It now counts the exact date heading, preserving the single-date contract without assuming the dialog title's heading level. No retries or timeout changes were added.
+
+## Clean Review URL
+
+Preview Controls is omitted from normal `/whats-new` rendering; development fixture controls require `?controls=1`. The opt-in URL retains error-state recovery, admin and channel selection. Notes and draft status remain visible without a controls panel. History/Help desktop/mobile screenshots were refreshed and the mobile history inspected.
+
+Focused checks: `docker exec -w /app bifrost-debug-3fc9b38f-client-1 npm test -- src/pages/ProductUpdatesPreview.test.tsx` passed all 5 tests, including default controls absence and opt-in fixture recovery. `./test.sh client preview` passed in 10.8 seconds, asserting controls absence on the normal history path. `docker exec -w /app bifrost-debug-3fc9b38f-client-1 npx eslint src/pages/ProductUpdatesPreview.tsx src/pages/ProductUpdatesPreview.test.tsx` passed, as did the actual browser spec ESLint via the mounted whole-client Playwright image. Broader suites and backend checks were not run for this UI-only change.
+
+`docker exec -w /app bifrost-debug-3fc9b38f-client-1 npx tsc -b --pretty false` also passed.
