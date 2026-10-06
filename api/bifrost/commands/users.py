@@ -152,6 +152,12 @@ def _print_role_assignments(assignments: dict[str, Any]) -> None:
         click.echo(f"{role['name']}  {places}")
 
 
+async def _current_assignments(client: BifrostClient, url: str) -> dict[str, Any]:
+    response = await client.get(url)
+    response.raise_for_status()
+    return response.json()
+
+
 def _boundary_input(boundary: dict[str, Any]) -> dict[str, Any]:
     if boundary["kind"] == "organization":
         return {"kind": "organization", "organization_id": boundary["organization_id"]}
@@ -254,7 +260,6 @@ async def set_roles(
         raise click.UsageError("--no-roles cannot be combined with --role.")
     if not (no_roles or role_specs or base_ref):
         raise click.UsageError("Nothing to change: give --base, --role or --no-roles.")
-    keeps_roles = not (no_roles or role_specs)
 
     user_id = await resolver.resolve("user", user_ref)
     base_role_id = await resolver.resolve("role", base_ref) if base_ref else None
@@ -267,17 +272,16 @@ async def set_roles(
         additional.append(entry)
 
     url = f"/api/users/{user_id}/role-assignments"
-    if base_role_id is None or keeps_roles:
-        current = await client.get(url)
-        current.raise_for_status()
-        assignments = current.json()
+    if no_roles or role_specs:
         if base_role_id is None:
-            base_role_id = assignments["base_role"]["id"]
-        if keeps_roles:
-            additional = [
-                {"role_id": role["role_id"], "boundaries": [_boundary_input(b) for b in role["boundaries"]]}
-                for role in assignments["additional"]
-            ]
+            base_role_id = (await _current_assignments(client, url))["base_role"]["id"]
+    else:
+        assignments = await _current_assignments(client, url)
+        base_role_id = base_role_id or assignments["base_role"]["id"]
+        additional = [
+            {"role_id": role["role_id"], "boundaries": [_boundary_input(b) for b in role["boundaries"]]}
+            for role in assignments["additional"]
+        ]
 
     response = await client.put(url, json={"base_role_id": base_role_id, "additional": additional})
     response.raise_for_status()
