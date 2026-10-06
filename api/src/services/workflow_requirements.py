@@ -99,14 +99,16 @@ def _reach_requirements(
             acts.setdefault(action.target, set()).add(action.kind)
     items = []
     for target, kinds in acts.items():
+        organization_id = None
         if target == ALL_ORGS:
             label, detail = "All Organizations", "The workflow reads across every organization, which only a Platform Admin reaches"
         else:
             assert isinstance(target, UUID)
+            organization_id = target
             label = organization_names.get(target, str(target))
             verbs = " and ".join(_ACTS_IN[kind] for kind in sorted(kinds))
             detail = f"The workflow {verbs} this organization, outside the identity's reach"
-        items.append(WorkflowRequirement(kind="reach", label=label, detail=detail, grant=None))
+        items.append(WorkflowRequirement(kind="reach", label=label, detail=detail, organization_id=organization_id, grant=None))
     return sorted(items, key=lambda item: item.label)
 
 
@@ -134,6 +136,7 @@ def _policy_requirements(
                     kind="policy_role",
                     label=role.name if role else ref,
                     detail="A table or file policy the workflow uses checks for this role",
+                    organization_id=place.organization_id,
                     grant=(
                         RequirementGrant(role_id=role.id, boundaries=[place])
                         if role is not None and not role.builtin
@@ -154,6 +157,7 @@ def _workflow_role_requirement(
             kind="workflow_role",
             label=", ".join(sorted(workflow_roles.values())),
             detail="Needed when the identity starts this workflow through the API: it must hold one of these roles",
+            organization_id=None,
             grant=None,
         )
     ]

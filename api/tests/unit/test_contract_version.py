@@ -333,7 +333,12 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # `bifrost workflows requirements/grant` parse WorkflowRequirements. The
     # commands ship with these DTOs (greenfield coverage). Fingerprint
     # refreshed only.
-    "e0f15376c692ae2264e162d84a4794b98a8df040e4c63a854c1460b6011e36b7"
+    #
+    # WorkflowRequirement gained `organization_id` (2026-10-06): the
+    # organization a reach item targets or a policy role's grant is placed at.
+    # ADDITIVE: the same unreleased commands, and the CLI reads items by key.
+    # Fingerprint refreshed only.
+    "3469395214e55c9aed0cf95783917e69fb730bf2ede75696ba3d694f1c80b268"
 )
 
 

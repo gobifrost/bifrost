@@ -24,6 +24,12 @@ class WorkflowRequirement(BaseModel):
     kind: RequirementKind
     label: str
     detail: str
+    organization_id: UUID | None = Field(
+        description=(
+            "The organization a reach requirement targets, or where a policy role's grant would be "
+            "placed; null for everything, for Global, and for a workflow role."
+        )
+    )
     grant: RequirementGrant | None = Field(
         description="Null when no single role assignment meets it (a role to choose, or information only)."
     )

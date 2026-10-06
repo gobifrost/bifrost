@@ -64,6 +64,7 @@ def test_scope_switch_outside_the_identitys_reach_is_a_reach_requirement() -> No
 
     assert (item.kind, item.label) == ("reach", "Fabrikam")
     assert "switches into" in item.detail
+    assert item.organization_id == FABRIKAM
     assert item.grant is None
 
 
@@ -93,12 +94,14 @@ def test_reading_every_organization_is_a_reach_requirement() -> None:
     (item,) = _build([CheckedAction("scope_switch", ALL_ORGS, ())], _holder())
 
     assert (item.kind, item.label) == ("reach", "All Organizations")
+    assert item.organization_id is None
 
 
 def test_missing_policy_role_is_granted_at_the_target_organization() -> None:
     (item,) = _build([CheckedAction("policy", FABRIKAM, ("role:HR",))], _holder())
 
     assert (item.kind, item.label) == ("policy_role", "HR")
+    assert item.organization_id == FABRIKAM
     assert item.grant is not None
     assert item.grant.role_id == HR.id
     assert item.grant.boundaries == [RoleBoundaryInput(kind="organization", organization_id=FABRIKAM)]
@@ -107,6 +110,7 @@ def test_missing_policy_role_is_granted_at_the_target_organization() -> None:
 def test_policy_role_on_a_global_table_is_granted_at_the_identitys_home() -> None:
     (item,) = _build([CheckedAction("policy", None, ("role:HR",))], _holder())
 
+    assert item.organization_id == CONTOSO
     assert item.grant is not None
     assert item.grant.boundaries == [RoleBoundaryInput(kind="organization", organization_id=CONTOSO)]
 
@@ -114,6 +118,7 @@ def test_policy_role_on_a_global_table_is_granted_at_the_identitys_home() -> Non
 def test_policy_role_for_a_global_identity_is_granted_at_the_platform() -> None:
     (item,) = _build([CheckedAction("policy", None, ("role:HR",))], _holder(home=None))
 
+    assert item.organization_id is None
     assert item.grant is not None
     assert item.grant.boundaries == [RoleBoundaryInput(kind="platform")]
 
@@ -152,7 +157,12 @@ def test_role_based_workflow_needs_the_identity_to_hold_one_of_its_roles() -> No
 
     (item,) = _build(actions, _holder(), workflow_roles={dispatchers: "Dispatchers", auditors: "Auditors"})
 
-    assert (item.kind, item.label, item.grant) == ("workflow_role", "Auditors, Dispatchers", None)
+    assert (item.kind, item.label, item.organization_id, item.grant) == (
+        "workflow_role",
+        "Auditors, Dispatchers",
+        None,
+        None,
+    )
 
 
 def test_identity_that_may_open_the_workflow_needs_no_workflow_role() -> None:

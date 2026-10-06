@@ -292,7 +292,9 @@ def test_requirements_list_what_the_identity_lacks_and_clear_once_granted(
     assert requirements["observed_runs"] == 2
     reach, policy = requirements["items"]
     assert (reach["kind"], reach["label"], reach["grant"]) == ("reach", fabrikam["name"], None)
+    assert reach["organization_id"] == fabrikam["id"]
     assert (policy["kind"], policy["label"]) == ("policy_role", hr["name"])
+    assert policy["organization_id"] == contoso["id"]
     assert policy["grant"] == {
         "role_id": hr["id"],
         "boundaries": [{"kind": "organization", "organization_id": contoso["id"]}],

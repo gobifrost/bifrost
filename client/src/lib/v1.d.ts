@@ -29978,6 +29978,11 @@ export interface components {
             label: string;
             /** Detail */
             detail: string;
+            /**
+             * Organization Id
+             * @description The organization a reach requirement targets, or where a policy role's grant would be placed; null for everything, for Global, and for a workflow role.
+             */
+            organization_id: string | null;
             /** @description Null when no single role assignment meets it (a role to choose, or information only). */
             grant: components["schemas"]["RequirementGrant"] | null;
         };
