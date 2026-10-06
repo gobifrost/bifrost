@@ -56,9 +56,21 @@ const identities: Identity[] = [
 	defaultIdentity("org-2", "Fabrikam"),
 ];
 
+const visible = vi.hoisted(() => ({
+	identities: [] as Identity[],
+	organizations: [] as { id: string; name: string }[],
+}));
+const mockUseOrganizations = vi.fn();
+vi.mock("@/hooks/useOrganizations", () => ({
+	useOrganizations: (options: { enabled?: boolean }) => {
+		mockUseOrganizations(options);
+		return { data: options.enabled ? visible.organizations : undefined };
+	},
+}));
+
 const create = vi.hoisted(() => ({ mutateAsync: vi.fn() }));
 vi.mock("@/services/identities", () => ({
-	useIdentities: () => ({ data: identities }),
+	useIdentities: () => ({ data: visible.identities }),
 	useCreateIdentity: () => ({ ...create, isPending: false }),
 }));
 
@@ -101,6 +113,12 @@ async function choose(
 
 beforeEach(() => {
 	authz.summary = adminSummary();
+	visible.identities = identities;
+	visible.organizations = [
+		{ id: "org-1", name: "Contoso" },
+		{ id: "org-2", name: "Fabrikam" },
+	];
+	mockUseOrganizations.mockReset();
 	create.mutateAsync.mockReset();
 });
 
@@ -211,5 +229,62 @@ describe("NewIdentityDialog", () => {
 		expect(create.mutateAsync).toHaveBeenCalledWith({
 			body: { name: "Nightly Sync", organization_id: "org-2" },
 		});
+	});
+
+	it("adds the organizations a caller can create in but not read users in", async () => {
+		// Users can be read in Contoso, so its identities are listed; identities
+		// can be created only in Fabrikam, which the organizations list names.
+		authz.summary = {
+			...adminSummary(),
+			is_platform_admin: false,
+			grants: [
+				{
+					permission: "users.read",
+					boundary: {
+						kind: "organization",
+						organization_id: "org-1",
+					},
+				},
+				...["users.lifecycle.readwrite", "organizations.read"].map(
+					(permission) => ({
+						permission,
+						boundary: {
+							kind: "organization" as const,
+							organization_id: "org-2",
+						},
+					}),
+				),
+			],
+		};
+		visible.identities = [defaultIdentity("org-1", "Contoso")];
+		visible.organizations = [{ id: "org-2", name: "Fabrikam" }];
+		const { user } = renderDialog();
+
+		await user.click(
+			screen.getByRole("combobox", { name: "Organization" }),
+		);
+
+		expect(
+			screen.getAllByRole("option").map((option) => option.textContent),
+		).toEqual(["Fabrikam"]);
+	});
+
+	it("reads organizations only for a caller who may", () => {
+		authz.summary = {
+			...adminSummary(),
+			is_platform_admin: false,
+			grants: [
+				{
+					permission: "users.lifecycle.readwrite",
+					boundary: {
+						kind: "organization",
+						organization_id: "org-2",
+					},
+				},
+			],
+		};
+		renderDialog();
+
+		expect(mockUseOrganizations).toHaveBeenCalledWith({ enabled: false });
 	});
 });

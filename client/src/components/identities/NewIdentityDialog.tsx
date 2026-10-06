@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useOrganizations } from "@/hooks/useOrganizations";
 import { getErrorMessage } from "@/lib/api-error";
 import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
 import { useAuthorization } from "@/services/authorization";
@@ -29,29 +30,27 @@ const GLOBAL_CHOICE = "global";
 
 /**
  * Where the caller may create an identity: Global, then each organization
- * they can create users in. Every organization has a default identity, so
- * the identities list names each one the caller can see, without needing
- * organizations.read.
+ * they can create users in, by name. Organizations come from the identities
+ * list (every organization has a default identity, listed wherever the caller
+ * can read users) and, for a caller who can read organizations, from the
+ * organizations list, since creating needs neither read permission.
  */
 function placeChoices(
-	identities: Identity[],
+	organizations: { id: string | null; name: string | null }[],
 	canCreateAt: (organizationId: string | null) => boolean,
 ): ComboboxOption[] {
-	const choices: ComboboxOption[] = canCreateAt(null)
-		? [{ value: GLOBAL_CHOICE, label: "Global", icon: Globe }]
-		: [];
-	const seen = new Set<string>();
-	for (const identity of identities) {
-		const id = identity.organization_id;
-		if (!id || seen.has(id) || !canCreateAt(id)) continue;
-		seen.add(id);
-		choices.push({
-			value: id,
-			label: identity.organization_name ?? id,
-			icon: Building2,
-		});
+	const named = new Map<string, string>();
+	for (const { id, name } of organizations) {
+		if (id && !named.has(id) && canCreateAt(id)) named.set(id, name ?? id);
 	}
-	return choices;
+	return [
+		...(canCreateAt(null)
+			? [{ value: GLOBAL_CHOICE, label: "Global", icon: Globe }]
+			: []),
+		...[...named]
+			.sort(([, a], [, b]) => a.localeCompare(b))
+			.map(([id, name]) => ({ value: id, label: name, icon: Building2 })),
+	];
 }
 
 function NewIdentityDialogContent({
@@ -69,11 +68,22 @@ function NewIdentityDialogContent({
 	const authorization = useAuthorization();
 	const create = useCreateIdentity();
 	const identitiesQuery = useIdentities();
-	const choices = placeChoices(identitiesQuery.data ?? [], (organizationId) =>
-		authorization.canAt(
-			LIFECYCLE,
-			organizationId ? orgTarget(organizationId) : GLOBAL_TARGET,
-		),
+	const organizationsQuery = useOrganizations({
+		enabled: authorization.canAnywhere("organizations.read"),
+	});
+	const choices = placeChoices(
+		[
+			...(identitiesQuery.data ?? []).map((identity) => ({
+				id: identity.organization_id,
+				name: identity.organization_name,
+			})),
+			...(organizationsQuery.data ?? []),
+		],
+		(organizationId) =>
+			authorization.canAt(
+				LIFECYCLE,
+				organizationId ? orgTarget(organizationId) : GLOBAL_TARGET,
+			),
 	);
 	useEffect(() => {
 		if (error) errorRef.current?.focus();
@@ -181,7 +191,10 @@ function NewIdentityDialogContent({
 							value={place}
 							onValueChange={setPlace}
 							options={choices}
-							isLoading={identitiesQuery.isLoading}
+							isLoading={
+								identitiesQuery.isLoading ||
+								organizationsQuery.isLoading
+							}
 							placeholder="Select an organization..."
 							searchPlaceholder="Search organizations..."
 							emptyText="No organizations found."
