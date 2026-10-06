@@ -435,8 +435,8 @@ async def update_workflow(
 _REQUIREMENT_KINDS = {"reach": "Reach", "policy_role": "Policy Role", "workflow_role": "Workflow Role"}
 
 
-async def _names(client: BifrostClient, path: str) -> dict[str, str]:
-    response = await client.get(path)
+async def _names(client: BifrostClient, path: str, params: dict[str, Any] | None = None) -> dict[str, str]:
+    response = await client.get(path, params=params)
     response.raise_for_status()
     return {item["id"]: item["name"] for item in response.json()}
 
@@ -455,7 +455,8 @@ def _print_requirements(requirements: dict[str, Any], roles: dict[str, str], org
             click.echo("   Grant: none (choose a role with bifrost users roles set)")
             continue
         places = ", ".join(
-            _boundary_label({**b, "organization_name": orgs.get(b.get("organization_id"))}) for b in grant["boundaries"]
+            _boundary_label({**b, "organization_name": orgs.get(b.get("organization_id"), b.get("organization_id"))})
+            for b in grant["boundaries"]
         )
         click.echo(f"   Grant: {roles[grant['role_id']]} at {places}")
 
@@ -485,7 +486,7 @@ async def workflow_requirements(
     grants = [item["grant"] for item in requirements["items"] if item["grant"]]
     roles = await _names(client, "/api/roles") if grants else {}
     orgs = (
-        await _names(client, "/api/organizations")
+        await _names(client, "/api/organizations", {"include_inactive": True})
         if any(b["kind"] == "organization" for grant in grants for b in grant["boundaries"])
         else {}
     )
@@ -518,6 +519,7 @@ def _merge_grants(assignments: dict[str, Any], grants: list[dict[str, Any]]) -> 
     help="Number of a requirement from `workflows requirements`, repeatable.",
 )
 @click.option("--all", "all_requirements", is_flag=True, help="Apply every requirement that has a grant.")
+@click.option("--yes", is_flag=True, help="Confirm granting to a default identity, which other workflows share.")
 @click.pass_context
 @pass_resolver
 @run_async
@@ -526,19 +528,21 @@ async def grant_requirements(
     ref: str,
     numbers: tuple[int, ...],
     all_requirements: bool,
+    yes: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
 ) -> None:
     """Grant the identity a workflow runs as what its requirements ask for.
 
-    Each grant is merged into the identity's existing assignment of that role. A requirement without a grant needs a role chosen: use `bifrost users roles set`. A default identity is shared: the grant applies to every workflow that runs as it.
+    Each grant is merged into the identity's existing assignment of that role. A requirement without a grant needs a role chosen: use `bifrost users roles set`. A default identity is shared by every workflow that runs as it, so granting to one needs --yes.
 
     Examples:
 
     \b
       bifrost workflows grant "Sync Invoices" --requirement 1
       bifrost workflows grant "Sync Invoices" --all
+      bifrost workflows grant "Sync Invoices" --requirement 1 --yes
     """
     if bool(numbers) == all_requirements:
         raise click.UsageError("Give --requirement N (repeatable) or --all.")
@@ -567,11 +571,12 @@ async def grant_requirements(
     identities = await client.get("/api/identities")
     identities.raise_for_status()
     identity = next(i for i in identities.json() if i["id"] == identity_id)
-    if identity["identity_kind"] != "custom":
-        click.echo(
-            f"{identity['name']} is a default identity: this applies to all {identity['workflows_using']} "
-            "workflows that run as it.",
-            err=True,
+    if identity["identity_kind"] != "custom" and not yes:
+        place = identity["organization_name"] or "Global"
+        raise click.UsageError(
+            f"{identity['name']} is the default identity: this applies to all {identity['workflows_using']} "
+            f"workflows in {place} that run as it. Pass --yes to continue, or give the workflow its own "
+            "identity with `bifrost users create --identity` and `bifrost workflows update --run-as`."
         )
 
     url = f"/api/users/{identity_id}/role-assignments"

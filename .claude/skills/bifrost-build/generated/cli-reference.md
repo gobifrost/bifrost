@@ -3308,18 +3308,21 @@ Usage: workflows grant [OPTIONS] REF
 
   Each grant is merged into the identity's existing assignment of that role. A
   requirement without a grant needs a role chosen: use `bifrost users roles
-  set`. A default identity is shared: the grant applies to every workflow that
-  runs as it.
+  set`. A default identity is shared by every workflow that runs as it, so
+  granting to one needs --yes.
 
   Examples:
 
     bifrost workflows grant "Sync Invoices" --requirement 1
     bifrost workflows grant "Sync Invoices" --all
+    bifrost workflows grant "Sync Invoices" --requirement 1 --yes
 
 Options:
   --requirement N  Number of a requirement from `workflows requirements`,
                    repeatable.
   --all            Apply every requirement that has a grant.
+  --yes            Confirm granting to a default identity, which other
+                   workflows share.
   --json           Emit JSON instead of human-readable output.
   --help           Show this message and exit.
 ```
