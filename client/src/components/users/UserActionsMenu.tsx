@@ -33,6 +33,8 @@ interface Props {
 	canSupport: boolean;
 	/** Permanent deletion (users.lifecycle.readwrite). */
 	canDelete: boolean;
+	/** The caller can change at least one profile field (people can always edit their own name). */
+	canEditProfile: boolean;
 	/** A protected user: the caller's actions show disabled, with why. */
 	isProtected?: boolean;
 	onResend: () => void;
@@ -54,6 +56,7 @@ export function UserActionsMenu({
 	isSelf,
 	canSupport,
 	canDelete,
+	canEditProfile,
 	isProtected = false,
 	onResend,
 	onRegenerate,
@@ -96,16 +99,20 @@ export function UserActionsMenu({
 						<DropdownMenuSeparator />
 					</>
 				)}
-				<DropdownMenuItem
-					className="min-h-11 lg:min-h-9"
-					onClick={onEditProfile}
-					disabled={isProtected && !isSelf}
-				>
-					<Pencil className="h-4 w-4" />
-					Edit profile
-				</DropdownMenuItem>
-				{(showInviteActions || canSupport || canDelete) && (
-					<DropdownMenuSeparator />
+				{canEditProfile && (
+					<>
+						<DropdownMenuItem
+							className="min-h-11 lg:min-h-9"
+							onClick={onEditProfile}
+							disabled={isProtected && !isSelf}
+						>
+							<Pencil className="h-4 w-4" />
+							Edit profile
+						</DropdownMenuItem>
+						{(showInviteActions || canSupport || canDelete) && (
+							<DropdownMenuSeparator />
+						)}
+					</>
 				)}
 				{showInviteActions && (
 					<>

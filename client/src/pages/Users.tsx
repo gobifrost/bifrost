@@ -47,6 +47,7 @@ import { useOrgScope } from "@/contexts/OrgScopeContext";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { CreateUserDialog } from "@/components/users/CreateUserDialog";
 import { EditUserDialog } from "@/components/users/EditUserDialog";
+import { profileAbilities } from "@/components/users/UserProfileForm";
 import {
 	PROTECTED_ACCOUNT_NOTICE,
 	UserActionsMenu,
@@ -234,6 +235,8 @@ export function Users() {
 			canSupport: authorization.canAt("users.readwrite", target),
 			canDelete: authorization.canAt("users.lifecycle.readwrite", target),
 			isProtected: user.is_protected && !authorization.isPlatformAdmin,
+			canEditProfile: profileAbilities(user, isSelf(user), authorization)
+				.canSave,
 		};
 	};
 

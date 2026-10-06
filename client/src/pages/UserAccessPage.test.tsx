@@ -44,10 +44,12 @@ vi.mock("@/contexts/AuthContext", () => ({
 
 const authz = vi.hoisted(() => ({
 	summary: undefined as AuthorizationSummary | undefined,
+	loading: false,
 }));
 vi.mock("@/services/authorization", () => ({
 	useAuthorization: () => ({
 		authorization: authz.summary,
+		isLoading: authz.loading,
 		isPlatformAdmin: authz.summary?.is_platform_admin ?? false,
 		canAt: (permission: string, target: AuthorizationTarget) =>
 			canAt(authz.summary, permission, target),
@@ -200,6 +202,7 @@ function renderPage(path = "/users/user-1") {
 
 beforeEach(() => {
 	authz.summary = adminSummary();
+	authz.loading = false;
 	mockUseUser.mockReturnValue({
 		data: person,
 		isLoading: false,
@@ -353,6 +356,43 @@ describe("UserAccessPage", () => {
 			screen.getByText("Profile form for avery@contoso.example"),
 		).toBeInTheDocument();
 		expect(mockUseUserAccessMap).toHaveBeenLastCalledWith(undefined);
+	});
+
+	it("moves someone who can't see role assignments from the access address to the profile", () => {
+		authz.summary = {
+			...adminSummary(),
+			is_platform_admin: false,
+			grants: [
+				{
+					permission: "users.read",
+					boundary: {
+						kind: "managed_organizations",
+						organization_id: null,
+					},
+				},
+			],
+		};
+		renderPage("/users/user-1/access");
+
+		expect(
+			screen.getByRole("status", { name: "location" }),
+		).toHaveTextContent("/users/user-1/profile");
+		expect(
+			screen.getByText("Profile form for avery@contoso.example"),
+		).toBeInTheDocument();
+	});
+
+	it("keeps the address while the caller's own access is still loading", () => {
+		authz.summary = undefined;
+		authz.loading = true;
+		renderPage("/users/user-1/access");
+
+		expect(
+			screen.getByRole("status", { name: "Loading user" }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("status", { name: "location" }),
+		).toHaveTextContent("/users/user-1/access");
 	});
 
 	it("explains when the person is out of the caller's reach", () => {

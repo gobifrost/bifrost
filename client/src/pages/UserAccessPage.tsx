@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { motion, useReducedMotion } from "framer-motion";
 import {
 	ArrowLeft,
@@ -301,7 +301,7 @@ export function UserAccessPage() {
 		enabled: authorization.canAnywhere("organizations.read"),
 	});
 
-	if (userQuery.isLoading)
+	if (userQuery.isLoading || authorization.isLoading)
 		return (
 			<div
 				role="status"
@@ -322,9 +322,13 @@ export function UserAccessPage() {
 			/>
 		);
 
+	// Without roleassignments.read the profile is the only tab, so its address
+	// is the only one that shows it.
+	if (!canViewAccess && tab !== "profile")
+		return <Navigate to={`/users/${person.id}/profile`} replace />;
+
 	const map = accessQuery.data;
-	const currentTab: Tab =
-		canViewAccess && tab !== "profile" ? "access" : "profile";
+	const currentTab: Tab = tab === "profile" ? "profile" : "access";
 	const homeOrganization = person.organization_id
 		? (map?.home_organization?.name ??
 			organizationsQuery.data?.find(

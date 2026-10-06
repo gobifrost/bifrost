@@ -385,6 +385,18 @@ class TestUsersRolesSet:
             ],
         }
 
+    def test_places_tolerate_spaces_around_the_commas(self, fake_client: _FakeClient) -> None:
+        _invoke(["roles", "set", USER_ID, "--base", "User", "--role", "Helpdesk=org:Contoso, customers"])
+        assert fake_client.calls[-1][2]["additional"] == [
+            {
+                "role_id": HELPDESK_ROLE_ID,
+                "boundaries": [
+                    {"kind": "organization", "organization_id": ORG_ID},
+                    {"kind": "managed_organizations"},
+                ],
+            }
+        ]
+
     def test_customers_and_global_map_to_their_boundary_kinds(self, fake_client: _FakeClient) -> None:
         _invoke(["roles", "set", USER_ID, "--base", "User", "--role", "Auditor=customers,global"])
         assert fake_client.calls[-1][2]["additional"] == [

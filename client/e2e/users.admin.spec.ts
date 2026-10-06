@@ -86,7 +86,7 @@ test.describe("User Details", () => {
 		await page.goto("/users");
 
 		const userRow = page.locator("table tbody tr").first();
-		await expect(userRow).toBeVisible({ timeout: 10000 });
+		await expect(userRow).toBeVisible();
 		await userRow.getByRole("button", { name: /actions$/ }).click();
 		await page.getByRole("menuitem", { name: "Edit profile" }).click();
 

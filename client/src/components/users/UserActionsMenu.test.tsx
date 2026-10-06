@@ -13,6 +13,7 @@ function makeProps(
 		isSelf: false,
 		canSupport: true,
 		canDelete: true,
+		canEditProfile: true,
 		onResend: vi.fn(),
 		onRegenerate: vi.fn(),
 		onCopyLink: vi.fn(),
@@ -166,6 +167,22 @@ describe("UserActionsMenu", () => {
 			screen.getByRole("menuitem", { name: "Edit profile" }),
 		);
 		expect(onEditProfile).toHaveBeenCalledOnce();
+	});
+
+	it("hides Edit profile when the caller can change no profile field", async () => {
+		const user = userEvent.setup();
+		render(
+			<UserActionsMenu
+				{...makeProps({ canSupport: false, canEditProfile: false })}
+			/>,
+		);
+		await user.click(screen.getByRole("button", { name: /user actions/i }));
+		expect(
+			screen.queryByRole("menuitem", { name: "Edit profile" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("menuitem", { name: "Delete" }),
+		).toBeInTheDocument();
 	});
 
 	it("lets people edit their own profile even without user permissions", async () => {

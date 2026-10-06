@@ -19,7 +19,7 @@ import click
 from bifrost.client import BifrostClient
 from bifrost.refs import RefResolver
 
-from .base import _EntityGroup, entity_group, output_result, pass_resolver, run_async
+from .base import EntityGroup, entity_group, output_result, pass_resolver, run_async
 
 users_group = entity_group("users", "Show and change what a user can do, and ask what their access would be.")
 
@@ -46,7 +46,7 @@ def _print_access_map(access_map: dict[str, Any]) -> None:
             click.echo(f"  {grant['permission']}  {_SCOPE_LABELS[grant['scope']]}  ({sources})")
 
 
-class _AccessGroup(_EntityGroup):
+class _AccessGroup(EntityGroup):
     """``users access`` runs ``show`` when its first argument isn't a subcommand."""
 
     def resolve_command(
@@ -168,7 +168,7 @@ async def _resolve_places(
 ) -> list[dict[str, Any]]:
     """Turn a comma list of ``org:<ref>``, ``customers``, ``global`` and ``all`` into boundaries."""
     boundaries: list[dict[str, Any]] = []
-    for token in places.split(","):
+    for token in (token.strip() for token in places.split(",")):
         if token.startswith("org:") and token != "org:":
             boundaries.append({"kind": "organization", "organization_id": await resolver.resolve("org", token[4:])})
         elif token in _BOUNDARY_PLACES:

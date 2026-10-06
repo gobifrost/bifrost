@@ -55,18 +55,20 @@ def _place_for(ctx: AuthorizationContext, boundary: Boundary, names: Mapping[UUI
         return Place(kind="platform", label="All organizations" if ctx.is_platform_admin else "Global")
     if boundary.kind == BoundaryKind.MANAGED_ORGANIZATIONS:
         return Place(kind="managed_organizations", label="All customer organizations")
-    assert boundary.organization_id is not None
-    name = names[boundary.organization_id]
-    if boundary.organization_id == ctx.home_organization_id:
+    organization_id = boundary.organization_id
+    if organization_id is None:
+        raise ValueError("An organization boundary must carry an organization id")
+    name = names[organization_id]
+    if organization_id == ctx.home_organization_id:
         return Place(
             kind="home",
-            organization_id=boundary.organization_id,
+            organization_id=organization_id,
             organization_name=name,
             label=f"{name} (home)",
         )
     return Place(
         kind="organization",
-        organization_id=boundary.organization_id,
+        organization_id=organization_id,
         organization_name=name,
         label=name,
     )

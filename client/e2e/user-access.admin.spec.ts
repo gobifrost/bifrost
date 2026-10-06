@@ -56,7 +56,9 @@ test.describe("Person access page", () => {
 		userId = ((await user.json()) as { id: string }).id;
 
 		const current = await api.get(`/api/users/${userId}/role-assignments`);
-		expect(current.ok(), `read assignments: ${current.status()}`).toBe(true);
+		expect(current.ok(), `read assignments: ${current.status()}`).toBe(
+			true,
+		);
 		const baseRoleId = (
 			(await current.json()) as { base_role: { id: string } }
 		).base_role.id;
@@ -139,7 +141,12 @@ test.describe("Person access page", () => {
 			.getByPlaceholder(/search roles by name or description/i)
 			.fill(ROLE_NAME);
 		const row = page.getByRole("row", { name: new RegExp(ROLE_NAME) });
-		await expect(row.getByRole("cell").nth(2)).toHaveText("1");
+		const headers = await page.getByRole("columnheader").allTextContents();
+		const holdersColumn = headers.findIndex(
+			(header) => header.trim() === "Holders",
+		);
+		expect(holdersColumn).toBeGreaterThanOrEqual(0);
+		await expect(row.getByRole("cell").nth(holdersColumn)).toHaveText("1");
 		await expect(
 			row
 				.getByRole("list", { name: `Where ${ROLE_NAME} applies` })

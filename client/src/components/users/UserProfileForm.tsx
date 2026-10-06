@@ -26,11 +26,11 @@ const LIFECYCLE_HINT =
 	"Only people who can create, move, or delete users in this organization can change this.";
 
 /** Which profile fields the caller may change on this user. */
-export function useUserProfileAbilities(user: User) {
-	const authorization = useAuthorization();
-	const { user: currentUser } = useAuth();
-
-	const isEditingSelf = !!(currentUser && user.id === currentUser.id);
+export function profileAbilities(
+	user: User,
+	isEditingSelf: boolean,
+	authorization: ReturnType<typeof useAuthorization>,
+) {
 	const target = orgTarget(user.organization_id);
 	const blockedByProtection =
 		user.is_protected && !authorization.isPlatformAdmin;
@@ -56,6 +56,16 @@ export function useUserProfileAbilities(user: User) {
 		canEditOrg,
 		canSave: canEditName || canEditStatus || canEditLifecycle,
 	};
+}
+
+export function useUserProfileAbilities(user: User) {
+	const authorization = useAuthorization();
+	const { user: currentUser } = useAuth();
+	return profileAbilities(
+		user,
+		!!(currentUser && user.id === currentUser.id),
+		authorization,
+	);
 }
 
 /**
