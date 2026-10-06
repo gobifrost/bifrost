@@ -254,6 +254,7 @@ async def set_roles(
         raise click.UsageError("--no-roles cannot be combined with --role.")
     if not (no_roles or role_specs or base_ref):
         raise click.UsageError("Nothing to change: give --base, --role or --no-roles.")
+    keeps_roles = not (no_roles or role_specs)
 
     user_id = await resolver.resolve("user", user_ref)
     base_role_id = await resolver.resolve("role", base_ref) if base_ref else None
@@ -266,7 +267,6 @@ async def set_roles(
         additional.append(entry)
 
     url = f"/api/users/{user_id}/role-assignments"
-    keeps_roles = not (no_roles or role_specs)
     if base_role_id is None or keeps_roles:
         current = await client.get(url)
         current.raise_for_status()
