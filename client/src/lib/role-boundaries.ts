@@ -1,5 +1,10 @@
 /** Plain-language wording and placement presets for where a role applies. */
 
+import type { components } from "@/lib/v1";
+import type { Place } from "@/services/access";
+
+type RolePlacementSummary = components["schemas"]["RolePlacementSummary"];
+
 export type BoundaryKind =
 	"organization" | "managed_organizations" | "platform";
 
@@ -34,6 +39,42 @@ export function placeLabel(
 		case "platform":
 			return "Global";
 	}
+}
+
+function summaryPlace(kind: Place["kind"], label: string): Place {
+	return { kind, organization_id: null, organization_name: null, label };
+}
+
+/**
+ * Where a role applies across everyone who holds it, as places for reach
+ * chips: "3 organizations", "All customer organizations", "Global". A base
+ * role applies at each holder's home organization.
+ */
+export function placementSummary(
+	placements: RolePlacementSummary,
+	isBase: boolean,
+): Place[] {
+	const places: Place[] = [];
+	if (isBase) places.push(summaryPlace("home", "Home organization"));
+	if (placements.organizations > 0)
+		places.push(
+			summaryPlace(
+				"organization",
+				placements.organizations === 1
+					? "1 organization"
+					: `${placements.organizations} organizations`,
+			),
+		);
+	if (placements.managed)
+		places.push(
+			summaryPlace(
+				"managed_organizations",
+				placeLabel("managed_organizations", ""),
+			),
+		);
+	if (placements.platform)
+		places.push(summaryPlace("platform", placeLabel("platform", "")));
+	return places;
 }
 
 const MANAGED: RolePlace = {

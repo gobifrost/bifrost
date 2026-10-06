@@ -123,7 +123,23 @@ describe("PermissionChip", () => {
 	it("keeps chip text at full opacity so it stays readable", () => {
 		render(<PermissionChip grant={grant} catalogEntry={entry} />);
 
-		expect(screen.getByText("read").className).not.toContain("opacity");
+		expect(screen.getByText("view").className).not.toContain("opacity");
+	});
+
+	it("says what the grant lets a person do in plain words", () => {
+		render(
+			<PermissionChip
+				grant={{
+					...grant,
+					permission: "tables.read.all",
+					action: "read.all",
+				}}
+				catalogEntry={entry}
+			/>,
+		);
+
+		expect(screen.getByText("view all")).toBeInTheDocument();
+		expect(screen.queryByText("read.all")).not.toBeInTheDocument();
 	});
 
 	it("uses the warning tone for a privileged permission", () => {

@@ -33,6 +33,7 @@ import { useUser } from "@/hooks/useUsers";
 import { ApiError } from "@/lib/api-error";
 import { orgTarget } from "@/lib/authorization";
 import { motionSeconds } from "@/lib/motion";
+import { permissionActionWord, permissionParts } from "@/lib/permission-words";
 import type { components } from "@/lib/v1";
 import {
 	usePermissionCatalog,
@@ -58,26 +59,16 @@ function initials(user: User): string {
 		.slice(0, 2);
 }
 
-const ACTION_WORDS: Record<string, string> = {
-	read: "view",
-	readwrite: "manage",
-	execute: "run",
-};
-
 /** "roles.readwrite" → "Role definitions (manage)". */
 function permissionPhrase(
 	permission: string,
 	catalog: PermissionCatalogEntry[],
 ): string {
 	if (permission === "*") return "every permission";
-	const all = permission.endsWith(".all");
-	const body = all ? permission.slice(0, -".all".length) : permission;
-	const cut = body.lastIndexOf(".");
-	const domain = body.slice(0, cut);
-	const action = ACTION_WORDS[body.slice(cut + 1)];
+	const { domain } = permissionParts(permission);
 	const title =
 		catalog.find((entry) => entry.domain === domain)?.title ?? domain;
-	return `${title} (${all ? `${action} all` : action})`;
+	return `${title} (${permissionActionWord(permission)})`;
 }
 
 /** "Protected: holds …" — what makes this account protected. */

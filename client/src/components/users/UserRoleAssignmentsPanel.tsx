@@ -15,7 +15,7 @@ import {
 import { RadioGroup as RadioGroupPrimitive } from "radix-ui";
 import { toast } from "sonner";
 
-import { BRIDGE_EDGE } from "@/components/access/PermissionChip";
+import { GrantChip } from "@/components/access/GrantChip";
 import { PlaceLabel } from "@/components/access/PlaceLabel";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -44,6 +44,7 @@ import { getErrorMessage } from "@/lib/api-error";
 import { orgTarget } from "@/lib/authorization";
 import { PLATFORM_ADMIN_ROLE_ID } from "@/lib/builtin-roles";
 import { motionSeconds } from "@/lib/motion";
+import { permissionActionWord, permissionParts } from "@/lib/permission-words";
 import {
 	offeredPresets,
 	placeKey,
@@ -53,7 +54,6 @@ import {
 	type PlacementPreset,
 	type RolePlace,
 } from "@/lib/role-boundaries";
-import { cn } from "@/lib/utils";
 import {
 	usePermissionCatalog,
 	type PermissionCatalogEntry,
@@ -101,11 +101,6 @@ const PRESET_ICONS = {
 /** Grant chips shown before "+N more". */
 const GRANTS_SHOWN = 4;
 
-const ACTION_WORDS: Record<string, string> = {
-	read: "view",
-	readwrite: "change",
-	execute: "run",
-};
 const DOMAIN_WORDS: Record<string, string> = {
 	agentruns: "agent runs",
 	configs: "configuration",
@@ -116,22 +111,10 @@ const DOMAIN_WORDS: Record<string, string> = {
 	"users.lifecycle": "user lifecycle",
 };
 
-/** "agentruns.read.all" → { domain: "agentruns", action: "read", all: true }. */
-function permissionParts(permission: string) {
-	const all = permission.endsWith(".all");
-	const body = all ? permission.slice(0, -".all".length) : permission;
-	const split = body.lastIndexOf(".");
-	return {
-		domain: body.slice(0, split),
-		action: body.slice(split + 1),
-		all,
-	};
-}
-
 /** "agents.read" → "view agents". */
 function describePermission(permission: string): string {
-	const { domain, action, all } = permissionParts(permission);
-	return `${ACTION_WORDS[action] ?? action}${all ? " all" : ""} ${DOMAIN_WORDS[domain] ?? domain.replace(/\./g, " ")}`;
+	const { domain } = permissionParts(permission);
+	return `${permissionActionWord(permission)} ${DOMAIN_WORDS[domain] ?? domain.replace(/\./g, " ")}`;
 }
 
 function describePermissions(permissions: string[]): string {
@@ -225,38 +208,6 @@ function Reveal({
 		>
 			{children}
 		</motion.div>
-	);
-}
-
-/** One permission a role grants, in the access map's power colours. */
-function GrantChip({
-	permission,
-	entry,
-}: {
-	permission: string;
-	entry: PermissionCatalogEntry | undefined;
-}) {
-	const { domain, action, all } = permissionParts(permission);
-	const privileged = !!entry?.privileged.includes(permission);
-	const platformWide = entry?.scope === "platform_wide";
-	return (
-		<Badge
-			variant={privileged ? "warning" : "secondary"}
-			className={cn(
-				"h-auto min-h-6 whitespace-normal",
-				!privileged &&
-					"bg-[var(--bf-power-soft)] text-[var(--bf-power)]",
-				platformWide && BRIDGE_EDGE,
-			)}
-		>
-			<span>{entry?.title ?? domain}</span>
-			<span className="font-normal">
-				{all ? `${action} all` : action}
-			</span>
-			{platformWide && (
-				<span className="text-xs font-semibold">Platform-wide</span>
-			)}
-		</Badge>
 	);
 }
 

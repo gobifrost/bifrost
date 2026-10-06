@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils";
+import {
+	fireEvent,
+	renderWithProviders,
+	screen,
+	waitFor,
+	within,
+} from "@/test-utils";
+import type { PermissionCatalogEntry } from "@/services/access";
 
 const mockUseRolesPage = vi.fn();
 const mockDeleteMutate = vi.fn();
@@ -29,6 +36,36 @@ vi.mock("@/services/authorization", () => ({
 	useAuthorization: () => ({ meets: () => authz.canManage }),
 }));
 
+function catalogEntry(
+	domain: string,
+	title: string,
+	privileged: string[] = [],
+): PermissionCatalogEntry {
+	return {
+		domain,
+		title,
+		area: "Automation",
+		description: `${title}.`,
+		who_should_hold: "Anyone.",
+		actions: ["read", "readwrite"],
+		privileged,
+		scope: "per_organization",
+		enforced: false,
+	};
+}
+
+vi.mock("@/services/access", () => ({
+	usePermissionCatalog: () => ({
+		data: [
+			catalogEntry("agents", "Agents"),
+			catalogEntry("forms", "Forms"),
+			catalogEntry("tables", "Tables"),
+			catalogEntry("workflows", "Workflows"),
+			catalogEntry("roles", "Roles", ["roles.readwrite"]),
+		],
+	}),
+}));
+
 import { Roles } from "./Roles";
 
 const role = {
@@ -46,7 +83,20 @@ const role = {
 		workflows: 0,
 		knowledge: 0,
 	},
+	holders: 5,
+	permissions: ["agents.read", "forms.readwrite"],
+	placements: { organizations: 3, managed: false, platform: true },
 };
+
+function page(items: object[]) {
+	return {
+		data: { items, total: items.length },
+		isLoading: false,
+		isFetching: false,
+		isError: false,
+		refetch: vi.fn(),
+	};
+}
 
 const longRole = {
 	...role,
@@ -181,25 +231,15 @@ describe("Roles", () => {
 
 	it("renders a mobile record list below 1024px with 44px controls", async () => {
 		mockUseMediaQuery.mockReturnValue(true);
-		mockUseRolesPage.mockReturnValue({
-			data: { items: [longRole], total: 1 },
-			isLoading: false,
-			isFetching: false,
-			isError: false,
-			refetch: vi.fn(),
-		});
+		mockUseRolesPage.mockReturnValue(page([longRole]));
 
 		renderWithProviders(<Roles />);
 
 		expect(screen.queryByRole("table")).not.toBeInTheDocument();
-		expect(
-			screen.getByRole("link", {
-				name: /enterprise security and finance operations administrators/i,
-			}),
-		).toBeInTheDocument();
-		expect(screen.getByRole("link", { name: /2 users/i })).toHaveClass(
-			"h-11",
-		);
+		const name = screen.getByRole("link", {
+			name: /enterprise security and finance operations administrators/i,
+		});
+		expect(name.getAttribute("class")).not.toContain("truncate");
 		expect(
 			screen.getByRole("button", {
 				name: /enterprise security and finance operations administrators.*actions/i,
@@ -208,44 +248,169 @@ describe("Roles", () => {
 		expect(
 			screen.getByRole("button", { name: /sort descending/i }),
 		).toHaveClass("h-11", "w-11");
+	});
+
+	it("keeps grants, holders and placements on mobile records", () => {
+		mockUseMediaQuery.mockReturnValue(true);
+		mockUseRolesPage.mockReturnValue(page([role]));
+
+		renderWithProviders(<Roles />);
+
+		const record = screen.getByRole("article");
 		expect(
-			screen
-				.getByRole("link", {
-					name: /enterprise security and finance operations administrators/i,
-				})
-				.getAttribute("class"),
-		).not.toContain("truncate");
+			within(
+				within(record).getByRole("list", {
+					name: "What Billing admins grants",
+				}),
+			).getAllByRole("listitem"),
+		).toHaveLength(2);
 		expect(
-			screen
-				.getByRole("link", { name: /2 users/i })
-				.getAttribute("class"),
-		).toContain("rounded-[var(--bf-radius-control)]");
+			within(record).getByText("Holders").nextSibling,
+		).toHaveTextContent("5");
+		expect(within(record).getByText("3 organizations")).toBeVisible();
+		expect(within(record).getByText("Global")).toBeVisible();
+	});
+
+	it("groups built-in and custom roles under their own headings", () => {
+		mockUseRolesPage.mockReturnValue(
+			page([
+				role,
+				{
+					...role,
+					id: "operator",
+					name: "Platform Operator",
+					is_builtin: true,
+				},
+			]),
+		);
+		renderWithProviders(<Roles />);
+
+		const builtIn = screen.getByRole("rowgroup", { name: "Built-in" });
+		const custom = screen.getByRole("rowgroup", { name: "Custom" });
+		expect(within(builtIn).getByText("Platform Operator")).toBeVisible();
+		expect(within(builtIn).queryByText("Billing admins")).toBeNull();
+		expect(within(custom).getByText("Billing admins")).toBeVisible();
+		expect(
+			builtIn.compareDocumentPosition(custom) &
+				Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
+	});
+
+	it("shows what each role grants in plain words, four at a time", () => {
+		mockUseRolesPage.mockReturnValue(
+			page([
+				{
+					...role,
+					permissions: [
+						"agents.read",
+						"forms.readwrite",
+						"roles.readwrite",
+						"tables.read",
+						"workflows.execute",
+						"workflows.read",
+					],
+				},
+			]),
+		);
+		renderWithProviders(<Roles />);
+
+		const grants = screen.getByRole("list", {
+			name: "What Billing admins grants",
+		});
+		expect(
+			within(grants)
+				.getAllByRole("listitem")
+				.map((item) => item.textContent),
+		).toEqual(["Agentsview", "Formsmanage", "Rolesmanage", "Tablesview"]);
+		expect(within(grants).getByText("Roles").parentElement).toHaveAttribute(
+			"data-variant",
+			"privileged",
+		);
+		const more = screen.getByRole("link", { name: "2 more permissions" });
+		expect(more).toHaveTextContent("+2");
+		expect(more).toHaveAttribute("href", "/roles/role-1/permissions");
+	});
+
+	it("shows holders and where each role is placed", () => {
+		mockUseRolesPage.mockReturnValue(page([role]));
+		renderWithProviders(<Roles />);
+
+		for (const heading of ["Grants", "Holders", "Placed"]) {
+			expect(
+				screen.getByRole("columnheader", { name: heading }),
+			).toBeInTheDocument();
+		}
+		const row = screen.getByRole("row", { name: /Billing admins/ });
+		expect(within(row).getByText("5")).toBeVisible();
+		const places = within(row).getByRole("list", {
+			name: "Where Billing admins applies",
+		});
+		expect(
+			within(places)
+				.getAllByRole("listitem")
+				.map((item) => item.textContent),
+		).toEqual(["3 organizations", "Global"]);
+		expect(
+			within(places).getByText("Global").closest("[data-place]"),
+		).toHaveClass("bg-[var(--bf-reach-soft)]");
+	});
+
+	it("says when a role is placed nowhere yet", () => {
+		mockUseRolesPage.mockReturnValue(
+			page([
+				{
+					...role,
+					placements: {
+						organizations: 0,
+						managed: false,
+						platform: false,
+					},
+				},
+			]),
+		);
+		renderWithProviders(<Roles />);
+
+		expect(screen.getByText("Not placed")).toBeVisible();
+	});
+
+	it("hides grants, holders and placements when the server leaves them out", () => {
+		mockUseRolesPage.mockReturnValue(
+			page([
+				{
+					...role,
+					consumer_counts: null,
+					holders: null,
+					permissions: null,
+					placements: null,
+				},
+			]),
+		);
+		renderWithProviders(<Roles />);
+
+		for (const heading of ["Grants", "Holders", "Placed"]) {
+			expect(
+				screen.queryByRole("columnheader", { name: heading }),
+			).not.toBeInTheDocument();
+		}
+		expect(screen.getByText("Billing admins")).toBeVisible();
 	});
 
 	it("shows built-in roles read-only, with no edit or delete actions", () => {
-		mockUseRolesPage.mockReturnValue({
-			data: {
-				items: [
-					{
-						...role,
-						id: "operator",
-						name: "Platform Operator",
-						is_builtin: true,
-					},
-					role,
-				],
-				total: 2,
-			},
-			isLoading: false,
-			isFetching: false,
-			isError: false,
-			refetch: vi.fn(),
-		});
+		mockUseRolesPage.mockReturnValue(
+			page([
+				{
+					...role,
+					id: "operator",
+					name: "Platform Operator",
+					is_builtin: true,
+				},
+				role,
+			]),
+		);
 		renderWithProviders(<Roles />);
 
-		expect(screen.getByText("Built-in")).toBeInTheDocument();
 		expect(
-			screen.getByRole("link", { name: "View permissions" }),
+			screen.getByRole("link", { name: "Platform Operator" }),
 		).toHaveAttribute("href", "/roles/operator");
 		expect(
 			screen.queryByRole("button", { name: "Platform Operator actions" }),

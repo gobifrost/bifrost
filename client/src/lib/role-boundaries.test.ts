@@ -4,6 +4,7 @@ import {
 	offeredPresets,
 	placeKey,
 	placeLabel,
+	placementSummary,
 	placesForPreset,
 	presetFor,
 	type PresetRole,
@@ -160,5 +161,43 @@ describe("placesForPreset", () => {
 				),
 			).toBe(preset);
 		}
+	});
+});
+
+describe("placementSummary", () => {
+	const none = { organizations: 0, managed: false, platform: false };
+
+	it("counts organizations and names the wider places", () => {
+		expect(
+			placementSummary(
+				{ organizations: 3, managed: true, platform: true },
+				false,
+			).map((place) => [place.kind, place.label]),
+		).toEqual([
+			["organization", "3 organizations"],
+			["managed_organizations", "All customer organizations"],
+			["platform", "Global"],
+		]);
+	});
+
+	it("says one organization in the singular", () => {
+		expect(
+			placementSummary({ ...none, organizations: 1 }, false).map(
+				(place) => place.label,
+			),
+		).toEqual(["1 organization"]);
+	});
+
+	it("places a base role at each holder's home organization", () => {
+		expect(
+			placementSummary(none, true).map((place) => [
+				place.kind,
+				place.label,
+			]),
+		).toEqual([["home", "Home organization"]]);
+	});
+
+	it("is empty for a role placed nowhere", () => {
+		expect(placementSummary(none, false)).toEqual([]);
 	});
 });

@@ -976,7 +976,7 @@ describe("UserRoleAssignmentsPanel", () => {
 							.map((part) => part.textContent)
 							.join(" "),
 					),
-			).toEqual(["Organizations read Platform-wide", "Users read"]);
+			).toEqual(["Organizations view Platform-wide", "Users view"]);
 		});
 	});
 });
