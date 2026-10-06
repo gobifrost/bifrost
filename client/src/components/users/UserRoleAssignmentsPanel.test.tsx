@@ -85,6 +85,31 @@ vi.mock("@/components/ui/combobox", () => ({
 	),
 }));
 
+vi.mock("@/services/access", () => {
+	const entry = (
+		domain: string,
+		title: string,
+		scope: string,
+		privileged: string[] = [],
+	) => ({
+		domain,
+		title,
+		area: "Identity & access",
+		description: "",
+		who_should_hold: "",
+		actions: ["read", "readwrite"],
+		privileged,
+		scope,
+		enforced: true,
+	});
+	const catalog = [
+		entry("organizations", "Organizations", "platform_wide"),
+		entry("users", "Users", "per_organization", ["users.readwrite"]),
+		entry("secrets", "Secrets", "per_organization", ["secrets.read"]),
+	];
+	return { usePermissionCatalog: () => ({ data: catalog }) };
+});
+
 vi.mock("sonner", () => ({ toast: { success: vi.fn() } }));
 
 import { UserRoleAssignmentsPanel } from "./UserRoleAssignmentsPanel";
@@ -247,7 +272,7 @@ describe("UserRoleAssignmentsPanel", () => {
 			name: "Where Platform Operator applies",
 		});
 		expect(
-			within(places).getByText("In all customer organizations"),
+			within(places).getByText("All customer organizations"),
 		).toBeInTheDocument();
 		expect(
 			screen.getByText(/Support for customer organizations/),
@@ -314,6 +339,9 @@ describe("UserRoleAssignmentsPanel", () => {
 			await screen.findByRole("option", { name: /Platform Operator/ }),
 		);
 		await user.click(
+			screen.getByRole("radio", { name: "Selected organizations" }),
+		);
+		await user.click(
 			screen.getByRole("button", {
 				name: "Add where Platform Operator applies",
 			}),
@@ -364,7 +392,7 @@ describe("UserRoleAssignmentsPanel", () => {
 				screen.getByRole("list", {
 					name: "Where Platform Admin applies",
 				}),
-			).getByText("Platform-wide"),
+			).getByText("Global"),
 		).toBeInTheDocument();
 		expect(
 			screen.queryByRole("button", {
@@ -495,7 +523,7 @@ describe("UserRoleAssignmentsPanel", () => {
 		expect(
 			within(
 				screen.getByRole("list", { name: "Where Help desk applies" }),
-			).getByText("In Contoso"),
+			).getByText("Contoso"),
 		).toBeInTheDocument();
 
 		await user.click(
@@ -626,5 +654,272 @@ describe("UserRoleAssignmentsPanel", () => {
 		expect(
 			screen.getByRole("button", { name: "Save roles" }),
 		).toBeDisabled();
+	});
+
+	describe("placement presets", () => {
+		const orgViewerRole = {
+			id: "org-viewer",
+			name: "Org viewer",
+			is_builtin: false,
+			permissions: ["organizations.read", "users.read"],
+			can_be_base: false,
+			can_be_additional: true,
+			boundary_kinds: [
+				"organization" as const,
+				"managed_organizations" as const,
+				"platform" as const,
+			],
+			provider_organization_allowed: true,
+		};
+
+		function holding(
+			role: { id: string; name: string; permissions: string[] },
+			boundaries: Assignments["additional"][number]["boundaries"],
+		): Assignments {
+			return {
+				...adminView(),
+				assignable_roles: [
+					...adminView().assignable_roles,
+					orgViewerRole,
+				],
+				additional: [
+					{
+						role_id: role.id,
+						name: role.name,
+						is_builtin: false,
+						permissions: role.permissions,
+						boundaries,
+					},
+				],
+			};
+		}
+
+		const contoso = {
+			kind: "organization" as const,
+			organization_id: "org-a",
+		};
+		const managed = {
+			kind: "managed_organizations" as const,
+			organization_id: null,
+		};
+
+		it("shows a placement as its preset and saves the places a preset stands for", async () => {
+			state.assignments = holding(supportRole, [contoso]);
+			const { user } = render(makeUser({ organization_id: "org-a" }));
+
+			const presets = screen.getByRole("radiogroup", {
+				name: "Placement for Help desk",
+			});
+			expect(
+				within(presets).getByRole("radio", {
+					name: "Selected organizations",
+				}),
+			).toBeChecked();
+
+			await user.click(
+				within(presets).getByRole("radio", {
+					name: "All organizations",
+				}),
+			);
+			const places = screen.getByRole("list", {
+				name: "Where Help desk applies",
+			});
+			expect(
+				within(places)
+					.getAllByRole("listitem")
+					.map((item) => item.textContent),
+			).toEqual(["All customer organizations", "Provider", "Global"]);
+
+			await user.click(
+				screen.getByRole("button", { name: "Save roles" }),
+			);
+			await waitFor(() => expect(state.mutateAsync).toHaveBeenCalled());
+			expect(state.mutateAsync.mock.calls[0][0].body.additional).toEqual([
+				{
+					role_id: SUPPORT_ROLE,
+					boundaries: [
+						managed,
+						{ kind: "organization", organization_id: PROVIDER },
+						{ kind: "platform", organization_id: null },
+					],
+				},
+			]);
+		});
+
+		it("brings back the chosen organizations when switching back to Selected organizations", async () => {
+			state.assignments = holding(supportRole, [
+				contoso,
+				{ kind: "organization", organization_id: "org-b" },
+			]);
+			const { user } = render(makeUser({ organization_id: "org-a" }));
+
+			await user.click(
+				screen.getByRole("radio", {
+					name: "All customer organizations",
+				}),
+			);
+			await user.click(
+				screen.getByRole("radio", { name: "Selected organizations" }),
+			);
+
+			expect(
+				within(
+					screen.getByRole("list", {
+						name: "Where Help desk applies",
+					}),
+				)
+					.getAllByRole("listitem")
+					.map((item) => item.textContent),
+			).toEqual(["Contoso", "Fabrikam"]);
+			expect(
+				screen.getByRole("button", { name: "Save roles" }),
+			).toBeDisabled();
+		});
+
+		it("offers All organizations only when the role can apply everywhere, provider org included", async () => {
+			const { user } = render();
+			await user.click(screen.getByRole("button", { name: "Add role" }));
+			await user.click(
+				await screen.findByRole("option", {
+					name: /Platform Operator/,
+				}),
+			);
+
+			expect(
+				within(
+					screen.getByRole("radiogroup", {
+						name: "Placement for Platform Operator",
+					}),
+				)
+					.getAllByRole("radio")
+					.map((radio) => radio.textContent),
+			).toEqual(["Selected organizations", "All customer organizations"]);
+		});
+
+		it("offers someone who isn't a Platform Admin only selected organizations", async () => {
+			state.summary = operatorCaller();
+			state.assignments = {
+				base_role: { id: USER_ROLE, name: "User", is_builtin: true },
+				additional: [],
+				is_protected: false,
+				assignable_roles: [supportRole],
+			};
+			const { user } = render(makeUser({ organization_id: "org-a" }));
+			await user.click(screen.getByRole("button", { name: "Add role" }));
+			await user.click(
+				await screen.findByRole("option", { name: /Help desk/ }),
+			);
+
+			expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+			expect(
+				screen.getByRole("button", {
+					name: "Add where Help desk applies",
+				}),
+			).toBeInTheDocument();
+		});
+
+		it("saves a Custom placement unchanged", async () => {
+			state.assignments = holding(supportRole, [contoso, managed]);
+			const { user } = render(makeUser({ organization_id: "org-a" }));
+
+			expect(screen.getByRole("radio", { name: "Custom" })).toBeChecked();
+			expect(
+				within(
+					screen.getByRole("list", {
+						name: "Where Help desk applies",
+					}),
+				)
+					.getAllByRole("listitem")
+					.map((item) => item.textContent),
+			).toEqual(["Contoso", "All customer organizations"]);
+			expect(
+				screen.queryByRole("button", {
+					name: "Remove Contoso from Help desk",
+				}),
+			).not.toBeInTheDocument();
+			expect(
+				screen.queryByRole("button", {
+					name: "Add where Help desk applies",
+				}),
+			).not.toBeInTheDocument();
+
+			await user.selectOptions(
+				screen.getByLabelText("base-role"),
+				"billing-forms",
+			);
+			await user.click(
+				screen.getByRole("button", { name: "Save roles" }),
+			);
+			await waitFor(() => expect(state.mutateAsync).toHaveBeenCalled());
+			expect(state.mutateAsync.mock.calls[0][0].body.additional).toEqual([
+				{ role_id: SUPPORT_ROLE, boundaries: [contoso, managed] },
+			]);
+		});
+
+		it("replaces a Custom placement once a preset is chosen", async () => {
+			state.assignments = holding(supportRole, [contoso, managed]);
+			const { user } = render(makeUser({ organization_id: "org-a" }));
+
+			await user.click(
+				screen.getByRole("radio", { name: "Selected organizations" }),
+			);
+
+			expect(
+				screen.queryByRole("radio", { name: "Custom" }),
+			).not.toBeInTheDocument();
+			expect(
+				within(
+					screen.getByRole("list", {
+						name: "Where Help desk applies",
+					}),
+				)
+					.getAllByRole("listitem")
+					.map((item) => item.textContent),
+			).toEqual(["Contoso"]);
+		});
+
+		it("warns when a platform-wide permission is placed on selected organizations", async () => {
+			state.assignments = holding(orgViewerRole, [contoso]);
+			const { user } = render(makeUser({ organization_id: "org-a" }));
+
+			await user.hover(
+				screen.getByRole("button", {
+					name: "Some permissions need Global",
+				}),
+			);
+			const tooltip = await screen.findByRole("tooltip");
+			expect(tooltip).toHaveTextContent(
+				"Organizations is platform-wide; it applies only through a Global placement.",
+			);
+			expect(tooltip).not.toHaveTextContent("Users");
+
+			await user.click(
+				screen.getByRole("radio", { name: "All organizations" }),
+			);
+			expect(
+				screen.queryByRole("button", {
+					name: "Some permissions need Global",
+				}),
+			).not.toBeInTheDocument();
+		});
+
+		it("lists what each role grants", async () => {
+			state.assignments = holding(orgViewerRole, [contoso]);
+			render(makeUser({ organization_id: "org-a" }));
+
+			expect(
+				within(
+					screen.getByRole("list", {
+						name: "What Org viewer grants",
+					}),
+				)
+					.getAllByRole("listitem")
+					.map((item) =>
+						[...item.firstElementChild!.children]
+							.map((part) => part.textContent)
+							.join(" "),
+					),
+			).toEqual(["Organizations read Platform-wide", "Users read"]);
+		});
 	});
 });
