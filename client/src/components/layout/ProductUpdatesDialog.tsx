@@ -10,7 +10,7 @@ import {
 	DialogDescription,
 } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { CommunityFooter, UpdateEntry } from "./ProductUpdateContent";
+import { CommunityFooter, UpdateGroups } from "./ProductUpdateContent";
 import {
 	productUpdatesPreviewAdapter,
 	type ProductUpdatesAdapter,
@@ -105,11 +105,7 @@ export function ProductUpdatesDialog({
 							</AlertDescription>
 						</Alert>
 					)}
-					<div className="divide-y divide-border">
-						{entries.map((entry) => (
-							<UpdateEntry key={entry.id} entry={entry} />
-						))}
-					</div>
+					<UpdateGroups entries={entries} />
 				</div>
 				<div className="flex shrink-0 justify-end border-t px-6 py-4 sm:px-8">
 					<Button

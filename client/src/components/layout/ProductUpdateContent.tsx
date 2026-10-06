@@ -10,6 +10,45 @@ import type {
 	ProductUpdateEntry,
 } from "@/generated/product-updates";
 
+export function UpdateGroups({
+	entries,
+	missingImage = false,
+}: {
+	entries: ProductUpdateEntry[];
+	missingImage?: boolean;
+}) {
+	const formatter = new Intl.DateTimeFormat(undefined, { dateStyle: "long" });
+	const groups = new Map<string, ProductUpdateEntry[]>();
+	for (const entry of [...entries].sort(
+		(a, b) => Date.parse(b.published_at) - Date.parse(a.published_at),
+	)) {
+		const date = formatter.format(new Date(entry.published_at));
+		const group = groups.get(date);
+		if (group) group.push(entry);
+		else groups.set(date, [entry]);
+	}
+	return (
+		<div className="space-y-8">
+			{Array.from(groups, ([date, updates]) => (
+				<section key={date} aria-label={date}>
+					<h2 className="mb-4 text-sm font-medium text-muted-foreground">
+						{date}
+					</h2>
+					<div className="divide-y divide-border">
+						{updates.map((entry) => (
+							<UpdateEntry
+								key={entry.id}
+								entry={entry}
+								missingImage={missingImage}
+							/>
+						))}
+					</div>
+				</section>
+			))}
+		</div>
+	);
+}
+
 export function UpdateEntry({
 	entry,
 	missingImage = false,
@@ -21,14 +60,9 @@ export function UpdateEntry({
 		<article className="py-6 first:pt-0 last:pb-0">
 			<div className="flex flex-col gap-3">
 				<div className="min-w-0">
-					<p className="text-sm text-muted-foreground">
-						{new Intl.DateTimeFormat(undefined, {
-							dateStyle: "long",
-						}).format(new Date(entry.published_at))}
-					</p>
-					<h2 className="mt-2 font-display text-xl font-semibold leading-snug [overflow-wrap:anywhere] sm:text-2xl">
+					<h3 className="font-display text-xl font-semibold leading-snug [overflow-wrap:anywhere] sm:text-2xl">
 						{entry.title}
-					</h2>
+					</h3>
 				</div>
 				<div className="flex flex-wrap gap-2">
 					<Badge variant="outline">{entry.area}</Badge>

@@ -8,7 +8,7 @@ Worktree: `/home/jack/.codex/worktrees/ae47/bifrost`, branch `codex/product-upda
 
 - Eligible unseen updates automatically open in a scrollable modal for platform admins entering the authenticated shell. The displayed batch is acknowledged after rendering; fetching or a failed load alone writes no receipt. Closing keeps the underlying route intact. The modal stays quiet after the batch has been presented.
 - The modal has **View All Updates**, which opens `/whats-new` in a new tab, keeping the original modal available. The permanent path is **Help → Release Notes**. The admin-only Help (?) trigger sits immediately left of the user icon and contains Documentation, Release Notes, Website, Discord, GitHub, and the copyable version. Direct history visits remain unobstructed.
-- History is a plain feed. No manual mark-read action, per-item unread badge, inbox tabs, carousel, counters, or viewport-tracking system.
+- Modal and history group notes under a single date heading per local calendar day, newest first. History is a plain feed. No manual mark-read action, per-item unread badge, inbox tabs, carousel, counters, or viewport-tracking system.
 - Modal and history share content rendering and the persistent GitHub / Discord / Website footer with brand icons and a rainbow edge. Dates, areas/types, screenshots and substantive upgrade/security notices remain. Sources and credits sit under collapsed Source Details. All note links open a new tab.
 - The announcement says release notes are available in the app and Bifrost is now on Discord. All initial prose remains draft; publication has not occurred.
 

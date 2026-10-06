@@ -23,6 +23,7 @@ test("admin sees new updates automatically and reopens history from Help", async
 			name: "Release Notes and Discord",
 		}),
 	).toBeVisible();
+	await expect(dialog.getByRole("heading", { name: "October 6, 2026", exact: true })).toHaveCount(1);
 	const community = dialog.getByRole("navigation", {
 		name: "Bifrost community links",
 	});
@@ -75,6 +76,7 @@ test("admin sees new updates automatically and reopens history from Help", async
 	await expect(
 		history.getByRole("heading", { name: "Release Notes and Discord" }),
 	).toBeVisible();
+	await expect(history.getByRole("heading", { name: "October 6, 2026", exact: true })).toHaveCount(1);
 	await expect(history.getByRole("tab")).toHaveCount(0);
 	await expect(
 		history.getByRole("button", { name: /Mark.*Read/ }),

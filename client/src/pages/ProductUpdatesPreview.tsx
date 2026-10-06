@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { AlertCircle, LoaderCircle, Megaphone } from "lucide-react";
 import {
 	CommunityFooter,
-	UpdateEntry,
+	UpdateGroups,
 } from "@/components/layout/ProductUpdateContent";
 import { useAuth } from "@/contexts/AuthContext";
 import { ListPageHeader } from "@/components/layout/ListPageHeader";
@@ -267,17 +267,10 @@ export function ProductUpdatesPreview({
 									description="New product updates will appear here."
 								/>
 							) : (
-								<div className="divide-y divide-border">
-									{visibleEntries.map((entry) => (
-										<UpdateEntry
-											key={entry.id}
-											entry={entry}
-											missingImage={
-												state === "missingimage"
-											}
-										/>
-									))}
-								</div>
+								<UpdateGroups
+									entries={visibleEntries}
+									missingImage={state === "missingimage"}
+								/>
 							)}
 							{otherChanges.length > 0 && (
 								<section
