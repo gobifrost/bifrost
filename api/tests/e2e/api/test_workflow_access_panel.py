@@ -428,3 +428,23 @@ def test_the_base_role_does_not_count_as_a_held_policy_role(e2e_client, platform
     (item,) = _requirements(e2e_client, admin, workflow["id"])["items"]
 
     assert (item["kind"], item["label"], item["grant"]) == ("policy_role", "User", None)
+
+
+def test_a_role_based_workflow_of_another_scope_has_no_workflow_role_requirement(
+    e2e_client, platform_admin, world, async_session_factory
+) -> None:
+    admin = platform_admin.headers
+    workflow = _register(e2e_client, admin, str(PROVIDER_ORG_ID))
+    _ok(e2e_client.patch(f"/api/workflows/{workflow['id']}", headers=admin, json={"access_level": "role_based", "role_ids": [world["hr"]["id"]]}))
+    _record_checks(
+        async_session_factory,
+        [_check(workflow["id"], "scope_switch", "success", organization_id=None, inputs={}, run=uuid.uuid4())],
+    )
+    shared = world["global_custom"]["id"]
+
+    without_role = _requirements(e2e_client, admin, workflow["id"], identity_id=shared)["items"]
+    _grant(e2e_client, admin, shared, [{"role_id": world["hr"]["id"], "boundaries": [{"kind": "platform"}]}])
+    with_role = _requirements(e2e_client, admin, workflow["id"], identity_id=shared)["items"]
+    _grant(e2e_client, admin, shared, [])
+
+    assert (without_role, with_role) == ([], [])

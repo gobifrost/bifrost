@@ -242,6 +242,10 @@ async def workflow_requirements(db: AsyncSession, workflow: Workflow, identity_i
         roles_by_ref.setdefault(name, ref)
         roles_by_ref[str(role_id)] = ref
 
+    # A role-based workflow of another organization is out of the identity's
+    # scope however many roles it holds (``run_identity_allowed`` pairs
+    # scopes, e.g. a global identity with a provider-organization workflow),
+    # so its roles are no requirement.
     workflow_roles = (
         dict(
             (
@@ -252,7 +256,7 @@ async def workflow_requirements(db: AsyncSession, workflow: Workflow, identity_i
                 )
             ).all()
         )
-        if workflow.access_level == "role_based"
+        if workflow.access_level == "role_based" and workflow.organization_id in (None, run_user.home)
         else {}
     )
     target_ids = {action.target for action in actions if isinstance(action.target, UUID)}
