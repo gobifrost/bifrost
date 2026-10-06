@@ -24805,6 +24805,27 @@ export interface components {
             permissions: string[];
         };
         /**
+         * RolePlacementSummary
+         * @description Where a role's assignments apply, across everyone who holds it.
+         */
+        RolePlacementSummary: {
+            /**
+             * Organizations
+             * @description Distinct organizations the role is placed on
+             */
+            organizations: number;
+            /**
+             * Managed
+             * @description Placed on every managed (customer) organization
+             */
+            managed: boolean;
+            /**
+             * Platform
+             * @description Placed platform-wide
+             */
+            platform: boolean;
+        };
+        /**
          * RolePublic
          * @description Role output for API responses.
          *
@@ -24838,6 +24859,18 @@ export interface components {
             updated_at: string | null;
             /** @description Inline counts of every consumer type. Populated on list-roles for the Roles UI; may be None on single-role responses where it's not needed. */
             consumer_counts?: components["schemas"]["RoleConsumerCounts"] | null;
+            /**
+             * Holders
+             * @description Distinct users holding the role as their base role or an additional role. Populated with consumer_counts.
+             */
+            holders?: number | null;
+            /**
+             * Permissions
+             * @description Permissions the role grants, sorted. Populated with consumer_counts.
+             */
+            permissions?: string[] | null;
+            /** @description Where the role's assignments are placed. Populated with consumer_counts. */
+            placements?: components["schemas"]["RolePlacementSummary"] | null;
         };
         /** RoleSummary */
         RoleSummary: {

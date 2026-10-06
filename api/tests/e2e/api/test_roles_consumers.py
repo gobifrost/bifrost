@@ -325,3 +325,99 @@ class TestRoleConsumerCounts:
                 e2e_client.delete(
                     f"/api/workflows/{wf_id}", headers=platform_admin.headers
                 )
+
+
+# =============================================================================
+# Holders, permissions and placements on GET /api/roles
+# =============================================================================
+
+USER_ROLE_ID = "00000000-0000-0000-0000-000000000006"
+
+
+def _listed(e2e_client, headers, role_id: str) -> dict:
+    roles = e2e_client.get(
+        "/api/roles", params={"include_builtin": True}, headers=headers
+    ).json()
+    return next(r for r in roles if r["id"] == role_id)
+
+
+def _create_user(e2e_client, headers, org_id: str) -> str:
+    resp = e2e_client.post(
+        "/api/users",
+        headers=headers,
+        json={
+            "email": f"holders-{uuid.uuid4().hex[:8]}@example.com",
+            "name": "Holder",
+            "organization_id": org_id,
+            "invite": False,
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["id"]
+
+
+@pytest.mark.e2e
+class TestRoleAccessSummary:
+    def test_holders_permissions_and_placements(
+        self, e2e_client, platform_admin, org1
+    ):
+        role = _create_role(e2e_client, platform_admin.headers, "Summary")
+        user_ids: list[str] = []
+        try:
+            assert _listed(e2e_client, platform_admin.headers, role)[
+                "placements"
+            ] == {"organizations": 0, "managed": False, "platform": False}
+
+            set_resp = e2e_client.put(
+                f"/api/roles/{role}/permissions",
+                headers=platform_admin.headers,
+                json={"permissions": ["users.read", "roles.read"]},
+            )
+            assert set_resp.status_code == 200, set_resp.text
+
+            placements = [
+                [{"kind": "organization", "organization_id": org1["id"]}],
+                [{"kind": "managed_organizations"}],
+            ]
+            for boundaries in placements:
+                user_id = _create_user(e2e_client, platform_admin.headers, org1["id"])
+                user_ids.append(user_id)
+                resp = e2e_client.put(
+                    f"/api/users/{user_id}/role-assignments",
+                    headers=platform_admin.headers,
+                    json={
+                        "base_role_id": USER_ROLE_ID,
+                        "additional": [{"role_id": role, "boundaries": boundaries}],
+                    },
+                )
+                assert resp.status_code == 200, resp.text
+
+            listed = _listed(e2e_client, platform_admin.headers, role)
+            assert listed["holders"] == 2
+            assert listed["permissions"] == ["roles.read", "users.read"]
+            assert listed["placements"] == {
+                "organizations": 1,
+                "managed": True,
+                "platform": False,
+            }
+
+            single = e2e_client.get(
+                f"/api/roles/{role}", headers=platform_admin.headers
+            ).json()
+            assert single["holders"] == 2
+            assert single["placements"] == listed["placements"]
+        finally:
+            for user_id in user_ids:
+                e2e_client.delete(f"/api/users/{user_id}", headers=platform_admin.headers)
+            e2e_client.delete(f"/api/roles/{role}", headers=platform_admin.headers)
+
+    def test_builtin_user_role_holders_count_base_role_users(
+        self, e2e_client, platform_admin, org1
+    ):
+        before = _listed(e2e_client, platform_admin.headers, USER_ROLE_ID)["holders"]
+        user_id = _create_user(e2e_client, platform_admin.headers, org1["id"])
+        try:
+            after = _listed(e2e_client, platform_admin.headers, USER_ROLE_ID)["holders"]
+            assert after == before + 1
+        finally:
+            e2e_client.delete(f"/api/users/{user_id}", headers=platform_admin.headers)

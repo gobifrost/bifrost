@@ -113,6 +113,7 @@ if TYPE_CHECKING:
         RoleKnowledgeResponse,
         RoleKnowledgeEntry,
         RoleConsumerCounts,
+        RolePlacementSummary,
         AssignUsersToRoleRequest,
         AssignFormsToRoleRequest,
         AssignAppsToRoleRequest,
