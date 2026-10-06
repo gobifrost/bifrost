@@ -18,8 +18,10 @@ export const USER_ACCESS_QUERY_KEY = [
 ] as const;
 
 /** Every permission domain: its title, area, guidance, actions, scope and enforcement. */
-export function usePermissionCatalog() {
-	return $api.useQuery("get", "/api/permissions/catalog");
+export function usePermissionCatalog(enabled = true) {
+	return $api.useQuery("get", "/api/permissions/catalog", undefined, {
+		enabled,
+	});
 }
 
 /** What a person can do, and where it applies. */

@@ -27,7 +27,15 @@ describe("access service", () => {
 		expect(useQueryMock).toHaveBeenCalledWith(
 			"get",
 			"/api/permissions/catalog",
+			undefined,
+			{ enabled: true },
 		);
+	});
+
+	it("skips the catalog for a caller who can't read it", () => {
+		usePermissionCatalog(false);
+
+		expect(useQueryMock.mock.calls[0][3]).toEqual({ enabled: false });
 	});
 
 	it("reads a person's access map from their path", () => {

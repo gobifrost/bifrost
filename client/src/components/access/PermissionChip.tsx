@@ -16,7 +16,8 @@ type CatalogScope = PermissionCatalogEntry["scope"];
 type ChipVariant = CatalogScope | "privileged";
 type ChipGrant = Omit<AccessGrant, "scope"> & { scope: CatalogScope };
 
-const BRIDGE_EDGE =
+/** The bridge-gradient leading edge that marks platform-wide access. */
+export const BRIDGE_EDGE =
 	"relative pl-3 before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-[image:var(--bf-bridge-vertical)]";
 
 const VARIES_EDGE =

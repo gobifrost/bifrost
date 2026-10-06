@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { RefObject } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
 	Crown,
 	RefreshCw,
@@ -37,7 +36,6 @@ import {
 	useDeleteUser,
 	useResetUserMfa,
 	useSignOutUserEverywhere,
-	useUser,
 	useUsersPage,
 	useUpdateUser,
 } from "@/hooks/useUsers";
@@ -150,90 +148,10 @@ function ProtectedBadge() {
 	);
 }
 
-function UserRouteLoadingState({ onBack }: { onBack: () => void }) {
-	return (
-		<div
-			role="status"
-			aria-label="Loading user"
-			className="rounded-[var(--bf-radius-surface)] border bg-card p-4"
-		>
-			<div className="space-y-3">
-				<Skeleton className="h-8 w-64 max-w-full" />
-				<Skeleton className="h-4 w-80 max-w-full" />
-				<Skeleton className="h-24 w-full" />
-			</div>
-			<div className="mt-4 flex flex-col gap-2 sm:flex-row">
-				<Button
-					type="button"
-					variant="outline"
-					className="min-h-11"
-					onClick={onBack}
-				>
-					Back to users
-				</Button>
-			</div>
-		</div>
-	);
-}
-
-function UserRouteErrorState({
-	title,
-	message,
-	onRetry,
-	onBack,
-	isRetrying,
-	containerRef,
-}: {
-	title: string;
-	message: string;
-	onRetry: () => void | Promise<void>;
-	onBack: () => void;
-	isRetrying: boolean;
-	containerRef?: RefObject<HTMLDivElement | null>;
-}) {
-	return (
-		<Alert
-			variant="destructive"
-			aria-label={title}
-			tabIndex={-1}
-			ref={containerRef}
-			className="outline-none"
-		>
-			<AlertTitle>{title}</AlertTitle>
-			<AlertDescription className="space-y-3">
-				<p>{message}</p>
-				<div className="flex flex-col gap-2 sm:flex-row">
-					<Button
-						type="button"
-						variant="outline"
-						className="min-h-11"
-						onClick={() => {
-							void onRetry();
-						}}
-						disabled={isRetrying}
-						aria-busy={isRetrying}
-					>
-						{isRetrying ? "Retrying user…" : "Retry user"}
-					</Button>
-					<Button
-						type="button"
-						variant="ghost"
-						className="min-h-11"
-						onClick={onBack}
-					>
-						Back to users
-					</Button>
-				</div>
-			</AlertDescription>
-		</Alert>
-	);
-}
-
 export function Users() {
 	const createUserButtonRef = useRef<HTMLButtonElement>(null);
 	const navigate = useNavigate();
 	const isNarrow = useMediaQuery("(max-width: 1023px)");
-	const { userId } = useParams<{ userId?: string }>();
 	const [selectedUser, setSelectedUser] = useState<User | undefined>();
 	const [isCreateOpen, setIsCreateOpen] = useState(false);
 	const [isDeleteOpen, setIsDeleteOpen] = useState(false);
@@ -243,8 +161,7 @@ export function Users() {
 	const [filterOrgId, setFilterOrgId] = useState<string | null | undefined>(
 		undefined,
 	);
-	const [isRetryingRouteUser, setIsRetryingRouteUser] = useState(false);
-	const routeErrorRef = useRef<HTMLDivElement | null>(null);
+	const [profileUser, setProfileUser] = useState<User | undefined>();
 	const [sortColumn, setSortColumn] = useState<SortColumn>("name");
 	const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 	const [offset, setOffset] = useState(0);
@@ -268,27 +185,6 @@ export function Users() {
 	});
 	const users = usersQuery.data?.items ?? [];
 	const total = usersQuery.data?.total ?? 0;
-	const {
-		data: routeSelectedUser,
-		isLoading: routeUserLoading,
-		isFetching: routeUserFetching,
-		isError: routeUserError,
-		error: routeUserErrorObject,
-		refetch: refetchRouteUser,
-	} = useUser(userId);
-	const routeUserNotFound =
-		!!userId && !routeUserLoading && !routeUserError && !routeSelectedUser;
-	const routeUserRetrySurface =
-		!!userId &&
-		!routeSelectedUser &&
-		(routeUserError || isRetryingRouteUser);
-	const isRetryingUser = routeUserFetching || isRetryingRouteUser;
-
-	useEffect(() => {
-		if (routeUserRetrySurface) {
-			routeErrorRef.current?.focus();
-		}
-	}, [routeUserRetrySurface]);
 	const deleteMutation = useDeleteUser();
 	const updateMutation = useUpdateUser();
 	const resetMfaMutation = useResetUserMfa();
@@ -413,10 +309,8 @@ export function Users() {
 		selection.clear();
 	};
 
-	const handleEditUser = (user: User) => {
-		if (userId !== user.id) {
-			navigate(`/users/${user.id}`);
-		}
+	const handleOpenUser = (user: User) => {
+		navigate(`/users/${user.id}`);
 	};
 
 	const handleToggleActive = (user: User) => {
@@ -499,10 +393,6 @@ export function Users() {
 		}
 		setSecurityAction(null);
 	};
-	const handleEditClose = () => {
-		if (userId) navigate("/users", { replace: true });
-	};
-
 	const isSelf = (user: User) =>
 		!!(currentUser && user.id === currentUser.id);
 
@@ -521,6 +411,7 @@ export function Users() {
 			isActive={user.is_active}
 			isSelf={isSelf(user)}
 			{...rowAbilities(user)}
+			onEditProfile={() => setProfileUser(user)}
 			onResend={() =>
 				resendMutation.mutate(user.id, {
 					onSuccess: (res) => {
@@ -621,48 +512,6 @@ export function Users() {
 					</>
 				}
 			/>
-
-			{routeUserRetrySurface ? (
-				<UserRouteErrorState
-					title="User could not be loaded"
-					message={
-						routeUserErrorObject instanceof Error
-							? routeUserErrorObject.message
-							: "The selected user could not be loaded."
-					}
-					isRetrying={isRetryingUser}
-					containerRef={routeErrorRef}
-					onRetry={async () => {
-						setIsRetryingRouteUser(true);
-						try {
-							await refetchRouteUser();
-						} finally {
-							setIsRetryingRouteUser(false);
-						}
-					}}
-					onBack={() => navigate("/users", { replace: true })}
-				/>
-			) : userId && routeUserLoading && !routeSelectedUser ? (
-				<UserRouteLoadingState
-					onBack={() => navigate("/users", { replace: true })}
-				/>
-			) : routeUserNotFound ? (
-				<UserRouteErrorState
-					title="User not found"
-					message="The selected user may have been deleted or you no longer have access to it."
-					isRetrying={isRetryingUser}
-					containerRef={routeErrorRef}
-					onRetry={async () => {
-						setIsRetryingRouteUser(true);
-						try {
-							await refetchRouteUser();
-						} finally {
-							setIsRetryingRouteUser(false);
-						}
-					}}
-					onBack={() => navigate("/users", { replace: true })}
-				/>
-			) : null}
 
 			<ListToolbar>
 				<SearchBox
@@ -844,7 +693,7 @@ export function Users() {
 												<button
 													type="button"
 													onClick={() =>
-														handleEditUser(user)
+														handleOpenUser(user)
 													}
 													className="min-h-11 text-left font-medium [overflow-wrap:anywhere] hover:text-primary focus-visible:outline-2 focus-visible:outline-ring"
 												>
@@ -1098,8 +947,8 @@ export function Users() {
 									return (
 										<DataTableRow
 											key={user.id}
-											clickable
-											onClick={() => handleEditUser(user)}
+											href={`/users/${user.id}`}
+											onClick={() => handleOpenUser(user)}
 											className={"group/row"}
 										>
 											{showSelection && (
@@ -1341,9 +1190,9 @@ export function Users() {
 			/>
 
 			<EditUserDialog
-				user={routeSelectedUser}
-				open={Boolean(userId && routeSelectedUser)}
-				onOpenChange={(open) => !open && handleEditClose()}
+				user={profileUser}
+				open={profileUser !== undefined}
+				onOpenChange={(open) => !open && setProfileUser(undefined)}
 			/>
 
 			<RegistrationLinkDialog

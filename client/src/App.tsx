@@ -64,6 +64,11 @@ const SolutionDetail = lazyWithReload(() =>
 const Users = lazyWithReload(() =>
 	import("@/pages/Users").then((m) => ({ default: m.Users })),
 );
+const UserAccessPage = lazyWithReload(() =>
+	import("@/pages/UserAccessPage").then((m) => ({
+		default: m.UserAccessPage,
+	})),
+);
 const Organizations = lazyWithReload(() =>
 	import("@/pages/Organizations").then((m) => ({ default: m.Organizations })),
 );
@@ -489,7 +494,17 @@ const routeElements = (
 					<ProtectedRoute
 						requirePermission={{ permission: "users.read" }}
 					>
-						<Users />
+						<UserAccessPage />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="users/:userId/:tab"
+				element={
+					<ProtectedRoute
+						requirePermission={{ permission: "users.read" }}
+					>
+						<UserAccessPage />
 					</ProtectedRoute>
 				}
 			/>

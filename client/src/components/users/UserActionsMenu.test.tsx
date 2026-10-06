@@ -21,6 +21,7 @@ function makeProps(
 		onSignOut: vi.fn(),
 		onToggleActive: vi.fn(),
 		onDelete: vi.fn(),
+		onEditProfile: vi.fn(),
 		...overrides,
 	};
 }
@@ -156,6 +157,37 @@ describe("UserActionsMenu", () => {
 		).not.toBeInTheDocument();
 	});
 
+	it("opens the profile editor from Edit profile", async () => {
+		const user = userEvent.setup();
+		const onEditProfile = vi.fn();
+		render(<UserActionsMenu {...makeProps({ onEditProfile })} />);
+		await user.click(screen.getByRole("button", { name: /user actions/i }));
+		await user.click(
+			screen.getByRole("menuitem", { name: "Edit profile" }),
+		);
+		expect(onEditProfile).toHaveBeenCalledOnce();
+	});
+
+	it("lets people edit their own profile even without user permissions", async () => {
+		const user = userEvent.setup();
+		render(
+			<UserActionsMenu
+				{...makeProps({
+					isSelf: true,
+					canSupport: false,
+					canDelete: false,
+				})}
+			/>,
+		);
+		await user.click(screen.getByRole("button", { name: /user actions/i }));
+		expect(
+			screen.getByRole("menuitem", { name: "Edit profile" }),
+		).not.toHaveAttribute("data-disabled");
+		expect(
+			screen.queryByRole("menuitem", { name: "Delete" }),
+		).not.toBeInTheDocument();
+	});
+
 	it("renders nothing when the caller can change nothing", () => {
 		render(
 			<UserActionsMenu
@@ -179,6 +211,7 @@ describe("UserActionsMenu", () => {
 			screen.getByText(/only a platform admin can change it/i),
 		).toBeInTheDocument();
 		for (const name of [
+			/edit profile/i,
 			/resend invite/i,
 			/^reset mfa$/i,
 			/sign out of all devices/i,

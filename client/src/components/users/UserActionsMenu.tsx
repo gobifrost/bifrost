@@ -4,6 +4,7 @@ import {
 	LogOut,
 	Mail,
 	MoreVertical,
+	Pencil,
 	RefreshCw,
 	Power,
 	ShieldOff,
@@ -42,6 +43,8 @@ interface Props {
 	onSignOut: () => void;
 	onToggleActive: () => void;
 	onDelete: () => void;
+	/** Opens the profile editor; people can always edit their own name. */
+	onEditProfile: () => void;
 }
 
 export function UserActionsMenu({
@@ -60,12 +63,13 @@ export function UserActionsMenu({
 	onSignOut,
 	onToggleActive,
 	onDelete,
+	onEditProfile,
 }: Props) {
 	const showInviteActions = canSupport && status !== "active";
 	const hasActiveInvite = status === "pending" || status === "expired";
 	// What the caller's roles don't grant is hidden; what protection blocks
 	// shows disabled, with the reason.
-	if (!canSupport && !canDelete) return null;
+	if (!canSupport && !canDelete && !isSelf) return null;
 
 	return (
 		<DropdownMenu>
@@ -91,6 +95,17 @@ export function UserActionsMenu({
 						</DropdownMenuLabel>
 						<DropdownMenuSeparator />
 					</>
+				)}
+				<DropdownMenuItem
+					className="min-h-11 lg:min-h-9"
+					onClick={onEditProfile}
+					disabled={isProtected && !isSelf}
+				>
+					<Pencil className="h-4 w-4" />
+					Edit profile
+				</DropdownMenuItem>
+				{(showInviteActions || canSupport || canDelete) && (
+					<DropdownMenuSeparator />
 				)}
 				{showInviteActions && (
 					<>
