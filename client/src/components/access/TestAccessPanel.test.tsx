@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ApiError } from "@/lib/api-error";
@@ -289,6 +289,33 @@ describe("TestAccessPanel", () => {
 		expect(
 			screen.getAllByRole("option").map((option) => option.textContent),
 		).toEqual(["Fabrikam"]);
+	});
+
+	it("ignores an answer for selections that have since changed", async () => {
+		let answer: (trace: AccessTrace) => void = () => {};
+		check.mutateAsync.mockReturnValue(
+			new Promise<AccessTrace>((resolve) => {
+				answer = resolve;
+			}),
+		);
+		const user = userEvent.setup();
+		render(
+			<TestAccessPanel
+				subjectId="user-1"
+				defaultOrganizationId="org-1"
+			/>,
+		);
+		const operation = screen.getByRole("combobox", { name: "Operation" });
+
+		await user.type(operation, "agents.list");
+		await user.click(screen.getByRole("button", { name: "Test Access" }));
+		await user.type(operation, "x");
+		await act(async () => answer(trace));
+
+		expect(
+			screen.queryByRole("list", { name: "Access Trace" }),
+		).not.toBeInTheDocument();
+		expect(screen.queryByText("Would be allowed")).not.toBeInTheDocument();
 	});
 
 	it("explains a refused check", async () => {

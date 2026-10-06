@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { motion, useReducedMotion } from "framer-motion";
 import {
@@ -34,6 +34,7 @@ import {
 	SheetDescription,
 	SheetHeader,
 	SheetTitle,
+	SheetTrigger,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -312,18 +313,18 @@ function SectionHeading({
 
 /** "Test Access": what the access model would decide for this person, in a sheet. */
 function TestAccessSheet({ person }: { person: User }) {
-	const [open, setOpen] = useState(false);
 	return (
-		<Sheet open={open} onOpenChange={setOpen}>
-			<Button
-				type="button"
-				variant="outline"
-				className="min-h-11 sm:min-h-9"
-				onClick={() => setOpen(true)}
-			>
-				<FlaskConical aria-hidden="true" className="size-4" />
-				Test Access
-			</Button>
+		<Sheet>
+			<SheetTrigger asChild>
+				<Button
+					type="button"
+					variant="outline"
+					className="min-h-11 sm:min-h-9"
+				>
+					<FlaskConical aria-hidden="true" className="size-4" />
+					Test Access
+				</Button>
+			</SheetTrigger>
 			<SheetContent className="sm:max-w-xl">
 				<SheetHeader className="border-b border-border/70">
 					<SheetTitle>Test Access</SheetTitle>

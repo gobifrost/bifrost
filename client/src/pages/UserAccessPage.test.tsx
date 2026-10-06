@@ -398,6 +398,22 @@ describe("UserAccessPage", () => {
 		expect(sheet).toHaveTextContent("Test access for user-1 in org-1");
 	});
 
+	it("returns focus to Test Access when the sheet closes", async () => {
+		const { user } = renderPage();
+		const button = screen.getByRole("button", { name: "Test Access" });
+
+		await user.click(button);
+		await screen.findByRole("dialog", { name: "Test Access" });
+		await user.keyboard("{Escape}");
+
+		await waitFor(() =>
+			expect(
+				screen.queryByRole("dialog", { name: "Test Access" }),
+			).not.toBeInTheDocument(),
+		);
+		expect(button).toHaveFocus();
+	});
+
 	it("opens on the access map above the role assignments", () => {
 		renderPage();
 

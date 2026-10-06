@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { AlertCircle, Building2, Globe, Loader2, Workflow } from "lucide-react";
 
 import { AccessTraceStrip } from "@/components/access/AccessTraceStrip";
@@ -126,6 +126,9 @@ export function TestAccessPanel({
 	const [workflow, setWorkflow] = useState(defaultWorkflowId ?? NO_WORKFLOW);
 	const [result, setResult] = useState<{ trace: AccessTrace; run: number }>();
 	const [error, setError] = useState<string | null>(null);
+	// Numbers each check; changing a selection moves it on, so an answer to
+	// an earlier request is never shown under the new selections.
+	const requestRef = useRef(0);
 
 	// Organization names from the organizations list and the subject's reach.
 	const map = accessQuery.data;
@@ -187,6 +190,7 @@ export function TestAccessPanel({
 		<T,>(set: (value: T) => void) =>
 		(value: T) => {
 			set(value);
+			requestRef.current += 1;
 			setResult(undefined);
 			setError(null);
 		};
@@ -197,6 +201,7 @@ export function TestAccessPanel({
 		event.preventDefault();
 		if (!ready || check.isPending) return;
 		setError(null);
+		const request = ++requestRef.current;
 		try {
 			const trace = await check.mutateAsync({
 				params: { path: { user_id: subjectId } },
@@ -206,8 +211,10 @@ export function TestAccessPanel({
 					workflow_id: workflowId,
 				},
 			});
-			setResult((previous) => ({ trace, run: (previous?.run ?? 0) + 1 }));
+			if (request === requestRef.current)
+				setResult({ trace, run: request });
 		} catch (cause) {
+			if (request !== requestRef.current) return;
 			setResult(undefined);
 			setError(getErrorMessage(cause, "The access check could not run."));
 		}
