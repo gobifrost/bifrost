@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
 	offeredPresets,
+	placeKey,
 	placeLabel,
 	placesForPreset,
 	presetFor,
@@ -36,14 +37,22 @@ const platform: RolePlace = { kind: "platform", organization_id: null };
 
 describe("placeLabel", () => {
 	it("names one organization", () => {
-		expect(placeLabel("organization", "Contoso")).toBe("In Contoso");
+		expect(placeLabel("organization", "Contoso")).toBe("Contoso");
 	});
 
-	it("describes the broad boundaries in plain language", () => {
+	it("uses the access map's words for the broad places", () => {
 		expect(placeLabel("managed_organizations", "")).toBe(
-			"In all customer organizations",
+			"All customer organizations",
 		);
-		expect(placeLabel("platform", "")).toBe("Platform-wide");
+		expect(placeLabel("platform", "")).toBe("Global");
+	});
+});
+
+describe("placeKey", () => {
+	it("tells places apart by kind and organization", () => {
+		expect(placeKey(org("a"))).toBe("organization:a");
+		expect(placeKey(managed)).toBe("managed_organizations:");
+		expect(placeKey(org("a"))).not.toBe(placeKey(org("b")));
 	});
 });
 

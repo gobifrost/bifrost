@@ -22,6 +22,7 @@ const SUPPORT_ROLE = "custom-support";
 const state = vi.hoisted(() => ({
 	summary: undefined as AuthorizationSummary | undefined,
 	assignments: undefined as Assignments | undefined,
+	authLoading: false,
 	mutateAsync: vi.fn(),
 }));
 
@@ -51,6 +52,7 @@ vi.mock("@/hooks/useOrganizations", () => ({
 vi.mock("@/services/authorization", () => ({
 	useAuthorization: () => ({
 		authorization: state.summary,
+		isLoading: state.authLoading,
 		isPlatformAdmin: state.summary?.is_platform_admin ?? false,
 		canAt: (permission: string, target: AuthorizationTarget) =>
 			canAt(state.summary, permission, target),
@@ -252,6 +254,7 @@ function render(user = makeUser(), isSelf = false) {
 beforeEach(() => {
 	state.summary = summary(true);
 	state.assignments = adminView();
+	state.authLoading = false;
 	state.mutateAsync.mockReset();
 	state.mutateAsync.mockImplementation(async () => state.assignments);
 });
@@ -656,6 +659,45 @@ describe("UserRoleAssignmentsPanel", () => {
 		).toBeDisabled();
 	});
 
+	it("waits for the caller's authorization before showing roles", () => {
+		state.authLoading = true;
+		state.summary = undefined;
+		render();
+
+		expect(
+			screen.getByRole("status", { name: "Loading roles" }),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByText("You can't view this person's roles."),
+		).not.toBeInTheDocument();
+	});
+
+	it("lists what the base role grants when its permissions are known", () => {
+		render();
+
+		expect(
+			within(screen.getByRole("list", { name: "What User grants" }))
+				.getAllByRole("listitem")
+				.map((item) => item.firstElementChild!.firstChild!.textContent),
+		).toEqual(["agents", "agentruns", "forms"]);
+	});
+
+	it("omits the base role's grants when the viewer isn't told them", () => {
+		state.summary = operatorCaller();
+		state.assignments = {
+			base_role: { id: USER_ROLE, name: "User", is_builtin: true },
+			additional: [],
+			is_protected: false,
+			assignable_roles: [supportRole],
+		};
+		render(makeUser({ organization_id: "org-a" }));
+
+		expect(screen.getByText("User")).toBeInTheDocument();
+		expect(
+			screen.queryByRole("list", { name: "What User grants" }),
+		).not.toBeInTheDocument();
+	});
+
 	describe("placement presets", () => {
 		const orgViewerRole = {
 			id: "org-viewer",
@@ -878,20 +920,21 @@ describe("UserRoleAssignmentsPanel", () => {
 			).toEqual(["Contoso"]);
 		});
 
-		it("warns when a platform-wide permission is placed on selected organizations", async () => {
+		it("warns, on tap, when a platform-wide permission is placed on selected organizations", async () => {
 			state.assignments = holding(orgViewerRole, [contoso]);
 			const { user } = render(makeUser({ organization_id: "org-a" }));
 
-			await user.hover(
+			await user.click(
 				screen.getByRole("button", {
 					name: "Some permissions need Global",
 				}),
 			);
-			const tooltip = await screen.findByRole("tooltip");
-			expect(tooltip).toHaveTextContent(
+			const details = await screen.findByRole("dialog");
+			expect(details).toHaveTextContent(
 				"Organizations is platform-wide; it applies only through a Global placement.",
 			);
-			expect(tooltip).not.toHaveTextContent("Users");
+			expect(details).not.toHaveTextContent("Users");
+			await user.keyboard("{Escape}");
 
 			await user.click(
 				screen.getByRole("radio", { name: "All organizations" }),
@@ -901,6 +944,20 @@ describe("UserRoleAssignmentsPanel", () => {
 					name: "Some permissions need Global",
 				}),
 			).not.toBeInTheDocument();
+		});
+
+		it("opens the platform-wide warning from the keyboard", async () => {
+			state.assignments = holding(orgViewerRole, [contoso]);
+			const { user } = render(makeUser({ organization_id: "org-a" }));
+
+			screen
+				.getByRole("button", { name: "Some permissions need Global" })
+				.focus();
+			await user.keyboard("{Enter}");
+
+			expect(await screen.findByRole("dialog")).toHaveTextContent(
+				"Organizations is platform-wide; it applies only through a Global placement.",
+			);
 		});
 
 		it("lists what each role grants", async () => {

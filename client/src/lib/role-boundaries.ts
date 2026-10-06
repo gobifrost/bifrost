@@ -21,18 +21,18 @@ export interface PresetRole {
  */
 export type PlacementPreset = "selected" | "customers" | "all";
 
-/** "In Contoso", "In all customer organizations", "Platform-wide". */
+/** "Contoso", "All customer organizations", "Global": the access map's words. */
 export function placeLabel(
 	kind: BoundaryKind,
 	organizationName: string,
 ): string {
 	switch (kind) {
 		case "organization":
-			return `In ${organizationName}`;
+			return organizationName;
 		case "managed_organizations":
-			return "In all customer organizations";
+			return "All customer organizations";
 		case "platform":
-			return "Platform-wide";
+			return "Global";
 	}
 }
 
@@ -42,7 +42,8 @@ const MANAGED: RolePlace = {
 };
 const GLOBAL: RolePlace = { kind: "platform", organization_id: null };
 
-function placeKey(place: RolePlace): string {
+/** Identity of a place, for sets and React keys. */
+export function placeKey(place: RolePlace): string {
 	return `${place.kind}:${place.organization_id ?? ""}`;
 }
 

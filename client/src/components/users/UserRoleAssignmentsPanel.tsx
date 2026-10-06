@@ -35,11 +35,6 @@ import {
 	PopoverTrigger,
 } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-	Tooltip,
-	TooltipContent,
-	TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import {
 	useReplaceUserRoleAssignments,
@@ -51,6 +46,8 @@ import { PLATFORM_ADMIN_ROLE_ID } from "@/lib/builtin-roles";
 import { motionSeconds } from "@/lib/motion";
 import {
 	offeredPresets,
+	placeKey,
+	placeLabel,
 	placesForPreset,
 	presetFor,
 	type PlacementPreset,
@@ -143,10 +140,6 @@ function describePermissions(permissions: string[]): string {
 		: "none";
 }
 
-function placeKey(place: RolePlace): string {
-	return `${place.kind}:${place.organization_id ?? ""}`;
-}
-
 function draftFrom(data: Assignments): Draft {
 	return {
 		baseRoleId: data.base_role.id,
@@ -172,26 +165,18 @@ function draftSignature(draft: Draft): string {
 	});
 }
 
-/** A role's place in the access map's words: "Contoso", "Global". */
+/** A role's place as the access map shows it, labelled by `placeLabel`. */
 function mapPlace(place: RolePlace, orgName: (id: string) => string): MapPlace {
-	switch (place.kind) {
-		case "organization": {
-			const name = orgName(place.organization_id ?? "");
-			return {
-				kind: "organization",
-				organization_id: place.organization_id,
-				organization_name: name,
-				label: name,
-			};
-		}
-		case "managed_organizations":
-			return {
-				kind: "managed_organizations",
-				label: "All customer organizations",
-			};
-		case "platform":
-			return { kind: "platform", label: "Global" };
-	}
+	const organizationName =
+		place.kind === "organization"
+			? orgName(place.organization_id ?? "")
+			: null;
+	return {
+		kind: place.kind,
+		organization_id: place.organization_id,
+		organization_name: organizationName,
+		label: placeLabel(place.kind, organizationName ?? ""),
+	};
 }
 
 /**
@@ -387,27 +372,35 @@ function PresetControl({
 	);
 }
 
-/** Platform-wide permissions do nothing at selected organizations; say so. */
+/**
+ * Platform-wide permissions do nothing at selected organizations; say so.
+ * Opens on click, tap, Enter or Space, so touch screens can read it too.
+ */
 function PlatformWideWarning({
 	entries,
 }: {
 	entries: PermissionCatalogEntry[];
 }) {
 	return (
-		<Tooltip>
-			<TooltipTrigger asChild>
+		<Popover>
+			<PopoverTrigger asChild>
 				<Badge asChild variant="warning">
 					<button
 						type="button"
-						className="h-auto min-h-8 cursor-default gap-1.5 whitespace-normal py-1"
+						className="h-auto min-h-8 gap-1.5 whitespace-normal py-1 focus-visible:ring-2 focus-visible:ring-ring"
 					>
 						<AlertTriangle aria-hidden="true" />
 						Some permissions need Global
 					</button>
 				</Badge>
-			</TooltipTrigger>
-			<TooltipContent className="max-w-xs">
-				<ul className="space-y-0.5">
+			</PopoverTrigger>
+			<PopoverContent
+				align="end"
+				collisionPadding={16}
+				aria-label="Platform-wide permissions"
+				className="w-72 max-w-[calc(100vw-2rem)] text-sm"
+			>
+				<ul className="space-y-1.5">
 					{entries.map((entry) => (
 						<li key={entry.domain}>
 							{entry.title} is platform-wide; it applies only
@@ -415,8 +408,8 @@ function PlatformWideWarning({
 						</li>
 					))}
 				</ul>
-			</TooltipContent>
-		</Tooltip>
+			</PopoverContent>
+		</Popover>
 	);
 }
 
@@ -543,6 +536,243 @@ function AddRolePicker({
 	);
 }
 
+interface AdditionalRoleCardProps {
+	role: DraftRole;
+	/** Where the role applies in saved state; undefined for a newly added role. */
+	savedPlaces: RolePlace[] | undefined;
+	info: RoleInfo | undefined;
+	/** The role as the caller may grant it; undefined when they can't. */
+	grantable: AssignableRole | undefined;
+	permissions: string[];
+	catalog: Map<string, PermissionCatalogEntry>;
+	canEdit: boolean;
+	providerOrgId: string;
+	userOrganizationId: string | null | undefined;
+	orgName: (id: string) => string;
+	organizationOptions: (
+		role: AssignableRole,
+		taken: RolePlace[],
+	) => { id: string; label: string }[];
+	homeIfAllowed: (role: AssignableRole) => string[];
+	onRemove: () => void;
+	onPlacesChange: (places: RolePlace[]) => void;
+}
+
+function organizationIds(places: RolePlace[] = []): string[] {
+	return places.flatMap((place) =>
+		place.kind === "organization" && place.organization_id
+			? [place.organization_id]
+			: [],
+	);
+}
+
+/** One additional role: what it grants, and where it applies. */
+function AdditionalRoleCard({
+	role,
+	savedPlaces,
+	info,
+	grantable,
+	permissions,
+	catalog,
+	canEdit,
+	providerOrgId,
+	userOrganizationId,
+	orgName,
+	organizationOptions,
+	homeIfAllowed,
+	onRemove,
+	onPlacesChange,
+}: AdditionalRoleCardProps) {
+	const name = info?.name ?? "Unknown role";
+	// Listed but not grantable: the user holds a role they could no longer be
+	// given (e.g. Platform Operator outside the provider org). It can only be
+	// removed.
+	const removable = canEdit && !!grantable;
+	const editable = removable && !!grantable?.can_be_additional;
+	// The server fixes where some roles apply; nobody picks.
+	const fixedPlaces = !!grantable?.fixed_boundaries?.length;
+	const presets = grantable ? offeredPresets(grantable) : [];
+	const preset = grantable
+		? presetFor(role.places, grantable, providerOrgId)
+		: "custom";
+	const savedPreset =
+		savedPlaces && grantable
+			? presetFor(savedPlaces, grantable, providerOrgId)
+			: undefined;
+	const showPresets =
+		editable &&
+		presets.length > 0 &&
+		(presets.length > 1 || preset === "custom");
+	const picksOrganizations = editable && preset === "selected";
+	const platformWide = platformWideAtSelected(
+		role.places,
+		permissions,
+		catalog,
+	);
+
+	/**
+	 * Selected organizations keeps the organizations already chosen, else the
+	 * saved ones, else the person's home organization.
+	 */
+	const choosePreset = (grantable: AssignableRole, next: PlacementPreset) => {
+		const current = organizationIds(role.places);
+		const before = organizationIds(savedPlaces);
+		const selected =
+			current.length > 0
+				? current
+				: before.length > 0
+					? before
+					: homeIfAllowed(grantable);
+		onPlacesChange(
+			placesForPreset(next, grantable, selected, providerOrgId),
+		);
+	};
+
+	return (
+		<Reveal
+			animate={!savedPlaces}
+			className="overflow-hidden rounded-[var(--bf-radius-surface)] border border-border/60 bg-muted/30"
+		>
+			<div className="flex items-start gap-2 p-3 sm:p-4">
+				<div className="min-w-0 flex-1 space-y-2">
+					<div className="space-y-1">
+						<p className="flex flex-wrap items-center gap-2 font-medium [overflow-wrap:anywhere]">
+							{name}
+							{info?.is_builtin && (
+								<Badge variant="outline">Built-in</Badge>
+							)}
+						</p>
+						{info?.description && (
+							<p className="text-xs leading-5 text-muted-foreground">
+								{info.description}
+							</p>
+						)}
+					</div>
+					<GrantChips
+						roleName={name}
+						permissions={permissions}
+						catalog={catalog}
+					/>
+				</div>
+				{removable && (
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon"
+						className="h-11 w-11 shrink-0 sm:h-8 sm:w-8"
+						aria-label={`Remove ${name}`}
+						onClick={onRemove}
+					>
+						<X className="h-4 w-4" />
+					</Button>
+				)}
+			</div>
+			<div className="space-y-3 border-t border-border/60 px-3 py-3 sm:px-4">
+				{fixedPlaces ? (
+					<p className="text-xs text-muted-foreground">
+						Applies everywhere.
+					</p>
+				) : (
+					<>
+						<div className="flex flex-wrap items-center justify-between gap-2">
+							<span className="text-xs font-medium text-muted-foreground">
+								Where it applies
+							</span>
+							{platformWide.length > 0 && (
+								<PlatformWideWarning entries={platformWide} />
+							)}
+						</div>
+						{showPresets && grantable && (
+							<PresetControl
+								roleName={name}
+								presets={presets}
+								value={preset}
+								onChange={(next) =>
+									choosePreset(grantable, next)
+								}
+							/>
+						)}
+						<Reveal
+							key={preset}
+							animate={preset !== savedPreset}
+							className="flex flex-wrap items-center gap-1.5"
+						>
+							<ul
+								className="contents"
+								aria-label={`Where ${name} applies`}
+							>
+								{role.places.map((place) => {
+									const shown = mapPlace(place, orgName);
+									const removePlace =
+										picksOrganizations &&
+										role.places.length > 1;
+									return (
+										<li key={placeKey(place)}>
+											<PlaceChip
+												place={shown}
+												removeLabel={`Remove ${shown.label} from ${name}`}
+												onRemove={
+													removePlace
+														? () =>
+																onPlacesChange(
+																	role.places.filter(
+																		(p) =>
+																			placeKey(
+																				p,
+																			) !==
+																			placeKey(
+																				place,
+																			),
+																	),
+																)
+														: undefined
+												}
+											/>
+										</li>
+									);
+								})}
+							</ul>
+							{picksOrganizations && grantable && (
+								<OrganizationPicker
+									roleName={name}
+									options={organizationOptions(
+										grantable,
+										role.places,
+									)}
+									onAdd={(id) =>
+										onPlacesChange([
+											...role.places,
+											{
+												kind: "organization",
+												organization_id: id,
+											},
+										])
+									}
+								/>
+							)}
+						</Reveal>
+					</>
+				)}
+				{role.places.length === 0 && (
+					<p role="alert" className="text-xs text-destructive">
+						Choose where {name} applies.
+					</p>
+				)}
+				{canEdit && !editable && (
+					<p className="text-xs text-muted-foreground">
+						{role.roleId === PLATFORM_ADMIN_ROLE_ID &&
+						!userOrganizationId
+							? "Move this person into an organization before removing Platform Admin."
+							: removable
+								? "This person can't be given this role any more. You can remove it, but not change where it applies."
+								: "You can't change this role. Saving keeps it as it is."}
+					</p>
+				)}
+			</div>
+		</Reveal>
+	);
+}
+
 /**
  * A user's base role and additional roles, with where each additional role
  * applies. Saving replaces both in one request; the server decides what the
@@ -580,7 +810,8 @@ export function UserRoleAssignmentsPanel({
 		if (pristine) setDraft(draftFrom(data));
 	}
 
-	const providerOrgId = authorization.authorization?.provider_organization_id;
+	const summary = authorization.authorization;
+	const providerOrgId = summary?.provider_organization_id;
 	const blockedByProtection =
 		!!data?.is_protected && !authorization.isPlatformAdmin;
 	const canEdit =
@@ -693,7 +924,22 @@ export function UserRoleAssignmentsPanel({
 			: [];
 	};
 
-	if (!canRead) {
+	const loading = (
+		<div
+			role="status"
+			aria-label="Loading roles"
+			className="space-y-3 px-4 py-4 sm:px-6"
+		>
+			<Skeleton className="h-4 w-32" />
+			<Skeleton className="h-11 w-full" />
+			<Skeleton className="h-24 w-full" />
+		</div>
+	);
+
+	// Presets and the organization picker depend on the caller's summary.
+	if (authorization.isLoading) return loading;
+
+	if (!canRead || !summary) {
 		return (
 			<div className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
 				You can't view this person's roles.
@@ -726,19 +972,7 @@ export function UserRoleAssignmentsPanel({
 		);
 	}
 
-	if (!data || !draft) {
-		return (
-			<div
-				role="status"
-				aria-label="Loading roles"
-				className="space-y-3 px-4 py-4 sm:px-6"
-			>
-				<Skeleton className="h-4 w-32" />
-				<Skeleton className="h-11 w-full" />
-				<Skeleton className="h-24 w-full" />
-			</div>
-		);
-	}
+	if (!data || !draft) return loading;
 
 	const saved = draftFrom(data);
 	const dirty = draftSignature(draft) !== draftSignature(saved);
@@ -794,39 +1028,6 @@ export function UserRoleAssignmentsPanel({
 				r.roleId === roleId ? { ...r, places } : r,
 			),
 		});
-
-	const savedPlaces = (roleId: string) =>
-		saved.additional.find((r) => r.roleId === roleId)?.places;
-
-	/**
-	 * Selected organizations keeps the organizations already chosen, else the
-	 * saved ones, else the person's home organization.
-	 */
-	const choosePreset = (
-		role: DraftRole,
-		grantable: AssignableRole,
-		provider: string,
-		preset: PlacementPreset,
-	) => {
-		const orgIds = (places: RolePlace[] = []) =>
-			places.flatMap((place) =>
-				place.kind === "organization" && place.organization_id
-					? [place.organization_id]
-					: [],
-			);
-		const current = orgIds(role.places);
-		const before = orgIds(savedPlaces(role.roleId));
-		const selected =
-			current.length > 0
-				? current
-				: before.length > 0
-					? before
-					: homeIfAllowed(grantable);
-		updateRole(
-			role.roleId,
-			placesForPreset(preset, grantable, selected, provider),
-		);
-	};
 
 	const handleSave = async () => {
 		if (!dirty || missingPlace || replace.isPending) return;
@@ -970,271 +1171,51 @@ export function UserRoleAssignmentsPanel({
 						</p>
 					) : (
 						<ul className="space-y-3" aria-label="Additional roles">
-							{draft.additional.map((role) => {
-								const info = roleInfo.get(role.roleId);
-								const name = info?.name ?? "Unknown role";
-								const grantable = assignable.get(role.roleId);
-								// Listed but not grantable: the user holds a role
-								// they could no longer be given (e.g. Platform
-								// Operator outside the provider org). It can only
-								// be removed.
-								const removable = canEdit && !!grantable;
-								const editable =
-									removable && !!grantable?.can_be_additional;
-								// The server fixes where some roles apply; nobody picks.
-								const fixedPlaces =
-									!!grantable?.fixed_boundaries?.length;
-								const permissions =
-									rolePermissions.get(role.roleId) ?? [];
-								const presets =
-									grantable && providerOrgId
-										? offeredPresets(grantable)
-										: [];
-								const preset =
-									grantable && providerOrgId
-										? presetFor(
-												role.places,
-												grantable,
-												providerOrgId,
-											)
-										: "custom";
-								const before = savedPlaces(role.roleId);
-								const savedPreset =
-									before && grantable && providerOrgId
-										? presetFor(
-												before,
-												grantable,
-												providerOrgId,
-											)
-										: undefined;
-								const showPresets =
-									editable &&
-									presets.length > 0 &&
-									(presets.length > 1 || preset === "custom");
-								const picksOrganizations =
-									editable && preset === "selected";
-								const platformWide = platformWideAtSelected(
-									role.places,
-									permissions,
-									catalog,
-								);
-								return (
-									<li key={role.roleId}>
-										<Reveal
-											animate={!before}
-											className="overflow-hidden rounded-[var(--bf-radius-surface)] border border-border/60 bg-muted/30"
-										>
-											<div className="flex items-start gap-2 p-3 sm:p-4">
-												<div className="min-w-0 flex-1 space-y-2">
-													<div className="space-y-1">
-														<p className="flex flex-wrap items-center gap-2 font-medium [overflow-wrap:anywhere]">
-															{name}
-															{info?.is_builtin && (
-																<Badge variant="outline">
-																	Built-in
-																</Badge>
-															)}
-														</p>
-														{info?.description && (
-															<p className="text-xs leading-5 text-muted-foreground">
-																{
-																	info.description
-																}
-															</p>
-														)}
-													</div>
-													<GrantChips
-														roleName={name}
-														permissions={
-															permissions
-														}
-														catalog={catalog}
-													/>
-												</div>
-												{removable && (
-													<Button
-														type="button"
-														variant="ghost"
-														size="icon"
-														className="h-11 w-11 shrink-0 sm:h-8 sm:w-8"
-														aria-label={`Remove ${name}`}
-														onClick={() =>
-															setDraft({
-																...draft,
-																additional:
-																	draft.additional.filter(
-																		(r) =>
-																			r.roleId !==
-																			role.roleId,
-																	),
-															})
-														}
-													>
-														<X className="h-4 w-4" />
-													</Button>
-												)}
-											</div>
-											<div className="space-y-3 border-t border-border/60 px-3 py-3 sm:px-4">
-												{fixedPlaces ? (
-													<p className="text-xs text-muted-foreground">
-														Applies everywhere.
-													</p>
-												) : (
-													<>
-														<div className="flex flex-wrap items-center justify-between gap-2">
-															<span className="text-xs font-medium text-muted-foreground">
-																Where it applies
-															</span>
-															{platformWide.length >
-																0 && (
-																<PlatformWideWarning
-																	entries={
-																		platformWide
-																	}
-																/>
-															)}
-														</div>
-														{showPresets &&
-															grantable &&
-															providerOrgId && (
-																<PresetControl
-																	roleName={
-																		name
-																	}
-																	presets={
-																		presets
-																	}
-																	value={
-																		preset
-																	}
-																	onChange={(
-																		next,
-																	) =>
-																		choosePreset(
-																			role,
-																			grantable,
-																			providerOrgId,
-																			next,
-																		)
-																	}
-																/>
-															)}
-														<Reveal
-															key={preset}
-															animate={
-																preset !==
-																savedPreset
-															}
-															className="flex flex-wrap items-center gap-1.5"
-														>
-															<ul
-																className="contents"
-																aria-label={`Where ${name} applies`}
-															>
-																{role.places.map(
-																	(place) => {
-																		const shown =
-																			mapPlace(
-																				place,
-																				orgName,
-																			);
-																		const removePlace =
-																			picksOrganizations &&
-																			role
-																				.places
-																				.length >
-																				1;
-																		return (
-																			<li
-																				key={placeKey(
-																					place,
-																				)}
-																			>
-																				<PlaceChip
-																					place={
-																						shown
-																					}
-																					removeLabel={`Remove ${shown.label} from ${name}`}
-																					onRemove={
-																						removePlace
-																							? () =>
-																									updateRole(
-																										role.roleId,
-																										role.places.filter(
-																											(
-																												p,
-																											) =>
-																												placeKey(
-																													p,
-																												) !==
-																												placeKey(
-																													place,
-																												),
-																										),
-																									)
-																							: undefined
-																					}
-																				/>
-																			</li>
-																		);
-																	},
-																)}
-															</ul>
-															{picksOrganizations &&
-																grantable && (
-																	<OrganizationPicker
-																		roleName={
-																			name
-																		}
-																		options={organizationOptions(
-																			grantable,
-																			role.places,
-																		)}
-																		onAdd={(
-																			id,
-																		) =>
-																			updateRole(
-																				role.roleId,
-																				[
-																					...role.places,
-																					{
-																						kind: "organization",
-																						organization_id:
-																							id,
-																					},
-																				],
-																			)
-																		}
-																	/>
-																)}
-														</Reveal>
-													</>
-												)}
-												{role.places.length === 0 && (
-													<p
-														role="alert"
-														className="text-xs text-destructive"
-													>
-														Choose where {name}{" "}
-														applies.
-													</p>
-												)}
-												{canEdit && !editable && (
-													<p className="text-xs text-muted-foreground">
-														{role.roleId ===
-															PLATFORM_ADMIN_ROLE_ID &&
-														!user.organization_id
-															? "Move this person into an organization before removing Platform Admin."
-															: removable
-																? "This person can't be given this role any more. You can remove it, but not change where it applies."
-																: "You can't change this role. Saving keeps it as it is."}
-													</p>
-												)}
-											</div>
-										</Reveal>
-									</li>
-								);
-							})}
+							{draft.additional.map((role) => (
+								<li key={role.roleId}>
+									<AdditionalRoleCard
+										role={role}
+										savedPlaces={
+											saved.additional.find(
+												(r) => r.roleId === role.roleId,
+											)?.places
+										}
+										info={roleInfo.get(role.roleId)}
+										grantable={assignable.get(role.roleId)}
+										permissions={
+											rolePermissions.get(role.roleId) ??
+											[]
+										}
+										catalog={catalog}
+										canEdit={canEdit}
+										providerOrgId={
+											summary.provider_organization_id
+										}
+										userOrganizationId={
+											user.organization_id
+										}
+										orgName={orgName}
+										organizationOptions={
+											organizationOptions
+										}
+										homeIfAllowed={homeIfAllowed}
+										onRemove={() =>
+											setDraft({
+												...draft,
+												additional:
+													draft.additional.filter(
+														(r) =>
+															r.roleId !==
+															role.roleId,
+													),
+											})
+										}
+										onPlacesChange={(places) =>
+											updateRole(role.roleId, places)
+										}
+									/>
+								</li>
+							))}
 						</ul>
 					)}
 					{adminHint && (
