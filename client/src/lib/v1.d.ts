@@ -7553,6 +7553,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/identities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List identities
+         * @description The identities in the organizations the caller may read users in, with their roles and the number of workflows that run as each. The global identity comes first.
+         */
+        get: operations["list_identities_api_identities_get"];
+        put?: never;
+        /**
+         * Create a custom identity
+         * @description A custom identity with the User base role, in an organization or (organization_id null) Global.
+         */
+        post: operations["create_identity_api_identities_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/identities/{identity_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a custom identity
+         * @description Only a custom identity no workflow runs as can be deleted; the 409 names the workflows.
+         */
+        delete: operations["delete_identity_api_identities__identity_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename an identity
+         * @description Rename any identity, default or custom.
+         */
+        patch: operations["rename_identity_api_identities__identity_id__patch"];
+        trace?: never;
+    };
     "/api/admin/roi/settings": {
         parameters: {
             query?: never;
@@ -19776,6 +19824,79 @@ export interface components {
             /** Collections */
             collections: components["schemas"]["HomeCollectionPublic"][];
         };
+        /** IdentityBaseRole */
+        IdentityBaseRole: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /**
+         * IdentityCreate
+         * @description A new custom identity (base role User, no additional roles).
+         */
+        IdentityCreate: {
+            /** Name */
+            name: string;
+            /**
+             * Organization Id
+             * @description The identity's organization; null for a Global identity.
+             */
+            organization_id: string | null;
+        };
+        /** IdentityPublic */
+        IdentityPublic: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Identity Kind
+             * @enum {string}
+             */
+            identity_kind: "org_default" | "global_default" | "custom";
+            /**
+             * Organization Id
+             * @description Null for Global identities.
+             */
+            organization_id: string | null;
+            /** Organization Name */
+            organization_name: string | null;
+            base_role: components["schemas"]["IdentityBaseRole"];
+            /** Additional Roles */
+            additional_roles: components["schemas"]["IdentityRole"][];
+            /**
+             * Workflows Using
+             * @description Workflows that run unattended as this identity. A default identity also runs the workflows of its organization (Global: of no organization) that name no identity.
+             */
+            workflows_using: number;
+        };
+        /**
+         * IdentityRole
+         * @description An additional role the identity holds, and where it applies.
+         */
+        IdentityRole: {
+            /**
+             * Role Id
+             * Format: uuid
+             */
+            role_id: string;
+            /** Name */
+            name: string;
+            /** Boundaries */
+            boundaries: components["schemas"]["RoleBoundaryPublic"][];
+        };
+        /** IdentityUpdate */
+        IdentityUpdate: {
+            /** Name */
+            name: string;
+        };
         /**
          * ImageArtifactSpec
          * @description Prompt for a provider-generated image saved as a Chat artifact.
@@ -28670,6 +28791,11 @@ export interface components {
             /** Updated At */
             updated_at: string | null;
             /**
+             * Identity Kind
+             * @description org_default, global_default or custom for an identity; null for a person.
+             */
+            identity_kind?: string | null;
+            /**
              * Invite Status
              * @default active
              */
@@ -32052,6 +32178,8 @@ export interface operations {
                 limit?: number | null;
                 /** @description Rows to skip when limit is set */
                 offset?: number;
+                /** @description 'only' lists identities instead of people; omit for people */
+                identities?: "only" | null;
             };
             header?: never;
             path?: never;
@@ -43756,6 +43884,135 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunRetentionPublic"];
+                };
+            };
+        };
+    };
+    list_identities_api_identities_get: {
+        parameters: {
+            query?: {
+                /** @description Only this organization's identities */
+                organization_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityPublic"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_identity_api_identities_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdentityCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_identity_api_identities__identity_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                identity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_identity_api_identities__identity_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                identity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdentityUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

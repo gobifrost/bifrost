@@ -52,6 +52,7 @@ from src.models.contracts.role_assignments import (
     UserRoleAssignmentsResponse,
     UserRoleAssignmentsUpdate,
 )
+from src.models.enums import IdentityKind
 from src.models.orm.organizations import Organization
 from src.models.orm.users import Role, RolePermission, User, UserRole, UserRoleBoundary
 from src.services.authorization.context import (
@@ -98,6 +99,7 @@ ADMIN_HOLDER_MESSAGE = (
 ADMIN_REMOVAL_MESSAGE = (
     "Move the user into an organization before removing the Platform Admin role"
 )
+DEFAULT_IDENTITY_BASE_ROLE_MESSAGE = "A default identity's base role is fixed"
 
 
 class RoleAssignmentError(Exception):
@@ -535,6 +537,8 @@ async def replace_role_assignments(
     base_changed = request.base_role_id != user.base_role_id
     if base_changed:
         _check_base_change(caller, target, roles[user.base_role_id], roles[request.base_role_id])
+        if user.identity_kind in (IdentityKind.ORG_DEFAULT, IdentityKind.GLOBAL_DEFAULT):
+            raise RoleAssignmentError(409, DEFAULT_IDENTITY_BASE_ROLE_MESSAGE)
     if request.base_role_id in requested:
         raise RoleAssignmentError(422, "The base role can't also be an additional role")
 

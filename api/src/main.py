@@ -66,6 +66,7 @@ from src.routers import (
     decorator_properties_router,
     maintenance_router,
     run_retention_router,
+    identities_router,
     roi_settings_router,
     roi_reports_router,
     usage_reports_router,
@@ -437,6 +438,7 @@ def create_app() -> FastAPI:
     app.include_router(decorator_properties_router)
     app.include_router(maintenance_router)
     app.include_router(run_retention_router)
+    app.include_router(identities_router)
     app.include_router(roi_settings_router)
     app.include_router(roi_reports_router)
     app.include_router(usage_reports_router)

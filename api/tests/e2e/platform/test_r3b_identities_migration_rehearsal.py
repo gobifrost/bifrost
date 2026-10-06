@@ -111,6 +111,30 @@ async def _rerun_data_step(database_url: str) -> None:
     await _run_in_database(database_url, rerun)
 
 
+async def _use_custom_global_identity(database_url: str, workflow_id: str) -> None:
+    """A custom identity with no organization, which a workflow runs as: what head allows and the downgrade removes."""
+
+    async def use(connection: AsyncConnection) -> None:
+        await connection.execute(
+            sa.text(
+                "INSERT INTO users (id, email, name, is_active, is_superuser, is_verified, is_registered, "
+                "is_system, is_external, organization_id, base_role_id, identity_kind) "
+                "VALUES (gen_random_uuid(), :email, 'Custom Global', true, false, true, true, false, false, "
+                "NULL, CAST(:user_role AS uuid), 'custom')"
+            ),
+            {"email": f"identity-custom@{DOMAIN}", "user_role": str(USER_ROLE_ID)},
+        )
+        await connection.execute(
+            sa.text(
+                "UPDATE workflows SET run_identity_id = (SELECT id FROM users WHERE name = 'Custom Global') "
+                "WHERE id = CAST(:workflow AS uuid)"
+            ),
+            {"workflow": workflow_id},
+        )
+
+    await _run_in_database(database_url, use)
+
+
 async def _state(database_url: str) -> dict:
     async def read(connection: AsyncConnection) -> dict:
         constraint = (
@@ -254,11 +278,17 @@ def test_identities_are_created_and_unattended_global_workflows_point_at_the_pro
             ids["a_sched"]: None,
         }
 
+        # Head widens only the constraint: custom identities may have no organization.
         _upgrade(database_url, "head")
-        assert asyncio.run(_state(database_url)) == after
+        at_head = asyncio.run(_state(database_url))
+        assert at_head["constraint"] == (
+            "CHECK (((organization_id IS NOT NULL) OR (is_superuser = true) OR (identity_kind IS NOT NULL)))"
+        )
+        assert {**at_head, "constraint": after["constraint"]} == after
         asyncio.run(_rerun_data_step(database_url))
-        assert asyncio.run(_state(database_url)) == after
+        assert asyncio.run(_state(database_url)) == at_head
 
+        asyncio.run(_use_custom_global_identity(database_url, ids["g_plain"]))
         _downgrade(database_url, PREVIOUS_REVISION)
         assert asyncio.run(_state(database_url)) == before
     finally:

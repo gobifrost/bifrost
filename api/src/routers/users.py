@@ -92,6 +92,9 @@ async def list_users(
         description="Maximum rows to return; omit for the legacy unbounded response",
     ),
     offset: int = Query(0, ge=0, description="Rows to skip when limit is set"),
+    identities: Literal["only"] | None = Query(
+        None, description="'only' lists identities instead of people; omit for people"
+    ),
 ) -> list[UserPublic]:
     """List the users the caller may read (users.read), optionally pinned
     to one organization or to Global by ``scope``.
@@ -112,6 +115,7 @@ async def list_users(
             sort_direction=sort_direction,
             limit=limit,
             offset=offset,
+            identities=identities,
         )
     except UserServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None

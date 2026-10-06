@@ -9970,7 +9970,7 @@
     "cli": 167,
     "manifest": 16,
     "mcp": 94,
-    "rest": 669,
+    "rest": 673,
     "sdk": 21
   },
   "schema_version": 1,
@@ -12436,6 +12436,34 @@
         "method": "PUT",
         "operation_id": "",
         "path": "/api/hooks/{source_id}",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/identities",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/identities",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "DELETE",
+        "operation_id": "",
+        "path": "/api/identities/{identity_id}",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "PATCH",
+        "operation_id": "",
+        "path": "/api/identities/{identity_id}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

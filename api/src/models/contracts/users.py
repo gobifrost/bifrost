@@ -124,6 +124,10 @@ class UserPublic(UserBase):
     last_login: datetime | None
     created_at: datetime
     updated_at: datetime
+    identity_kind: str | None = Field(
+        default=None,
+        description="org_default, global_default or custom for an identity; null for a person.",
+    )
     invite_status: str = "active"  # one of InviteStatus values; populated by router
     registration_url: str | None = None  # only populated immediately after invite creation
     is_protected: bool = Field(

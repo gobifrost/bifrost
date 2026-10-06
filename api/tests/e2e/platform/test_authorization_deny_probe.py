@@ -63,6 +63,8 @@ VALID_BODIES: dict[tuple[str, str], dict] = {
         "end_date": "2026-01-02T00:00:00Z",
         "action": "access.check",
     },
+    ("POST", "/api/identities"): {"name": "deny-probe", "organization_id": None},
+    ("PATCH", "/api/identities/{identity_id}"): {"name": "deny-probe"},
     ("POST", "/api/organizations"): {"name": "deny-probe"},
     ("POST", "/api/roles"): {"name": "deny-probe"},
     ("PUT", "/api/roles/{role_id}/permissions"): {"permissions": []},

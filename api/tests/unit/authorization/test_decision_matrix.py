@@ -229,6 +229,7 @@ _CUTOVER_CALLERS: tuple[tuple[Persona, Caller], ...] = (
 _OPERATOR_AT_CUSTOMER_ORG = {
     ("users.list", "users.read"),
     ("users.get", "users.read"),
+    ("GET /api/identities", "users.read"),
     ("users.create", "users.readwrite"),
     ("users.update", "users.readwrite"),
     ("users.bulk_update", "users.readwrite"),

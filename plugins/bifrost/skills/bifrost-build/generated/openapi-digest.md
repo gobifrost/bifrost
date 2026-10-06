@@ -277,6 +277,10 @@
 | PUT | `/api/home/collections/{collection_id}` |
 | PUT | `/api/home/preferences/{resource_key}` |
 | GET | `/api/hooks/health` |
+| GET | `/api/identities` |
+| POST | `/api/identities` |
+| DELETE | `/api/identities/{identity_id}` |
+| PATCH | `/api/identities/{identity_id}` |
 | GET | `/api/integrations` |
 | POST | `/api/integrations` |
 | GET | `/api/integrations/by-name/{name}` |

@@ -44,6 +44,7 @@ from src.routers.integrations import router as integrations_router
 from src.routers.decorator_properties import router as decorator_properties_router
 from src.routers.maintenance import router as maintenance_router
 from src.routers.run_retention import router as run_retention_router
+from src.routers.identities import router as identities_router
 from src.routers.roi_settings import router as roi_settings_router
 from src.routers.roi_reports import router as roi_reports_router
 from src.routers.usage_reports import router as usage_reports_router
@@ -131,6 +132,7 @@ __all__ = [
     "decorator_properties_router",
     "maintenance_router",
     "run_retention_router",
+    "identities_router",
     "roi_settings_router",
     "roi_reports_router",
     "usage_reports_router",
