@@ -20,7 +20,8 @@ FABRIKAM = UUID("00000000-0000-0000-0000-00000000f001")
 NAMES = {CONTOSO: "Contoso", FABRIKAM: "Fabrikam"}
 HR = RoleRef(id=UUID("00000000-0000-0000-0000-0000000000a1"), name="HR", builtin=False)
 OPERATOR = RoleRef(id=UUID("00000000-0000-0000-0000-000000000007"), name="Platform Operator", builtin=True)
-ROLES = {ref: role for role in (HR, OPERATOR) for ref in (role.name, str(role.id))}
+USER = RoleRef(id=USER_ROLE_ID, name="User", builtin=True)
+ROLES = {ref: role for role in (HR, OPERATOR, USER) for ref in (role.name, str(role.id))}
 
 
 def _holder(*held: RoleRef, home: UUID | None = CONTOSO, placed_at: tuple[UUID, ...] = ()) -> Holder:
@@ -39,18 +40,18 @@ def _holder(*held: RoleRef, home: UUID | None = CONTOSO, placed_at: tuple[UUID, 
     )
     return Holder(
         run_user=RunUser(user_id=ctx.user_id, ctx=ctx, identity_kind="custom"),
-        role_ids=frozenset(role.id for role in held),
-        role_names=frozenset(role.name for role in held),
+        held_roles=frozenset(ref for role in held for ref in (role.name, str(role.id))),
     )
 
 
-def _build(actions, holder: Holder, *, workflow_roles: dict[UUID, str] | None = None):
+def _build(actions, holder: Holder, *, workflow_roles: dict[UUID, str] | None = None, may_open: bool = False):
     return build_requirements(
         actions,
         holder=holder,
         roles_by_ref=ROLES,
         organization_names=NAMES,
         workflow_roles=workflow_roles or {},
+        may_open_workflow=may_open,
     )
 
 
@@ -154,10 +155,16 @@ def test_role_based_workflow_needs_the_identity_to_hold_one_of_its_roles() -> No
     assert (item.kind, item.label, item.grant) == ("workflow_role", "Auditors, Dispatchers", None)
 
 
-def test_identity_holding_a_workflow_role_needs_nothing_more() -> None:
-    held = RoleRef(id=uuid4(), name="Dispatchers", builtin=False)
+def test_identity_that_may_open_the_workflow_needs_no_workflow_role() -> None:
+    actions = [CheckedAction("run_as", None, ())]
 
-    assert _build([CheckedAction("run_as", None, ())], _holder(held), workflow_roles={held.id: "Dispatchers"}) == []
+    assert _build(actions, _holder(), workflow_roles={uuid4(): "Dispatchers"}, may_open=True) == []
+
+
+def test_the_base_role_is_not_a_held_role_unless_it_is_a_membership() -> None:
+    (item,) = _build([CheckedAction("policy", CONTOSO, ("role:User",))], _holder())
+
+    assert (item.kind, item.label, item.grant) == ("policy_role", "User", None)
 
 
 def test_requirements_list_reach_first_then_policy_roles_then_workflow_roles() -> None:

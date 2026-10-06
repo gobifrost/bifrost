@@ -10,8 +10,9 @@ workflow does that the identity could not:
 - Policy roles: roles a table or file policy looked for that the identity
   does not hold now. Claims are not requirements: they resolve from the
   person's own data, and no role assignment supplies them.
-- Workflow roles: for a role-based workflow, whether the identity holds one
-  of its roles, which matters when the identity starts it through the API.
+- Workflow roles: whether the identity may open the workflow itself, which
+  matters when it starts it through the API (``run_user_may_open``, the same
+  rule the workflow's own access check applies).
 
 A role named by a policy is a requirement only as far as the recorded check
 saw it: a check lists what its run user was missing, so a role that run user
@@ -31,6 +32,7 @@ from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.access_checks import ALL_ORGS, NoteTarget
+from shared.role_cache import get_user_roles
 from src.models.contracts.role_assignments import RoleBoundaryInput
 from src.models.contracts.workflow_requirements import (
     RequirementGrant,
@@ -42,6 +44,8 @@ from src.models.orm.organizations import Organization
 from src.models.orm.users import Role
 from src.models.orm.workflow_roles import WorkflowRole
 from src.models.orm.workflows import Workflow
+from src.repositories.workflows import WorkflowRepository
+from src.services.access_check_entry import run_user_may_open
 from src.services.audit_retention.settings import AuditRetentionSettingsService
 from src.services.authorization.explain import RunUser, in_reach, load_run_user
 
@@ -69,15 +73,12 @@ class RoleRef:
 
 @dataclass(frozen=True)
 class Holder:
-    """The identity the requirements are for, and the roles it holds now."""
+    """The identity the requirements are for, and the roles it holds now:
+    its role memberships, by name and by id, as a policy's ``has_role`` sees
+    them."""
 
     run_user: RunUser
-    role_ids: frozenset[UUID]
-    role_names: frozenset[str]
-
-    @property
-    def holds(self) -> frozenset[str]:
-        return self.role_names | {str(role_id) for role_id in self.role_ids}
+    held_roles: frozenset[str]
 
 
 def _place(holder: Holder, target: NoteTarget) -> RoleBoundaryInput:
@@ -112,7 +113,7 @@ def _reach_requirements(
 def _policy_requirements(
     actions: Sequence[CheckedAction], holder: Holder, roles_by_ref: Mapping[str, RoleRef]
 ) -> list[WorkflowRequirement]:
-    held = holder.holds
+    held = holder.held_roles
     seen: set[tuple[str, str]] = set()
     items = []
     for action in actions:
@@ -143,8 +144,10 @@ def _policy_requirements(
     return sorted(items, key=lambda item: item.label)
 
 
-def _workflow_role_requirement(holder: Holder, workflow_roles: Mapping[UUID, str]) -> list[WorkflowRequirement]:
-    if not workflow_roles or holder.role_ids & workflow_roles.keys():
+def _workflow_role_requirement(
+    workflow_roles: Mapping[UUID, str], may_open_workflow: bool
+) -> list[WorkflowRequirement]:
+    if not workflow_roles or may_open_workflow:
         return []
     return [
         WorkflowRequirement(
@@ -163,17 +166,19 @@ def build_requirements(
     roles_by_ref: Mapping[str, RoleRef],
     organization_names: Mapping[UUID, str],
     workflow_roles: Mapping[UUID, str],
+    may_open_workflow: bool,
 ) -> list[WorkflowRequirement]:
     """The requirements ``actions`` leave unmet by ``holder``: reach, then
     policy roles, then workflow roles. ``roles_by_ref`` finds a role by name
     or id; ``workflow_roles`` is the role-based workflow's roles (empty
-    otherwise). No recorded actions, no requirements."""
+    otherwise) and ``may_open_workflow`` whether the identity may open it.
+    No recorded actions, no requirements."""
     if not actions:
         return []
     return [
         *_reach_requirements(actions, holder, organization_names),
         *_policy_requirements(actions, holder, roles_by_ref),
-        *_workflow_role_requirement(holder, workflow_roles),
+        *_workflow_role_requirement(workflow_roles, may_open_workflow),
     ]
 
 
@@ -220,19 +225,17 @@ async def workflow_requirements(db: AsyncSession, workflow: Workflow, identity_i
     actions, runs = await _recorded_actions(db, workflow.id, datetime.now(timezone.utc) - timedelta(days=window_days))
     run_user = await load_run_user(db, identity_id)
     assert run_user is not None
-    ctx = run_user.ctx
-
-    held_ids = {ctx.base_role_id, *(grant.role_id for grant in ctx.role_grants)}
+    # The same membership the policy observer and workflow access checks read.
+    held_ids, held_names = await get_user_roles(identity_id, db)
     referenced = {entry[len(_ROLE_PREFIX):] for action in actions for entry in action.missing if entry.startswith(_ROLE_PREFIX)}
     referenced_ids = {UUID(ref) for ref in referenced if _is_uuid(ref)}
     roles = (
         await db.execute(
             select(Role.id, Role.name, Role.is_builtin)
-            .where(Role.id.in_(held_ids | referenced_ids) | Role.name.in_(referenced))
+            .where(Role.id.in_(referenced_ids) | Role.name.in_(referenced))
             .order_by(Role.name, Role.id)
         )
     ).all()
-    role_names = {role_id: name for role_id, name, _ in roles}
     roles_by_ref: dict[str, RoleRef] = {}
     for role_id, name, builtin in roles:
         ref = RoleRef(id=role_id, name=name, builtin=builtin)
@@ -258,13 +261,10 @@ async def workflow_requirements(db: AsyncSession, workflow: Workflow, identity_i
     )
     items = build_requirements(
         actions,
-        holder=Holder(
-            run_user=run_user,
-            role_ids=frozenset(held_ids),
-            role_names=frozenset(role_names[role_id] for role_id in held_ids if role_id in role_names),
-        ),
+        holder=Holder(run_user=run_user, held_roles=frozenset(held_names) | {str(role_id) for role_id in held_ids}),
         roles_by_ref=roles_by_ref,
         organization_names=organization_names,
         workflow_roles=workflow_roles,
+        may_open_workflow=await run_user_may_open(db, WorkflowRepository, identity_id, workflow.id),
     )
     return WorkflowRequirements(identity_id=identity_id, observed_runs=runs, window_days=window_days, items=items)

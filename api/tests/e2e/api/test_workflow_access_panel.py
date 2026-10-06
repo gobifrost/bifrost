@@ -387,3 +387,44 @@ def test_unknown_workflow_is_not_found_and_people_are_refused(e2e_client, platfo
     for route in ("run-identities", "requirements"):
         assert e2e_client.get(f"/api/workflows/{missing}/{route}", headers=platform_admin.headers).status_code == 404
         assert e2e_client.get(f"/api/workflows/{workflow['id']}/{route}", headers=org1_user.headers).status_code == 403
+
+
+def test_a_platform_admin_identity_needs_no_workflow_role(e2e_client, platform_admin, world, async_session_factory) -> None:
+    admin = platform_admin.headers
+    workflow = _register(e2e_client, admin, None)
+    _ok(e2e_client.patch(f"/api/workflows/{workflow['id']}", headers=admin, json={"access_level": "role_based", "role_ids": [world["hr"]["id"]]}))
+    _record_checks(
+        async_session_factory,
+        [_check(workflow["id"], "scope_switch", "success", organization_id=None, inputs={}, run=uuid.uuid4())],
+    )
+    identities = {i["identity_kind"] + str(i["organization_id"]): i for i in _run_identities(e2e_client, admin, workflow["id"])}
+    global_default = identities["global_defaultNone"]
+    provider_default = identities[f"org_default{PROVIDER_ORG_ID}"]
+
+    lacking = _requirements(e2e_client, admin, workflow["id"], identity_id=global_default["id"])["items"]
+    admin_identity = _requirements(e2e_client, admin, workflow["id"], identity_id=provider_default["id"])["items"]
+
+    assert [item["kind"] for item in lacking] == ["workflow_role"]
+    assert admin_identity == []
+
+
+def test_the_base_role_does_not_count_as_a_held_policy_role(e2e_client, platform_admin, world, async_session_factory) -> None:
+    admin = platform_admin.headers
+    workflow = _register(e2e_client, admin, world["contoso"]["id"])
+    _record_checks(
+        async_session_factory,
+        [
+            _check(
+                workflow["id"],
+                "policy",
+                "failure",
+                organization_id=world["contoso"]["id"],
+                inputs={"missing": ["role:User"]},
+                run=uuid.uuid4(),
+            )
+        ],
+    )
+
+    (item,) = _requirements(e2e_client, admin, workflow["id"])["items"]
+
+    assert (item["kind"], item["label"], item["grant"]) == ("policy_role", "User", None)
