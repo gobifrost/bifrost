@@ -7,6 +7,7 @@ from src.routers.passkeys import router as passkeys_router
 from src.routers.health import router as health_router
 from src.routers.organizations import router as organizations_router
 from src.routers.users import router as users_router
+from src.routers.permissions import router as permissions_router
 from src.routers.roles import router as roles_router
 from src.routers.executions import router as executions_router
 from src.routers.workflows import router as workflows_router
@@ -93,6 +94,7 @@ __all__ = [
     "organizations_router",
     "users_router",
     "authorization_router",
+    "permissions_router",
     "roles_router",
     "executions_router",
     "workflows_router",

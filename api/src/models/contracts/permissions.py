@@ -24,19 +24,38 @@ does not imply ``read``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+
+
+PermissionArea = Literal[
+    "Identity & Access",
+    "Automation",
+    "Data & Content",
+    "Integrations & Secrets",
+    "Platform",
+]
 
 
 class PermissionDomain(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    # The resource, in Title Case ("Workflow Runs"); a domain that is itself
+    # an action is titled by it ("Publish Apps").
+    title: str
+    area: PermissionArea
     description: str
     who_should_hold: str
+    # Display names the verb rule can't word, by action: every ``execute``
+    # (each has its own verb) and any action worded differently.
+    names: dict[str, str] = Field(default_factory=dict)
 
 
 PERMISSION_DOMAINS: dict[str, PermissionDomain] = {
     "roles": PermissionDomain(
+        title="Roles",
+        area="Identity & Access",
         description=(
             "Role definitions and their permission sets. Assigning roles to "
             "users is `roleassignments`; sharing an entity with a role is "
@@ -45,10 +64,14 @@ PERMISSION_DOMAINS: dict[str, PermissionDomain] = {
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role.",
     ),
     "roleassignments": PermissionDomain(
+        title="Role Assignments",
+        area="Identity & Access",
         description="Assigning roles to users and setting where each assignment applies (its boundaries), distinct from authoring the role definitions themselves.",
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role. The Platform Operator role may assign only roles that carry no permissions, and never to a privileged user.",
     ),
     "users": PermissionDomain(
+        title="Users",
+        area="Identity & Access",
         description=(
             "The user directory and limited support actions on ordinary "
             "users: inviting an ordinary user into an organization, sending, "
@@ -59,94 +82,145 @@ PERMISSION_DOMAINS: dict[str, PermissionDomain] = {
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role. The Platform Operator role gets user support at Managed organizations.",
     ),
     "users.lifecycle": PermissionDomain(
+        title="User Lifecycle",
+        names={"readwrite": "Manage User Lifecycle (move, delete, change base role)"},
+        area="Identity & Access",
         description="Elevated user changes: creating platform/Global users, moving a user between organizations or into Global, changing a user's identity (email, verification, External), changing a user's base role, and permanently deleting a user.",
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role or the Platform Operator role.",
     ),
     "integrations": PermissionDomain(
+        title="Integrations",
+        area="Integrations & Secrets",
         description="Integration definitions, config schema, and per-org OAuth/API mappings.",
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role.",
     ),
     "repository": PermissionDomain(
+        title="Workspace Files",
+        area="Data & Content",
         description="Raw `_repo/` workspace file content (apps/workflows/.bifrost source) and its module cache.",
         who_should_hold="Platform admins at the Platform boundary, and running workflows through workflow permissions. Never ordinary users.",
     ),
     "organizations": PermissionDomain(
+        title="Organizations",
+        area="Identity & Access",
         description="Organization records and their lifecycle: creating, renaming, configuring and disabling organizations. Users inside an organization are `users`.",
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role. The Platform Operator role reads Managed organizations.",
     ),
     "solutions": PermissionDomain(
+        title="Solutions",
+        area="Automation",
         description="Solution catalog entries: install records, updates, connection references.",
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role.",
     ),
     "solutions.deploy": PermissionDomain(
+        title="Deploy Solutions",
+        names={"execute": "Deploy Solutions"},
+        area="Automation",
         description="Triggering a Solution's install/sync/uninstall deploy job.",
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role.",
     ),
     "solutions.build": PermissionDomain(
+        title="Build Solutions",
+        names={"execute": "Build Solutions"},
+        area="Automation",
         description="Building/packaging a Solution from its source.",
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role. Builder roles get this once Builder ships.",
     ),
     "events": PermissionDomain(
+        title="Events",
+        area="Automation",
         description="Event sources, subscriptions, webhook adapters, and emitting/publishing an event onto a topic.",
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role.",
     ),
     "apps": PermissionDomain(
+        title="Apps",
+        area="Automation",
         description="V2 App definitions: source, dependencies, draft/publish state.",
         who_should_hold="Write: platform admins, or an admin-assigned role at a specific boundary; never the User base role. Read: members, where the object is shared with them.",
     ),
     "apps.deploy": PermissionDomain(
+        title="Publish Apps",
+        names={"execute": "Publish Apps"},
+        area="Automation",
         description="Publishing a built App version live.",
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role.",
     ),
     "workflows": PermissionDomain(
+        title="Workflows",
+        names={"execute": "Run Workflows"},
+        area="Automation",
         description="Workflow definitions: registration, validation, role grants, execution.",
         who_should_hold="Write: platform admins, or an admin-assigned role at a specific boundary; never the User base role. Read: members, where the object is shared with them. Running a workflow is `execute`; the Platform Operator role runs workflows at Managed organizations.",
     ),
     "policyrules": PermissionDomain(
+        title="Policy Rules",
+        area="Data & Content",
         description="Reusable named policy-rule fragments referenced by table/file policies.",
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role.",
     ),
     "knowledge": PermissionDomain(
+        title="Knowledge",
+        area="Data & Content",
         description="Knowledge-base namespaces and documents (the RAG corpus).",
         who_should_hold="Write: platform admins, or an admin-assigned role at a specific boundary; never the User base role. Read: members, where the object is shared with them.",
     ),
     "filepolicies": PermissionDomain(
+        title="File Policies",
+        area="Data & Content",
         description="Access-policy documents governing `_repo`/uploaded file paths.",
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role.",
     ),
     "tables": PermissionDomain(
+        title="Tables",
+        area="Data & Content",
         description="Table (structured-data) definitions — not the row data inside them (that's table_policy-governed).",
         who_should_hold="Write: platform admins, or an admin-assigned role at a specific boundary; never the User base role. Read: members, where the object is shared with them. Row access is decided by table policies.",
     ),
     "forms": PermissionDomain(
+        title="Forms",
+        area="Automation",
         description="Form definitions and their runtime configuration.",
         who_should_hold="Write: platform admins, or an admin-assigned role at a specific boundary; never the User base role. Read: members, where the object is shared with them.",
     ),
     "configs": PermissionDomain(
+        title="Configuration",
+        area="Integrations & Secrets",
         description="Config key/value definitions and their per-org values, including the workflow SDK's runtime read/write path.",
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role. Running workflows read and write configs through workflow permissions.",
     ),
     "claims": PermissionDomain(
+        title="Claims",
+        area="Data & Content",
         description="Insurance/service claim records (a first-class platform entity).",
         who_should_hold="Write: platform admins, or an admin-assigned role at a specific boundary; never the User base role. Read: members, where the object is shared with them.",
     ),
     "agents": PermissionDomain(
+        title="Agents",
+        area="Automation",
         description="The shared (non-private) agent catalog — definitions, independent of who owns a given agent.",
         who_should_hold="Write: platform admins, or an admin-assigned role at a specific boundary; never the User base role. Read: members, where the object is shared with them. Members may also create and edit their own private agents (own-private-agent class).",
     ),
     "executions": PermissionDomain(
+        title="Workflow Runs",
+        area="Automation",
         description="Workflow execution history and diagnostics.",
         who_should_hold="Read: members see their own runs; platform admins and roles at a boundary see others'. Write/cleanup: platform admins.",
     ),
     "mcp": PermissionDomain(
+        title="MCP Servers",
+        area="Integrations & Secrets",
         description="MCP server templates, org-level shared connections, and the MCP gateway surface.",
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role.",
     ),
     "agentruns": PermissionDomain(
+        title="Agent Runs",
+        area="Automation",
         description="Agent-run history, verdicts, and moderation state.",
         who_should_hold="Read: members see their own agent runs; platform admins and roles at a boundary see others'. Write (verdicts, reruns): same rule.",
     ),
     "settings": PermissionDomain(
+        title="Settings",
+        area="Platform",
         description=(
             "Platform or org configuration that isn't a first-class entity of its "
             "own: AI model routing/pricing/behavior, branding, OAuth/SSO provider "
@@ -160,6 +234,8 @@ PERMISSION_DOMAINS: dict[str, PermissionDomain] = {
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role.",
     ),
     "secrets": PermissionDomain(
+        title="Secret Values",
+        area="Integrations & Secrets",
         description=(
             "Decrypting secret values: secret config values, integration "
             "OAuth tokens and client secrets returned in plain text. "
@@ -175,14 +251,20 @@ PERMISSION_DOMAINS: dict[str, PermissionDomain] = {
         ),
     ),
     "reports": PermissionDomain(
+        title="ROI Reports",
+        area="Platform",
         description="ROI reporting: per-organization and per-workflow ROI summaries and trends, and the ROI settings they are computed from.",
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role.",
     ),
     "metrics": PermissionDomain(
+        title="Usage and Audit Logs",
+        area="Platform",
         description="Aggregate usage/cost reporting, the audit log, and scheduler diagnostics. ROI reporting is `reports`.",
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role. The Platform Operator role reads metrics at Managed organizations.",
     ),
     "platform": PermissionDomain(
+        title="Platform Operations",
+        area="Platform",
         description=(
             "Platform operations with no per-org meaning: maintenance jobs, "
             "worker/Kubernetes execution infrastructure, the package registry, "
@@ -201,6 +283,14 @@ PERMISSION_ACTIONS = ("read", "readwrite", "execute")
 """The actions a permission string may name, before an optional ``.all``."""
 
 ALL_SUFFIX = "all"
+
+ACTION_VERBS = {
+    "read": "Read",
+    "read.all": "Read All",
+    "readwrite": "Read and Write",
+    "readwrite.all": "Read and Write All",
+}
+"""How a permission's display name begins: ``{verb} {domain title}``."""
 
 
 @dataclass(frozen=True)
@@ -233,6 +323,31 @@ def parse_permission(permission: str) -> ParsedPermission:
             f"Unknown permission domain {domain!r} (not in PERMISSION_DOMAINS)"
         )
     return ParsedPermission(domain=domain, action=action, extended=extended)
+
+
+def permission_display_name(permission: str) -> str:
+    """Name a permission the way Microsoft Graph does: "Read and Write Users".
+
+    ``execute`` and any other action the domain words itself come from the
+    domain's ``names``.
+    """
+    parsed = parse_permission(permission)
+    domain = PERMISSION_DOMAINS[parsed.domain]
+    action = f"{parsed.action}.{ALL_SUFFIX}" if parsed.extended else parsed.action
+    if action in domain.names:
+        return domain.names[action]
+    return f"{ACTION_VERBS[action]} {domain.title}"
+
+
+def domain_display_names(domain: str) -> dict[str, str]:
+    """The display name of every permission of ``domain`` that has one: each
+    verb-rule action, whether or not a route checks it (a role can hold any
+    well-formed permission), and each action the domain names itself."""
+    actions = dict.fromkeys([*ACTION_VERBS, *PERMISSION_DOMAINS[domain].names])
+    return {
+        f"{domain}.{action}": permission_display_name(f"{domain}.{action}")
+        for action in actions
+    }
 
 
 DECRYPT_PERMISSION = "secrets.read"
@@ -268,3 +383,27 @@ PRIVILEGED_PERMISSIONS: frozenset[str] = frozenset(
 principal (see ``src.services.authorization.privilege``). The Platform
 Admin wildcard is privileged too. A privileged user is a protected target:
 limited user-support and role-assignment permissions do not reach them."""
+
+
+class PermissionCatalogEntry(BaseModel):
+    """One permission domain as the roles and access screens present it."""
+
+    domain: str
+    title: str
+    area: PermissionArea
+    description: str
+    who_should_hold: str
+    # Actions the platform checks for this domain (read, readwrite, execute,
+    # with any ``.all`` variants kept as listed).
+    actions: list[str]
+    # The display name of every permission of the domain a role could hold
+    # that has one, keyed by permission ("tables.readwrite" -> "Read and
+    # Write Tables"); not limited to ``actions``.
+    names: dict[str, str]
+    # The domain's permissions that make a holder a privileged principal.
+    privileged: list[str]
+    # per_organization: only checked at an organization; platform_wide: only
+    # at Global; varies: both, or no route checks it yet.
+    scope: Literal["per_organization", "platform_wide", "varies"]
+    # True once any route of the domain is decided by the evaluator.
+    enforced: bool

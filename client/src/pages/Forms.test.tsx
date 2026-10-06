@@ -169,7 +169,9 @@ describe("Forms — solution-managed badge (grid view)", () => {
 		await user.click(
 			screen.getByRole("button", { name: "Onboarding actions" }),
 		);
-		await user.click(screen.getByRole("menuitem", { name: "Disable Form" }));
+		await user.click(
+			screen.getByRole("menuitem", { name: "Disable Form" }),
+		);
 
 		const dialog = screen.getByRole("alertdialog");
 		await user.click(

@@ -194,7 +194,9 @@ describe("RoleDetail", () => {
 		const { user } = renderAt(`/roles/${id}`);
 
 		expect(
-			screen.getByText("Takes effect when secret decryption is enforced."),
+			screen.getByText(
+				"Takes effect when secret decryption is enforced.",
+			),
 		).toBeInTheDocument();
 		await user.click(screen.getByRole("tab", { name: "People" }));
 		expect(await screen.findByText("People panel")).toBeInTheDocument();

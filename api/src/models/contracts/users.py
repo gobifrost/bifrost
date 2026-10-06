@@ -254,6 +254,13 @@ class RoleUpdate(BaseModel):
     description: str | None = None
 
 
+class RolePlacementSummary(BaseModel):
+    """Where a role's assignments apply, across everyone who holds it."""
+    organizations: int = Field(description="Distinct organizations the role is placed on")
+    managed: bool = Field(description="Placed on every managed (customer) organization")
+    platform: bool = Field(description="Placed platform-wide")
+
+
 class RolePublic(RoleBase):
     """Role output for API responses.
 
@@ -273,6 +280,21 @@ class RolePublic(RoleBase):
             "Inline counts of every consumer type. Populated on list-roles for the "
             "Roles UI; may be None on single-role responses where it's not needed."
         ),
+    )
+    holders: int | None = Field(
+        default=None,
+        description=(
+            "Distinct users holding the role as their base role or an additional role. "
+            "Populated with consumer_counts."
+        ),
+    )
+    grants: list[str] | None = Field(
+        default=None,
+        description="Permissions the role grants, sorted. Populated with consumer_counts.",
+    )
+    placements: RolePlacementSummary | None = Field(
+        default=None,
+        description="Where the role's assignments are placed. Populated with consumer_counts.",
     )
 
     @field_serializer("created_at", "updated_at")

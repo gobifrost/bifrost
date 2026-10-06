@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, Users } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { ListPagination } from "@/components/pagination/ListPagination";
@@ -7,6 +7,7 @@ import { SearchBox } from "@/components/search/SearchBox";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRoleUsersPage } from "@/hooks/useRoles";
 import { getErrorMessage } from "@/lib/api-error";
@@ -16,7 +17,7 @@ const PAGE_SIZE = 25;
 
 /**
  * Who holds a built-in role, and where it applies for each of them.
- * Read-only: built-in roles are given from a person's Roles & access.
+ * Read-only: built-in roles are given from a person's Role Assignments.
  * The server lists only people in organizations where the caller can view
  * role assignments.
  */
@@ -37,10 +38,10 @@ export function RolePeoplePanel({ roleId }: { roleId: string }) {
 					id="role-people-heading"
 					className="text-base font-semibold"
 				>
-					People with this role
+					People with This Role
 				</h2>
 				<p className="text-xs text-muted-foreground">
-					Give or remove this role from a person's Roles &amp; access.
+					Give or remove this role from a person's Role Assignments.
 				</p>
 			</div>
 			<SearchBox
@@ -69,7 +70,7 @@ export function RolePeoplePanel({ roleId }: { roleId: string }) {
 						disabled={query.isFetching}
 						onClick={() => void query.refetch()}
 					>
-						Retry people
+						Retry People
 					</Button>
 				</div>
 			) : query.isLoading ? (
@@ -82,14 +83,17 @@ export function RolePeoplePanel({ roleId }: { roleId: string }) {
 					<Skeleton className="h-12 w-full" />
 				</div>
 			) : users.length === 0 ? (
-				<p className="rounded-[var(--bf-radius-surface)] border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
-					{search
-						? "No one with this role matches your search."
-						: "No one has this role yet."}
-				</p>
+				<EmptyState
+					icon={Users}
+					title={
+						search
+							? "No one with this role matches your search."
+							: "No one has this role yet."
+					}
+				/>
 			) : (
 				<div className="rounded-[var(--bf-radius-surface)] border bg-card">
-					<ul aria-label="People with this role" className="divide-y">
+					<ul aria-label="People with This Role" className="divide-y">
 						{users.map((person) => (
 							<li
 								key={person.id}

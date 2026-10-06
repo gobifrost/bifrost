@@ -36,7 +36,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, union
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.log_safety import log_safe
@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from src.models import (
         RoleConsumerCounts,
         RoleFormsResponse,
+        RolePlacementSummary,
         RolePublic,
         RoleUsersResponse,
     )
@@ -103,6 +104,86 @@ async def get_consumer_counts(
     return counts_by_role
 
 
+async def get_role_holders(
+    session: AsyncSession, role_ids: list[UUID]
+) -> dict[UUID, int]:
+    """Distinct users holding each role as their base role or an additional role."""
+    from src.models import User as UserORM
+    from src.models import UserRole as UserRoleORM
+
+    held = union(
+        select(UserORM.base_role_id.label("role_id"), UserORM.id.label("user_id")),
+        select(UserRoleORM.role_id, UserRoleORM.user_id),
+    ).subquery()
+    rows = await session.execute(
+        select(held.c.role_id, func.count())
+        .where(held.c.role_id.in_(role_ids))
+        .group_by(held.c.role_id)
+    )
+    return {role_id: int(count) for role_id, count in rows.all()}
+
+
+async def get_role_permissions(
+    session: AsyncSession, role_ids: list[UUID]
+) -> dict[UUID, list[str]]:
+    """Each role's granted permissions, sorted."""
+    from src.models.orm.users import RolePermission as RolePermissionORM
+
+    rows = await session.execute(
+        select(RolePermissionORM.role_id, RolePermissionORM.permission)
+        .where(RolePermissionORM.role_id.in_(role_ids))
+        .order_by(RolePermissionORM.permission)
+    )
+    permissions: dict[UUID, list[str]] = {role_id: [] for role_id in role_ids}
+    for role_id, permission in rows.all():
+        permissions[role_id].append(permission)
+    return permissions
+
+
+async def get_role_placements(
+    session: AsyncSession, role_ids: list[UUID]
+) -> dict[UUID, RolePlacementSummary]:
+    """Where each role's assignments are placed, from its assignment boundaries."""
+    from src.models import RolePlacementSummary
+    from src.models.orm.users import UserRoleBoundary
+
+    rows = await session.execute(
+        select(
+            UserRoleBoundary.role_id,
+            func.count(func.distinct(UserRoleBoundary.organization_id)),
+            func.bool_or(UserRoleBoundary.kind == "managed_organizations"),
+            func.bool_or(UserRoleBoundary.kind == "platform"),
+        )
+        .where(UserRoleBoundary.role_id.in_(role_ids))
+        .group_by(UserRoleBoundary.role_id)
+    )
+    placements = {
+        role_id: RolePlacementSummary(organizations=0, managed=False, platform=False)
+        for role_id in role_ids
+    }
+    for role_id, organizations, managed, platform in rows.all():
+        placements[role_id] = RolePlacementSummary(
+            organizations=int(organizations), managed=bool(managed), platform=bool(platform)
+        )
+    return placements
+
+
+async def attach_role_summaries(session: AsyncSession, roles: list[RolePublic]) -> None:
+    """Fill the consumer counts, holders, grants and placements of ``roles``."""
+    if not roles:
+        return
+    role_ids = [role.id for role in roles]
+    counts = await get_consumer_counts(session, role_ids)
+    holders = await get_role_holders(session, role_ids)
+    permissions = await get_role_permissions(session, role_ids)
+    placements = await get_role_placements(session, role_ids)
+    for role in roles:
+        role.consumer_counts = counts[role.id]
+        role.holders = holders.get(role.id, 0)
+        role.grants = permissions[role.id]
+        role.placements = placements[role.id]
+
+
 async def create_role(
     session: AsyncSession,
     *,
@@ -144,7 +225,7 @@ async def create_role(
         details={"name": role.name},
     )
     public = RolePublic.model_validate(role)
-    public.consumer_counts = (await get_consumer_counts(session, [role.id]))[role.id]
+    await attach_role_summaries(session, [public])
     return public
 
 
@@ -176,7 +257,7 @@ async def get_role(
 
     public = RolePublic.model_validate(role)
     if include_counts:
-        public.consumer_counts = (await get_consumer_counts(session, [role.id]))[role.id]
+        await attach_role_summaries(session, [public])
     return public
 
 
@@ -227,15 +308,9 @@ async def list_roles(
     result = await session.execute(query)
     roles = result.scalars().all()
 
-    counts_by_role = (
-        await get_consumer_counts(session, [role.id for role in roles]) if include_counts else {}
-    )
-
-    out: list[RolePublic] = []
-    for r in roles:
-        public = RolePublic.model_validate(r)
-        public.consumer_counts = counts_by_role.get(r.id)
-        out.append(public)
+    out = [RolePublic.model_validate(r) for r in roles]
+    if include_counts:
+        await attach_role_summaries(session, out)
     return out, total or 0
 
 

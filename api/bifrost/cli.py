@@ -764,6 +764,7 @@ Flags:
 Entity mutation commands (see 'bifrost <entity> --help'):
   orgs         Manage organizations
   roles        Manage roles
+  permissions  Inspect the permission catalog
   workflows    Manage workflow lifecycle and role assignments
   forms        Manage forms
   agents       Manage AI agents

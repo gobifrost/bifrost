@@ -6078,6 +6078,20 @@
     "access_class": "personal",
     "boundary": null,
     "current_gate": "authenticated",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "GET",
+    "operation_id": null,
+    "path": "/api/permissions/catalog",
+    "permission": null,
+    "reason": "The permission vocabulary (titles, areas, scopes) the access screens render; the same for every signed-in user, so no permission is checked."
+  },
+  {
+    "access_class": "personal",
+    "boundary": null,
+    "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin"
     ],
@@ -8701,6 +8715,20 @@
     "path": "/api/users/{user_id}",
     "permission": "users.lifecycle.readwrite",
     "reason": "Updates a user. Classified by its most privileged fields (organization_id moves the user, at the source and destination; email/is_verified/is_external change identity); name, password, mfa_enabled and is_active are users.readwrite support changes, and is_superuser takes a Platform Admin. Every supplied field is decided. Decided by the evaluator (src.services.authorization.enforce) at the user's organization; protected users only for a Platform Admin."
+  },
+  {
+    "access_class": "permission",
+    "boundary": "organization",
+    "current_gate": "evaluator",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "GET",
+    "operation_id": null,
+    "path": "/api/users/{user_id}/access",
+    "permission": "roleassignments.read",
+    "reason": "Reads what a user can do and where: their permissions grouped by place, with the role each comes through. Decided by the evaluator (src.services.authorization.enforce) at the user's organization, like reading their role assignments."
   },
   {
     "access_class": "permission",

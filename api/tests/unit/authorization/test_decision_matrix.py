@@ -241,6 +241,7 @@ _OPERATOR_AT_CUSTOMER_ORG = {
     ("POST /auth/admin/revoke-user", "users.readwrite"),
     ("users.roles.list", "roleassignments.read"),
     ("users.forms.list", "roleassignments.read"),
+    ("GET /api/users/{user_id}/access", "roleassignments.read"),
     ("GET /api/users/{user_id}/role-assignments", "roleassignments.read"),
     ("PUT /api/users/{user_id}/role-assignments", "roleassignments.readwrite"),
     ("roles.users.list", "roleassignments.read"),

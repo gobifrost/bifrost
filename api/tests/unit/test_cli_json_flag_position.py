@@ -3,7 +3,7 @@
 Click options only parse at the position they're declared. ``entity_group``
 attaches ``--json`` at the group level (so ``bifrost tables --json list``
 works), but most users naturally type the flag *after* the subcommand
-(``bifrost tables list --json``). ``_EntityGroup.add_command`` appends a
+(``bifrost tables list --json``). ``EntityGroup.add_command`` appends a
 fresh ``--json`` option to every subcommand so both positions parse.
 
 These tests pin the behavior so a future refactor of ``base.py`` can't

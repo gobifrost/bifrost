@@ -1,17 +1,14 @@
 /**
  * Component tests for EditUserDialog.
  *
- * Covers:
- * - pre-fills fields and sends only changed fields
- * - "editing your own account" limits edits to the display name
- * - each field is enabled by the permission that decides it, and disabled
- *   fields say why (support vs user lifecycle)
- * - protected users are read-only to everyone but a Platform Admin
- * - the Roles & access tab appears only with roleassignments.read
+ * Covers the dialog around UserProfileForm (which has its own tests):
+ * - title and protected-account notice follow what the caller may change
+ * - a save closes it; a pending save keeps it open
+ * - role assignments live on the person page, not here
  *
  * The Combobox is stubbed to a <select> for the same reason as
  * CreateUserDialog.test.tsx — driving Radix popovers in happy-dom is slow
- * and brittle. The Roles & access panel has its own tests.
+ * and brittle.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -55,10 +52,6 @@ vi.mock("@/services/authorization", () => ({
 		canAnywhere: (permission: string) =>
 			canAnywhere(authz.summary, permission),
 	}),
-}));
-
-vi.mock("./UserRoleAssignmentsPanel", () => ({
-	UserRoleAssignmentsPanel: () => <p>Roles panel</p>,
 }));
 
 vi.mock("@/components/ui/combobox", () => ({
@@ -171,7 +164,7 @@ beforeEach(() => {
 });
 
 describe("EditUserDialog", () => {
-	it("pre-fills the display name from the user prop", () => {
+	it("shows the profile form with a close control", () => {
 		renderWithProviders(
 			<EditUserDialog
 				user={makeUser()}
@@ -180,136 +173,34 @@ describe("EditUserDialog", () => {
 			/>,
 		);
 
+		expect(
+			screen.getByRole("heading", { name: "Edit User" }),
+		).toBeInTheDocument();
 		expect(screen.getByLabelText(/display name/i)).toHaveValue("Alice");
-		expect(screen.getByLabelText(/email address/i)).toBeDisabled();
 		expect(
 			screen.getByRole("button", { name: /close dialog/i }),
 		).toBeInTheDocument();
 	});
 
-	it("limits self edits to the display name", async () => {
-		const account = makeUser({ organization_id: null });
-		mockAuth.mockReturnValue({
-			user: { id: account.id, email: account.email },
-		});
+	it("closes after a save", async () => {
+		const onOpenChange = vi.fn();
 		const { user } = renderWithProviders(
-			<EditUserDialog user={account} open onOpenChange={vi.fn()} />,
+			<EditUserDialog
+				user={makeUser()}
+				open={true}
+				onOpenChange={onOpenChange}
+			/>,
 		);
-		expect(
-			screen.getByText(/editing your own account/i),
-		).toBeInTheDocument();
-		expect(screen.getByLabelText("Account Status")).toBeDisabled();
 
 		await user.clear(screen.getByLabelText(/display name/i));
-		await user.type(
-			screen.getByLabelText(/display name/i),
-			"Updated Self Name",
-		);
-		await user.click(screen.getByRole("button", { name: /save changes/i }));
-		await waitFor(() => expect(mockUpdateMutate).toHaveBeenCalled());
-		expect(mockUpdateMutate.mock.calls[0][0].body).toEqual({
-			name: "Updated Self Name",
-			organization_id: null,
-			is_active: null,
-			is_external: null,
-		});
-	});
-
-	it("submits only the name delta when just the name is changed", async () => {
-		const onOpenChange = vi.fn();
-		const { user } = renderWithProviders(
-			<EditUserDialog
-				user={makeUser()}
-				open={true}
-				onOpenChange={onOpenChange}
-			/>,
-		);
-
-		const nameInput = screen.getByLabelText(/display name/i);
-		await user.clear(nameInput);
-		await user.type(nameInput, "Alice Updated");
-
+		await user.type(screen.getByLabelText(/display name/i), "Alice B");
 		await user.click(screen.getByRole("button", { name: /save changes/i }));
 
-		await waitFor(() => expect(mockUpdateMutate).toHaveBeenCalled());
-		const call = mockUpdateMutate.mock.calls[0]![0];
-		expect(call.params).toEqual({ path: { user_id: "u-1" } });
-		expect(call.body).toEqual({
-			name: "Alice Updated",
-			is_active: null,
-			organization_id: null,
-			is_external: null,
-		});
-		expect(onOpenChange).toHaveBeenCalledWith(false);
+		await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+		expect(mockUpdateMutate).toHaveBeenCalledOnce();
 	});
 
-	it("does not call update when nothing has changed", async () => {
-		const onOpenChange = vi.fn();
-		const { user } = renderWithProviders(
-			<EditUserDialog
-				user={makeUser()}
-				open={true}
-				onOpenChange={onOpenChange}
-			/>,
-		);
-
-		await user.click(screen.getByRole("button", { name: /save changes/i }));
-
-		expect(mockUpdateMutate).not.toHaveBeenCalled();
-		expect(onOpenChange).toHaveBeenCalledWith(false);
-	});
-
-	it("lets user support change support fields but not lifecycle fields", async () => {
-		authz.summary = operator();
-		const { user } = renderWithProviders(
-			<EditUserDialog user={makeUser()} open onOpenChange={vi.fn()} />,
-		);
-
-		expect(screen.getByLabelText(/display name/i)).toBeEnabled();
-		expect(screen.getByLabelText("Account Status")).toBeEnabled();
-		expect(screen.getByLabelText("Organization")).toBeDisabled();
-		expect(screen.getByLabelText("Organization")).toHaveValue("Acme");
-		expect(screen.getByLabelText("External user")).toBeDisabled();
-		expect(
-			screen.getAllByText(
-				/only people who can create, move, or delete users/i,
-			),
-		).toHaveLength(2);
-
-		await user.click(screen.getByLabelText("Account Status"));
-		await user.click(screen.getByRole("button", { name: /save changes/i }));
-		await waitFor(() => expect(mockUpdateMutate).toHaveBeenCalled());
-		expect(mockUpdateMutate.mock.calls[0][0].body).toEqual({
-			name: null,
-			is_active: false,
-			organization_id: null,
-			is_external: null,
-		});
-	});
-
-	it("offers move destinations only where the caller manages user lifecycle", () => {
-		authz.summary = summary(false, [
-			...managed("users.read", "organizations.read"),
-			{
-				permission: "users.lifecycle.readwrite",
-				boundary: { kind: "organization", organization_id: "org-1" },
-			},
-		]);
-		renderWithProviders(
-			<EditUserDialog user={makeUser()} open onOpenChange={vi.fn()} />,
-		);
-
-		const options = Array.from(
-			screen.getByLabelText("organization").querySelectorAll("option"),
-		).map((option) => option.textContent);
-		expect(options).toEqual(["(none)", "Acme"]);
-		expect(screen.getByLabelText("Account Status")).toBeDisabled();
-		expect(
-			screen.getAllByText(/only people who can manage users/i),
-		).toHaveLength(2);
-	});
-
-	it("makes a protected user read-only for anyone but a Platform Admin", () => {
+	it("shows a protected user's details read-only to anyone but a Platform Admin", () => {
 		authz.summary = operator();
 		renderWithProviders(
 			<EditUserDialog
@@ -322,18 +213,16 @@ describe("EditUserDialog", () => {
 		expect(
 			screen.getByRole("heading", { name: /user details/i }),
 		).toBeInTheDocument();
-		expect(screen.getByText("Protected account")).toBeInTheDocument();
+		expect(screen.getByText("Protected Account")).toBeInTheDocument();
 		expect(
 			screen.getByText(/only a platform admin can change them/i),
 		).toBeInTheDocument();
-		expect(screen.getByLabelText(/display name/i)).toBeDisabled();
-		expect(screen.getByLabelText("Account Status")).toBeDisabled();
 		expect(
 			screen.queryByRole("button", { name: /save changes/i }),
 		).not.toBeInTheDocument();
 	});
 
-	it("lets a Platform Admin edit a protected user", () => {
+	it("tells a Platform Admin a protected user is theirs alone to change", () => {
 		renderWithProviders(
 			<EditUserDialog
 				user={makeUser({ is_protected: true })}
@@ -342,40 +231,27 @@ describe("EditUserDialog", () => {
 			/>,
 		);
 
-		expect(screen.getByText("Protected account")).toBeInTheDocument();
 		expect(
 			screen.getByText(
 				"This person holds privileged access. Only Platform Admins can change their profile, sign-in, or roles.",
 			),
 		).toBeInTheDocument();
-		expect(screen.getByLabelText(/display name/i)).toBeEnabled();
 		expect(
 			screen.getByRole("button", { name: /save changes/i }),
 		).toBeEnabled();
 	});
 
-	it("shows Roles & access only to callers who can view role assignments", async () => {
-		const { user, unmount } = renderWithProviders(
-			<EditUserDialog user={makeUser()} open onOpenChange={vi.fn()} />,
-		);
-		await user.click(screen.getByRole("tab", { name: "Roles & access" }));
-		expect(screen.getByText("Roles panel")).toBeVisible();
-		unmount();
-
-		authz.summary = summary(
-			false,
-			managed("users.read", "users.readwrite"),
-		);
+	it("edits the profile only; role assignments live on the person page", () => {
 		renderWithProviders(
 			<EditUserDialog user={makeUser()} open onOpenChange={vi.fn()} />,
 		);
-		expect(
-			screen.queryByRole("tab", { name: "Roles & access" }),
-		).not.toBeInTheDocument();
+
+		expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+		expect(screen.queryByText("Roles & access")).not.toBeInTheDocument();
 	});
 });
 
-it("keeps a pending save open and preserves the draft after failure", async () => {
+it("keeps a pending save open", async () => {
 	let rejectSave!: (error: Error) => void;
 	mockUpdateMutate.mockImplementationOnce(
 		() =>
@@ -393,14 +269,10 @@ it("keeps a pending save open and preserves the draft after failure", async () =
 	await user.keyboard("{Escape}");
 	expect(onOpenChange).not.toHaveBeenCalled();
 	expect(screen.getByRole("button", { name: "Close dialog" })).toBeDisabled();
-	expect(
-		screen.getByLabelText(/display name/i).closest("[inert]"),
-	).not.toBeNull();
 	rejectSave(new Error("Synthetic user save failure"));
-	const error = await screen.findByRole("alert");
-	await waitFor(() => expect(error).toHaveFocus());
-	expect(screen.getByLabelText(/display name/i)).toHaveValue(
-		"Preserved draft",
+	await waitFor(() =>
+		expect(
+			screen.getByRole("button", { name: "Close dialog" }),
+		).toBeEnabled(),
 	);
-	expect(screen.getByRole("button", { name: "Save Changes" })).toBeEnabled();
 });

@@ -19,9 +19,11 @@ const badgeVariants = cva(
 					"border-border/70 text-foreground [a]:hover:bg-muted [a]:hover:text-muted-foreground",
 				ghost: "hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50",
 				link: "text-primary underline-offset-4 hover:underline",
-				// Bifrost extension: soft warning badge (kept from new-york-era local fork, restyled to Rhea's soft-tint idiom)
+				// Bifrost extension: soft warning badge drawn from the warning tokens
 				warning:
-					"bg-amber-500/15 text-amber-700 dark:bg-amber-400/15 dark:text-amber-400 [a]:hover:bg-amber-500/25",
+					"bg-[var(--bf-warning-soft)] text-[var(--bf-warning)] [a]:hover:bg-[color-mix(in_srgb,var(--bf-warning)_18%,var(--bf-warning-soft))]",
+				// Bifrost extension: what a person or role can do (permissions)
+				power: "bg-[var(--bf-power-soft)] text-[var(--bf-power)] [a]:hover:bg-[color-mix(in_srgb,var(--bf-power)_18%,var(--bf-power-soft))]",
 			},
 		},
 		defaultVariants: {

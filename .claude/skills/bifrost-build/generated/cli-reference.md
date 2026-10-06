@@ -1788,6 +1788,33 @@ Options:
   --help                        Show this message and exit.
 ```
 
+## `permissions`
+
+```
+Usage: permissions [OPTIONS] COMMAND [ARGS]...
+
+  Inspect the permission catalog.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  list  List checked permissions by area, with name, scope and enforcement.
+```
+
+### `permissions list`
+
+```
+Usage: permissions list [OPTIONS]
+
+  List checked permissions by area, with name, scope and enforcement.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
 ## `policy-rule`
 
 ```
@@ -3014,14 +3041,15 @@ Options:
 ```
 Usage: users [OPTIONS] COMMAND [ARGS]...
 
-  Ask what a user's access would be.
+  Show and change what a user can do, and ask what their access would be.
 
 Options:
   --json  Emit JSON instead of human-readable output.
   --help  Show this message and exit.
 
 Commands:
-  access  Check a user's access.
+  access  Show a user's access, or check what it would allow.
+  roles   Show and replace a user's roles.
 ```
 
 ### `users access`
@@ -3029,7 +3057,7 @@ Commands:
 ```
 Usage: users access [OPTIONS] COMMAND [ARGS]...
 
-  Check a user's access.
+  Show a user's access, or check what it would allow.
 
 Options:
   --json  Emit JSON instead of human-readable output.
@@ -3037,6 +3065,7 @@ Options:
 
 Commands:
   check  Show how the access model decides USER performing --operation in...
+  show   Show what USER can do, and where.
 ```
 
 #### `users access check`
@@ -3050,10 +3079,8 @@ Usage: users access check [OPTIONS] USER
 
   Examples:
 
-    bifrost users access check ada@contoso.test --org global --operation
-    tables.documents.create   bifrost users access check ada@contoso.test
-    --org Contoso --operation tables.documents.create --workflow "Sync
-    Invoices"
+    bifrost users access check ada@contoso.test --org global --operation tables.documents.create
+    bifrost users access check ada@contoso.test --org Contoso --operation tables.documents.create --workflow "Sync Invoices"
 
 Options:
   --org TEXT        Organization UUID or name, or 'global'.  [required]
@@ -3062,6 +3089,83 @@ Options:
                     Omit to act directly.
   --json            Emit JSON instead of human-readable output.
   --help            Show this message and exit.
+```
+
+#### `users access show`
+
+```
+Usage: users access show [OPTIONS] USER
+
+  Show what USER can do, and where.
+
+  Lists every place the user reaches and the permissions held there. USER is a
+  UUID or an email. `bifrost users access USER` is the same as `bifrost users
+  access show USER`.
+
+  Example:
+
+    bifrost users access ada@contoso.test
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `users roles`
+
+```
+Usage: users roles [OPTIONS] COMMAND [ARGS]...
+
+  Show and replace a user's roles.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  get  Show USER's base role and additional roles, with the places each...
+  set  Replace USER's additional roles, and optionally their base role.
+```
+
+#### `users roles get`
+
+```
+Usage: users roles get [OPTIONS] USER
+
+  Show USER's base role and additional roles, with the places each applies.
+
+  USER is a UUID or an email.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+#### `users roles set`
+
+```
+Usage: users roles set [OPTIONS] USER
+
+  Replace USER's additional roles, and optionally their base role.
+
+  The --role options replace the additional roles; --no-roles removes them
+  all. With only --base, the additional roles stay as they are.
+
+  Examples:
+
+    bifrost users roles set ada@contoso.test --role Helpdesk=org:Contoso,org:Fabrikam
+    bifrost users roles set ada@contoso.test --base User --role Auditor=all
+    bifrost users roles set ada@contoso.test --no-roles
+
+Options:
+  --base TEXT           Base role (UUID or name). Omit to keep the current
+                        one.
+  --role ROLE[=PLACES]  Additional role, repeatable. PLACES is a comma list of
+                        org:<organization>, customers, global or all; omit it
+                        for the role's default (the user's home organization).
+  --no-roles            Remove every additional role.
+  --json                Emit JSON instead of human-readable output.
+  --help                Show this message and exit.
 ```
 
 ## `workflows`

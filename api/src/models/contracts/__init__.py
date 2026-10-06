@@ -53,6 +53,7 @@ if TYPE_CHECKING:
         RoleAppsResponse,
         RoleBase,
         RoleConsumerCounts,
+        RolePlacementSummary,
         RoleCreate,
         RoleFormsResponse,
         RoleKnowledgeEntry,

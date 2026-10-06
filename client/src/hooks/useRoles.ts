@@ -10,6 +10,7 @@ import {
 import { $api, apiClient } from "@/lib/api-client";
 import type { components } from "@/lib/v1";
 import { invalidateAuthorization } from "@/lib/authorization";
+import { USER_ACCESS_QUERY_KEY } from "@/services/access";
 import { toast } from "sonner";
 type RoleCreate = components["schemas"]["RoleCreate"];
 type AssignUsersToRoleRequest =
@@ -109,6 +110,7 @@ export function useUpdateRolePermissions() {
 			queryClient.invalidateQueries({
 				queryKey: ["get", "/api/users/{user_id}/role-assignments"],
 			});
+			queryClient.invalidateQueries({ queryKey: USER_ACCESS_QUERY_KEY });
 			void invalidateAuthorization(queryClient);
 		},
 	});

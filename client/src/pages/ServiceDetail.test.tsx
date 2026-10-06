@@ -2,7 +2,10 @@ import { Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { waitFor } from "@testing-library/react";
 import { renderWithProviders, screen } from "@/test-utils";
-import { makeAttempt, makeService } from "@/components/services/serviceTestUtils";
+import {
+	makeAttempt,
+	makeService,
+} from "@/components/services/serviceTestUtils";
 import { ServiceDetail } from "./ServiceDetail";
 
 vi.mock("@/contexts/AuthContext", () => ({
@@ -64,8 +67,7 @@ vi.mock("@/services/services", async (importOriginal) => ({
 	getService: (...args: unknown[]) => mocks.getService(...args),
 	listServiceAttempts: (...args: unknown[]) =>
 		mocks.listServiceAttempts(...args),
-	listServiceLogs: (...args: unknown[]) =>
-		mocks.listServiceLogs(...args),
+	listServiceLogs: (...args: unknown[]) => mocks.listServiceLogs(...args),
 	startService: vi.fn().mockResolvedValue({}),
 	stopService: vi.fn().mockResolvedValue({}),
 	restartService: vi.fn().mockResolvedValue({}),
@@ -146,9 +148,7 @@ function LocationProbe() {
 describe("ServiceDetail route", () => {
 	it("renders the live detail with the attempt timeline", async () => {
 		renderAt("/services/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
-		expect(
-			await screen.findByText("telegram_bridge"),
-		).toBeInTheDocument();
+		expect(await screen.findByText("telegram_bridge")).toBeInTheDocument();
 		expect(mocks.getService).toHaveBeenCalledWith(
 			"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
 		);
@@ -160,9 +160,7 @@ describe("ServiceDetail route", () => {
 			screen.getByText(/Attempt exited \(requested\)/),
 		).toBeInTheDocument();
 		// Persisted log output renders in the same timeline.
-		expect(
-			screen.getByText("bridged 3 messages"),
-		).toBeInTheDocument();
+		expect(screen.getByText("bridged 3 messages")).toBeInTheDocument();
 		// The live tail merges below the persisted rows.
 		expect(screen.getByText("live tail line")).toBeInTheDocument();
 		expect(mocks.listServiceLogs).toHaveBeenCalledWith(
@@ -198,10 +196,7 @@ describe("ServiceDetail route", () => {
 			continuation_token,
 		});
 		mocks.listServiceLogs.mockImplementation(
-			(
-				_serviceId: unknown,
-				filters: { continuationToken?: string },
-			) =>
+			(_serviceId: unknown, filters: { continuationToken?: string }) =>
 				Promise.resolve(
 					filters.continuationToken === "tok-1"
 						? page(3, 1, 3, null)
@@ -214,9 +209,7 @@ describe("ServiceDetail route", () => {
 		expect(
 			await screen.findByText("Showing 2 of 3 lines"),
 		).toBeInTheDocument();
-		expect(
-			mocks.listServiceLogs,
-		).toHaveBeenCalledWith(
+		expect(mocks.listServiceLogs).toHaveBeenCalledWith(
 			"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
 			expect.objectContaining({
 				limit: 200,
@@ -230,9 +223,7 @@ describe("ServiceDetail route", () => {
 		expect(
 			await screen.findByText("Showing 3 of 3 lines"),
 		).toBeInTheDocument();
-		expect(
-			mocks.listServiceLogs,
-		).toHaveBeenCalledWith(
+		expect(mocks.listServiceLogs).toHaveBeenCalledWith(
 			"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
 			expect.objectContaining({ continuationToken: "tok-1" }),
 		);
@@ -247,11 +238,11 @@ describe("ServiceDetail route", () => {
 		);
 		await screen.findByText("telegram_bridge");
 		const calls = mocks.getService.mock.calls.length;
-		await user.click(screen.getByRole("button", { name: "Refresh service" }));
+		await user.click(
+			screen.getByRole("button", { name: "Refresh service" }),
+		);
 		await waitFor(() =>
-			expect(mocks.getService.mock.calls.length).toBeGreaterThan(
-				calls,
-			),
+			expect(mocks.getService.mock.calls.length).toBeGreaterThan(calls),
 		);
 	});
 
@@ -261,9 +252,7 @@ describe("ServiceDetail route", () => {
 		expect(
 			await screen.findByText("Service not found"),
 		).toBeInTheDocument();
-		expect(
-			screen.getByText(/may have been removed/),
-		).toBeInTheDocument();
+		expect(screen.getByText(/may have been removed/)).toBeInTheDocument();
 		await user.click(
 			screen.getByRole("button", { name: "Back to Services" }),
 		);
@@ -277,13 +266,9 @@ describe("ServiceDetail route", () => {
 		const { user } = renderAt("/services/does-not-exist");
 		await screen.findByText("Service not found");
 		const calls = mocks.getService.mock.calls.length;
-		await user.click(
-			screen.getByRole("button", { name: "Try again" }),
-		);
+		await user.click(screen.getByRole("button", { name: "Try again" }));
 		await waitFor(() =>
-			expect(mocks.getService.mock.calls.length).toBeGreaterThan(
-				calls,
-			),
+			expect(mocks.getService.mock.calls.length).toBeGreaterThan(calls),
 		);
 	});
 

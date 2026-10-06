@@ -1,0 +1,273 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+
+import type {
+	AccessGrant,
+	AccessRow,
+	PermissionCatalogEntry,
+	Place,
+} from "@/services/access";
+
+const mockUseMediaQuery = vi.fn(() => false);
+vi.mock("@/hooks/useMediaQuery", () => ({
+	useMediaQuery: () => mockUseMediaQuery(),
+}));
+afterEach(() => mockUseMediaQuery.mockReturnValue(false));
+
+import { AccessMap } from "./AccessMap";
+
+function entry(
+	domain: string,
+	title: string,
+	area: PermissionCatalogEntry["area"],
+	overrides: Partial<PermissionCatalogEntry> = {},
+): PermissionCatalogEntry {
+	return {
+		domain,
+		title,
+		area,
+		description: "",
+		who_should_hold: "",
+		actions: ["read", "readwrite"],
+		names: {
+			[`${domain}.read`]: `Read ${title}`,
+			[`${domain}.readwrite`]: `Read and Write ${title}`,
+		},
+		privileged: [],
+		scope: "per_organization",
+		enforced: true,
+		...overrides,
+	};
+}
+
+// Sorted by area, then title, as the server sends it.
+const catalog: PermissionCatalogEntry[] = [
+	entry("workflows", "Workflows", "Automation"),
+	entry("tables", "Tables", "Data & Content"),
+	entry("organizations", "Organizations", "Identity & Access", {
+		scope: "platform_wide",
+	}),
+	entry("users", "Users", "Identity & Access", {
+		privileged: ["users.readwrite"],
+	}),
+	entry("secrets", "Secrets", "Integrations & Secrets", {
+		privileged: ["secrets.read"],
+	}),
+	entry("settings", "Settings", "Platform"),
+];
+
+function grant(
+	permission: string,
+	scope: AccessGrant["scope"] = "per_organization",
+	roleName = "Helpdesk",
+): AccessGrant {
+	const [domain, action] = permission.split(".");
+	return {
+		permission,
+		domain,
+		action,
+		scope,
+		sources: [
+			{
+				role_id: `role-${roleName}`,
+				role_name: roleName,
+				via: "additional",
+			},
+		],
+	};
+}
+
+const home: Place = {
+	kind: "home",
+	organization_id: "org-1",
+	organization_name: "Contoso",
+	label: "Contoso (Home)",
+};
+const fabrikam: Place = {
+	kind: "organization",
+	organization_id: "org-2",
+	organization_name: "Fabrikam",
+	label: "Fabrikam",
+};
+const global: Place = {
+	kind: "platform",
+	organization_id: null,
+	organization_name: null,
+	label: "Global",
+};
+
+const rows: AccessRow[] = [
+	{
+		place: home,
+		grants: [grant("tables.read"), grant("users.readwrite")],
+	},
+	{ place: fabrikam, grants: [grant("workflows.execute")] },
+	{ place: global, grants: [grant("organizations.read", "platform_wide")] },
+];
+
+describe("AccessMap", () => {
+	it("lays out places as rows and only the areas they hold as columns", () => {
+		render(<AccessMap rows={rows} catalog={catalog} />);
+
+		const table = screen.getByRole("table", { name: "Access by Place" });
+		expect(
+			within(table)
+				.getAllByRole("columnheader")
+				.map((cell) => cell.textContent),
+		).toEqual([
+			"Place",
+			"Automation",
+			"Data & Content",
+			"Identity & Access",
+		]);
+		expect(
+			within(table)
+				.getAllByRole("rowheader")
+				.map((cell) => cell.textContent),
+		).toEqual(["Contoso (Home)", "Fabrikam", "Global"]);
+	});
+
+	it("puts each permission in its place's row under its area", () => {
+		render(<AccessMap rows={rows} catalog={catalog} />);
+
+		const contoso = screen.getByRole("row", { name: /Contoso \(Home\)/ });
+		const cells = within(contoso).getAllByRole("cell");
+		expect(cells[0]).toHaveTextContent("None");
+		expect(
+			within(cells[1]).getByRole("button", { name: "Read Tables" }),
+		).toHaveAttribute("data-variant", "per_organization");
+		expect(
+			within(cells[2]).getByRole("button", { name: /Users/ }),
+		).toHaveAttribute("data-variant", "privileged");
+	});
+
+	it("marks a platform-wide permission on its chip", () => {
+		render(<AccessMap rows={rows} catalog={catalog} />);
+
+		const globalRow = screen.getByRole("row", { name: /Global/ });
+		const chip = within(globalRow).getByRole("button", {
+			name: /Organizations/,
+		});
+		expect(chip).toHaveAttribute("data-variant", "platform_wide");
+		expect(within(chip).getByText("Platform-Wide")).toBeInTheDocument();
+	});
+
+	const everything: AccessGrant = {
+		...grant("*", "platform_wide", "Platform Admin"),
+		domain: "*",
+		action: "*",
+	};
+	const allOrganizations: AccessRow = {
+		place: { ...global, label: "All Organizations" },
+		grants: [everything],
+	};
+	const tooltip =
+		"Platform Admin: every permission in every organization (secret values excepted)";
+
+	it("spans a Platform Admin's wildcard across every area column as one privileged chip", async () => {
+		const user = userEvent.setup();
+		render(
+			<AccessMap
+				catalog={catalog}
+				rows={[
+					{ place: home, grants: [grant("tables.read")] },
+					{
+						...allOrganizations,
+						grants: [
+							everything,
+							grant("secrets.read", "varies", "Secrets Reader"),
+						],
+					},
+				]}
+			/>,
+		);
+
+		const areas = screen
+			.getAllByRole("columnheader")
+			.slice(1)
+			.map((cell) => cell.textContent);
+		expect(areas).toEqual(["Data & Content", "Integrations & Secrets"]);
+		const place = screen.getByRole("rowheader", {
+			name: "All Organizations",
+		});
+		expect(place).toHaveAttribute("rowspan", "2");
+		const spanRow = place.closest("tr")!;
+		const [span] = within(spanRow).getAllByRole("cell");
+		expect(span).toHaveAttribute("colspan", String(areas.length));
+		const chip = within(span).getByRole("button", {
+			name: "All Permissions",
+		});
+		expect(chip).toHaveAttribute("data-variant", "privileged");
+		expect(chip).toHaveClass(
+			"w-full",
+			"bg-[var(--bf-warning-soft)]",
+			"text-[var(--bf-warning)]",
+		);
+		expect(within(span).getAllByRole("button")).toHaveLength(1);
+
+		const explicitRow = spanRow.nextElementSibling as HTMLElement;
+		const [dataCell, secretsCell] =
+			within(explicitRow).getAllByRole("cell");
+		expect(dataCell).toHaveTextContent("None");
+		expect(
+			within(secretsCell).getByRole("button", { name: /Secrets/ }),
+		).toBeInTheDocument();
+
+		await user.hover(chip);
+		expect(await screen.findByRole("tooltip")).toHaveTextContent(tooltip);
+	});
+
+	it("derives no area columns from the wildcard", () => {
+		render(<AccessMap catalog={catalog} rows={[allOrganizations]} />);
+
+		expect(
+			screen.getAllByRole("columnheader").map((cell) => cell.textContent),
+		).toEqual(["Place", "Permissions"]);
+	});
+
+	it("keeps the wildcard full width in the narrow record list", () => {
+		mockUseMediaQuery.mockReturnValue(true);
+		render(<AccessMap catalog={catalog} rows={[allOrganizations]} />);
+
+		const [record] = within(
+			screen.getByRole("list", { name: "Access by Place" }),
+		).getAllByRole("listitem");
+		expect(
+			within(record).getByRole("button", { name: "All Permissions" }),
+		).toHaveClass("w-full");
+		expect(
+			within(record).queryByText("Permissions"),
+		).not.toBeInTheDocument();
+	});
+
+	it("lists one record per place on narrow screens", () => {
+		mockUseMediaQuery.mockReturnValue(true);
+		render(<AccessMap rows={rows} catalog={catalog} />);
+
+		expect(screen.queryByRole("table")).not.toBeInTheDocument();
+		const records = within(
+			screen.getByRole("list", { name: "Access by Place" }),
+		).getAllByRole("listitem");
+		expect(records).toHaveLength(3);
+		expect(
+			within(records[0]).getByRole("heading", { name: "Contoso (Home)" }),
+		).toBeInTheDocument();
+		expect(
+			within(records[0]).getByText("Data & Content"),
+		).toBeInTheDocument();
+		expect(
+			within(records[0]).getByRole("button", { name: /Tables/ }),
+		).toBeInTheDocument();
+		expect(
+			within(records[0]).queryByText("Automation"),
+		).not.toBeInTheDocument();
+	});
+
+	it("says so when the person holds nothing anywhere", () => {
+		render(<AccessMap rows={[]} catalog={catalog} />);
+
+		expect(screen.getByText("No Permissions Yet")).toBeInTheDocument();
+		expect(screen.queryByRole("table")).not.toBeInTheDocument();
+	});
+});

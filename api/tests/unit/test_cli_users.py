@@ -1,10 +1,11 @@
-"""Unit tests for the ``bifrost users access check`` CLI command.
+"""Unit tests for the ``bifrost users`` CLI commands.
 
-The command resolves its user, organization and workflow refs, then posts the
-what-if to ``POST /api/users/{id}/access/check``. These tests replace
-:class:`BifrostClient` with a fake that has the real ``get``/``post`` call
-shapes so we can assert on every URL, param and body the CLI sends and on the
-text it renders.
+``access check`` resolves its user, organization and workflow refs, then posts
+the what-if to ``POST /api/users/{id}/access/check``; ``access`` alone shows the
+user's access map; ``roles get|set`` read and replace role assignments. These
+tests replace :class:`BifrostClient` with a fake that has the real
+``get``/``post``/``put`` call shapes so we can assert on every URL, param and
+body the CLI sends and on the text it renders.
 """
 
 from __future__ import annotations
@@ -23,6 +24,11 @@ from bifrost.commands.users import users_group
 USER_ID = str(uuid4())
 ORG_ID = str(uuid4())
 WORKFLOW_ID = str(uuid4())
+FABRIKAM_ID = str(uuid4())
+PROVIDER_ID = str(uuid4())
+USER_ROLE_ID = str(uuid4())
+HELPDESK_ROLE_ID = str(uuid4())
+AUDITOR_ROLE_ID = str(uuid4())
 
 TRACE: dict[str, Any] = {
     "outcome": "failure",
@@ -36,6 +42,93 @@ TRACE: dict[str, Any] = {
 }
 
 
+ACCESS_MAP: dict[str, Any] = {
+    "user_id": USER_ID,
+    "name": "Ada Lovelace",
+    "email": "ada@contoso.test",
+    "home_organization": {"id": ORG_ID, "name": "Contoso"},
+    "is_platform_admin": False,
+    "is_protected": False,
+    "privileged_permissions": [],
+    "reach": [
+        {"kind": "home", "organization_id": ORG_ID, "organization_name": "Contoso", "label": "Contoso (Home)"},
+        {"kind": "managed_organizations", "organization_id": None, "organization_name": None, "label": "All Customer Organizations"},
+        {"kind": "platform", "organization_id": None, "organization_name": None, "label": "Global"},
+    ],
+    "rows": [
+        {
+            "place": {"kind": "home", "organization_id": ORG_ID, "organization_name": "Contoso", "label": "Contoso (Home)"},
+            "grants": [
+                {
+                    "permission": "tables.read",
+                    "domain": "tables",
+                    "action": "read",
+                    "scope": "per_organization",
+                    "sources": [{"role_id": USER_ROLE_ID, "role_name": "User", "via": "base"}],
+                },
+                {
+                    "permission": "forms.execute",
+                    "domain": "forms",
+                    "action": "execute",
+                    "scope": "per_organization",
+                    "sources": [
+                        {"role_id": USER_ROLE_ID, "role_name": "User", "via": "base"},
+                        {"role_id": HELPDESK_ROLE_ID, "role_name": "Helpdesk", "via": "additional"},
+                    ],
+                },
+            ],
+        },
+        {
+            "place": {"kind": "platform", "organization_id": None, "organization_name": None, "label": "Global"},
+            "grants": [
+                {
+                    "permission": "audit.read",
+                    "domain": "audit",
+                    "action": "read",
+                    "scope": "platform_wide",
+                    "sources": [{"role_id": AUDITOR_ROLE_ID, "role_name": "Auditor", "via": "additional"}],
+                }
+            ],
+        },
+    ],
+}
+
+CATALOG: list[dict[str, Any]] = [
+    {"domain": "tables", "names": {"tables.read": "Read Tables"}},
+    {"domain": "forms", "names": {"forms.execute": "Run Forms"}},
+]
+
+ASSIGNMENTS: dict[str, Any] = {
+    "base_role": {"id": USER_ROLE_ID, "name": "User", "description": None, "is_builtin": True},
+    "additional": [
+        {
+            "role_id": HELPDESK_ROLE_ID,
+            "name": "Helpdesk",
+            "description": None,
+            "is_builtin": False,
+            "permissions": ["tables.read"],
+            "boundaries": [
+                {"kind": "organization", "organization_id": ORG_ID, "organization_name": "Contoso"},
+                {"kind": "organization", "organization_id": FABRIKAM_ID, "organization_name": "Fabrikam"},
+            ],
+        },
+        {
+            "role_id": AUDITOR_ROLE_ID,
+            "name": "Auditor",
+            "description": None,
+            "is_builtin": False,
+            "permissions": ["audit.read"],
+            "boundaries": [
+                {"kind": "managed_organizations", "organization_id": None, "organization_name": None},
+                {"kind": "platform", "organization_id": None, "organization_name": None},
+            ],
+        },
+    ],
+    "is_protected": False,
+    "assignable_roles": [],
+}
+
+
 class _FakeClient:
     """Routes request paths to canned JSON bodies and records each call."""
 
@@ -44,7 +137,16 @@ class _FakeClient:
         self.calls: list[tuple[str, str, dict[str, Any] | None]] = []
         self._responses: dict[str, Any] = {
             "/api/users": [{"id": USER_ID, "email": "ada@contoso.test", "organization_id": None}],
-            "/api/organizations": [{"id": ORG_ID, "name": "Contoso"}],
+            "/api/organizations": [{"id": ORG_ID, "name": "Contoso"}, {"id": FABRIKAM_ID, "name": "Fabrikam"}],
+            "/api/roles": [
+                {"id": USER_ROLE_ID, "name": "User"},
+                {"id": HELPDESK_ROLE_ID, "name": "Helpdesk"},
+                {"id": AUDITOR_ROLE_ID, "name": "Auditor"},
+            ],
+            "/auth/authorization": {"provider_organization_id": PROVIDER_ID},
+            f"/api/users/{USER_ID}/access": ACCESS_MAP,
+            "/api/permissions/catalog": CATALOG,
+            f"/api/users/{USER_ID}/role-assignments": ASSIGNMENTS,
             "/api/workflows": [
                 {"id": WORKFLOW_ID, "name": "Sync Invoices", "function_name": "sync", "source_file_path": "workflows/sync.py"}
             ],
@@ -62,6 +164,10 @@ class _FakeClient:
     async def post(self, path: str, *, json: dict[str, Any] | None = None) -> httpx.Response:
         self.calls.append(("POST", path, json))
         return self._response("POST", path)
+
+    async def put(self, path: str, *, json: dict[str, Any] | None = None) -> httpx.Response:
+        self.calls.append(("PUT", path, json))
+        return self._response("PUT", path)
 
 
 @pytest.fixture
@@ -147,3 +253,229 @@ class TestUsersAccessCheck:
         result = CliRunner().invoke(users_group, ["access", "check", USER_ID], standalone_mode=False)
         assert result.exit_code != 0
         assert fake_client.calls == []
+
+
+class TestUsersAccessShow:
+    @pytest.mark.parametrize("args", [["access", USER_ID], ["access", "show", USER_ID]])
+    def test_a_user_with_no_subcommand_fetches_the_access_map(self, fake_client: _FakeClient, args: list[str]) -> None:
+        result = _invoke(args)
+        assert result.exit_code == 0, result.output
+        assert fake_client.calls == [
+            ("GET", f"/api/users/{USER_ID}/access", None),
+            ("GET", "/api/permissions/catalog", None),
+        ]
+
+    def test_email_is_resolved_to_the_user_id(self, fake_client: _FakeClient) -> None:
+        _invoke(["access", "ada@contoso.test"])
+        assert fake_client.calls == [
+            ("GET", "/api/users", {"search": "ada@contoso.test"}),
+            ("GET", f"/api/users/{USER_ID}/access", None),
+            ("GET", "/api/permissions/catalog", None),
+        ]
+
+    def test_renders_the_reach_line_then_a_block_per_place(self, fake_client: _FakeClient) -> None:
+        output = _invoke(["access", USER_ID]).output
+        assert [line.split() for line in output.splitlines()] == [
+            ["Reach:", "Contoso", "(Home),", "All", "Customer", "Organizations,", "Global"],
+            [],
+            ["Contoso", "(Home)"],
+            ["Read", "Tables", "tables.read", "per-org", "(User,", "base)"],
+            ["Run", "Forms", "forms.execute", "per-org", "(User,", "base;", "Helpdesk,", "additional)"],
+            [],
+            ["Global"],
+            ["audit.read", "platform-wide", "(Auditor,", "additional)"],
+        ]
+
+    def test_grants_are_indented_under_their_place(self, fake_client: _FakeClient) -> None:
+        lines = _invoke(["access", USER_ID]).output.splitlines()
+        assert lines[2] == "Contoso (Home)"
+        assert lines[3].startswith("  Read Tables  tables.read")
+
+    def test_the_platform_admin_wildcard_reads_all_permissions(self, fake_client: _FakeClient) -> None:
+        wildcard = {**ACCESS_MAP["rows"][1]["grants"][0], "permission": "*", "domain": "*", "action": "*"}
+        fake_client._responses[f"/api/users/{USER_ID}/access"] = {
+            **ACCESS_MAP,
+            "rows": [{**ACCESS_MAP["rows"][1], "grants": [wildcard]}],
+        }
+        lines = _invoke(["access", USER_ID]).output.splitlines()
+        assert lines[3].startswith("  All Permissions  *")
+
+    def test_json_passes_the_access_map_through(self, fake_client: _FakeClient) -> None:
+        assert json.loads(_invoke(["access", USER_ID, "--json"]).output) == ACCESS_MAP
+
+    def test_json_before_the_user_also_dispatches_to_show(self, fake_client: _FakeClient) -> None:
+        assert json.loads(_invoke(["access", "--json", USER_ID]).output) == ACCESS_MAP
+
+    def test_check_still_dispatches_to_check(self, fake_client: _FakeClient) -> None:
+        result = _invoke(["access", "check", USER_ID, "--org", "global", "--operation", "tables.documents.create"])
+        assert result.exit_code == 0, result.output
+        assert fake_client.calls[-1][0:2] == ("POST", f"/api/users/{USER_ID}/access/check")
+
+    def test_help_lists_both_commands(self) -> None:
+        output = CliRunner().invoke(users_group, ["access", "--help"]).output
+        assert "check" in output
+        assert "show" in output
+
+
+class TestUsersRolesGet:
+    def test_fetches_the_role_assignments(self, fake_client: _FakeClient) -> None:
+        result = _invoke(["roles", "get", USER_ID])
+        assert result.exit_code == 0, result.output
+        assert fake_client.calls == [("GET", f"/api/users/{USER_ID}/role-assignments", None)]
+
+    def test_renders_the_base_role_then_each_additional_role_with_its_places(self, fake_client: _FakeClient) -> None:
+        output = _invoke(["roles", "get", USER_ID]).output
+        assert [line.split() for line in output.splitlines()] == [
+            ["Base", "role:", "User"],
+            ["Helpdesk", "Contoso,", "Fabrikam"],
+            ["Auditor", "All", "Customer", "Organizations,", "Global"],
+        ]
+
+    def test_no_additional_roles_renders_only_the_base_role(self, fake_client: _FakeClient) -> None:
+        fake_client._responses[f"/api/users/{USER_ID}/role-assignments"] = {**ASSIGNMENTS, "additional": []}
+        assert _invoke(["roles", "get", USER_ID]).output.splitlines() == ["Base role: User"]
+
+    def test_json_passes_the_assignments_through(self, fake_client: _FakeClient) -> None:
+        assert json.loads(_invoke(["roles", "get", USER_ID, "--json"]).output) == ASSIGNMENTS
+
+
+class TestUsersRolesSet:
+    URL = f"/api/users/{USER_ID}/role-assignments"
+
+    def test_role_without_places_sends_no_boundaries_and_keeps_the_current_base(self, fake_client: _FakeClient) -> None:
+        result = _invoke(["roles", "set", USER_ID, "--role", "Helpdesk"])
+        assert result.exit_code == 0, result.output
+        assert fake_client.calls == [
+            ("GET", "/api/roles", None),
+            ("GET", self.URL, None),
+            ("PUT", self.URL, {"base_role_id": USER_ROLE_ID, "additional": [{"role_id": HELPDESK_ROLE_ID}]}),
+        ]
+
+    def test_base_alone_keeps_the_additional_roles_with_their_boundaries(self, fake_client: _FakeClient) -> None:
+        result = _invoke(["roles", "set", USER_ID, "--base", "Helpdesk"])
+        assert result.exit_code == 0, result.output
+        assert fake_client.calls[-1] == (
+            "PUT",
+            self.URL,
+            {
+                "base_role_id": HELPDESK_ROLE_ID,
+                "additional": [
+                    {
+                        "role_id": HELPDESK_ROLE_ID,
+                        "boundaries": [
+                            {"kind": "organization", "organization_id": ORG_ID},
+                            {"kind": "organization", "organization_id": FABRIKAM_ID},
+                        ],
+                    },
+                    {
+                        "role_id": AUDITOR_ROLE_ID,
+                        "boundaries": [{"kind": "managed_organizations"}, {"kind": "platform"}],
+                    },
+                ],
+            },
+        )
+
+    def test_base_with_role_replaces_the_additional_roles_without_reading_them(self, fake_client: _FakeClient) -> None:
+        _invoke(["roles", "set", USER_ID, "--base", "Helpdesk", "--role", "Auditor"])
+        assert fake_client.calls[-1] == (
+            "PUT",
+            self.URL,
+            {"base_role_id": HELPDESK_ROLE_ID, "additional": [{"role_id": AUDITOR_ROLE_ID}]},
+        )
+        assert ("GET", self.URL, None) not in fake_client.calls
+
+    def test_base_with_no_roles_clears_without_reading_the_additional_roles(self, fake_client: _FakeClient) -> None:
+        _invoke(["roles", "set", USER_ID, "--base", "Helpdesk", "--no-roles"])
+        assert fake_client.calls[-1] == ("PUT", self.URL, {"base_role_id": HELPDESK_ROLE_ID, "additional": []})
+        assert ("GET", self.URL, None) not in fake_client.calls
+
+    def test_org_places_resolve_to_organization_boundaries(self, fake_client: _FakeClient) -> None:
+        _invoke(["roles", "set", USER_ID, "--base", "User", "--role", "Helpdesk=org:Contoso,org:Fabrikam"])
+        assert fake_client.calls[-1][2] == {
+            "base_role_id": USER_ROLE_ID,
+            "additional": [
+                {
+                    "role_id": HELPDESK_ROLE_ID,
+                    "boundaries": [
+                        {"kind": "organization", "organization_id": ORG_ID},
+                        {"kind": "organization", "organization_id": FABRIKAM_ID},
+                    ],
+                }
+            ],
+        }
+
+    def test_places_tolerate_spaces_around_the_commas(self, fake_client: _FakeClient) -> None:
+        _invoke(["roles", "set", USER_ID, "--base", "User", "--role", "Helpdesk=org:Contoso, customers"])
+        assert fake_client.calls[-1][2]["additional"] == [
+            {
+                "role_id": HELPDESK_ROLE_ID,
+                "boundaries": [
+                    {"kind": "organization", "organization_id": ORG_ID},
+                    {"kind": "managed_organizations"},
+                ],
+            }
+        ]
+
+    def test_customers_and_global_map_to_their_boundary_kinds(self, fake_client: _FakeClient) -> None:
+        _invoke(["roles", "set", USER_ID, "--base", "User", "--role", "Auditor=customers,global"])
+        assert fake_client.calls[-1][2]["additional"] == [
+            {
+                "role_id": AUDITOR_ROLE_ID,
+                "boundaries": [{"kind": "managed_organizations"}, {"kind": "platform"}],
+            }
+        ]
+
+    def test_all_expands_to_customers_the_provider_organization_and_global(self, fake_client: _FakeClient) -> None:
+        _invoke(["roles", "set", USER_ID, "--base", "User", "--role", "Auditor=all"])
+        assert ("GET", "/auth/authorization", None) in fake_client.calls
+        assert fake_client.calls[-1][2]["additional"] == [
+            {
+                "role_id": AUDITOR_ROLE_ID,
+                "boundaries": [
+                    {"kind": "managed_organizations"},
+                    {"kind": "organization", "organization_id": PROVIDER_ID},
+                    {"kind": "platform"},
+                ],
+            }
+        ]
+
+    def test_a_place_named_twice_is_sent_once(self, fake_client: _FakeClient) -> None:
+        _invoke(["roles", "set", USER_ID, "--base", "User", "--role", "Auditor=global,all"])
+        kinds = [b["kind"] for b in fake_client.calls[-1][2]["additional"][0]["boundaries"]]
+        assert kinds == ["platform", "managed_organizations", "organization"]
+
+    def test_several_roles_are_sent_in_order(self, fake_client: _FakeClient) -> None:
+        _invoke(["roles", "set", USER_ID, "--base", "User", "--role", "Helpdesk", "--role", "Auditor=global"])
+        assert fake_client.calls[-1][2]["additional"] == [
+            {"role_id": HELPDESK_ROLE_ID},
+            {"role_id": AUDITOR_ROLE_ID, "boundaries": [{"kind": "platform"}]},
+        ]
+
+    def test_no_roles_clears_the_additional_roles(self, fake_client: _FakeClient) -> None:
+        result = _invoke(["roles", "set", USER_ID, "--no-roles"])
+        assert result.exit_code == 0, result.output
+        assert fake_client.calls[-1] == ("PUT", self.URL, {"base_role_id": USER_ROLE_ID, "additional": []})
+
+    def test_prints_the_updated_assignments(self, fake_client: _FakeClient) -> None:
+        output = _invoke(["roles", "set", USER_ID, "--no-roles"]).output
+        assert output.splitlines()[0] == "Base role: User"
+
+    def test_nothing_to_change_is_a_usage_error(self, fake_client: _FakeClient) -> None:
+        result = CliRunner().invoke(users_group, ["roles", "set", USER_ID], standalone_mode=False)
+        assert result.exit_code != 0
+        assert fake_client.calls == []
+
+    def test_no_roles_conflicts_with_role(self, fake_client: _FakeClient) -> None:
+        result = CliRunner().invoke(
+            users_group, ["roles", "set", USER_ID, "--no-roles", "--role", "Helpdesk"], standalone_mode=False
+        )
+        assert result.exit_code != 0
+        assert fake_client.calls == []
+
+    @pytest.mark.parametrize("role", ["Helpdesk=nowhere", "Helpdesk=", "Helpdesk=org:"])
+    def test_a_bad_place_is_a_usage_error_and_nothing_is_sent(self, fake_client: _FakeClient, role: str) -> None:
+        result = CliRunner().invoke(
+            users_group, ["roles", "set", USER_ID, "--base", "User", "--role", role], standalone_mode=False
+        )
+        assert result.exit_code != 0
+        assert not any(call[0] == "PUT" for call in fake_client.calls)

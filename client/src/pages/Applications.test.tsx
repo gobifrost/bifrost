@@ -183,7 +183,9 @@ describe("Applications — bulk SDK updates", () => {
 			screen.getByRole("button", { name: "Update all SDKs (2)" }),
 		);
 
-		expect(screen.getByRole("button", { name: "Queueing…" })).toBeDisabled();
+		expect(
+			screen.getByRole("button", { name: "Queueing…" }),
+		).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Select" })).toBeDisabled();
 		expect(mockBatchUpdateApplicationSdks).toHaveBeenCalledWith([
 			"app-1",
@@ -303,8 +305,12 @@ describe("Applications — bulk SDK updates", () => {
 			screen.getByRole("button", { name: "Update selected (2)" }),
 		);
 
-		expect(screen.getByRole("button", { name: "Select all" })).toBeDisabled();
-		expect(screen.getByRole("button", { name: "Queueing…" })).toBeDisabled();
+		expect(
+			screen.getByRole("button", { name: "Select all" }),
+		).toBeDisabled();
+		expect(
+			screen.getByRole("button", { name: "Queueing…" }),
+		).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
 		expect(mockBatchUpdateApplicationSdks).toHaveBeenCalledWith([
 			"app-1",
@@ -405,9 +411,10 @@ describe("Applications — app launch behavior", () => {
 			refetch: vi.fn(),
 		});
 		await renderPage();
-		expect(
-			screen.getByRole("link", { name: "Live Dash" }),
-		).toHaveAttribute("href", "/apps/live-dash");
+		expect(screen.getByRole("link", { name: "Live Dash" })).toHaveAttribute(
+			"href",
+			"/apps/live-dash",
+		);
 		expect(screen.queryByText(/open published/i)).not.toBeInTheDocument();
 	});
 

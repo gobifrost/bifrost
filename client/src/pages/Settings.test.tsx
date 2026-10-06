@@ -51,8 +51,7 @@ vi.mock("@/pages/settings/KubernetesExecutions", () => ({
 const kubernetesStatusMock = vi.fn();
 
 vi.mock("@/services/kubernetes", () => ({
-	getKubernetesStatus: (...args: unknown[]) =>
-		kubernetesStatusMock(...args),
+	getKubernetesStatus: (...args: unknown[]) => kubernetesStatusMock(...args),
 }));
 
 describe("Settings", () => {
@@ -72,18 +71,14 @@ describe("Settings", () => {
 			screen.getByRole("textbox", { name: "Repository draft" }),
 			"unsaved-repository",
 		);
-		await user.click(
-			screen.getByRole("button", { name: "Security" }),
-		);
+		await user.click(screen.getByRole("button", { name: "Security" }));
 		await user.click(
 			screen.getByRole("button", { name: "Authentication" }),
 		);
 		expect(
 			screen.queryByRole("textbox", { name: "Repository draft" }),
 		).not.toBeInTheDocument();
-		await user.click(
-			screen.getByRole("button", { name: "GitHub" }),
-		);
+		await user.click(screen.getByRole("button", { name: "GitHub" }));
 		expect(
 			screen.getByRole("textbox", { name: "Repository draft" }),
 		).toHaveValue("unsaved-repository");
@@ -92,9 +87,10 @@ describe("Settings", () => {
 		renderWithProviders(<Settings />, {
 			initialEntries: ["/settings/unknown"],
 		});
-		expect(
-			screen.getByRole("button", { name: "Models" }),
-		).toHaveAttribute("aria-current", "page");
+		expect(screen.getByRole("button", { name: "Models" })).toHaveAttribute(
+			"aria-current",
+			"page",
+		);
 		expect(
 			screen.getByRole("heading", { name: "Models Panel" }),
 		).toBeVisible();
@@ -209,9 +205,7 @@ describe("Settings", () => {
 		await user.click(
 			await screen.findByRole("button", { name: /^kubernetes$/i }),
 		);
-		await user.click(
-			screen.getByRole("button", { name: /^executions$/i }),
-		);
+		await user.click(screen.getByRole("button", { name: /^executions$/i }));
 		expect(
 			screen.getByRole("heading", { name: /executions panel/i }),
 		).toBeVisible();

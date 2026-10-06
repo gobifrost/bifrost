@@ -9,7 +9,9 @@ import {
 	useQueryClient,
 } from "@tanstack/react-query";
 import { $api, apiClient } from "@/lib/api-client";
+import { parseApiError } from "@/lib/api-error";
 import { invalidateAuthorization } from "@/lib/authorization";
+import { USER_ACCESS_QUERY_KEY } from "@/services/access";
 
 export interface UsersPageParams {
 	scope?: string | null;
@@ -96,15 +98,23 @@ export function useUsersFiltered(
 }
 
 /**
- * Fetch a specific user by ID
+ * Fetch a specific user by ID. A failed read rejects with an `ApiError`
+ * carrying the status, so a page can tell "not allowed" from "not found".
  */
 export function useUser(userId: string | undefined) {
-	return $api.useQuery(
-		"get",
-		"/api/users/{user_id}",
-		{ params: { path: { user_id: userId! } } },
-		{ enabled: !!userId },
-	);
+	const init = { params: { path: { user_id: userId! } } };
+	return useQuery({
+		queryKey: ["get", "/api/users/{user_id}", init],
+		queryFn: async () => {
+			const { data, error, response } = await apiClient.GET(
+				"/api/users/{user_id}",
+				init,
+			);
+			if (error) throw parseApiError(error, response.status);
+			return data;
+		},
+		enabled: !!userId,
+	});
 }
 
 /**
@@ -150,6 +160,7 @@ export function useReplaceUserRoleAssignments() {
 			queryClient.invalidateQueries({
 				queryKey: ["get", "/api/roles/{role_id}/users"],
 			});
+			queryClient.invalidateQueries({ queryKey: USER_ACCESS_QUERY_KEY });
 			void invalidateAuthorization(queryClient);
 		},
 	});
@@ -182,6 +193,7 @@ export function useUpdateUser() {
 			queryClient.invalidateQueries({
 				queryKey: ["get", "/api/users/{user_id}/role-assignments"],
 			});
+			queryClient.invalidateQueries({ queryKey: USER_ACCESS_QUERY_KEY });
 		},
 	});
 }

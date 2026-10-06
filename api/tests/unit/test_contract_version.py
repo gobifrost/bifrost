@@ -42,6 +42,18 @@ from src.models.contracts.platform_jobs import (  # noqa: E402
     PlatformJobAccepted,
     PlatformJobPublic,
 )
+from src.models.contracts.access_checks import (  # noqa: E402
+    AccessExplanation,
+    AccessTrace,
+)
+from src.models.contracts.audit import AuditLogListResponse  # noqa: E402
+from src.models.contracts.audit_retention import AuditRetentionStatus  # noqa: E402
+from src.models.contracts.permissions import PermissionCatalogEntry  # noqa: E402
+from src.models.contracts.role_assignments import (  # noqa: E402
+    UserRoleAssignmentsResponse,
+)
+from src.models.contracts.run_retention import RunRetentionStatus  # noqa: E402
+from src.models.contracts.user_access import UserAccessMap  # noqa: E402
 from src.models.contracts.claims import CustomClaimCreate, CustomClaimUpdate  # noqa: E402
 from src.models.contracts.config import ConfigCreate, ConfigUpdate  # noqa: E402
 from src.models.contracts.events import (  # noqa: E402
@@ -121,6 +133,14 @@ _COMMAND_DTOS: list[type] = [
     PolicyRuleCreate,
     PolicyRuleUpdate,
     ServicePolicyUpdate,
+    UserAccessMap,
+    PermissionCatalogEntry,
+    UserRoleAssignmentsResponse,
+    AccessExplanation,
+    AccessTrace,
+    AuditLogListResponse,
+    RunRetentionStatus,
+    AuditRetentionStatus,
 ]
 
 #: Every request/response DTO the in-workflow SDK sends/parses against
@@ -289,7 +309,20 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # "secret" key is write-only (stored encrypted, never returned; omit to
     # keep, null/"" to clear). COSMETIC: the schema shape is unchanged and old
     # CLIs send the same body. Fingerprint refreshed only.
-    "deca5400274834bb454fb1d19fdf35c912e47de8950f7b8beb3257463a21b8ae"
+    #
+    # Access and retention response shapes newly fingerprinted (2026-10-06):
+    # `bifrost users access/roles`, `permissions catalog`, `audit list/explain`
+    # and `retention` parse UserAccessMap, PermissionCatalogEntry,
+    # UserRoleAssignmentsResponse, AccessExplanation/AccessTrace,
+    # AuditLogListResponse, RunRetentionStatus and AuditRetentionStatus. The
+    # commands ship with these DTOs, so no released CLI parses an older shape
+    # (greenfield coverage). Fingerprint refreshed only.
+    #
+    # PermissionCatalogEntry gained `names` and Title Case `area` values
+    # (2026-10-06, Graph-style permission display names). Same unreleased
+    # commands as above, so no released CLI parses the older shape.
+    # Fingerprint refreshed only.
+    "9cacb5b441195dd167c6fde2f4a2c040ca92f16db80d518aa712bd39b3b16c39"
 )
 
 

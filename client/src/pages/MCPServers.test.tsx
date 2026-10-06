@@ -23,35 +23,33 @@ import { MCPServers } from "./MCPServers";
 
 beforeEach(() => {
 	useMediaQueryMock.mockReturnValue(false);
-	useQueryMock.mockImplementation(
-		(_method: string, path: string) => {
-			if (path === "/api/mcp-servers") {
-				return {
-					data: [
-						{
-							id: "server-1",
-							name: "Linear MCP",
-							server_url: "https://linear.example/mcp",
-							is_active: true,
-							organization_id: null,
-							created_at: "2026-01-01T00:00:00Z",
-						},
-					],
-					isLoading: false,
-					isError: false,
-					isFetching: false,
-					refetch: vi.fn(),
-				};
-			}
+	useQueryMock.mockImplementation((_method: string, path: string) => {
+		if (path === "/api/mcp-servers") {
 			return {
-				data: [{ id: "connection-1", server_id: "server-1" }],
+				data: [
+					{
+						id: "server-1",
+						name: "Linear MCP",
+						server_url: "https://linear.example/mcp",
+						is_active: true,
+						organization_id: null,
+						created_at: "2026-01-01T00:00:00Z",
+					},
+				],
 				isLoading: false,
 				isError: false,
 				isFetching: false,
 				refetch: vi.fn(),
 			};
-		},
-	);
+		}
+		return {
+			data: [{ id: "connection-1", server_id: "server-1" }],
+			isLoading: false,
+			isError: false,
+			isFetching: false,
+			refetch: vi.fn(),
+		};
+	});
 });
 
 describe("MCPServers", () => {

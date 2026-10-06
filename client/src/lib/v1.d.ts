@@ -1641,6 +1641,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/{user_id}/access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get what a user can do, and where
+         * @description The user's permissions grouped by place (home, selected organizations, all customer organizations, Global) with the role each comes through.
+         */
+        get: operations["get_user_access_api_users__user_id__access_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users/{user_id}/access/check": {
         parameters: {
             query?: never;
@@ -1912,6 +1932,26 @@ export interface paths {
          * @description Replace the role's identity permissions (users, users.lifecycle, organizations, roleassignments, roles); its other permissions are kept. Builtin roles can't be changed.
          */
         put: operations["set_role_permissions_api_roles__role_id__permissions_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/permissions/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List permission domains
+         * @description Every permission domain with its title, area, guidance, actions, scope and enforcement
+         */
+        get: operations["get_permission_catalog_api_permissions_catalog_get"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -11902,6 +11942,46 @@ export interface components {
             now_unavailable: ("rows_not_stored" | "run_user_missing" | "workflow_missing" | "solution_not_recorded") | null;
             /** Changed */
             changed: boolean | null;
+        };
+        /** AccessGrant */
+        AccessGrant: {
+            /** Permission */
+            permission: string;
+            /** Domain */
+            domain: string;
+            /** Action */
+            action: string;
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "per_organization" | "platform_wide" | "varies";
+            /** Sources */
+            sources: components["schemas"]["AccessGrantSource"][];
+        };
+        /**
+         * AccessGrantSource
+         * @description The role a permission is held through.
+         */
+        AccessGrantSource: {
+            /**
+             * Role Id
+             * Format: uuid
+             */
+            role_id: string;
+            /** Role Name */
+            role_name: string;
+            /**
+             * Via
+             * @enum {string}
+             */
+            via: "base" | "additional";
+        };
+        /** AccessRow */
+        AccessRow: {
+            place: components["schemas"]["Place"];
+            /** Grants */
+            grants: components["schemas"]["AccessGrant"][];
         };
         /**
          * AccessStep
@@ -22810,6 +22890,16 @@ export interface components {
             /** Total Value */
             total_value: number;
         };
+        /** OrganizationRef */
+        OrganizationRef: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+        };
         /**
          * OrganizationUpdate
          * @description Input for updating an organization (all fields optional).
@@ -23290,6 +23380,57 @@ export interface components {
              * @description Forms, agents, and apps that depend on this workflow
              */
             affected_entities?: components["schemas"]["AffectedEntity"][];
+        };
+        /**
+         * PermissionCatalogEntry
+         * @description One permission domain as the roles and access screens present it.
+         */
+        PermissionCatalogEntry: {
+            /** Domain */
+            domain: string;
+            /** Title */
+            title: string;
+            /**
+             * Area
+             * @enum {string}
+             */
+            area: "Identity & Access" | "Automation" | "Data & Content" | "Integrations & Secrets" | "Platform";
+            /** Description */
+            description: string;
+            /** Who Should Hold */
+            who_should_hold: string;
+            /** Actions */
+            actions: string[];
+            /** Names */
+            names: {
+                [key: string]: string;
+            };
+            /** Privileged */
+            privileged: string[];
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "per_organization" | "platform_wide" | "varies";
+            /** Enforced */
+            enforced: boolean;
+        };
+        /**
+         * Place
+         * @description Somewhere a person's roles apply, with the label the screens show.
+         */
+        Place: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "home" | "organization" | "managed_organizations" | "platform";
+            /** Organization Id */
+            organization_id?: string | null;
+            /** Organization Name */
+            organization_name?: string | null;
+            /** Label */
+            label: string;
         };
         /**
          * PlatformJobAccepted
@@ -24755,6 +24896,27 @@ export interface components {
             permissions: string[];
         };
         /**
+         * RolePlacementSummary
+         * @description Where a role's assignments apply, across everyone who holds it.
+         */
+        RolePlacementSummary: {
+            /**
+             * Organizations
+             * @description Distinct organizations the role is placed on
+             */
+            organizations: number;
+            /**
+             * Managed
+             * @description Placed on every managed (customer) organization
+             */
+            managed: boolean;
+            /**
+             * Platform
+             * @description Placed platform-wide
+             */
+            platform: boolean;
+        };
+        /**
          * RolePublic
          * @description Role output for API responses.
          *
@@ -24788,6 +24950,18 @@ export interface components {
             updated_at: string | null;
             /** @description Inline counts of every consumer type. Populated on list-roles for the Roles UI; may be None on single-role responses where it's not needed. */
             consumer_counts?: components["schemas"]["RoleConsumerCounts"] | null;
+            /**
+             * Holders
+             * @description Distinct users holding the role as their base role or an additional role. Populated with consumer_counts.
+             */
+            holders?: number | null;
+            /**
+             * Grants
+             * @description Permissions the role grants, sorted. Populated with consumer_counts.
+             */
+            grants?: string[] | null;
+            /** @description Where the role's assignments are placed. Populated with consumer_counts. */
+            placements?: components["schemas"]["RolePlacementSummary"] | null;
         };
         /** RoleSummary */
         RoleSummary: {
@@ -28328,6 +28502,29 @@ export interface components {
              * @default 0
              */
             output_tokens: number;
+        };
+        /** UserAccessMap */
+        UserAccessMap: {
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+            /** Name */
+            name?: string | null;
+            /** Email */
+            email: string;
+            home_organization?: components["schemas"]["OrganizationRef"] | null;
+            /** Is Platform Admin */
+            is_platform_admin: boolean;
+            /** Is Protected */
+            is_protected: boolean;
+            /** Privileged Permissions */
+            privileged_permissions: string[];
+            /** Reach */
+            reach: components["schemas"]["Place"][];
+            /** Rows */
+            rows: components["schemas"]["AccessRow"][];
         };
         /**
          * UserFormsResponse
@@ -32328,6 +32525,37 @@ export interface operations {
             };
         };
     };
+    get_user_access_api_users__user_id__access_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserAccessMap"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     check_user_access_api_users__user_id__access_check_post: {
         parameters: {
             query?: never;
@@ -33178,6 +33406,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_permission_catalog_api_permissions_catalog_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PermissionCatalogEntry"][];
                 };
             };
         };

@@ -77,6 +77,8 @@ from src.services.authorization.privilege import (
 
 GET_OPERATION = "GET /api/users/{user_id}/role-assignments"
 PUT_OPERATION = "PUT /api/users/{user_id}/role-assignments"
+# The access map is read exactly as the role assignments are.
+ACCESS_OPERATION = "GET /api/users/{user_id}/access"
 
 CEILING_MESSAGE = (
     "You can only assign or remove roles that carry no permissions, on users "
@@ -279,7 +281,7 @@ def check_boundaries(
 
 
 @dataclass(frozen=True)
-class _Target:
+class AssignmentTarget:
     user: User
     held: frozenset[str]
 
@@ -288,12 +290,12 @@ class _Target:
         return is_privileged_principal(self.held)
 
 
-async def _load_target(session: AsyncSession, user_id: UUID) -> _Target | None:
+async def _load_target(session: AsyncSession, user_id: UUID) -> AssignmentTarget | None:
     user = await session.get(User, user_id)
     if user is None:
         return None
     held = await held_permissions_by_user(session, [user_id])
-    return _Target(user, held.get(user_id, frozenset()))
+    return AssignmentTarget(user, held.get(user_id, frozenset()))
 
 
 async def _current_assignments(
@@ -323,7 +325,7 @@ async def _all_roles(session: AsyncSession) -> dict[UUID, RoleInfo]:
 
 def _assignable_roles(
     caller: Caller,
-    target: _Target,
+    target: AssignmentTarget,
     roles: dict[UUID, RoleInfo],
     held_role_ids: frozenset[UUID],
 ) -> list[AssignableRole]:
@@ -398,7 +400,7 @@ def _may_change(caller: Caller, role: RoleInfo, target_permissions: frozenset[st
 
 
 async def _response(
-    session: AsyncSession, caller: Caller, target: _Target
+    session: AsyncSession, caller: Caller, target: AssignmentTarget
 ) -> UserRoleAssignmentsResponse:
     assignments = await _current_assignments(session, target.user.id)
     roles = await _all_roles(session)
@@ -453,9 +455,11 @@ async def _response(
     )
 
 
-async def _require_target(
+async def require_assignment_target(
     session: AsyncSession, caller: Caller, user_id: UUID, operation: str
-) -> _Target:
+) -> AssignmentTarget:
+    """The user ``operation`` is about, once ``caller`` may perform it at
+    their organization (404 when they do not exist)."""
     # Reach anywhere first: a caller with none learns nothing about which
     # users exist.
     operation_reach(caller, operation)
@@ -469,7 +473,7 @@ async def _require_target(
 async def get_role_assignments(
     session: AsyncSession, caller: Caller, *, user_id: UUID
 ) -> UserRoleAssignmentsResponse:
-    target = await _require_target(session, caller, user_id, GET_OPERATION)
+    target = await require_assignment_target(session, caller, user_id, GET_OPERATION)
     return await _response(session, caller, target)
 
 
@@ -505,7 +509,7 @@ async def replace_role_assignments(
     from src.core.cache import invalidate_role_users
     from src.services.audit import emit_audit
 
-    target = await _require_target(session, caller, user_id, PUT_OPERATION)
+    target = await require_assignment_target(session, caller, user_id, PUT_OPERATION)
     user = target.user
     if is_system_account(user.id):
         raise RoleAssignmentError(422, SYSTEM_ACCOUNT_ROLE_MESSAGE)
@@ -617,7 +621,7 @@ async def replace_role_assignments(
     return await _response(session, caller, refreshed)
 
 
-def _check_base_change(caller: Caller, target: _Target, old: RoleInfo, new: RoleInfo) -> None:
+def _check_base_change(caller: Caller, target: AssignmentTarget, old: RoleInfo, new: RoleInfo) -> None:
     org = org_target(target.user.organization_id)
     require_operation(caller, PUT_OPERATION, org, permission="users.lifecycle.readwrite")
     if new.is_builtin and new.id not in BASE_ROLE_IDS:

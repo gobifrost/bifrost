@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useLocation } from "react-router-dom";
 import { waitFor } from "@testing-library/react";
 import { renderWithProviders, screen } from "@/test-utils";
-import { makeAttempt, makeService } from "@/components/services/serviceTestUtils";
+import {
+	makeAttempt,
+	makeService,
+} from "@/components/services/serviceTestUtils";
 import { Services } from "./Services";
 
 const telegramAttempt = makeAttempt({
@@ -156,9 +159,7 @@ async function renderServicesPage() {
 describe("Services page (live)", () => {
 	it("renders the live services list with search and filters", async () => {
 		await renderServicesPage();
-		expect(
-			await screen.findByText("telegram_bridge"),
-		).toBeInTheDocument();
+		expect(await screen.findByText("telegram_bridge")).toBeInTheDocument();
 		expect(screen.getByText("Crash loop")).toBeInTheDocument();
 		expect(
 			screen.getByRole("textbox", {
@@ -177,9 +178,9 @@ describe("Services page (live)", () => {
 		await user.click(
 			await screen.findByRole("link", { name: "mqtt_ingest" }),
 		);
-		expect(
-			screen.getByLabelText("location"),
-		).toHaveTextContent("/services/cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+		expect(screen.getByLabelText("location")).toHaveTextContent(
+			"/services/cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+		);
 	});
 
 	it("shows a retryable error when the live list fails", async () => {
@@ -192,12 +193,8 @@ describe("Services page (live)", () => {
 			items: liveServices,
 			total: liveServices.length,
 		});
-		await user.click(
-			screen.getByRole("button", { name: "Retry loading" }),
-		);
-		expect(
-			await screen.findByText("telegram_bridge"),
-		).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Retry loading" }));
+		expect(await screen.findByText("telegram_bridge")).toBeInTheDocument();
 	});
 
 	it("refreshes the live list from the Refresh button", async () => {
@@ -208,9 +205,7 @@ describe("Services page (live)", () => {
 			screen.getByRole("button", { name: "Refresh services" }),
 		);
 		await waitFor(() =>
-			expect(mocks.listServices.mock.calls.length).toBeGreaterThan(
-				calls,
-			),
+			expect(mocks.listServices.mock.calls.length).toBeGreaterThan(calls),
 		);
 	});
 
@@ -282,13 +277,9 @@ describe("Services page (live)", () => {
 			}),
 		);
 		await user.click(screen.getByRole("menuitem", { name: "Stop" }));
-		expect(
-			screen.getByText("Stop telegram_bridge?"),
-		).toBeInTheDocument();
+		expect(screen.getByText("Stop telegram_bridge?")).toBeInTheDocument();
 		expect(mocks.stopService).not.toHaveBeenCalled();
-		await user.click(
-			screen.getByRole("button", { name: "Stop service" }),
-		);
+		await user.click(screen.getByRole("button", { name: "Stop service" }));
 		await waitFor(() =>
 			expect(mocks.stopService).toHaveBeenCalledExactlyOnceWith(
 				"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",

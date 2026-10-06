@@ -55,20 +55,33 @@ describe("DevicePage", () => {
 	it("redirects an unauthenticated visitor back through login", async () => {
 		authState.isAuthenticated = false;
 		renderWithProviders(<DevicePage />, { initialEntries: ["/device"] });
-		await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith("/login", {
-			state: { from: "/device" }, replace: true,
-		}));
+		await waitFor(() =>
+			expect(mockNavigate).toHaveBeenCalledWith("/login", {
+				state: { from: "/device" },
+				replace: true,
+			}),
+		);
 	});
 
 	it("returns expired authorization sessions to login", async () => {
 		localStorage.setItem("bifrost_access_token", "access-token");
-		vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 401 })));
-		const { user } = renderWithProviders(<DevicePage />, { initialEntries: ["/device"] });
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => ({ ok: false, status: 401 })),
+		);
+		const { user } = renderWithProviders(<DevicePage />, {
+			initialEntries: ["/device"],
+		});
 		await user.type(screen.getByLabelText(/device code/i), "abcd1234");
-		await user.click(screen.getByRole("button", { name: /authorize device/i }));
-		await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith("/login", {
-			state: { from: "/device" }, replace: true,
-		}));
+		await user.click(
+			screen.getByRole("button", { name: /authorize device/i }),
+		);
+		await waitFor(() =>
+			expect(mockNavigate).toHaveBeenCalledWith("/login", {
+				state: { from: "/device" },
+				replace: true,
+			}),
+		);
 	});
 
 	it("lets an authenticated user leave the device-code form", async () => {

@@ -57,9 +57,9 @@ describe("RolePeoplePanel", () => {
 			name: "Where it applies for Olivia Operator",
 		});
 		expect(
-			within(places).getByText("In all customer organizations"),
+			within(places).getByText("All Customer Organizations"),
 		).toBeInTheDocument();
-		expect(within(places).getByText("In Contoso")).toBeInTheDocument();
+		expect(within(places).getByText("Contoso")).toBeInTheDocument();
 		expect(state.calls[0]).toEqual([
 			"operator",
 			{ search: "", limit: 25, offset: 0 },
@@ -99,7 +99,7 @@ describe("RolePeoplePanel", () => {
 				"You don't have permission to view role assignments",
 			),
 		).toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: "Retry people" }));
+		await user.click(screen.getByRole("button", { name: "Retry People" }));
 		expect(refetch).toHaveBeenCalled();
 	});
 });

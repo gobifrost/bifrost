@@ -109,7 +109,10 @@ describe("AppCodeEditorPage publish flow", () => {
 	it("passes the loaded app's owning Solution to the preview layout", () => {
 		renderWithProviders(<AppCodeEditorPage />);
 		expect(mockEditorLayout).toHaveBeenCalledWith(
-			expect.objectContaining({ appId: "app-1", solutionId: "solution-1" }),
+			expect.objectContaining({
+				appId: "app-1",
+				solutionId: "solution-1",
+			}),
 		);
 	});
 

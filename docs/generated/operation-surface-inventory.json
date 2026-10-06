@@ -9967,10 +9967,10 @@
     }
   ],
   "counts": {
-    "cli": 163,
+    "cli": 167,
     "manifest": 16,
     "mcp": 94,
-    "rest": 667,
+    "rest": 669,
     "sdk": 21
   },
   "schema_version": 1,
@@ -10267,6 +10267,15 @@
         "path": [
           "orgs",
           "update"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "kind": "operation",
+        "path": [
+          "permissions",
+          "list"
         ],
         "reason": "CLI operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -10740,6 +10749,36 @@
           "users",
           "access",
           "check"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "kind": "operation",
+        "path": [
+          "users",
+          "access",
+          "show"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "kind": "operation",
+        "path": [
+          "users",
+          "roles",
+          "get"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "kind": "operation",
+        "path": [
+          "users",
+          "roles",
+          "set"
         ],
         "reason": "CLI operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -13019,6 +13058,13 @@
       {
         "method": "GET",
         "operation_id": "",
+        "path": "/api/permissions/catalog",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
         "path": "/api/platform-jobs",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -13888,6 +13934,13 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/tools/system",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/users/{user_id}/access",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

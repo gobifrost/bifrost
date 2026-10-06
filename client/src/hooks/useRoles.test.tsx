@@ -13,7 +13,11 @@ vi.mock("@/lib/api-client", () => ({
 	$api: { useQuery: vi.fn(), useMutation: mockUseMutation },
 }));
 
-import { useAssignUsersToRole, useRoleUsersPage } from "./useRoles";
+import {
+	useAssignUsersToRole,
+	useRoleUsersPage,
+	useUpdateRolePermissions,
+} from "./useRoles";
 
 let queryClient: QueryClient;
 
@@ -73,6 +77,22 @@ describe("useRoleUsersPage", () => {
 
 		expect(invalidate).toHaveBeenCalledWith({
 			queryKey: ["get", "/api/roles/{role_id}/users"],
+		});
+	});
+
+	it("invalidates every access map after a role's permissions change", () => {
+		const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+		mockUseMutation.mockReturnValue({ mutate: vi.fn() });
+
+		renderHook(() => useUpdateRolePermissions(), { wrapper });
+		const options = mockUseMutation.mock.calls[0][2];
+		options.onSuccess(
+			{ permissions: [] },
+			{ params: { path: { role_id: "role-1" } } },
+		);
+
+		expect(invalidate).toHaveBeenCalledWith({
+			queryKey: ["get", "/api/users/{user_id}/access"],
 		});
 	});
 });

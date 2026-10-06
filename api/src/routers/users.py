@@ -26,6 +26,7 @@ from src.services.authorization.enforce import (
     require_unprotected,
 )
 from src.services.events import emit_event
+from src.services.user_access_map import get_user_access_map as get_user_access_map_service
 from src.services.user_invite_service import UserInviteService
 from src.services.user_mfa_reset import reset_user_mfa as reset_user_mfa_service
 from src.services.user_role_assignments import (
@@ -48,6 +49,7 @@ from src.models.contracts.role_assignments import (
     UserRoleAssignmentsResponse,
     UserRoleAssignmentsUpdate,
 )
+from src.models.contracts.user_access import UserAccessMap
 from src.models.contracts.users import UserMfaResetResponse
 from src.models.contracts.user_invites import (
     CreateInviteResponse,
@@ -557,6 +559,26 @@ async def get_role_assignments(
 ) -> UserRoleAssignmentsResponse:
     try:
         return await get_role_assignments_service(db, await load_caller(db, user), user_id=user_id)
+    except RoleAssignmentError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
+
+
+@router.get(
+    "/{user_id}/access",
+    response_model=UserAccessMap,
+    summary="Get what a user can do, and where",
+    description=(
+        "The user's permissions grouped by place (home, selected organizations, "
+        "all customer organizations, Global) with the role each comes through."
+    ),
+)
+async def get_user_access(
+    user_id: UUID,
+    user: CurrentActiveUser,
+    db: DbSession,
+) -> UserAccessMap:
+    try:
+        return await get_user_access_map_service(db, await load_caller(db, user), user_id=user_id)
     except RoleAssignmentError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 

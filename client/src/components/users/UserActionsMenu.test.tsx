@@ -21,6 +21,7 @@ function makeProps(
 		onSignOut: vi.fn(),
 		onToggleActive: vi.fn(),
 		onDelete: vi.fn(),
+		onEditProfile: vi.fn(),
 		...overrides,
 	};
 }
@@ -104,7 +105,7 @@ describe("UserActionsMenu", () => {
 		expect(onResetMfa).toHaveBeenCalledTimes(1);
 		await user.click(screen.getByRole("button", { name: /user actions/i }));
 		await user.click(
-			screen.getByRole("menuitem", { name: "Sign out of all devices" }),
+			screen.getByRole("menuitem", { name: "Sign Out of All Devices" }),
 		);
 		expect(onSignOut).toHaveBeenCalledTimes(1);
 	});
@@ -117,7 +118,7 @@ describe("UserActionsMenu", () => {
 			screen.queryByRole("menuitem", { name: "Reset MFA" }),
 		).not.toBeInTheDocument();
 		expect(
-			screen.queryByRole("menuitem", { name: "Sign out of all devices" }),
+			screen.queryByRole("menuitem", { name: "Sign Out of All Devices" }),
 		).not.toBeInTheDocument();
 	});
 
@@ -156,10 +157,61 @@ describe("UserActionsMenu", () => {
 		).not.toBeInTheDocument();
 	});
 
+	it("opens the profile editor from Edit Profile", async () => {
+		const user = userEvent.setup();
+		const onEditProfile = vi.fn();
+		render(<UserActionsMenu {...makeProps({ onEditProfile })} />);
+		await user.click(screen.getByRole("button", { name: /user actions/i }));
+		await user.click(
+			screen.getByRole("menuitem", { name: "Edit Profile" }),
+		);
+		expect(onEditProfile).toHaveBeenCalledOnce();
+	});
+
+	it("leaves out Edit Profile where no profile editor is offered", async () => {
+		const user = userEvent.setup();
+		render(
+			<UserActionsMenu
+				{...makeProps({ canSupport: false, onEditProfile: undefined })}
+			/>,
+		);
+		await user.click(screen.getByRole("button", { name: /user actions/i }));
+		expect(
+			screen.queryByRole("menuitem", { name: "Edit Profile" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("menuitem", { name: "Delete" }),
+		).toBeInTheDocument();
+	});
+
+	it("lets people edit their own profile even without user permissions", async () => {
+		const user = userEvent.setup();
+		render(
+			<UserActionsMenu
+				{...makeProps({
+					isSelf: true,
+					canSupport: false,
+					canDelete: false,
+				})}
+			/>,
+		);
+		await user.click(screen.getByRole("button", { name: /user actions/i }));
+		expect(
+			screen.getByRole("menuitem", { name: "Edit Profile" }),
+		).not.toHaveAttribute("data-disabled");
+		expect(
+			screen.queryByRole("menuitem", { name: "Delete" }),
+		).not.toBeInTheDocument();
+	});
+
 	it("renders nothing when the caller can change nothing", () => {
 		render(
 			<UserActionsMenu
-				{...makeProps({ canSupport: false, canDelete: false })}
+				{...makeProps({
+					canSupport: false,
+					canDelete: false,
+					onEditProfile: undefined,
+				})}
 			/>,
 		);
 		expect(
@@ -179,6 +231,7 @@ describe("UserActionsMenu", () => {
 			screen.getByText(/only a platform admin can change it/i),
 		).toBeInTheDocument();
 		for (const name of [
+			/edit profile/i,
 			/resend invite/i,
 			/^reset mfa$/i,
 			/sign out of all devices/i,

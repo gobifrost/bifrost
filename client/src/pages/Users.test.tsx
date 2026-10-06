@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes, useLocation } from "react-router-dom";
 import { renderWithProviders, screen, waitFor, within } from "@/test-utils";
 
 const mockUseMediaQuery = vi.fn(() => false);
@@ -8,7 +8,6 @@ vi.mock("@/hooks/useMediaQuery", () => ({
 }));
 afterEach(() => mockUseMediaQuery.mockReturnValue(false));
 const mockUseUsersPage = vi.fn();
-const mockUseUser = vi.fn();
 const mockUseDeleteUser = vi.fn();
 const mockUseUpdateUser = vi.fn();
 const mockResetMfa = vi.fn();
@@ -28,7 +27,6 @@ const mockEditUserDialog = vi.fn();
 
 vi.mock("@/hooks/useUsers", () => ({
 	useUsersPage: (...args: unknown[]) => mockUseUsersPage(...args),
-	useUser: (...args: unknown[]) => mockUseUser(...args),
 	useDeleteUser: () => mockUseDeleteUser(),
 	useUpdateUser: () => mockUseUpdateUser(),
 	useResetUserMfa: () => ({ mutateAsync: mockResetMfa }),
@@ -152,12 +150,19 @@ beforeEach(() => {
 	authz.summary = adminSummary();
 });
 
+function LocationProbe() {
+	return <output aria-label="location">{useLocation().pathname}</output>;
+}
+
 function renderUsersRoute(initialEntry = "/users") {
 	return renderWithProviders(
-		<Routes>
-			<Route path="/users" element={<Users />} />
-			<Route path="/users/:userId" element={<Users />} />
-		</Routes>,
+		<>
+			<Routes>
+				<Route path="/users" element={<Users />} />
+				<Route path="/users/:userId" element={<p>Person page</p>} />
+			</Routes>
+			<LocationProbe />
+		</>,
 		{ initialEntries: [initialEntry] },
 	);
 }
@@ -212,7 +217,6 @@ describe("Users — registration links", () => {
 			isError: false,
 			refetch: vi.fn(),
 		});
-		mockUseUser.mockReturnValue({ data: undefined });
 		mockUseDeleteUser.mockReturnValue({ mutateAsync: vi.fn() });
 		mockUseUpdateUser.mockReturnValue({ mutateAsync: vi.fn() });
 		mockUseOrganizations.mockReturnValue({
@@ -253,16 +257,27 @@ describe("Users — registration links", () => {
 		mockEditUserDialog.mockClear();
 	});
 
-	it("waits for the route-selected user instead of pre-opening the dialog", async () => {
-		mockUseUser.mockReturnValue({
-			data: makeUser(),
-			isLoading: false,
-			isError: false,
-			refetch: vi.fn(),
-		});
+	it("opens the person page when a row is selected", async () => {
 		const { user } = renderUsersRoute();
 
 		await user.click(screen.getByText("Alice"));
+
+		expect(
+			screen.getByRole("status", { name: "location" }),
+		).toHaveTextContent("/users/user-1");
+		expect(screen.getByText("Person page")).toBeInTheDocument();
+		expect(mockEditUserDialog).not.toHaveBeenCalledWith(
+			expect.objectContaining({ open: true }),
+		);
+	});
+
+	it("edits a profile from the row menu without leaving the list", async () => {
+		const { user } = renderUsersRoute();
+
+		await user.click(screen.getByRole("button", { name: "Alice actions" }));
+		await user.click(
+			screen.getByRole("menuitem", { name: "Edit Profile" }),
+		);
 
 		expect(await screen.findByRole("dialog")).toBeInTheDocument();
 		expect(mockEditUserDialog).toHaveBeenLastCalledWith(
@@ -271,116 +286,9 @@ describe("Users — registration links", () => {
 				user: expect.objectContaining({ id: "user-1" }),
 			}),
 		);
-	});
-
-	it("shows loading, error, and not-found states for user deep links", async () => {
-		const retry = vi.fn();
-		let phase: "loading" | "error" | "retrying" | "resolved" = "loading";
-		mockUseUser.mockImplementation((userId?: string) => {
-			if (!userId) {
-				return {
-					data: undefined,
-					isLoading: false,
-					isFetching: false,
-					isError: false,
-					refetch: retry,
-				};
-			}
-			if (phase === "loading") {
-				return {
-					data: undefined,
-					isLoading: true,
-					isFetching: true,
-					isError: false,
-					refetch: retry,
-				};
-			}
-			if (phase === "error") {
-				return {
-					data: undefined,
-					isLoading: false,
-					isFetching: false,
-					isError: true,
-					error: new Error("User API down"),
-					refetch: retry,
-				};
-			}
-			if (phase === "retrying") {
-				return {
-					data: undefined,
-					isLoading: false,
-					isFetching: true,
-					isError: true,
-					error: new Error("User API down"),
-					refetch: retry,
-				};
-			}
-			return {
-				data: undefined,
-				isLoading: false,
-				isFetching: false,
-				isError: false,
-				refetch: retry,
-			};
-		});
-		const { rerender, user } = renderUsersRoute("/users/user-1");
-
 		expect(
-			screen.getByRole("status", { name: "Loading user" }),
-		).toBeVisible();
-		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-
-		phase = "error";
-		rerender(
-			<Routes>
-				<Route path="/users" element={<Users />} />
-				<Route path="/users/:userId" element={<Users />} />
-			</Routes>,
-		);
-
-		expect(
-			screen.getByRole("alert", { name: "User could not be loaded" }),
-		).toHaveTextContent("User API down");
-		await user.click(screen.getByRole("button", { name: "Retry user" }));
-		expect(retry).toHaveBeenCalledOnce();
-		phase = "retrying";
-		rerender(
-			<Routes>
-				<Route path="/users" element={<Users />} />
-				<Route path="/users/:userId" element={<Users />} />
-			</Routes>,
-		);
-		expect(
-			screen.getByRole("button", { name: "Retrying user…" }),
-		).toBeDisabled();
-		phase = "resolved";
-		rerender(
-			<Routes>
-				<Route path="/users" element={<Users />} />
-				<Route path="/users/:userId" element={<Users />} />
-			</Routes>,
-		);
-		await user.click(screen.getByRole("button", { name: "Back to users" }));
-		expect(
-			screen.queryByRole("alert", { name: "User could not be loaded" }),
-		).not.toBeInTheDocument();
-		expect(screen.getByText("Alice")).toBeVisible();
-	});
-
-	it("shows a not-found state for missing user deep links", () => {
-		const retry = vi.fn();
-		mockUseUser.mockReturnValue({
-			data: undefined,
-			isLoading: false,
-			isError: false,
-			refetch: retry,
-		});
-		renderUsersRoute("/users/user-1");
-		expect(
-			screen.getByRole("alert", { name: "User not found" }),
-		).toHaveTextContent(
-			"The selected user may have been deleted or you no longer have access to it.",
-		);
+			screen.getByRole("status", { name: "location" }),
+		).toHaveTextContent(/^\/users$/);
 	});
 
 	afterEach(() => {
@@ -514,7 +422,6 @@ describe("Users", () => {
 			isError: false,
 			refetch: mockRefetch,
 		});
-		mockUseUser.mockReturnValue({ data: undefined });
 		mockUseOrganizations.mockReset();
 		mockUseOrganizations.mockReturnValue({
 			data: [
@@ -600,7 +507,7 @@ describe("Users", () => {
 		const { user } = renderWithProviders(<Users />);
 		expect(screen.queryByRole("table")).not.toBeInTheDocument();
 		const records = screen.getByRole("list", { name: "Users" });
-		expect(within(records).getByText("Platform admin")).toBeVisible();
+		expect(within(records).getByText("Platform Admin")).toBeVisible();
 		expect(within(records).getByText("dev@gobifrost.com")).toBeVisible();
 		await user.click(
 			screen.getByRole("checkbox", { name: "Select Dev Admin" }),
@@ -651,14 +558,13 @@ describe("Users", () => {
 		expect(
 			screen.getByRole("checkbox", { name: "Select Dev Admin" }),
 		).toBeChecked();
-		await user.click(screen.getByRole("button", { name: "Retry users" }));
+		await user.click(screen.getByRole("button", { name: "Retry Users" }));
 		expect(mockRefetch).toHaveBeenCalledOnce();
 	});
 });
 
 describe("Users — permission-driven actions", () => {
 	beforeEach(() => {
-		mockUseUser.mockReturnValue({ data: undefined });
 		mockUseDeleteUser.mockReturnValue({ mutateAsync: vi.fn() });
 		mockUseUpdateUser.mockReturnValue({ mutateAsync: vi.fn() });
 		mockUseOrganizations.mockReturnValue({
@@ -705,7 +611,7 @@ describe("Users — permission-driven actions", () => {
 		const { user } = renderUsersRoute();
 
 		expect(
-			screen.getByRole("button", { name: "Create user" }),
+			screen.getByRole("button", { name: "Create User" }),
 		).toBeInTheDocument();
 		await user.click(
 			screen.getByRole("button", { name: "Ordinary Person actions" }),
@@ -786,13 +692,13 @@ describe("Users — permission-driven actions", () => {
 			screen.getByRole("button", { name: "Ordinary Person actions" }),
 		);
 		await user.click(
-			screen.getByRole("menuitem", { name: "Sign out of all devices" }),
+			screen.getByRole("menuitem", { name: "Sign Out of All Devices" }),
 		);
 		expect(screen.getByRole("alertdialog")).toHaveTextContent(
 			"Signs Ordinary Person out on every device. They can sign in again right away.",
 		);
 		await user.click(
-			screen.getByRole("button", { name: "Sign out everywhere" }),
+			screen.getByRole("button", { name: "Sign Out Everywhere" }),
 		);
 
 		await waitFor(() =>
@@ -817,7 +723,11 @@ describe("Users — permission-driven actions", () => {
 		expect(
 			screen.getByText(/only a platform admin can change it/i),
 		).toBeInTheDocument();
-		for (const name of ["Reset MFA", "Sign out of all devices", "Disable"]) {
+		for (const name of [
+			"Reset MFA",
+			"Sign Out of All Devices",
+			"Disable",
+		]) {
 			expect(screen.getByRole("menuitem", { name })).toHaveAttribute(
 				"data-disabled",
 			);
@@ -853,7 +763,7 @@ describe("Users — permission-driven actions", () => {
 			),
 		).toBeInTheDocument();
 		expect(
-			screen.queryByRole("button", { name: "Create user" }),
+			screen.queryByRole("button", { name: "Create User" }),
 		).not.toBeInTheDocument();
 		expect(
 			screen.queryByRole("checkbox", {

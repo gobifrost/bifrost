@@ -3,10 +3,7 @@ import type { AriaAttributes } from "react";
 
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 
-export type AccessLevelValue =
-	| "authenticated"
-	| "everyone"
-	| "role_based";
+export type AccessLevelValue = "authenticated" | "everyone" | "role_based";
 
 export interface AccessLevelOption extends ComboboxOption {
 	value: AccessLevelValue | string;

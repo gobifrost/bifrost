@@ -154,9 +154,12 @@ describe("Events page", () => {
 			initialEntries: ["/event-sources"],
 		});
 
-		fireEvent.click(screen.getByRole("cell", { name: /northwind automation/i }), {
-			ctrlKey: true,
-		});
+		fireEvent.click(
+			screen.getByRole("cell", { name: /northwind automation/i }),
+			{
+				ctrlKey: true,
+			},
+		);
 
 		expect(open).toHaveBeenCalledWith("/event-sources/source-1", "_blank");
 	});
