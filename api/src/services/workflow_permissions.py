@@ -46,13 +46,20 @@ async def get_default_workflow_permission_mode(db: AsyncSession) -> WorkflowPerm
     return WorkflowPermissionMode(config.value_json["mode"])
 
 
+def resolve_workflow_permission_mode(
+    workflow: Workflow, default: WorkflowPermissionMode
+) -> WorkflowPermissionMode:
+    """The workflow's own mode, else ``default`` (the platform default)."""
+    if workflow.permission_mode is not None:
+        return WorkflowPermissionMode(workflow.permission_mode)
+    return default
+
+
 async def effective_workflow_permission_mode(
     db: AsyncSession, workflow: Workflow
 ) -> WorkflowPermissionMode:
     """The workflow's own mode, else the platform default."""
-    if workflow.permission_mode is not None:
-        return WorkflowPermissionMode(workflow.permission_mode)
-    return await get_default_workflow_permission_mode(db)
+    return resolve_workflow_permission_mode(workflow, await get_default_workflow_permission_mode(db))
 
 
 async def list_workflow_grants(db: AsyncSession, workflow_id: UUID) -> list[WorkflowGrant]:

@@ -9211,6 +9211,20 @@
     "mcp_tool": null,
     "method": "GET",
     "operation_id": null,
+    "path": "/api/workflows/{workflow_id}/requirements",
+    "permission": "workflows.read",
+    "reason": "Platform-admin-only operation."
+  },
+  {
+    "access_class": "permission",
+    "boundary": "organization",
+    "current_gate": "superuser",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "GET",
+    "operation_id": null,
     "path": "/api/workflows/{workflow_id}/roles",
     "permission": "workflows.read",
     "reason": "Platform-admin-only operation."
@@ -9241,6 +9255,20 @@
     "operation_id": "workflows.roles.revoke",
     "path": "/api/workflows/{workflow_id}/roles/{role_id}",
     "permission": "workflows.readwrite",
+    "reason": "Platform-admin-only operation."
+  },
+  {
+    "access_class": "permission",
+    "boundary": "organization",
+    "current_gate": "superuser",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "GET",
+    "operation_id": null,
+    "path": "/api/workflows/{workflow_id}/run-identities",
+    "permission": "workflows.read",
     "reason": "Platform-admin-only operation."
   },
   {

@@ -12,11 +12,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 from uuid import UUID, uuid4
 
+from fastapi import HTTPException, status
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.builtin_roles import USER_ROLE_ID
-from shared.identities import IDENTITY_EMAIL_DOMAIN, is_identity
+from shared.builtin_roles import USER_BASE_PERMISSIONS, USER_ROLE_ID
+from shared.identities import IDENTITY_EMAIL_DOMAIN, is_identity, run_identity_allowed
 from shared.sdk_users import set_user_base_role
 from src.models.contracts.identities import (
     IdentityBaseRole,
@@ -31,15 +32,23 @@ from src.models.orm.organizations import Organization
 from src.models.orm.users import Role, User, UserRole, UserRoleBoundary
 from src.models.orm.workflows import Workflow
 from src.services.audit import emit_audit
+from src.services.authorization.context import (
+    AuthorizationContext,
+    Boundary,
+    BoundaryKind,
+    build_authorization_context,
+)
 from src.services.authorization.enforce import (
     Caller,
     cross_org,
     operation_reach,
     org_target,
+    permitted_organizations,
     privileged_user_ids,
     require_operation,
     require_unprotected,
 )
+from src.services.authorization.reach import OrgReach
 
 LIST_OPERATION = "GET /api/identities"
 CREATE_OPERATION = "POST /api/identities"
@@ -165,6 +174,18 @@ async def _public(session: AsyncSession, identities: Sequence[User]) -> list[Ide
     ]
 
 
+def _identities_query():
+    """Every identity: Global first, then by organization name, default before custom, then by name."""
+    return (
+        select(User)
+        .outerjoin(Organization, Organization.id == User.organization_id)
+        .where(User.identity_kind.is_not(None))
+        .order_by(
+            User.organization_id.is_not(None), func.lower(Organization.name), _KIND_ORDER, func.lower(User.name), User.id
+        )
+    )
+
+
 async def list_identities(
     session: AsyncSession, caller: Caller, *, organization_id: UUID | None = None
 ) -> list[IdentityPublic]:
@@ -172,21 +193,25 @@ async def list_identities(
     organization; ``organization_id`` pins one organization (decided at that
     target first)."""
     reach = operation_reach(caller, LIST_OPERATION)
-    query = (
-        select(User)
-        .outerjoin(Organization, Organization.id == User.organization_id)
-        .where(User.identity_kind.is_not(None))
-    )
+    query = _identities_query()
     if organization_id is not None:
         require_operation(caller, LIST_OPERATION, cross_org(organization_id))
         query = query.where(User.organization_id == organization_id)
     reach_filter = reach.where(User.organization_id)
     if reach_filter is not None:
         query = query.where(reach_filter)
-    query = query.order_by(
-        User.organization_id.is_not(None), func.lower(Organization.name), _KIND_ORDER, func.lower(User.name), User.id
-    )
     identities = list((await session.execute(query)).scalars())
+    return await _public(session, identities)
+
+
+async def list_run_identities(session: AsyncSession, workflow_organization_id: UUID | None) -> list[IdentityPublic]:
+    """The identities a workflow of ``workflow_organization_id`` may run as
+    (``run_identity_allowed``), in the order the list returns them."""
+    identities = [
+        identity
+        for identity in (await session.execute(_identities_query())).scalars()
+        if run_identity_allowed(workflow_organization_id=workflow_organization_id, identity=identity)
+    ]
     return await _public(session, identities)
 
 
@@ -278,3 +303,41 @@ async def delete_identity(session: AsyncSession, caller: Caller, identity_id: UU
     await session.delete(identity)
     await session.flush()
     await emit_audit(session, "identity.delete", resource_type="user", resource_id=identity_id, details=details)
+
+
+def _powers(ctx: AuthorizationContext) -> list[tuple[str, Boundary]]:
+    """What an identity holds beyond the User baseline every account has at its home."""
+    home = (
+        Boundary(BoundaryKind.PLATFORM)
+        if ctx.home_organization_id is None
+        else Boundary(BoundaryKind.ORGANIZATION, ctx.home_organization_id)
+    )
+    baseline = {(permission, home) for permission in USER_BASE_PERMISSIONS}
+    return [grant for grant in ctx.effective_grants if grant not in baseline]
+
+
+def _holds(reach: OrgReach, boundary: Boundary) -> bool:
+    if reach.everything:
+        return True
+    if boundary.kind == BoundaryKind.PLATFORM:
+        return reach.include_global
+    if boundary.kind == BoundaryKind.MANAGED_ORGANIZATIONS:
+        return reach.managed
+    return reach.covers(boundary.organization_id)
+
+
+async def require_delegation(session: AsyncSession, caller: Caller, identity_id: UUID) -> None:
+    """403 unless ``caller`` may make a workflow run as ``identity_id``: a
+    Platform Admin, or someone who holds every permission the identity holds,
+    at every place it holds it. A workflow running as an identity uses its
+    powers, so only someone who has them may hand them out."""
+    if caller.is_platform_admin:
+        return
+    identity = await session.get(User, identity_id)
+    assert identity is not None
+    for permission, boundary in _powers(await build_authorization_context(session, identity_id)):
+        if not _holds(permitted_organizations(caller, permission), boundary):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                f"{identity.name} holds powers you don't, so you can't make a workflow run as it",
+            )

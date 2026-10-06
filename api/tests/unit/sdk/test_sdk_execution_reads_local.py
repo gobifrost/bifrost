@@ -22,6 +22,7 @@ import pytest
 
 def test_sdk_workflow_metadata_accepts_server_parameter_list():
     from bifrost.models import WorkflowMetadata as SdkWorkflowMetadata
+    from src.models.contracts.workflow_permissions import WorkflowPermissionMode
     from src.models.contracts.workflows import (
         WorkflowMetadata as ServerWorkflowMetadata,
         WorkflowParameter,
@@ -30,6 +31,7 @@ def test_sdk_workflow_metadata_accepts_server_parameter_list():
     server = ServerWorkflowMetadata(
         id=str(uuid4()),
         name="parameterized",
+        permission_mode=WorkflowPermissionMode.FULL,
         parameters=[WorkflowParameter(name="count", type="int", required=True)],
         created_at=datetime.now(timezone.utc),
     )

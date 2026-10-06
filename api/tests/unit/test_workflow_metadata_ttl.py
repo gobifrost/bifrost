@@ -18,6 +18,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import src.routers.workflows as wf
+from src.models.contracts.workflow_permissions import WorkflowPermissionMode
 
 
 def _orm(**overrides):
@@ -34,6 +35,7 @@ def _orm(**overrides):
         organization_id=None,
         solution_id=None,
         run_identity_id=None,
+        permission_mode=None,
         access_level=None,
         parameters_schema=None,
         execution_mode=None,
@@ -53,18 +55,28 @@ def _orm(**overrides):
     return SimpleNamespace(**base)
 
 
+def _convert(workflow, default=WorkflowPermissionMode.FULL):
+    return wf._convert_workflow_orm_to_schema(workflow, default)
+
+
 def test_zero_ttl_is_preserved_not_defaulted():
-    assert wf._convert_workflow_orm_to_schema(_orm(cache_ttl_seconds=0)).cache_ttl_seconds == 0
+    assert _convert(_orm(cache_ttl_seconds=0)).cache_ttl_seconds == 0
 
 
 def test_unset_ttl_falls_back_to_default():
-    assert wf._convert_workflow_orm_to_schema(_orm(cache_ttl_seconds=None)).cache_ttl_seconds == 300
+    assert _convert(_orm(cache_ttl_seconds=None)).cache_ttl_seconds == 300
 
 
 def test_explicit_ttl_is_passed_through():
-    assert wf._convert_workflow_orm_to_schema(_orm(cache_ttl_seconds=60)).cache_ttl_seconds == 60
+    assert _convert(_orm(cache_ttl_seconds=60)).cache_ttl_seconds == 60
 
 
 def test_zero_timeout_is_preserved_not_defaulted():
     """Regression guard for the sibling field fixed in #27; 0 = no timeout."""
-    assert wf._convert_workflow_orm_to_schema(_orm(timeout_seconds=0)).timeout_seconds == 0
+    assert _convert(_orm(timeout_seconds=0)).timeout_seconds == 0
+
+
+def test_permission_mode_is_the_workflows_own_else_the_platform_default():
+    restricted = WorkflowPermissionMode.RESTRICTED
+    assert _convert(_orm(), restricted).permission_mode is restricted
+    assert _convert(_orm(permission_mode="full"), restricted).permission_mode is WorkflowPermissionMode.FULL

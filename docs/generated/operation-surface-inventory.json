@@ -9970,7 +9970,7 @@
     "cli": 167,
     "manifest": 16,
     "mcp": 94,
-    "rest": 673,
+    "rest": 675,
     "sdk": 21
   },
   "schema_version": 1,
@@ -14080,7 +14080,21 @@
       {
         "method": "GET",
         "operation_id": "",
+        "path": "/api/workflows/{workflow_id}/requirements",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
         "path": "/api/workflows/{workflow_id}/roles",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/workflows/{workflow_id}/run-identities",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

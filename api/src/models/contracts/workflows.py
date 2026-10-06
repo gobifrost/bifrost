@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.models.enums import FormAccessLevel
 from src.models.contracts.base import RetryPolicy
+from src.models.contracts.workflow_permissions import WorkflowPermissionMode
 
 if TYPE_CHECKING:
     pass
@@ -82,6 +83,9 @@ class WorkflowMetadata(BaseModel):
 
     # Identity this workflow runs as when no person starts it
     run_identity_id: UUID | None = Field(default=None, description="Identity this workflow runs as when no person starts it. Null = its organization's default identity.")
+
+    # Powers a run of this workflow adds to its run user (effective: its own setting, else the platform default)
+    permission_mode: WorkflowPermissionMode = Field(description="Effective workflow permission mode: 'full' or 'restricted'")
 
     # Access control
     access_level: str = Field(default="role_based", description="Access level: 'authenticated' (any signed-in user except externals), 'everyone' (any signed-in user incl. externals), or 'role_based' (specific roles required)")

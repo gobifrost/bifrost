@@ -608,9 +608,11 @@
 | POST | `/api/workflows/{workflow_id}/recreate` |
 | POST | `/api/workflows/{workflow_id}/remap` |
 | POST | `/api/workflows/{workflow_id}/replace` |
+| GET | `/api/workflows/{workflow_id}/requirements` |
 | GET | `/api/workflows/{workflow_id}/roles` |
 | POST | `/api/workflows/{workflow_id}/roles` |
 | DELETE | `/api/workflows/{workflow_id}/roles/{role_id}` |
+| GET | `/api/workflows/{workflow_id}/run-identities` |
 | POST | `/auth/admin/revoke-user` |
 | GET | `/auth/authorization` |
 | POST | `/auth/device/authorize` |

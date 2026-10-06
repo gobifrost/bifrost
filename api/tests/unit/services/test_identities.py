@@ -6,6 +6,7 @@ from __future__ import annotations
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from shared.builtin_roles import USER_BASE_PERMISSIONS, USER_ROLE_ID
 from shared.identities import ensure_default_identity
@@ -21,7 +22,9 @@ from src.services.identities import (
     create_identity,
     delete_identity,
     list_identities,
+    list_run_identities,
     rename_identity,
+    require_delegation,
 )
 from tests.helpers.authorization import admin_caller
 
@@ -200,3 +203,99 @@ class TestChange:
         assert refused.value.status_code == 409
         assert detail.startswith("Can't delete Busy: these workflows run as it: wf_00, wf_01")
         assert "wf_09" in detail and "wf_10" not in detail and detail.endswith("and 2 more")
+
+
+def _holding(permissions: set[str], *organization_ids: UUID) -> Caller:
+    """Holds ``permissions`` at each organization through one role, and nothing else."""
+    ctx = AuthorizationContext(
+        user_id=uuid4(),
+        home_organization_id=PROVIDER_ORG_ID,
+        base_role_id=USER_ROLE_ID,
+        is_external=False,
+        base_permissions=USER_BASE_PERMISSIONS,
+        role_grants=(
+            RoleGrant(
+                uuid4(),
+                frozenset(permissions),
+                tuple(Boundary(BoundaryKind.ORGANIZATION, org_id) for org_id in organization_ids),
+            ),
+        ),
+    )
+    return Caller(UserPrincipal(user_id=ctx.user_id, email="holder@example.com", organization_id=PROVIDER_ORG_ID), ctx)
+
+
+async def _give(db_session, identity: IdentityPublic, permissions: set[str], organization_id: UUID) -> None:
+    from src.models import Role, RolePermission
+    from src.services.user_role_assignments import insert_assignment
+
+    role = Role(name=f"delegation-{uuid4().hex[:6]}", created_by="t")
+    db_session.add(role)
+    await db_session.flush()
+    db_session.add_all(RolePermission(role_id=role.id, permission=permission) for permission in permissions)
+    await db_session.flush()
+    await insert_assignment(
+        db_session,
+        user_id=identity.id,
+        role_id=role.id,
+        boundaries=[Boundary(BoundaryKind.ORGANIZATION, organization_id)],
+        assigned_by="t",
+    )
+
+
+class TestRunIdentities:
+    async def test_an_organization_workflow_may_run_as_that_organizations_identities_only(self, db_session) -> None:
+        admin = admin_caller()
+        contoso, fabrikam = await _organization(db_session, "Contoso"), await _organization(db_session, "Fabrikam")
+        custom = await create_identity(db_session, admin, IdentityCreate(name="Nightly", organization_id=contoso.id))
+        await create_identity(db_session, admin, IdentityCreate(name="Other", organization_id=fabrikam.id))
+
+        listed = await list_run_identities(db_session, contoso.id)
+
+        assert [(i.identity_kind, i.organization_id) for i in listed] == [
+            ("org_default", contoso.id),
+            ("custom", contoso.id),
+        ]
+        assert listed[1].id == custom.id
+
+    async def test_a_global_workflow_may_run_as_global_or_provider_identities(self, db_session) -> None:
+        admin = admin_caller()
+        contoso = await _organization(db_session, "Contoso")
+        shared = await create_identity(db_session, admin, IdentityCreate(name="Shared", organization_id=None))
+
+        listed = await list_run_identities(db_session, None)
+
+        assert {i.organization_id for i in listed} == {None, PROVIDER_ORG_ID}
+        assert listed[0].identity_kind == IdentityKind.GLOBAL_DEFAULT
+        assert shared.id in {i.id for i in listed}
+        assert contoso.id not in {i.organization_id for i in listed}
+
+
+class TestDelegation:
+    async def test_an_identity_holding_only_the_user_baseline_needs_no_powers(self, db_session) -> None:
+        contoso = await _organization(db_session, "Contoso")
+        default = await _by_kind(db_session, admin_caller(), contoso.id, "org_default")
+
+        await require_delegation(db_session, _holding(set()), default.id)
+
+    async def test_the_caller_must_hold_every_power_the_identity_holds_where_it_holds_it(self, db_session) -> None:
+        contoso, fabrikam = await _organization(db_session, "Contoso"), await _organization(db_session, "Fabrikam")
+        custom = await create_identity(db_session, admin_caller(), IdentityCreate(name="Writer", organization_id=contoso.id))
+        await _give(db_session, custom, {"workflows.readwrite", "tables.read"}, contoso.id)
+
+        await require_delegation(db_session, _holding({"workflows.readwrite", "tables.read"}, contoso.id), custom.id)
+        for caller in (
+            _holding(set()),
+            _holding({"workflows.readwrite"}, contoso.id),
+            _holding({"workflows.readwrite", "tables.read"}, fabrikam.id),
+        ):
+            with pytest.raises(HTTPException) as refused:
+                await require_delegation(db_session, caller, custom.id)
+            assert refused.value.status_code == 403
+            assert "Writer" in refused.value.detail
+
+    async def test_a_platform_admin_may_delegate_any_identity(self, db_session) -> None:
+        contoso = await _organization(db_session, "Contoso")
+        custom = await create_identity(db_session, admin_caller(), IdentityCreate(name="Writer", organization_id=contoso.id))
+        await _give(db_session, custom, {"workflows.readwrite"}, contoso.id)
+
+        await require_delegation(db_session, admin_caller(), custom.id)

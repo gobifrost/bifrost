@@ -2471,6 +2471,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workflows/{workflow_id}/run-identities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the identities a workflow may run as
+         * @description The identities this workflow may run as when no person starts it: its organization's identities (a global or provider-organization workflow: the global and provider-organization ones), including the default (Platform admin only)
+         */
+        get: operations["list_workflow_run_identities_api_workflows__workflow_id__run_identities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflows/{workflow_id}/requirements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What a workflow's identity lacks
+         * @description What the workflow does, from the access checks its runs recorded in the audit log's hot window, that the identity it runs as lacks: reach into other organizations, roles its policies look for, and its own roles. Computed for identity_id, else the identity it runs as now. Empty until runs are observed (Platform admin only)
+         */
+        get: operations["get_workflow_requirements_api_workflows__workflow_id__requirements_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/forms": {
         parameters: {
             query?: never;
@@ -24759,6 +24799,20 @@ export interface components {
             instructions: string;
         };
         /**
+         * RequirementGrant
+         * @description The role assignment that would meet a requirement: ``role_id`` applied at
+         *     ``boundaries``, merged into the identity's existing assignment of that role.
+         */
+        RequirementGrant: {
+            /**
+             * Role Id
+             * Format: uuid
+             */
+            role_id: string;
+            /** Boundaries */
+            boundaries: components["schemas"]["RoleBoundaryInput"][];
+        };
+        /**
          * ResolveRequest
          * @description Request to resolve merge conflicts after a failed pull.
          */
@@ -29674,6 +29728,8 @@ export interface components {
              * @description Identity this workflow runs as when no person starts it. Null = its organization's default identity.
              */
             run_identity_id?: string | null;
+            /** @description Effective workflow permission mode: 'full' or 'restricted' */
+            permission_mode: components["schemas"]["WorkflowPermissionMode"];
             /**
              * Access Level
              * @description Access level: 'authenticated' (any signed-in user except externals), 'everyone' (any signed-in user incl. externals), or 'role_based' (specific roles required)
@@ -29864,6 +29920,11 @@ export interface components {
             } | null;
         };
         /**
+         * WorkflowPermissionMode
+         * @enum {string}
+         */
+        WorkflowPermissionMode: "full" | "restricted";
+        /**
          * WorkflowROIEntry
          * @description ROI data for a single workflow.
          */
@@ -29905,6 +29966,41 @@ export interface components {
              * @description Entity name
              */
             name: string;
+        };
+        /** WorkflowRequirement */
+        WorkflowRequirement: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "reach" | "policy_role" | "workflow_role";
+            /** Label */
+            label: string;
+            /** Detail */
+            detail: string;
+            /** @description Null when no single role assignment meets it (a role to choose, or information only). */
+            grant: components["schemas"]["RequirementGrant"] | null;
+        };
+        /** WorkflowRequirements */
+        WorkflowRequirements: {
+            /**
+             * Identity Id
+             * Format: uuid
+             * @description The identity the requirements are computed for.
+             */
+            identity_id: string;
+            /**
+             * Observed Runs
+             * @description Runs in the window that recorded access checks for this workflow.
+             */
+            observed_runs: number;
+            /**
+             * Window Days
+             * @description How far back the recorded checks reach: the audit log's hot window.
+             */
+            window_days: number;
+            /** Items */
+            items: components["schemas"]["WorkflowRequirement"][];
         };
         /**
          * WorkflowResourceReport
@@ -34495,6 +34591,71 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_workflow_run_identities_api_workflows__workflow_id__run_identities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityPublic"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_workflow_requirements_api_workflows__workflow_id__requirements_get: {
+        parameters: {
+            query?: {
+                /** @description Compute for this identity instead of the current one */
+                identity_id?: string | null;
+            };
+            header?: never;
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowRequirements"];
+                };
             };
             /** @description Validation Error */
             422: {
