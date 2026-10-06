@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
 	AlertCircle,
 	AlertTriangle,
@@ -311,13 +311,9 @@ function AddRolePicker({
 export function UserRoleAssignmentsPanel({
 	user,
 	isSelf,
-	onClose,
-	onPendingChange,
 }: {
 	user: User;
 	isSelf: boolean;
-	onClose: () => void;
-	onPendingChange?: (pending: boolean) => void;
 }) {
 	const authorization = useAuthorization();
 	const target = orgTarget(user.organization_id);
@@ -342,10 +338,6 @@ export function UserRoleAssignmentsPanel({
 		setLoadedFrom(data);
 		if (pristine) setDraft(draftFrom(data));
 	}
-
-	useEffect(() => {
-		onPendingChange?.(replace.isPending);
-	}, [replace.isPending, onPendingChange]);
 
 	const providerOrgId = authorization.authorization?.provider_organization_id;
 	const blockedByProtection =
@@ -906,46 +898,33 @@ export function UserRoleAssignmentsPanel({
 					)}
 				</section>
 			</div>
-			<DialogFooter className="shrink-0 border-t border-border/70 px-4 py-4 sm:px-6">
-				{canEdit ? (
-					<>
-						<Button
-							type="button"
-							variant="outline"
-							className="h-11"
-							disabled={!dirty || replace.isPending}
-							onClick={() => {
-								setDraft(draftFrom(data));
-								setSaveError(null);
-							}}
-						>
-							Discard changes
-						</Button>
-						<Button
-							type="button"
-							className="h-11"
-							disabled={
-								!dirty || !!missingPlace || replace.isPending
-							}
-							onClick={() => void handleSave()}
-						>
-							{replace.isPending && (
-								<Loader2 className="mr-2 h-4 w-4 motion-safe:animate-spin" />
-							)}
-							Save roles
-						</Button>
-					</>
-				) : (
+			{canEdit && (
+				<DialogFooter className="shrink-0 border-t border-border/70 px-4 py-4 sm:px-6">
 					<Button
 						type="button"
 						variant="outline"
 						className="h-11"
-						onClick={onClose}
+						disabled={!dirty || replace.isPending}
+						onClick={() => {
+							setDraft(draftFrom(data));
+							setSaveError(null);
+						}}
 					>
-						Close
+						Discard changes
 					</Button>
-				)}
-			</DialogFooter>
+					<Button
+						type="button"
+						className="h-11"
+						disabled={!dirty || !!missingPlace || replace.isPending}
+						onClick={() => void handleSave()}
+					>
+						{replace.isPending && (
+							<Loader2 className="mr-2 h-4 w-4 motion-safe:animate-spin" />
+						)}
+						Save roles
+					</Button>
+				</DialogFooter>
+			)}
 		</>
 	);
 }

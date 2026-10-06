@@ -220,11 +220,7 @@ function adminView(): Assignments {
 
 function render(user = makeUser(), isSelf = false) {
 	return renderWithProviders(
-		<UserRoleAssignmentsPanel
-			user={user}
-			isSelf={isSelf}
-			onClose={vi.fn()}
-		/>,
+		<UserRoleAssignmentsPanel user={user} isSelf={isSelf} />,
 	);
 }
 
@@ -578,6 +574,9 @@ describe("UserRoleAssignmentsPanel", () => {
 		).not.toBeInTheDocument();
 		expect(
 			screen.queryByRole("button", { name: "Save roles" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: "Close" }),
 		).not.toBeInTheDocument();
 	});
 

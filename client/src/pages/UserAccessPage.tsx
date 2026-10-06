@@ -32,10 +32,12 @@ import { useOrganizations } from "@/hooks/useOrganizations";
 import { useUser } from "@/hooks/useUsers";
 import { ApiError } from "@/lib/api-error";
 import { orgTarget } from "@/lib/authorization";
+import { motionSeconds } from "@/lib/motion";
 import type { components } from "@/lib/v1";
 import {
 	usePermissionCatalog,
 	useUserAccessMap,
+	type PermissionCatalogEntry,
 	type UserAccessMap,
 } from "@/services/access";
 import { useAuthorization } from "@/services/authorization";
@@ -56,15 +58,41 @@ function initials(user: User): string {
 		.slice(0, 2);
 }
 
+const ACTION_WORDS: Record<string, string> = {
+	read: "view",
+	readwrite: "manage",
+	execute: "run",
+};
+
+/** "roles.readwrite" → "Role definitions (manage)". */
+function permissionPhrase(
+	permission: string,
+	catalog: PermissionCatalogEntry[],
+): string {
+	if (permission === "*") return "every permission";
+	const all = permission.endsWith(".all");
+	const body = all ? permission.slice(0, -".all".length) : permission;
+	const cut = body.lastIndexOf(".");
+	const domain = body.slice(0, cut);
+	const action = ACTION_WORDS[body.slice(cut + 1)];
+	const title =
+		catalog.find((entry) => entry.domain === domain)?.title ?? domain;
+	return `${title} (${all ? `${action} all` : action})`;
+}
+
 /** "Protected: holds …" — what makes this account protected. */
-function protectedSummary(map: UserAccessMap | undefined): string {
-	const held = map
-		? LIST.format(
-				map.privileged_permissions.map((permission) =>
-					permission === "*" ? "every permission" : permission,
-				),
-			)
-		: "privileged access";
+function protectedSummary(
+	map: UserAccessMap | undefined,
+	catalog: PermissionCatalogEntry[] | undefined,
+): string {
+	const held =
+		map && catalog
+			? LIST.format(
+					map.privileged_permissions.map((permission) =>
+						permissionPhrase(permission, catalog),
+					),
+				)
+			: "privileged access";
 	return `Protected: holds ${held}. Only a Platform Admin can change this account.`;
 }
 
@@ -75,7 +103,10 @@ function Disclosure({ children }: { children: ReactNode }) {
 		<motion.div
 			initial={{ opacity: 0, y: reduceMotion ? 0 : 6 }}
 			animate={{ opacity: 1, y: 0 }}
-			transition={{ duration: reduceMotion ? 0 : 0.22, ease: "easeOut" }}
+			transition={{
+				duration: motionSeconds("--bf-motion-disclosure"),
+				ease: "easeOut",
+			}}
 			className="space-y-8"
 		>
 			{children}
@@ -149,10 +180,12 @@ function PersonHeader({
 	user,
 	homeOrganization,
 	map,
+	catalog,
 }: {
 	user: User;
 	homeOrganization: string | undefined;
 	map: UserAccessMap | undefined;
+	catalog: PermissionCatalogEntry[] | undefined;
 }) {
 	return (
 		<header className="min-w-0 space-y-3">
@@ -226,7 +259,7 @@ function PersonHeader({
 								aria-hidden="true"
 								className="mt-0.5 size-4 shrink-0"
 							/>
-							<span>{protectedSummary(map)}</span>
+							<span>{protectedSummary(map, catalog)}</span>
 						</p>
 					)}
 				</div>
@@ -272,10 +305,7 @@ export function UserAccessPage() {
 			orgTarget(person.organization_id),
 		);
 	const accessQuery = useUserAccessMap(canViewAccess ? userId : undefined);
-	const catalogQuery = usePermissionCatalog(
-		canViewAccess &&
-			authorization.meets({ permission: "roles.read", at: "global" }),
-	);
+	const catalogQuery = usePermissionCatalog();
 	const organizationsQuery = useOrganizations({
 		enabled: authorization.canAnywhere("organizations.read"),
 	});
@@ -317,6 +347,7 @@ export function UserAccessPage() {
 				user={person}
 				homeOrganization={homeOrganization}
 				map={map}
+				catalog={catalogQuery.data}
 			/>
 			<Tabs
 				value={currentTab}
@@ -359,21 +390,32 @@ export function UserAccessPage() {
 										title="What they can do, and where"
 										description="One row for each place their roles apply. Hover or focus a permission to see which role gives it."
 									/>
-									{accessQuery.isLoading ? (
-										<Skeleton className="h-40 w-full" />
-									) : map ? (
+									{map && catalogQuery.data ? (
 										<AccessMap
 											rows={map.rows}
 											catalog={catalogQuery.data}
 										/>
-									) : (
+									) : accessQuery.isError ||
+									  catalogQuery.isError ? (
 										<ListLoadError
 											resource="their access"
 											hasCachedData={false}
-											isRetrying={accessQuery.isFetching}
-											onRetry={() =>
-												void accessQuery.refetch()
+											isRetrying={
+												accessQuery.isFetching ||
+												catalogQuery.isFetching
 											}
+											onRetry={() => {
+												if (accessQuery.isError)
+													void accessQuery.refetch();
+												if (catalogQuery.isError)
+													void catalogQuery.refetch();
+											}}
+										/>
+									) : (
+										<Skeleton
+											role="status"
+											aria-label="Loading access"
+											className="h-40 w-full"
 										/>
 									)}
 								</section>
@@ -392,7 +434,6 @@ export function UserAccessPage() {
 											isSelf={
 												currentUser?.id === person.id
 											}
-											onClose={() => navigate("/users")}
 										/>
 									</div>
 								</section>

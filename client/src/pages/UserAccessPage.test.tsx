@@ -144,6 +144,28 @@ const accessMap: UserAccessMap = {
 
 const catalog: PermissionCatalogEntry[] = [
 	{
+		domain: "roles",
+		title: "Role definitions",
+		area: "Identity & access",
+		description: "",
+		who_should_hold: "",
+		actions: ["read", "readwrite"],
+		privileged: ["roles.readwrite"],
+		scope: "platform_wide",
+		enforced: true,
+	},
+	{
+		domain: "users",
+		title: "Users",
+		area: "Identity & access",
+		description: "",
+		who_should_hold: "",
+		actions: ["read", "readwrite"],
+		privileged: ["users.readwrite"],
+		scope: "per_organization",
+		enforced: true,
+	},
+	{
 		domain: "tables",
 		title: "Tables",
 		area: "Data & content",
@@ -189,7 +211,11 @@ beforeEach(() => {
 		isLoading: false,
 		isError: false,
 	});
-	mockUsePermissionCatalog.mockReturnValue({ data: catalog });
+	mockUsePermissionCatalog.mockReturnValue({
+		data: catalog,
+		isLoading: false,
+		isError: false,
+	});
 });
 
 describe("UserAccessPage", () => {
@@ -225,7 +251,20 @@ describe("UserAccessPage", () => {
 		).toBeInTheDocument();
 		expect(screen.getByText("Role assignments editor")).toBeInTheDocument();
 		expect(mockUseUserAccessMap).toHaveBeenLastCalledWith("user-1");
-		expect(mockUsePermissionCatalog).toHaveBeenLastCalledWith(true);
+	});
+
+	it("waits for the catalog before drawing the map", () => {
+		mockUsePermissionCatalog.mockReturnValue({
+			data: undefined,
+			isLoading: true,
+			isError: false,
+		});
+		renderPage();
+
+		expect(
+			screen.getByRole("status", { name: "Loading access" }),
+		).toBeInTheDocument();
+		expect(screen.queryByRole("table")).not.toBeInTheDocument();
 	});
 
 	it("says why a protected person is protected", () => {
@@ -247,7 +286,7 @@ describe("UserAccessPage", () => {
 
 		expect(
 			screen.getByText(
-				"Protected: holds roles.readwrite and users.readwrite. Only a Platform Admin can change this account.",
+				"Protected: holds Role definitions (manage) and Users (manage). Only a Platform Admin can change this account.",
 			),
 		).toBeInTheDocument();
 	});

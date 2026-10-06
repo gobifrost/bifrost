@@ -27,38 +27,34 @@ import { BRIDGE_EDGE, PermissionChip } from "./PermissionChip";
 import { PlaceLabel } from "./PlaceLabel";
 
 const WILDCARD = "*";
-/** Where a grant goes when the catalog can't name its area. */
-const UNSORTED = "Permissions";
+/** The one column heading when the only thing held is the wildcard. */
+const WILDCARD_ONLY_HEADING = "Permissions";
 
 interface Layout {
 	columns: string[];
-	areaOf: (grant: AccessGrant) => string;
+	areaOf: (grant: AccessGrant) => string | undefined;
 	entryFor: (grant: AccessGrant) => PermissionCatalogEntry | undefined;
 }
+
+const isWildcard = (grant: AccessGrant) => grant.permission === WILDCARD;
 
 /** Columns are the catalog's areas, in catalog order, that hold a grant. */
 function layoutFor(
 	rows: AccessRow[],
-	catalog: PermissionCatalogEntry[] | undefined,
+	catalog: PermissionCatalogEntry[],
 ): Layout {
-	const byDomain = new Map(catalog?.map((entry) => [entry.domain, entry]));
+	const byDomain = new Map(catalog.map((entry) => [entry.domain, entry]));
 	const entryFor = (grant: AccessGrant) => byDomain.get(grant.domain);
-	const areaOf = (grant: AccessGrant): string =>
-		entryFor(grant)?.area ?? UNSORTED;
+	const areaOf = (grant: AccessGrant) => entryFor(grant)?.area;
 	const held = new Set(
 		rows.flatMap((row) =>
-			row.grants
-				.filter((grant) => grant.permission !== WILDCARD)
-				.map(areaOf),
+			row.grants.filter((grant) => !isWildcard(grant)).map(areaOf),
 		),
 	);
-	const order = [...new Set(catalog?.map((entry) => entry.area)), UNSORTED];
-	const columns = order.filter((area) => held.has(area));
-	return {
-		columns: columns.length > 0 ? columns : [UNSORTED],
-		areaOf,
-		entryFor,
-	};
+	const columns = [...new Set(catalog.map((entry) => entry.area))].filter(
+		(area) => held.has(area),
+	);
+	return { columns, areaOf, entryFor };
 }
 
 /** A Platform Admin's wildcard: one privileged chip across the whole row. */
@@ -107,82 +103,100 @@ function Chips({
 		);
 	return (
 		<div className="flex flex-wrap gap-1.5">
-			{grants.map((grant) =>
-				grant.permission === WILDCARD ? (
-					<WildcardChip key={grant.permission} />
-				) : (
-					<PermissionChip
-						key={grant.permission}
-						grant={grant}
-						catalogEntry={layout.entryFor(grant)}
-						place={row.place}
-					/>
-				),
-			)}
+			{grants.map((grant) => (
+				<PermissionChip
+					key={grant.permission}
+					grant={grant}
+					catalogEntry={layout.entryFor(grant)}
+					place={row.place}
+				/>
+			))}
 		</div>
 	);
 }
 
+function AreaCells({ row, layout }: { row: AccessRow; layout: Layout }) {
+	return layout.columns.map((area) => (
+		<DataTableCell key={area} className="align-top">
+			<Chips
+				grants={row.grants.filter(
+					(grant) =>
+						!isWildcard(grant) && layout.areaOf(grant) === area,
+				)}
+				row={row}
+				layout={layout}
+			/>
+		</DataTableCell>
+	));
+}
+
+/**
+ * A place's row. Beside the wildcard, the grants it does not cover (such as
+ * reading secrets) sit in their own area columns on a second line.
+ */
+function PlaceRows({ row, layout }: { row: AccessRow; layout: Layout }) {
+	const wildcard = row.grants.some(isWildcard);
+	const explicit = row.grants.some((grant) => !isWildcard(grant));
+	const place = (
+		<DataTableHead
+			scope="row"
+			rowSpan={wildcard && explicit ? 2 : undefined}
+			className="h-auto whitespace-normal py-3 align-top text-[var(--bf-reach)]"
+		>
+			<PlaceLabel place={row.place} />
+		</DataTableHead>
+	);
+	if (!wildcard)
+		return (
+			<DataTableRow className="hover:bg-transparent">
+				{place}
+				<AreaCells row={row} layout={layout} />
+			</DataTableRow>
+		);
+	return (
+		<>
+			<DataTableRow
+				className={cn("hover:bg-transparent", explicit && "border-b-0")}
+			>
+				{place}
+				<DataTableCell
+					colSpan={Math.max(layout.columns.length, 1)}
+					className="align-top"
+				>
+					<WildcardChip />
+				</DataTableCell>
+			</DataTableRow>
+			{explicit && (
+				<DataTableRow className="hover:bg-transparent">
+					<AreaCells row={row} layout={layout} />
+				</DataTableRow>
+			)}
+		</>
+	);
+}
+
 function DesktopMap({ rows, layout }: { rows: AccessRow[]; layout: Layout }) {
+	const headings =
+		layout.columns.length > 0 ? layout.columns : [WILDCARD_ONLY_HEADING];
 	return (
 		<DataTable>
 			<caption className="sr-only">Access by place</caption>
 			<DataTableHeader>
 				<DataTableRow className="hover:bg-transparent">
 					<DataTableHead className="w-56">Place</DataTableHead>
-					{layout.columns.map((area) => (
-						<DataTableHead key={area}>{area}</DataTableHead>
+					{headings.map((heading) => (
+						<DataTableHead key={heading}>{heading}</DataTableHead>
 					))}
 				</DataTableRow>
 			</DataTableHeader>
 			<DataTableBody>
-				{rows.map((row) => {
-					const wildcard = row.grants.some(
-						(grant) => grant.permission === WILDCARD,
-					);
-					return (
-						<DataTableRow
-							key={`${row.place.kind}:${row.place.organization_id}`}
-							className="hover:bg-transparent"
-						>
-							<DataTableHead
-								scope="row"
-								className="h-auto whitespace-normal py-3 align-top text-[var(--bf-reach)]"
-							>
-								<PlaceLabel place={row.place} />
-							</DataTableHead>
-							{wildcard ? (
-								<DataTableCell
-									colSpan={layout.columns.length}
-									className="align-top"
-								>
-									<Chips
-										grants={row.grants}
-										row={row}
-										layout={layout}
-									/>
-								</DataTableCell>
-							) : (
-								layout.columns.map((area) => (
-									<DataTableCell
-										key={area}
-										className="align-top"
-									>
-										<Chips
-											grants={row.grants.filter(
-												(grant) =>
-													layout.areaOf(grant) ===
-													area,
-											)}
-											row={row}
-											layout={layout}
-										/>
-									</DataTableCell>
-								))
-							)}
-						</DataTableRow>
-					);
-				})}
+				{rows.map((row) => (
+					<PlaceRows
+						key={`${row.place.kind}:${row.place.organization_id}`}
+						row={row}
+						layout={layout}
+					/>
+				))}
 			</DataTableBody>
 		</DataTable>
 	);
@@ -195,15 +209,12 @@ function MobileMap({ rows, layout }: { rows: AccessRow[]; layout: Layout }) {
 			className="divide-y divide-border/60 overflow-hidden rounded-[var(--bf-radius-surface)] border bg-card"
 		>
 			{rows.map((row) => {
-				const wildcard = row.grants.filter(
-					(grant) => grant.permission === WILDCARD,
-				);
 				const groups = layout.columns
 					.map((area) => ({
 						area,
 						grants: row.grants.filter(
 							(grant) =>
-								grant.permission !== WILDCARD &&
+								!isWildcard(grant) &&
 								layout.areaOf(grant) === area,
 						),
 					}))
@@ -216,13 +227,7 @@ function MobileMap({ rows, layout }: { rows: AccessRow[]; layout: Layout }) {
 						<h3 className="text-sm font-medium text-[var(--bf-reach)]">
 							<PlaceLabel place={row.place} />
 						</h3>
-						{wildcard.length > 0 && (
-							<Chips
-								grants={wildcard}
-								row={row}
-								layout={layout}
-							/>
-						)}
+						{row.grants.some(isWildcard) && <WildcardChip />}
 						{groups.map((group) => (
 							<div key={group.area} className="space-y-1.5">
 								<p className="text-xs text-muted-foreground">
@@ -293,7 +298,7 @@ export function AccessMap({
 	catalog,
 }: {
 	rows: AccessRow[];
-	catalog?: PermissionCatalogEntry[];
+	catalog: PermissionCatalogEntry[];
 }) {
 	const narrow = useMediaQuery("(max-width: 1023px)");
 	if (rows.length === 0)

@@ -167,23 +167,31 @@ describe("AccessMap", () => {
 			<AccessMap
 				catalog={catalog}
 				rows={[
+					{ place: home, grants: [grant("tables.read")] },
 					{
-						place: home,
+						...allOrganizations,
 						grants: [
-							grant("tables.read"),
-							grant("workflows.execute"),
+							everything,
+							grant("secrets.read", "varies", "Secrets Reader"),
 						],
 					},
-					allOrganizations,
 				]}
 			/>,
 		);
 
-		const row = screen.getByRole("row", { name: /All organizations/ });
-		const cells = within(row).getAllByRole("cell");
-		expect(cells).toHaveLength(1);
-		expect(cells[0]).toHaveAttribute("colspan", "2");
-		const chip = within(cells[0]).getByRole("button", {
+		const areas = screen
+			.getAllByRole("columnheader")
+			.slice(1)
+			.map((cell) => cell.textContent);
+		expect(areas).toEqual(["Data & content", "Integrations & secrets"]);
+		const place = screen.getByRole("rowheader", {
+			name: "All organizations",
+		});
+		expect(place).toHaveAttribute("rowspan", "2");
+		const spanRow = place.closest("tr")!;
+		const [span] = within(spanRow).getAllByRole("cell");
+		expect(span).toHaveAttribute("colspan", String(areas.length));
+		const chip = within(span).getByRole("button", {
 			name: "Every permission",
 		});
 		expect(chip).toHaveAttribute("data-variant", "privileged");
@@ -192,6 +200,15 @@ describe("AccessMap", () => {
 			"bg-[var(--bf-warning-soft)]",
 			"text-[var(--bf-warning)]",
 		);
+		expect(within(span).getAllByRole("button")).toHaveLength(1);
+
+		const explicitRow = spanRow.nextElementSibling as HTMLElement;
+		const [dataCell, secretsCell] =
+			within(explicitRow).getAllByRole("cell");
+		expect(dataCell).toHaveTextContent("None");
+		expect(
+			within(secretsCell).getByRole("button", { name: /Secrets/ }),
+		).toBeInTheDocument();
 
 		await user.hover(chip);
 		expect(await screen.findByRole("tooltip")).toHaveTextContent(tooltip);
@@ -241,17 +258,6 @@ describe("AccessMap", () => {
 		expect(
 			within(records[0]).queryByText("Automation"),
 		).not.toBeInTheDocument();
-	});
-
-	it("keeps every permission in one column without the catalog", () => {
-		render(<AccessMap rows={rows} />);
-
-		expect(
-			screen.getAllByRole("columnheader").map((cell) => cell.textContent),
-		).toEqual(["Place", "Permissions"]);
-		expect(
-			screen.getByRole("button", { name: /workflows/ }),
-		).toBeInTheDocument();
 	});
 
 	it("says so when the person holds nothing anywhere", () => {
