@@ -93,12 +93,57 @@ function PrivilegedMark() {
 	);
 }
 
+/** Whether holding `a` already gives `b`: managing covers viewing, `.all` covers the plain action. */
+function covers(a: string, b: string) {
+	const held = permissionParts(a);
+	const other = permissionParts(b);
+	return (
+		a !== b &&
+		held.domain === other.domain &&
+		(held.all || !other.all) &&
+		(held.action === other.action ||
+			(held.action === "readwrite" && other.action === "read"))
+	);
+}
+
+/** Muted note for domains the evaluator does not enforce yet. */
+function TakesEffectLater() {
+	return (
+		<span className="rounded-full border border-border px-2 py-0.5 text-xs font-normal text-muted-foreground">
+			Takes effect with R3b
+		</span>
+	);
+}
+
+/** Catalog prose, with `backticked` names set as code. */
+function Description({ text }: { text: string }) {
+	return (
+		<p className="text-xs leading-5 text-muted-foreground">
+			{text.split("`").map((part, index) =>
+				index % 2 === 1 ? (
+					<code
+						key={index}
+						className="rounded bg-muted/50 px-1 font-mono text-[0.92em]"
+					>
+						{part}
+					</code>
+				) : (
+					part
+				),
+			)}
+		</p>
+	);
+}
+
 /** One catalog domain: what it covers, and what the role holds in it. */
 function DomainRow({
 	entry,
+	noteLater,
 	children,
 }: {
 	entry: PermissionCatalogEntry;
+	/** Show the R3b note on this row; false when the area header carries it. */
+	noteLater: boolean;
 	children: ReactNode;
 }) {
 	return (
@@ -116,15 +161,9 @@ function DomainRow({
 						>
 							{entry.title}
 						</h3>
-						{!entry.enforced && (
-							<span className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
-								Takes effect with R3b
-							</span>
-						)}
+						{noteLater && <TakesEffectLater />}
 					</div>
-					<p className="text-xs leading-5 text-muted-foreground">
-						{entry.description}
-					</p>
+					<Description text={entry.description} />
 				</div>
 				{children}
 			</div>
@@ -246,6 +285,14 @@ export function RolePermissionsPanel({
 		const { domain } = permissionParts(held.permission);
 		heldByDomain.set(domain, [...(heldByDomain.get(domain) ?? []), held]);
 	}
+	// Areas where nothing is enforced yet say so once, on the area.
+	const laterAreas = new Set<string>(
+		[...new Set(catalog.map((entry) => entry.area))].filter((area) =>
+			catalog
+				.filter((entry) => entry.area === area)
+				.every((entry) => !entry.enforced),
+		),
+	);
 	const areas = areasOf(
 		catalog.filter((entry) => matchesSearch(entry, search)),
 		identityDomains,
@@ -298,11 +345,15 @@ export function RolePermissionsPanel({
 			permissionsFor(domain, choice, vocabulary).some((p) =>
 				privileged.has(p),
 			);
+		// A domain is a choice only when the server accepts every change to it.
 		const editable =
 			canEdit &&
-			choices.some((choice) =>
-				editableVocabulary.has(`${domain}.${choice}`),
-			);
+			[...vocabulary]
+				.filter(
+					(permission) =>
+						permissionParts(permission).domain === domain,
+				)
+				.every((permission) => editableVocabulary.has(permission));
 		if (!editable)
 			return (
 				<HeldValue
@@ -335,7 +386,10 @@ export function RolePermissionsPanel({
 	};
 
 	const heldControl = (domain: string) => {
-		const held = heldByDomain.get(domain) ?? [];
+		const all = heldByDomain.get(domain) ?? [];
+		const held = all.filter(
+			(p) => !all.some((other) => covers(other.permission, p.permission)),
+		);
 		return (
 			<HeldValue
 				label={
@@ -349,7 +403,7 @@ export function RolePermissionsPanel({
 								.join(", ")
 						: "No access"
 				}
-				privileged={held.some((p) => p.privileged)}
+				privileged={all.some((p) => p.privileged)}
 			/>
 		);
 	};
@@ -393,17 +447,26 @@ export function RolePermissionsPanel({
 								aria-labelledby={areaId(area)}
 								className="space-y-2"
 							>
-								<h2
-									id={areaId(area)}
-									className="text-base font-semibold"
-								>
-									{area}
-								</h2>
+								<div className="flex flex-wrap items-center gap-2">
+									<h2
+										id={areaId(area)}
+										className="text-base font-semibold"
+									>
+										{area}
+									</h2>
+									{laterAreas.has(area) && (
+										<TakesEffectLater />
+									)}
+								</div>
 								<ul className="divide-y divide-border/70 rounded-[var(--bf-radius-surface)] border border-border/70">
 									{entries.map((entry) => (
 										<DomainRow
 											key={entry.domain}
 											entry={entry}
+											noteLater={
+												!entry.enforced &&
+												!laterAreas.has(area)
+											}
 										>
 											{identityDomains.has(entry.domain)
 												? identityControl(

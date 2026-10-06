@@ -271,6 +271,28 @@ describe("Roles", () => {
 		expect(within(record).getByText("Global")).toBeVisible();
 	});
 
+	it("leaves grants, holders and placements off mobile records the server leaves them out of", () => {
+		mockUseMediaQuery.mockReturnValue(true);
+		mockUseRolesPage.mockReturnValue(
+			page([
+				{
+					...role,
+					consumer_counts: null,
+					holders: null,
+					permissions: null,
+					placements: null,
+				},
+			]),
+		);
+		renderWithProviders(<Roles />);
+
+		const record = screen.getByRole("article");
+		expect(within(record).queryByText("Grants")).toBeNull();
+		expect(within(record).queryByText("Holders")).toBeNull();
+		expect(within(record).queryByText("Placed")).toBeNull();
+		expect(within(record).getByText("Created")).toBeVisible();
+	});
+
 	it("groups built-in and custom roles under their own headings", () => {
 		mockUseRolesPage.mockReturnValue(
 			page([
@@ -329,6 +351,7 @@ describe("Roles", () => {
 		const more = screen.getByRole("link", { name: "2 more permissions" });
 		expect(more).toHaveTextContent("+2");
 		expect(more).toHaveAttribute("href", "/roles/role-1/permissions");
+		expect(more).toHaveClass("min-h-11", "min-w-11");
 	});
 
 	it("shows holders and where each role is placed", () => {

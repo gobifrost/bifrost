@@ -218,7 +218,7 @@ function RoleGrants({ role, catalog }: { role: Role; catalog: Catalog }) {
 				<Link
 					to={`/roles/${role.id}/permissions`}
 					aria-label={`${hidden} more permissions`}
-					className="inline-flex min-h-6 items-center rounded-[var(--bf-radius-control)] px-1 text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+					className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-[var(--bf-radius-control)] px-1 text-xs lg:min-h-6 lg:min-w-0 font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 					onClick={(e) => e.stopPropagation()}
 				>
 					+{hidden}
@@ -283,7 +283,7 @@ function RoleMobileRecord({
 				<div className="min-w-0 space-y-1.5">
 					<Link
 						to={`/roles/${role.id}`}
-						className="block min-h-11 text-base font-semibold leading-6 [overflow-wrap:anywhere] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+						className="-my-2.5 block py-2.5 text-base font-semibold leading-6 [overflow-wrap:anywhere] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 					>
 						{role.name}
 					</Link>
@@ -346,6 +346,7 @@ function RoleMobileRecord({
 function RoleMobileList({
 	roles,
 	catalog,
+	summaries,
 	canManage,
 	total,
 	offset,
@@ -359,6 +360,7 @@ function RoleMobileList({
 }: {
 	roles: Role[];
 	catalog: Catalog;
+	summaries: boolean;
 	canManage: boolean;
 	total: number;
 	offset: number;
@@ -392,7 +394,7 @@ function RoleMobileList({
 								key={role.id}
 								role={role}
 								catalog={catalog}
-								summaries={hasSummaries(roles)}
+								summaries={summaries}
 								canManage={canManage}
 								onEdit={() => onEdit(role)}
 								onDelete={() => onDelete(role)}
@@ -578,6 +580,7 @@ export function Roles() {
 					<RoleMobileList
 						roles={roles}
 						catalog={catalog}
+						summaries={summaries}
 						canManage={canManage}
 						total={total}
 						offset={offset}

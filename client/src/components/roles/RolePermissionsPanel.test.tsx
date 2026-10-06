@@ -55,9 +55,6 @@ const CATALOG: PermissionCatalogEntry[] = [
 		"users.lifecycle",
 		"Move, delete & change base role",
 		"Identity & access",
-		{
-			enforced: true,
-		},
 	),
 	entry("organizations", "Organizations", "Identity & access", {
 		enforced: true,
@@ -65,7 +62,11 @@ const CATALOG: PermissionCatalogEntry[] = [
 	entry("roleassignments", "Role assignments", "Identity & access", {
 		enforced: true,
 	}),
-	entry("roles", "Roles", "Identity & access", { enforced: true }),
+	entry("roles", "Roles", "Identity & access", {
+		enforced: true,
+		description:
+			"Role definitions. Assigning roles to users is `roleassignments`.",
+	}),
 	entry("users", "Users", "Identity & access", { enforced: true }),
 	entry("configs", "Configs", "Integrations & secrets", {
 		description: "Configuration values and secret references.",
@@ -247,17 +248,76 @@ describe("RolePermissionsPanel", () => {
 		expect(within(domain("Tables")).getByText("No access")).toBeVisible();
 	});
 
-	it("says which domains take effect with R3b", () => {
+	it("says once on an area when every domain there takes effect with R3b", () => {
 		renderWithProviders(
 			<RolePermissionsPanel roleId="role-1" isBuiltin={false} />,
 		);
 
+		const automation = screen.getByRole("region", { name: "Automation" });
 		expect(
-			within(domain("Agents")).getByText("Takes effect with R3b"),
+			within(automation).getAllByText("Takes effect with R3b"),
+		).toHaveLength(1);
+		expect(
+			within(domain("Agents")).queryByText("Takes effect with R3b"),
+		).toBeNull();
+	});
+
+	it("says it per domain in an area where only some take effect with R3b", () => {
+		renderWithProviders(
+			<RolePermissionsPanel roleId="role-1" isBuiltin={false} />,
+		);
+
+		const identity = screen.getByRole("region", {
+			name: "Identity & access",
+		});
+		expect(
+			within(identity).getAllByText("Takes effect with R3b"),
+		).toHaveLength(1);
+		expect(
+			within(domain("Move, delete & change base role")).getByText(
+				"Takes effect with R3b",
+			),
 		).toBeVisible();
 		expect(
 			within(domain("Users")).queryByText("Takes effect with R3b"),
 		).toBeNull();
+	});
+
+	it("shows backticked names in descriptions as code", () => {
+		renderWithProviders(
+			<RolePermissionsPanel roleId="role-1" isBuiltin={false} />,
+		);
+
+		const roles = domain("Roles");
+		const code = within(roles).getByText("roleassignments");
+		expect(code.tagName).toBe("CODE");
+		expect(code).toHaveClass("font-mono");
+		expect(roles.textContent).not.toContain("`");
+	});
+
+	it("offers a choice only where every permission behind it is editable", () => {
+		state.data = {
+			...permissionsOf(["users.read"]),
+			identity_permissions: IDENTITY.map((p) =>
+				item(p, p !== "roles.readwrite"),
+			),
+		};
+		renderWithProviders(
+			<RolePermissionsPanel roleId="role-1" isBuiltin={false} />,
+		);
+
+		expect(within(domain("Roles")).queryByRole("radio")).toBeNull();
+		expect(within(domain("Roles")).getByText("No access")).toBeVisible();
+	});
+
+	it("shows only the highest level held in a read-only domain", () => {
+		state.data = permissionsOf(["agents.read", "agents.readwrite"]);
+		renderWithProviders(
+			<RolePermissionsPanel roleId="role-1" isBuiltin={false} />,
+		);
+
+		expect(within(domain("Agents")).getByText("Manage")).toBeVisible();
+		expect(within(domain("Agents")).queryByText(/View/)).toBeNull();
 	});
 
 	it("marks privileged choices and explains what that means", () => {
@@ -294,7 +354,7 @@ describe("RolePermissionsPanel", () => {
 		expect(domain("Configs")).toBeVisible();
 
 		await user.clear(search);
-		await user.type(search, "roleassign");
+		await user.type(search, "role assign");
 		await waitFor(() =>
 			expect(
 				screen
