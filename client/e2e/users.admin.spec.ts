@@ -53,7 +53,7 @@ test.describe("User Listing", () => {
 });
 
 test.describe("User Details", () => {
-	test("opens user details once without remounting the dialog", async ({
+	test("a list row opens the person's page, not a dialog", async ({
 		page,
 	}) => {
 		await page.goto("/users");
@@ -64,57 +64,37 @@ test.describe("User Details", () => {
 
 		const userRow = page.locator("table tbody tr").first();
 		await expect(userRow).toBeVisible({ timeout: 10000 });
-		await page.evaluate(() => {
-			const observedWindow = window as unknown as {
-				__dialogTransitions: string[];
-			};
-			observedWindow.__dialogTransitions = [];
-			new MutationObserver((mutations) => {
-				for (const mutation of mutations) {
-					for (const node of mutation.addedNodes) {
-						if (
-							node instanceof HTMLElement &&
-							(node.matches('[role="dialog"]') ||
-								node.querySelector('[role="dialog"]'))
-						) {
-							observedWindow.__dialogTransitions.push("added");
-						}
-					}
-					for (const node of mutation.removedNodes) {
-						if (
-							node instanceof HTMLElement &&
-							(node.matches('[role="dialog"]') ||
-								node.querySelector('[role="dialog"]'))
-						) {
-							observedWindow.__dialogTransitions.push("removed");
-						}
-					}
-				}
-			}).observe(document.body, { childList: true, subtree: true });
-		});
-
 		const emailCell = userRow.locator("td").nth(3);
 		const email = (await emailCell.textContent())?.trim();
 		expect(email).toBeTruthy();
 		await emailCell.getByText(email!, { exact: true }).click();
+
 		await expect(page).toHaveURL(/\/users\/[0-9a-f-]+$/);
+		await expect(page.getByRole("tab", { name: "Access" })).toHaveAttribute(
+			"aria-selected",
+			"true",
+		);
+		await expect(page.getByRole("dialog")).toHaveCount(0);
+
+		await page.getByRole("tab", { name: "Profile" }).click();
+		await expect(page).toHaveURL(/\/users\/[0-9a-f-]+\/profile$/);
+	});
+
+	test("Edit profile opens the dialog without leaving the list", async ({
+		page,
+	}) => {
+		await page.goto("/users");
+
+		const userRow = page.locator("table tbody tr").first();
+		await expect(userRow).toBeVisible({ timeout: 10000 });
+		await userRow.getByRole("button", { name: /actions$/ }).click();
+		await page.getByRole("menuitem", { name: "Edit profile" }).click();
+
 		await expect(
 			page.getByRole("dialog", { name: /edit user/i }),
 		).toBeVisible();
-		await page.evaluate(
-			() =>
-				new Promise((resolve) =>
-					requestAnimationFrame(() => requestAnimationFrame(resolve)),
-				),
-		);
-		const transitions = await page.evaluate(
-			() =>
-				(window as unknown as { __dialogTransitions: string[] })
-					.__dialogTransitions,
-		);
-		expect(transitions).toEqual(["added"]);
+		await expect(page).toHaveURL(/\/users$/);
 	});
-
 });
 
 test.describe("User Invitation", () => {
