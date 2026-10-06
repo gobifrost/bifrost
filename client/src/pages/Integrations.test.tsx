@@ -187,9 +187,12 @@ describe("Integrations", () => {
 			"href",
 			"/integrations/int-1",
 		);
-		fireEvent.click(screen.getByRole("cell", { name: "OAuth configured" }), {
-			ctrlKey: true,
-		});
+		fireEvent.click(
+			screen.getByRole("cell", { name: "OAuth configured" }),
+			{
+				ctrlKey: true,
+			},
+		);
 		expect(open).toHaveBeenCalledWith("/integrations/int-1", "_blank");
 		expect(
 			screen.queryByRole("button", { name: /open slack/i }),

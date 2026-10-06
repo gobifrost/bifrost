@@ -381,6 +381,9 @@ describe("Roles", () => {
 				.getAllByRole("listitem")
 				.map((item) => item.textContent),
 		).toEqual(["3 Organizations", "Global"]);
+		for (const item of within(places).getAllByRole("listitem")) {
+			expect(item).toHaveClass("min-w-0", "max-w-full");
+		}
 		expect(
 			within(places).getByText("Global").closest("[data-place]"),
 		).toHaveClass("bg-[var(--bf-reach-soft)]");

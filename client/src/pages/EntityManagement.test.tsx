@@ -447,37 +447,66 @@ it("keeps rendered resources and chevrons while availability refreshes", async (
 	refresh.resolve(relationshipAvailability());
 });
 
-
 it("filters differences across loaded relationships without including unrelated resources", async () => {
 	const user = userEvent.setup();
 	sourceState.workflowAccess = "role_based";
 	apiPost.mockResolvedValue(relationshipAvailability());
-	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-	render(<QueryClientProvider client={queryClient}><EntityManagement /></QueryClientProvider>);
-	await user.click((await screen.findAllByRole("button", { name: "Expand Covi Portal" }))[0]);
+	const queryClient = new QueryClient({
+		defaultOptions: { queries: { retry: false } },
+	});
+	render(
+		<QueryClientProvider client={queryClient}>
+			<EntityManagement />
+		</QueryClientProvider>,
+	);
+	await user.click(
+		(
+			await screen.findAllByRole("button", { name: "Expand Covi Portal" })
+		)[0],
+	);
 	await user.click(screen.getByRole("button", { name: "Filters" }));
-	await user.click(screen.getByRole("option", { name: "Related scope/access mismatch" }));
+	await user.click(
+		screen.getByRole("option", { name: "Related scope/access mismatch" }),
+	);
 	await user.keyboard("{Escape}");
 	expect(screen.queryByText("Unrelated Portal")).not.toBeInTheDocument();
 	expect(screen.getAllByText("Covi Portal").length).toBeGreaterThan(0);
-	expect(screen.getAllByText("Create service request").length).toBeGreaterThan(0);
-	expect(screen.getAllByText("Service request intake").length).toBeGreaterThan(0);
+	expect(
+		screen.getAllByText("Create service request").length,
+	).toBeGreaterThan(0);
+	expect(
+		screen.getAllByText("Service request intake").length,
+	).toBeGreaterThan(0);
 });
-
 
 it("clears workflow roles without overriding an explicit access level", async () => {
 	const user = userEvent.setup();
 	apiPost.mockResolvedValue(relationshipAvailability());
-	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-	render(<QueryClientProvider client={queryClient}><EntityManagement /></QueryClientProvider>);
-	await user.click(await screen.findByRole("checkbox", { name: "Select Create service request" }));
+	const queryClient = new QueryClient({
+		defaultOptions: { queries: { retry: false } },
+	});
+	render(
+		<QueryClientProvider client={queryClient}>
+			<EntityManagement />
+		</QueryClientProvider>,
+	);
+	await user.click(
+		await screen.findByRole("checkbox", {
+			name: "Select Create service request",
+		}),
+	);
 	await user.click(screen.getByRole("button", { name: "Edit selected" }));
-	await user.click(screen.getByRole("combobox", { name: "Access level change" }));
-	await user.click(screen.getByRole("option", { name: /^Everyone Any signed-in/ }));
+	await user.click(
+		screen.getByRole("combobox", { name: "Access level change" }),
+	);
+	await user.click(
+		screen.getByRole("option", { name: /^Everyone Any signed-in/ }),
+	);
 	await user.click(screen.getByRole("combobox", { name: "Roles change" }));
 	await user.click(screen.getByRole("option", { name: "Clear roles" }));
 	await user.click(screen.getByRole("button", { name: "Apply changes" }));
 	expect(updateWorkflow).toHaveBeenCalledExactlyOnceWith("workflow-1", {
-		access_level: "everyone", role_ids: [],
+		access_level: "everyone",
+		role_ids: [],
 	});
 });

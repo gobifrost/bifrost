@@ -271,6 +271,10 @@ describe("UserAccessPage", () => {
 				.getAllByRole("listitem")
 				.map((item) => item.textContent),
 		).toEqual(["Contoso (Home)", "Global"]);
+		// A long name truncates inside its chip instead of widening the list.
+		for (const item of within(reach).getAllByRole("listitem")) {
+			expect(item).toHaveClass("min-w-0", "max-w-full");
+		}
 		expect(screen.queryByText(/^Protected:/)).not.toBeInTheDocument();
 	});
 

@@ -670,7 +670,9 @@ describe("Solutions — bulk SDK updates", () => {
 		);
 
 		await waitFor(() =>
-			expect(screen.getAllByLabelText("SDK update queued")).toHaveLength(2),
+			expect(screen.getAllByLabelText("SDK update queued")).toHaveLength(
+				2,
+			),
 		);
 		expect(
 			screen.queryByRole("button", { name: "Update all SDKs (2)" }),
@@ -738,7 +740,9 @@ describe("Solutions — bulk SDK updates", () => {
 		);
 
 		await waitFor(() =>
-			expect(screen.getAllByLabelText("SDK update queued")).toHaveLength(1),
+			expect(screen.getAllByLabelText("SDK update queued")).toHaveLength(
+				1,
+			),
 		);
 		expect(
 			screen.getByRole("button", { name: "Update all SDKs (1)" }),
@@ -1318,7 +1322,9 @@ describe("Solutions — page dropzone", () => {
 		// The file does not imply a destination: the picker comes first and
 		// nothing previews yet.
 		const dialog = await screen.findByTestId("solution-dialog");
-		expect(within(dialog).getByTestId("destination-picker")).toBeInTheDocument();
+		expect(
+			within(dialog).getByTestId("destination-picker"),
+		).toBeInTheDocument();
 		expect(mockPreviewInstall).not.toHaveBeenCalled();
 
 		// Managed path: the dropped file prefills the zip source.
@@ -1357,7 +1363,9 @@ describe("Solutions — page dropzone", () => {
 		await user.click(within(dialog).getByTestId("destination-workspace"));
 		// The dropped file prefills the workspace zip source and previews.
 		await waitFor(() =>
-			expect(mockPreviewWorkspaceBundle).toHaveBeenCalledWith(file, { organizationId: "" }),
+			expect(mockPreviewWorkspaceBundle).toHaveBeenCalledWith(file, {
+				organizationId: "",
+			}),
 		);
 		expect(
 			await within(dialog).findByTestId("workspace-import-footer"),
@@ -1372,9 +1380,15 @@ describe("Solutions — destination-first install", () => {
 
 		await user.click(screen.getByTestId("open-install"));
 		const dialog = await screen.findByTestId("solution-dialog");
-		expect(within(dialog).getByTestId("destination-picker")).toBeInTheDocument();
-		expect(within(dialog).getByTestId("destination-workspace")).toBeInTheDocument();
-		expect(within(dialog).getByTestId("destination-solution")).toBeInTheDocument();
+		expect(
+			within(dialog).getByTestId("destination-picker"),
+		).toBeInTheDocument();
+		expect(
+			within(dialog).getByTestId("destination-workspace"),
+		).toBeInTheDocument();
+		expect(
+			within(dialog).getByTestId("destination-solution"),
+		).toBeInTheDocument();
 		// No blank-create form: no name input, no immediate install button.
 		expect(within(dialog).queryByTestId("confirm-install")).toBeNull();
 
@@ -1390,7 +1404,9 @@ describe("Solutions — destination-first install", () => {
 			await screen.findByText(/no solutions installed yet/i),
 		);
 		const dialog = await screen.findByTestId("solution-dialog");
-		expect(within(dialog).getByTestId("destination-picker")).toBeInTheDocument();
+		expect(
+			within(dialog).getByTestId("destination-picker"),
+		).toBeInTheDocument();
 	});
 });
 

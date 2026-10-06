@@ -240,10 +240,10 @@ function RolePlaces({ role }: { role: Role }) {
 	return (
 		<ul
 			aria-label={`Where ${role.name} applies`}
-			className="flex flex-wrap gap-1.5"
+			className="flex min-w-0 max-w-full flex-wrap gap-1.5"
 		>
 			{places.map((place) => (
-				<li key={place.kind}>
+				<li key={place.kind} className="min-w-0 max-w-full">
 					<ReachChip place={place} />
 				</li>
 			))}

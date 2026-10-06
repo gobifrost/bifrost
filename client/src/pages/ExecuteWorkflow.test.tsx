@@ -28,9 +28,10 @@ vi.mock("@/hooks/useWorkflows", () => ({
 
 const mockNavigate = vi.fn();
 vi.mock("react-router-dom", async () => {
-	const actual = await vi.importActual<typeof import("react-router-dom")>(
-		"react-router-dom",
-	);
+	const actual =
+		await vi.importActual<typeof import("react-router-dom")>(
+			"react-router-dom",
+		);
 	return {
 		...actual,
 		useNavigate: () => mockNavigate,
@@ -88,161 +89,147 @@ async function renderPage() {
 // -----------------------------------------------------------------------------
 
 describe("ExecuteWorkflow — run-now path (no schedule)", () => {
-	it(
-		"submits a body without scheduled_at or delay_seconds when the schedule switch is untouched",
-		async () => {
-			const { user } = await renderPage();
+	it("submits a body without scheduled_at or delay_seconds when the schedule switch is untouched", async () => {
+		const { user } = await renderPage();
 
-			await user.click(
-				await screen.findByRole("button", {
-					name: /execute workflow/i,
-				}),
+		await user.click(
+			await screen.findByRole("button", {
+				name: /execute workflow/i,
+			}),
+		);
+
+		await waitFor(() => {
+			expect(mockMutateAsync).toHaveBeenCalledTimes(1);
+		});
+
+		const body = mockMutateAsync.mock.calls[0][0].body as Record<
+			string,
+			unknown
+		>;
+		expect(body).not.toHaveProperty("scheduled_at");
+		expect(body).not.toHaveProperty("delay_seconds");
+		expect(body).toMatchObject({
+			workflow_id: WORKFLOW.id,
+			transient: false,
+		});
+
+		// Non-scheduled response goes to the details page.
+		await waitFor(() => {
+			expect(mockNavigate).toHaveBeenCalledWith(
+				"/history/abc-exec-id",
+				expect.any(Object),
 			);
-
-			await waitFor(() => {
-				expect(mockMutateAsync).toHaveBeenCalledTimes(1);
-			});
-
-			const body = mockMutateAsync.mock.calls[0][0].body as Record<
-				string,
-				unknown
-			>;
-			expect(body).not.toHaveProperty("scheduled_at");
-			expect(body).not.toHaveProperty("delay_seconds");
-			expect(body).toMatchObject({
-				workflow_id: WORKFLOW.id,
-				transient: false,
-			});
-
-			// Non-scheduled response goes to the details page.
-			await waitFor(() => {
-				expect(mockNavigate).toHaveBeenCalledWith(
-					"/history/abc-exec-id",
-					expect.any(Object),
-				);
-			});
-		},
-		15000,
-	);
+		});
+	}, 15000);
 });
 
 describe("ExecuteWorkflow — scheduled path", () => {
-	it(
-		"sends delay_seconds: 3600 when the user picks 'In 1 hour' and shows the scheduling label",
-		async () => {
-			const { user } = await renderPage();
+	it("sends delay_seconds: 3600 when the user picks 'In 1 hour' and shows the scheduling label", async () => {
+		const { user } = await renderPage();
 
-			await user.click(
-				await screen.findByRole("switch", {
-					name: /schedule for later/i,
-				}),
-			);
-			await user.click(
-				screen.getByRole("button", { name: /in 1 hour/i }),
-			);
-			expect(
-				screen.getByRole("button", { name: /schedule workflow/i }),
-			).toBeInTheDocument();
+		await user.click(
+			await screen.findByRole("switch", {
+				name: /schedule for later/i,
+			}),
+		);
+		await user.click(screen.getByRole("button", { name: /in 1 hour/i }));
+		expect(
+			screen.getByRole("button", { name: /schedule workflow/i }),
+		).toBeInTheDocument();
 
-			await user.click(
-				screen.getByRole("button", { name: /schedule workflow/i }),
-			);
+		await user.click(
+			screen.getByRole("button", { name: /schedule workflow/i }),
+		);
 
-			await waitFor(() => {
-				expect(mockMutateAsync).toHaveBeenCalledTimes(1);
-			});
+		await waitFor(() => {
+			expect(mockMutateAsync).toHaveBeenCalledTimes(1);
+		});
 
-			const body = mockMutateAsync.mock.calls[0][0].body as Record<
-				string,
-				unknown
-			>;
-			expect(body.delay_seconds).toBe(3600);
-			expect(body).not.toHaveProperty("scheduled_at");
-		},
-		15000,
-	);
+		const body = mockMutateAsync.mock.calls[0][0].body as Record<
+			string,
+			unknown
+		>;
+		expect(body.delay_seconds).toBe(3600);
+		expect(body).not.toHaveProperty("scheduled_at");
+	}, 15000);
 
-	it(
-		"shows a Scheduling label while the scheduled request is pending",
-		async () => {
-			const pending = deferred<{
-				execution_id: string;
-				status: string;
-				scheduled_at: string;
-			}>();
-			mockMutateAsync.mockImplementationOnce(() => pending.promise);
+	it("shows a Scheduling label while the scheduled request is pending", async () => {
+		const pending = deferred<{
+			execution_id: string;
+			status: string;
+			scheduled_at: string;
+		}>();
+		mockMutateAsync.mockImplementationOnce(() => pending.promise);
 
-			const { user } = await renderPage();
+		const { user } = await renderPage();
 
-			await user.click(
-				await screen.findByRole("switch", {
-					name: /schedule for later/i,
-				}),
-			);
-			await user.click(screen.getByRole("button", { name: /in 1 hour/i }));
-			await user.click(
-				screen.getByRole("button", { name: /schedule workflow/i }),
-			);
+		await user.click(
+			await screen.findByRole("switch", {
+				name: /schedule for later/i,
+			}),
+		);
+		await user.click(screen.getByRole("button", { name: /in 1 hour/i }));
+		await user.click(
+			screen.getByRole("button", { name: /schedule workflow/i }),
+		);
 
-			expect(
-				screen.getByRole("button", { name: /scheduling/i }),
-			).toBeDisabled();
-			pending.resolve({
-				execution_id: "abc",
-				status: "Scheduled",
-				scheduled_at: "2026-05-01T12:00:00Z",
-			});
+		expect(
+			screen.getByRole("button", { name: /scheduling/i }),
+		).toBeDisabled();
+		pending.resolve({
+			execution_id: "abc",
+			status: "Scheduled",
+			scheduled_at: "2026-05-01T12:00:00Z",
+		});
 
-			await waitFor(() => {
-				expect(mockNavigate).toHaveBeenCalledWith("/history");
-			});
-		},
-		15000,
-	);
+		await waitFor(() => {
+			expect(mockNavigate).toHaveBeenCalledWith("/history");
+		});
+	}, 15000);
 
-	it(
-		"navigates to /history and toasts the scheduled time on a Scheduled response",
-		async () => {
-			mockMutateAsync.mockResolvedValueOnce({
-				execution_id: "abc",
-				status: "Scheduled",
-				scheduled_at: "2026-05-01T12:00:00Z",
-			});
+	it("navigates to /history and toasts the scheduled time on a Scheduled response", async () => {
+		mockMutateAsync.mockResolvedValueOnce({
+			execution_id: "abc",
+			status: "Scheduled",
+			scheduled_at: "2026-05-01T12:00:00Z",
+		});
 
-			const { user } = await renderPage();
+		const { user } = await renderPage();
 
-			await user.click(
-				await screen.findByRole("switch", {
-					name: /schedule for later/i,
-				}),
-			);
-			await user.click(
-				screen.getByRole("button", { name: /in 1 hour/i }),
-			);
-			await user.click(
-				screen.getByRole("button", { name: /schedule workflow/i }),
-			);
+		await user.click(
+			await screen.findByRole("switch", {
+				name: /schedule for later/i,
+			}),
+		);
+		await user.click(screen.getByRole("button", { name: /in 1 hour/i }));
+		await user.click(
+			screen.getByRole("button", { name: /schedule workflow/i }),
+		);
 
-			await waitFor(() => {
-				expect(mockNavigate).toHaveBeenCalledWith("/history");
-			});
+		await waitFor(() => {
+			expect(mockNavigate).toHaveBeenCalledWith("/history");
+		});
 
-			expect(mockToastSuccess).toHaveBeenCalledTimes(1);
-			const toastMsg = mockToastSuccess.mock.calls[0][0] as string;
-			expect(toastMsg).toMatch(/scheduled for/i);
-		},
-		15000,
-	);
+		expect(mockToastSuccess).toHaveBeenCalledTimes(1);
+		const toastMsg = mockToastSuccess.mock.calls[0][0] as string;
+		expect(toastMsg).toMatch(/scheduled for/i);
+	}, 15000);
 });
-
 
 describe("ExecuteWorkflow — metadata recovery", () => {
 	it("offers retry without reporting a failed request as a missing workflow", async () => {
 		const refetch = vi.fn();
-		mockUseWorkflowsMetadata.mockReturnValue({ data: undefined, isLoading: false, error: new Error("offline"), refetch });
+		mockUseWorkflowsMetadata.mockReturnValue({
+			data: undefined,
+			isLoading: false,
+			error: new Error("offline"),
+			refetch,
+		});
 		const { user } = await renderPage();
 		expect(screen.getByText("Unable to load workflow")).toBeVisible();
-		expect(screen.queryByText("Workflow not found")).not.toBeInTheDocument();
+		expect(
+			screen.queryByText("Workflow not found"),
+		).not.toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Try again" }));
 		expect(refetch).toHaveBeenCalledOnce();
 		expect(mockMutateAsync).not.toHaveBeenCalled();
@@ -266,9 +253,7 @@ describe("ExecuteWorkflow — mutation errors", () => {
 
 		await waitFor(
 			() => {
-				expect(
-					screen.getByText(/backend exploded/i),
-				).toBeVisible();
+				expect(screen.getByText(/backend exploded/i)).toBeVisible();
 			},
 			{ timeout: 5000 },
 		);

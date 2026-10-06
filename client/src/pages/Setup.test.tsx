@@ -28,9 +28,7 @@ describe("Setup account details", () => {
 			"Design Review",
 		);
 		await user.type(email, "invalid");
-		await user.click(
-			screen.getByRole("button", { name: "Continue" }),
-		);
+		await user.click(screen.getByRole("button", { name: "Continue" }));
 		expect(
 			screen.queryByRole("button", { name: "Use password instead" }),
 		).not.toBeInTheDocument();

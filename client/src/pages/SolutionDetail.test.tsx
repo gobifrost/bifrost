@@ -310,14 +310,30 @@ beforeEach(() => {
 });
 
 it("opens a bookmarked Exports tab and keeps tab navigation in the URL", async () => {
-	function Location() { return <output aria-label="Current tab URL">{useLocation().search}</output>; }
-	const { user } = renderWithProviders(<><SolutionDetail /><Location /></>, { initialEntries: ["/solutions/sol-1?tab=exports&from=docs"] });
+	function Location() {
+		return (
+			<output aria-label="Current tab URL">{useLocation().search}</output>
+		);
+	}
+	const { user } = renderWithProviders(
+		<>
+			<SolutionDetail />
+			<Location />
+		</>,
+		{ initialEntries: ["/solutions/sol-1?tab=exports&from=docs"] },
+	);
 	const exports = await screen.findByRole("tab", { name: "Exports" });
 	expect(exports).toHaveAttribute("aria-selected", "true");
-	expect(await screen.findByText("No backup exports queued yet.")).toBeInTheDocument();
+	expect(
+		await screen.findByText("No backup exports queued yet."),
+	).toBeInTheDocument();
 	await user.click(screen.getByRole("tab", { name: /^Overview/ }));
-	expect(screen.getByRole("status", { name: "Current tab URL" })).toHaveTextContent("tab=overview");
-	expect(screen.getByRole("status", { name: "Current tab URL" })).toHaveTextContent("from=docs");
+	expect(
+		screen.getByRole("status", { name: "Current tab URL" }),
+	).toHaveTextContent("tab=overview");
+	expect(
+		screen.getByRole("status", { name: "Current tab URL" }),
+	).toHaveTextContent("from=docs");
 });
 
 it("adds one history entry per tab selection so Back returns to the bookmarked tab", async () => {
@@ -325,13 +341,22 @@ it("adds one history entry per tab selection so Back returns to the bookmarked t
 		const { navigator } = useContext(UNSAFE_NavigationContext);
 		return <button onClick={() => navigator.go(-1)}>Browser Back</button>;
 	}
-	const { user } = renderWithProviders(<><HistoryControls /><SolutionDetail /></>, {
-		initialEntries: ["/solutions/sol-1?tab=exports"],
-	});
+	const { user } = renderWithProviders(
+		<>
+			<HistoryControls />
+			<SolutionDetail />
+		</>,
+		{
+			initialEntries: ["/solutions/sol-1?tab=exports"],
+		},
+	);
 	await screen.findByText("No backup exports queued yet.");
 	await user.click(screen.getByRole("tab", { name: "Overview" }));
 	await user.click(screen.getByRole("button", { name: "Browser Back" }));
-	expect(screen.getByRole("tab", { name: "Exports" })).toHaveAttribute("aria-selected", "true");
+	expect(screen.getByRole("tab", { name: "Exports" })).toHaveAttribute(
+		"aria-selected",
+		"true",
+	);
 });
 
 it("keeps the bookmarked tab while focusing another tab and changes it on activation", async () => {
@@ -340,14 +365,24 @@ it("keeps the bookmarked tab while focusing another tab and changes it on activa
 	});
 	await screen.findByText("No backup exports queued yet.");
 	act(() => screen.getByRole("tab", { name: "Overview" }).focus());
-	expect(screen.getByRole("tab", { name: "Exports" })).toHaveAttribute("aria-selected", "true");
+	expect(screen.getByRole("tab", { name: "Exports" })).toHaveAttribute(
+		"aria-selected",
+		"true",
+	);
 	await user.keyboard("{Enter}");
-	expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+	expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute(
+		"aria-selected",
+		"true",
+	);
 });
 
 it("keeps Overview as the default for an unknown tab bookmark", async () => {
-	renderWithProviders(<SolutionDetail />, { initialEntries: ["/solutions/sol-1?tab=unknown"] });
-	expect(await screen.findByRole("tab", { name: /^Overview/ })).toHaveAttribute("aria-selected", "true");
+	renderWithProviders(<SolutionDetail />, {
+		initialEntries: ["/solutions/sol-1?tab=unknown"],
+	});
+	expect(
+		await screen.findByRole("tab", { name: /^Overview/ }),
+	).toHaveAttribute("aria-selected", "true");
 });
 
 describe("SolutionDetail", () => {

@@ -228,11 +228,12 @@ function PersonHeader({
 							</span>
 							<ul
 								aria-labelledby="person-reach"
-								className="flex flex-wrap gap-1.5"
+								className="flex min-w-0 max-w-full flex-wrap gap-1.5"
 							>
 								{map.reach.map((place) => (
 									<li
 										key={`${place.kind}:${place.organization_id}`}
+										className="min-w-0 max-w-full"
 									>
 										<ReachChip place={place} />
 									</li>

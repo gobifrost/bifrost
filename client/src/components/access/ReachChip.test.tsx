@@ -52,5 +52,7 @@ describe("ReachChip", () => {
 		expect(screen.getByText("All Customer Organizations")).toHaveClass(
 			"truncate",
 		);
+		// The full name stays available when the label is cut short.
+		expect(chip).toHaveAttribute("title", "All Customer Organizations");
 	});
 });

@@ -108,7 +108,9 @@ it("leaves standalone apps full-page", () => {
 		},
 	});
 	renderRoute();
-	expect(state.shell).toHaveBeenCalledWith(expect.objectContaining({ solutionId: "solution-1" }));
+	expect(state.shell).toHaveBeenCalledWith(
+		expect.objectContaining({ solutionId: "solution-1" }),
+	);
 	expect(screen.getByText("App content")).toBeInTheDocument();
 	expect(
 		screen.queryByRole("region", { name: "App chrome" }),

@@ -61,7 +61,9 @@ vi.mock("@/components/forms/OrganizationSelect", () => ({
 	OrganizationSelect: () => null,
 }));
 const mockReadFile = vi.fn();
-vi.mock("@/services/fileService", () => ({ fileService: { readFile: (...args: unknown[]) => mockReadFile(...args) } }));
+vi.mock("@/services/fileService", () => ({
+	fileService: { readFile: (...args: unknown[]) => mockReadFile(...args) },
+}));
 
 const mockUseServicesList = vi.fn();
 vi.mock("@/components/services/useServiceQueries", () => ({
@@ -328,28 +330,64 @@ it("explains an empty type filter and lets users clear it", async () => {
 });
 
 it("opens metadata for the selected workflow ID when names repeat", async () => {
-	mockUseWorkflowsFiltered.mockReturnValue({ data: [makeWorkflow()], isLoading: false, refetch: vi.fn() });
-	mockUseWorkflowsMetadata.mockReturnValue({ data: { workflows: [
-		{ id: "other-workflow", name: "sync_tickets", relative_file_path: "other.py" },
-		{ id: "wf-1", name: "sync_tickets", relative_file_path: "selected.py" },
-	] } });
+	mockUseWorkflowsFiltered.mockReturnValue({
+		data: [makeWorkflow()],
+		isLoading: false,
+		refetch: vi.fn(),
+	});
+	mockUseWorkflowsMetadata.mockReturnValue({
+		data: {
+			workflows: [
+				{
+					id: "other-workflow",
+					name: "sync_tickets",
+					relative_file_path: "other.py",
+				},
+				{
+					id: "wf-1",
+					name: "sync_tickets",
+					relative_file_path: "selected.py",
+				},
+			],
+		},
+	});
 	mockReadFile.mockRejectedValue(new Error("Synthetic read failure"));
 	const { user } = await renderPage();
-	await user.click(screen.getByRole("button", { name: "sync_tickets actions" }));
+	await user.click(
+		screen.getByRole("button", { name: "sync_tickets actions" }),
+	);
 	await user.click(screen.getByRole("menuitem", { name: "Open in editor" }));
 	expect(mockReadFile).toHaveBeenCalledWith("selected.py");
 });
 
-
 it("finds the edited display name and excludes unrelated workflows", async () => {
- mockUseWorkflowsFiltered.mockReturnValue({
-  data: [makeWorkflow({ display_name: "Customer onboarding" }), makeWorkflow({ id: "wf-2", name: "archive_logs", display_name: "Archive logs" })],
-  isLoading: false, refetch: vi.fn(),
- });
- const { user } = await renderPage();
- await user.type(screen.getByRole("textbox", { name: "Search by name, description, or category..." }), "Customer onboarding");
- await vi.waitFor(() => expect(screen.queryByRole("button", { name: "archive_logs actions" })).not.toBeInTheDocument());
-	expect(screen.getByRole("button", { name: "sync_tickets actions" })).toBeInTheDocument();
+	mockUseWorkflowsFiltered.mockReturnValue({
+		data: [
+			makeWorkflow({ display_name: "Customer onboarding" }),
+			makeWorkflow({
+				id: "wf-2",
+				name: "archive_logs",
+				display_name: "Archive logs",
+			}),
+		],
+		isLoading: false,
+		refetch: vi.fn(),
+	});
+	const { user } = await renderPage();
+	await user.type(
+		screen.getByRole("textbox", {
+			name: "Search by name, description, or category...",
+		}),
+		"Customer onboarding",
+	);
+	await vi.waitFor(() =>
+		expect(
+			screen.queryByRole("button", { name: "archive_logs actions" }),
+		).not.toBeInTheDocument(),
+	);
+	expect(
+		screen.getByRole("button", { name: "sync_tickets actions" }),
+	).toBeInTheDocument();
 });
 
 describe("Workflows — service row links", () => {
