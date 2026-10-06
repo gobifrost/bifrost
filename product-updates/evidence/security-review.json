@@ -1,0 +1,38 @@
+{
+  "review_status": "draft",
+  "checked_at": "2026-10-06",
+  "sources": [
+    {
+      "advisory": "GHSA-6fqq-452j-qhrp",
+      "url": "https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-6fqq-452j-qhrp",
+      "source_pr": 910,
+      "packages": [
+        "pydantic-ai",
+        "pydantic-ai-slim"
+      ],
+      "affected": ">=2.10.0,<2.53.0",
+      "patched": "2.53.0",
+      "cve_id": null,
+      "cve_status": "Upstream page reports no known CVE at verification time.",
+      "applicability": "Dependency version patched; review deployment use of model concurrency wrappers before making exploitability claims."
+    },
+    {
+      "advisory": "GHSA-6hxq-p678-4hr2",
+      "url": "https://github.com/MasterKale/SimpleWebAuthn/security/advisories/GHSA-6hxq-p678-4hr2",
+      "source_pr": 714,
+      "packages": [
+        "@simplewebauthn/server"
+      ],
+      "affected": "<13.3.1",
+      "patched": "13.3.2",
+      "cve_id": null,
+      "cve_status": "Upstream page reports no known CVE at verification time.",
+      "applicability": "PR updates @simplewebauthn/browser only; do not claim the server advisory was fixed in Bifrost without affected-package evidence."
+    },
+    {
+      "source_pr": 718,
+      "url": "https://github.com/nodeca/js-yaml/blob/4.3.2/CHANGELOG.md",
+      "applicability": "Docs tooling dependency; upstream YAML merge CPU bounds require review. No CVE conclusion made."
+    }
+  ]
+}

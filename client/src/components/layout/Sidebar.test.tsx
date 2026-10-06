@@ -55,6 +55,10 @@ vi.mock("@/components/branding/Logo", () => ({
 	Logo: () => <div aria-label="Logo" />,
 }));
 
+vi.mock("./ProductUpdatesSidebarLink", () => ({
+	ProductUpdatesSidebarLink: () => <a href="/whats-new">What's New</a>,
+}));
+
 vi.mock("@/lib/api-client", () => ({
 	$api: {
 		useQuery: (...args: unknown[]) => state.useQuery(...args),
@@ -95,7 +99,7 @@ beforeEach(() => {
 });
 
 describe("Sidebar terminology", () => {
-	it("renders branded product nouns in navigation", () => {
+	it("renders branded product nouns in navigation", async () => {
 		const terminology = mergeTerminology({
 			app: { singular: "Game", plural: "Games" },
 			agent: { singular: "Character", plural: "Characters" },
@@ -126,6 +130,7 @@ describe("Sidebar terminology", () => {
 		expect(
 			screen.queryByRole("link", { name: "Dashboard" }),
 		).not.toBeInTheDocument();
+		await screen.findByRole("link", { name: "What's New" });
 	});
 
 	it("preserves the desktop navigation scroll position across route changes", async () => {
@@ -194,7 +199,13 @@ describe("Sidebar structure", () => {
 			/>,
 		);
 
-		for (const name of ["Organizations", "Users", "Roles", "Settings"]) {
+		for (const name of [
+			"Organizations",
+			"Users",
+			"Roles",
+			"Settings",
+			"What's New",
+		]) {
 			expect(screen.getByRole("link", { name })).toBeInTheDocument();
 		}
 	});

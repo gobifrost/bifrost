@@ -1,4 +1,5 @@
 import { AccountMenuContent } from "./AccountMenuContent";
+import { Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 import {
 	ChevronDown,
@@ -25,6 +26,17 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useProfile } from "@/hooks/useProfile";
 import { profileService } from "@/services/profile";
 import { BifrostRunMenu } from "@/components/layout/BifrostRunMenu";
+import { lazyWithReload } from "@/lib/lazy-with-reload";
+
+// The preview item imports its bundle only in development. Production has no
+// menu entry or bundled product-update data.
+const ProductUpdatesMenuItem = import.meta.env.DEV
+	? lazyWithReload(() =>
+			import("./ProductUpdatesMenuItem").then((module) => ({
+				default: module.ProductUpdatesMenuItem,
+			})),
+		)
+	: null;
 
 interface HeaderProps {
 	onMobileMenuToggle?: () => void;
@@ -189,6 +201,16 @@ export function Header({
 						avatarUrl={avatarUrl}
 						onSettings={() => navigate("/user-settings")}
 						onLogout={logout}
+						updatesMenuItem={
+							isPlatformAdmin && ProductUpdatesMenuItem && user?.id ? (
+								<Suspense fallback={null}>
+									<ProductUpdatesMenuItem
+										adminId={user.id}
+										onOpen={() => navigate("/whats-new")}
+									/>
+								</Suspense>
+							) : undefined
+						}
 					/>
 				</DropdownMenu>
 			</div>

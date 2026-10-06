@@ -1,0 +1,1453 @@
+{
+  "schema_version": 1,
+  "inventory": {
+    "base_ref": "ade714a08b95c84daa285e859ebece55f45c6754",
+    "target_ref": "32aeea16c99c27d1278b5576f09080e29a59cca2"
+  },
+  "items": {
+    "pr:708": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/708"
+        ]
+      },
+      "summary": "Refresh the Python container image."
+    },
+    "pr:709": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/709"
+        ]
+      },
+      "summary": "Update Playwright to 1.63.0 for browser testing."
+    },
+    "pr:710": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/710"
+        ]
+      },
+      "summary": "Refresh the Nginx client image."
+    },
+    "pr:714": {
+      "classification": "highlight",
+      "entry_ids": [
+        "21f60d8e-18e9-5a5d-a730-e7d55cd77a3a"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/714"
+        ]
+      },
+      "security_review": {
+        "status": "required",
+        "review_ref": "https://github.com/gobifrost/bifrost/pull/714"
+      }
+    },
+    "pr:718": {
+      "classification": "highlight",
+      "entry_ids": [
+        "21f60d8e-18e9-5a5d-a730-e7d55cd77a3a"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/718"
+        ]
+      },
+      "security_review": {
+        "status": "required",
+        "review_ref": "https://github.com/gobifrost/bifrost/pull/718"
+      }
+    },
+    "pr:745": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/745"
+        ]
+      },
+      "summary": "Give each event-delivery retry a fresh timeout window."
+    },
+    "pr:752": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/752"
+        ]
+      },
+      "summary": "Refresh the Node container image."
+    },
+    "pr:756": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/756"
+        ]
+      },
+      "summary": "Preserve streaming activity when a new conversation receives its id."
+    },
+    "pr:764": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/764"
+        ]
+      },
+      "summary": "Start one login redirect when concurrent requests lose authentication."
+    },
+    "pr:781": {
+      "classification": "highlight",
+      "entry_ids": [
+        "5a021295-d85e-5d79-bc30-dc764cecab0d"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/781"
+        ]
+      }
+    },
+    "pr:783": {
+      "classification": "highlight",
+      "entry_ids": [
+        "e3c123ca-33cb-5c12-880c-f05521c4ac0b"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/783"
+        ]
+      }
+    },
+    "pr:785": {
+      "classification": "highlight",
+      "entry_ids": [
+        "e3c123ca-33cb-5c12-880c-f05521c4ac0b"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/785"
+        ]
+      }
+    },
+    "pr:786": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/786"
+        ]
+      },
+      "summary": "Update the GitHub Actions used to build, sign, and test releases."
+    },
+    "pr:788": {
+      "classification": "highlight",
+      "entry_ids": [
+        "cd2688ce-bc8c-501c-ab74-68b896d7ec7d"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/788"
+        ]
+      }
+    },
+    "pr:789": {
+      "classification": "highlight",
+      "entry_ids": [
+        "cd2688ce-bc8c-501c-ab74-68b896d7ec7d"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/789"
+        ]
+      }
+    },
+    "pr:791": {
+      "classification": "highlight",
+      "entry_ids": [
+        "54ca0580-5047-5ba9-bf2f-8d33dba99e0b"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/791"
+        ]
+      }
+    },
+    "pr:792": {
+      "classification": "highlight",
+      "entry_ids": [
+        "46cd9f78-2680-5597-ae31-3ead081b6af8"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/792"
+        ]
+      }
+    },
+    "pr:794": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/794"
+        ]
+      },
+      "summary": "Save organization configuration overrides before an integration mapping exists."
+    },
+    "pr:795": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/795"
+        ]
+      },
+      "summary": "Include the latest Solution README in shareable and full exports."
+    },
+    "pr:796": {
+      "classification": "highlight",
+      "entry_ids": [
+        "e3c123ca-33cb-5c12-880c-f05521c4ac0b"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/796"
+        ]
+      }
+    },
+    "pr:797": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/797"
+        ]
+      },
+      "summary": "Retry safe SDK reads and explicitly keyed writes after transient disconnects."
+    },
+    "pr:798": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/798"
+        ]
+      },
+      "reason": "Internal CI build parallelism; no product capability to announce."
+    },
+    "pr:800": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/800"
+        ]
+      },
+      "reason": "Repair to dev image promotion; operational pipeline-only change."
+    },
+    "pr:801": {
+      "classification": "highlight",
+      "entry_ids": [
+        "e3c123ca-33cb-5c12-880c-f05521c4ac0b"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/801"
+        ]
+      }
+    },
+    "pr:802": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/802"
+        ]
+      },
+      "reason": "Test worker timing only; production defaults unchanged."
+    },
+    "pr:803": {
+      "classification": "highlight",
+      "entry_ids": [
+        "a37e2a01-1645-5cf9-8e78-0dfc0167565f"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/803"
+        ]
+      }
+    },
+    "pr:805": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/805"
+        ]
+      },
+      "reason": "Internal build dependency pin; no separate product announcement."
+    },
+    "pr:807": {
+      "classification": "highlight",
+      "entry_ids": [
+        "3446112d-fcde-5861-9a99-9accc96f2302"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/807"
+        ]
+      }
+    },
+    "pr:809": {
+      "classification": "highlight",
+      "entry_ids": [
+        "3446112d-fcde-5861-9a99-9accc96f2302"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/809"
+        ]
+      }
+    },
+    "pr:810": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/810"
+        ]
+      },
+      "summary": "Run engine SDK requests through the worker-local HTTP socket."
+    },
+    "pr:811": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/811"
+        ]
+      },
+      "summary": "Preserve audit attribution and API error behavior on the worker SDK path."
+    },
+    "pr:812": {
+      "classification": "highlight",
+      "entry_ids": [
+        "cd2688ce-bc8c-501c-ab74-68b896d7ec7d"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/812"
+        ]
+      }
+    },
+    "pr:813": {
+      "classification": "highlight",
+      "entry_ids": [
+        "54ca0580-5047-5ba9-bf2f-8d33dba99e0b"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/813"
+        ]
+      }
+    },
+    "pr:814": {
+      "classification": "highlight",
+      "entry_ids": [
+        "54ca0580-5047-5ba9-bf2f-8d33dba99e0b"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/814"
+        ]
+      }
+    },
+    "pr:815": {
+      "classification": "highlight",
+      "entry_ids": [
+        "54ca0580-5047-5ba9-bf2f-8d33dba99e0b"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/815"
+        ]
+      }
+    },
+    "pr:816": {
+      "classification": "omit",
+      "entry_ids": [],
+      "reason": "Operation catalog metadata groundwork; no runtime authorization or product capability changes in this PR.",
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/816"
+        ]
+      }
+    },
+    "pr:817": {
+      "classification": "highlight",
+      "entry_ids": [
+        "54ca0580-5047-5ba9-bf2f-8d33dba99e0b"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/817"
+        ]
+      }
+    },
+    "pr:818": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/818"
+        ]
+      },
+      "summary": "Let embedded apps read the workflow executions they started."
+    },
+    "pr:819": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/819"
+        ]
+      },
+      "summary": "Return consistent totals and items when listing service attempts."
+    },
+    "pr:820": {
+      "classification": "highlight",
+      "entry_ids": [
+        "007e847d-a72e-5ae9-b0a8-ced754e74ffe"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/820"
+        ]
+      }
+    },
+    "pr:821": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/821"
+        ]
+      },
+      "summary": "Restore the audit actor in platform-job execution."
+    },
+    "pr:822": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/822"
+        ]
+      },
+      "summary": "Preserve separately discovered MCP resource documents."
+    },
+    "pr:824": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/824"
+        ]
+      },
+      "summary": "Update the AI runtime libraries and their provider dependencies."
+    },
+    "pr:825": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/825"
+        ]
+      },
+      "summary": "Remove failed repository Solution installs in the same transaction as job failure."
+    },
+    "pr:826": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/826"
+        ]
+      },
+      "summary": "Update Vitest and its UI to 5.0.2."
+    },
+    "pr:827": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/827"
+        ]
+      },
+      "summary": "Update client dependencies and resolve the accompanying compatibility issues."
+    },
+    "pr:828": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/828"
+        ]
+      },
+      "summary": "Refresh client dependencies with ten minor and patch updates."
+    },
+    "pr:829": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/829"
+        ]
+      },
+      "reason": "Dependency bot/queue automation repair; repository operations only."
+    },
+    "pr:830": {
+      "classification": "highlight",
+      "entry_ids": [
+        "007e847d-a72e-5ae9-b0a8-ced754e74ffe"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/830"
+        ]
+      }
+    },
+    "pr:831": {
+      "classification": "highlight",
+      "entry_ids": [
+        "007e847d-a72e-5ae9-b0a8-ced754e74ffe"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/831"
+        ]
+      }
+    },
+    "pr:832": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/832"
+        ]
+      },
+      "summary": "Keep roles off the system account and list only usable agent tools."
+    },
+    "pr:833": {
+      "classification": "highlight",
+      "entry_ids": [
+        "007e847d-a72e-5ae9-b0a8-ced754e74ffe"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/833"
+        ]
+      }
+    },
+    "pr:834": {
+      "classification": "highlight",
+      "entry_ids": [
+        "007e847d-a72e-5ae9-b0a8-ced754e74ffe"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/834"
+        ]
+      }
+    },
+    "pr:835": {
+      "classification": "highlight",
+      "entry_ids": [
+        "007e847d-a72e-5ae9-b0a8-ced754e74ffe"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/835"
+        ]
+      }
+    },
+    "pr:837": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/837"
+        ]
+      },
+      "summary": "Update the Python AI runtime dependencies."
+    },
+    "pr:839": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/839"
+        ]
+      },
+      "summary": "Apply two minor and patch updates to client dependencies."
+    },
+    "pr:842": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/842"
+        ]
+      },
+      "summary": "Apply three minor and patch updates to GitHub Actions."
+    },
+    "pr:843": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/843"
+        ]
+      },
+      "reason": "GitHub App automation repair; repository operations only."
+    },
+    "pr:844": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/844"
+        ]
+      },
+      "summary": "Keep service SDK authentication working after credential renewal."
+    },
+    "pr:845": {
+      "classification": "highlight",
+      "entry_ids": [
+        "e2e8b98b-8707-5db3-acc4-7fce73125358"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/845"
+        ]
+      }
+    },
+    "pr:846": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/846"
+        ]
+      },
+      "reason": "Test discovery and stale browser spec maintenance."
+    },
+    "pr:847": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/847"
+        ]
+      },
+      "reason": "Authorization access-list scaffolding; not runtime enforcement."
+    },
+    "pr:848": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/848"
+        ]
+      },
+      "summary": "Record operation ids and caller surfaces in audit rows, and measure workflow operation use."
+    },
+    "pr:849": {
+      "classification": "highlight",
+      "entry_ids": [
+        "e3c123ca-33cb-5c12-880c-f05521c4ac0b"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/849"
+        ]
+      }
+    },
+    "pr:850": {
+      "classification": "highlight",
+      "entry_ids": [
+        "3446112d-fcde-5861-9a99-9accc96f2302"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/850"
+        ]
+      }
+    },
+    "pr:851": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/851"
+        ]
+      },
+      "reason": "Intermediate role schema and backfill; final admin behavior represented by the access entry."
+    },
+    "pr:852": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/852"
+        ]
+      },
+      "summary": "Show the provider error when an OAuth refresh returns success=false."
+    },
+    "pr:853": {
+      "classification": "highlight",
+      "entry_ids": [
+        "3446112d-fcde-5861-9a99-9accc96f2302"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/853"
+        ]
+      }
+    },
+    "pr:854": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/854"
+        ]
+      },
+      "reason": "Data-only workflow grants and Solution requests; runtime enforcement not shipped."
+    },
+    "pr:855": {
+      "classification": "highlight",
+      "entry_ids": [
+        "3446112d-fcde-5861-9a99-9accc96f2302"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/855"
+        ]
+      }
+    },
+    "pr:856": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/856"
+        ]
+      },
+      "summary": "Finish legacy logo migration for Solutions, forms, and integrations."
+    },
+    "pr:857": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/857"
+        ]
+      },
+      "summary": "Remove withdrawn Builder schema residue before later migrations."
+    },
+    "pr:858": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/858"
+        ]
+      },
+      "summary": "Wait for the database schema before starting workers and the scheduler."
+    },
+    "pr:859": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/859"
+        ]
+      },
+      "reason": "Intermediate evaluator scaffolding; no request enforcement in this PR."
+    },
+    "pr:860": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/860"
+        ]
+      },
+      "summary": "Commit request database changes before sending the response."
+    },
+    "pr:861": {
+      "classification": "highlight",
+      "entry_ids": [
+        "3446112d-fcde-5861-9a99-9accc96f2302"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/861"
+        ]
+      }
+    },
+    "pr:863": {
+      "classification": "highlight",
+      "entry_ids": [
+        "e3c123ca-33cb-5c12-880c-f05521c4ac0b"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/863"
+        ]
+      }
+    },
+    "pr:864": {
+      "classification": "highlight",
+      "entry_ids": [
+        "c001044d-7255-59ce-814f-070e6cc37aa8"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/864"
+        ]
+      }
+    },
+    "pr:866": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/866"
+        ]
+      },
+      "summary": "Resolve global Solution installs by name from an organization-scoped caller."
+    },
+    "pr:867": {
+      "classification": "highlight",
+      "entry_ids": [
+        "c001044d-7255-59ce-814f-070e6cc37aa8"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/867"
+        ]
+      }
+    },
+    "pr:868": {
+      "classification": "highlight",
+      "entry_ids": [
+        "c001044d-7255-59ce-814f-070e6cc37aa8"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/868"
+        ]
+      }
+    },
+    "pr:869": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/869"
+        ]
+      },
+      "reason": "Permission vocabulary scaffolding; no runtime enforcement in this PR."
+    },
+    "pr:870": {
+      "classification": "highlight",
+      "entry_ids": [
+        "e2e8b98b-8707-5db3-acc4-7fce73125358"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/870"
+        ]
+      }
+    },
+    "pr:871": {
+      "classification": "highlight",
+      "entry_ids": [
+        "e2e8b98b-8707-5db3-acc4-7fce73125358"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/871"
+        ]
+      }
+    },
+    "pr:873": {
+      "classification": "highlight",
+      "entry_ids": [
+        "05998cb0-6d43-5c62-9121-c4b7b468e88a"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/873"
+        ]
+      }
+    },
+    "pr:874": {
+      "classification": "highlight",
+      "entry_ids": [
+        "e2e8b98b-8707-5db3-acc4-7fce73125358"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/874"
+        ]
+      }
+    },
+    "pr:875": {
+      "classification": "highlight",
+      "entry_ids": [
+        "c001044d-7255-59ce-814f-070e6cc37aa8"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/875"
+        ]
+      }
+    },
+    "pr:876": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/876"
+        ]
+      },
+      "reason": "Test authentication isolation only; no product capability."
+    },
+    "pr:877": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/877"
+        ]
+      },
+      "reason": "Removed unused helpers with no behavior change."
+    },
+    "pr:878": {
+      "classification": "highlight",
+      "entry_ids": [
+        "c2ac76ce-8a68-540b-8c56-a2c8b00ed3da"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/878"
+        ]
+      }
+    },
+    "pr:879": {
+      "classification": "highlight",
+      "entry_ids": [
+        "fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/879"
+        ]
+      }
+    },
+    "pr:880": {
+      "classification": "highlight",
+      "entry_ids": [
+        "c2ac76ce-8a68-540b-8c56-a2c8b00ed3da"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/880"
+        ]
+      }
+    },
+    "pr:881": {
+      "classification": "highlight",
+      "entry_ids": [
+        "c2ac76ce-8a68-540b-8c56-a2c8b00ed3da"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/881"
+        ]
+      }
+    },
+    "pr:882": {
+      "classification": "highlight",
+      "entry_ids": [
+        "c2ac76ce-8a68-540b-8c56-a2c8b00ed3da"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/882"
+        ]
+      }
+    },
+    "pr:885": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/885"
+        ]
+      },
+      "summary": "Record policy-rule changes in the audit log."
+    },
+    "pr:886": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/886"
+        ]
+      },
+      "summary": "Stop child Node processes when app builds are cancelled."
+    },
+    "pr:887": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/887"
+        ]
+      },
+      "reason": "Scenario test matrix; product behavior unchanged."
+    },
+    "pr:888": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/888"
+        ]
+      },
+      "summary": "Use the REST organization rule for WebSocket table subscriptions."
+    },
+    "pr:889": {
+      "classification": "highlight",
+      "entry_ids": [
+        "fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/889"
+        ]
+      }
+    },
+    "pr:890": {
+      "classification": "highlight",
+      "entry_ids": [
+        "fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/890"
+        ]
+      }
+    },
+    "pr:891": {
+      "classification": "highlight",
+      "entry_ids": [
+        "c001044d-7255-59ce-814f-070e6cc37aa8"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/891"
+        ]
+      }
+    },
+    "pr:892": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/892"
+        ]
+      },
+      "summary": "Record refused sign-ins in the audit log."
+    },
+    "pr:893": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/893"
+        ]
+      },
+      "reason": "Authoring guidance consolidation; no separate feature announcement."
+    },
+    "pr:894": {
+      "classification": "highlight",
+      "entry_ids": [
+        "657a8947-1cc8-5050-b312-a43033ad02b7"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/894"
+        ]
+      }
+    },
+    "pr:895": {
+      "classification": "highlight",
+      "entry_ids": [
+        "fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/895"
+        ]
+      }
+    },
+    "pr:896": {
+      "classification": "highlight",
+      "entry_ids": [
+        "657a8947-1cc8-5050-b312-a43033ad02b7"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/896"
+        ]
+      }
+    },
+    "pr:897": {
+      "classification": "highlight",
+      "entry_ids": [
+        "657a8947-1cc8-5050-b312-a43033ad02b7"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/897"
+        ]
+      }
+    },
+    "pr:898": {
+      "classification": "highlight",
+      "entry_ids": [
+        "657a8947-1cc8-5050-b312-a43033ad02b7"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/898"
+        ]
+      }
+    },
+    "pr:899": {
+      "classification": "highlight",
+      "entry_ids": [
+        "c2ac76ce-8a68-540b-8c56-a2c8b00ed3da"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/899"
+        ]
+      }
+    },
+    "pr:900": {
+      "classification": "highlight",
+      "entry_ids": [
+        "fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/900"
+        ]
+      }
+    },
+    "pr:901": {
+      "classification": "highlight",
+      "entry_ids": [
+        "c2ac76ce-8a68-540b-8c56-a2c8b00ed3da"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/901"
+        ]
+      }
+    },
+    "pr:902": {
+      "classification": "highlight",
+      "entry_ids": [
+        "c2ac76ce-8a68-540b-8c56-a2c8b00ed3da"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/902"
+        ]
+      }
+    },
+    "pr:903": {
+      "classification": "highlight",
+      "entry_ids": [
+        "fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/903"
+        ]
+      }
+    },
+    "pr:904": {
+      "classification": "highlight",
+      "entry_ids": [
+        "e3c123ca-33cb-5c12-880c-f05521c4ac0b"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/904"
+        ]
+      }
+    },
+    "pr:905": {
+      "classification": "highlight",
+      "entry_ids": [
+        "0cf7ed8c-3fc1-5d28-b89b-09ca20a59262"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/905"
+        ]
+      }
+    },
+    "pr:906": {
+      "classification": "highlight",
+      "entry_ids": [
+        "657a8947-1cc8-5050-b312-a43033ad02b7"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/906"
+        ]
+      }
+    },
+    "pr:907": {
+      "classification": "highlight",
+      "entry_ids": [
+        "c2ac76ce-8a68-540b-8c56-a2c8b00ed3da"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/907"
+        ]
+      }
+    },
+    "pr:908": {
+      "classification": "highlight",
+      "entry_ids": [
+        "0cf7ed8c-3fc1-5d28-b89b-09ca20a59262"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/908"
+        ]
+      }
+    },
+    "pr:910": {
+      "classification": "highlight",
+      "entry_ids": [
+        "21f60d8e-18e9-5a5d-a730-e7d55cd77a3a"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/910"
+        ]
+      },
+      "security_review": {
+        "status": "required",
+        "review_ref": "https://github.com/gobifrost/bifrost/pull/910"
+      }
+    },
+    "pr:911": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/911"
+        ]
+      },
+      "summary": "Refresh client dependencies with fifteen minor and patch updates."
+    },
+    "pr:913": {
+      "classification": "highlight",
+      "entry_ids": [
+        "657a8947-1cc8-5050-b312-a43033ad02b7"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/913"
+        ]
+      }
+    },
+    "pr:914": {
+      "classification": "highlight",
+      "entry_ids": [
+        "fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/914"
+        ]
+      }
+    },
+    "pr:915": {
+      "classification": "highlight",
+      "entry_ids": [
+        "fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/915"
+        ]
+      }
+    },
+    "pr:916": {
+      "classification": "highlight",
+      "entry_ids": [
+        "e3c123ca-33cb-5c12-880c-f05521c4ac0b"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/916"
+        ]
+      }
+    }
+  }
+}

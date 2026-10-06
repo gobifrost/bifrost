@@ -242,6 +242,15 @@ const MCPConnectionEdit = lazyWithReload(() =>
 		default: m.MCPConnectionEdit,
 	})),
 );
+// Product updates are a development-only preview. Keeping the dynamic import
+// inside this compile-time branch leaves its route, data, and UI out of builds.
+const ProductUpdatesPreview = import.meta.env.DEV
+	? lazyWithReload(() =>
+			import("@/pages/ProductUpdatesPreview").then((m) => ({
+				default: m.ProductUpdatesPreview,
+			})),
+		)
+	: null;
 
 export function AppFrame() {
 	const { brandingLoaded } = useOrgScope();
@@ -376,6 +385,16 @@ const routeElements = (
 		<Route path="/" element={<Layout />}>
 			{/* Home is available to authenticated users; metrics remain admin-only. */}
 			<Route index element={<Home />} />
+			{ProductUpdatesPreview && (
+				<Route
+					path="whats-new"
+					element={
+						<ProtectedRoute requirePlatformAdmin>
+							<ProductUpdatesPreview />
+						</ProtectedRoute>
+					}
+				/>
+			)}
 			<Route
 				path="dashboard"
 				element={

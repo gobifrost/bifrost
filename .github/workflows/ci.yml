@@ -575,6 +575,28 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Python for Product Updates validation
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Validate and bundle approved Product Updates
+        run: |
+          python -m pip install --require-hashes -r requirements.lock
+          FROZEN_TARGET=$(jq -r .target_ref product-updates/inventory.json)
+          python3 scripts/product_updates.py validate \
+            --content-dir product-updates \
+            --inventory product-updates/inventory.json \
+            --dispositions product-updates/dispositions.json \
+            --target "$FROZEN_TARGET"
+          python3 scripts/product_updates.py bundle \
+            --content-dir product-updates \
+            --inventory product-updates/inventory.json \
+            --dispositions product-updates/dispositions.json \
+            --target "$GITHUB_SHA" \
+            --content-ref "$GITHUB_SHA" \
+            --output /tmp/product-updates-dev-bundle.json
+
       - name: Verify exact merge candidate gate
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -1098,6 +1120,11 @@ jobs:
             echo "prerelease=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Verify prepared release body
+        run: |
+          BODY="product-updates/release-bodies/${{ steps.get_version.outputs.version }}.md"
+          test -s "$BODY"
+
       - name: Copy type stubs
         run: |
           if [ -f "stubs/bifrost.pyi" ]; then
@@ -1161,49 +1188,7 @@ jobs:
             bifrost.pyi.sigstore
             stubs/DISTRIBUTION.md
           fail_on_unmatched_files: false
-          body: |
-            ## Bifrost ${{ steps.get_version.outputs.version }}
-
-            ### Docker Images
-
-            **API:**
-            ```bash
-            docker pull ghcr.io/gobifrost/bifrost-api:${{ steps.get_version.outputs.version }}
-            ```
-
-            **Client:**
-            ```bash
-            docker pull ghcr.io/gobifrost/bifrost-client:${{ steps.get_version.outputs.version }}
-            ```
-
-            ### Type Stubs for IDEs
-            Download `bifrost.pyi` from the assets below and place it in your workspace directory for IDE autocomplete and type checking support.
-
-            See `DISTRIBUTION.md` for instructions.
-
-            ### Signed artifacts (Sigstore / cosign — keyless)
-
-            Each release asset has a matching `.sigstore` bundle (Sigstore's
-            self-contained signature + certificate + Rekor inclusion proof,
-            produced via keyless OIDC — no maintainer-held keys involved).
-
-            Verify with cosign (>= v2.4):
-
-            ```bash
-            cosign verify-blob \
-              --bundle bifrost-${{ steps.get_version.outputs.version }}-source.tar.gz.sigstore \
-              --certificate-identity-regexp 'https://github\.com/gobifrost/bifrost/.*' \
-              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-              bifrost-${{ steps.get_version.outputs.version }}-source.tar.gz
-            ```
-
-            A SLSA build-provenance attestation is also published and verifiable via:
-
-            ```bash
-            gh attestation verify bifrost-${{ steps.get_version.outputs.version }}-source.tar.gz \
-              --owner gobifrost
-            ```
-
+          body_path: product-updates/release-bodies/${{ steps.get_version.outputs.version }}.md
           draft: false
           prerelease: ${{ steps.get_version.outputs.prerelease == 'true' }}
         env:

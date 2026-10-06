@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { LogOut, Settings } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -17,6 +17,7 @@ export function AccountMenuContent({
 	avatarUrl,
 	onSettings,
 	onLogout,
+	updatesMenuItem,
 }: {
 	name: string;
 	email: string;
@@ -24,6 +25,7 @@ export function AccountMenuContent({
 	avatarUrl?: string | null;
 	onSettings: () => void;
 	onLogout: () => void;
+	updatesMenuItem?: ReactNode;
 }) {
 	return (
 		<DropdownMenuContent
@@ -50,6 +52,8 @@ export function AccountMenuContent({
 				<Settings aria-hidden="true" className="size-4" />
 				Settings
 			</DropdownMenuItem>
+			{updatesMenuItem && <DropdownMenuSeparator />}
+			{updatesMenuItem}
 			<DropdownMenuSeparator />
 			<DropdownMenuItem
 				variant="destructive"

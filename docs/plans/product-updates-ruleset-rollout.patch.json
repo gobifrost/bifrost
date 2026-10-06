@@ -1,0 +1,9 @@
+[
+  {
+    "op": "add",
+    "path": "/rules/3/parameters/required_status_checks/-",
+    "value": {
+      "context": "Product Updates"
+    }
+  }
+]

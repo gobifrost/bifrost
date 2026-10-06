@@ -18,6 +18,9 @@ export default defineConfig({
 		sourceDirty: process.env.TEST_SOURCE_DIRTY ?? "unrecorded",
 	},
 	testDir: "./e2e",
+	// Development-only preview specs use their own config and live Vite stack.
+	// They must never be selected by the production-client projects below.
+	testIgnore: "**/preview/**",
 	// This directory is mounted out of the disposable runner container.
 	outputDir: "./playwright-results/artifacts",
 	fullyParallel: true,

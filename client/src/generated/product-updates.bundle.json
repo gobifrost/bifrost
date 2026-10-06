@@ -1,0 +1,858 @@
+{
+  "content_ref": "32aeea16c99c27d1278b5576f09080e29a59cca2",
+  "entries": [
+    {
+      "action_required": false,
+      "area": "Platform",
+      "assets": [],
+      "contributors": [],
+      "id": "fff7e9e4-e072-590b-a65d-8873e2be4438",
+      "markdown": "\nProduct release notes are available right in the app. Open **What's New** to see what's changed, catch up on unread updates, and find the details that matter before you upgrade.\n\nWe're also [on Discord](https://discord.gg/f7TCcWX2s). Join the Bifrost community to ask questions, share workflows, and talk about what you're building.\n\nGitHub, Discord, and the Bifrost website are always a click away in the footer.",
+      "published_at": "2026-10-06T22:06:01Z",
+      "revision": 1,
+      "sources": [],
+      "title": "Product Updates, Now in Bifrost",
+      "type": "New"
+    },
+    {
+      "action_required": false,
+      "area": "Administration",
+      "assets": [
+        {
+          "alt": "Roles page showing built-in role grants, holders, and organization placements in a seeded development instance.",
+          "caption": "Built-in roles, their grants, and where they apply. Captured from this isolated development build.",
+          "path": "assets/fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8/roles.png",
+          "url": "/product-updates/assets/fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8/roles.png"
+        }
+      ],
+      "contributors": [],
+      "id": "fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8",
+      "markdown": "\nOpen a person from **Users** to see their effective access, role assignments, and the organizations those roles reach. The Roles page shows grants, holders, and placements; the permission catalog makes the vocabulary searchable.\n\nFor recorded access checks, admins can compare the decision at the time with the same inputs evaluated against today's settings. What-if checks are available through the API and CLI.\n\n**The workflow access checks are report-only.** They describe what the proposed model would allow or block and do not change requests. Identity-management routes already use the role evaluator; this update does not claim that every permission area is enforced. Default unattended identities and run lineage prepare the remaining execution model, and the interface identifies permissions whose enforcement is still pending.\n\n![Roles page showing built-in role grants, holders, and organization placements in a seeded development instance.](assets/fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8/roles.png)",
+      "published_at": "2026-10-06T22:01:18Z",
+      "revision": 1,
+      "sources": [
+        {
+          "commit": "d29fab00a6cb50a3eeb541fde4539be2b98d2238",
+          "pr": 879,
+          "role": "implementation"
+        },
+        {
+          "commit": "7e073686c85b3a1c9d2f2542c7c124cda7b9f7e3",
+          "pr": 889,
+          "role": "implementation"
+        },
+        {
+          "commit": "6301e4c49e3ecc0b41faacb6e8a446cecf61244b",
+          "pr": 890,
+          "role": "implementation"
+        },
+        {
+          "commit": "8f23d220aa22c743ff32082ea53b5e40619a7354",
+          "pr": 895,
+          "role": "implementation"
+        },
+        {
+          "commit": "43f3f78d7f9b5b09dc3a7d0e1417b0a4c3bd7b17",
+          "pr": 900,
+          "role": "implementation"
+        },
+        {
+          "commit": "2c59f7f7cf2c11ed02502579c025075152392d44",
+          "pr": 903,
+          "role": "implementation"
+        },
+        {
+          "commit": "0e690857167b158b4d66c159a300ddaacae080cb",
+          "pr": 914,
+          "role": "implementation"
+        },
+        {
+          "commit": "f5f112d21454e2b5222fcebb1d910d02ea75ddda",
+          "pr": 915,
+          "role": "implementation"
+        }
+      ],
+      "title": "See What a Person Can Access\u2014and Why",
+      "type": "New"
+    },
+    {
+      "action_required": false,
+      "area": "Agents",
+      "assets": [],
+      "contributors": [
+        {
+          "login": "sdc53",
+          "profile_url": "https://github.com/sdc53",
+          "source_pr": 801
+        }
+      ],
+      "id": "e3c123ca-33cb-5c12-880c-f05521c4ac0b",
+      "markdown": "\nAgent context management uses the configured model chain's real context window instead of a fixed 24,000-token limit. Run details show cost, context, and cache use. Profiles can specify output limits and an explicit failover profile for transport failures after the normal retry budget is exhausted.\n\nStructured output wrapped in a Markdown JSON fence is parsed into the requested object. SDK callers can wait within workflow deadlines and resume waiting using the returned run id.\n\nIf a delegated specialist times out after completing checks, the parent receives a bounded receipt of completed and unfinished work. Timeout remains a failure; the receipt preserves evidence rather than declaring success. A sweeper also finishes agent runs left cancelling after their worker is gone.",
+      "published_at": "2026-10-06T22:01:18Z",
+      "revision": 1,
+      "sources": [
+        {
+          "commit": "ea0f14a01a4ee8979f41faf6d3782918eeb4bd9c",
+          "pr": 783,
+          "role": "implementation"
+        },
+        {
+          "commit": "033b358f2719187299b92cb95ffbba0cf5de59e0",
+          "pr": 785,
+          "role": "implementation"
+        },
+        {
+          "commit": "74b8dd5ab3268efc7c54bd01dcfbf335e570ce9a",
+          "pr": 796,
+          "role": "implementation"
+        },
+        {
+          "commit": "35c4dc96248f907ee3b0eb035e95cf2b7d7c09aa",
+          "pr": 801,
+          "role": "implementation"
+        },
+        {
+          "commit": "b69a76341d8f0141e5eb1b9d3f3c0a065681b5ba",
+          "pr": 849,
+          "role": "implementation"
+        },
+        {
+          "commit": "593a8818abfca7038c7e539e95cd6b8507334567",
+          "pr": 863,
+          "role": "implementation"
+        },
+        {
+          "commit": "fe364358b98427f8634709293aa6d0f70e58a4af",
+          "pr": 904,
+          "role": "implementation"
+        },
+        {
+          "commit": "32aeea16c99c27d1278b5576f09080e29a59cca2",
+          "pr": 916,
+          "role": "implementation"
+        }
+      ],
+      "title": "Keep Agent Runs Useful When Models Struggle",
+      "type": "Improved"
+    },
+    {
+      "action_required": true,
+      "area": "Integrations",
+      "assets": [],
+      "contributors": [],
+      "id": "e2e8b98b-8707-5db3-acc4-7fce73125358",
+      "markdown": "\nAdmin REST, MCP, and CLI reads return the existing secret placeholder instead of decrypted integration credentials. Workflows continue to obtain credentials through the authorized SDK path.\n\nGeneric webhook signing secrets are encrypted at rest and shown only when created or rotated. Microsoft Graph clientState is encrypted and removed from delivered notifications. Per-execution engine tokens are redacted from output, excluded from persisted diagnostic context, and rejected after the execution finishes.\n\n**Review your integrations:** copy a new webhook signing secret when it is created or rotated; it cannot be read back later. Consumers that previously used clientState from delivered Graph events must stop depending on that field. Use the authorized workflow SDK for runtime secrets.",
+      "published_at": "2026-10-06T22:01:18Z",
+      "revision": 1,
+      "sources": [
+        {
+          "commit": "29f5ab1735e1039a36dddcf3fc521d2772210fd2",
+          "pr": 845,
+          "role": "implementation"
+        },
+        {
+          "commit": "d92e468a77ae5196bca8fdbbb03449736d8c2bb1",
+          "pr": 870,
+          "role": "implementation"
+        },
+        {
+          "commit": "e62377bdfcc1db9f1dd58050d49bbdbe1c491f6c",
+          "pr": 871,
+          "role": "implementation"
+        },
+        {
+          "commit": "39586af0e1ac0cb24e45cf2caa25ff0b456d6928",
+          "pr": 874,
+          "role": "implementation"
+        }
+      ],
+      "title": "Keep Secrets out of Admin Reads and Event History",
+      "type": "Security"
+    },
+    {
+      "action_required": false,
+      "area": "Workflows",
+      "assets": [],
+      "contributors": [],
+      "id": "cd2688ce-bc8c-501c-ab74-68b896d7ec7d",
+      "markdown": "\nUse a supervised workflow service for a long-lived listener or integration. Bifrost manages worker claims, startup readiness, renewable credentials, crash recovery, and stop transitions through its shared execution infrastructure.\n\nThe Services interface and CLI expose start, stop, restart, enable, disable, policy settings, attempts, and trailing logs. Live log updates and attempt history help explain what a listener is doing.\n\nSolution-backed services preserve their permitted workspace source access when credentials rotate, including a cold source load after a restart.",
+      "published_at": "2026-10-06T22:01:18Z",
+      "revision": 1,
+      "sources": [
+        {
+          "commit": "c3f8e2cadbcd33972d6c192f2f35b5290f85e3e4",
+          "pr": 788,
+          "role": "implementation"
+        },
+        {
+          "commit": "c95ebf2ecd8b9f8edf1035388c3773ae1eb332f9",
+          "pr": 789,
+          "role": "implementation"
+        },
+        {
+          "commit": "c7c955f9e269d05fe9b331000609dc4ed570b429",
+          "pr": 812,
+          "role": "implementation"
+        }
+      ],
+      "title": "Run Long-Lived Workflow Services",
+      "type": "New"
+    },
+    {
+      "action_required": false,
+      "area": "Platform",
+      "assets": [],
+      "contributors": [],
+      "id": "c2ac76ce-8a68-540b-8c56-a2c8b00ed3da",
+      "markdown": "\nFull Solution backups include the complete file inventory and preserve table document ids, keeping references between documents, folders, attachments, and other records intact. Oversized tables fail visibly instead of silently producing a partial backup.\n\nLarge encrypted backups restore by reading payloads from the archive without extracting another encrypted copy. Durable downloads go directly through a short-lived authorized object-storage link, so the browser does not buffer the whole archive in memory.\n\nFull exports can run in isolated Kubernetes build pods when that execution policy is enabled. Lost runners produce a failed export state. Apps can also link directly to their owning Solution's backup history.",
+      "published_at": "2026-10-06T22:01:18Z",
+      "revision": 1,
+      "sources": [
+        {
+          "commit": "91294a7a48a29d449dc50acb5f2f907eb5ed5bfd",
+          "pr": 878,
+          "role": "implementation"
+        },
+        {
+          "commit": "54d95a5ea0d26d7c5ae1e0fd0e618a30d1608bab",
+          "pr": 880,
+          "role": "implementation"
+        },
+        {
+          "commit": "a9f00a674ac763e12ddfbcdd678bdccf9058a7d6",
+          "pr": 881,
+          "role": "implementation"
+        },
+        {
+          "commit": "fe702966f3063f08f135646b57065525ccd20e65",
+          "pr": 882,
+          "role": "implementation"
+        },
+        {
+          "commit": "ef1163075399807ba433ee38cf75532820f90751",
+          "pr": 899,
+          "role": "implementation"
+        },
+        {
+          "commit": "68565c88987e18687ce4ccb2f5955f66a4b5163a",
+          "pr": 901,
+          "role": "implementation"
+        },
+        {
+          "commit": "33f923ac5a6340923776d764f0e513f734d9c871",
+          "pr": 902,
+          "role": "implementation"
+        },
+        {
+          "commit": "3e33fe53a78dae375c05f6be3f50e19b2ee7fd4e",
+          "pr": 907,
+          "role": "implementation"
+        }
+      ],
+      "title": "Preserve Complete Solution Backups and Relationships",
+      "type": "Improved"
+    },
+    {
+      "action_required": true,
+      "area": "Platform",
+      "assets": [],
+      "contributors": [],
+      "id": "c001044d-7255-59ce-814f-070e6cc37aa8",
+      "markdown": "\nWorkspace sync now protects Solution-owned entities and refuses an absent manifest that would otherwise delete the workspace. Maintenance Reimport reports missing source instead of deleting entities. External subscriptions to a Solution's events survive redeployment, and sync cannot deactivate the provider organization.\n\n**Update your sync routine:** after changing files in Bifrost, run **Fetch** before Commit, Sync, or Discard. These actions refuse stale working trees. Discard also refuses while a merge is unfinished, keeping conflict markers out of the running source.\n\nTo remove entities whose source is missing, review and confirm the deletions through git sync. Reimport is no longer a deletion mechanism.",
+      "published_at": "2026-10-06T22:01:18Z",
+      "revision": 1,
+      "sources": [
+        {
+          "commit": "da56e589c55945a14190f66322f7dab6433fb411",
+          "pr": 864,
+          "role": "implementation"
+        },
+        {
+          "commit": "62d2cde75bb15e3fdeb0171c3a865135ebc1e733",
+          "pr": 867,
+          "role": "implementation"
+        },
+        {
+          "commit": "46b8a2a033bf13e80ad362267a232938929bb6d1",
+          "pr": 868,
+          "role": "implementation"
+        },
+        {
+          "commit": "c9be693b932f77599c91a73fb5fb70dbca318880",
+          "pr": 875,
+          "role": "implementation"
+        },
+        {
+          "commit": "3db674f94ceb01079f53e96372aed5072908b617",
+          "pr": 891,
+          "role": "implementation"
+        }
+      ],
+      "title": "Review Safer Workspace Sync and Reimport",
+      "type": "Improved"
+    },
+    {
+      "action_required": false,
+      "area": "Workflows",
+      "assets": [],
+      "contributors": [],
+      "id": "a37e2a01-1645-5cf9-8e78-0dfc0167565f",
+      "markdown": "\nThe **Workflow Resources** view in Usage shows runs and a per-workflow ranking with CPU, memory, duration, and AI usage. Filters and the selected view remain in the URL, and returning from a run restores the filtered list.\n\nNew runs record sampled resource peaks. Older runs show blank values where no telemetry was captured. Peak CPU measures the share of one core and can exceed 100% when a run uses multiple cores; brief bursts may fall between samples.",
+      "published_at": "2026-10-06T22:01:18Z",
+      "revision": 1,
+      "sources": [
+        {
+          "commit": "c894749503255f67bda596610836e40dbc97ae86",
+          "pr": 803,
+          "role": "implementation"
+        }
+      ],
+      "title": "Compare Workflow Resource Use",
+      "type": "New"
+    },
+    {
+      "action_required": false,
+      "area": "Apps & Forms",
+      "assets": [],
+      "contributors": [],
+      "id": "657a8947-1cc8-5050-b312-a43033ad02b7",
+      "markdown": "\nV2 apps can use `useUser` and `RequireRole` for user-aware presentation, `useBranding` for platform names, logos, and theme palettes, and `useOrganizations` for organizations the caller is allowed to see. These helpers preserve the underlying endpoint authorization; hiding a control is not an access gate.\n\nThe starter app has a top navigation shell and an intentionally unwired example button, so a new independent app does not call a workflow it never installed. The header supports navigation and a compact, keyboard-accessible phone menu, including correct desktop restoration in React 18 apps.\n\nExisting apps receive these SDK changes through an SDK update or redeploy. Installed plugin authoring guidance arrives with the next versioned plugin release.",
+      "published_at": "2026-10-06T22:01:18Z",
+      "revision": 1,
+      "sources": [
+        {
+          "commit": "00f5e7d40606836bd16a8898dd048714a3e0c77b",
+          "pr": 894,
+          "role": "implementation"
+        },
+        {
+          "commit": "2a052b89fc1a12e481440e36a73600483efaf077",
+          "pr": 896,
+          "role": "implementation"
+        },
+        {
+          "commit": "effbecb6ea440a831ff04cfc541333f410ab707b",
+          "pr": 897,
+          "role": "implementation"
+        },
+        {
+          "commit": "50701c2cf775632bb0f268480b0e448e59dbf27d",
+          "pr": 898,
+          "role": "implementation"
+        },
+        {
+          "commit": "494ec04695c537c2e23439cdc5921b2c899d4729",
+          "pr": 906,
+          "role": "implementation"
+        },
+        {
+          "commit": "ff940d8ef7e3330b4ca1cef298adb7bc0b81ec95",
+          "pr": 913,
+          "role": "implementation"
+        }
+      ],
+      "title": "Build Apps with Platform Identity and Branding",
+      "type": "Improved"
+    },
+    {
+      "action_required": false,
+      "area": "Platform",
+      "assets": [],
+      "contributors": [],
+      "id": "5a021295-d85e-5d79-bc30-dc764cecab0d",
+      "markdown": "\nApp deploys and SDK rebuilds can run in temporary Kubernetes pods with their own memory limits, keeping heavy compilers away from the shared scheduler.\n\nThe execution settings expose per-job placement and concurrency controls, and Diagnostics identifies jobs running in Kubernetes. Shared platform-job policies manage claims, progress, timeouts, and cleanup.\n\nThis is opt-in. Existing installs keep local execution until an operator enables the compatible Kubernetes builds overlay and execution policy. It does not move every workflow or platform operation into a remote pod.",
+      "published_at": "2026-10-06T22:01:18Z",
+      "revision": 1,
+      "sources": [
+        {
+          "commit": "2399fbb049e6b6c121ca07980ffa649844c0d477",
+          "pr": 781,
+          "role": "implementation"
+        }
+      ],
+      "title": "Run Heavy App Builds in Isolated Kubernetes Pods",
+      "type": "New"
+    },
+    {
+      "action_required": true,
+      "area": "Platform",
+      "assets": [],
+      "contributors": [],
+      "id": "54ca0580-5047-5ba9-bf2f-8d33dba99e0b",
+      "markdown": "\nTable updates must satisfy the row policy before and after the change, preventing a permitted row from being rewritten into a forbidden organization. Agent runs, artifacts, and WebSocket channels follow the caller's permitted scope.\n\nSDK credential routes admit real execution credentials and the permitted platform principals. App embed sessions are confined to their app and workflow endpoints instead of also reaching same-organization form runtime routes.\n\n**Check custom clients before upgrading:** ordinary user session tokens no longer read secrets through SDK credential routes, and admin-only endpoints require platform administration. These are implemented restrictions, separate from the newer report-only workflow permission checks.",
+      "published_at": "2026-10-06T22:01:18Z",
+      "revision": 1,
+      "sources": [
+        {
+          "commit": "927327d4377af540d81cf07d9c3b7b4a4394dce7",
+          "pr": 791,
+          "role": "implementation"
+        },
+        {
+          "commit": "5657f19fd584af3272259c405a47aae759e3b7f7",
+          "pr": 813,
+          "role": "implementation"
+        },
+        {
+          "commit": "92ca6044306ffe84a4fb7f62a47363ad5ee3cf4c",
+          "pr": 814,
+          "role": "implementation"
+        },
+        {
+          "commit": "df38a597107c545d1f9d07e3da8e8941ee1d5f1b",
+          "pr": 815,
+          "role": "implementation"
+        },
+        {
+          "commit": "7c4c8017c83d487b6a6dbde668a7ee05400b1322",
+          "pr": 817,
+          "role": "implementation"
+        }
+      ],
+      "title": "Tighten Execution and Data Access Boundaries",
+      "type": "Security"
+    },
+    {
+      "action_required": false,
+      "area": "Platform",
+      "assets": [],
+      "contributors": [],
+      "id": "46cd9f78-2680-5597-ae31-3ead081b6af8",
+      "markdown": "\nImport a Solution ZIP or repository snapshot into the workspace with a scoped review. Choose which entities and source to bring in, resolve collisions, and see unchanged items before applying the import.\n\nThe import preserves portable entities, configuration declarations, integration shells, roles, claims, and file policies. Progress uses the shared platform-job system. A workspace import stays distinct from a managed Solution installation.",
+      "published_at": "2026-10-06T22:01:18Z",
+      "revision": 1,
+      "sources": [
+        {
+          "commit": "cbb98cc152f6bd76449969adcf3fef75df7c2077",
+          "pr": 792,
+          "role": "implementation"
+        }
+      ],
+      "title": "Review a Solution Before Importing It into the Workspace",
+      "type": "New"
+    },
+    {
+      "action_required": false,
+      "area": "Agents",
+      "assets": [],
+      "contributors": [
+        {
+          "login": "wilhil",
+          "profile_url": "https://github.com/wilhil",
+          "source_pr": 807
+        }
+      ],
+      "id": "3446112d-fcde-5861-9a99-9accc96f2302",
+      "markdown": "\nModel settings now use the models.dev catalog for provider choices, context windows, pricing, capabilities, and reasoning controls. A bundled snapshot remains available offline; a refresh can bring in newer catalog data. Community providers are labeled separately from Bifrost's native integrations.\n\nOpenCode Go is a supported provider, with its model-specific request surfaces and session headers. Connection and profile **Test** buttons now send a real request through saved model settings, so a working model list alone no longer makes a configured profile look healthy.\n\nA connection without profiles explains that it can only test model discovery. Existing and manually entered prices keep their precedence.",
+      "published_at": "2026-10-06T22:01:18Z",
+      "revision": 1,
+      "sources": [
+        {
+          "commit": "410375a11baf4f7765b2e1d64ce45bb5cba04fd7",
+          "pr": 807,
+          "role": "implementation"
+        },
+        {
+          "commit": "686cff8d885257c6206412fb99d1fca2c219441c",
+          "pr": 809,
+          "role": "implementation"
+        },
+        {
+          "commit": "57796d05b04bb4c8d151f7df4e872eac5ccf5774",
+          "pr": 850,
+          "role": "implementation"
+        },
+        {
+          "commit": "0d02dc2b36865611750536e67d40df2c1c972d45",
+          "pr": 853,
+          "role": "implementation"
+        },
+        {
+          "commit": "db0be320b3fba96d76ae8b914630afffaf356a32",
+          "pr": 855,
+          "role": "implementation"
+        },
+        {
+          "commit": "93bb9b196cfa3d8a94f20e775468c35c218ea491",
+          "pr": 861,
+          "role": "implementation"
+        }
+      ],
+      "title": "Choose Models from a Shared Catalog",
+      "type": "Improved"
+    },
+    {
+      "action_required": true,
+      "area": "Platform",
+      "assets": [],
+      "contributors": [],
+      "id": "21f60d8e-18e9-5a5d-a730-e7d55cd77a3a",
+      "markdown": "\nThe dependency refresh includes pydantic-ai 2.53.0, which addresses [GHSA-6fqq-452j-qhrp](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-6fqq-452j-qhrp): streamed requests could retain a shared concurrency-limiter slot and eventually block requests using that limiter. The upstream advisory says agent-level concurrency and non-streaming requests are not affected.\n\nThe updated SimpleWebAuthn **browser** dependency includes upstream notes about a separate server-package advisory and raised runtime requirements. Those notes need an applicability review; this change does not prove that Bifrost shipped the affected server package.\n\nThe docs tooling also picks up a js-yaml change that bounds CPU work in YAML merge handling.\n\n**Release review required:** confirm deployment applicability, any assigned CVE identifiers, and the upstream compatibility notes before publishing a security summary. This draft records the observed advisories; it does not assert that no CVEs were fixed.",
+      "published_at": "2026-10-06T22:01:18Z",
+      "revision": 1,
+      "sources": [
+        {
+          "commit": "347a783251c7041ce5ccc95e50982724bdabea0d",
+          "pr": 718,
+          "role": "implementation"
+        },
+        {
+          "commit": "4620a43d97a16975f0becec831af3c9e6797c6f0",
+          "pr": 910,
+          "role": "implementation"
+        },
+        {
+          "commit": "01717658658c407d13b2c065c1581da4230357d7",
+          "pr": 714,
+          "role": "implementation"
+        }
+      ],
+      "title": "Review Dependency Security Fixes",
+      "type": "Security"
+    },
+    {
+      "action_required": true,
+      "area": "Administration",
+      "assets": [],
+      "contributors": [],
+      "id": "0cf7ed8c-3fc1-5d28-b89b-09ca20a59262",
+      "markdown": "\nAdmins can set how long Bifrost keeps completed runs, events, and audit records in **Settings \u2192 Maintenance**. Run history keeps cost and resource totals after the detailed records are removed. Audit records move to object storage and are read back and verified before their database rows are cleared.\n\n**Review before upgrading:** run and event history defaults to **30 days**, including existing installs. Choose **Keep forever** before the daily cleanup if you need older detailed runs. Deleted run history has no archive. Audit defaults differ: existing installs retain archives indefinitely; new installs keep 90 days in the database and 365 days in the archive.\n\nPreview and Run Now controls let an admin inspect and apply the policy. Active, paused, and cancelling runs are protected from history cleanup.",
+      "published_at": "2026-10-06T22:01:18Z",
+      "revision": 1,
+      "sources": [
+        {
+          "commit": "3d678951a2d187e31139ffcdd5a4dcc5f4a98209",
+          "pr": 905,
+          "role": "implementation"
+        },
+        {
+          "commit": "1aeb7d66efc4bfb78365fc84d1c4203b67a468ff",
+          "pr": 908,
+          "role": "implementation"
+        }
+      ],
+      "title": "Choose How Long History Stays",
+      "type": "New"
+    },
+    {
+      "action_required": false,
+      "area": "Developer Tools",
+      "assets": [],
+      "contributors": [],
+      "id": "05998cb0-6d43-5c62-9121-c4b7b468e88a",
+      "markdown": "\nSource search covers workspace files and retained Solution source through one paged search path. Solution results are labeled read-only, and callers can narrow the search to a particular source or Solution.\n\nOne indexer handles writes, moves, deletes, and bulk refreshes. Reconciliation compares current objects without restoring deleted files, and a concurrent save wins over an older reconciliation read. Binary or oversized files remain searchable by path.",
+      "published_at": "2026-10-06T22:01:18Z",
+      "revision": 1,
+      "sources": [
+        {
+          "commit": "59001666f5644f29feb484b7c992ed3ed285b548",
+          "pr": 873,
+          "role": "implementation"
+        }
+      ],
+      "title": "Search Workspace and Solution Source Together",
+      "type": "Improved"
+    },
+    {
+      "action_required": true,
+      "area": "Developer Tools",
+      "assets": [],
+      "contributors": [],
+      "id": "007e847d-a72e-5ae9-b0a8-ced754e74ffe",
+      "markdown": "\nMCP tools for platform entities now call the same REST endpoints and use canonical `bifrost_<noun>_<verb>` names. Stored platform agent tool references and allow/block lists are migrated; external clients that retain old names need to refresh their discovery or configuration.\n\n**Upgrade the CLI/SDK with the platform.** The obsolete interactive local runner and its session endpoints are removed. Direct local workflow runs remain available. SDK versions through 1.4.1 cannot parse the changed execution response, and the current minimum client floor is 1.4.2; release preparation must keep that floor aligned with the version that ships this change.\n\nApp management requires Platform Admin. Custom provider-staff clients must review the new boundary. The renamed MCP tools preserve endpoint validation and audit behavior instead of reimplementing it.",
+      "published_at": "2026-10-06T22:01:18Z",
+      "revision": 1,
+      "sources": [
+        {
+          "commit": "4a9c6998e70bccdb679d02c9bbb1257081f44616",
+          "pr": 820,
+          "role": "implementation"
+        },
+        {
+          "commit": "b35672bf242e01b2ca7cabadc9994481a7c4ecfc",
+          "pr": 830,
+          "role": "implementation"
+        },
+        {
+          "commit": "603d932cb0e40b8f4c37a7d2524a3129f8b3f13b",
+          "pr": 831,
+          "role": "implementation"
+        },
+        {
+          "commit": "90dc87ee9ce20b8f632d1cf10ec863ebaf86822a",
+          "pr": 833,
+          "role": "implementation"
+        },
+        {
+          "commit": "b260eb8ea2600b5b8be11e601306300694faa7d4",
+          "pr": 834,
+          "role": "implementation"
+        },
+        {
+          "commit": "f49eec0efb77ef5cad35e24af0dee09a77d3984b",
+          "pr": 835,
+          "role": "implementation"
+        }
+      ],
+      "title": "Update Clients for the CLI and MCP Changes",
+      "type": "Improved"
+    }
+  ],
+  "other_changes": [
+    {
+      "contributors": [],
+      "source": "pr:842",
+      "title": "Apply three minor and patch updates to GitHub Actions.",
+      "url": "https://github.com/gobifrost/bifrost/pull/842"
+    },
+    {
+      "contributors": [],
+      "source": "pr:839",
+      "title": "Apply two minor and patch updates to client dependencies.",
+      "url": "https://github.com/gobifrost/bifrost/pull/839"
+    },
+    {
+      "contributors": [],
+      "source": "pr:860",
+      "title": "Commit request database changes before sending the response.",
+      "url": "https://github.com/gobifrost/bifrost/pull/860"
+    },
+    {
+      "contributors": [],
+      "source": "pr:856",
+      "title": "Finish legacy logo migration for Solutions, forms, and integrations.",
+      "url": "https://github.com/gobifrost/bifrost/pull/856"
+    },
+    {
+      "contributors": [
+        {
+          "login": "MTG-Thomas",
+          "profile_url": "https://github.com/MTG-Thomas",
+          "role": "original implementation",
+          "source_pr": 745
+        }
+      ],
+      "source": "pr:745",
+      "title": "Give each event-delivery retry a fresh timeout window.",
+      "url": "https://github.com/gobifrost/bifrost/pull/745"
+    },
+    {
+      "contributors": [],
+      "source": "pr:795",
+      "title": "Include the latest Solution README in shareable and full exports.",
+      "url": "https://github.com/gobifrost/bifrost/pull/795"
+    },
+    {
+      "contributors": [],
+      "source": "pr:832",
+      "title": "Keep roles off the system account and list only usable agent tools.",
+      "url": "https://github.com/gobifrost/bifrost/pull/832"
+    },
+    {
+      "contributors": [],
+      "source": "pr:844",
+      "title": "Keep service SDK authentication working after credential renewal.",
+      "url": "https://github.com/gobifrost/bifrost/pull/844"
+    },
+    {
+      "contributors": [],
+      "source": "pr:818",
+      "title": "Let embedded apps read the workflow executions they started.",
+      "url": "https://github.com/gobifrost/bifrost/pull/818"
+    },
+    {
+      "contributors": [],
+      "source": "pr:811",
+      "title": "Preserve audit attribution and API error behavior on the worker SDK path.",
+      "url": "https://github.com/gobifrost/bifrost/pull/811"
+    },
+    {
+      "contributors": [],
+      "source": "pr:822",
+      "title": "Preserve separately discovered MCP resource documents.",
+      "url": "https://github.com/gobifrost/bifrost/pull/822"
+    },
+    {
+      "contributors": [
+        {
+          "login": "MTG-Thomas",
+          "profile_url": "https://github.com/MTG-Thomas",
+          "source_pr": 756
+        }
+      ],
+      "source": "pr:756",
+      "title": "Preserve streaming activity when a new conversation receives its id.",
+      "url": "https://github.com/gobifrost/bifrost/pull/756"
+    },
+    {
+      "contributors": [],
+      "source": "pr:848",
+      "title": "Record operation ids and caller surfaces in audit rows, and measure workflow operation use.",
+      "url": "https://github.com/gobifrost/bifrost/pull/848"
+    },
+    {
+      "contributors": [],
+      "source": "pr:885",
+      "title": "Record policy-rule changes in the audit log.",
+      "url": "https://github.com/gobifrost/bifrost/pull/885"
+    },
+    {
+      "contributors": [],
+      "source": "pr:892",
+      "title": "Record refused sign-ins in the audit log.",
+      "url": "https://github.com/gobifrost/bifrost/pull/892"
+    },
+    {
+      "contributors": [],
+      "source": "pr:911",
+      "title": "Refresh client dependencies with fifteen minor and patch updates.",
+      "url": "https://github.com/gobifrost/bifrost/pull/911"
+    },
+    {
+      "contributors": [],
+      "source": "pr:828",
+      "title": "Refresh client dependencies with ten minor and patch updates.",
+      "url": "https://github.com/gobifrost/bifrost/pull/828"
+    },
+    {
+      "contributors": [],
+      "source": "pr:710",
+      "title": "Refresh the Nginx client image.",
+      "url": "https://github.com/gobifrost/bifrost/pull/710"
+    },
+    {
+      "contributors": [],
+      "source": "pr:752",
+      "title": "Refresh the Node container image.",
+      "url": "https://github.com/gobifrost/bifrost/pull/752"
+    },
+    {
+      "contributors": [],
+      "source": "pr:708",
+      "title": "Refresh the Python container image.",
+      "url": "https://github.com/gobifrost/bifrost/pull/708"
+    },
+    {
+      "contributors": [],
+      "source": "pr:825",
+      "title": "Remove failed repository Solution installs in the same transaction as job failure.",
+      "url": "https://github.com/gobifrost/bifrost/pull/825"
+    },
+    {
+      "contributors": [],
+      "source": "pr:857",
+      "title": "Remove withdrawn Builder schema residue before later migrations.",
+      "url": "https://github.com/gobifrost/bifrost/pull/857"
+    },
+    {
+      "contributors": [],
+      "source": "pr:866",
+      "title": "Resolve global Solution installs by name from an organization-scoped caller.",
+      "url": "https://github.com/gobifrost/bifrost/pull/866"
+    },
+    {
+      "contributors": [],
+      "source": "pr:821",
+      "title": "Restore the audit actor in platform-job execution.",
+      "url": "https://github.com/gobifrost/bifrost/pull/821"
+    },
+    {
+      "contributors": [],
+      "source": "pr:797",
+      "title": "Retry safe SDK reads and explicitly keyed writes after transient disconnects.",
+      "url": "https://github.com/gobifrost/bifrost/pull/797"
+    },
+    {
+      "contributors": [],
+      "source": "pr:819",
+      "title": "Return consistent totals and items when listing service attempts.",
+      "url": "https://github.com/gobifrost/bifrost/pull/819"
+    },
+    {
+      "contributors": [],
+      "source": "pr:810",
+      "title": "Run engine SDK requests through the worker-local HTTP socket.",
+      "url": "https://github.com/gobifrost/bifrost/pull/810"
+    },
+    {
+      "contributors": [],
+      "source": "pr:794",
+      "title": "Save organization configuration overrides before an integration mapping exists.",
+      "url": "https://github.com/gobifrost/bifrost/pull/794"
+    },
+    {
+      "contributors": [],
+      "source": "pr:852",
+      "title": "Show the provider error when an OAuth refresh returns success=false.",
+      "url": "https://github.com/gobifrost/bifrost/pull/852"
+    },
+    {
+      "contributors": [
+        {
+          "login": "MTG-Thomas",
+          "profile_url": "https://github.com/MTG-Thomas",
+          "source_pr": 764
+        }
+      ],
+      "source": "pr:764",
+      "title": "Start one login redirect when concurrent requests lose authentication.",
+      "url": "https://github.com/gobifrost/bifrost/pull/764"
+    },
+    {
+      "contributors": [],
+      "source": "pr:886",
+      "title": "Stop child Node processes when app builds are cancelled.",
+      "url": "https://github.com/gobifrost/bifrost/pull/886"
+    },
+    {
+      "contributors": [],
+      "source": "pr:827",
+      "title": "Update client dependencies and resolve the accompanying compatibility issues.",
+      "url": "https://github.com/gobifrost/bifrost/pull/827"
+    },
+    {
+      "contributors": [],
+      "source": "pr:709",
+      "title": "Update Playwright to 1.63.0 for browser testing.",
+      "url": "https://github.com/gobifrost/bifrost/pull/709"
+    },
+    {
+      "contributors": [],
+      "source": "pr:824",
+      "title": "Update the AI runtime libraries and their provider dependencies.",
+      "url": "https://github.com/gobifrost/bifrost/pull/824"
+    },
+    {
+      "contributors": [],
+      "source": "pr:786",
+      "title": "Update the GitHub Actions used to build, sign, and test releases.",
+      "url": "https://github.com/gobifrost/bifrost/pull/786"
+    },
+    {
+      "contributors": [],
+      "source": "pr:837",
+      "title": "Update the Python AI runtime dependencies.",
+      "url": "https://github.com/gobifrost/bifrost/pull/837"
+    },
+    {
+      "contributors": [],
+      "source": "pr:826",
+      "title": "Update Vitest and its UI to 5.0.2.",
+      "url": "https://github.com/gobifrost/bifrost/pull/826"
+    },
+    {
+      "contributors": [],
+      "source": "pr:888",
+      "title": "Use the REST organization rule for WebSocket table subscriptions.",
+      "url": "https://github.com/gobifrost/bifrost/pull/888"
+    },
+    {
+      "contributors": [],
+      "source": "pr:858",
+      "title": "Wait for the database schema before starting workers and the scheduler.",
+      "url": "https://github.com/gobifrost/bifrost/pull/858"
+    }
+  ],
+  "schema_version": 1,
+  "target_ref": "32aeea16c99c27d1278b5576f09080e29a59cca2"
+}
