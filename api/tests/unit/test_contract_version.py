@@ -48,6 +48,7 @@ from src.models.contracts.access_checks import (  # noqa: E402
 )
 from src.models.contracts.audit import AuditLogListResponse  # noqa: E402
 from src.models.contracts.audit_retention import AuditRetentionStatus  # noqa: E402
+from src.models.contracts.identities import IdentityCreate, IdentityPublic  # noqa: E402
 from src.models.contracts.permissions import PermissionCatalogEntry  # noqa: E402
 from src.models.contracts.role_assignments import (  # noqa: E402
     UserRoleAssignmentsResponse,
@@ -85,6 +86,7 @@ from src.models.contracts.policy_rule import PolicyRuleCreate, PolicyRuleUpdate 
 from src.models.contracts.services import ServicePolicyUpdate  # noqa: E402
 from src.models.contracts.tables import TableCreate, TableUpdate  # noqa: E402
 from src.models.contracts.users import RoleCreate, RoleUpdate  # noqa: E402
+from src.models.contracts.workflow_requirements import WorkflowRequirements  # noqa: E402
 from src.models.contracts.workflows import WorkflowUpdateRequest  # noqa: E402
 
 import inspect  # noqa: E402
@@ -141,6 +143,9 @@ _COMMAND_DTOS: list[type] = [
     AuditLogListResponse,
     RunRetentionStatus,
     AuditRetentionStatus,
+    IdentityCreate,
+    IdentityPublic,
+    WorkflowRequirements,
 ]
 
 #: Every request/response DTO the in-workflow SDK sends/parses against
@@ -322,7 +327,13 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # (2026-10-06, Graph-style permission display names). Same unreleased
     # commands as above, so no released CLI parses the older shape.
     # Fingerprint refreshed only.
-    "9cacb5b441195dd167c6fde2f4a2c040ca92f16db80d518aa712bd39b3b16c39"
+    #
+    # Identity shapes newly fingerprinted (2026-10-06): `bifrost users create
+    # --identity` sends IdentityCreate and parses IdentityPublic, and
+    # `bifrost workflows requirements/grant` parse WorkflowRequirements. The
+    # commands ship with these DTOs (greenfield coverage). Fingerprint
+    # refreshed only.
+    "e0f15376c692ae2264e162d84a4794b98a8df040e4c63a854c1460b6011e36b7"
 )
 
 

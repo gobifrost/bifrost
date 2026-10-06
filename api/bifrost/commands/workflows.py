@@ -15,6 +15,11 @@ Implements Task 5c of the CLI mutation surface plan:
   from :class:`WorkflowUpdateRequest`).
 * ``bifrost workflows delete <ref>`` → ``DELETE /api/workflows/{uuid}``
   (forwards ``--force`` as ``force_deactivation`` on the request body).
+* ``bifrost workflows requirements <ref>`` →
+  ``GET /api/workflows/{uuid}/requirements``.
+* ``bifrost workflows grant <ref> (--requirement N | --all)`` → read-merge-PUT
+  of the workflow identity's role assignments, applying the requirements that
+  carry a grant.
 * ``bifrost workflows grant-role <ref> <role-ref>`` →
   ``POST /api/workflows/{uuid}/roles`` with a single-element role_ids list.
 * ``bifrost workflows revoke-role <ref> <role-ref>`` →
@@ -57,6 +62,7 @@ from bifrost.refs import RefResolver
 from bifrost.contracts import WorkflowUpdateRequest
 
 from .base import _apply_flags, entity_group, output_result, pass_resolver, run_async
+from .users import _boundary_input, _boundary_label, _current_assignments, _print_role_assignments
 
 
 _TERMINAL_STATUSES = frozenset(
@@ -378,6 +384,20 @@ async def _fetch_final_execution(
 
 @workflows_group.command("update")
 @click.argument("ref")
+@click.option(
+    "--run-as",
+    "run_as",
+    type=str,
+    default=None,
+    help="Identity (UUID or name) the workflow runs as when no person starts it.",
+)
+@click.option(
+    "--run-as-default",
+    "run_as_default",
+    is_flag=True,
+    default=False,
+    help="Run as the organization's default identity again.",
+)
 @_apply_flags(_UPDATE_FLAGS)
 @click.pass_context
 @pass_resolver
@@ -388,6 +408,8 @@ async def update_workflow(
     *,
     client: BifrostClient,
     resolver: RefResolver,
+    run_as: str | None,
+    run_as_default: bool,
     **fields: Any,
 ) -> None:
     """Update a workflow's editable properties.
@@ -395,13 +417,167 @@ async def update_workflow(
     ``REF`` is a UUID, workflow name, or ``path::func`` locator. See
     :mod:`bifrost.refs` for resolution rules.
     """
+    if run_as is not None and run_as_default:
+        raise click.UsageError("--run-as cannot be combined with --run-as-default.")
     workflow_uuid = await resolver.resolve("workflow", ref)
     body = await assemble_body(WorkflowUpdateRequest, fields, resolver=resolver)
+    if run_as is not None:
+        body["run_identity_id"] = await resolver.resolve("identity", run_as)
+    elif run_as_default:
+        body["run_identity_id"] = None
     response = await client.patch(
         f"/api/workflows/{workflow_uuid}", json=body
     )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
+
+
+_REQUIREMENT_KINDS = {"reach": "Reach", "policy_role": "Policy Role", "workflow_role": "Workflow Role"}
+
+
+async def _names(client: BifrostClient, path: str) -> dict[str, str]:
+    response = await client.get(path)
+    response.raise_for_status()
+    return {item["id"]: item["name"] for item in response.json()}
+
+
+def _print_requirements(requirements: dict[str, Any], roles: dict[str, str], orgs: dict[str, str]) -> None:
+    if not requirements["items"]:
+        click.echo("No runs observed yet." if not requirements["observed_runs"] else "Nothing missing.")
+        return
+    click.echo(f"Based on {requirements['observed_runs']} runs in the last {requirements['window_days']} days.")
+    for number, item in enumerate(requirements["items"], start=1):
+        click.echo()
+        click.echo(f"{number}. {_REQUIREMENT_KINDS[item['kind']]}: {item['label']}")
+        click.echo(f"   {item['detail']}")
+        grant = item["grant"]
+        if grant is None:
+            click.echo("   Grant: none (choose a role with bifrost users roles set)")
+            continue
+        places = ", ".join(
+            _boundary_label({**b, "organization_name": orgs.get(b.get("organization_id"))}) for b in grant["boundaries"]
+        )
+        click.echo(f"   Grant: {roles[grant['role_id']]} at {places}")
+
+
+@workflows_group.command("requirements")
+@click.argument("ref")
+@click.pass_context
+@pass_resolver
+@run_async
+async def workflow_requirements(
+    ctx: click.Context,
+    ref: str,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,
+) -> None:
+    """Show what the identity a workflow runs as lacks.
+
+    Computed from the access checks the workflow's recent runs recorded: reach into other organizations, roles its policies look for, and the workflow's own roles. Empty until runs are observed. Apply the grants with `bifrost workflows grant`.
+
+    ``REF`` is a UUID, workflow name, or ``path::func`` locator.
+    """
+    workflow_uuid = await resolver.resolve("workflow", ref)
+    response = await client.get(f"/api/workflows/{workflow_uuid}/requirements")
+    response.raise_for_status()
+    requirements = response.json()
+    grants = [item["grant"] for item in requirements["items"] if item["grant"]]
+    roles = await _names(client, "/api/roles") if grants else {}
+    orgs = (
+        await _names(client, "/api/organizations")
+        if any(b["kind"] == "organization" for grant in grants for b in grant["boundaries"])
+        else {}
+    )
+    output_result(requirements, ctx=ctx, human=lambda r: _print_requirements(r, roles, orgs))
+
+
+def _merge_grants(assignments: dict[str, Any], grants: list[dict[str, Any]]) -> dict[str, Any]:
+    """The role-assignments PUT body: the current assignments plus ``grants``, each merged into the identity's existing assignment of that role."""
+    additional = [
+        {"role_id": role["role_id"], "boundaries": [_boundary_input(b) for b in role["boundaries"]]}
+        for role in assignments["additional"]
+    ]
+    for grant in grants:
+        entry = next((role for role in additional if role["role_id"] == grant["role_id"]), None)
+        if entry is None:
+            entry = {"role_id": grant["role_id"], "boundaries": []}
+            additional.append(entry)
+        entry["boundaries"] += [b for b in grant["boundaries"] if b not in entry["boundaries"]]
+    return {"base_role_id": assignments["base_role"]["id"], "additional": additional}
+
+
+@workflows_group.command("grant")
+@click.argument("ref")
+@click.option(
+    "--requirement",
+    "numbers",
+    type=int,
+    multiple=True,
+    metavar="N",
+    help="Number of a requirement from `workflows requirements`, repeatable.",
+)
+@click.option("--all", "all_requirements", is_flag=True, help="Apply every requirement that has a grant.")
+@click.pass_context
+@pass_resolver
+@run_async
+async def grant_requirements(
+    ctx: click.Context,
+    ref: str,
+    numbers: tuple[int, ...],
+    all_requirements: bool,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,
+) -> None:
+    """Grant the identity a workflow runs as what its requirements ask for.
+
+    Each grant is merged into the identity's existing assignment of that role. A requirement without a grant needs a role chosen: use `bifrost users roles set`. A default identity is shared: the grant applies to every workflow that runs as it.
+
+    Examples:
+
+    \b
+      bifrost workflows grant "Sync Invoices" --requirement 1
+      bifrost workflows grant "Sync Invoices" --all
+    """
+    if bool(numbers) == all_requirements:
+        raise click.UsageError("Give --requirement N (repeatable) or --all.")
+    workflow_uuid = await resolver.resolve("workflow", ref)
+    response = await client.get(f"/api/workflows/{workflow_uuid}/requirements")
+    response.raise_for_status()
+    requirements = response.json()
+    items = requirements["items"]
+
+    chosen = list(range(1, len(items) + 1)) if all_requirements else list(numbers)
+    for number in chosen:
+        if not 1 <= number <= len(items):
+            raise click.UsageError(f"There is no requirement {number}: this workflow has {len(items)}.")
+    unmet = [number for number in chosen if items[number - 1]["grant"] is None]
+    if not all_requirements and unmet:
+        raise click.UsageError(
+            f"Requirement {unmet[0]} needs a role chosen: use bifrost users roles set."
+        )
+    grants = [items[number - 1]["grant"] for number in chosen if items[number - 1]["grant"] is not None]
+    if not grants:
+        raise click.UsageError("No requirement has a grant to apply.")
+    for number in unmet:
+        click.echo(f"Requirement {number} needs a role chosen: use bifrost users roles set.", err=True)
+
+    identity_id = requirements["identity_id"]
+    identities = await client.get("/api/identities")
+    identities.raise_for_status()
+    identity = next(i for i in identities.json() if i["id"] == identity_id)
+    if identity["identity_kind"] != "custom":
+        click.echo(
+            f"{identity['name']} is a default identity: this applies to all {identity['workflows_using']} "
+            "workflows that run as it.",
+            err=True,
+        )
+
+    url = f"/api/users/{identity_id}/role-assignments"
+    updated = await client.put(url, json=_merge_grants(await _current_assignments(client, url), grants))
+    updated.raise_for_status()
+    output_result(updated.json(), ctx=ctx, human=_print_role_assignments)
 
 
 @workflows_group.command("remap")

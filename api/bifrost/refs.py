@@ -15,6 +15,8 @@ Accepted ref shapes (by kind):
   ``GET /api/applications/{slug}`` directly.
 - **email** — ``user`` only; exact, case-insensitive match against
   ``GET /api/users?search=<email>``.
+- **identity name** — ``identity`` only; exact, case-insensitive match against
+  ``GET /api/identities``.
 
 Config is keyed by ``key`` (the stored column name), not by a ``name`` field —
 callers pass the config key as the ``value`` for ``kind="config"``.
@@ -46,6 +48,7 @@ RefKind = Literal[
     "solution",
     "service",
     "user",
+    "identity",
 ]
 
 
@@ -329,6 +332,20 @@ async def _resolve_user(client: Any, value: str) -> tuple[str, list[dict[str, An
     return "", candidates
 
 
+async def _resolve_identity(
+    client: Any, value: str
+) -> tuple[str, list[dict[str, Any]]]:
+    items = await _get_json(client, "/api/identities")
+    matches = [i for i in items if str(i.get("name", "")).lower() == value.lower()]
+    candidates = [
+        _candidate(i["name"], str(i["id"]), _as_opt_str(i.get("organization_id")))
+        for i in matches
+    ]
+    if len(matches) == 1:
+        return str(matches[0]["id"]), candidates
+    return "", candidates
+
+
 def _as_opt_str(value: Any) -> str | None:
     if value is None:
         return None
@@ -349,6 +366,7 @@ _RESOLVERS = {
     "solution": _resolve_solution,
     "service": _resolve_service,
     "user": _resolve_user,
+    "identity": _resolve_identity,
 }
 
 
@@ -365,7 +383,7 @@ async def resolve_ref(
         client: Async HTTP client exposing ``async def get(path) -> Response``
             (e.g. :class:`bifrost.client.BifrostClient`).
         kind: Entity kind.
-        value: UUID, name, ``path::func`` (workflow), slug (app), or email (user).
+        value: UUID, name, ``path::func`` (workflow), slug (app), email (user), or identity name.
         cache: Optional per-invocation cache, keyed by ``(kind, value)``.
             The CLI command instance owns one cache dict per invocation.
 

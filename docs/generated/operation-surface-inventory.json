@@ -9967,7 +9967,7 @@
     }
   ],
   "counts": {
-    "cli": 167,
+    "cli": 171,
     "manifest": 16,
     "mcp": 94,
     "rest": 675,
@@ -10767,6 +10767,24 @@
         "kind": "operation",
         "path": [
           "users",
+          "create"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "kind": "operation",
+        "path": [
+          "users",
+          "list"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "kind": "operation",
+        "path": [
+          "users",
           "roles",
           "get"
         ],
@@ -10795,6 +10813,15 @@
         "kind": "operation",
         "path": [
           "workflows",
+          "grant"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "kind": "operation",
+        "path": [
+          "workflows",
           "list-orphaned"
         ],
         "reason": "CLI operation has not entered the canonical operation catalog yet.",
@@ -10814,6 +10841,15 @@
         "path": [
           "workflows",
           "replace"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "kind": "operation",
+        "path": [
+          "workflows",
+          "requirements"
         ],
         "reason": "CLI operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"

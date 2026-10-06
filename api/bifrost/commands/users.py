@@ -1,11 +1,14 @@
 """CLI commands for asking what a user's access is, and for changing their roles.
 
+* ``bifrost users list [--identities]`` → ``GET /api/users``
+* ``bifrost users create --identity`` → ``POST /api/identities``
 * ``bifrost users access <user>`` → ``GET /api/users/{id}/access``
 * ``bifrost users access check <user>`` → ``POST /api/users/{id}/access/check``
 * ``bifrost users roles get <user>`` → ``GET /api/users/{id}/role-assignments``
 * ``bifrost users roles set <user>`` → ``PUT /api/users/{id}/role-assignments``
 
-``access`` shows what the user can do and where. ``access check`` is a what-if:
+``list`` shows people, or with ``--identities`` the identities that run work no person
+started; ``create --identity`` adds a custom one. ``access`` shows what the user can do and where. ``access check`` is a what-if:
 could this user perform an operation in an organization, directly or through a
 workflow? The answer is the access model's trace; nothing is enforced.
 """
@@ -17,6 +20,7 @@ from typing import Any
 import click
 
 from bifrost.client import BifrostClient
+from bifrost.org_target import resolve_org_target
 from bifrost.refs import RefResolver
 
 from .base import EntityGroup, entity_group, output_result, pass_resolver, run_async
@@ -24,7 +28,21 @@ from .permissions import SCOPE_LABELS, permission_names
 
 users_group = entity_group("users", "Show and change what a user can do, and ask what their access would be.")
 
+_IDENTITY_KINDS = {"org_default": "Default", "global_default": "Global", "custom": "Custom"}
+
 _MARKS = {"passed": "✓", "stopped": "✗", "not_applicable": "–", "not_reached": "·"}
+
+
+def _print_users(users: list[dict[str, Any]]) -> None:
+    for user in users:
+        kind = _IDENTITY_KINDS.get(user.get("identity_kind"))
+        click.echo(f"{user['name']}  {kind or user['email']}")
+
+
+def _print_created_identity(identity: dict[str, Any]) -> None:
+    kind = _IDENTITY_KINDS[identity["identity_kind"]]
+    place = identity["organization_name"] or "Global"
+    click.echo(f"Created {identity['name']} ({kind}, {place})  {identity['id']}")
 
 
 def _print_trace(trace: dict[str, Any]) -> None:
@@ -44,6 +62,57 @@ def _print_access_map(access_map: dict[str, Any], names: dict[str, str]) -> None
             sources = "; ".join(f"{source['role_name']}, {source['via']}" for source in grant["sources"])
             name = f"{names[permission]}  " if permission in names else ""
             click.echo(f"  {name}{permission}  {SCOPE_LABELS[grant['scope']]}  ({sources})")
+
+
+@users_group.command("list")
+@click.option("--identities", is_flag=True, help="List identities instead of people.")
+@click.pass_context
+@pass_resolver
+@run_async
+async def list_users(
+    ctx: click.Context,
+    identities: bool,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,  # noqa: ARG001 - kept for signature parity
+) -> None:
+    """List the people you may read, or with --identities the identities.
+
+    Identities are the accounts that run work no person started: each organization's default, the global default, and custom ones.
+    """
+    response = await client.get("/api/users", params={"identities": "only"} if identities else None)
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx, human=_print_users)
+
+
+@users_group.command("create")
+@click.option("--identity", "identity", is_flag=True, required=True, help="Create an identity (the only thing created here).")
+@click.option("--org", required=True, help="Organization UUID or name, or 'global'.")
+@click.option("--name", required=True, help="The identity's name.")
+@click.pass_context
+@pass_resolver
+@run_async
+async def create_identity(
+    ctx: click.Context,
+    identity: bool,  # noqa: ARG001 - required to be set; selects what to create
+    org: str,
+    name: str,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,
+) -> None:
+    """Create a custom identity in --org, or Global.
+
+    The identity starts with the User base role and no additional roles; give it roles with `bifrost users roles set`, then point a workflow at it with `bifrost workflows update --run-as`.
+
+    Example:
+
+      bifrost users create --identity --org Contoso --name "Contoso Nightly"
+    """
+    target = await resolve_org_target(org, False, resolver)
+    response = await client.post("/api/identities", json={"name": name, "organization_id": target.organization_id})
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx, human=_print_created_identity)
 
 
 class _AccessGroup(EntityGroup):

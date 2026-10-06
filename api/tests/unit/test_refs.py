@@ -497,6 +497,56 @@ async def test_resolve_user_ambiguous_surfaces_candidates() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Identity refs (name)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_by_name_matches_exactly_ignoring_case() -> None:
+    uid = uuid4()
+    client = FakeClient(
+        {
+            "/api/identities": [
+                {"id": str(uid), "name": "Contoso Nightly", "organization_id": str(uuid4())},
+                {"id": str(uuid4()), "name": "Contoso Nightly Backup", "organization_id": None},
+            ]
+        }
+    )
+    assert await resolve_ref(client, "identity", "contoso nightly") == str(uid)
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_uuid_passes_through_without_a_lookup() -> None:
+    uid = uuid4()
+    client = FakeClient({})
+    assert await resolve_ref(client, "identity", str(uid)) == str(uid)
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_not_found() -> None:
+    client = FakeClient({"/api/identities": [{"id": str(uuid4()), "name": "Other", "organization_id": None}]})
+    with pytest.raises(RefNotFoundError):
+        await resolve_ref(client, "identity", "Contoso Nightly")
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_ambiguous_surfaces_candidates() -> None:
+    first, second = uuid4(), uuid4()
+    client = FakeClient(
+        {
+            "/api/identities": [
+                {"id": str(first), "name": "Nightly", "organization_id": str(uuid4())},
+                {"id": str(second), "name": "NIGHTLY", "organization_id": None},
+            ]
+        }
+    )
+    with pytest.raises(AmbiguousRefError) as exc_info:
+        await resolve_ref(client, "identity", "nightly")
+    assert {c["uuid"] for c in exc_info.value.candidates} == {str(first), str(second)}
+
+
+# ---------------------------------------------------------------------------
 # Cache behavior
 # ---------------------------------------------------------------------------
 

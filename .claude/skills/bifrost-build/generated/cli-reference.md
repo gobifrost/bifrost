@@ -3049,6 +3049,8 @@ Options:
 
 Commands:
   access  Show a user's access, or check what it would allow.
+  create  Create a custom identity in --org, or Global.
+  list    List the people you may read, or with --identities the identities.
   roles   Show and replace a user's roles.
 ```
 
@@ -3109,6 +3111,45 @@ Usage: users access show [OPTIONS] USER
 Options:
   --json  Emit JSON instead of human-readable output.
   --help  Show this message and exit.
+```
+
+### `users create`
+
+```
+Usage: users create [OPTIONS]
+
+  Create a custom identity in --org, or Global.
+
+  The identity starts with the User base role and no additional roles; give it
+  roles with `bifrost users roles set`, then point a workflow at it with
+  `bifrost workflows update --run-as`.
+
+  Example:
+
+    bifrost users create --identity --org Contoso --name "Contoso Nightly"
+
+Options:
+  --identity   Create an identity (the only thing created here).  [required]
+  --org TEXT   Organization UUID or name, or 'global'.  [required]
+  --name TEXT  The identity's name.  [required]
+  --json       Emit JSON instead of human-readable output.
+  --help       Show this message and exit.
+```
+
+### `users list`
+
+```
+Usage: users list [OPTIONS]
+
+  List the people you may read, or with --identities the identities.
+
+  Identities are the accounts that run work no person started: each
+  organization's default, the global default, and custom ones.
+
+Options:
+  --identities  List identities instead of people.
+  --json        Emit JSON instead of human-readable output.
+  --help        Show this message and exit.
 ```
 
 ### `users roles`
@@ -3183,12 +3224,14 @@ Commands:
   delete         Delete a workflow by removing its function from the...
   execute        Execute a registered workflow remotely and stream logs...
   get            Get a single workflow by UUID, name, or ``path::func`` ref.
+  grant          Grant the identity a workflow runs as what its...
   grant-role     Grant a role access to a workflow.
   list           List all workflows visible to the caller.
   list-orphaned  List all orphaned workflows (backing file deleted or...
   register       Register a decorated function from an existing workspace...
   remap          Move references from one workflow ID to another active...
   replace        Repoint an orphaned workflow to a new file location.
+  requirements   Show what the identity a workflow runs as lacks.
   revoke-role    Revoke a role's access from a workflow.
   update         Update a workflow's editable properties.
 ```
@@ -3254,6 +3297,31 @@ Usage: workflows get [OPTIONS] REF
 Options:
   --json  Emit JSON instead of human-readable output.
   --help  Show this message and exit.
+```
+
+### `workflows grant`
+
+```
+Usage: workflows grant [OPTIONS] REF
+
+  Grant the identity a workflow runs as what its requirements ask for.
+
+  Each grant is merged into the identity's existing assignment of that role. A
+  requirement without a grant needs a role chosen: use `bifrost users roles
+  set`. A default identity is shared: the grant applies to every workflow that
+  runs as it.
+
+  Examples:
+
+    bifrost workflows grant "Sync Invoices" --requirement 1
+    bifrost workflows grant "Sync Invoices" --all
+
+Options:
+  --requirement N  Number of a requirement from `workflows requirements`,
+                   repeatable.
+  --all            Apply every requirement that has a grant.
+  --json           Emit JSON instead of human-readable output.
+  --help           Show this message and exit.
 ```
 
 ### `workflows grant-role`
@@ -3381,6 +3449,25 @@ Options:
   --help                Show this message and exit.
 ```
 
+### `workflows requirements`
+
+```
+Usage: workflows requirements [OPTIONS] REF
+
+  Show what the identity a workflow runs as lacks.
+
+  Computed from the access checks the workflow's recent runs recorded: reach
+  into other organizations, roles its policies look for, and the workflow's
+  own roles. Empty until runs are observed. Apply the grants with `bifrost
+  workflows grant`.
+
+  ``REF`` is a UUID, workflow name, or ``path::func`` locator.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
 ### `workflows revoke-role`
 
 ```
@@ -3407,6 +3494,10 @@ Usage: workflows update [OPTIONS] REF
   :mod:`bifrost.refs` for resolution rules.
 
 Options:
+  --run-as TEXT                   Identity (UUID or name) the workflow runs as
+                                  when no person starts it.
+  --run-as-default                Run as the organization's default identity
+                                  again.
   --organization-id TEXT          organization_id
   --access-level TEXT             access_level
   --clear-roles / --no-clear-roles
@@ -3425,7 +3516,6 @@ Options:
   --public-endpoint / --no-public-endpoint
                                   public_endpoint (tri-state; omit to leave
                                   unchanged).
-  --run-identity-id TEXT          run_identity_id (UUID).
   --json                          Emit JSON instead of human-readable output.
   --help                          Show this message and exit.
 ```
