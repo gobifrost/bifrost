@@ -111,6 +111,17 @@ vi.mock("@/components/users/UserRoleAssignmentsPanel", () => ({
 	UserRoleAssignmentsPanel: () => <p>Role assignments editor</p>,
 }));
 
+vi.mock("@/components/access/TestAccessPanel", () => ({
+	TestAccessPanel: (props: {
+		subjectId: string;
+		defaultOrganizationId?: string;
+	}) => (
+		<p>
+			Test access for {props.subjectId} in {props.defaultOrganizationId}
+		</p>
+	),
+}));
+
 import { UserAccessPage } from "./UserAccessPage";
 
 const PROVIDER = "org-provider";
@@ -374,6 +385,17 @@ describe("UserAccessPage", () => {
 		expect(
 			screen.getByRole("heading", { level: 2, name: "Role Assignments" }),
 		).toBeInTheDocument();
+	});
+
+	it("tests this person's access from Effective Access, starting in their home organization", async () => {
+		const { user } = renderPage();
+
+		await user.click(screen.getByRole("button", { name: "Test Access" }));
+
+		const sheet = await screen.findByRole("dialog", {
+			name: "Test Access",
+		});
+		expect(sheet).toHaveTextContent("Test access for user-1 in org-1");
 	});
 
 	it("opens on the access map above the role assignments", () => {

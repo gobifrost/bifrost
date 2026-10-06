@@ -10,6 +10,8 @@ export type AccessGrantSource = components["schemas"]["AccessGrantSource"];
 export type AccessGrant = components["schemas"]["AccessGrant"];
 export type AccessRow = components["schemas"]["AccessRow"];
 export type UserAccessMap = components["schemas"]["UserAccessMap"];
+export type AccessTrace = components["schemas"]["AccessTrace"];
+export type AccessStep = components["schemas"]["AccessStep"];
 
 /** Prefix of every access-map query key; mutations that change access invalidate it. */
 export const USER_ACCESS_QUERY_KEY = [
@@ -30,4 +32,9 @@ export function useUserAccessMap(userId: string | undefined) {
 		{ params: { path: { user_id: userId! } } },
 		{ enabled: !!userId },
 	);
+}
+
+/** What the managed-identity model would decide for a user performing an operation: report-only. */
+export function useCheckUserAccess() {
+	return $api.useMutation("post", "/api/users/{user_id}/access/check");
 }

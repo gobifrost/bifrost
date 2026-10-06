@@ -1,10 +1,11 @@
-import { useRef, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { motion, useReducedMotion } from "framer-motion";
 import {
 	ArrowLeft,
 	Building2,
 	ChevronLeft,
+	FlaskConical,
 	KeyRound,
 	RefreshCw,
 	ShieldAlert,
@@ -12,6 +13,7 @@ import {
 } from "lucide-react";
 
 import { AccessMap } from "@/components/access/AccessMap";
+import { TestAccessPanel } from "@/components/access/TestAccessPanel";
 import { IdentityActions } from "@/components/identities/IdentityActions";
 import { IdentityGlyph } from "@/components/identities/IdentityGlyph";
 import { IdentityKindBadge } from "@/components/identities/IdentityKindBadge";
@@ -26,6 +28,13 @@ import { RouteUnavailableState } from "@/components/layout/RouteUnavailableState
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+	Sheet,
+	SheetContent,
+	SheetDescription,
+	SheetHeader,
+	SheetTitle,
+} from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { UserActionsMenu } from "@/components/users/UserActionsMenu";
@@ -281,18 +290,59 @@ function SectionHeading({
 	id,
 	title,
 	description,
+	action,
 }: {
 	id: string;
 	title: string;
 	description: string;
+	action?: ReactNode;
 }) {
 	return (
-		<div className="space-y-1">
-			<h2 id={id} className="text-base font-semibold">
-				{title}
-			</h2>
-			<p className="text-sm text-muted-foreground">{description}</p>
+		<div className="flex flex-wrap items-start justify-between gap-3">
+			<div className="min-w-0 flex-1 basis-64 space-y-1">
+				<h2 id={id} className="text-base font-semibold">
+					{title}
+				</h2>
+				<p className="text-sm text-muted-foreground">{description}</p>
+			</div>
+			{action}
 		</div>
+	);
+}
+
+/** "Test Access": what the access model would decide for this person, in a sheet. */
+function TestAccessSheet({ person }: { person: User }) {
+	const [open, setOpen] = useState(false);
+	return (
+		<Sheet open={open} onOpenChange={setOpen}>
+			<Button
+				type="button"
+				variant="outline"
+				className="min-h-11 sm:min-h-9"
+				onClick={() => setOpen(true)}
+			>
+				<FlaskConical aria-hidden="true" className="size-4" />
+				Test Access
+			</Button>
+			<SheetContent className="sm:max-w-xl">
+				<SheetHeader className="border-b border-border/70">
+					<SheetTitle>Test Access</SheetTitle>
+					<SheetDescription>
+						What the access model would decide for{" "}
+						{person.name || person.email}. Report-only: nothing is
+						recorded or enforced.
+					</SheetDescription>
+				</SheetHeader>
+				<div className="min-h-0 overflow-auto p-6">
+					<TestAccessPanel
+						subjectId={person.id}
+						defaultOrganizationId={
+							person.organization_id ?? "global"
+						}
+					/>
+				</div>
+			</SheetContent>
+		</Sheet>
 	);
 }
 
@@ -437,6 +487,9 @@ export function UserAccessPage() {
 										id="access-map-heading"
 										title="Effective Access"
 										description={sectionCopy.access}
+										action={
+											<TestAccessSheet person={person} />
+										}
 									/>
 									{map && catalogQuery.data ? (
 										<AccessMap
