@@ -13,7 +13,7 @@ This branch implements a development-only preview and repository toolchain. It a
 - Entry key is the permanent UUID; content stores revision, approved Markdown, dates, source/credit metadata, and assets identified by bundle manifest hash.
 - Upsert is idempotent on `(entry_uuid, revision)`. Only approved entries seed. A lower revision cannot overwrite a retained higher approved revision. Same UUID/revision with different content is an integrity error, not last-writer-wins.
 - Receipt key is `(admin_id, entry_uuid)` with acknowledgement timestamp. An entry revision upsert never touches receipts. A genuinely new capability or corrective announcement receives a new UUID.
-- Opening or fetching the feed does not acknowledge entries. Mark-read receives the explicit list currently presented and validates every UUID against the running bundle before writing. Duplicate ids are harmless; invalid/ineligible ids fail validation.
+- Fetching alone does not acknowledge entries. Rendering the modal or history automatically acknowledges the batch presented by that surface; the user has no mark-read chore. A receipt means presented, not proof of reading or understanding. The receipt endpoint receives the presented UUID list and validates every UUID against the running bundle before writing. Duplicate ids are harmless; invalid/ineligible ids fail validation.
 - Independent admins maintain independent receipts. Dev → candidate → stable transitions retain the UUID and receipt. Logout, profile change, or another browser tab cannot transfer receipt ownership.
 
 ## Running Build Is the Visibility Boundary

@@ -26,14 +26,13 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useProfile } from "@/hooks/useProfile";
 import { profileService } from "@/services/profile";
 import { BifrostRunMenu } from "@/components/layout/BifrostRunMenu";
+import { HelpMenu } from "./HelpMenu";
 import { lazyWithReload } from "@/lib/lazy-with-reload";
 
-// The preview item imports its bundle only in development. Production has no
-// menu entry or bundled product-update data.
-const ProductUpdatesMenuItem = import.meta.env.DEV
+const ProductUpdatesDialog = import.meta.env.DEV
 	? lazyWithReload(() =>
-			import("./ProductUpdatesMenuItem").then((module) => ({
-				default: module.ProductUpdatesMenuItem,
+			import("./ProductUpdatesDialog").then((module) => ({
+				default: module.ProductUpdatesDialog,
 			})),
 		)
 	: null;
@@ -174,6 +173,8 @@ export function Header({
 					</div>
 				</div>
 
+				{isPlatformAdmin && <HelpMenu />}
+
 				{/* User Menu */}
 				<DropdownMenu>
 					<DropdownMenuTrigger asChild>
@@ -201,16 +202,7 @@ export function Header({
 						avatarUrl={avatarUrl}
 						onSettings={() => navigate("/user-settings")}
 						onLogout={logout}
-						updatesMenuItem={
-							isPlatformAdmin && ProductUpdatesMenuItem && user?.id ? (
-								<Suspense fallback={null}>
-									<ProductUpdatesMenuItem
-										adminId={user.id}
-										onOpen={() => navigate("/whats-new")}
-									/>
-								</Suspense>
-							) : undefined
-						}
+						showVersion={!isPlatformAdmin}
 					/>
 				</DropdownMenu>
 			</div>
@@ -221,6 +213,11 @@ export function Header({
 				>
 					<HeaderStatusIndicators isPlatformAdmin={isPlatformAdmin} />
 				</div>
+			)}
+			{isPlatformAdmin && user?.id && ProductUpdatesDialog && (
+				<Suspense fallback={null}>
+					<ProductUpdatesDialog key={user.id} adminId={user.id} />
+				</Suspense>
 			)}
 		</header>
 	);

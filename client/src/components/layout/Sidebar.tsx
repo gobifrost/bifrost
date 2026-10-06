@@ -1,4 +1,4 @@
-import { Fragment, Suspense, useEffect, useLayoutEffect, useRef } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import {
 	Home,
@@ -37,15 +37,6 @@ import { term, useTerminology, type ProductTermKey } from "@/lib/terminology";
 import type { PermissionRequirement } from "@/lib/authorization";
 import { useAuthorization } from "@/services/authorization";
 import { SidebarLink } from "./sidebarLinks";
-import { lazyWithReload } from "@/lib/lazy-with-reload";
-
-const ProductUpdatesSidebarLink = import.meta.env.DEV
-	? lazyWithReload(() =>
-			import("./ProductUpdatesSidebarLink").then((module) => ({
-				default: module.ProductUpdatesSidebarLink,
-			})),
-		)
-	: null;
 
 interface NavItem {
 	title: string;
@@ -251,7 +242,7 @@ export function Sidebar({
 	setIsMobileMenuOpen,
 	isCollapsed,
 }: SidebarProps) {
-	const { isPlatformAdmin, user } = useAuth();
+	const { isPlatformAdmin } = useAuth();
 	const { meets } = useAuthorization();
 	const terminology = useTerminology();
 	const location = useLocation();
@@ -372,16 +363,6 @@ export function Sidebar({
 										</div>
 									);
 								})}
-								{section.title === "Platform" &&
-									isPlatformAdmin &&
-									ProductUpdatesSidebarLink && (
-										<Suspense fallback={null}>
-											<ProductUpdatesSidebarLink
-												adminId={user?.id ?? "platform-admin"}
-												isCollapsed={isCollapsed}
-											/>
-										</Suspense>
-									)}
 							</div>
 						</Fragment>
 					))}
@@ -464,17 +445,6 @@ export function Sidebar({
 											</div>
 										);
 									})}
-									{section.title === "Platform" &&
-										isPlatformAdmin &&
-										ProductUpdatesSidebarLink && (
-											<Suspense fallback={null}>
-												<ProductUpdatesSidebarLink
-													adminId={user?.id ?? "platform-admin"}
-													isCollapsed={false}
-													onClick={() => setIsMobileMenuOpen(false)}
-												/>
-											</Suspense>
-										)}
 								</div>
 							</Fragment>
 						))}

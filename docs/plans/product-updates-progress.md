@@ -20,7 +20,7 @@ Authoritative schema/tool: `product-updates/schema.json`, `scripts/product_updat
 
 - Tooling: deterministic schema validation, cached-source coverage, Git ancestry eligibility, release interval filtering, schema-generated TypeScript/bundles, local assets, external credits, and PR/merge-group event validation are implemented. Pending sources are structurally validated but withheld until cached metadata and ancestry verify every cited source and prerequisite. Reviewed landed portions remain Other changes; required security and upgrade notices block release until eligible. Metadata collection is an explicit preparation command; rendering has no GitHub or LLM dependency.
 - Backfill: all 124 PRs reconciled: 68 grouped into 16 highlights, 39 Other changes with plain-English summaries, and 17 Omit decisions with reasons. No unresolved authors or PR associations. The preview adds one staged Product Updates/Discord announcement, with no invented PR number. Content remains draft for Jack's review.
-- Client: development-only admin route, navigation and quiet shared unread cues; a replaceable local receipt adapter; state controls, safe screenshots, and persistent GitHub/Discord/Website brand links with a rainbow edge. Production build excludes the preview. No product API/database contract changed.
+- Client: development-only automatic admin modal and history route reachable through the admin Help menu; automatic batch acknowledgment through a replaceable local receipt adapter; safe screenshots and shared GitHub/Discord/Website brand footer with a rainbow edge. The manual action, per-item unread badges, inbox tabs, and duplicate sidebar entry were removed after Jack reviewed the first design. Production build excludes the preview. No product API/database contract changed.
 - CI/release: a real always-triggered Product Updates workflow uses the trusted base validator/schema. Initial bootstrap fails visibly until the validator exists on main; no green stub or candidate-code fallback. The live ruleset rollout is prepared, not applied. Release publication consumes a prepared body, and its gate refuses unreviewed coverage, security/CVE or breaking-change material.
 - Preview stack: running at https://bifrost-3fc9b38f-lsk5.eu1.netbird.services/whats-new. Obtain login locally with `./debug.sh status`; credentials are not stored here.
 - Screenshots: `product-updates-desktop-review.png`, `product-updates-mobile-review.png`, and `product-updates-image-review.png` in this directory. Desktop/mobile are the final passing browser flow; the embedded-image view was inspected separately.
@@ -32,9 +32,9 @@ Initial prose and security/upgrade material remain drafts. The reviewed design a
 
 Production seed/read-receipt API and database integration, publication delivery, tags, release publishing, deployment, and live ruleset changes are outside this slice. Jack supplied https://discord.gg/f7TCcWX2s for the branded footer. Actual invite expiry/use settings and server safety are not verified by this implementation. No external messages or GitHub settings have been changed.
 
-## Verification
+## Initial Baseline Verification
 
-Focused verification passed:
+Focused verification passed before the UX revision below. Some initial navigation tests were subsequently replaced with Help/modal coverage:
 
 ```bash
 python3 -m unittest scripts.test_product_updates scripts.test_release_gate -q
@@ -73,6 +73,39 @@ Final draft render verification: all four saved bundles reproduce deterministica
 Failures resolved during development: a staged announcement was incorrectly excluded by interval filtering (fixed with a regression test); a Markdown screenshot created invalid paragraph nesting (fixed and covered by its image-error component test); a duplicate Discord locator matched both announcement and footer links (scoped to the community navigation); static type checks exposed optional-value handling (fixed, now clean). One browser run hit `ERR_NETWORK_CHANGED` during a redundant full-page navigation while separate host-network Docker checks ran. The test now uses the product sidebar and Docker checks finish before the authenticated browser run. No retries, skips, or increased timeouts were added.
 
 Not run: full backend unit/E2E, full Vitest/Playwright, `pre-pr`, registry/signing/attestation, and live GitHub merge queue. No API types were regenerated because no API contract changed.
+
+## UX Revision After Jack's Review
+
+The manual receipt workflow has been removed: no mark-read button, per-item unread badge, inbox tabs, duplicate sidebar link, pagination or viewport tracker. Eligible unseen entries open automatically in a scrollable admin modal; rendering acknowledges the displayed batch. Receipt updates leave the batch on screen. Direct history visits render the feed without an overlay and acknowledge the presented batch. Receipt means presented, not proof of reading. The local adapter and UUID/independent-admin boundaries are retained.
+
+Jack subsequently suggested a Help menu. Implemented an admin-only (?) trigger immediately left of the user icon, containing Documentation, Release Notes, Website, Discord and GitHub, plus the existing copyable version. Account retains its own actions; ordinary users keep their existing account version display. Resource links and version work in production; the internal Release Notes item and announcement/feed remain DEV-only pending the separate production slice.
+
+Shared `ProductUpdateContent.tsx` owns Markdown/images, metadata, attribution and branded footer for both surfaces. History now uses a plain feed with consistent separators and spacing. The draft announcement is shortened to release notes in the app and Discord, with Help as the history path. The Claude handoff has been updated to current implementation instead of the earlier speculative carousel/viewport-tracking design.
+
+Revision checks:
+
+```bash
+docker exec -w /app bifrost-debug-3fc9b38f-client-1 npm test -- src/components/layout/Header.test.tsx src/components/layout/Sidebar.test.tsx src/components/layout/AccountMenuContent.test.tsx src/components/layout/VersionMenuItem.test.tsx src/components/layout/HelpMenu.test.tsx src/components/layout/ProductUpdatesDialog.test.tsx src/components/layout/ProductUpdateContent.test.tsx src/lib/product-updates-preview.test.ts src/pages/ProductUpdatesPreview.test.tsx
+# 9 files / 29 tests passed.
+docker exec -w /app bifrost-debug-3fc9b38f-client-1 npx tsc -b --pretty false
+# Passed, zero errors.
+./test.sh client preview
+# Real password-grant login, automatic modal and UUID acknowledgment, modal-to-history,
+# Help navigation/version/resources, no manual receipt UI, desktop/mobile screenshots,
+# direct history reload; includes a mobile viewport-bounds assertion. No retries.
+docker exec -w /app bifrost-debug-3fc9b38f-client-1 npx vite build --outDir /tmp/product-updates-production-build --emptyOutDir
+# Production build passed; ProductUpdatesDialog, receipt key and announcement prose absent.
+```
+
+Scoped ESLint passed for changed source/tests in the debug client, and separately for the actual worktree browser spec/runner in `bifrost-test-playwright:latest` with the whole client mounted. The debug stack mounts source, but not its e2e directory; checks on that image's e2e copy are not counted as current-spec evidence. Full client lint also passed with the same four existing warnings recorded above. No backend boundaries changed; broader suites remain unrun.
+
+Failure dispositions: `./test.sh client unit <focused files>` could not find host Vitest because this worktree has no host-installed dependencies; the identical focused set passed using the API-matched debug client dependency container. New test selectors initially used Playwright's `exact` option in Testing Library; removed that unsupported option, preserving exact string-name matching. An interrupted type/lint process returned SIGTERM and was not counted as verification; type and scoped lint were separated for the final check.
+
+The first public-proxy browser flow timed out during the sign-in transition. Request-timing diagnostics measured dev module requests taking 1–17 seconds and shell availability around 26 seconds. The harness now uses this worktree's Docker bridge and the same client/API instead of shipping hundreds of Vite imports through NetBird, preserving the public review URL. Final local happy path passed in 9.3 seconds, including mobile bounds and Help checks. A diagnostic waiting for the background Help button while a modal was open was an invalid readiness check (Radix hides the background); the test correctly waits for the modal itself.
+
+Screenshot review caught mobile clipping when an open centered dialog was resized. The modal now uses a viewport top gutter with bounded height; header/actions/community links remain outside the content scroller. The browser spec asserts the whole dialog fits the mobile viewport, and screenshots disable finite entry animations for a stable final-layout capture.
+
+Final revision screenshots: `product-updates-modal-desktop-review.png`, `product-updates-modal-mobile-review.png`, `product-updates-help-review.png`, `product-updates-help-mobile-review.png`, and refreshed desktop/mobile history images. All were inspected after the viewport fix.
 
 ## Resumption
 

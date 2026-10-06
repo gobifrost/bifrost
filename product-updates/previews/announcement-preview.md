@@ -81,11 +81,9 @@ Sources: [#820](https://github.com/gobifrost/bifrost/pull/820), [#830](https://g
 ### Product Updates, Now in Bifrost
 
 
-Product release notes are available right in the app. Open **What's New** to see what's changed, catch up on unread updates, and find the details that matter before you upgrade.
+Product release notes are now available in the app. Open **What's New** from the Help menu whenever you want to see what's changed.
 
-We're also [on Discord](https://discord.gg/f7TCcWX2s). Join the Bifrost community to ask questions, share workflows, and talk about what you're building.
-
-GitHub, Discord, and the Bifrost website are always a click away in the footer.
+We're now [on Discord](https://discord.gg/f7TCcWX2s). Join the Bifrost community to ask questions, share workflows, and talk about what you're building.
 
 ### See What a Person Can Access—and Why
 

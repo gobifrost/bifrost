@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, renderWithProviders, screen } from "@/test-utils";
+import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils";
 import type { ProductUpdatesAdapter } from "@/lib/product-updates-preview";
 import type { ProductUpdatesBundle } from "@/generated/product-updates";
 import { ProductUpdatesPreview } from "./ProductUpdatesPreview";
@@ -71,42 +71,43 @@ describe("ProductUpdatesPreview", () => {
 
 	it("marks only the presented UUIDs read for the selected admin", async () => {
 		const previewAdapter = adapter();
-		const { user } = renderWithProviders(
+		renderWithProviders(
 			<ProductUpdatesPreview adapter={previewAdapter} />,
 			{ initialEntries: ["/?admin=admin-a"] },
 		);
 
 		await screen.findByRole("heading", { name: "Readable Update" });
-		await user.click(
-			screen.getByRole("button", { name: "Mark Presented Updates Read" }),
-		);
 
-		expect(previewAdapter.markRead).toHaveBeenCalledWith("admin-a", [
-			"entry-1",
-		]);
+		await waitFor(() =>
+			expect(previewAdapter.markRead).toHaveBeenCalledWith("admin-a", [
+				"entry-1",
+			]),
+		);
+		expect(
+			screen.queryByRole("button", { name: /Mark.*Read/ }),
+		).not.toBeInTheDocument();
+		expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+		expect(screen.queryByText("Unread")).not.toBeInTheDocument();
 	});
 
-	it("keeps the receipt visible when saving it fails", async () => {
+	it("keeps updates available and reports an automatic receipt failure", async () => {
 		const previewAdapter = adapter({
 			markRead: vi.fn(async () => {
 				throw new Error("storage denied");
 			}),
 		});
-		const { user } = renderWithProviders(
+		renderWithProviders(
 			<ProductUpdatesPreview adapter={previewAdapter} />,
 			{ initialEntries: ["/?admin=admin-a"] },
 		);
 
 		await screen.findByRole("heading", { name: "Readable Update" });
-		await user.click(
-			screen.getByRole("button", { name: "Mark Presented Updates Read" }),
-		);
 
 		expect(
-			await screen.findByText("Read State Wasn't Saved"),
+			await screen.findByText("Seen State Wasn't Saved"),
 		).toBeVisible();
 		expect(
-			screen.getByText("Unread", { selector: '[data-slot="badge"]' }),
+			screen.getByRole("heading", { name: "Readable Update" }),
 		).toBeVisible();
 	});
 

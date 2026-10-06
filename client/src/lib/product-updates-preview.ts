@@ -9,8 +9,6 @@ const RECEIPT_KEY_PREFIX = "bifrost.product-updates.receipts";
 
 export type ProductUpdatesPreviewState =
 	| "normal"
-	| "unread"
-	| "allread"
 	| "empty"
 	| "loading"
 	| "failure"
