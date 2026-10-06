@@ -33,23 +33,17 @@ from src.models.contracts.user_access import (
     UserAccessMap,
 )
 from src.models.orm.organizations import Organization
-from src.models.orm.users import Role, User
+from src.models.orm.users import Role
 from src.services.authorization.context import (
     AuthorizationContext,
     Boundary,
     BoundaryKind,
     build_authorization_context,
 )
-from src.services.authorization.enforce import (
-    Caller,
-    held_permissions_by_user,
-    operation_reach,
-    org_target,
-    require_operation,
-)
+from src.services.authorization.enforce import Caller
 from src.services.authorization.privilege import is_privileged_principal
 from src.services.permission_catalog import build_catalog
-from src.services.user_role_assignments import RoleAssignmentError
+from src.services.user_role_assignments import require_assignment_target
 
 GET_OPERATION = "GET /api/users/{user_id}/access"
 
@@ -86,7 +80,9 @@ def _place_key(place: Place) -> _PlaceKey:
 
 def _new_grant(permission: str, scope_by_domain: Mapping[str, GrantScope]) -> AccessGrant:
     if permission == WILDCARD_PERMISSION:
-        return AccessGrant(permission=permission, domain="*", action="*", scope="varies", sources=[])
+        return AccessGrant(
+            permission=permission, domain="*", action="*", scope="platform_wide", sources=[]
+        )
     parsed = parse_permission(permission)
     return AccessGrant(
         permission=permission,
@@ -175,10 +171,14 @@ def build_access_map(
     )
 
 
-async def load_user_access_map(db: AsyncSession, user_id: UUID) -> UserAccessMap:
+async def get_user_access_map(
+    db: AsyncSession, caller: Caller, *, user_id: UUID
+) -> UserAccessMap:
+    """The access map of ``user_id``, gated like reading their role
+    assignments: ``roleassignments.read`` at the user's organization."""
+    target = await require_assignment_target(db, caller, user_id, GET_OPERATION)
+    user = target.user
     ctx = await build_authorization_context(db, user_id)
-    user = (await db.execute(select(User.name, User.email).where(User.id == user_id))).one()
-    held = (await held_permissions_by_user(db, [user_id]))[user_id]
 
     role_ids = {ctx.base_role_id, *(grant.role_id for grant in ctx.role_grants)}
     role_names = dict(
@@ -205,25 +205,8 @@ async def load_user_access_map(db: AsyncSession, user_id: UUID) -> UserAccessMap
         ctx,
         user_name=user.name,
         user_email=user.email,
-        held=held,
+        held=target.held,
         names=names,
         role_names=role_names,
         catalog={entry.domain: entry for entry in build_catalog()},
     )
-
-
-async def get_user_access_map(
-    db: AsyncSession, caller: Caller, *, user_id: UUID
-) -> UserAccessMap:
-    """``load_user_access_map`` gated like reading the user's role
-    assignments: ``roleassignments.read`` at the user's organization."""
-    # Reach anywhere first: a caller with none learns nothing about which
-    # users exist.
-    operation_reach(caller, GET_OPERATION)
-    organization_id = (
-        await db.execute(select(User.organization_id).where(User.id == user_id))
-    ).first()
-    if organization_id is None:
-        raise RoleAssignmentError(404, "User not found")
-    require_operation(caller, GET_OPERATION, org_target(organization_id[0]))
-    return await load_user_access_map(db, user_id)

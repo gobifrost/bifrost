@@ -185,7 +185,12 @@ def test_a_platform_admin_is_one_wildcard_row_for_all_organizations() -> None:
     [row] = access_map.rows
     assert (row.place.kind, row.place.label) == ("platform", "All organizations")
     [grant] = row.grants
-    assert (grant.permission, grant.domain, grant.action) == ("*", "*", "*")
+    assert (grant.permission, grant.domain, grant.action, grant.scope) == (
+        "*",
+        "*",
+        "*",
+        "platform_wide",
+    )
     assert [(s.role_name, s.via) for s in grant.sources] == [("Platform Admin", "additional")]
     assert access_map.reach[-1].label == "All organizations"
 
