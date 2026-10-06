@@ -13901,6 +13901,13 @@
       {
         "method": "GET",
         "operation_id": "",
+        "path": "/api/users/{user_id}/access",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
         "path": "/api/users/{user_id}/role-assignments",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
