@@ -9,6 +9,7 @@ import {
 	type AuthorizationTarget,
 	type PermissionRequirement,
 } from "@/lib/authorization";
+import type { Identity } from "@/services/identities";
 
 const authz = vi.hoisted(() => ({
 	summary: undefined as AuthorizationSummary | undefined,
@@ -26,45 +27,42 @@ vi.mock("@/services/authorization", () => ({
 	}),
 }));
 
+function defaultIdentity(
+	organizationId: string | null,
+	organizationName: string | null,
+): Identity {
+	return {
+		id: `identity-${organizationId ?? "global"}`,
+		name: `${organizationName ?? "Global"} Identity`,
+		identity_kind: organizationId ? "org_default" : "global_default",
+		organization_id: organizationId,
+		organization_name: organizationName,
+		base_role: { id: "role-user", name: "User" },
+		additional_roles: [],
+		workflows_using: 0,
+	};
+}
+
+// Every organization the caller can read users in has a default identity.
+const identities: Identity[] = [
+	defaultIdentity(null, null),
+	defaultIdentity("org-1", "Contoso"),
+	{
+		...defaultIdentity("org-1", "Contoso"),
+		id: "identity-custom",
+		name: "Backup Runner",
+		identity_kind: "custom",
+	},
+	defaultIdentity("org-2", "Fabrikam"),
+];
+
 const create = vi.hoisted(() => ({ mutateAsync: vi.fn() }));
 vi.mock("@/services/identities", () => ({
+	useIdentities: () => ({ data: identities }),
 	useCreateIdentity: () => ({ ...create, isPending: false }),
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn() } }));
-
-type SelectProps = {
-	value: string | null | undefined;
-	onChange: (value: string | null | undefined) => void;
-	showGlobal?: boolean;
-	filterOrganizations?: (organization: { id: string }) => boolean;
-};
-const select = vi.hoisted(() => ({
-	props: undefined as SelectProps | undefined,
-}));
-// The picker itself has its own tests; this stands in with a native select.
-vi.mock("@/components/forms/OrganizationSelect", () => ({
-	OrganizationSelect: (props: SelectProps & { id?: string }) => {
-		select.props = props;
-		return (
-			<select
-				id={props.id}
-				value={props.value === null ? "global" : (props.value ?? "")}
-				onChange={(event) =>
-					props.onChange(
-						event.target.value === "global"
-							? null
-							: event.target.value,
-					)
-				}
-			>
-				<option value="">Select</option>
-				<option value="global">Global</option>
-				<option value="org-1">Contoso</option>
-			</select>
-		);
-	},
-}));
 
 import { NewIdentityDialog } from "./NewIdentityDialog";
 
@@ -93,9 +91,16 @@ function renderDialog() {
 	return { ...rendered, onCreated, onOpenChange };
 }
 
+async function choose(
+	user: ReturnType<typeof renderDialog>["user"],
+	place: string,
+) {
+	await user.click(screen.getByRole("combobox", { name: "Organization" }));
+	await user.click(screen.getByRole("option", { name: place }));
+}
+
 beforeEach(() => {
 	authz.summary = adminSummary();
-	select.props = undefined;
 	create.mutateAsync.mockReset();
 });
 
@@ -112,10 +117,7 @@ describe("NewIdentityDialog", () => {
 			screen.getByRole("textbox", { name: "Name" }),
 			"Nightly Sync",
 		);
-		await user.selectOptions(
-			screen.getByRole("combobox", { name: "Organization" }),
-			"global",
-		);
+		await choose(user, "Global");
 		await user.click(
 			screen.getByRole("button", { name: "Create Identity" }),
 		);
@@ -137,10 +139,7 @@ describe("NewIdentityDialog", () => {
 			"Nightly Sync",
 		);
 		expect(submit).toBeDisabled();
-		await user.selectOptions(
-			screen.getByRole("combobox", { name: "Organization" }),
-			"org-1",
-		);
+		await choose(user, "Contoso");
 		expect(submit).toBeEnabled();
 	});
 
@@ -154,10 +153,7 @@ describe("NewIdentityDialog", () => {
 			screen.getByRole("textbox", { name: "Name" }),
 			"Nightly Sync",
 		);
-		await user.selectOptions(
-			screen.getByRole("combobox", { name: "Organization" }),
-			"org-1",
-		);
+		await choose(user, "Contoso");
 		await user.click(
 			screen.getByRole("button", { name: "Create Identity" }),
 		);
@@ -168,7 +164,19 @@ describe("NewIdentityDialog", () => {
 		expect(onCreated).not.toHaveBeenCalled();
 	});
 
-	it("offers only the places the caller can create identities in", () => {
+	it("offers each organization once, from the identities the caller can see", async () => {
+		const { user } = renderDialog();
+
+		await user.click(
+			screen.getByRole("combobox", { name: "Organization" }),
+		);
+
+		expect(
+			screen.getAllByRole("option").map((option) => option.textContent),
+		).toEqual(["Global", "Contoso", "Fabrikam"]);
+	});
+
+	it("offers only the places the caller can create identities in, without reading organizations", async () => {
 		authz.summary = {
 			...adminSummary(),
 			is_platform_admin: false,
@@ -177,17 +185,31 @@ describe("NewIdentityDialog", () => {
 					permission: "users.lifecycle.readwrite",
 					boundary: {
 						kind: "organization",
-						organization_id: "org-1",
+						organization_id: "org-2",
 					},
 				},
 			],
 		};
-		renderDialog();
+		create.mutateAsync.mockResolvedValue({ id: "identity-new" });
+		const { user } = renderDialog();
 
-		expect(select.props?.showGlobal).toBe(false);
-		expect(select.props?.filterOrganizations?.({ id: "org-1" })).toBe(true);
-		expect(select.props?.filterOrganizations?.({ id: "org-2" })).toBe(
-			false,
+		await user.type(
+			screen.getByRole("textbox", { name: "Name" }),
+			"Nightly Sync",
 		);
+		await user.click(
+			screen.getByRole("combobox", { name: "Organization" }),
+		);
+		expect(
+			screen.getAllByRole("option").map((option) => option.textContent),
+		).toEqual(["Fabrikam"]);
+		await user.click(screen.getByRole("option", { name: "Fabrikam" }));
+		await user.click(
+			screen.getByRole("button", { name: "Create Identity" }),
+		);
+
+		expect(create.mutateAsync).toHaveBeenCalledWith({
+			body: { name: "Nightly Sync", organization_id: "org-2" },
+		});
 	});
 });

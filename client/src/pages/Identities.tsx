@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Building2, Globe, Plus, RefreshCw, Workflow } from "lucide-react";
 
 import { IdentityKindBadge } from "@/components/identities/IdentityKindBadge";
@@ -26,6 +26,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { UsersViewTabs } from "@/components/users/UsersViewTabs";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { placeLabel } from "@/lib/role-boundaries";
 import { cn } from "@/lib/utils";
 import { useAuthorization } from "@/services/authorization";
 import { useIdentities, type Identity } from "@/services/identities";
@@ -67,9 +68,11 @@ function RoleChips({ identity }: { identity: Identity }) {
 					<Badge
 						variant="power"
 						title={`Applies in ${role.boundaries
-							.map(
-								(boundary) =>
-									boundary.organization_name ?? "Global",
+							.map((boundary) =>
+								placeLabel(
+									boundary.kind,
+									boundary.organization_name ?? "",
+								),
 							)
 							.join(", ")}`}
 						className="h-auto min-h-6 whitespace-normal"
@@ -210,13 +213,12 @@ export function Identities() {
 								)}
 							>
 								<div className="flex flex-wrap items-center gap-2">
-									<button
-										type="button"
-										onClick={() => open(identity)}
-										className="min-h-11 text-left font-medium [overflow-wrap:anywhere] hover:text-primary focus-visible:outline-2 focus-visible:outline-ring"
+									<Link
+										to={`/users/${identity.id}`}
+										className="inline-flex min-h-11 items-center font-medium [overflow-wrap:anywhere] hover:text-primary focus-visible:outline-2 focus-visible:outline-ring"
 									>
 										{identity.name}
-									</button>
+									</Link>
 									<IdentityKindBadge
 										kind={identity.identity_kind}
 									/>
@@ -283,7 +285,12 @@ export function Identities() {
 									)}
 								>
 									<DataTableCell className="min-w-48 font-medium [overflow-wrap:anywhere]">
-										{identity.name}
+										<Link
+											to={`/users/${identity.id}`}
+											className="hover:text-primary focus-visible:outline-2 focus-visible:outline-ring"
+										>
+											{identity.name}
+										</Link>
 									</DataTableCell>
 									<DataTableCell className="w-0 whitespace-nowrap">
 										<IdentityKindBadge

@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, Loader2, X } from "lucide-react";
+import { AlertCircle, Building2, Globe, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 
-import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import {
 	Dialog,
 	DialogContent,
@@ -18,9 +18,41 @@ import { Label } from "@/components/ui/label";
 import { getErrorMessage } from "@/lib/api-error";
 import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
 import { useAuthorization } from "@/services/authorization";
-import { useCreateIdentity, type Identity } from "@/services/identities";
+import {
+	useCreateIdentity,
+	useIdentities,
+	type Identity,
+} from "@/services/identities";
 
 const LIFECYCLE = "users.lifecycle.readwrite";
+const GLOBAL_CHOICE = "global";
+
+/**
+ * Where the caller may create an identity: Global, then each organization
+ * they can create users in. Every organization has a default identity, so
+ * the identities list names each one the caller can see, without needing
+ * organizations.read.
+ */
+function placeChoices(
+	identities: Identity[],
+	canCreateAt: (organizationId: string | null) => boolean,
+): ComboboxOption[] {
+	const choices: ComboboxOption[] = canCreateAt(null)
+		? [{ value: GLOBAL_CHOICE, label: "Global", icon: Globe }]
+		: [];
+	const seen = new Set<string>();
+	for (const identity of identities) {
+		const id = identity.organization_id;
+		if (!id || seen.has(id) || !canCreateAt(id)) continue;
+		seen.add(id);
+		choices.push({
+			value: id,
+			label: identity.organization_name ?? id,
+			icon: Building2,
+		});
+	}
+	return choices;
+}
 
 function NewIdentityDialogContent({
 	onOpenChange,
@@ -30,28 +62,36 @@ function NewIdentityDialogContent({
 	onCreated: (identity: Identity) => void;
 }) {
 	const [name, setName] = useState("");
-	// undefined until chosen; null is Global.
-	const [organizationId, setOrganizationId] = useState<
-		string | null | undefined
-	>(undefined);
+	// An organization id, GLOBAL_CHOICE, or "" until chosen.
+	const [place, setPlace] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const errorRef = useRef<HTMLDivElement>(null);
 	const authorization = useAuthorization();
 	const create = useCreateIdentity();
+	const identitiesQuery = useIdentities();
+	const choices = placeChoices(identitiesQuery.data ?? [], (organizationId) =>
+		authorization.canAt(
+			LIFECYCLE,
+			organizationId ? orgTarget(organizationId) : GLOBAL_TARGET,
+		),
+	);
 	useEffect(() => {
 		if (error) errorRef.current?.focus();
 	}, [error]);
 
-	const ready = name.trim().length > 0 && organizationId !== undefined;
+	const ready = name.trim().length > 0 && place !== "";
 	const busy = create.isPending;
 
 	const handleSubmit = async (event: React.FormEvent) => {
 		event.preventDefault();
-		if (!ready || busy || organizationId === undefined) return;
+		if (!ready || busy) return;
 		setError(null);
 		try {
 			const identity = await create.mutateAsync({
-				body: { name: name.trim(), organization_id: organizationId },
+				body: {
+					name: name.trim(),
+					organization_id: place === GLOBAL_CHOICE ? null : place,
+				},
 			});
 			toast.success("Identity created", {
 				description: `${identity.name} runs with the User base role until you give it more`,
@@ -136,22 +176,15 @@ function NewIdentityDialogContent({
 						<Label htmlFor="identity-organization">
 							Organization
 						</Label>
-						<OrganizationSelect
+						<Combobox
 							id="identity-organization"
-							label="Organization"
-							value={organizationId}
-							onChange={setOrganizationId}
-							showGlobal={authorization.canAt(
-								LIFECYCLE,
-								GLOBAL_TARGET,
-							)}
-							filterOrganizations={(organization) =>
-								authorization.canAt(
-									LIFECYCLE,
-									orgTarget(organization.id),
-								)
-							}
+							value={place}
+							onValueChange={setPlace}
+							options={choices}
+							isLoading={identitiesQuery.isLoading}
 							placeholder="Select an organization..."
+							searchPlaceholder="Search organizations..."
+							emptyText="No organizations found."
 						/>
 						<p className="text-xs text-muted-foreground">
 							Where its base role applies. A Global identity runs

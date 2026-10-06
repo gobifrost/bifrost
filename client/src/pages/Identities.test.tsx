@@ -104,7 +104,24 @@ const identities: Identity[] = [
 		organization_id: null,
 		organization_name: null,
 		base_role: { id: "role-user", name: "User" },
-		additional_roles: [],
+		additional_roles: [
+			{
+				role_id: "role-fleet",
+				name: "Fleet Operations",
+				boundaries: [
+					{
+						kind: "managed_organizations",
+						organization_id: null,
+						organization_name: null,
+					},
+					{
+						kind: "platform",
+						organization_id: null,
+						organization_name: null,
+					},
+				],
+			},
+		],
 		workflows_using: 2,
 	},
 	{
@@ -225,14 +242,43 @@ describe("Identities", () => {
 		expect(rows[1]).not.toHaveAttribute("data-pinned");
 	});
 
-	it("opens an identity's page from its row", async () => {
+	it("opens an identity's page from anywhere on its row", async () => {
 		const { user } = renderPage();
+		const backup = within(screen.getByRole("table"))
+			.getAllByRole("row")
+			.find((row) => row.textContent?.includes("Backup Runner"))!;
 
-		await user.click(screen.getByText("Backup Runner"));
+		await user.click(within(backup).getAllByRole("cell")[4]);
 
 		expect(
 			screen.getByRole("status", { name: "location" }),
 		).toHaveTextContent("/users/identity-backup");
+	});
+
+	it("links each name to the identity's page, from the keyboard too", async () => {
+		const { user } = renderPage();
+		const link = screen.getByRole("link", { name: "Backup Runner" });
+		expect(link).toHaveAttribute("href", "/users/identity-backup");
+
+		link.focus();
+		await user.keyboard("{Enter}");
+
+		expect(
+			screen.getByRole("status", { name: "location" }),
+		).toHaveTextContent("/users/identity-backup");
+	});
+
+	it("says where each additional role applies", () => {
+		renderPage();
+
+		expect(screen.getByText("Fleet Operations")).toHaveAttribute(
+			"title",
+			"Applies in All Customer Organizations, Global",
+		);
+		expect(screen.getByText("Ticket Sync")).toHaveAttribute(
+			"title",
+			"Applies in Contoso",
+		);
 	});
 
 	it("creates an identity and opens its page", async () => {
