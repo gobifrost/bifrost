@@ -14,7 +14,9 @@ describe("AccessLevelSelect", () => {
 			/>,
 		);
 
-		await user.click(screen.getByRole("combobox", { name: "Access level" }));
+		await user.click(
+			screen.getByRole("combobox", { name: "Access level" }),
+		);
 		await user.click(screen.getByRole("option", { name: /Role-based/ }));
 
 		expect(handleChange).toHaveBeenCalledWith("role_based");
@@ -34,7 +36,9 @@ describe("AccessLevelSelect", () => {
 		expect(
 			screen.getByRole("combobox", { name: "Access level" }),
 		).toHaveTextContent("No change");
-		await user.click(screen.getByRole("combobox", { name: "Access level" }));
+		await user.click(
+			screen.getByRole("combobox", { name: "Access level" }),
+		);
 		await user.click(screen.getByRole("option", { name: /No change/ }));
 
 		expect(handleChange).toHaveBeenCalledWith("__keep__");

@@ -46,11 +46,16 @@ const contoso: Place = {
 };
 
 describe("PermissionChip", () => {
-	it("draws a per-organization grant as a plain chip", () => {
+	it("draws a per-organization grant as a plain chip in the power colours", () => {
 		render(<PermissionChip grant={grant} catalogEntry={entry} />);
 
 		const chip = screen.getByRole("button", { name: /Tables/ });
 		expect(chip).toHaveAttribute("data-variant", "per_organization");
+		expect(chip).toHaveClass(
+			"bg-[var(--bf-power-soft)]",
+			"text-[var(--bf-power)]",
+		);
+		expect(chip).not.toHaveClass("bg-secondary");
 		expect(chip).not.toHaveClass(
 			"before:bg-[image:var(--bf-bridge-vertical)]",
 		);
@@ -78,7 +83,11 @@ describe("PermissionChip", () => {
 		const chip = screen.getByRole("button", { name: /Organizations/ });
 		expect(chip).toHaveAttribute("data-variant", "platform_wide");
 		expect(chip).toHaveClass("before:bg-[image:var(--bf-bridge-vertical)]");
-		expect(screen.getByText("Platform-Wide")).toBeInTheDocument();
+		// The tag sits apart from the name, so the name still reads "Read Organizations".
+		expect(screen.getByText("Read Organizations")).toBeInTheDocument();
+		expect(
+			screen.getByText("Platform-Wide").closest("[data-tag]"),
+		).toHaveClass("border-l");
 	});
 
 	it("draws a varying grant solid with a dashed edge and says why in the tooltip", async () => {

@@ -27,7 +27,11 @@ describe("GrantChip", () => {
 
 		const chip = screen.getByText("Read and Write Tables").parentElement!;
 		expect(chip).toHaveAttribute("data-variant", "per_organization");
-		expect(chip).toHaveClass("bg-[var(--bf-power-soft)]");
+		expect(chip).toHaveClass(
+			"bg-[var(--bf-power-soft)]",
+			"text-[var(--bf-power)]",
+		);
+		expect(chip).not.toHaveClass("bg-secondary");
 	});
 
 	it("uses the warning tone for a privileged permission", () => {
@@ -54,7 +58,9 @@ describe("GrantChip", () => {
 		expect(screen.getByText("Read Tables").parentElement).toHaveClass(
 			"before:bg-[image:var(--bf-bridge-vertical)]",
 		);
-		expect(screen.getByText("Platform-Wide")).toBeInTheDocument();
+		expect(
+			screen.getByText("Platform-Wide").closest("[data-tag]"),
+		).toHaveClass("border-l");
 	});
 
 	it("shows Platform Admin's wildcard as All Permissions, privileged", () => {

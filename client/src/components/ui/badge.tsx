@@ -22,6 +22,8 @@ const badgeVariants = cva(
 				// Bifrost extension: soft warning badge drawn from the warning tokens
 				warning:
 					"bg-[var(--bf-warning-soft)] text-[var(--bf-warning)] [a]:hover:bg-[color-mix(in_srgb,var(--bf-warning)_18%,var(--bf-warning-soft))]",
+				// Bifrost extension: what a person or role can do (permissions)
+				power: "bg-[var(--bf-power-soft)] text-[var(--bf-power)] [a]:hover:bg-[color-mix(in_srgb,var(--bf-power)_18%,var(--bf-power-soft))]",
 			},
 		},
 		defaultVariants: {

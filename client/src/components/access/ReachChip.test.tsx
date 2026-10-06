@@ -40,4 +40,17 @@ describe("ReachChip", () => {
 		expect(chip).toHaveAttribute("data-place", place.kind);
 		expect(chip).toHaveClass("text-[var(--bf-reach)]");
 	});
+
+	it("keeps a long place on one line", () => {
+		render(<ReachChip place={places[2]} />);
+
+		const chip = screen
+			.getByText("All Customer Organizations")
+			.closest("[data-slot=badge]");
+		expect(chip).toHaveClass("whitespace-nowrap", "max-w-full");
+		expect(chip).not.toHaveClass("whitespace-normal");
+		expect(screen.getByText("All Customer Organizations")).toHaveClass(
+			"truncate",
+		);
+	});
 });

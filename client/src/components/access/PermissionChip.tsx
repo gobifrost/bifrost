@@ -1,3 +1,5 @@
+import { Globe } from "lucide-react";
+
 import { Badge } from "@/components/ui/badge";
 import {
 	Tooltip,
@@ -26,6 +28,19 @@ const VARIES_EDGE =
 
 const VARIES_NOTE =
 	"Some operations in this area are platform-wide and apply only through a Global placement.";
+
+/** "Platform-Wide", set apart from the permission's name by a divider and a globe. */
+export function PlatformWideTag() {
+	return (
+		<span
+			data-tag="platform-wide"
+			className="inline-flex items-center gap-1 border-l border-current/30 pl-1.5 font-normal"
+		>
+			<Globe aria-hidden="true" className="size-3 shrink-0" />
+			Platform-Wide
+		</span>
+	);
+}
 
 function chipVariant(
 	grant: ChipGrant,
@@ -80,15 +95,13 @@ export function PermissionChip({
 			<TooltipTrigger asChild>
 				<Badge
 					asChild
-					variant={variant === "privileged" ? "warning" : "secondary"}
+					variant={variant === "privileged" ? "warning" : "power"}
 				>
 					<button
 						type="button"
 						data-variant={variant}
 						className={cn(
 							"h-auto min-h-5 cursor-default whitespace-normal",
-							variant !== "privileged" &&
-								"bg-[var(--bf-power-soft)] text-[var(--bf-power)]",
 							platformWide && BRIDGE_EDGE,
 							varies && VARIES_EDGE,
 						)}
@@ -99,11 +112,7 @@ export function PermissionChip({
 								catalogEntry,
 							)}
 						</span>
-						{platformWide && (
-							<span className="text-xs font-semibold">
-								Platform-Wide
-							</span>
-						)}
+						{platformWide && <PlatformWideTag />}
 					</button>
 				</Badge>
 			</TooltipTrigger>

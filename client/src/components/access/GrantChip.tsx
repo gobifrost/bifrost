@@ -3,7 +3,7 @@ import { permissionDisplayName, WILDCARD } from "@/lib/permission-words";
 import { cn } from "@/lib/utils";
 import type { PermissionCatalogEntry } from "@/services/access";
 
-import { BRIDGE_EDGE } from "./PermissionChip";
+import { BRIDGE_EDGE, PlatformWideTag } from "./PermissionChip";
 
 /**
  * One permission a role grants, in the access map's power colours: the warning
@@ -31,19 +31,15 @@ export function GrantChip({
 	const platformWide = entry?.scope === "platform_wide";
 	return (
 		<Badge
-			variant={privileged ? "warning" : "secondary"}
+			variant={privileged ? "warning" : "power"}
 			data-variant={privileged ? "privileged" : entry?.scope}
 			className={cn(
 				"h-auto min-h-6 whitespace-normal",
-				!privileged &&
-					"bg-[var(--bf-power-soft)] text-[var(--bf-power)]",
 				platformWide && BRIDGE_EDGE,
 			)}
 		>
 			<span>{name}</span>
-			{platformWide && (
-				<span className="text-xs font-semibold">Platform-Wide</span>
-			)}
+			{platformWide && <PlatformWideTag />}
 		</Badge>
 	);
 }

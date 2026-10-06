@@ -14,4 +14,15 @@ describe("Badge", () => {
 		);
 		expect(badge.className).not.toContain("amber");
 	});
+
+	it("draws the power variant, for permissions, from the power tokens", () => {
+		render(<Badge variant="power">Read Users</Badge>);
+
+		const badge = screen.getByText("Read Users");
+		expect(badge).toHaveClass(
+			"bg-[var(--bf-power-soft)]",
+			"text-[var(--bf-power)]",
+		);
+		expect(badge).not.toHaveClass("bg-secondary");
+	});
 });
