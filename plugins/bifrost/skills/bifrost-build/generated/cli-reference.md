@@ -3148,9 +3148,8 @@ Usage: users roles set [OPTIONS] USER
 
   Replace USER's additional roles, and optionally their base role.
 
-  The additional roles you list replace the current ones. To change only the
-  base role, pass --base and the --role options for every additional role to
-  keep.
+  The --role options replace the additional roles; --no-roles removes them
+  all. With only --base, the additional roles stay as they are.
 
   Examples:
 

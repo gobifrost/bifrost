@@ -149,6 +149,12 @@ def _print_role_assignments(assignments: dict[str, Any]) -> None:
         click.echo(f"{role['name']}  {places}")
 
 
+def _boundary_input(boundary: dict[str, Any]) -> dict[str, Any]:
+    if boundary["kind"] == "organization":
+        return {"kind": "organization", "organization_id": boundary["organization_id"]}
+    return {"kind": boundary["kind"]}
+
+
 def _boundary_label(boundary: dict[str, Any]) -> str:
     if boundary["kind"] == "organization":
         return boundary["organization_name"]
@@ -231,8 +237,8 @@ async def set_roles(
 ) -> None:
     """Replace USER's additional roles, and optionally their base role.
 
-    The additional roles you list replace the current ones. To change only the base role, pass --base and
-    the --role options for every additional role to keep.
+    The --role options replace the additional roles; --no-roles removes them all. With only --base, the
+    additional roles stay as they are.
 
     Examples:
 
@@ -257,10 +263,18 @@ async def set_roles(
         additional.append(entry)
 
     url = f"/api/users/{user_id}/role-assignments"
-    if base_role_id is None:
+    keeps_roles = not (no_roles or role_specs)
+    if base_role_id is None or keeps_roles:
         current = await client.get(url)
         current.raise_for_status()
-        base_role_id = current.json()["base_role"]["id"]
+        assignments = current.json()
+        if base_role_id is None:
+            base_role_id = assignments["base_role"]["id"]
+        if keeps_roles:
+            additional = [
+                {"role_id": role["role_id"], "boundaries": [_boundary_input(b) for b in role["boundaries"]]}
+                for role in assignments["additional"]
+            ]
 
     response = await client.put(url, json={"base_role_id": base_role_id, "additional": additional})
     response.raise_for_status()

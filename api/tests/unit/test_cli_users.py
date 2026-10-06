@@ -332,13 +332,42 @@ class TestUsersRolesSet:
             ("PUT", self.URL, {"base_role_id": USER_ROLE_ID, "additional": [{"role_id": HELPDESK_ROLE_ID}]}),
         ]
 
-    def test_base_given_skips_reading_the_current_assignments(self, fake_client: _FakeClient) -> None:
+    def test_base_alone_keeps_the_additional_roles_with_their_boundaries(self, fake_client: _FakeClient) -> None:
+        result = _invoke(["roles", "set", USER_ID, "--base", "Helpdesk"])
+        assert result.exit_code == 0, result.output
+        assert fake_client.calls[-1] == (
+            "PUT",
+            self.URL,
+            {
+                "base_role_id": HELPDESK_ROLE_ID,
+                "additional": [
+                    {
+                        "role_id": HELPDESK_ROLE_ID,
+                        "boundaries": [
+                            {"kind": "organization", "organization_id": ORG_ID},
+                            {"kind": "organization", "organization_id": FABRIKAM_ID},
+                        ],
+                    },
+                    {
+                        "role_id": AUDITOR_ROLE_ID,
+                        "boundaries": [{"kind": "managed_organizations"}, {"kind": "platform"}],
+                    },
+                ],
+            },
+        )
+
+    def test_base_with_role_replaces_the_additional_roles_without_reading_them(self, fake_client: _FakeClient) -> None:
         _invoke(["roles", "set", USER_ID, "--base", "Helpdesk", "--role", "Auditor"])
         assert fake_client.calls[-1] == (
             "PUT",
             self.URL,
             {"base_role_id": HELPDESK_ROLE_ID, "additional": [{"role_id": AUDITOR_ROLE_ID}]},
         )
+        assert ("GET", self.URL, None) not in fake_client.calls
+
+    def test_base_with_no_roles_clears_without_reading_the_additional_roles(self, fake_client: _FakeClient) -> None:
+        _invoke(["roles", "set", USER_ID, "--base", "Helpdesk", "--no-roles"])
+        assert fake_client.calls[-1] == ("PUT", self.URL, {"base_role_id": HELPDESK_ROLE_ID, "additional": []})
         assert ("GET", self.URL, None) not in fake_client.calls
 
     def test_org_places_resolve_to_organization_boundaries(self, fake_client: _FakeClient) -> None:
