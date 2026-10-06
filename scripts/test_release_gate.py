@@ -26,7 +26,11 @@ class ReleaseGateTests(unittest.TestCase):
         )
         write_json(
             self.root / "inventory.json",
-            {"target_ref": SHA, "commits": [{"sha": SHA, "prs": [1]}]},
+            {
+                "target_ref": SHA,
+                "commits": [{"sha": SHA, "prs": [1]}],
+                "prs": [{"number": 1, "merge_commit": SHA}],
+            },
         )
         write_json(
             self.root / "dispositions.json",
@@ -51,6 +55,7 @@ class ReleaseGateTests(unittest.TestCase):
                     "security_review": {"status": "required"},
                     "action_required": True,
                     "sources": [{"pr": 1}],
+                    "eligibility": {"requires_prs": [1], "requires_commits": [SHA]},
                 }
             )
             + "\n---\nText\n"
@@ -92,6 +97,19 @@ class ReleaseGateTests(unittest.TestCase):
 
         self.assertIn(
             "pr:1: release disposition review must be approved", result.errors
+        )
+
+    def test_pending_group_cannot_suppress_required_notice(self) -> None:
+        path = self.root / "entries" / f"{ENTRY}.md"
+        path.write_text(
+            path.read_text().replace('"requires_prs": [1]', '"requires_prs": [1, 2]')
+        )
+        result = release_gate.validate(self.root, SHA)
+        self.assertTrue(
+            any("canonical security-reviewed entry" in error for error in result.errors)
+        )
+        self.assertTrue(
+            any("canonical action-required entry" in error for error in result.errors)
         )
 
     def test_security_or_action_required_source_cannot_be_hidden_as_other(self) -> None:

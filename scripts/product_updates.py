@@ -249,6 +249,7 @@ def validate_entry(
     commits: set[str],
     allow_draft: bool,
     commit_prs: dict[str, set[int]] | None = None,
+    allow_pending_sources: bool = False,
 ) -> list[str]:
     label = entry.get("_path", "entry")
     errors: list[str] = []
@@ -320,18 +321,24 @@ def validate_entry(
                 f"{label}: source must reference a cached PR or direct commit"
             )
             continue
-        if source.get("pr") is not None and source["pr"] not in prs:
+        if (
+            source.get("pr") is not None
+            and source["pr"] not in prs
+            and not allow_pending_sources
+        ):
             errors.append(f"{label}: source PR must be in the cached range")
         elif source.get("pr") is not None:
             source_prs.add(source["pr"])
         commit = source.get("commit")
         if commit is not None and (
-            not isinstance(commit, str) or commit not in commits
+            not isinstance(commit, str)
+            or (commit not in commits and not allow_pending_sources)
         ):
             errors.append(f"{label}: source commit must be in the cached range")
         elif (
             commit is not None
-            and source.get("pr") is not None
+            and commit in commits
+            and source.get("pr") in prs
             and commit_prs is not None
             and source["pr"] not in commit_prs.get(commit, set())
         ):
@@ -349,10 +356,10 @@ def validate_entry(
         )
     else:
         for pr in eligibility["requires_prs"]:
-            if pr not in prs:
+            if pr not in prs and not allow_pending_sources:
                 errors.append(f"{label}: requires PR #{pr} not landed in cached target")
         for commit in eligibility["requires_commits"]:
-            if commit not in commits:
+            if commit not in commits and not allow_pending_sources:
                 errors.append(
                     f"{label}: requires commit {commit} not landed in cached target"
                 )
@@ -390,6 +397,8 @@ def validate_entry(
             errors.append(
                 f"{label}: contributor must have a source PR and https profile URL"
             )
+            continue
+        if contributor["source_pr"] not in prs:
             continue
         pr = prs[contributor["source_pr"]]
         allowed = {pr.get("author", {}).get("login")}
@@ -514,7 +523,15 @@ def validate_content(
             schema_errors(schema_path, "entry", schema_value, str(entry["_path"]))
         )
         errors.extend(
-            validate_entry(entry, content_dir, prs, commits, allow_draft, commit_prs)
+            validate_entry(
+                entry,
+                content_dir,
+                prs,
+                commits,
+                allow_draft,
+                commit_prs,
+                allow_pending_sources=True,
+            )
         )
         entry_id = entry.get("id")
         if entry_id in seen:
@@ -537,13 +554,17 @@ def _entry_eligible(
     entry: dict[str, Any], target: str, inventory: dict[str, Any]
 ) -> bool:
     eligibility = entry["eligibility"]
-    prs, _ = _metadata_indexes(inventory)
-    required_commits = list(eligibility.get("requires_commits", []))
-    required_commits.extend(
-        prs[pr]["merge_commit"]
-        for pr in eligibility.get("requires_prs", [])
-        if pr in prs
-    )
+    prs, commits = _metadata_indexes(inventory)
+    required_prs = set(eligibility.get("requires_prs", []))
+    required_commits = set(eligibility.get("requires_commits", []))
+    for source in entry.get("sources", []):
+        if source.get("pr") is not None:
+            required_prs.add(source["pr"])
+        if source.get("commit") is not None:
+            required_commits.add(source["commit"])
+    if not required_prs.issubset(prs) or not required_commits.issubset(commits):
+        return False
+    required_commits.update(prs[pr]["merge_commit"] for pr in required_prs)
     return all(_reachable(commit, target, inventory) for commit in required_commits)
 
 
@@ -644,6 +665,25 @@ def build_bundle(
             continue
         if not _entry_eligible(entry, target, inventory):
             continue
+        source_keys = {
+            f"{kind}:{source[kind]}"
+            for source in entry["sources"]
+            for kind in ("pr", "commit")
+            if source.get(kind) is not None
+            and (kind == "pr" or source.get("pr") is None)
+        }
+        if not staged and any(
+            dispositions["items"].get(key, {}).get("classification") != "highlight"
+            or entry["id"]
+            not in dispositions["items"].get(key, {}).get("entry_ids", [])
+            or (
+                not allow_draft
+                and dispositions["items"].get(key, {}).get("review", {}).get("status")
+                != "approved"
+            )
+            for key in source_keys
+        ):
+            continue
         source_commits = [
             source.get("commit") or prs.get(source.get("pr"), {}).get("merge_commit")
             for source in entry["sources"]
@@ -666,9 +706,20 @@ def build_bundle(
         ]
         entries.append(output)
     entries.sort(key=lambda entry: (entry["published_at"], entry["id"]), reverse=True)
+    represented = {
+        f"{kind}:{source[kind]}"
+        for entry in entries
+        for source in entry["sources"]
+        for kind in ("pr", "commit")
+        if source.get(kind) is not None
+    }
     other: list[dict[str, Any]] = []
     for key, item in dispositions.get("items", {}).items():
-        if not isinstance(item, dict) or item.get("classification") != "other":
+        if (
+            not isinstance(item, dict)
+            or item.get("classification") == "omit"
+            or key in represented
+        ):
             continue
         if item.get("review", {}).get("status") != "approved" and not allow_draft:
             continue

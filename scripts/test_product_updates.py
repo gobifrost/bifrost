@@ -244,7 +244,48 @@ class ProductUpdatesTests(unittest.TestCase):
             self.content, self.inventory, self.dispositions, TARGET
         )
 
-        self.assertTrue(any("requires PR #11" in error for error in errors))
+        self.assertEqual([], errors)
+        bundle = product_updates.build_bundle(
+            self.content, self.inventory, self.dispositions, TARGET, "/product-updates/"
+        )
+        self.assertEqual([], bundle["entries"])
+        self.assertEqual(
+            ["pr:10"], [item["source"] for item in bundle["other_changes"]]
+        )
+
+    def test_uncached_cited_source_is_withheld_even_without_declared_prerequisite(
+        self,
+    ) -> None:
+        data = self.entry_data()
+        data["sources"].append({"pr": 11})
+        self.write_entry(data)
+        bundle = product_updates.build_bundle(
+            self.content, self.inventory, self.dispositions, TARGET, "/product-updates/"
+        )
+        self.assertEqual([], bundle["entries"])
+        self.assertEqual(1, len(bundle["other_changes"]))
+
+    def test_canonical_other_disposition_prevents_duplicate_highlight(self) -> None:
+        data = self.disposition_data()
+        data["items"]["pr:10"].update(
+            classification="other", entry_ids=[], summary="Reviewed smaller change"
+        )
+        self._write_json(self.dispositions, data)
+        bundle = product_updates.build_bundle(
+            self.content, self.inventory, self.dispositions, TARGET, "/product-updates/"
+        )
+        self.assertEqual([], bundle["entries"])
+        self.assertEqual("Reviewed smaller change", bundle["other_changes"][0]["title"])
+
+    def test_draft_source_review_withholds_approved_entry(self) -> None:
+        data = self.disposition_data()
+        data["items"]["pr:10"]["review"]["status"] = "draft"
+        self._write_json(self.dispositions, data)
+        bundle = product_updates.build_bundle(
+            self.content, self.inventory, self.dispositions, TARGET, "/product-updates/"
+        )
+        self.assertEqual([], bundle["entries"])
+        self.assertEqual([], bundle["other_changes"])
 
     def test_rejects_unsafe_assets_and_unreviewed_security_updates(self) -> None:
         data = self.entry_data()

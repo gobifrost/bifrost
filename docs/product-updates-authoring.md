@@ -30,6 +30,15 @@ revision. A new capability or materially different corrective announcement
 gets a new UUID. One primary area and type are required; `highlight`, `other`,
 and `omit` are visibility decisions, not areas or types.
 
+A pending source does not prevent structural validation or a development build.
+The renderer withholds its highlight until every cited source and declared
+prerequisite is present in the verified metadata and reachable from the build.
+Refresh cached metadata after landing before publishing that highlight. Approved
+landed portions of a pending group appear as Other changes using their persisted
+summary (or cached PR title); omitted and unreviewed sources stay excluded.
+Security and action-required sources cannot use this smaller-change treatment
+for a release: their required canonical notice must be eligible.
+
 Security disclosures and action-required or breaking updates require explicit
 review evidence. Entry Markdown is reviewed prose, not generated at release
 time. Assets live beneath the entry's asset directory, have useful alt text,

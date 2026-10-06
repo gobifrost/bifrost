@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Require reviewed Product Updates material before rendering a release body.
 
-This deliberately has no network or git dependency.  The frozen inventory is
-the release range, normal ``entries/`` are the only publishable entries, and
+This has no network dependency; source eligibility uses the local Git graph.
+The frozen inventory is the release range, normal ``entries/`` are the only publishable entries, and
 ``release-review.json`` records the human security and breaking-change review.
 """
 
@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from scripts.product_updates import read_entry, schema_errors
+from scripts.product_updates import _entry_eligible, read_entry, schema_errors
 
 
 @dataclass(frozen=True)
@@ -188,7 +188,8 @@ def validate(content_dir: Path, target: str) -> GateResult:
                     f"{key}: canonical entry {entry_id} must cite this PR as a source"
                 )
                 continue
-            matched_entries.append(entry)
+            if _entry_eligible(entry, target, inventory):
+                matched_entries.append(entry)
 
         if disposition.get("security_review", {}).get(
             "status"

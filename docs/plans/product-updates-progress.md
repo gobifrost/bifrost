@@ -18,7 +18,7 @@ Latest published non-draft final release verified through `gh release list` on 2
 
 Authoritative schema/tool: `product-updates/schema.json`, `scripts/product_updates.py`. Verified metadata: `product-updates/inventory.json`; durable classifications: `product-updates/dispositions.json`; draft backfill: `product-updates/drafts/initial-backfill/entries/`. Required release review uses the same schema's `releaseReview` definition and `scripts/release_gate.py`.
 
-- Tooling: deterministic schema validation, cached-source coverage, Git ancestry eligibility, release interval filtering, schema-generated TypeScript/bundles, local assets, external credits, and PR/merge-group event validation are implemented. Metadata collection is an explicit preparation command; rendering has no GitHub or LLM dependency.
+- Tooling: deterministic schema validation, cached-source coverage, Git ancestry eligibility, release interval filtering, schema-generated TypeScript/bundles, local assets, external credits, and PR/merge-group event validation are implemented. Pending sources are structurally validated but withheld until cached metadata and ancestry verify every cited source and prerequisite. Reviewed landed portions remain Other changes; required security and upgrade notices block release until eligible. Metadata collection is an explicit preparation command; rendering has no GitHub or LLM dependency.
 - Backfill: all 124 PRs reconciled: 68 grouped into 16 highlights, 39 Other changes with plain-English summaries, and 17 Omit decisions with reasons. No unresolved authors or PR associations. The preview adds one staged Product Updates/Discord announcement, with no invented PR number. Content remains draft for Jack's review.
 - Client: development-only admin route, navigation and quiet shared unread cues; a replaceable local receipt adapter; state controls, safe screenshots, and persistent GitHub/Discord/Website brand links with a rainbow edge. Production build excludes the preview. No product API/database contract changed.
 - CI/release: a real always-triggered Product Updates workflow uses the trusted base validator/schema. Initial bootstrap fails visibly until the validator exists on main; no green stub or candidate-code fallback. The live ruleset rollout is prepared, not applied. Release publication consumes a prepared body, and its gate refuses unreviewed coverage, security/CVE or breaking-change material.
@@ -38,7 +38,7 @@ Focused verification passed:
 
 ```bash
 python3 -m unittest scripts.test_product_updates scripts.test_release_gate -q
-# 27 tests: 24 tooling contracts and 3 strict release-gate contracts.
+# 31 tests: 27 tooling contracts and 4 strict release-gate contracts.
 bash scripts/test_release_check.sh
 bash scripts/test_prepare_release_body.sh
 # Includes valid reviewed fixture generation and actual draft-corpus blocking.
@@ -67,6 +67,8 @@ docker exec -w /app bifrost-debug-3fc9b38f-client-1 npx tsc -b --pretty false
 Targeted ESLint passed for all changed client files and the preview config/spec/runner. Production build command: `docker exec -w /app bifrost-debug-3fc9b38f-client-1 npx vite build --outDir /tmp/product-updates-production-build`. A subsequent recursive grep for `What.s New|Product Updates, Now in Bifrost|product-updates.bundle` returned no matches (`PRODUCT_UPDATES_PREVIEW_ABSENT`). Full `docker exec -w /app bifrost-debug-3fc9b38f-client-1 npm run lint` passed with zero errors and four pre-existing hook warnings in unchanged AgentRunsPanel/ExecutionHistory files.
 
 `./test.sh quality repo` passed early, including Action version/SHA verification and skill mirrors. The final run passed the scoped tool/release/helper checks, then GitHub's API returned HTTP 403 while resolving existing Action tags. The same full-SHA pins had passed earlier and have not changed; the final offline pin-format and mirror checks passed. This is an external rate-limit disposition, not a green rerun of that failed command. Live GitHub PR/metadata-edit/merge-group readiness must still be verified before applying the required-check ruleset.
+
+Final draft render verification: all four saved bundles reproduce deterministically, with 16 highlights/39 Other changes in the full and candidate previews, 17/39 including the staged announcement, and 0/1 in the no-new-highlights range.
 
 Failures resolved during development: a staged announcement was incorrectly excluded by interval filtering (fixed with a regression test); a Markdown screenshot created invalid paragraph nesting (fixed and covered by its image-error component test); a duplicate Discord locator matched both announcement and footer links (scoped to the community navigation); static type checks exposed optional-value handling (fixed, now clean). One browser run hit `ERR_NETWORK_CHANGED` during a redundant full-page navigation while separate host-network Docker checks ran. The test now uses the product sidebar and Docker checks finish before the authenticated browser run. No retries, skips, or increased timeouts were added.
 
