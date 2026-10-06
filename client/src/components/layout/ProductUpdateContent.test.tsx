@@ -10,7 +10,7 @@ const entry: ProductUpdateEntry = {
 	revision: 1,
 	title: "Upgrade Notice",
 	published_at: "2026-10-06T12:00:00Z",
-	markdown: "![Roles](assets/one/roles.png)",
+	markdown: "[Open Users](/users)\n\n![Roles](assets/one/roles.png)",
 	area: "Administration",
 	type: "Security",
 	action_required: true,
@@ -32,10 +32,14 @@ describe("shared product update content", () => {
 			screen.getByRole("heading", { name: "Upgrade Notice" }),
 		).toBeVisible();
 		expect(screen.getByText("Security")).toBeVisible();
+		fireEvent.click(screen.getByText("Source Details"));
 		expect(screen.getByRole("link", { name: "PR #10" })).toHaveAttribute(
 			"href",
 			"https://github.com/gobifrost/bifrost/pull/10",
 		);
+		expect(
+			screen.getByRole("link", { name: "Open Users" }),
+		).toHaveAttribute("target", "_blank");
 		expect(screen.queryByText("Unread")).not.toBeInTheDocument();
 		fireEvent.error(screen.getByRole("img", { name: "Roles" }));
 		expect(screen.getByText("Screenshot unavailable: Roles")).toBeVisible();

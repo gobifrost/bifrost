@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -117,10 +117,14 @@ export function ProductUpdatesDialog({
 						variant="outline"
 						className="h-11 gap-2 px-4"
 					>
-						<Link to="/whats-new" onClick={() => setOpen(false)}>
+						<a
+							href="/whats-new"
+							target="_blank"
+							rel="noopener noreferrer"
+						>
 							View All Updates{" "}
 							<ArrowRight aria-hidden="true" className="size-4" />
-						</Link>
+						</a>
 					</Button>
 				</div>
 				<CommunityFooter />

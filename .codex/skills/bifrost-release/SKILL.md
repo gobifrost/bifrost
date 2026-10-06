@@ -1,6 +1,6 @@
 ---
 name: bifrost:release
-description: Build and release Bifrost. Use when pushing commits to main, cutting a versioned release, or deploying to K8s. Handles dev push (CI builds :dev image), pre-release (vX.Y.Z-rc.N tag → pre-release GitHub Release), and full release (version tag → GitHub Release + :latest).
+description: Prepare Bifrost release data, build, and release. Use when adding or aggregating release notes, pushing commits to main, cutting a versioned release, or deploying to K8s. Handles dev push (CI builds :dev image), pre-release (vX.Y.Z-rc.N tag → pre-release GitHub Release), and full release (version tag → GitHub Release + :latest).
 ---
 
 # Bifrost Release
@@ -17,7 +17,32 @@ Bifrost ships on a deliberate three-rung ladder. Know which audience each rung s
 
 The intent going forward (announce this in the first full release that introduces it): **full releases land roughly monthly; between them we cut `-rc.N` pre-releases that are intended to be safer but more frequent. `:dev` remains bleeding edge and will contain bugs the maintainer intends to find in his own production first.** When you draft notes for the release that introduces this cadence, include a short "Release cadence going forward" callout stating exactly that.
 
-## Step 1: Ask which workflow
+## Release Data and Publication
+
+Treat content preparation and publication as separate operations. If asked only to
+add or prepare release data, stop after a reviewable committed draft, coverage
+reconciliation, validation, and previews. That request does not authorize a tag,
+GitHub Release, deployment, Discord post, or publication approval.
+
+Write each noteworthy change once in `product-updates/` during its PR. Read
+`docs/product-updates-authoring.md` and apply its General Writing/Humanizer pass,
+short-note format, verified app links, and enforced word budgets. Before a formal
+release, aggregate the eligible approved entries since the previous final and
+freeze the complete body. Publishing consumes that prepared body without a new
+writing pass. Draft or staged entries never activate production announcements.
+
+The in-app trigger is unseen approved entry UUIDs in the running build, checked
+when an authenticated platform admin enters the shell. A displayed batch is
+acknowledged automatically. Reusing an entry UUID for editorial corrections or
+promotion from dev to stable does not reopen it. New noteworthy entries can
+appear in dev builds; a formal release aggregates them without re-announcing
+previously seen entries. Production receipt persistence remains the follow-on
+contract in `docs/plans/product-updates-production-contract.md`.
+
+## Step 1: Resolve the Requested Operation
+
+For release-data-only requests, use the preparation path above. Resolve a release
+rung only when publication is requested, using the conversation before asking.
 
 > "Which release rung?
 > - **dev push** — commits to main → CI builds `:dev` (every merge; you + community track bleeding edge)
@@ -171,7 +196,7 @@ scripts/update-plugin-version.sh "$VERSION"
 
 Same guard and trade-off as a full release — forgetting it fails the build, it doesn't ship stale.
 
-### 3. Tag and push
+### 3. Prepare Release Data
 
 Prepare and review the candidate body before the tag. It uses the same approved
 entries as a final release and adds candidate-specific test/known-issue material

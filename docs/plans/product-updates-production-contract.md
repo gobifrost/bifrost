@@ -33,3 +33,13 @@ A real API/database slice needs transaction tests for repeat/concurrent seed, ol
 ## Future Publication Consumer
 
 Approved publication events can feed Discord independently of software tags. Define a durable publication identity and destination-specific receipt so repeated delivery cannot repost the same revision. Consumer invocation and live posting remain separately authorized work. The preview never sends Discord messages and no private invite is bundled.
+
+## Announcement Trigger
+
+Check the running build's eligible approved UUIDs when an authenticated platform
+admin enters the shell. Open the modal when any are unseen by that admin; a
+successful render acknowledges that batch. Revisions and dev-to-stable promotion
+retain UUID receipts. A new capability needs a new UUID. Fetches, version changes,
+draft notes, and retained rows outside the running bundle do not trigger it.
+Release-data preparation does not publish or activate drafts. Publication and
+production build activation are separately authorized operations.

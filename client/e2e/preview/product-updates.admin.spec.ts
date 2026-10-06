@@ -20,7 +20,7 @@ test("admin sees new updates automatically and reopens history from Help", async
 	await expect(dialog).toBeVisible();
 	await expect(
 		dialog.getByRole("heading", {
-			name: "Product Updates, Now in Bifrost",
+			name: "Release Notes and Discord",
 		}),
 	).toBeVisible();
 	const community = dialog.getByRole("navigation", {
@@ -61,54 +61,62 @@ test("admin sees new updates automatically and reopens history from Help", async
 		animations: "disabled",
 		path: testInfo.outputPath("whats-new-modal-mobile.png"),
 	});
-	await dialog.getByRole("link", { name: "View All Updates" }).click();
-	await expect(page).toHaveURL(/\/whats-new$/);
-	await expect(page.getByRole("dialog")).toHaveCount(0);
 	await expect(
-		page.getByRole("heading", { name: "Product Updates, Now in Bifrost" }),
+		dialog.getByRole("link", { name: "Open Users", exact: true }),
+	).toHaveAttribute("target", "_blank");
+	const [history] = await Promise.all([
+		page.waitForEvent("popup"),
+		dialog.getByRole("link", { name: "View All Updates" }).click(),
+	]);
+
+	await expect(history).toHaveURL(/\/whats-new$/);
+	await history.setViewportSize({ width: 390, height: 844 });
+	await expect(history.getByRole("dialog")).toHaveCount(0);
+	await expect(
+		history.getByRole("heading", { name: "Release Notes and Discord" }),
 	).toBeVisible();
-	await expect(page.getByRole("tab")).toHaveCount(0);
-	await expect(page.getByRole("button", { name: /Mark.*Read/ })).toHaveCount(
-		0,
-	);
-	await page.screenshot({
+	await expect(history.getByRole("tab")).toHaveCount(0);
+	await expect(
+		history.getByRole("button", { name: /Mark.*Read/ }),
+	).toHaveCount(0);
+	await history.screenshot({
 		animations: "disabled",
 		path: testInfo.outputPath("whats-new-mobile.png"),
 	});
-	await page.getByRole("button", { name: "Help", exact: true }).click();
+	await history.getByRole("button", { name: "Help", exact: true }).click();
 	await expect(
-		page.getByRole("menuitem", { name: "Release Notes", exact: true }),
+		history.getByRole("menuitem", { name: "Release Notes", exact: true }),
 	).toBeVisible();
-	await page.screenshot({
+	await history.screenshot({
 		animations: "disabled",
 		path: testInfo.outputPath("whats-new-help-mobile.png"),
 	});
-	await page.keyboard.press("Escape");
-	await page.setViewportSize({ width: 1440, height: 1000 });
-	await page.getByRole("button", { name: "Help", exact: true }).click();
+	await history.keyboard.press("Escape");
+	await history.setViewportSize({ width: 1440, height: 1000 });
+	await history.getByRole("button", { name: "Help", exact: true }).click();
 	await expect(
-		page.getByRole("menuitem", { name: "Documentation", exact: true }),
+		history.getByRole("menuitem", { name: "Documentation", exact: true }),
 	).toBeVisible();
 	await expect(
-		page.getByRole("menuitem", { name: /Copy version/ }),
+		history.getByRole("menuitem", { name: /Copy version/ }),
 	).toBeVisible();
-	await page.screenshot({
+	await history.screenshot({
 		animations: "disabled",
 		path: testInfo.outputPath("whats-new-help-desktop.png"),
 	});
-	await page
+	await history
 		.getByRole("menuitem", { name: "Release Notes", exact: true })
 		.click();
 	await expect(
-		page.getByRole("heading", { name: "What's New", exact: true }),
+		history.getByRole("heading", { name: "What's New", exact: true }),
 	).toBeVisible();
-	await page.screenshot({
+	await history.screenshot({
 		animations: "disabled",
 		path: testInfo.outputPath("whats-new-desktop.png"),
 	});
-	await page.reload();
+	await history.reload();
 	await expect(
-		page.getByRole("heading", { name: "What's New", exact: true }),
+		history.getByRole("heading", { name: "What's New", exact: true }),
 	).toBeVisible();
-	await expect(page.getByRole("dialog")).toHaveCount(0);
+	await expect(history.getByRole("dialog")).toHaveCount(0);
 });

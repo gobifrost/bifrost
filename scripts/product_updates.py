@@ -369,6 +369,15 @@ def validate_entry(
             errors.append(f"{label}: staged entries cannot claim landed sources")
         if staged and entry.get("review", {}).get("status") != "draft":
             errors.append(f"{label}: staged entries must remain draft")
+    prose = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", entry["markdown"])
+    prose = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", prose)
+    word_limit = 100 if entry["action_required"] or entry["type"] == "Security" else 60
+    if len(prose.split()) > word_limit:
+        errors.append(
+            f"{label}: update prose exceeds {word_limit} words; shorten it or link to details"
+        )
+    if len(entry["title"].split()) > 10:
+        errors.append(f"{label}: update title exceeds 10 words")
     if unsafe_markdown(entry["markdown"]):
         errors.append(f"{label}: raw HTML or executable embeds are not allowed")
     assets = entry["assets"]
@@ -811,7 +820,12 @@ def render_release(bundle: dict[str, Any], asset_base_url: str) -> str:
             continue
         lines.extend([f"## {title}", ""])
         for entry in sections[title]:
-            markdown = entry["markdown"]
+            # Installation-relative app destinations have no universal GitHub URL.
+            markdown = re.sub(
+                r"(?<!!)\[([^\]]+)\]\((/[^)\s]+)\)",
+                r"**\1** (in Bifrost)",
+                entry["markdown"],
+            )
             inline_assets: set[str] = set()
             for asset in entry.get("assets", []):
                 marker = f"]({asset['path']})"

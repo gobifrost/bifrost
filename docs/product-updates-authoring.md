@@ -5,6 +5,24 @@ What's new entries and GitHub release summaries. The same entry prose is
 bundled for the admin experience and rendered into a release body; do not keep
 a second release-notes draft elsewhere.
 
+## Copy Standard
+
+Use General Writing with Humanizer for entry prose when those skills are available.
+Calibrate against Jack's example: “See a user's effective access.” Apply this
+standard regardless of skill availability: short concrete title, one or two
+sentences stating the change, and a useful app link or screenshot. Cut background,
+implementation inventories, promotional claims, repeated summaries, and generic
+“review this update” instructions. Put necessary upgrade actions in the note.
+
+Validation enforces at most 10 title words and 60 body words (100 for Security or
+Action Required). Image markup and URL targets do not consume the body budget.
+A word limit checks length, not quality: the human content review must also check
+this standard and retain copy-review evidence in the existing review record.
+
+Use verified installation-relative routes for app links. All links in the app
+notes open in a new tab. GitHub rendering keeps app-link labels as plain directions
+because each installation has its own URL; it never invents a deployment URL.
+
 ## Before and during a pull request
 
 Classify every landed change in `product-updates/dispositions.json` under its

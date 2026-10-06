@@ -116,3 +116,35 @@ Final revision screenshots: `product-updates-modal-desktop-review.png`, `product
 5. Verify real content-only, metadata-edit, mixed-source and multi-PR GitHub checks after bootstrap. Apply the reviewed ruleset delta only under separate authorization.
 6. Implement the documented production seed/admin API/read-receipt contracts separately. Preserve UUID receipts, approved revisions, bundled rollback content/assets and running-build eligibility; do not add polling or a bespoke background job.
 7. Verify invite Never/No Limit settings and Discord server safety in the separate setup chat. Publication delivery, tags and production deployment remain separately authorized work.
+
+## Short Notes and Release Preparation
+
+All 17 draft notes were rewritten with short titles, one or two sentences, verified app links and screenshots where available. UUIDs, evidence, eligibility and security/upgrade requirements remain; editorial revisions incremented to 2. The three affected saved release previews and app bundle were regenerated. Ordinary prose is capped at 60 words, security/action-required prose at 100, titles at 10. General Writing/Humanizer is the authoring pass; human review still checks clarity and accuracy. Source Details collapses attribution by default, while note links and View All Updates open a new tab. GitHub renders installation-relative links as named in-Bifrost directions.
+
+The release skill now explicitly covers preparing data independently from publishing: author once during the PR, review and aggregate approved entries since the previous final, freeze the body, then consume it at publication. The production trigger proposal checks unseen approved UUIDs in the running build at admin shell entry; editorial changes and dev-to-stable promotion retain receipts. Production persistence remains outside this DEV preview.
+
+Focused verification for this revision:
+
+```bash
+python3 -m unittest scripts.test_product_updates scripts.test_release_gate -q
+# 33 tests passed.
+bash scripts/test_prepare_release_body.sh
+bash scripts/test_release_check.sh
+# Both passed.
+docker run --rm -v "$PWD:/app" -w /app bifrost-test-api-dev:latest sh -c 'ruff check --no-cache scripts/product_updates.py scripts/test_product_updates.py && pyright scripts/product_updates.py scripts/test_product_updates.py'
+# Ruff passed; Pyright 0 errors.
+docker exec -w /app bifrost-debug-3fc9b38f-client-1 npm test -- src/components/layout/ProductUpdateContent.test.tsx src/components/layout/ProductUpdatesDialog.test.tsx src/pages/ProductUpdatesPreview.test.tsx
+# 3 files / 12 tests passed.
+docker exec -w /app bifrost-debug-3fc9b38f-client-1 npx tsc -b --pretty false
+# Passed.
+docker exec -w /app bifrost-debug-3fc9b38f-client-1 npx eslint src/components/layout/ProductUpdateContent.tsx src/components/layout/ProductUpdateContent.test.tsx src/components/layout/ProductUpdatesDialog.tsx src/pages/ProductUpdatesPreview.test.tsx
+docker run --rm -v "$PWD/client:/app" -v /app/node_modules -w /app bifrost-test-playwright:latest npx eslint e2e/preview/product-updates.admin.spec.ts
+# Scoped source/tests and actual worktree browser spec lint passed.
+./test.sh client preview
+# Passed in 9.9 seconds: real login, automatic acknowledgment, new-tab history,
+# Help, reload, desktop/mobile captures and modal viewport bounds.
+docker exec -w /app bifrost-debug-3fc9b38f-client-1 npx vite build --outDir /tmp/product-updates-production-build --emptyOutDir
+# Passed; grep confirmed preview announcement, dialog and receipt key absent.
+```
+
+Failure dispositions: a content edit briefly omitted a closing JSX block; the compiler caught it and it was restored before final tests. After changing View All Updates to open a new tab, one browser selector still targeted the original page; it now targets the history tab. That tab also gets an explicit mobile viewport because new tabs inherit the context viewport, not the opener's per-page override. Final screenshots reflect that correction. Ruff's first container run could not write the host cache as the container user; using `--no-cache` avoids that filesystem boundary without changing rule enforcement. No retries, skips or timeout increases were introduced. Full backend, full frontend suites and live publication were not run.

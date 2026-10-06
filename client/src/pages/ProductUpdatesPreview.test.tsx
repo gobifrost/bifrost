@@ -153,6 +153,7 @@ describe("ProductUpdatesPreview", () => {
 		renderWithProviders(<ProductUpdatesPreview adapter={previewAdapter} />);
 
 		const image = await screen.findByRole("img", { name: "Roles page" });
+		fireEvent.click(screen.getByText("Source Details"));
 		expect(screen.getByRole("link", { name: "abcdef0" })).toHaveAttribute(
 			"href",
 			"https://github.com/gobifrost/bifrost/commit/abcdef0123456789",

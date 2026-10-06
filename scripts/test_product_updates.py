@@ -287,6 +287,26 @@ class ProductUpdatesTests(unittest.TestCase):
         self.assertEqual([], bundle["entries"])
         self.assertEqual([], bundle["other_changes"])
 
+    def test_rejects_verbose_notes(self) -> None:
+        self.write_entry(body="word " * 61)
+        errors = product_updates.validate_content(
+            self.content, self.inventory, self.dispositions, TARGET
+        )
+        self.assertTrue(any("exceeds 60 words" in error for error in errors))
+
+    def test_release_uses_app_link_labels_without_inventing_a_deployment_url(
+        self,
+    ) -> None:
+        self.write_entry(body="See effective access. [Open Users](/users)")
+        bundle = product_updates.build_bundle(
+            self.content, self.inventory, self.dispositions, TARGET, "/product-updates/"
+        )
+        rendered = product_updates.render_release(
+            bundle, f"https://raw.githubusercontent.com/gobifrost/bifrost/{TARGET}/"
+        )
+        self.assertIn("**Open Users** (in Bifrost)", rendered)
+        self.assertNotIn("](/users)", rendered)
+
     def test_rejects_unsafe_assets_and_unreviewed_security_updates(self) -> None:
         data = self.entry_data()
         data["assets"][0]["path"] = "../escape.svg"

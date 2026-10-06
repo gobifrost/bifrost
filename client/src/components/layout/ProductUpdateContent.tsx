@@ -1,10 +1,9 @@
 import { useState, type ReactNode } from "react";
-import { AlertCircle, ExternalLink, ImageOff } from "lucide-react";
+import { ExternalLink, ImageOff } from "lucide-react";
 import { MarkdownContent } from "@/components/common/MarkdownContent";
 import { Logo } from "@/components/branding/Logo";
 import { DiscordIcon } from "@/components/icons/DiscordIcon";
 import { Github } from "@/components/icons/GithubIcon";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import type {
 	ProductUpdateAsset,
@@ -39,19 +38,21 @@ export function UpdateEntry({
 					)}
 				</div>
 			</div>
-			{entry.action_required && (
-				<Alert className="mt-4 border-[var(--bf-warning)]/40">
-					<AlertCircle aria-hidden="true" />
-					<AlertTitle>Action Required</AlertTitle>
-					<AlertDescription>
-						Review this update before continuing with affected work.
-					</AlertDescription>
-				</Alert>
-			)}
+
 			<MarkdownContent
 				content={entry.markdown}
 				className="mt-4 max-w-[75ch]"
 				components={{
+					a: ({ href, children }) => (
+						<a
+							href={href}
+							target="_blank"
+							rel="noopener noreferrer"
+							className="text-primary underline underline-offset-2"
+						>
+							{children}
+						</a>
+					),
 					img: ({ src, alt }) => {
 						const asset = entry.assets.find(
 							(candidate) =>
@@ -68,58 +69,63 @@ export function UpdateEntry({
 					},
 				}}
 			/>
-			{entry.sources.length > 0 && (
-				<div className="mt-5 flex flex-wrap gap-x-4 gap-y-2 border-t pt-4 text-sm">
-					<span className="font-medium">Sources</span>
-					{entry.sources.map((source) => {
-						const hasPullRequest = source.pr != null;
-						const label = hasPullRequest
-							? `PR #${source.pr}`
-							: source.commit?.slice(0, 7);
-						const href = hasPullRequest
-							? `https://github.com/gobifrost/bifrost/pull/${source.pr}`
-							: source.commit
-								? `https://github.com/gobifrost/bifrost/commit/${source.commit}`
-								: undefined;
-						if (!label || !href) return null;
-						return (
-							<a
-								key={source.pr ?? source.commit}
-								className="inline-flex items-center gap-1 text-primary underline underline-offset-2"
-								href={href}
-								target="_blank"
-								rel="noreferrer"
-							>
-								{label}
-								<ExternalLink
-									aria-hidden="true"
-									className="size-3"
-								/>
-							</a>
-						);
-					})}
-				</div>
-			)}
-			{entry.contributors.length > 0 && (
-				<p className="mt-3 text-sm text-muted-foreground">
-					Credits:{" "}
-					{entry.contributors.map((contributor, index) => (
-						<span
-							key={`${contributor.login}-${contributor.source_pr}-${contributor.role ?? ""}`}
-						>
-							{index > 0 && ", "}
-							<a
-								className="text-primary underline underline-offset-2"
-								href={contributor.profile_url}
-								target="_blank"
-								rel="noreferrer"
-							>
-								{contributor.login}
-							</a>{" "}
-							(PR #{contributor.source_pr})
-						</span>
-					))}
-				</p>
+			{(entry.sources.length > 0 || entry.contributors.length > 0) && (
+				<details className="mt-4 text-sm text-muted-foreground">
+					<summary className="cursor-pointer">Source Details</summary>
+					{entry.sources.length > 0 && (
+						<div className="mt-5 flex flex-wrap gap-x-4 gap-y-2 border-t pt-4 text-sm">
+							<span className="font-medium">Sources</span>
+							{entry.sources.map((source) => {
+								const hasPullRequest = source.pr != null;
+								const label = hasPullRequest
+									? `PR #${source.pr}`
+									: source.commit?.slice(0, 7);
+								const href = hasPullRequest
+									? `https://github.com/gobifrost/bifrost/pull/${source.pr}`
+									: source.commit
+										? `https://github.com/gobifrost/bifrost/commit/${source.commit}`
+										: undefined;
+								if (!label || !href) return null;
+								return (
+									<a
+										key={source.pr ?? source.commit}
+										className="inline-flex items-center gap-1 text-primary underline underline-offset-2"
+										href={href}
+										target="_blank"
+										rel="noreferrer"
+									>
+										{label}
+										<ExternalLink
+											aria-hidden="true"
+											className="size-3"
+										/>
+									</a>
+								);
+							})}
+						</div>
+					)}
+					{entry.contributors.length > 0 && (
+						<p className="mt-3 text-sm text-muted-foreground">
+							Credits:{" "}
+							{entry.contributors.map((contributor, index) => (
+								<span
+									key={`${contributor.login}-${contributor.source_pr}-${contributor.role ?? ""}`}
+								>
+									{index > 0 && ", "}
+									<a
+										className="text-primary underline underline-offset-2"
+										href={contributor.profile_url}
+										target="_blank"
+										rel="noreferrer"
+									>
+										{contributor.login}
+									</a>{" "}
+									(PR #{contributor.source_pr})
+								</span>
+							))}
+						</p>
+					)}{" "}
+				</details>
 			)}
 		</article>
 	);
