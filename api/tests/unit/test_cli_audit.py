@@ -190,6 +190,42 @@ class TestAuditList:
             ["3", "-", "2026-10-04T09:00:00+00:00"],
         ]
 
+    def test_workflow_and_organization_groups_are_named(self, fake_client: _FakeClient) -> None:
+        workflow_id, deleted_id, contoso_id = str(uuid4()), str(uuid4()), str(uuid4())
+        fake_client.respond(
+            "/api/audit",
+            {
+                "entries": [],
+                "groups": [
+                    {
+                        "key": workflow_id,
+                        "count": 6,
+                        "last_seen": "2026-10-05T10:00:00+00:00",
+                        "sample": _entry(workflow_name="Fleet Invoice Report"),
+                    },
+                    {"key": None, "count": 2, "last_seen": "2026-10-04T09:00:00+00:00", "sample": _entry(workflow_name=None)},
+                    {"key": deleted_id, "count": 1, "last_seen": "2026-10-03T09:00:00+00:00", "sample": _entry(workflow_name=None)},
+                ],
+                "continuation_token": None,
+            },
+        )
+        lines = _invoke(["list", "--group-by", "workflow"]).output.splitlines()
+        assert [line.split("  ")[1].strip() for line in lines] == ["Fleet Invoice Report", "No Workflow", deleted_id]
+
+        fake_client.respond(
+            "/api/audit",
+            {
+                "entries": [],
+                "groups": [
+                    {"key": contoso_id, "count": 4, "last_seen": "2026-10-05T10:00:00+00:00", "sample": _entry()},
+                    {"key": None, "count": 1, "last_seen": "2026-10-04T09:00:00+00:00", "sample": _entry()},
+                ],
+                "continuation_token": None,
+            },
+        )
+        lines = _invoke(["list", "--group-by", "organization"]).output.splitlines()
+        assert [line.split("  ")[1].strip() for line in lines] == ["Contoso", "Global"]
+
     def test_says_so_when_there_are_no_entries(self, fake_client: _FakeClient) -> None:
         fake_client.respond("/api/audit", {"entries": [], "groups": None, "continuation_token": None})
         assert _invoke(["list"]).output.strip() == "No entries."

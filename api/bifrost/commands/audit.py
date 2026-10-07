@@ -40,9 +40,19 @@ def _columns(rows: list[list[str]], separator: str) -> list[str]:
     ]
 
 
-def _print_list(response: dict[str, Any]) -> None:
-    if response["groups"] is not None:
-        rows = [[str(g["count"]), g["key"] or "-", g["last_seen"]] for g in response["groups"]]
+def _group_label(group_by: str, group: dict[str, Any]) -> str:
+    """A workflow or organization group by name; anything else by its key."""
+    if group_by == "workflow":
+        # A workflow deleted since keeps its id.
+        return "No Workflow" if group["key"] is None else group["sample"]["workflow_name"] or group["key"]
+    if group_by == "organization":
+        return "Global" if group["key"] is None else group["sample"]["actor"]["organization_name"]
+    return group["key"] or "-"
+
+
+def _print_list(response: dict[str, Any], group_by: str | None) -> None:
+    if group_by is not None:
+        rows = [[str(g["count"]), _group_label(group_by, g), g["last_seen"]] for g in response["groups"]]
     else:
         rows = [
             [
@@ -58,7 +68,7 @@ def _print_list(response: dict[str, Any]) -> None:
     if rows:
         click.echo("\n".join(_columns(rows, "  ")))
     else:
-        click.echo("No groups." if response["groups"] is not None else "No entries.")
+        click.echo("No groups." if group_by is not None else "No entries.")
 
 
 @audit_group.command("list")
@@ -128,7 +138,7 @@ async def list_audit(
 
     response = await client.get("/api/audit", params=params)
     response.raise_for_status()
-    output_result(response.json(), ctx=ctx, human=_print_list)
+    output_result(response.json(), ctx=ctx, human=lambda r: _print_list(r, group_by))
 
 
 def _cell(step: dict[str, Any]) -> str:
