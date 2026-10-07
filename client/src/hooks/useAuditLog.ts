@@ -6,27 +6,13 @@ export type AuditLogEntry = components["schemas"]["AuditLogEntry"];
 export type AuditLogListResponse =
 	components["schemas"]["AuditLogListResponse"];
 export type AuditLogGroup = components["schemas"]["AuditLogGroup"];
-export type AuditGroupBy = NonNullable<
-	NonNullable<
-		NonNullable<
-			paths["/api/audit"]["get"]["parameters"]["query"]
-		>["group_by"]
-	>
+type AuditLogQuery = NonNullable<
+	paths["/api/audit"]["get"]["parameters"]["query"]
 >;
+export type AuditGroupBy = NonNullable<AuditLogQuery["group_by"]>;
 
-export interface GetAuditLogParams {
-	action?: string;
-	resource_type?: string;
-	outcome?: string;
-	user_id?: string;
-	workflow_id?: string;
-	organization_id?: string;
-	start_date?: string;
-	end_date?: string;
-	search?: string;
-	limit?: number;
-	continuation_token?: string;
-}
+/** The audit list's query parameters, as the API declares them. */
+export type GetAuditLogParams = Omit<AuditLogQuery, "group_by">;
 
 export function useAuditLog(
 	params: GetAuditLogParams = {},
@@ -38,7 +24,7 @@ export function useAuditLog(
 		"/api/audit",
 		{
 			params: {
-				query: params as Record<string, string | number | undefined>,
+				query: params,
 			},
 		},
 		{
