@@ -64,11 +64,12 @@ test.describe("Test Access", () => {
 		await expect(
 			sheet.getByRole("combobox", { name: "Organization" }),
 		).toHaveText(ORG_NAME);
-		await sheet.getByRole("combobox", { name: "Operation" }).fill("Read");
-		await sheet
-			.getByRole("option")
-			.filter({ hasText: "agents.list" })
-			.click();
+		await sheet.getByRole("combobox", { name: "Operation" }).click();
+		await page.getByPlaceholder("Search operations").fill("agents.list");
+		await page.getByRole("option", { name: /^Read Agents/ }).click();
+		await expect(
+			sheet.getByRole("combobox", { name: "Operation" }),
+		).toContainText("Read Agents");
 		await sheet.getByRole("button", { name: "Test Access" }).click();
 
 		const trace = sheet.getByRole("list", { name: "Access Trace" });

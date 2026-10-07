@@ -5,17 +5,10 @@ import { AccessTraceStrip } from "@/components/access/AccessTraceStrip";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
-import {
-	Command,
-	CommandGroup,
-	CommandInput,
-	CommandItem,
-	CommandList,
-} from "@/components/ui/command";
 import { Label } from "@/components/ui/label";
 import { useTraceNames } from "@/hooks/useTraceNames";
 import { useWorkflowsMetadata } from "@/hooks/useWorkflows";
-import { OPERATION_SUGGESTIONS, operationFor } from "@/lib/access-operations";
+import { OPERATION_SUGGESTIONS } from "@/lib/access-operations";
 import { getErrorMessage } from "@/lib/api-error";
 import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
 import { useCheckUserAccess, type AccessTrace } from "@/services/access";
@@ -26,66 +19,6 @@ const GLOBAL_CHOICE = "global";
 const NO_WORKFLOW = "none";
 /** What the caller needs where they test (the access check's own gate). */
 const TEST_PERMISSION = "roleassignments.read";
-
-function OperationInput({
-	value,
-	onChange,
-}: {
-	value: string;
-	onChange: (text: string) => void;
-}) {
-	const [suggesting, setSuggesting] = useState(false);
-	return (
-		// cmdk labels its input itself, so the field's name comes from `label`.
-		<Command
-			label="Operation"
-			className="relative overflow-visible bg-transparent p-0 [&_[data-slot=command-input-wrapper]]:p-0"
-		>
-			<CommandInput
-				aria-describedby="test-access-operation-help"
-				placeholder="Read Tables, agents.list or GET /api/users"
-				value={value}
-				onValueChange={(next) => {
-					onChange(next);
-					setSuggesting(true);
-				}}
-				onFocus={() => setSuggesting(true)}
-				onBlur={() => setSuggesting(false)}
-			/>
-			{suggesting && (
-				<CommandList
-					aria-label="Common Operations"
-					className="absolute inset-x-0 top-full z-10 mt-1 max-h-60 rounded-[var(--bf-radius-control)] border bg-popover shadow-lg [&:not(:has([cmdk-item]))]:hidden"
-					// Keep focus in the input so choosing doesn't blur the list away first.
-					onMouseDown={(event) => event.preventDefault()}
-				>
-					<CommandGroup>
-						{OPERATION_SUGGESTIONS.map((suggestion) => (
-							<CommandItem
-								key={suggestion.operation}
-								value={suggestion.operation}
-								keywords={[suggestion.label]}
-								className="min-h-11 flex-col items-start gap-0"
-								onSelect={() => {
-									// Shown by name; operationFor reads it back as the operation.
-									onChange(suggestion.label);
-									setSuggesting(false);
-								}}
-							>
-								<span className="font-medium">
-									{suggestion.label}
-								</span>
-								<span className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
-									{suggestion.operation}
-								</span>
-							</CommandItem>
-						))}
-					</CommandGroup>
-				</CommandList>
-			)}
-		</Command>
-	);
-}
 
 /**
  * Test what the managed-identity model would decide for a user or identity
@@ -134,6 +67,13 @@ export function TestAccessPanel({
 			.sort(([, a], [, b]) => a.localeCompare(b))
 			.map(([id, name]) => ({ value: id, label: name, icon: Building2 })),
 	];
+	const operationChoices: ComboboxOption[] = OPERATION_SUGGESTIONS.map(
+		({ label, operation }) => ({
+			value: operation,
+			label,
+			description: operation,
+		}),
+	);
 	const workflowChoices: ComboboxOption[] = [
 		{
 			value: NO_WORKFLOW,
@@ -156,7 +96,7 @@ export function TestAccessPanel({
 			setError(null);
 		};
 	const workflowId = workflow !== NO_WORKFLOW ? workflow : null;
-	const ready = organization !== "" && operation.trim() !== "";
+	const ready = organization !== "" && operation !== "";
 
 	const handleSubmit = async (event: React.FormEvent) => {
 		event.preventDefault();
@@ -168,7 +108,7 @@ export function TestAccessPanel({
 				params: { path: { user_id: subjectId } },
 				body: {
 					organization_id: organization,
-					operation: operationFor(operation),
+					operation,
 					workflow_id: workflowId,
 				},
 			});
@@ -200,19 +140,29 @@ export function TestAccessPanel({
 					/>
 				</div>
 				<div className="space-y-2">
-					<Label asChild>
-						<span aria-hidden="true">Operation</span>
-					</Label>
-					<OperationInput
+					<Label htmlFor="test-access-operation">Operation</Label>
+					<Combobox
+						id="test-access-operation"
+						aria-label="Operation"
+						aria-describedby="test-access-operation-help"
+						options={operationChoices}
 						value={operation}
-						onChange={changed(setOperation)}
+						onValueChange={changed(setOperation)}
+						placeholder="Choose an operation"
+						searchPlaceholder="Search operations"
+						emptyText="No operation found."
+						showSelectedDescription
+						descriptionClassName="font-mono"
 					/>
 					<p
 						id="test-access-operation-help"
 						className="text-xs text-muted-foreground"
 					>
-						Choose a common operation, or type any access-list
-						operation: a catalog id or METHOD /api/path.
+						To test any other access-list operation, use{" "}
+						<code className="font-mono">
+							bifrost users access check
+						</code>
+						.
 					</p>
 				</div>
 				<div className="space-y-2">

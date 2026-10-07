@@ -1,7 +1,7 @@
 /**
  * Common operations to test access with, named the way people ask ("Read
  * Tables") and keyed the way the access list names them: a catalog id or
- * "METHOD /api/path". Any other access-list key can still be typed.
+ * "METHOD /api/path". The CLI tests any other access-list key.
  */
 export interface OperationSuggestion {
 	label: string;
@@ -48,15 +48,3 @@ export const OPERATION_SUGGESTIONS: readonly OperationSuggestion[] = [
 	{ label: "Read Workflow Runs", operation: "executions.list" },
 ];
 
-/**
- * The operation to test for what's in the Operation field: a suggestion's
- * name ("Read Tables", any case) is its operation; anything else is taken as
- * typed, an access-list key.
- */
-export function operationFor(text: string): string {
-	const typed = text.trim();
-	const suggestion = OPERATION_SUGGESTIONS.find(
-		({ label }) => label.toLowerCase() === typed.toLowerCase(),
-	);
-	return suggestion ? suggestion.operation : typed;
-}

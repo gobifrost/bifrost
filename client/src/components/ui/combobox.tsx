@@ -38,6 +38,8 @@ interface ComboboxProps {
 	isLoading?: boolean;
 	/** Show the selected option's description after its label in the trigger. */
 	showSelectedDescription?: boolean;
+	/** Extra classes for option descriptions, e.g. `font-mono` for ids. */
+	descriptionClassName?: string;
 	/** Choosing the selected option again clears it. For optional fields only. */
 	allowClear?: boolean;
 	className?: string;
@@ -54,6 +56,7 @@ export function Combobox({
 	disabled = false,
 	isLoading = false,
 	showSelectedDescription = false,
+	descriptionClassName,
 	allowClear = false,
 	className,
 	id,
@@ -123,7 +126,12 @@ export function Combobox({
 								</span>
 								{showSelectedDescription &&
 									selectedOption?.description && (
-										<span className="min-w-0 shrink truncate text-xs text-muted-foreground">
+										<span
+											className={cn(
+												"min-w-0 shrink truncate text-xs text-muted-foreground",
+												descriptionClassName,
+											)}
+										>
 											{selectedOption.description}
 										</span>
 									)}
@@ -182,7 +190,12 @@ export function Combobox({
 												{option.label}
 											</span>
 											{option.description && (
-												<span className="text-xs text-muted-foreground">
+												<span
+													className={cn(
+														"text-xs text-muted-foreground",
+														descriptionClassName,
+													)}
+												>
 													{option.description}
 												</span>
 											)}

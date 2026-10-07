@@ -188,23 +188,36 @@ beforeEach(() => {
 	check.mutateAsync.mockResolvedValue(trace);
 });
 
+async function chooseOperation(
+	user: ReturnType<typeof userEvent.setup>,
+	search: string,
+	option: RegExp,
+) {
+	await user.click(screen.getByRole("combobox", { name: "Operation" }));
+	await user.type(
+		await screen.findByPlaceholderText("Search operations"),
+		search,
+	);
+	await user.click(await screen.findByRole("option", { name: option }));
+}
+
 describe("TestAccessPanel", () => {
-	it("tests a typed operation in an organization and shows the trace", async () => {
+	it("tests a chosen operation in an organization and shows the trace", async () => {
 		const user = userEvent.setup();
 		render(<TestAccessPanel subjectId="user-1" />);
 
 		await choose(user, "Organization", "Fabrikam");
-		await user.type(
+		await chooseOperation(user, "read tab", /^Read Tables/);
+		expect(
 			screen.getByRole("combobox", { name: "Operation" }),
-			"GET /api/tables",
-		);
+		).toHaveTextContent("Read Tablestables.list");
 		await user.click(screen.getByRole("button", { name: "Test Access" }));
 
 		expect(check.mutateAsync).toHaveBeenCalledWith({
 			params: { path: { user_id: "user-1" } },
 			body: {
 				organization_id: "org-2",
-				operation: "GET /api/tables",
+				operation: "tables.list",
 				workflow_id: null,
 			},
 		});
@@ -213,46 +226,35 @@ describe("TestAccessPanel", () => {
 		expect(strip).toHaveTextContent("Helpdesk grants Read Tables there.");
 	});
 
-	it('sends Global as "global", with a suggested operation', async () => {
+	it("lists each operation by name with its id in monospace", async () => {
+		const user = userEvent.setup();
+		render(<TestAccessPanel subjectId="user-1" />);
+
+		await user.click(screen.getByRole("combobox", { name: "Operation" }));
+
+		const option = await screen.findByRole("option", {
+			name: /^Read Agents/,
+		});
+		expect(within(option).getByText("agents.list")).toHaveClass(
+			"font-mono",
+		);
+	});
+
+	it('sends Global as "global", with an operation found by its id', async () => {
 		const user = userEvent.setup();
 		render(<TestAccessPanel subjectId="user-1" />);
 
 		await choose(user, "Organization", "Global");
-		await user.type(
-			screen.getByRole("combobox", { name: "Operation" }),
-			"read tab",
-		);
-		await user.click(screen.getByRole("option", { name: /Read Tables/ }));
-		expect(screen.getByRole("combobox", { name: "Operation" })).toHaveValue(
-			"Read Tables",
-		);
+		await chooseOperation(user, "agents.list", /^Read Agents/);
 		await user.click(screen.getByRole("button", { name: "Test Access" }));
 
 		expect(check.mutateAsync).toHaveBeenCalledWith(
 			expect.objectContaining({
 				body: {
 					organization_id: "global",
-					operation: "tables.list",
+					operation: "agents.list",
 					workflow_id: null,
 				},
-			}),
-		);
-	});
-
-	it("tests a suggested operation typed by its name", async () => {
-		const user = userEvent.setup();
-		render(<TestAccessPanel subjectId="user-1" />);
-
-		await choose(user, "Organization", "Global");
-		await user.type(
-			screen.getByRole("combobox", { name: "Operation" }),
-			"read agents",
-		);
-		await user.click(screen.getByRole("button", { name: "Test Access" }));
-
-		expect(check.mutateAsync).toHaveBeenCalledWith(
-			expect.objectContaining({
-				body: expect.objectContaining({ operation: "agents.list" }),
 			}),
 		);
 	});
@@ -270,10 +272,7 @@ describe("TestAccessPanel", () => {
 		expect(
 			screen.getByRole("combobox", { name: "Workflow" }),
 		).toHaveTextContent("Nightly Sync");
-		await user.type(
-			screen.getByRole("combobox", { name: "Operation" }),
-			"agents.list",
-		);
+		await chooseOperation(user, "read agents", /^Read Agents/);
 		await user.click(screen.getByRole("button", { name: "Test Access" }));
 
 		expect(check.mutateAsync).toHaveBeenCalledWith({
@@ -326,11 +325,10 @@ describe("TestAccessPanel", () => {
 				defaultOrganizationId="org-1"
 			/>,
 		);
-		const operation = screen.getByRole("combobox", { name: "Operation" });
 
-		await user.type(operation, "agents.list");
+		await chooseOperation(user, "read agents", /^Read Agents/);
 		await user.click(screen.getByRole("button", { name: "Test Access" }));
-		await user.type(operation, "x");
+		await chooseOperation(user, "read apps", /^Read Apps/);
 		await act(async () => answer(trace));
 
 		expect(
@@ -341,10 +339,7 @@ describe("TestAccessPanel", () => {
 
 	it("explains a refused check", async () => {
 		check.mutateAsync.mockRejectedValue(
-			new ApiError(
-				"Unknown operation 'nope': use an access-list catalog id or \"METHOD /api/path\"",
-				422,
-			),
+			new ApiError("The access check could not resolve agents.list", 422),
 		);
 		const user = userEvent.setup();
 		render(
@@ -354,14 +349,11 @@ describe("TestAccessPanel", () => {
 			/>,
 		);
 
-		await user.type(
-			screen.getByRole("combobox", { name: "Operation" }),
-			"nope",
-		);
+		await chooseOperation(user, "read agents", /^Read Agents/);
 		await user.click(screen.getByRole("button", { name: "Test Access" }));
 
 		expect(await screen.findByRole("alert")).toHaveTextContent(
-			"Unknown operation 'nope'",
+			"The access check could not resolve agents.list",
 		);
 		expect(
 			within(document.body).queryByRole("list", { name: "Access Trace" }),
