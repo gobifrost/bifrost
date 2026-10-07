@@ -252,7 +252,10 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
     {
         "model_path": "src.models.contracts.workflows:WorkflowUpdateRequest",
         "tool_path": "src.services.mcp_server.tools.workflow:bifrost_workflow_update",
-        "extra_args": {"workflow_ref"},
+        # ``run_identity_id`` is excluded from the DTO flags (the CLI names the
+        # identity with --run-as <ref> / --run-as-default), but the MCP tool
+        # takes the raw identity id — so it's an extra_arg here.
+        "extra_args": {"workflow_ref", "run_identity_id"},
         "field_renames": {},
     },
     {
