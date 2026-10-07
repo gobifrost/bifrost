@@ -47,7 +47,7 @@ See a user's effective access, role assignments, and organization scope. Workflo
 
 **Open Users** (in Bifrost) · **Open Roles** (in Bifrost)
 
-![Effective access and role assignments](https://raw.githubusercontent.com/gobifrost/bifrost/25db03042f39a0e613423652dfc860af00247459/product-updates/assets/fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8/effective-access.png)
+![Effective access and role assignments](https://raw.githubusercontent.com/gobifrost/bifrost/1837da2cfcfc8646ef5b094894bba4edd9d767f9/product-updates/assets/fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8/effective-access.png)
 
 A user's effective permissions and organization scope.
 
@@ -144,7 +144,7 @@ Run and event history defaults to 30 days, including existing installs. Choose *
 
 **Open Maintenance** (in Bifrost)
 
-![Run history retention settings](https://raw.githubusercontent.com/gobifrost/bifrost/25db03042f39a0e613423652dfc860af00247459/product-updates/assets/0cf7ed8c-3fc1-5d28-b89b-09ca20a59262/retention.png)
+![Run history retention settings](https://raw.githubusercontent.com/gobifrost/bifrost/1837da2cfcfc8646ef5b094894bba4edd9d767f9/product-updates/assets/0cf7ed8c-3fc1-5d28-b89b-09ca20a59262/retention.png)
 
 Choose a retention period or keep finished runs and events indefinitely.
 

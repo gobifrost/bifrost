@@ -2,7 +2,7 @@
   "schema_version": 1,
   "inventory": {
     "base_ref": "ade714a08b95c84daa285e859ebece55f45c6754",
-    "target_ref": "5d4d5224f008e7e041f01300d8577f744776daee"
+    "target_ref": "14c6d9c92d845f1451d5d62c3a53ebf155a1c66a"
   },
   "items": {
     "pr:708": {

@@ -2,9 +2,9 @@
   "schema_version": 1,
   "repository": "gobifrost/bifrost",
   "base_ref": "ade714a08b95c84daa285e859ebece55f45c6754",
-  "target_ref": "5d4d5224f008e7e041f01300d8577f744776daee",
-  "collected_at": "2026-10-07T01:18:27Z",
-  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...5d4d5224f008e7e041f01300d8577f744776daee",
+  "target_ref": "14c6d9c92d845f1451d5d62c3a53ebf155a1c66a",
+  "collected_at": "2026-10-07T02:30:33Z",
+  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...14c6d9c92d845f1451d5d62c3a53ebf155a1c66a",
   "commits": [
     {
       "sha": "2399fbb049e6b6c121ca07980ffa649844c0d477",
@@ -879,6 +879,13 @@
       "subject": "Bootstrap trusted Product Updates validation tooling (#917)",
       "prs": [
         917
+      ]
+    },
+    {
+      "sha": "14c6d9c92d845f1451d5d62c3a53ebf155a1c66a",
+      "subject": "Fix Product Updates validation in squash merge queues (#919)",
+      "prs": [
+        919
       ]
     }
   ],
@@ -2516,6 +2523,19 @@
       "merge_commit": "5d4d5224f008e7e041f01300d8577f744776daee",
       "body": "The Product Updates content check must run validator code from trusted main, rather than from the PR being evaluated. Land the schema and deterministic validator before enabling that check in the feature PR. This also adds the image-bundle preparation entry point used by the upcoming runtime integration.\n\nValidation: 35 Python tool/release-gate tests, 3 merge-group scope tests, scoped Ruff and Pyright (zero errors). Full application suites were not run locally; the merge queue provides the complete candidate gate.\n\nThis PR adds tooling only. It does not enable the UI, publish notes, alter branch protection, or cut a release.\n",
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/917"
+    },
+    {
+      "number": 919,
+      "title": "Fix Product Updates validation in squash merge queues",
+      "url": "https://github.com/gobifrost/bifrost/pull/919",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-07T02:26:43Z",
+      "merge_commit": "14c6d9c92d845f1451d5d62c3a53ebf155a1c66a",
+      "body": "Product Updates validation could not resolve PRs in a squash merge queue because a PR branch head is not an ancestor of GitHub's synthetic candidate. Resolve the exact candidate chain from GitHub's MergeQueueEntry head/base commit metadata, including batched entries, and reject incomplete or ambiguous scope.\n\nThis trusted-base helper must land before the Product Updates workflow in #918 consumes it. The workflow adapter changes remain in #918.\n\nValidation: `node --test scripts/test_product_updates_scope.cjs` (8 passed); `git diff --check`. Tests cover the actual failed squash candidate, chained and batched entries, and missing/ambiguous/cyclic metadata. Broader suites are left to the merge queue.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/919"
     }
   ]
 }

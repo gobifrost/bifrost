@@ -32,6 +32,8 @@ Final review removed CodeQL's redundant compact-title conditional and unused pre
 
 The rebuilt production-image browser journey passed again with the replacement Discord invite (10.1 seconds overall). The feature PR's full checks passed on `6dba827f01dbc38e2896620c2e690a7fcbed27ed`, but its first merge-group Product Updates check exposed an ancestry assumption that fails for a squash queue. The PR was dequeued and auto-merge disabled while correcting the trusted base helper in PR #919. The replacement resolves GitHub MergeQueueEntry head/base commit metadata and rejects missing, ambiguous or cyclic chains. Eight focused Node tests passed, including the actual failed candidate, and the workflow adapter passed syntax and two-page pagination checks. No failed validation gate was bypassed.
 
+The squash-queue helper repair PR #919 merged as `14c6d9c92d845f1451d5d62c3a53ebf155a1c66a` after every queue check passed, including all three E2E shards and both signed image candidates. Its post-merge exact-candidate promotion gate passed. The feature branch incorporates it, and the cumulative inventory now has 126 verified PRs/commits with no missing coverage: 68 Highlight, 17 Other, 41 Omit. Focused verification passed eight Node scope tests, workflow adapter syntax/pagination checks, 37 Python tool/release tests, action pins and content validation. Saved previews and the image bundle were refreshed.
+
 ## Historical Implementation Record
 
 ## Frozen Coverage
