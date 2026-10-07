@@ -179,13 +179,12 @@ class TestChange:
             assigned_by="t",
         )
 
-        for attempt in (
-            rename_identity(db_session, holder, privileged.id, IdentityUpdate(name="Renamed")),
-            delete_identity(db_session, holder, privileged.id),
-        ):
-            with pytest.raises(Exception) as refused:
-                await attempt
-            assert getattr(refused.value, "status_code", None) == 403
+        with pytest.raises(Exception) as refused:
+            await rename_identity(db_session, holder, privileged.id, IdentityUpdate(name="Renamed"))
+        assert getattr(refused.value, "status_code", None) == 403
+        with pytest.raises(Exception) as refused:
+            await delete_identity(db_session, holder, privileged.id)
+        assert getattr(refused.value, "status_code", None) == 403
         renamed = await rename_identity(db_session, admin, privileged.id, IdentityUpdate(name="Renamed"))
         assert renamed.name == "Renamed"
         assert [r.name for r in renamed.additional_roles] == [role.name]

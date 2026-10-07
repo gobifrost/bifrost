@@ -260,9 +260,12 @@ def test_delete_custom_but_not_default(e2e_client, platform_admin, world) -> Non
     custom = _ok(_create(e2e_client, admin, f"Doomed {tag}", contoso["id"]), 201)
     default = _default(e2e_client, admin, contoso["id"])
 
-    assert e2e_client.delete(f"/api/identities/{custom['id']}", headers=admin).status_code == 204
+    deleted = e2e_client.delete(f"/api/identities/{custom['id']}", headers=admin)
+
+    assert deleted.status_code == 204
     assert custom["id"] not in {identity["id"] for identity in _identities(e2e_client, admin)}
-    assert e2e_client.delete(f"/api/identities/{custom['id']}", headers=admin).status_code == 404
+    deleted = e2e_client.delete(f"/api/identities/{custom['id']}", headers=admin)
+    assert deleted.status_code == 404
 
     refused = e2e_client.delete(f"/api/identities/{default['id']}", headers=admin)
     assert refused.status_code == 409, refused.text
@@ -291,7 +294,8 @@ def test_workflows_using_counts_and_blocks_delete(e2e_client, platform_admin, wo
     assert custom["id"] in {identity["id"] for identity in _identities(e2e_client, admin)}
 
     _ok(e2e_client.patch(f"/api/workflows/{workflow['id']}", headers=admin, json={"run_identity_id": None}))
-    assert e2e_client.delete(f"/api/identities/{custom['id']}", headers=admin).status_code == 204
+    deleted = e2e_client.delete(f"/api/identities/{custom['id']}", headers=admin)
+    assert deleted.status_code == 204
 
 
 def test_default_identity_base_role_is_fixed(e2e_client, platform_admin, world) -> None:
@@ -391,7 +395,8 @@ def test_operator_reads_only_what_it_reaches_and_changes_nothing(e2e_client, pla
 
     assert _create(e2e_client, operator, f"Nope {world['tag']}", contoso["id"]).status_code == 403
     assert e2e_client.patch(f"/api/identities/{custom['id']}", headers=operator, json={"name": "Nope"}).status_code == 403
-    assert e2e_client.delete(f"/api/identities/{custom['id']}", headers=operator).status_code == 403
+    deleted = e2e_client.delete(f"/api/identities/{custom['id']}", headers=operator)
+    assert deleted.status_code == 403
 
 
 def test_lifecycle_holder_changes_identities_at_their_organization(e2e_client, platform_admin, world) -> None:
@@ -409,9 +414,12 @@ def test_lifecycle_holder_changes_identities_at_their_organization(e2e_client, p
     assert renamed["name"] == f"Held Again {tag}"
     elsewhere = _ok(_create(e2e_client, admin, f"Abroad {tag}", fabrikam["id"]), 201)
     assert e2e_client.patch(f"/api/identities/{elsewhere['id']}", headers=holder, json={"name": "Nope"}).status_code == 403
-    assert e2e_client.delete(f"/api/identities/{elsewhere['id']}", headers=holder).status_code == 403
+    deleted = e2e_client.delete(f"/api/identities/{elsewhere['id']}", headers=holder)
+    assert deleted.status_code == 403
 
-    assert e2e_client.delete(f"/api/identities/{made['id']}", headers=holder).status_code == 204
+    deleted = e2e_client.delete(f"/api/identities/{made['id']}", headers=holder)
+
+    assert deleted.status_code == 204
 
 
 def test_plain_user_is_refused(e2e_client, world) -> None:
@@ -421,7 +429,8 @@ def test_plain_user_is_refused(e2e_client, world) -> None:
     assert e2e_client.get("/api/identities", headers=plain).status_code == 403
     assert _create(e2e_client, plain, "Nope", world["contoso"]["id"]).status_code == 403
     assert e2e_client.patch(f"/api/identities/{default['id']}", headers=plain, json={"name": "Nope"}).status_code == 403
-    assert e2e_client.delete(f"/api/identities/{default['id']}", headers=plain).status_code == 403
+    deleted = e2e_client.delete(f"/api/identities/{default['id']}", headers=plain)
+    assert deleted.status_code == 403
 
 
 def test_user_list_excludes_identities(e2e_client, platform_admin, world) -> None:
