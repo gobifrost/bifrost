@@ -16,6 +16,11 @@ creation ("{organization} identity", "Global identity").
 Identity names are unique per organization, ignoring case, with Global
 counted as one organization (uq_users_identity_name_per_org). Created after
 the rename: each organization has one default, so no names collide.
+
+Recommended Access reads a workflow's recorded access checks
+(details->>'workflow_id' over the hot window) through
+ix_audit_logs_access_check_workflow, created concurrently: audit_logs is the
+largest table and is written on every request.
 """
 from __future__ import annotations
 
@@ -50,9 +55,16 @@ def upgrade() -> None:
         "organization_id IS NOT NULL OR is_superuser = true OR identity_kind IS NOT NULL",
     )
     op.execute(_NAME_INDEX)
+    with op.get_context().autocommit_block():
+        op.execute(
+            "CREATE INDEX CONCURRENTLY ix_audit_logs_access_check_workflow "
+            "ON audit_logs ((details ->> 'workflow_id'), created_at) WHERE action = 'access.check'"
+        )
 
 
 def downgrade() -> None:
+    with op.get_context().autocommit_block():
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_audit_logs_access_check_workflow")
     op.drop_index("uq_users_identity_name_per_org", table_name="users")
     op.execute(_RESTORE_ORG)
     op.execute(_RESTORE_GLOBAL)

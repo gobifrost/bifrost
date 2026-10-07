@@ -16,7 +16,7 @@ from uuid import UUID
 from sqlalchemy import ColumnElement, Select, String, Text, and_, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.orm.audit import AuditLog
+from src.models.orm.audit import AuditLog, named_workflow_id
 from src.models.orm.organizations import Organization
 from src.models.orm.users import User
 
@@ -48,15 +48,10 @@ class AuditLogGroupRow:
     sample: AuditLog
 
 
-def _workflow_id() -> ColumnElement[Any]:
-    """The workflow an entry names in its details, as text (None when it names none)."""
-    return AuditLog.details["workflow_id"].astext
-
-
 def _group_key(group_by: GroupBy) -> ColumnElement[Any]:
     """The grouping key, as text (None when the entry has no value)."""
     if group_by == "workflow":
-        return _workflow_id()
+        return named_workflow_id()
     column = {
         "action": AuditLog.action,
         "resource_type": AuditLog.resource_type,
@@ -93,9 +88,9 @@ def _filtered(
     if execution_id:
         query = query.where(AuditLog.execution_id == execution_id)
     if workflow_id == "none":
-        query = query.where(_workflow_id().is_(None))
+        query = query.where(named_workflow_id().is_(None))
     elif workflow_id:
-        query = query.where(_workflow_id() == str(workflow_id))
+        query = query.where(named_workflow_id() == str(workflow_id))
     if organization_id == "none":
         query = query.where(AuditLog.organization_id.is_(None))
     elif organization_id:

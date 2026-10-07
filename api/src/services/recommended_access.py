@@ -40,7 +40,7 @@ from src.models.contracts.recommended_access import (
     RecommendedAccessItem,
     RecommendedGrant,
 )
-from src.models.orm.audit import AuditLog
+from src.models.orm.audit import AuditLog, named_workflow_id
 from src.models.orm.organizations import Organization
 from src.models.orm.users import Role
 from src.models.orm.workflow_roles import WorkflowRole
@@ -206,7 +206,7 @@ async def _recorded_actions(db: AsyncSession, workflow_id: UUID, since: datetime
     runs recorded them."""
     recorded = (
         AuditLog.action == "access.check",
-        AuditLog.details["workflow_id"].astext == str(workflow_id),
+        named_workflow_id() == str(workflow_id),
         AuditLog.created_at >= since,
     )
     inputs = AuditLog.details["inputs"]

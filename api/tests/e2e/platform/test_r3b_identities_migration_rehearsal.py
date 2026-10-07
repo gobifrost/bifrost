@@ -169,6 +169,11 @@ async def _state(database_url: str) -> dict:
                 sa.text("SELECT indexdef FROM pg_indexes WHERE indexname = 'uq_users_identity_name_per_org'")
             )
         ).scalar_one_or_none()
+        workflow_index = (
+            await connection.execute(
+                sa.text("SELECT indexdef FROM pg_indexes WHERE indexname = 'ix_audit_logs_access_check_workflow'")
+            )
+        ).scalar_one_or_none()
         users_org_on_update = (
             await connection.execute(
                 sa.text("SELECT confupdtype::text FROM pg_constraint WHERE conname = 'users_organization_id_fkey'")
@@ -232,6 +237,7 @@ async def _state(database_url: str) -> dict:
         return {
             "constraint": constraint,
             "name_index": name_index,
+            "workflow_index": workflow_index,
             "users_org_on_update": users_org_on_update,
             "columns": columns,
             "identities": identities,
@@ -259,6 +265,7 @@ def test_identities_are_created_and_unattended_global_workflows_point_at_the_pro
         assert before["columns"] == set()
         assert before["users_org_on_update"] == "a"
         assert before["name_index"] is None
+        assert before["workflow_index"] is None
 
         _upgrade(database_url, REVISION)
         after = asyncio.run(_state(database_url))
@@ -321,8 +328,14 @@ def test_identities_are_created_and_unattended_global_workflows_point_at_the_pro
             "(COALESCE(organization_id, '00000000-0000-0000-0000-000000000000'::uuid), lower((name)::text)) "
             "WHERE (identity_kind IS NOT NULL)"
         )
+        # Recommended Access reads a workflow's recorded checks through this index.
+        assert at_head["workflow_index"] == (
+            "CREATE INDEX ix_audit_logs_access_check_workflow ON public.audit_logs USING btree "
+            "(((details ->> 'workflow_id'::text)), created_at) WHERE ((action)::text = 'access.check'::text)"
+        )
         every_default = {row[2]: "Default Identity" for row in edited["identities"]}
-        assert _named({**at_head, "constraint": after["constraint"], "name_index": None}, {}) == _named(
+        unchanged = {"constraint": after["constraint"], "name_index": None, "workflow_index": None}
+        assert _named({**at_head, **unchanged}, {}) == _named(
             edited, every_default
         )
         asyncio.run(_rerun_data_step(database_url))
