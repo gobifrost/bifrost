@@ -41,7 +41,6 @@ import {
 } from "@/hooks/useAuditLog";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useOrganizations } from "@/hooks/useOrganizations";
-import { useWorkflowsMetadata } from "@/hooks/useWorkflows";
 import {
 	checkKindTitle,
 	stepTitle,
@@ -256,12 +255,10 @@ function GroupList({
 
 function CheckList({
 	entries,
-	organizationName,
 	onOpen,
 	desktop,
 }: {
 	entries: AuditLogEntry[];
-	organizationName: (id: string) => string | undefined;
 	onOpen: (entry: AuditLogEntry, opener: HTMLElement | null) => void;
 	desktop: boolean;
 }) {
@@ -287,10 +284,7 @@ function CheckList({
 								{new Date(entry.timestamp).toLocaleString()}
 							</button>
 						</h3>
-						<RunUserLabel
-							entry={entry}
-							organizationName={organizationName}
-						/>
+						<RunUserLabel entry={entry} />
 						<p className="text-muted-foreground">
 							{organization(entry)}
 							{entry.resource_type &&
@@ -332,10 +326,7 @@ function CheckList({
 							</OpenButton>
 						</DataTableCell>
 						<DataTableCell>
-							<RunUserLabel
-								entry={entry}
-								organizationName={organizationName}
-							/>
+							<RunUserLabel entry={entry} />
 						</DataTableCell>
 						<DataTableCell>{organization(entry)}</DataTableCell>
 						<DataTableCell>
@@ -357,13 +348,11 @@ function CheckList({
 function GroupChecks({
 	groupBy,
 	groupKey,
-	organizationName,
 	onOpen,
 	desktop,
 }: {
 	groupBy: AuditGroupBy;
 	groupKey: string;
-	organizationName: (id: string) => string | undefined;
 	onOpen: (entry: AuditLogEntry, opener: HTMLElement | null) => void;
 	desktop: boolean;
 }) {
@@ -400,12 +389,7 @@ function GroupChecks({
 		);
 	return (
 		<>
-			<CheckList
-				entries={entries}
-				organizationName={organizationName}
-				onOpen={onOpen}
-				desktop={desktop}
-			/>
+			<CheckList entries={entries} onOpen={onOpen} desktop={desktop} />
 			<AuditPagination
 				count={entries.length}
 				page={page}
@@ -441,11 +425,6 @@ export function AccessChecksPage() {
 
 	const groupsQuery = useAuditGroups(groupBy, WOULD_DENY);
 	const groups = groupsQuery.data?.groups ?? [];
-	const workflows = useWorkflowsMetadata({
-		enabled:
-			groupBy === "workflow" &&
-			authorization.canAnywhere("workflows.read"),
-	}).data.workflows;
 	const organizations = useOrganizations({
 		enabled: authorization.canAnywhere("organizations.read"),
 	}).data;
@@ -461,8 +440,7 @@ export function AccessChecksPage() {
 	const groupName = (key: string | null, sample?: AuditLogEntry): string => {
 		if (groupBy === "workflow") {
 			if (key === null) return "No Workflow";
-			const workflow = workflows.find((item) => item.id === key);
-			return workflow ? workflow.display_name || workflow.name : key;
+			return sample?.workflow_name ?? key;
 		}
 		if (groupBy === "resource_type")
 			return key === null ? "No Resource Type" : checkKindTitle(key);
@@ -559,7 +537,6 @@ export function AccessChecksPage() {
 							key={`${groupBy}:${groupKey}`}
 							groupBy={groupBy}
 							groupKey={groupKey}
-							organizationName={organizationName}
 							onOpen={(entry, opener) => {
 								setSelected({ entry, opener });
 								setDrawerOpen(true);

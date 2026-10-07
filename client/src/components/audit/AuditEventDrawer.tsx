@@ -17,7 +17,6 @@ import { useAuditExplain, type AuditLogEntry } from "@/hooks/useAuditLog";
 import { isNotFoundError } from "@/hooks/useExecutions";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useTraceNames } from "@/hooks/useTraceNames";
-import { useWorkflowsMetadata } from "@/hooks/useWorkflows";
 import {
 	changeSentence,
 	changedStepKeys,
@@ -30,7 +29,6 @@ import {
 import { getErrorMessage } from "@/lib/api-error";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { AuditOutcome } from "@/pages/audit/AuditOutcome";
-import { useAuthorization } from "@/services/authorization";
 
 const ACCESS_CHECK = "access.check";
 
@@ -49,25 +47,9 @@ function detailValue(value: unknown): string {
 	return typeof value === "string" ? value : JSON.stringify(value);
 }
 
-function Summary({
-	entry,
-	names,
-}: {
-	entry: AuditLogEntry;
-	names: TraceNames;
-}) {
-	const authorization = useAuthorization();
+function Summary({ entry }: { entry: AuditLogEntry }) {
 	const isCheck = entry.action === ACCESS_CHECK;
 	const workflowId = isCheck ? entry.details?.workflow_id : undefined;
-	const workflows = useWorkflowsMetadata({
-		enabled:
-			typeof workflowId === "string" &&
-			authorization.canAnywhere("workflows.read"),
-	}).data.workflows;
-	const workflow =
-		typeof workflowId === "string"
-			? workflows.find((item) => item.id === workflowId)
-			: undefined;
 	const resource = entry.resource_type
 		? isCheck
 			? checkKindTitle(entry.resource_type)
@@ -94,10 +76,7 @@ function Summary({
 				</span>
 			</Field>
 			<Field label="Actor">
-				<RunUserLabel
-					entry={entry}
-					organizationName={names.organization}
-				/>
+				<RunUserLabel entry={entry} />
 			</Field>
 			<Field label="Organization">
 				{entry.actor.organization_name ??
@@ -106,9 +85,7 @@ function Summary({
 			<Field label="Resource">{resource}</Field>
 			{typeof workflowId === "string" && (
 				<Field label="Workflow">
-					{workflow ? (
-						workflow.display_name || workflow.name
-					) : (
+					{entry.workflow_name ?? (
 						<span className="font-mono text-xs">{workflowId}</span>
 					)}
 				</Field>
@@ -316,7 +293,7 @@ export function AuditEventDrawer({
 							</SheetDescription>
 						</SheetHeader>
 						<div className="min-h-0 space-y-6 overflow-auto p-6">
-							<Summary entry={entry} names={names} />
+							<Summary entry={entry} />
 							{isCheck ? (
 								<AccessCheckTrace
 									key={entry.id}

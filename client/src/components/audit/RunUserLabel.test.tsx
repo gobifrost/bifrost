@@ -26,6 +26,8 @@ function check(
 			user_name: "Default Identity",
 			organization_id: "org-2",
 			organization_name: "Fabrikam",
+			home_organization_id: "org-1",
+			home_organization_name: "Contoso",
 			...actor,
 		},
 		ip_address: null,
@@ -48,17 +50,14 @@ function check(
 	};
 }
 
-const names = (id: string) => ({ "org-1": "Contoso" })[id];
-
 describe("RunUserLabel", () => {
-	it("names an identity with its home organization and the hexagon glyph", () => {
+	it("names an identity with its home organization and the hexagon glyph, never the event's", () => {
 		render(
 			<RunUserLabel
 				entry={check({
 					identity_kind: "default",
 					home_organization_id: "org-1",
 				})}
-				organizationName={names}
 			/>,
 		);
 
@@ -66,28 +65,35 @@ describe("RunUserLabel", () => {
 		expect(screen.getByText("Default Identity · Contoso")).toBeVisible();
 	});
 
-	it("falls back to the event's organization when the home has no name here", () => {
+	it("never names the event's organization as the identity's", () => {
 		render(
 			<RunUserLabel
-				entry={check({
-					identity_kind: "default",
-					home_organization_id: "org-9",
-				})}
-				organizationName={names}
+				entry={check(
+					{
+						identity_kind: "default",
+						home_organization_id: "org-9",
+					},
+					{
+						home_organization_id: "org-9",
+						home_organization_name: null,
+					},
+				)}
 			/>,
 		);
 
-		expect(screen.getByText("Default Identity · Fabrikam")).toBeVisible();
+		expect(screen.queryByText(/Fabrikam/)).toBeNull();
 	});
 
 	it("names a Global identity", () => {
 		render(
 			<RunUserLabel
-				entry={check({
-					identity_kind: "service",
-					home_organization_id: null,
-				})}
-				organizationName={names}
+				entry={check(
+					{ identity_kind: "service", home_organization_id: null },
+					{
+						home_organization_id: null,
+						home_organization_name: null,
+					},
+				)}
 			/>,
 		);
 
@@ -101,7 +107,6 @@ describe("RunUserLabel", () => {
 					{ identity_kind: null, home_organization_id: "org-1" },
 					{ user_email: "avery@contoso.example", user_name: "Avery" },
 				)}
-				organizationName={names}
 			/>,
 		);
 
@@ -111,12 +116,7 @@ describe("RunUserLabel", () => {
 
 	it("shows the source when no one signed in", () => {
 		const entry = check(null, { user_name: null });
-		render(
-			<RunUserLabel
-				entry={{ ...entry, source: "scheduler" }}
-				organizationName={names}
-			/>,
-		);
+		render(<RunUserLabel entry={{ ...entry, source: "scheduler" }} />);
 
 		expect(screen.getByText("(scheduler)")).toBeVisible();
 	});

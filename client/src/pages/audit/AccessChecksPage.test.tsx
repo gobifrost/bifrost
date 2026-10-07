@@ -33,26 +33,16 @@ vi.mock("@/hooks/useTraceNames", () => ({
 	}),
 }));
 
-vi.mock("@/hooks/useWorkflows", () => ({
-	useWorkflowsMetadata: () => ({
-		data: {
-			workflows: [
-				{
-					id: "wf-1",
-					name: "nightly_sync",
-					display_name: "Nightly Sync",
-				},
-			],
-		},
+const lists = vi.hoisted(() => ({ readable: true }));
+
+vi.mock("@/hooks/useOrganizations", () => ({
+	useOrganizations: () => ({
+		data: lists.readable ? [{ id: "org-1", name: "Contoso" }] : undefined,
 	}),
 }));
 
-vi.mock("@/hooks/useOrganizations", () => ({
-	useOrganizations: () => ({ data: [{ id: "org-1", name: "Contoso" }] }),
-}));
-
 vi.mock("@/services/authorization", () => ({
-	useAuthorization: () => ({ canAnywhere: () => true }),
+	useAuthorization: () => ({ canAnywhere: () => lists.readable }),
 }));
 
 import { AccessChecksPage } from "./AccessChecksPage";
@@ -88,7 +78,10 @@ function check(id: string, steps: AccessStep[]): AuditLogEntry {
 			user_name: "Default Identity",
 			organization_id: "org-2",
 			organization_name: "Fabrikam",
+			home_organization_id: "org-1",
+			home_organization_name: "Contoso",
 		},
+		workflow_name: "Nightly Sync",
 		ip_address: null,
 		user_agent: null,
 		details: {
@@ -145,6 +138,7 @@ function renderPage(url = "/audit/access-checks") {
 const search = () => screen.getByTestId("location").textContent;
 
 beforeEach(() => {
+	lists.readable = true;
 	audit.groups.mockReset();
 	audit.list.mockReset();
 	audit.groups.mockReturnValue(query({ entries: [], groups }));
@@ -275,5 +269,23 @@ describe("AccessChecksPage", () => {
 		await user.click(screen.getByRole("link", { name: "Back" }));
 
 		await waitFor(() => expect(search()).toBe("?group_by=organization"));
+	});
+
+	it("names workflows and identities' organizations for someone who can't list either", async () => {
+		lists.readable = false;
+		const { user } = renderPage();
+
+		await user.click(screen.getByRole("button", { name: "Nightly Sync" }));
+		const [, row] = screen.getAllByRole("row");
+		expect(row).toHaveTextContent("Default Identity · Contoso");
+
+		await user.click(within(row).getByRole("button"));
+		const dialog = await screen.findByRole("dialog", {
+			name: "Access Check",
+		});
+		const workflow = within(dialog).getByText("Workflow", {
+			selector: "dt",
+		}).nextElementSibling;
+		expect(workflow).toHaveTextContent("Nightly Sync");
 	});
 });

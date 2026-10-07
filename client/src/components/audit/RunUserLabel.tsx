@@ -13,18 +13,11 @@ function actorName(entry: AuditLogEntry): string {
 
 /**
  * Who an audit event acted as. Every organization's default identity has
- * the same name, so an identity shows the hexagon glyph and its
- * organization ("Default Identity · Contoso"): its home by name where
- * `organizationName` knows it, else the organization the event carries.
- * Anyone else shows by email or name.
+ * the same name, so an identity shows the hexagon glyph and its home
+ * organization ("Default Identity · Contoso"), never the organization the
+ * event targeted. Anyone else shows by email or name.
  */
-export function RunUserLabel({
-	entry,
-	organizationName,
-}: {
-	entry: AuditLogEntry;
-	organizationName: (organizationId: string) => string | undefined;
-}) {
+export function RunUserLabel({ entry }: { entry: AuditLogEntry }) {
 	const runUser = storedTrace(entry.details)?.steps.find(
 		(step) => step.key === "run_user",
 	);
@@ -33,10 +26,9 @@ export function RunUserLabel({
 			<span className="[overflow-wrap:anywhere]">{actorName(entry)}</span>
 		);
 
-	const home = runUser.facts.home_organization_id;
 	const organization =
-		typeof home === "string"
-			? organizationName(home) || entry.actor.organization_name
+		typeof runUser.facts.home_organization_id === "string"
+			? entry.actor.home_organization_name
 			: "Global";
 	return (
 		<span className="inline-flex min-w-0 items-center gap-2">

@@ -34,24 +34,6 @@ vi.mock("@/hooks/useTraceNames", () => ({
 	useTraceNames: () => ({ names, organizationNames: new Map() }),
 }));
 
-vi.mock("@/hooks/useWorkflows", () => ({
-	useWorkflowsMetadata: () => ({
-		data: {
-			workflows: [
-				{
-					id: "wf-1",
-					name: "nightly_sync",
-					display_name: "Nightly Sync",
-				},
-			],
-		},
-	}),
-}));
-
-vi.mock("@/services/authorization", () => ({
-	useAuthorization: () => ({ canAnywhere: () => true }),
-}));
-
 import { AuditEventDrawer } from "./AuditEventDrawer";
 
 const then: AccessTrace = {
@@ -111,7 +93,10 @@ const accessCheck: AuditLogEntry = {
 		user_name: "Default Identity",
 		organization_id: "org-2",
 		organization_name: "Fabrikam",
+		home_organization_id: "org-1",
+		home_organization_name: "Contoso",
 	},
+	workflow_name: "Nightly Sync",
 	ip_address: null,
 	user_agent: null,
 	details: { workflow_id: "wf-1", trace: then },
@@ -129,7 +114,10 @@ const roleUpdate: AuditLogEntry = {
 		user_name: "Avery Example",
 		organization_id: "org-1",
 		organization_name: "Contoso",
+		home_organization_id: "org-1",
+		home_organization_name: "Contoso",
 	},
+	workflow_name: null,
 	details: { role_name: "Helpdesk", permissions_added: ["tables.read"] },
 };
 
