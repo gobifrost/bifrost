@@ -49,3 +49,20 @@ test('a concurrent branch update fails without force or retry', async () => {
 test('unknown advisory metadata fails closed', async () => {
   const f = fixture(); await assert.rejects(f.run('unknown'), /Unknown/); assert.deepEqual(f.writes, []);
 });
+
+test('workflow changes must only update the same fully pinned action', async () => {
+  const patch = `@@ -1 +1 @@\n-        uses: actions/checkout@${'a'.repeat(40)} # v1\n+        uses: actions/checkout@${'b'.repeat(40)} # v2`;
+  const f = fixture(); f.files.splice(0, 1, { filename: '.github/workflows/ci.yml', status: 'modified', patch });
+  await f.run(''); assert.equal(f.writes.length, 4);
+  for (const bad of [undefined, '+        run: echo unsafe', patch.replace('actions/checkout@' + 'b'.repeat(40), 'other/action@' + 'b'.repeat(40)), patch.replace('b'.repeat(40), 'main')]) {
+    const badFixture = fixture(); badFixture.files.splice(0, 1, { filename: '.github/workflows/ci.yml', status: 'modified', patch: bad });
+    await assert.rejects(badFixture.run(''), /outside dependency maintenance/); assert.deepEqual(badFixture.writes, []);
+  }
+});
+
+test('fixed and dismissed advisory metadata are recognized states', async () => {
+  for (const state of ['FIXED', 'DISMISSED']) {
+    const f = fixture(); await f.run(state);
+    assert.equal(JSON.parse(f.writes[0].content).items['pr:920'].security_review, undefined);
+  }
+});

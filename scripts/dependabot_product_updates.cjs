@@ -9,8 +9,20 @@ const DEPENDENCY_FILES = new Set([
   "api/Dockerfile", "api/Dockerfile.dev", "client/Dockerfile", "client/Dockerfile.dev",
 ]);
 
+function isActionPinUpdate(file) {
+  if (typeof file.patch !== "string") return false;
+  const removed = [], added = [];
+  for (const line of file.patch.split("\n")) {
+    if (!line.startsWith("+") && !line.startsWith("-")) continue;
+    const match = line.slice(1).match(/^\s*(?:-\s*)?uses:\s*(\S+@)[a-f0-9]{40}(?:\s+#.*)?\s*$/);
+    if (!match) return false;
+    (line.startsWith("+") ? added : removed).push(match[1]);
+  }
+  return added.length > 0 && JSON.stringify(added) === JSON.stringify(removed);
+}
+
 async function recordDependabotDisposition({ github, repository, number, alertState }) {
-  if (!["", "OPEN", "CLOSED"].includes(alertState)) {
+  if (!["", "OPEN", "FIXED", "DISMISSED"].includes(alertState)) {
     throw new Error("Unknown Dependabot advisory state");
   }
   const args = { ...repository, pull_number: number };
@@ -25,6 +37,7 @@ async function recordDependabotDisposition({ github, repository, number, alertSt
   const files = await github.paginate(github.rest.pulls.listFiles, { ...args, per_page: 100 });
   if (!files.some(file => DEPENDENCY_FILES.has(file.filename) || /^\.github\/workflows\/[^/]+\.ya?ml$/.test(file.filename)) ||
       files.some(file => file.status === "renamed" ||
+        (/^\.github\/workflows\/[^/]+\.ya?ml$/.test(file.filename) && !isActionPinUpdate(file)) ||
         (file.filename !== LEDGER && !DEPENDENCY_FILES.has(file.filename) &&
           !/^\.github\/workflows\/[^/]+\.ya?ml$/.test(file.filename)))) {
     throw new Error("Dependabot PR changes files outside dependency maintenance");
