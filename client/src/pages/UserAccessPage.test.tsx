@@ -396,6 +396,9 @@ describe("UserAccessPage", () => {
 			name: "Test Access",
 		});
 		expect(sheet).toHaveTextContent("Test access for user-1 in org-1");
+		expect(sheet).toHaveTextContent(
+			"What the access model would decide for Avery Example.",
+		);
 	});
 
 	it("returns focus to Test Access when the sheet closes", async () => {
@@ -644,7 +647,10 @@ function showIdentity(
 
 describe("UserAccessPage for an identity", () => {
 	it("places the global identity in Global", () => {
-		showIdentity({ identity_kind: "global_default", organization_id: null });
+		showIdentity({
+			identity_kind: "global_default",
+			organization_id: null,
+		});
 		renderPage("/users/identity-1");
 
 		expect(
@@ -660,9 +666,9 @@ describe("UserAccessPage for an identity", () => {
 
 		const heading = screen.getByRole("heading", { level: 1 });
 		expect(heading).toHaveTextContent(/^Default Identity/);
-		expect(within(heading).getByLabelText("Organization")).toHaveTextContent(
-			"Contoso",
-		);
+		expect(
+			within(heading).getByLabelText("Organization"),
+		).toHaveTextContent("Contoso");
 		expect(
 			screen.getByRole("img", { name: "Identity" }),
 		).toBeInTheDocument();
@@ -670,6 +676,35 @@ describe("UserAccessPage for an identity", () => {
 		expect(
 			screen.getByRole("link", { name: "Identities" }),
 		).toHaveAttribute("href", "/users/identities");
+	});
+
+	it("names the identity with its organization when testing its access", async () => {
+		showIdentity();
+		const { user } = renderPage("/users/identity-1");
+
+		await user.click(screen.getByRole("button", { name: "Test Access" }));
+
+		expect(
+			await screen.findByRole("dialog", { name: "Test Access" }),
+		).toHaveTextContent(
+			"What the access model would decide for Default Identity · Contoso.",
+		);
+	});
+
+	it("names the global identity as Global when testing its access", async () => {
+		showIdentity({
+			identity_kind: "global_default",
+			organization_id: null,
+		});
+		const { user } = renderPage("/users/identity-1");
+
+		await user.click(screen.getByRole("button", { name: "Test Access" }));
+
+		expect(
+			await screen.findByRole("dialog", { name: "Test Access" }),
+		).toHaveTextContent(
+			"What the access model would decide for Default Identity · Global.",
+		);
 	});
 
 	it("describes access and roles as the identity's", () => {

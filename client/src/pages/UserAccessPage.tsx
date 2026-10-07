@@ -51,7 +51,7 @@ import { orgTarget } from "@/lib/authorization";
 import { motionSeconds } from "@/lib/motion";
 import { permissionDisplayName, permissionParts } from "@/lib/permission-words";
 import type { components } from "@/lib/v1";
-import type { IdentityKind } from "@/services/identities";
+import { identityLabel, type IdentityKind } from "@/services/identities";
 import {
 	usePermissionCatalog,
 	useUserAccessMap,
@@ -314,7 +314,14 @@ function SectionHeading({
 }
 
 /** "Test Access": what the access model would decide for this person, in a sheet. */
-function TestAccessSheet({ person }: { person: User }) {
+function TestAccessSheet({
+	person,
+	subjectLabel,
+}: {
+	person: User;
+	/** The person's name or email; an identity's name with its organization. */
+	subjectLabel: string;
+}) {
 	return (
 		<Sheet>
 			<SheetTrigger asChild>
@@ -331,9 +338,8 @@ function TestAccessSheet({ person }: { person: User }) {
 				<SheetHeader className="border-b border-border/70">
 					<SheetTitle>Test Access</SheetTitle>
 					<SheetDescription>
-						What the access model would decide for{" "}
-						{person.name || person.email}. Report-only: nothing is
-						recorded or enforced.
+						What the access model would decide for {subjectLabel}.
+						Report-only: nothing is recorded or enforced.
 					</SheetDescription>
 				</SheetHeader>
 				<div className="min-h-0 overflow-auto p-6">
@@ -425,6 +431,18 @@ export function UserAccessPage() {
 				(org) => org.id === person.organization_id,
 			)?.name)
 		: "Global (No Organization)";
+	// An identity's organization goes with its name: null is Global,
+	// undefined until loaded.
+	const identityOrganization = person.organization_id
+		? homeOrganization
+		: null;
+	const subjectLabel =
+		identityKind && identityOrganization !== undefined
+			? identityLabel({
+					name: person.name || person.email,
+					organization_name: identityOrganization,
+				})
+			: person.name || person.email;
 
 	return (
 		<PageWorkspace className="mx-auto w-full max-w-7xl gap-5">
@@ -491,7 +509,10 @@ export function UserAccessPage() {
 										title="Effective Access"
 										description={sectionCopy.access}
 										action={
-											<TestAccessSheet person={person} />
+											<TestAccessSheet
+												person={person}
+												subjectLabel={subjectLabel}
+											/>
 										}
 									/>
 									{map && catalogQuery.data ? (
