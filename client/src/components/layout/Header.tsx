@@ -1,4 +1,5 @@
 import { AccountMenuContent } from "./AccountMenuContent";
+import { Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 import {
 	ChevronDown,
@@ -25,6 +26,14 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useProfile } from "@/hooks/useProfile";
 import { profileService } from "@/services/profile";
 import { BifrostRunMenu } from "@/components/layout/BifrostRunMenu";
+import { HelpMenu } from "./HelpMenu";
+import { lazyWithReload } from "@/lib/lazy-with-reload";
+
+const ProductUpdatesDialog = lazyWithReload(() =>
+	import("./ProductUpdatesDialog").then((module) => ({
+		default: module.ProductUpdatesDialog,
+	})),
+);
 
 interface HeaderProps {
 	onMobileMenuToggle?: () => void;
@@ -162,6 +171,8 @@ export function Header({
 					</div>
 				</div>
 
+				{isPlatformAdmin && <HelpMenu />}
+
 				{/* User Menu */}
 				<DropdownMenu>
 					<DropdownMenuTrigger asChild>
@@ -189,6 +200,7 @@ export function Header({
 						avatarUrl={avatarUrl}
 						onSettings={() => navigate("/user-settings")}
 						onLogout={logout}
+						showVersion={!isPlatformAdmin}
 					/>
 				</DropdownMenu>
 			</div>
@@ -199,6 +211,11 @@ export function Header({
 				>
 					<HeaderStatusIndicators isPlatformAdmin={isPlatformAdmin} />
 				</div>
+			)}
+			{isPlatformAdmin && user?.id && (
+				<Suspense fallback={null}>
+					<ProductUpdatesDialog key={user.id} adminId={user.id} />
+				</Suspense>
 			)}
 		</header>
 	);

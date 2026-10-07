@@ -242,6 +242,11 @@ const MCPConnectionEdit = lazyWithReload(() =>
 		default: m.MCPConnectionEdit,
 	})),
 );
+const ProductUpdates = lazyWithReload(() =>
+	import("@/pages/ProductUpdates").then((m) => ({
+		default: m.ProductUpdates,
+	})),
+);
 
 export function AppFrame() {
 	const { brandingLoaded } = useOrgScope();
@@ -376,6 +381,14 @@ const routeElements = (
 		<Route path="/" element={<Layout />}>
 			{/* Home is available to authenticated users; metrics remain admin-only. */}
 			<Route index element={<Home />} />
+			<Route
+				path="whats-new"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<ProductUpdates />
+					</ProtectedRoute>
+				}
+			/>
 			<Route
 				path="dashboard"
 				element={

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen } from "@/test-utils";
 
+const authState = vi.hoisted(() => ({ isPlatformAdmin: true }));
 const mockNavigate = vi.fn();
 const mockLogout = vi.fn();
 const mockOpenEditor = vi.fn();
@@ -16,7 +17,7 @@ vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => ({
 		user: { email: "admin@example.com", name: "Admin User" },
 		logout: mockLogout,
-		isPlatformAdmin: true,
+		isPlatformAdmin: authState.isPlatformAdmin,
 	}),
 }));
 
@@ -77,6 +78,7 @@ import { Header } from "./Header";
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	authState.isPlatformAdmin = true;
 	mockUseMediaQuery.mockImplementation((query: string) =>
 		query.includes("1279px"),
 	);
@@ -102,6 +104,18 @@ describe("Header", () => {
 		).not.toBeInTheDocument();
 		expect(
 			screen.queryByRole("button", { name: /set up passkey/i }),
+		).not.toBeInTheDocument();
+	});
+
+	it("places Help beside the account menu for admins and omits it for ordinary users", () => {
+		const view = renderWithProviders(<Header />);
+		expect(
+			screen.getByRole("button", { name: "Help" }),
+		).toBeVisible();
+		authState.isPlatformAdmin = false;
+		view.rerender(<Header />);
+		expect(
+			screen.queryByRole("button", { name: "Help" }),
 		).not.toBeInTheDocument();
 	});
 

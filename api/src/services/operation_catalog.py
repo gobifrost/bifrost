@@ -136,6 +136,48 @@ _CONFIG_MANIFEST_EXCLUSION = (
 
 OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
     OperationDefinition(
+        operation_id="productupdates.get",
+        summary="Get this build's Product Updates feed",
+        target_kind=OperationTargetKind.PLATFORM,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/product-updates",
+            response_model="ProductUpdatesFeedResponse",
+        ),
+        native_builder=False,
+        action_scopes=("settings.read",),
+        authorization_resolver="RequirePlatformAdmin",
+        exclusions={
+            "cli": "Product Updates are presented in the authenticated platform shell.",
+            "mcp": "Product Updates are an authenticated platform-shell feed.",
+            "manifest": "The immutable build bundle, not a workspace manifest, is the content source.",
+            "sdk": "Application runtimes do not present platform administrator announcements.",
+            "native_builder": "Product Updates are not a Builder authoring target.",
+        },
+    ),
+    OperationDefinition(
+        operation_id="productupdates.receipts.create",
+        summary="Record Product Updates presented to the authenticated administrator",
+        target_kind=OperationTargetKind.PLATFORM,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/product-updates/receipts",
+            request_model="ProductUpdatesReceiptRequest",
+            response_model="ProductUpdatesReceiptResponse",
+        ),
+        native_builder=False,
+        action_scopes=("settings.readwrite",),
+        authorization_resolver="RequirePlatformAdmin; receipt owner is CurrentSuperuser",
+        side_effects=("persist Product Updates presentation receipts",),
+        exclusions={
+            "cli": "Product Updates are presented in the authenticated platform shell.",
+            "mcp": "Product Updates are an authenticated platform-shell feed.",
+            "manifest": "Presentation receipts are per-admin runtime state.",
+            "sdk": "Application runtimes do not present platform administrator announcements.",
+            "native_builder": "Product Updates are not a Builder authoring target.",
+        },
+    ),
+    OperationDefinition(
         operation_id="agents.list",
         summary="List Agents visible to the caller",
         target_kind=OperationTargetKind.COLLECTION,

@@ -95,7 +95,7 @@ beforeEach(() => {
 });
 
 describe("Sidebar terminology", () => {
-	it("renders branded product nouns in navigation", () => {
+	it("renders branded product nouns in navigation", async () => {
 		const terminology = mergeTerminology({
 			app: { singular: "Game", plural: "Games" },
 			agent: { singular: "Character", plural: "Characters" },

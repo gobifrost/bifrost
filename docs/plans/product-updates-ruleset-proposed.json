@@ -1,0 +1,91 @@
+{
+  "id": 15329014,
+  "name": "Protect Branch",
+  "target": "branch",
+  "source_type": "Repository",
+  "source": "gobifrost/bifrost",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "exclude": [],
+      "include": [
+        "~DEFAULT_BRANCH"
+      ]
+    }
+  },
+  "rules": [
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": true,
+        "required_reviewers": [],
+        "require_code_owner_review": false,
+        "dismissal_restriction": {
+          "enabled": false,
+          "allowed_actors": []
+        },
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": false,
+        "require_extra_approval_for_unattributed_changes": true,
+        "allowed_merge_methods": [
+          "merge",
+          "squash",
+          "rebase"
+        ]
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [
+          {
+            "context": "Lint & Type Check"
+          },
+          {
+            "context": "Unit Tests"
+          },
+          {
+            "context": "E2E Tests"
+          },
+          {
+            "context": "Product Updates"
+          }
+        ]
+      }
+    },
+    {
+      "type": "merge_queue",
+      "parameters": {
+        "merge_method": "SQUASH",
+        "max_entries_to_build": 5,
+        "min_entries_to_merge": 1,
+        "max_entries_to_merge": 5,
+        "min_entries_to_merge_wait_minutes": 5,
+        "grouping_strategy": "ALLGREEN",
+        "check_response_timeout_minutes": 60
+      }
+    }
+  ],
+  "node_id": "RRS_lACqUmVwb3NpdG9yec5ADSYwzgDp5vY",
+  "created_at": "2026-04-21T00:25:15.687-04:00",
+  "updated_at": "2026-08-28T20:03:18.134-04:00",
+  "bypass_actors": [],
+  "current_user_can_bypass": "never",
+  "_links": {
+    "self": {
+      "href": "https://api.github.com/repos/gobifrost/bifrost/rulesets/15329014"
+    },
+    "html": {
+      "href": "https://github.com/gobifrost/bifrost/rules/15329014"
+    }
+  }
+}

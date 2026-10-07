@@ -1,0 +1,29 @@
+{
+  "captured_at": "2026-10-07T00:09:44.004024+00:00",
+  "source_commit": "02103d4a9",
+  "images": [
+    {
+      "path": "product-updates/assets/0cf7ed8c-3fc1-5d28-b89b-09ca20a59262/retention.png",
+      "route": "/settings/maintenance",
+      "sha256": "82dedc35b37009487d552c8a0b0ce7b52924fa1156c883fdd22586038dbf7cb7",
+      "source": "Live read-only capture from this worktree Docker debug stack",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      }
+    },
+    {
+      "path": "product-updates/assets/fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8/effective-access.png",
+      "route": "/users/<debug-admin-id>/access",
+      "sha256": "f5e889c7615d2c5362e2228a6596ce416f75dd5f607238fff02216d6e45b7df2",
+      "source": "Live read-only capture from this worktree Docker debug stack",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      }
+    }
+  ],
+  "not_captured": {
+    "kubernetes_execution_settings": "Settings are intentionally hidden when KubernetesStatus.configured is false; this Docker-only preview has no configured Kubernetes connection."
+  }
+}

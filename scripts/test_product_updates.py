@@ -138,20 +138,46 @@ class ProductUpdatesTests(unittest.TestCase):
             {c["login"] for c in first["entries"][0]["contributors"]},
         )
 
+    def test_inventory_refresh_preserves_reviewed_extra_credit_for_the_same_merge(
+        self,
+    ) -> None:
+        prior = self.inventory_data()
+        refreshed = self.inventory_data()
+        del refreshed["prs"][0]["contributions"]
+        product_updates.retain_contribution_evidence(refreshed, prior)
+        self.assertEqual(
+            prior["prs"][0]["contributions"], refreshed["prs"][0]["contributions"]
+        )
+        refreshed["prs"][0].pop("contributions")
+        refreshed["prs"][0]["merge_commit"] = "d" * 40
+        product_updates.retain_contribution_evidence(refreshed, prior)
+        self.assertNotIn("contributions", refreshed["prs"][0])
+
     def test_image_history_retains_entries_excluded_from_a_later_release(self) -> None:
         (self.root / "api").mkdir()
         history = prepare(self.root, TARGET)
         release = product_updates.build_bundle(
-            self.content, self.inventory, self.dispositions, TARGET,
-            "/product-updates/", base=COMMIT,
+            self.content,
+            self.inventory,
+            self.dispositions,
+            TARGET,
+            "/product-updates/",
+            base=COMMIT,
         )
         self.assertEqual([ENTRY_ID], [entry["id"] for entry in history["entries"]])
         self.assertEqual([], release["entries"])
         self.assertEqual(
             b"png",
-            (self.root / "client/public/product-updates/assets" / ENTRY_ID / "screen.png").read_bytes(),
+            (
+                self.root
+                / "client/public"
+                / history["entries"][0]["assets"][0]["url"].lstrip("/")
+            ).read_bytes(),
         )
-        self.assertEqual(history, json.loads((self.root / "api/product-updates.bundle.json").read_text()))
+        self.assertEqual(
+            history,
+            json.loads((self.root / "api/product-updates.bundle.json").read_text()),
+        )
 
     def test_coverage_reconciles_every_cached_landed_item_once(self) -> None:
         report = product_updates.coverage_report(

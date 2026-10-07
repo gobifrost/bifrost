@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "base_ref": "ade714a08b95c84daa285e859ebece55f45c6754",
+  "target_ref": "5d4d5224f008e7e041f01300d8577f744776daee",
+  "git_commit_count": 125,
+  "cached_commit_count": 125,
+  "verified_pr_count": 125,
+  "disposition_counts": {
+    "omit": 40,
+    "highlight": 68,
+    "other": 17
+  },
+  "unresolved_commits": [],
+  "unresolved_prs": [],
+  "review_status": "approved",
+  "credit_evidence": "pr-744.json",
+  "security_evidence": "security-review.json",
+  "editorial_note": "Customer-facing curation: routine dependencies and internal maintenance omitted from app/release summaries; required dependency security notice retained in release material with in_app=false."
+}
