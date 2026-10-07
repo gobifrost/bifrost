@@ -290,6 +290,15 @@ def test_admin_explains_then_and_now(e2e_client, platform_admin, world) -> None:
     assert body["now_unavailable"] is None
 
 
+def test_event_names_the_run_user_s_own_organization(e2e_client, platform_admin, world) -> None:
+    actor = _ok(_explain(e2e_client, platform_admin.headers, world["events"]["fabrikam"]))["event"]["actor"]
+
+    assert (actor["home_organization_name"], actor["organization_name"]) == (
+        world["contoso"]["name"],
+        world["fabrikam"]["name"],
+    )
+
+
 def test_role_change_flips_now(e2e_client, platform_admin, world) -> None:
     """A role placed on Fabrikam brings it into the run user's reach; Full powers hold the permission."""
     admin = platform_admin.headers

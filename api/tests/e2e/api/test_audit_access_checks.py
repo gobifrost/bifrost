@@ -109,6 +109,89 @@ def world(e2e_client, platform_admin, async_session_factory):
     e2e_client.delete(f"/api/organizations/{customer['id']}", headers=platform_admin.headers)
 
 
+async def _seed_workflow(session_factory, name: str, display_name: str) -> uuid.UUID:
+    from src.core.database import close_db
+    from src.models.orm.workflows import Workflow
+
+    try:
+        async with session_factory() as session:
+            workflow = Workflow(name=name, function_name=name, display_name=display_name, path=f"workflows/{name}.py")
+            session.add(workflow)
+            await session.commit()
+            return workflow.id
+    finally:
+        await close_db()
+
+
+async def _delete_workflow(session_factory, workflow_id: uuid.UUID) -> None:
+    from sqlalchemy import delete
+
+    from src.core.database import close_db
+    from src.models.orm.workflows import Workflow
+
+    try:
+        async with session_factory() as session:
+            await session.execute(delete(Workflow).where(Workflow.id == workflow_id))
+            await session.commit()
+    finally:
+        await close_db()
+
+
+@pytest.fixture(scope="module")
+def named(e2e_client, platform_admin, async_session_factory, world):
+    """A Fabrikam person's run whose access check targets the customer org, naming a real workflow."""
+    tag = uuid.uuid4().hex[:8]
+    admin = platform_admin.headers
+    fabrikam = _ok(e2e_client.post("/api/organizations", headers=admin, json={"name": f"Fabrikam-{tag}"}), 201)
+    person = _ok(
+        e2e_client.post(
+            "/api/users",
+            headers=admin,
+            json={"email": f"named-{tag}@fabrikam.example", "name": f"Named Person {tag}", "organization_id": fabrikam["id"]},
+        ),
+        201,
+    )
+    workflow_id = asyncio.run(_seed_workflow(async_session_factory, f"nightly_{tag}", f"Nightly Report {tag}"))
+    run = uuid.uuid4()
+    asyncio.run(
+        _seed(
+            async_session_factory,
+            [
+                {
+                    "action": "access.check",
+                    "resource_type": "scope_switch",
+                    "outcome": "failure",
+                    "execution_id": run,
+                    "user_id": uuid.UUID(person["id"]),
+                    "organization_id": uuid.UUID(world["customer"]["id"]),
+                    "details": {"workflow_id": str(workflow_id)},
+                }
+            ],
+        )
+    )
+    yield {"fabrikam": fabrikam, "run": str(run), "workflow_name": f"Nightly Report {tag}"}
+    asyncio.run(_delete_workflow(async_session_factory, workflow_id))
+    e2e_client.delete(f"/api/users/{person['id']}", headers=admin)
+    e2e_client.delete(f"/api/organizations/{fabrikam['id']}", headers=admin)
+
+
+def test_operators_see_the_workflow_and_the_run_user_s_own_organization(e2e_client, world, named) -> None:
+    """Named server-side: Operators cannot list workflows, and the row's organization is the target."""
+    params = {"action": "access.check", "execution_id": named["run"]}
+    operator = world["operator"].headers
+
+    [entry] = _ok(e2e_client.get("/api/audit", headers=operator, params=params))["entries"]
+    [group] = _ok(e2e_client.get("/api/audit", headers=operator, params={**params, "group_by": "workflow"}))["groups"]
+
+    for shown in (entry, group["sample"]):
+        assert shown["workflow_name"] == named["workflow_name"]
+        assert (shown["actor"]["home_organization_id"], shown["actor"]["home_organization_name"]) == (
+            named["fabrikam"]["id"],
+            named["fabrikam"]["name"],
+        )
+        assert shown["actor"]["organization_name"] == world["customer"]["name"]
+
+
 def test_admins_group_access_checks_by_workflow(e2e_client, platform_admin, world) -> None:
     body = _ok(
         e2e_client.get(
@@ -122,6 +205,7 @@ def test_admins_group_access_checks_by_workflow(e2e_client, platform_admin, worl
     [group] = body["groups"]
     assert (group["key"], group["count"]) == (world["workflow"], 4)
     assert group["sample"]["action"] == "access.check"
+    assert group["sample"]["workflow_name"] is None
 
 
 def _drill_in(e2e_client, headers: dict, world, **filters: str) -> list[dict]:

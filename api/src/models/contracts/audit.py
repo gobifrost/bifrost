@@ -17,8 +17,14 @@ class AuditLogActor(BaseModel):
     user_id: UUID | None = Field(None, description="Acting user's ID (null for system events)")
     user_email: str | None = Field(None, description="Acting user's email")
     user_name: str | None = Field(None, description="Acting user's display name")
-    organization_id: UUID | None = Field(None, description="Acting user's organization")
-    organization_name: str | None = Field(None, description="Acting user's organization name")
+    organization_id: UUID | None = Field(
+        None, description="Organization the event happened in (an access check's target organization)"
+    )
+    organization_name: str | None = Field(None, description="Name of the organization the event happened in")
+    home_organization_id: UUID | None = Field(
+        None, description="The organization the acting user belongs to (null for Global or a deleted user)"
+    )
+    home_organization_name: str | None = Field(None, description="Name of the acting user's own organization")
 
 
 class AuditLogEntry(BaseModel):
@@ -46,6 +52,9 @@ class AuditLogEntry(BaseModel):
     ip_address: str | None = Field(None)
     user_agent: str | None = Field(None)
     details: dict[str, Any] | None = Field(None, description="Event-specific metadata")
+    workflow_name: str | None = Field(
+        None, description="Name of the workflow the event names (details.workflow_id), when it still exists"
+    )
 
     @field_serializer("timestamp")
     def _serialize_ts(self, dt: datetime) -> str:
