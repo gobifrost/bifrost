@@ -132,6 +132,7 @@ export function IdentityActions({
 			</DropdownMenu>
 			<RenameIdentityDialog
 				identity={identity}
+				returnFocusRef={triggerRef}
 				open={dialog === "rename"}
 				onOpenChange={(open) => {
 					if (!open) setDialog(null);

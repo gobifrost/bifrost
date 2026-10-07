@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { AlertCircle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -14,16 +14,20 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useDialogReturnFocus } from "@/hooks/useDialogReturnFocus";
 import { getErrorMessage } from "@/lib/api-error";
 import { useRenameIdentity } from "@/services/identities";
 
 function RenameIdentityDialogContent({
 	identity,
 	onOpenChange,
+	returnFocusRef,
 }: {
 	identity: { id: string; name: string };
 	onOpenChange: (open: boolean) => void;
+	returnFocusRef: RefObject<HTMLElement | null>;
 }) {
+	const returnFocus = useDialogReturnFocus(returnFocusRef, true);
 	const rename = useRenameIdentity();
 	const [name, setName] = useState(identity.name);
 	const [error, setError] = useState<string | null>(null);
@@ -56,6 +60,9 @@ function RenameIdentityDialogContent({
 
 	return (
 		<DialogContent
+			{...returnFocus}
+			// Nothing closes it while the rename saves, so a refusal stays visible.
+			showCloseButton={!busy}
 			onEscapeKeyDown={(event) => {
 				if (busy) event.preventDefault();
 			}}
@@ -124,10 +131,13 @@ export function RenameIdentityDialog({
 	identity,
 	open,
 	onOpenChange,
+	returnFocusRef,
 }: {
 	identity: { id: string; name: string };
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
+	/** Focus goes back here on close: the identity's actions button. */
+	returnFocusRef: RefObject<HTMLElement | null>;
 }) {
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
@@ -135,6 +145,7 @@ export function RenameIdentityDialog({
 				<RenameIdentityDialogContent
 					identity={identity}
 					onOpenChange={onOpenChange}
+					returnFocusRef={returnFocusRef}
 				/>
 			)}
 		</Dialog>
