@@ -389,7 +389,10 @@ async def _fetch_final_execution(
     "run_as",
     type=str,
     default=None,
-    help="Identity (UUID or name) the workflow runs as when no person starts it.",
+    help=(
+        "Identity the workflow runs as when no person starts it: UUID, name, or name with its place, "
+        "e.g. 'Default Identity (Contoso)'."
+    ),
 )
 @click.option(
     "--run-as-default",

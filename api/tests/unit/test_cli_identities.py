@@ -232,6 +232,22 @@ class TestUsersCreateIdentity:
         assert fake_client.calls == []
 
 
+class TestUsersByIdentityName:
+    def test_roles_get_takes_an_identity_by_its_label(self, fake_client: _FakeClient) -> None:
+        result = _users(["roles", "get", "Default Identity (Contoso)"])
+        assert result.exit_code == 0, result.output
+        assert [call[:2] for call in fake_client.calls] == [
+            ("GET", "/api/users"),
+            ("GET", "/api/identities"),
+            ("GET", f"/api/users/{DEFAULT_IDENTITY_ID}/role-assignments"),
+        ]
+
+    @pytest.mark.parametrize("command", [["access", "show"], ["access", "check"], ["roles", "get"], ["roles", "set"]])
+    def test_help_says_user_may_be_an_identity_name(self, command: list[str]) -> None:
+        output = CliRunner().invoke(users_group, [*command, "--help"]).output
+        assert "UUID, email, or identity name" in output
+
+
 class TestWorkflowsUpdateRunAs:
     def test_identity_name_is_resolved_to_run_identity_id(self, fake_client: _FakeClient) -> None:
         result = _workflows(["update", "Sync Invoices", "--run-as", "contoso nightly"])
@@ -241,6 +257,15 @@ class TestWorkflowsUpdateRunAs:
             ("GET", "/api/identities", None),
             ("PATCH", f"/api/workflows/{WORKFLOW_ID}", {"run_identity_id": NIGHTLY_IDENTITY_ID}),
         ]
+
+    def test_a_default_identity_is_named_with_its_place(self, fake_client: _FakeClient) -> None:
+        result = _workflows(["update", WORKFLOW_ID, "--run-as", "Default Identity (Contoso)"])
+        assert result.exit_code == 0, result.output
+        assert fake_client.calls[-1] == (
+            "PATCH",
+            f"/api/workflows/{WORKFLOW_ID}",
+            {"run_identity_id": DEFAULT_IDENTITY_ID},
+        )
 
     def test_identity_uuid_passes_through_without_a_lookup(self, fake_client: _FakeClient) -> None:
         _workflows(["update", WORKFLOW_ID, "--run-as", NIGHTLY_IDENTITY_ID])

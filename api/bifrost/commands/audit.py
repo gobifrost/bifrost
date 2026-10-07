@@ -65,7 +65,7 @@ def _print_list(response: dict[str, Any]) -> None:
 @click.option("--action", help="Action prefix, e.g. 'user.' or 'access.check'.")
 @click.option("--outcome", type=click.Choice(["success", "failure"]), help="Only successes or failures.")
 @click.option("--resource-type", help="Only events on this resource type.")
-@click.option("--user", "user_ref", help="Acting user: UUID or email.")
+@click.option("--user", "user_ref", help="Acting user: UUID, email, or identity name.")
 @click.option("--execution", help="Workflow execution ID.")
 @click.option("--workflow", "workflow_ref", help="Only events naming this workflow: UUID, name, or path::function.")
 @click.option("--org", "org_ref", help="Only events in this organization: UUID or name, or 'global'.")

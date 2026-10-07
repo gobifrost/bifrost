@@ -560,7 +560,7 @@ Options:
                                   'access.check'.
   --outcome [success|failure]     Only successes or failures.
   --resource-type TEXT            Only events on this resource type.
-  --user TEXT                     Acting user: UUID or email.
+  --user TEXT                     Acting user: UUID, email, or identity name.
   --execution TEXT                Workflow execution ID.
   --workflow TEXT                 Only events naming this workflow: UUID,
                                   name, or path::function.
@@ -3081,7 +3081,7 @@ Usage: users access check [OPTIONS] USER
 
   Show how the access model decides USER performing --operation in --org.
 
-  USER is a UUID or an email.
+  USER is a UUID, email, or identity name.
 
   Examples:
 
@@ -3104,9 +3104,10 @@ Usage: users access show [OPTIONS] USER
 
   Show what USER can do, and where.
 
-  Lists every place the user reaches and the permissions held there. USER is a
-  UUID or an email. `bifrost users access USER` is the same as `bifrost users
-  access show USER`.
+  Lists every place the user reaches and the permissions held there. `bifrost
+  users access USER` is the same as `bifrost users access show USER`.
+
+  USER is a UUID, email, or identity name.
 
   Example:
 
@@ -3179,7 +3180,7 @@ Usage: users roles get [OPTIONS] USER
 
   Show USER's base role and additional roles, with the places each applies.
 
-  USER is a UUID or an email.
+  USER is a UUID, email, or identity name.
 
 Options:
   --json  Emit JSON instead of human-readable output.
@@ -3192,6 +3193,8 @@ Options:
 Usage: users roles set [OPTIONS] USER
 
   Replace USER's additional roles, and optionally their base role.
+
+  USER is a UUID, email, or identity name.
 
   The --role options replace the additional roles; --no-roles removes them
   all. With only --base, the additional roles stay as they are.
@@ -3501,8 +3504,9 @@ Usage: workflows update [OPTIONS] REF
   :mod:`bifrost.refs` for resolution rules.
 
 Options:
-  --run-as TEXT                   Identity (UUID or name) the workflow runs as
-                                  when no person starts it.
+  --run-as TEXT                   Identity the workflow runs as when no person
+                                  starts it: UUID, name, or name with its
+                                  place, e.g. 'Default Identity (Contoso)'.
   --run-as-default                Run as the organization's default identity
                                   again.
   --organization-id TEXT          organization_id

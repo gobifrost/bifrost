@@ -159,7 +159,9 @@ async def show_access(
 ) -> None:
     """Show what USER can do, and where.
 
-    Lists every place the user reaches and the permissions held there. USER is a UUID or an email. `bifrost users access USER` is the same as `bifrost users access show USER`.
+    Lists every place the user reaches and the permissions held there. `bifrost users access USER` is the same as `bifrost users access show USER`.
+
+    USER is a UUID, email, or identity name.
 
     Example:
 
@@ -194,7 +196,7 @@ async def check_access(
 ) -> None:
     """Show how the access model decides USER performing --operation in --org.
 
-    USER is a UUID or an email.
+    USER is a UUID, email, or identity name.
 
     Examples:
 
@@ -288,7 +290,7 @@ async def get_roles(
 ) -> None:
     """Show USER's base role and additional roles, with the places each applies.
 
-    USER is a UUID or an email.
+    USER is a UUID, email, or identity name.
     """
     user_id = await resolver.resolve("user", user_ref)
     response = await client.get(f"/api/users/{user_id}/role-assignments")
@@ -324,6 +326,8 @@ async def set_roles(
     resolver: RefResolver,
 ) -> None:
     """Replace USER's additional roles, and optionally their base role.
+
+    USER is a UUID, email, or identity name.
 
     The --role options replace the additional roles; --no-roles removes them all. With only --base, the
     additional roles stay as they are.

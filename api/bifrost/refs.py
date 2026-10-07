@@ -15,8 +15,9 @@ Accepted ref shapes (by kind):
   ``GET /api/applications/{slug}`` directly.
 - **email** — ``user`` only; exact, case-insensitive match against
   ``GET /api/users?search=<email>``.
-- **identity name** — ``identity`` only; exact, case-insensitive match against
-  ``GET /api/identities``.
+- **identity name** — ``identity``, and ``user`` when no person's email
+  matches; exact, case-insensitive match of the name or of the label the CLI
+  prints (``Default Identity (Contoso)``) against ``GET /api/identities``.
 
 Config is keyed by ``key`` (the stored column name), not by a ``name`` field —
 callers pass the config key as the ``value`` for ``kind="config"``.
@@ -327,6 +328,8 @@ async def _resolve_user(client: Any, value: str) -> tuple[str, list[dict[str, An
         _candidate(u["email"], str(u["id"]), _as_opt_str(u.get("organization_id")))
         for u in matches
     ]
+    if not matches:
+        return await _resolve_identity(client, value)
     if len(matches) == 1:
         return str(matches[0]["id"]), candidates
     return "", candidates
@@ -343,7 +346,7 @@ async def _resolve_identity(
     client: Any, value: str
 ) -> tuple[str, list[dict[str, Any]]]:
     items = await _get_json(client, "/api/identities")
-    matches = [i for i in items if str(i.get("name", "")).lower() == value.lower()]
+    matches = [i for i in items if value.lower() in (str(i["name"]).lower(), identity_label(i).lower())]
     candidates = [
         _candidate(identity_label(i), str(i["id"]), _as_opt_str(i.get("organization_id")))
         for i in matches
@@ -390,7 +393,8 @@ async def resolve_ref(
         client: Async HTTP client exposing ``async def get(path) -> Response``
             (e.g. :class:`bifrost.client.BifrostClient`).
         kind: Entity kind.
-        value: UUID, name, ``path::func`` (workflow), slug (app), email (user), or identity name.
+        value: UUID, name, ``path::func`` (workflow), slug (app), email or
+            identity name (user), or identity name (identity).
         cache: Optional per-invocation cache, keyed by ``(kind, value)``.
             The CLI command instance owns one cache dict per invocation.
 
