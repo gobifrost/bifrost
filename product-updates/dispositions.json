@@ -1778,6 +1778,19 @@
         ]
       },
       "reason": "Dependabot dependency maintenance; omitted under the repository's customer-facing selection policy. CI and dependency security review remain required."
+    },
+    "pr:939": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/939",
+          "https://github.com/gobifrost/bifrost/pull/935",
+          "https://github.com/gobifrost/bifrost/blob/93572f29c0665dae6193675d19aa488e7d7c6a44/docs/product-updates-authoring.md"
+        ]
+      },
+      "reason": "Internal dependency compatibility maintenance: preserve existing final agent handoff behavior with Pydantic AI 2.54. No new customer capability or upgrade action."
     }
   }
 }
