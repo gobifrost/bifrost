@@ -299,9 +299,9 @@ function CheckList({
 		<DataTable>
 			<DataTableHeader>
 				<DataTableRow>
+					<DataTableHead>Organization</DataTableHead>
 					<DataTableHead>Time</DataTableHead>
 					<DataTableHead>Run User</DataTableHead>
-					<DataTableHead>Organization</DataTableHead>
 					<DataTableHead>Resource Type</DataTableHead>
 					<DataTableHead>Would Stop Here</DataTableHead>
 				</DataTableRow>
@@ -318,6 +318,7 @@ function CheckList({
 							)
 						}
 					>
+						<DataTableCell>{organization(entry)}</DataTableCell>
 						<DataTableCell className="whitespace-nowrap">
 							<OpenButton
 								onOpen={(opener) => onOpen(entry, opener)}
@@ -328,7 +329,6 @@ function CheckList({
 						<DataTableCell>
 							<RunUserLabel entry={entry} />
 						</DataTableCell>
-						<DataTableCell>{organization(entry)}</DataTableCell>
 						<DataTableCell>
 							{entry.resource_type
 								? checkKindTitle(entry.resource_type)

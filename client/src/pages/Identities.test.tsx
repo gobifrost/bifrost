@@ -203,7 +203,7 @@ describe("Identities", () => {
 		).toBeInTheDocument();
 	});
 
-	it("lists identities by name, kind, organization, roles and workflows, without email", () => {
+	it("lists identities by organization, name, kind, roles and workflows, without email", () => {
 		renderPage();
 
 		const table = screen.getByRole("table");
@@ -211,16 +211,16 @@ describe("Identities", () => {
 			within(table)
 				.getAllByRole("columnheader")
 				.map((header) => header.textContent),
-		).toEqual(["Name", "Kind", "Organization", "Roles", "Workflows Using"]);
+		).toEqual(["Organization", "Name", "Kind", "Roles", "Workflows Using"]);
 		const [, contoso] = within(table).getAllByRole("row").slice(1);
 		expect(
 			within(contoso)
 				.getAllByRole("cell")
 				.map((cell) => cell.textContent),
 		).toEqual([
+			"Contoso",
 			"Default Identity",
 			"Default",
-			"Contoso",
 			"UserTicket Sync",
 			"12",
 		]);
@@ -233,11 +233,11 @@ describe("Identities", () => {
 			.getAllByRole("row")
 			.slice(1);
 		const cells = within(rows[0]).getAllByRole("cell");
-		expect(cells[0]).toHaveTextContent("Default Identity");
-		expect(cells[1]).toHaveTextContent("Global");
 		expect(
-			within(cells[2]).getByLabelText("Organization"),
+			within(cells[0]).getByLabelText("Organization"),
 		).toHaveTextContent("Global");
+		expect(cells[1]).toHaveTextContent("Default Identity");
+		expect(cells[2]).toHaveTextContent("Global");
 		expect(rows[0]).toHaveAttribute("data-pinned", "true");
 		expect(rows[1]).not.toHaveAttribute("data-pinned");
 	});
@@ -315,6 +315,11 @@ describe("Identities", () => {
 			.filter((item) => item.parentElement === list);
 		expect(records).toHaveLength(3);
 		expect(records[0]).toHaveAttribute("data-pinned", "true");
+		// The organization leads each record.
+		expect(records[1].firstElementChild).toHaveAccessibleName(
+			"Organization",
+		);
+		expect(records[1].firstElementChild).toHaveTextContent("Contoso");
 		expect(within(records[1]).getByText("Ticket Sync")).toBeInTheDocument();
 		expect(within(records[1]).getByText("12")).toBeInTheDocument();
 	});

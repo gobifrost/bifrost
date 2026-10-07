@@ -246,9 +246,21 @@ describe("AccessChecksPage", () => {
 			true,
 			{ preservePageData: true },
 		);
+		expect(
+			screen
+				.getAllByRole("columnheader")
+				.map((header) => header.textContent),
+		).toEqual([
+			"Organization",
+			"Time",
+			"Run User",
+			"Resource Type",
+			"Would Stop Here",
+		]);
 		const [, row] = screen.getAllByRole("row");
-		expect(row).toHaveTextContent("Default Identity · Contoso");
-		expect(row).toHaveTextContent("Fabrikam");
+		const cells = within(row).getAllByRole("cell");
+		expect(cells[0]).toHaveTextContent("Fabrikam");
+		expect(cells[2]).toHaveTextContent("Default Identity · Contoso");
 
 		await user.click(within(row).getByRole("button"));
 		expect(

@@ -202,6 +202,11 @@ export function Identities() {
 									pinned(identity) && PINNED_CLASS_NAME,
 								)}
 							>
+								<IdentityOrganizationChip
+									organizationName={
+										identity.organization_name
+									}
+								/>
 								<div className="flex flex-wrap items-center gap-2">
 									<Link
 										to={`/users/${identity.id}`}
@@ -214,18 +219,6 @@ export function Identities() {
 									/>
 								</div>
 								<dl className="grid grid-cols-2 gap-3 text-sm">
-									<div>
-										<dt className="text-xs text-muted-foreground">
-											Organization
-										</dt>
-										<dd className="mt-1">
-											<IdentityOrganizationChip
-												organizationName={
-													identity.organization_name
-												}
-											/>
-										</dd>
-									</div>
 									<div>
 										<dt className="text-xs text-muted-foreground">
 											Workflows Using
@@ -250,14 +243,14 @@ export function Identities() {
 					<DataTable className="max-h-full">
 						<DataTableHeader>
 							<DataTableRow>
+								<DataTableHead className="w-0 whitespace-nowrap">
+									Organization
+								</DataTableHead>
 								<DataTableHead className="min-w-48">
 									Name
 								</DataTableHead>
 								<DataTableHead className="w-0 whitespace-nowrap">
 									Kind
-								</DataTableHead>
-								<DataTableHead className="w-0 whitespace-nowrap">
-									Organization
 								</DataTableHead>
 								<DataTableHead>Roles</DataTableHead>
 								<DataTableHead className="w-0 whitespace-nowrap text-right">
@@ -276,6 +269,13 @@ export function Identities() {
 										pinned(identity) && PINNED_CLASS_NAME,
 									)}
 								>
+									<DataTableCell className="w-0 whitespace-nowrap text-sm">
+										<IdentityOrganizationChip
+											organizationName={
+												identity.organization_name
+											}
+										/>
+									</DataTableCell>
 									<DataTableCell className="min-w-48 font-medium [overflow-wrap:anywhere]">
 										<Link
 											to={`/users/${identity.id}`}
@@ -287,13 +287,6 @@ export function Identities() {
 									<DataTableCell className="w-0 whitespace-nowrap">
 										<IdentityKindBadge
 											kind={identity.identity_kind}
-										/>
-									</DataTableCell>
-									<DataTableCell className="w-0 whitespace-nowrap text-sm">
-										<IdentityOrganizationChip
-											organizationName={
-												identity.organization_name
-											}
 										/>
 									</DataTableCell>
 									<DataTableCell>
