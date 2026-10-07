@@ -2491,7 +2491,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/workflows/{workflow_id}/requirements": {
+    "/api/workflows/{workflow_id}/recommended-access": {
         parameters: {
             query?: never;
             header?: never;
@@ -2499,10 +2499,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * What a workflow's identity lacks
-         * @description What the workflow does, from the access checks its runs recorded in the audit log's hot window, that the identity it runs as lacks: reach into other organizations, roles its policies look for, and its own roles. Computed for identity_id, else the identity it runs as now. Empty until runs are observed (Platform admin only)
+         * Recommended Access for a workflow's identity
+         * @description What the identity the workflow runs as would also need, based on the access checks its runs recorded in the audit log's hot window: reach into other organizations, roles its policies look for, and the workflow's own roles. Computed for identity_id, else the identity it runs as now. Empty until runs are observed (Platform admin only)
          */
-        get: operations["get_workflow_requirements_api_workflows__workflow_id__requirements_get"];
+        get: operations["get_workflow_recommended_access_api_workflows__workflow_id__recommended_access_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -24394,6 +24394,63 @@ export interface components {
             started_at: string | null;
         };
         /**
+         * RecommendedAccess
+         * @description What the identity a workflow runs as would also need, based on its recorded runs.
+         */
+        RecommendedAccess: {
+            /**
+             * Identity Id
+             * Format: uuid
+             * @description The identity the recommendations are computed for.
+             */
+            identity_id: string;
+            /**
+             * Observed Runs
+             * @description Runs in the window that recorded access checks for this workflow.
+             */
+            observed_runs: number;
+            /**
+             * Window Days
+             * @description How far back the recorded checks reach: the audit log's hot window.
+             */
+            window_days: number;
+            /** Items */
+            items: components["schemas"]["RecommendedAccessItem"][];
+        };
+        /** RecommendedAccessItem */
+        RecommendedAccessItem: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "reach" | "policy_role" | "workflow_role";
+            /** Label */
+            label: string;
+            /** Detail */
+            detail: string;
+            /**
+             * Organization Id
+             * @description The organization a reach recommendation targets, or where a policy role's grant would be placed; null for everything, for Global, and for a workflow role.
+             */
+            organization_id: string | null;
+            /** @description Null when no single role assignment meets it (a role to choose, or information only). */
+            grant: components["schemas"]["RecommendedGrant"] | null;
+        };
+        /**
+         * RecommendedGrant
+         * @description The role assignment a recommendation asks for: ``role_id`` applied at
+         *     ``boundaries``, merged into the identity's existing assignment of that role.
+         */
+        RecommendedGrant: {
+            /**
+             * Role Id
+             * Format: uuid
+             */
+            role_id: string;
+            /** Boundaries */
+            boundaries: components["schemas"]["RoleBoundaryInput"][];
+        };
+        /**
          * RecoveryCodesCountResponse
          * @description Recovery codes count response.
          */
@@ -24797,20 +24854,6 @@ export interface components {
              * @default
              */
             instructions: string;
-        };
-        /**
-         * RequirementGrant
-         * @description The role assignment that would meet a requirement: ``role_id`` applied at
-         *     ``boundaries``, merged into the identity's existing assignment of that role.
-         */
-        RequirementGrant: {
-            /**
-             * Role Id
-             * Format: uuid
-             */
-            role_id: string;
-            /** Boundaries */
-            boundaries: components["schemas"]["RoleBoundaryInput"][];
         };
         /**
          * ResolveRequest
@@ -29967,46 +30010,6 @@ export interface components {
              */
             name: string;
         };
-        /** WorkflowRequirement */
-        WorkflowRequirement: {
-            /**
-             * Kind
-             * @enum {string}
-             */
-            kind: "reach" | "policy_role" | "workflow_role";
-            /** Label */
-            label: string;
-            /** Detail */
-            detail: string;
-            /**
-             * Organization Id
-             * @description The organization a reach requirement targets, or where a policy role's grant would be placed; null for everything, for Global, and for a workflow role.
-             */
-            organization_id: string | null;
-            /** @description Null when no single role assignment meets it (a role to choose, or information only). */
-            grant: components["schemas"]["RequirementGrant"] | null;
-        };
-        /** WorkflowRequirements */
-        WorkflowRequirements: {
-            /**
-             * Identity Id
-             * Format: uuid
-             * @description The identity the requirements are computed for.
-             */
-            identity_id: string;
-            /**
-             * Observed Runs
-             * @description Runs in the window that recorded access checks for this workflow.
-             */
-            observed_runs: number;
-            /**
-             * Window Days
-             * @description How far back the recorded checks reach: the audit log's hot window.
-             */
-            window_days: number;
-            /** Items */
-            items: components["schemas"]["WorkflowRequirement"][];
-        };
         /**
          * WorkflowResourceReport
          * @description Response for the workflow resource report endpoint.
@@ -34639,7 +34642,7 @@ export interface operations {
             };
         };
     };
-    get_workflow_requirements_api_workflows__workflow_id__requirements_get: {
+    get_workflow_recommended_access_api_workflows__workflow_id__recommended_access_get: {
         parameters: {
             query?: {
                 /** @description Compute for this identity instead of the current one */
@@ -34659,7 +34662,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkflowRequirements"];
+                    "application/json": components["schemas"]["RecommendedAccess"];
                 };
             };
             /** @description Validation Error */

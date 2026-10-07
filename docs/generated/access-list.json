@@ -9167,6 +9167,20 @@
     "inline_effect": null,
     "intended_change": null,
     "mcp_tool": null,
+    "method": "GET",
+    "operation_id": null,
+    "path": "/api/workflows/{workflow_id}/recommended-access",
+    "permission": "workflows.read",
+    "reason": "Platform-admin-only operation."
+  },
+  {
+    "access_class": "permission",
+    "boundary": "organization",
+    "current_gate": "superuser",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
     "method": "POST",
     "operation_id": null,
     "path": "/api/workflows/{workflow_id}/recreate",
@@ -9199,20 +9213,6 @@
     "operation_id": null,
     "path": "/api/workflows/{workflow_id}/replace",
     "permission": "workflows.readwrite",
-    "reason": "Platform-admin-only operation."
-  },
-  {
-    "access_class": "permission",
-    "boundary": "organization",
-    "current_gate": "superuser",
-    "inline_checks": [],
-    "inline_effect": null,
-    "intended_change": null,
-    "mcp_tool": null,
-    "method": "GET",
-    "operation_id": null,
-    "path": "/api/workflows/{workflow_id}/requirements",
-    "permission": "workflows.read",
     "reason": "Platform-admin-only operation."
   },
   {

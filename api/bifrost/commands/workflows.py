@@ -15,11 +15,11 @@ Implements Task 5c of the CLI mutation surface plan:
   from :class:`WorkflowUpdateRequest`).
 * ``bifrost workflows delete <ref>`` → ``DELETE /api/workflows/{uuid}``
   (forwards ``--force`` as ``force_deactivation`` on the request body).
-* ``bifrost workflows requirements <ref>`` →
-  ``GET /api/workflows/{uuid}/requirements``.
-* ``bifrost workflows grant <ref> (--requirement N | --all)`` → read-merge-PUT
-  of the workflow identity's role assignments, applying the requirements that
-  carry a grant.
+* ``bifrost workflows recommendations <ref>`` →
+  ``GET /api/workflows/{uuid}/recommended-access``.
+* ``bifrost workflows grant <ref> (--recommendation N | --all)`` →
+  read-merge-PUT of the workflow identity's role assignments, applying the
+  recommendations that carry a grant.
 * ``bifrost workflows grant-role <ref> <role-ref>`` →
   ``POST /api/workflows/{uuid}/roles`` with a single-element role_ids list.
 * ``bifrost workflows revoke-role <ref> <role-ref>`` →
@@ -432,7 +432,7 @@ async def update_workflow(
     output_result(response.json(), ctx=ctx)
 
 
-_REQUIREMENT_KINDS = {"reach": "Reach", "policy_role": "Policy Role", "workflow_role": "Workflow Role"}
+_RECOMMENDATION_KINDS = {"reach": "Reach", "policy_role": "Policy Role", "workflow_role": "Workflow Role"}
 
 
 async def _names(client: BifrostClient, path: str, params: dict[str, Any] | None = None) -> dict[str, str]:
@@ -441,14 +441,31 @@ async def _names(client: BifrostClient, path: str, params: dict[str, Any] | None
     return {item["id"]: item["name"] for item in response.json()}
 
 
-def _print_requirements(requirements: dict[str, Any], roles: dict[str, str], orgs: dict[str, str]) -> None:
-    if not requirements["items"]:
-        click.echo("No runs observed yet." if not requirements["observed_runs"] else "Nothing missing.")
+async def _identity(client: BifrostClient, identity_id: str) -> dict[str, Any]:
+    response = await client.get("/api/identities")
+    response.raise_for_status()
+    return next(identity for identity in response.json() if identity["id"] == identity_id)
+
+
+async def _recommended_access(client: BifrostClient, workflow_uuid: str) -> dict[str, Any]:
+    response = await client.get(f"/api/workflows/{workflow_uuid}/recommended-access")
+    response.raise_for_status()
+    return response.json()
+
+
+def _print_recommendations(
+    recommended: dict[str, Any], identity: str, roles: dict[str, str], orgs: dict[str, str]
+) -> None:
+    if not recommended["items"]:
+        click.echo("No runs observed yet." if not recommended["observed_runs"] else "Nothing missing.")
         return
-    click.echo(f"Based on {requirements['observed_runs']} runs in the last {requirements['window_days']} days.")
-    for number, item in enumerate(requirements["items"], start=1):
+    click.echo(
+        f"Based on {recommended['observed_runs']} runs in the last {recommended['window_days']} days, "
+        f"{identity} would also need:"
+    )
+    for number, item in enumerate(recommended["items"], start=1):
         click.echo()
-        click.echo(f"{number}. {_REQUIREMENT_KINDS[item['kind']]}: {item['label']}")
+        click.echo(f"{number}. {_RECOMMENDATION_KINDS[item['kind']]}: {item['label']}")
         click.echo(f"   {item['detail']}")
         grant = item["grant"]
         if grant is None:
@@ -461,36 +478,35 @@ def _print_requirements(requirements: dict[str, Any], roles: dict[str, str], org
         click.echo(f"   Grant: {roles[grant['role_id']]} at {places}")
 
 
-@workflows_group.command("requirements")
+@workflows_group.command("recommendations")
 @click.argument("ref")
 @click.pass_context
 @pass_resolver
 @run_async
-async def workflow_requirements(
+async def workflow_recommendations(
     ctx: click.Context,
     ref: str,
     *,
     client: BifrostClient,
     resolver: RefResolver,
 ) -> None:
-    """Show what the identity a workflow runs as lacks.
+    """Show what the identity a workflow runs as would also need.
 
-    Computed from the access checks the workflow's recent runs recorded: reach into other organizations, roles its policies look for, and the workflow's own roles. Empty until runs are observed. Apply the grants with `bifrost workflows grant`.
+    Recommended Access, based on the access checks the workflow's recent runs recorded: reach into other organizations, roles its policies look for, and the workflow's own roles. Empty until runs are observed. Apply the grants with `bifrost workflows grant`.
 
     ``REF`` is a UUID, workflow name, or ``path::func`` locator.
     """
     workflow_uuid = await resolver.resolve("workflow", ref)
-    response = await client.get(f"/api/workflows/{workflow_uuid}/requirements")
-    response.raise_for_status()
-    requirements = response.json()
-    grants = [item["grant"] for item in requirements["items"] if item["grant"]]
+    recommended = await _recommended_access(client, workflow_uuid)
+    identity = identity_label(await _identity(client, recommended["identity_id"])) if recommended["items"] else ""
+    grants = [item["grant"] for item in recommended["items"] if item["grant"]]
     roles = await _names(client, "/api/roles") if grants else {}
     orgs = (
         await _names(client, "/api/organizations", {"include_inactive": True})
         if any(b["kind"] == "organization" for grant in grants for b in grant["boundaries"])
         else {}
     )
-    output_result(requirements, ctx=ctx, human=lambda r: _print_requirements(r, roles, orgs))
+    output_result(recommended, ctx=ctx, human=lambda r: _print_recommendations(r, identity, roles, orgs))
 
 
 def _merge_grants(assignments: dict[str, Any], grants: list[dict[str, Any]]) -> dict[str, Any]:
@@ -511,66 +527,62 @@ def _merge_grants(assignments: dict[str, Any], grants: list[dict[str, Any]]) -> 
 @workflows_group.command("grant")
 @click.argument("ref")
 @click.option(
-    "--requirement",
+    "--recommendation",
     "numbers",
     type=int,
     multiple=True,
     metavar="N",
-    help="Number of a requirement from `workflows requirements`, repeatable.",
+    help="Number of a recommendation from `workflows recommendations`, repeatable.",
 )
-@click.option("--all", "all_requirements", is_flag=True, help="Apply every requirement that has a grant.")
+@click.option("--all", "all_recommendations", is_flag=True, help="Apply every recommendation that has a grant.")
 @click.option("--yes", is_flag=True, help="Confirm granting to a default identity, which other workflows share.")
 @click.pass_context
 @pass_resolver
 @run_async
-async def grant_requirements(
+async def grant_recommendations(
     ctx: click.Context,
     ref: str,
     numbers: tuple[int, ...],
-    all_requirements: bool,
+    all_recommendations: bool,
     yes: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
 ) -> None:
-    """Grant the identity a workflow runs as what its requirements ask for.
+    """Grant the identity a workflow runs as what Recommended Access recommends.
 
-    Each grant is merged into the identity's existing assignment of that role. A requirement without a grant needs a role chosen: use `bifrost users roles set`. A default identity is shared by every workflow that runs as it, so granting to one needs --yes.
+    Each grant is merged into the identity's existing assignment of that role. A recommendation without a grant needs a role chosen: use `bifrost users roles set`. A default identity is shared by every workflow that runs as it, so granting to one needs --yes.
 
     Examples:
 
     \b
-      bifrost workflows grant "Sync Invoices" --requirement 1
+      bifrost workflows grant "Sync Invoices" --recommendation 1
       bifrost workflows grant "Sync Invoices" --all
-      bifrost workflows grant "Sync Invoices" --requirement 1 --yes
+      bifrost workflows grant "Sync Invoices" --recommendation 1 --yes
     """
-    if bool(numbers) == all_requirements:
-        raise click.UsageError("Give --requirement N (repeatable) or --all.")
+    if bool(numbers) == all_recommendations:
+        raise click.UsageError("Give --recommendation N (repeatable) or --all.")
     workflow_uuid = await resolver.resolve("workflow", ref)
-    response = await client.get(f"/api/workflows/{workflow_uuid}/requirements")
-    response.raise_for_status()
-    requirements = response.json()
-    items = requirements["items"]
+    recommended = await _recommended_access(client, workflow_uuid)
+    items = recommended["items"]
 
-    chosen = list(range(1, len(items) + 1)) if all_requirements else list(numbers)
+    chosen = list(range(1, len(items) + 1)) if all_recommendations else list(numbers)
     for number in chosen:
         if not 1 <= number <= len(items):
-            raise click.UsageError(f"There is no requirement {number}: this workflow has {len(items)}.")
+            raise click.UsageError(f"There is no recommendation {number}: this workflow has {len(items)}.")
     unmet = [number for number in chosen if items[number - 1]["grant"] is None]
-    if not all_requirements and unmet:
+    if not all_recommendations and unmet:
         raise click.UsageError(
-            f"Requirement {unmet[0]} needs a role chosen: use bifrost users roles set."
+            f"Recommendation {unmet[0]} needs a role chosen: use bifrost users roles set."
         )
     grants = [items[number - 1]["grant"] for number in chosen if items[number - 1]["grant"] is not None]
     if not grants:
-        raise click.UsageError("No requirement has a grant to apply.")
+        raise click.UsageError("No recommendation has a grant to apply.")
     for number in unmet:
-        click.echo(f"Requirement {number} needs a role chosen: use bifrost users roles set.", err=True)
+        click.echo(f"Recommendation {number} needs a role chosen: use bifrost users roles set.", err=True)
 
-    identity_id = requirements["identity_id"]
-    identities = await client.get("/api/identities")
-    identities.raise_for_status()
-    identity = next(i for i in identities.json() if i["id"] == identity_id)
+    identity_id = recommended["identity_id"]
+    identity = await _identity(client, identity_id)
     if identity["identity_kind"] != "custom" and not yes:
         place = identity["organization_name"] or "Global"
         raise click.UsageError(

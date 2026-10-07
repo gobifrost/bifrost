@@ -1,4 +1,5 @@
-"""What a workflow's identity lacks, from the access checks its runs recorded.
+"""Recommended Access: what the identity a workflow runs as would also need,
+based on its recorded runs.
 
 A run's access checks are written to the audit log (``access.check``, see
 ``src.services.access_check_writer``) with the workflow they came from. Read
@@ -8,15 +9,15 @@ workflow does that the identity could not:
 - Reach: organizations the workflow switches into or starts child runs in,
   outside the identity's reach (``explain.in_reach``).
 - Policy roles: roles a table or file policy looked for that the identity
-  does not hold now. Claims are not requirements: they resolve from the
+  does not hold now. Claims are never recommended: they resolve from the
   person's own data, and no role assignment supplies them.
 - Workflow roles: whether the identity may open the workflow itself, which
   matters when it starts it through the API (``run_user_may_open``, the same
   rule the workflow's own access check applies).
 
-A role named by a policy is a requirement only as far as the recorded check
+A role named by a policy is recommended only as far as the recorded check
 saw it: a check lists what its run user was missing, so a role that run user
-held does not appear. Nothing is listed until the workflow has recorded a
+held does not appear. Nothing is recommended until the workflow has recorded a
 check. Nothing here decides access; it reads what was recorded and what the
 identity holds now.
 """
@@ -34,10 +35,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.access_checks import ALL_ORGS, NoteTarget
 from shared.role_cache import get_user_roles
 from src.models.contracts.role_assignments import RoleBoundaryInput
-from src.models.contracts.workflow_requirements import (
-    RequirementGrant,
-    WorkflowRequirement,
-    WorkflowRequirements,
+from src.models.contracts.recommended_access import (
+    RecommendedAccess,
+    RecommendedAccessItem,
+    RecommendedGrant,
 )
 from src.models.orm.audit import AuditLog
 from src.models.orm.organizations import Organization
@@ -73,7 +74,7 @@ class RoleRef:
 
 @dataclass(frozen=True)
 class Holder:
-    """The identity the requirements are for, and the roles it holds now:
+    """The identity the recommendations are for, and the roles it holds now:
     its role memberships, by name and by id, as a policy's ``has_role`` sees
     them."""
 
@@ -90,9 +91,9 @@ def _place(holder: Holder, target: NoteTarget) -> RoleBoundaryInput:
     return RoleBoundaryInput(kind="organization", organization_id=organization_id)
 
 
-def _reach_requirements(
+def _reach_items(
     actions: Sequence[CheckedAction], holder: Holder, organization_names: Mapping[UUID, str]
-) -> list[WorkflowRequirement]:
+) -> list[RecommendedAccessItem]:
     acts: dict[NoteTarget, set[str]] = {}
     for action in actions:
         if action.kind in _ACTS_IN and not in_reach(holder.run_user, action.target)[0]:
@@ -108,13 +109,13 @@ def _reach_requirements(
             label = organization_names.get(target, str(target))
             verbs = " and ".join(_ACTS_IN[kind] for kind in sorted(kinds))
             detail = f"The workflow {verbs} this organization, outside the identity's reach"
-        items.append(WorkflowRequirement(kind="reach", label=label, detail=detail, organization_id=organization_id, grant=None))
+        items.append(RecommendedAccessItem(kind="reach", label=label, detail=detail, organization_id=organization_id, grant=None))
     return sorted(items, key=lambda item: item.label)
 
 
-def _policy_requirements(
+def _policy_items(
     actions: Sequence[CheckedAction], holder: Holder, roles_by_ref: Mapping[str, RoleRef]
-) -> list[WorkflowRequirement]:
+) -> list[RecommendedAccessItem]:
     held = holder.held_roles
     seen: set[tuple[str, str]] = set()
     items = []
@@ -132,13 +133,13 @@ def _policy_requirements(
                 continue
             seen.add(key)
             items.append(
-                WorkflowRequirement(
+                RecommendedAccessItem(
                     kind="policy_role",
                     label=role.name if role else ref,
                     detail="A table or file policy the workflow uses checks for this role",
                     organization_id=place.organization_id,
                     grant=(
-                        RequirementGrant(role_id=role.id, boundaries=[place])
+                        RecommendedGrant(role_id=role.id, boundaries=[place])
                         if role is not None and not role.builtin
                         else None
                     ),
@@ -147,13 +148,13 @@ def _policy_requirements(
     return sorted(items, key=lambda item: item.label)
 
 
-def _workflow_role_requirement(
+def _workflow_role_item(
     workflow_roles: Mapping[UUID, str], may_open_workflow: bool
-) -> list[WorkflowRequirement]:
+) -> list[RecommendedAccessItem]:
     if not workflow_roles or may_open_workflow:
         return []
     return [
-        WorkflowRequirement(
+        RecommendedAccessItem(
             kind="workflow_role",
             label=", ".join(sorted(workflow_roles.values())),
             detail="Needed when the identity starts this workflow through the API: it must hold one of these roles",
@@ -163,7 +164,7 @@ def _workflow_role_requirement(
     ]
 
 
-def build_requirements(
+def build_recommendations(
     actions: Sequence[CheckedAction],
     *,
     holder: Holder,
@@ -171,18 +172,18 @@ def build_requirements(
     organization_names: Mapping[UUID, str],
     workflow_roles: Mapping[UUID, str],
     may_open_workflow: bool,
-) -> list[WorkflowRequirement]:
-    """The requirements ``actions`` leave unmet by ``holder``: reach, then
-    policy roles, then workflow roles. ``roles_by_ref`` finds a role by name
+) -> list[RecommendedAccessItem]:
+    """What ``holder`` would also need for ``actions``: reach, then policy
+    roles, then workflow roles. ``roles_by_ref`` finds a role by name
     or id; ``workflow_roles`` is the role-based workflow's roles (empty
     otherwise) and ``may_open_workflow`` whether the identity may open it.
-    No recorded actions, no requirements."""
+    No recorded actions, no recommendations."""
     if not actions:
         return []
     return [
-        *_reach_requirements(actions, holder, organization_names),
-        *_policy_requirements(actions, holder, roles_by_ref),
-        *_workflow_role_requirement(workflow_roles, may_open_workflow),
+        *_reach_items(actions, holder, organization_names),
+        *_policy_items(actions, holder, roles_by_ref),
+        *_workflow_role_item(workflow_roles, may_open_workflow),
     ]
 
 
@@ -222,9 +223,9 @@ async def _recorded_actions(db: AsyncSession, workflow_id: UUID, since: datetime
     return actions, runs
 
 
-async def workflow_requirements(db: AsyncSession, workflow: Workflow, identity_id: UUID) -> WorkflowRequirements:
-    """``workflow``'s requirements for the identity ``identity_id`` (which
-    must exist), from the checks recorded in the audit log's hot window."""
+async def recommended_access(db: AsyncSession, workflow: Workflow, identity_id: UUID) -> RecommendedAccess:
+    """What the identity ``identity_id`` (which must exist) would also need to
+    run ``workflow``, from the checks recorded in the audit log's hot window."""
     window_days = (await AuditRetentionSettingsService(db).get_settings()).hot_days
     actions, runs = await _recorded_actions(db, workflow.id, datetime.now(timezone.utc) - timedelta(days=window_days))
     run_user = await load_run_user(db, identity_id)
@@ -249,7 +250,7 @@ async def workflow_requirements(db: AsyncSession, workflow: Workflow, identity_i
     # A role-based workflow of another organization is out of the identity's
     # scope however many roles it holds (``run_identity_allowed`` pairs
     # scopes, e.g. a global identity with a provider-organization workflow),
-    # so its roles are no requirement.
+    # so its roles are no recommendation.
     workflow_roles = (
         dict(
             (
@@ -267,7 +268,7 @@ async def workflow_requirements(db: AsyncSession, workflow: Workflow, identity_i
     organization_names = dict(
         (await db.execute(select(Organization.id, Organization.name).where(Organization.id.in_(target_ids)))).all()
     )
-    items = build_requirements(
+    items = build_recommendations(
         actions,
         holder=Holder(run_user=run_user, held_roles=frozenset(held_names) | {str(role_id) for role_id in held_ids}),
         roles_by_ref=roles_by_ref,
@@ -275,4 +276,4 @@ async def workflow_requirements(db: AsyncSession, workflow: Workflow, identity_i
         workflow_roles=workflow_roles,
         may_open_workflow=await run_user_may_open(db, WorkflowRepository, identity_id, workflow.id),
     )
-    return WorkflowRequirements(identity_id=identity_id, observed_runs=runs, window_days=window_days, items=items)
+    return RecommendedAccess(identity_id=identity_id, observed_runs=runs, window_days=window_days, items=items)

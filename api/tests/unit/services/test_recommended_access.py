@@ -1,4 +1,4 @@
-"""What a workflow's identity lacks, computed from the access checks it recorded."""
+"""Recommended Access: what a workflow's identity would also need, from the checks its runs recorded."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ from shared.builtin_roles import USER_BASE_PERMISSIONS, USER_ROLE_ID
 from src.models.contracts.role_assignments import RoleBoundaryInput
 from src.services.authorization.context import AuthorizationContext, Boundary, BoundaryKind, RoleGrant
 from src.services.authorization.explain import ALL_ORGS, RunUser
-from src.services.workflow_requirements import (
+from src.services.recommended_access import (
     CheckedAction,
     Holder,
     RoleRef,
-    build_requirements,
+    build_recommendations,
 )
 
 CONTOSO = UUID("00000000-0000-0000-0000-00000000c001")
@@ -45,7 +45,7 @@ def _holder(*held: RoleRef, home: UUID | None = CONTOSO, placed_at: tuple[UUID, 
 
 
 def _build(actions, holder: Holder, *, workflow_roles: dict[UUID, str] | None = None, may_open: bool = False):
-    return build_requirements(
+    return build_recommendations(
         actions,
         holder=holder,
         roles_by_ref=ROLES,
@@ -55,11 +55,11 @@ def _build(actions, holder: Holder, *, workflow_roles: dict[UUID, str] | None = 
     )
 
 
-def test_no_recorded_checks_means_no_requirements() -> None:
+def test_no_recorded_checks_means_no_recommendations() -> None:
     assert _build([], _holder(), workflow_roles={uuid4(): "Dispatchers"}) == []
 
 
-def test_scope_switch_outside_the_identitys_reach_is_a_reach_requirement() -> None:
+def test_scope_switch_outside_the_identitys_reach_is_a_reach_recommendation() -> None:
     (item,) = _build([CheckedAction("scope_switch", FABRIKAM, ())], _holder())
 
     assert (item.kind, item.label) == ("reach", "Fabrikam")
@@ -78,7 +78,7 @@ def test_targets_in_reach_need_nothing() -> None:
     assert _build(actions, _holder(placed_at=(FABRIKAM,), home=CONTOSO)) == []
 
 
-def test_one_requirement_per_target_names_every_way_the_workflow_acts_there() -> None:
+def test_one_recommendation_per_target_names_every_way_the_workflow_acts_there() -> None:
     actions = [
         CheckedAction("scope_switch", FABRIKAM, ()),
         CheckedAction("child_run", FABRIKAM, ()),
@@ -90,7 +90,7 @@ def test_one_requirement_per_target_names_every_way_the_workflow_acts_there() ->
     assert "switches into" in item.detail and "starts child runs in" in item.detail
 
 
-def test_reading_every_organization_is_a_reach_requirement() -> None:
+def test_reading_every_organization_is_a_reach_recommendation() -> None:
     (item,) = _build([CheckedAction("scope_switch", ALL_ORGS, ())], _holder())
 
     assert (item.kind, item.label) == ("reach", "All Organizations")
@@ -141,7 +141,7 @@ def test_builtin_and_unknown_policy_roles_are_listed_without_a_grant() -> None:
     assert [(item.label, item.grant) for item in items] == [("Ghost", None), ("Platform Operator", None)]
 
 
-def test_missing_claims_are_not_requirements() -> None:
+def test_missing_claims_are_not_recommendations() -> None:
     assert _build([CheckedAction("policy", CONTOSO, ("claim:department",))], _holder()) == []
 
 
@@ -177,7 +177,7 @@ def test_the_base_role_is_not_a_held_role_unless_it_is_a_membership() -> None:
     assert (item.kind, item.label, item.grant) == ("policy_role", "User", None)
 
 
-def test_requirements_list_reach_first_then_policy_roles_then_workflow_roles() -> None:
+def test_recommendations_list_reach_first_then_policy_roles_then_workflow_roles() -> None:
     actions = [
         CheckedAction("policy", CONTOSO, ("role:HR",)),
         CheckedAction("scope_switch", FABRIKAM, ()),

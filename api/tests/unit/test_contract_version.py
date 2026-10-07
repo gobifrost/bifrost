@@ -85,8 +85,8 @@ from src.models.contracts.solutions import (  # noqa: E402
 from src.models.contracts.policy_rule import PolicyRuleCreate, PolicyRuleUpdate  # noqa: E402
 from src.models.contracts.services import ServicePolicyUpdate  # noqa: E402
 from src.models.contracts.tables import TableCreate, TableUpdate  # noqa: E402
+from src.models.contracts.recommended_access import RecommendedAccess  # noqa: E402
 from src.models.contracts.users import RoleCreate, RoleUpdate  # noqa: E402
-from src.models.contracts.workflow_requirements import WorkflowRequirements  # noqa: E402
 from src.models.contracts.workflows import WorkflowUpdateRequest  # noqa: E402
 
 import inspect  # noqa: E402
@@ -145,7 +145,7 @@ _COMMAND_DTOS: list[type] = [
     AuditRetentionStatus,
     IdentityCreate,
     IdentityPublic,
-    WorkflowRequirements,
+    RecommendedAccess,
 ]
 
 #: Every request/response DTO the in-workflow SDK sends/parses against
@@ -338,7 +338,13 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # organization a reach item targets or a policy role's grant is placed at.
     # ADDITIVE: the same unreleased commands, and the CLI reads items by key.
     # Fingerprint refreshed only.
-    "3469395214e55c9aed0cf95783917e69fb730bf2ede75696ba3d694f1c80b268"
+    #
+    # Requirements became Recommended Access (2026-10-06): WorkflowRequirements
+    # is now RecommendedAccess (items RecommendedAccessItem, grant
+    # RecommendedGrant), served at /recommended-access and parsed by `bifrost
+    # workflows recommendations/grant`. Same shape, renamed; the route and the
+    # commands are unreleased. Fingerprint refreshed only.
+    "6f77e10e77caed158f0f96218638c4dd52e804e78be7d16962d4a3f08d6d6fb0"
 )
 
 

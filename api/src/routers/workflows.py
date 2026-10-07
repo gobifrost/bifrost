@@ -69,12 +69,12 @@ from src.services.operation_catalog import operation_route
 from shared.identities import validate_run_identity
 from shared.run_lineage import identity_lineage
 from src.models.contracts.identities import IdentityPublic
+from src.models.contracts.recommended_access import RecommendedAccess
 from src.models.contracts.workflow_permissions import WorkflowPermissionMode
-from src.models.contracts.workflow_requirements import WorkflowRequirements
 from src.services.authorization.enforce import load_caller
 from src.services.identities import list_run_identities, require_delegation
+from src.services.recommended_access import recommended_access
 from src.services.workflow_permissions import get_default_workflow_permission_mode
-from src.services.workflow_requirements import workflow_requirements
 
 logger = logging.getLogger(__name__)
 
@@ -1729,22 +1729,22 @@ async def list_workflow_run_identities(
 
 
 @router.get(
-    "/{workflow_id}/requirements",
-    response_model=WorkflowRequirements,
-    summary="What a workflow's identity lacks",
+    "/{workflow_id}/recommended-access",
+    response_model=RecommendedAccess,
+    summary="Recommended Access for a workflow's identity",
     description=(
-        "What the workflow does, from the access checks its runs recorded in the audit log's hot window, that "
-        "the identity it runs as lacks: reach into other organizations, roles its policies look for, and its "
-        "own roles. Computed for identity_id, else the identity it runs as now. Empty until runs are observed "
-        "(Platform admin only)"
+        "What the identity the workflow runs as would also need, based on the access checks its runs recorded "
+        "in the audit log's hot window: reach into other organizations, roles its policies look for, and the "
+        "workflow's own roles. Computed for identity_id, else the identity it runs as now. Empty until runs are "
+        "observed (Platform admin only)"
     ),
 )
-async def get_workflow_requirements(
+async def get_workflow_recommended_access(
     workflow_id: UUID,
     user: CurrentSuperuser,
     db: DbSession,
     identity_id: UUID | None = Query(None, description="Compute for this identity instead of the current one"),
-) -> WorkflowRequirements:
+) -> RecommendedAccess:
     workflow = await _get_workflow_or_404(db, workflow_id)
     if identity_id is None:
         identity_id = workflow.run_identity_id or (await identity_lineage(db, workflow.organization_id)).run_user_id
@@ -1756,7 +1756,7 @@ async def get_workflow_requirements(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail={"identity_id": str(e)},
             ) from None
-    return await workflow_requirements(db, workflow, identity_id)
+    return await recommended_access(db, workflow, identity_id)
 
 
 @router.delete(

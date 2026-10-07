@@ -605,10 +605,10 @@
 | PATCH | `/api/workflows/{workflow_id}` |
 | GET | `/api/workflows/{workflow_id}/compatible-replacements` |
 | POST | `/api/workflows/{workflow_id}/deactivate` |
+| GET | `/api/workflows/{workflow_id}/recommended-access` |
 | POST | `/api/workflows/{workflow_id}/recreate` |
 | POST | `/api/workflows/{workflow_id}/remap` |
 | POST | `/api/workflows/{workflow_id}/replace` |
-| GET | `/api/workflows/{workflow_id}/requirements` |
 | GET | `/api/workflows/{workflow_id}/roles` |
 | POST | `/api/workflows/{workflow_id}/roles` |
 | DELETE | `/api/workflows/{workflow_id}/roles/{role_id}` |

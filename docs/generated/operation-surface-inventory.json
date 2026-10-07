@@ -10831,6 +10831,15 @@
         "kind": "operation",
         "path": [
           "workflows",
+          "recommendations"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "kind": "operation",
+        "path": [
+          "workflows",
           "remap"
         ],
         "reason": "CLI operation has not entered the canonical operation catalog yet.",
@@ -10841,15 +10850,6 @@
         "path": [
           "workflows",
           "replace"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "workflows",
-          "requirements"
         ],
         "reason": "CLI operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -14093,6 +14093,13 @@
         "status": "missing_surface"
       },
       {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/workflows/{workflow_id}/recommended-access",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
         "method": "POST",
         "operation_id": "",
         "path": "/api/workflows/{workflow_id}/recreate",
@@ -14110,13 +14117,6 @@
         "method": "POST",
         "operation_id": "",
         "path": "/api/workflows/{workflow_id}/replace",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/workflows/{workflow_id}/requirements",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

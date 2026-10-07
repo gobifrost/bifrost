@@ -2,8 +2,8 @@
 
 ``users list [--identities]`` and ``users create --identity`` read and create
 identities; ``workflows update --run-as`` names the identity a workflow runs as;
-``workflows requirements`` shows what that identity lacks and ``workflows grant``
-applies the grants that meet it. These tests replace :class:`BifrostClient` with a
+``workflows recommendations`` shows what that identity would also need and
+``workflows grant`` applies the recommended grants. These tests replace :class:`BifrostClient` with a
 fake that has the real ``get``/``post``/``put``/``patch`` call shapes so we can
 assert on every URL, param and body the CLI sends and on the text it renders.
 """
@@ -14,6 +14,7 @@ import json
 from typing import Any
 from uuid import uuid4
 
+import click
 import httpx
 import pytest
 from click.testing import CliRunner, Result
@@ -48,7 +49,7 @@ def _identity(identity_id: str, name: str, kind: str, workflows_using: int) -> d
 DEFAULT_IDENTITY = _identity(DEFAULT_IDENTITY_ID, "Default Identity", "org_default", 4)
 NIGHTLY_IDENTITY = _identity(NIGHTLY_IDENTITY_ID, "Contoso Nightly", "custom", 1)
 
-REQUIREMENTS: dict[str, Any] = {
+RECOMMENDED: dict[str, Any] = {
     "identity_id": DEFAULT_IDENTITY_ID,
     "observed_runs": 12,
     "window_days": 30,
@@ -119,7 +120,7 @@ class _FakeClient:
                 {"id": WORKFLOW_ID, "name": "Sync Invoices", "function_name": "sync", "source_file_path": "workflows/sync.py"}
             ],
             ("PATCH", f"/api/workflows/{WORKFLOW_ID}"): {"id": WORKFLOW_ID, "run_identity_id": NIGHTLY_IDENTITY_ID},
-            ("GET", f"/api/workflows/{WORKFLOW_ID}/requirements"): REQUIREMENTS,
+            ("GET", f"/api/workflows/{WORKFLOW_ID}/recommended-access"): RECOMMENDED,
             ("GET", f"/api/users/{DEFAULT_IDENTITY_ID}/role-assignments"): ASSIGNMENTS,
             ("PUT", f"/api/users/{DEFAULT_IDENTITY_ID}/role-assignments"): ASSIGNMENTS,
         }
@@ -276,18 +277,21 @@ class TestWorkflowsUpdateRunAs:
         assert "--run-identity-id" not in output
 
 
-class TestWorkflowsRequirements:
-    def test_fetches_the_requirements_and_names_roles_and_places(self, fake_client: _FakeClient) -> None:
-        result = _workflows(["requirements", "Sync Invoices"])
+class TestWorkflowsRecommendations:
+    def test_fetches_the_recommendations_and_names_the_identity_roles_and_places(self, fake_client: _FakeClient) -> None:
+        result = _workflows(["recommendations", "Sync Invoices"])
         assert result.exit_code == 0, result.output
         assert fake_client.calls == [
             ("GET", "/api/workflows", None),
-            ("GET", f"/api/workflows/{WORKFLOW_ID}/requirements", None),
+            ("GET", f"/api/workflows/{WORKFLOW_ID}/recommended-access", None),
+            ("GET", "/api/identities", None),
             ("GET", "/api/roles", None),
             ("GET", "/api/organizations", {"include_inactive": True}),
         ]
-        assert [line.split() for line in result.output.splitlines()] == [
-            ["Based", "on", "12", "runs", "in", "the", "last", "30", "days."],
+        assert result.output.splitlines()[0] == (
+            "Based on 12 runs in the last 30 days, Default Identity (Contoso) would also need:"
+        )
+        assert [line.split() for line in result.output.splitlines()[1:]] == [
             [],
             ["1.", "Reach:", "Fabrikam"],
             ["Switched", "into", "Fabrikam", "in", "3", "runs."],
@@ -304,35 +308,41 @@ class TestWorkflowsRequirements:
 
     def test_an_organization_missing_from_the_list_is_shown_by_its_id(self, fake_client: _FakeClient) -> None:
         fake_client._responses[("GET", "/api/organizations")] = [{"id": ORG_ID, "name": "Contoso"}]
-        result = _workflows(["requirements", WORKFLOW_ID])
+        result = _workflows(["recommendations", WORKFLOW_ID])
         assert result.exit_code == 0, result.output
         assert f"Grant: Helpdesk at {FABRIKAM_ID}" in result.output
 
     def test_no_observed_runs_says_so_without_further_lookups(self, fake_client: _FakeClient) -> None:
-        fake_client._responses[("GET", f"/api/workflows/{WORKFLOW_ID}/requirements")] = {
-            **REQUIREMENTS,
+        fake_client._responses[("GET", f"/api/workflows/{WORKFLOW_ID}/recommended-access")] = {
+            **RECOMMENDED,
             "observed_runs": 0,
             "items": [],
         }
-        result = _workflows(["requirements", WORKFLOW_ID])
+        result = _workflows(["recommendations", WORKFLOW_ID])
         assert result.output.splitlines() == ["No runs observed yet."]
-        assert fake_client.calls == [("GET", f"/api/workflows/{WORKFLOW_ID}/requirements", None)]
+        assert fake_client.calls == [("GET", f"/api/workflows/{WORKFLOW_ID}/recommended-access", None)]
 
     def test_runs_observed_with_nothing_missing_says_so(self, fake_client: _FakeClient) -> None:
-        fake_client._responses[("GET", f"/api/workflows/{WORKFLOW_ID}/requirements")] = {**REQUIREMENTS, "items": []}
-        assert _workflows(["requirements", WORKFLOW_ID]).output.splitlines() == ["Nothing missing."]
+        fake_client._responses[("GET", f"/api/workflows/{WORKFLOW_ID}/recommended-access")] = {**RECOMMENDED, "items": []}
+        assert _workflows(["recommendations", WORKFLOW_ID]).output.splitlines() == ["Nothing missing."]
 
-    def test_json_passes_the_requirements_through(self, fake_client: _FakeClient) -> None:
-        result = _workflows(["requirements", WORKFLOW_ID, "--json"])
-        assert json.loads(result.output) == REQUIREMENTS
+    def test_requirements_is_now_recommendations(self) -> None:
+        commands = workflows_group.list_commands(click.Context(workflows_group))
+        assert "recommendations" in commands and "requirements" not in commands
+        grant_help = CliRunner().invoke(workflows_group, ["grant", "--help"]).output
+        assert "--recommendation" in grant_help and "--requirement" not in grant_help
+
+    def test_json_passes_the_recommendations_through(self, fake_client: _FakeClient) -> None:
+        result = _workflows(["recommendations", WORKFLOW_ID, "--json"])
+        assert json.loads(result.output) == RECOMMENDED
 
 
 class TestWorkflowsGrant:
-    def test_a_requirement_is_merged_into_the_identitys_roles(self, fake_client: _FakeClient) -> None:
-        result = _workflows(["grant", WORKFLOW_ID, "--requirement", "1", "--yes"])
+    def test_a_recommendation_is_merged_into_the_identitys_roles(self, fake_client: _FakeClient) -> None:
+        result = _workflows(["grant", WORKFLOW_ID, "--recommendation", "1", "--yes"])
         assert result.exit_code == 0, result.output
         assert fake_client.calls == [
-            ("GET", f"/api/workflows/{WORKFLOW_ID}/requirements", None),
+            ("GET", f"/api/workflows/{WORKFLOW_ID}/recommended-access", None),
             ("GET", "/api/identities", None),
             ("GET", f"/api/users/{DEFAULT_IDENTITY_ID}/role-assignments", None),
             (
@@ -358,7 +368,7 @@ class TestWorkflowsGrant:
             **ASSIGNMENTS,
             "additional": [],
         }
-        _workflows(["grant", WORKFLOW_ID, "--requirement", "1", "--yes"])
+        _workflows(["grant", WORKFLOW_ID, "--recommendation", "1", "--yes"])
         assert fake_client.calls[-1] == (
             "PUT",
             f"/api/users/{DEFAULT_IDENTITY_ID}/role-assignments",
@@ -378,7 +388,7 @@ class TestWorkflowsGrant:
     ) -> None:
         result = _workflows(["grant", WORKFLOW_ID, "--all", "--yes"])
         assert result.exit_code == 0, result.output
-        assert result.stderr.splitlines()[:1] == ["Requirement 2 needs a role chosen: use bifrost users roles set."]
+        assert result.stderr.splitlines()[:1] == ["Recommendation 2 needs a role chosen: use bifrost users roles set."]
         puts = [call for call in fake_client.calls if call[0] == "PUT"]
         assert len(puts) == 1
         assert puts[0][2] == {
@@ -398,7 +408,7 @@ class TestWorkflowsGrant:
     def test_a_default_identity_needs_yes_and_the_refusal_names_how_many_workflows_share_it(
         self, fake_client: _FakeClient
     ) -> None:
-        result = CliRunner().invoke(workflows_group, ["grant", WORKFLOW_ID, "--requirement", "1"], standalone_mode=False)
+        result = CliRunner().invoke(workflows_group, ["grant", WORKFLOW_ID, "--recommendation", "1"], standalone_mode=False)
         assert result.exit_code != 0
         assert str(result.exception).startswith(
             "Default Identity (Contoso) is shared: this applies to all 4 workflows in Contoso that run as it."
@@ -410,52 +420,52 @@ class TestWorkflowsGrant:
         fake_client._responses[("GET", "/api/identities")] = [
             {**DEFAULT_IDENTITY, "identity_kind": "global_default", "organization_id": None, "organization_name": None}
         ]
-        result = CliRunner().invoke(workflows_group, ["grant", WORKFLOW_ID, "--requirement", "1"], standalone_mode=False)
+        result = CliRunner().invoke(workflows_group, ["grant", WORKFLOW_ID, "--recommendation", "1"], standalone_mode=False)
         assert str(result.exception).startswith(
             "Default Identity (Global) is shared: this applies to all 4 workflows in Global that run as it."
         )
 
     def test_a_custom_identity_needs_no_yes(self, fake_client: _FakeClient) -> None:
-        fake_client._responses[("GET", f"/api/workflows/{WORKFLOW_ID}/requirements")] = {
-            **REQUIREMENTS,
+        fake_client._responses[("GET", f"/api/workflows/{WORKFLOW_ID}/recommended-access")] = {
+            **RECOMMENDED,
             "identity_id": NIGHTLY_IDENTITY_ID,
         }
         fake_client._responses[("GET", f"/api/users/{NIGHTLY_IDENTITY_ID}/role-assignments")] = ASSIGNMENTS
         fake_client._responses[("PUT", f"/api/users/{NIGHTLY_IDENTITY_ID}/role-assignments")] = ASSIGNMENTS
-        result = _workflows(["grant", WORKFLOW_ID, "--requirement", "1"])
+        result = _workflows(["grant", WORKFLOW_ID, "--recommendation", "1"])
         assert result.exit_code == 0, result.output
         assert fake_client.calls[-1][:2] == ("PUT", f"/api/users/{NIGHTLY_IDENTITY_ID}/role-assignments")
 
-    def test_a_requirement_without_a_grant_is_refused_before_any_write(self, fake_client: _FakeClient) -> None:
+    def test_a_recommendation_without_a_grant_is_refused_before_any_write(self, fake_client: _FakeClient) -> None:
         result = CliRunner().invoke(
-            workflows_group, ["grant", WORKFLOW_ID, "--requirement", "2"], standalone_mode=False
+            workflows_group, ["grant", WORKFLOW_ID, "--recommendation", "2"], standalone_mode=False
         )
         assert result.exit_code != 0
         assert "roles set" in str(result.exception)
         assert [call[0] for call in fake_client.calls] == ["GET"]
 
-    def test_a_requirement_number_out_of_range_is_refused(self, fake_client: _FakeClient) -> None:
+    def test_a_recommendation_number_out_of_range_is_refused(self, fake_client: _FakeClient) -> None:
         result = CliRunner().invoke(
-            workflows_group, ["grant", WORKFLOW_ID, "--requirement", "4"], standalone_mode=False
+            workflows_group, ["grant", WORKFLOW_ID, "--recommendation", "4"], standalone_mode=False
         )
         assert result.exit_code != 0
         assert [call[0] for call in fake_client.calls] == ["GET"]
 
-    def test_requirement_or_all_is_required_but_not_both(self, fake_client: _FakeClient) -> None:
-        for args in ([], ["--requirement", "1", "--all"]):
+    def test_recommendation_or_all_is_required_but_not_both(self, fake_client: _FakeClient) -> None:
+        for args in ([], ["--recommendation", "1", "--all"]):
             result = CliRunner().invoke(workflows_group, ["grant", WORKFLOW_ID, *args], standalone_mode=False)
             assert result.exit_code != 0
         assert fake_client.calls == []
 
     def test_nothing_to_grant_makes_no_write(self, fake_client: _FakeClient) -> None:
-        fake_client._responses[("GET", f"/api/workflows/{WORKFLOW_ID}/requirements")] = {
-            **REQUIREMENTS,
-            "items": [REQUIREMENTS["items"][1]],
+        fake_client._responses[("GET", f"/api/workflows/{WORKFLOW_ID}/recommended-access")] = {
+            **RECOMMENDED,
+            "items": [RECOMMENDED["items"][1]],
         }
         result = CliRunner().invoke(workflows_group, ["grant", WORKFLOW_ID, "--all"], standalone_mode=False)
         assert result.exit_code != 0
         assert [call[0] for call in fake_client.calls] == ["GET"]
 
     def test_json_passes_the_new_role_assignments_through(self, fake_client: _FakeClient) -> None:
-        result = _workflows(["grant", WORKFLOW_ID, "--requirement", "1", "--yes", "--json"])
+        result = _workflows(["grant", WORKFLOW_ID, "--recommendation", "1", "--yes", "--json"])
         assert json.loads(result.stdout) == ASSIGNMENTS
