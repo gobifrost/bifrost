@@ -1727,6 +1727,18 @@
         ]
       }
     },
+    "pr:931": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/931",
+          "https://github.com/gobifrost/bifrost/blob/37387260d6962fb8fa0b09cc5e482fe031d8e0ee/docs/product-updates-authoring.md"
+        ]
+      },
+      "reason": "Dependabot dependency maintenance; omitted under the repository's customer-facing selection policy. CI and dependency security review remain required."
+    },
     "pr:929": {
       "classification": "omit",
       "entry_ids": [],
@@ -1741,6 +1753,18 @@
       "security_review": {
         "status": "required",
         "review_ref": "https://github.com/gobifrost/bifrost/pull/929"
+      }
+    },
+    "pr:938": {
+      "classification": "omit",
+      "entry_ids": [],
+      "reason": "Internal dependency-maintenance event handling and automation regression coverage; no customer-facing functionality change.",
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/938",
+          "User authorized verified security-maintenance repairs and merge; signed metadata verification is retained and 9 Node 26 automation tests passed."
+        ]
       }
     }
   }
