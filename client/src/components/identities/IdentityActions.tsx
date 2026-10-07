@@ -50,10 +50,13 @@ export function canManageIdentity(
  */
 export function IdentityActions({
 	identity,
+	label = `${identity.name} actions`,
 	onOpen,
 	onDeleted,
 }: {
 	identity: IdentityActionsSubject;
+	/** The menu button's name; on a list, with the organization, since every default identity has the same name. */
+	label?: string;
 	/** Offered on the list, where the identity isn't open yet. */
 	onOpen?: () => void;
 	onDeleted?: () => void;
@@ -75,7 +78,7 @@ export function IdentityActions({
 						ref={triggerRef}
 						variant="ghost"
 						size="icon"
-						aria-label={`${identity.name} actions`}
+						aria-label={label}
 						className="h-11 w-11 shrink-0 lg:h-9 lg:w-9"
 					>
 						<MoreVertical className="h-4 w-4" />

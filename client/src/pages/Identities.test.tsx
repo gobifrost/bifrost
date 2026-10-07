@@ -45,9 +45,28 @@ vi.mock("@/services/authorization", () => ({
 }));
 
 const mockUseIdentities = vi.fn();
+const deleteIdentity = vi.hoisted(() => vi.fn());
 vi.mock("@/services/identities", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@/services/identities")>()),
 	useIdentities: () => mockUseIdentities(),
+	useDeleteIdentity: () => ({
+		mutateAsync: deleteIdentity,
+		isPending: false,
+	}),
+	useRenameIdentity: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+
+vi.mock("@/components/users/BulkUserDialogs", async (importOriginal) => ({
+	...(await importOriginal<
+		typeof import("@/components/users/BulkUserDialogs")
+	>()),
+	BulkReplaceRolesDialog: (props: {
+		open: boolean;
+		users: { name?: string | null }[];
+	}) =>
+		props.open ? (
+			<p>Replace roles for {props.users.map((u) => u.name).join(", ")}</p>
+		) : null,
 }));
 
 const dialog = vi.hoisted(() => ({
@@ -176,6 +195,7 @@ function renderPage() {
 }
 
 beforeEach(() => {
+	deleteIdentity.mockReset().mockResolvedValue(undefined);
 	authz.summary = adminSummary();
 	dialog.props = undefined;
 	mockUseIdentities.mockReturnValue({
@@ -211,18 +231,28 @@ describe("Identities", () => {
 			within(table)
 				.getAllByRole("columnheader")
 				.map((header) => header.textContent),
-		).toEqual(["Organization", "Name", "Kind", "Roles", "Workflows Using"]);
+		).toEqual([
+			"",
+			"Organization",
+			"Name",
+			"Kind",
+			"Roles",
+			"Workflows Using",
+			"Actions",
+		]);
 		const [, contoso] = within(table).getAllByRole("row").slice(1);
 		expect(
 			within(contoso)
 				.getAllByRole("cell")
 				.map((cell) => cell.textContent),
 		).toEqual([
+			"",
 			"Contoso",
 			"Default Identity",
 			"Default",
 			"UserTicket Sync",
 			"12",
+			"",
 		]);
 	});
 
@@ -234,10 +264,10 @@ describe("Identities", () => {
 			.slice(1);
 		const cells = within(rows[0]).getAllByRole("cell");
 		expect(
-			within(cells[0]).getByLabelText("Organization"),
+			within(cells[1]).getByLabelText("Organization"),
 		).toHaveTextContent("Global");
-		expect(cells[1]).toHaveTextContent("Default Identity");
-		expect(cells[2]).toHaveTextContent("Global");
+		expect(cells[2]).toHaveTextContent("Default Identity");
+		expect(cells[3]).toHaveTextContent("Global");
 		expect(rows[0]).toHaveAttribute("data-pinned", "true");
 		expect(rows[1]).not.toHaveAttribute("data-pinned");
 	});
@@ -248,7 +278,7 @@ describe("Identities", () => {
 			.getAllByRole("row")
 			.find((row) => row.textContent?.includes("Backup Runner"))!;
 
-		await user.click(within(backup).getAllByRole("cell")[4]);
+		await user.click(within(backup).getAllByRole("cell")[5]);
 
 		expect(
 			screen.getByRole("status", { name: "location" }),
@@ -349,5 +379,190 @@ describe("Identities", () => {
 		expect(
 			within(screen.getByRole("table")).getAllByRole("row")[1],
 		).toHaveTextContent("Backup Runner");
+	});
+
+	it("offers Replace Roles and Delete for the selected identities, nothing that only applies to people", async () => {
+		const { user } = renderPage();
+
+		await user.click(
+			screen.getByRole("checkbox", {
+				name: "Select all visible identities",
+			}),
+		);
+
+		const bar = screen.getByRole("region", {
+			name: "Bulk identity actions",
+		});
+		expect(bar).toHaveTextContent("3 selected");
+		expect(
+			within(bar)
+				.getAllByRole("button")
+				.map((button) => button.textContent),
+		).toEqual(["", "Replace Roles", "Delete"]);
+		await user.click(
+			within(bar).getByRole("button", { name: "Replace Roles" }),
+		);
+		expect(
+			screen.getByText(
+				"Replace roles for Default Identity, Default Identity, Backup Runner",
+			),
+		).toBeInTheDocument();
+	});
+
+	it("deletes only the custom identities selected, saying how many defaults it skips", async () => {
+		const { user } = renderPage();
+		await user.click(
+			screen.getByRole("checkbox", {
+				name: "Select all visible identities",
+			}),
+		);
+
+		await user.click(
+			within(
+				screen.getByRole("region", { name: "Bulk identity actions" }),
+			).getByRole("button", { name: "Delete" }),
+		);
+		const dialog = await screen.findByRole("dialog", {
+			name: "Delete 1 Identity",
+		});
+		expect(dialog).toHaveTextContent(
+			"2 default identities selected can't be deleted and will be skipped.",
+		);
+		await user.click(
+			within(dialog).getByRole("button", { name: "Delete 1 Identity" }),
+		);
+
+		await waitFor(() => expect(deleteIdentity).toHaveBeenCalledOnce());
+		expect(deleteIdentity).toHaveBeenCalledWith({
+			params: { path: { identity_id: "identity-backup" } },
+		});
+		await waitFor(() =>
+			expect(
+				screen.queryByRole("region", { name: "Bulk identity actions" }),
+			).not.toBeInTheDocument(),
+		);
+	});
+
+	it("shows which identities couldn't be deleted, and why", async () => {
+		deleteIdentity.mockRejectedValue({
+			detail: "Can't delete Backup Runner: these workflows run as it: Nightly Sync",
+		});
+		const { user } = renderPage();
+		await user.click(
+			screen.getByRole("checkbox", {
+				name: "Select Backup Runner · Contoso",
+			}),
+		);
+		await user.click(
+			within(
+				screen.getByRole("region", { name: "Bulk identity actions" }),
+			).getByRole("button", { name: "Delete" }),
+		);
+		await user.click(
+			within(
+				await screen.findByRole("dialog", {
+					name: "Delete 1 Identity",
+				}),
+			).getByRole("button", { name: "Delete 1 Identity" }),
+		);
+
+		const result = await screen.findByRole("dialog", {
+			name: "Bulk action results",
+		});
+		expect(result).toHaveTextContent("0 succeeded · 1 failed");
+		expect(result).toHaveTextContent(
+			"Backup RunnerCan't delete Backup Runner: these workflows run as it: Nightly Sync",
+		);
+	});
+
+	it("can't delete when only default identities are selected", async () => {
+		const { user } = renderPage();
+		await user.click(
+			screen.getByRole("checkbox", {
+				name: "Select Default Identity · Contoso",
+			}),
+		);
+
+		const remove = within(
+			screen.getByRole("region", { name: "Bulk identity actions" }),
+		).getByRole("button", { name: "Delete" });
+		expect(remove).toBeDisabled();
+		expect(remove).toHaveAttribute(
+			"title",
+			"Default identities can't be deleted",
+		);
+	});
+
+	it("offers Open, Rename and Delete on a custom identity's row, and only Open on a default's", async () => {
+		const { user } = renderPage();
+
+		await user.click(
+			screen.getByRole("button", {
+				name: "Backup Runner · Contoso actions",
+			}),
+		);
+		expect(
+			screen.getAllByRole("menuitem").map((item) => item.textContent),
+		).toEqual(["Open", "Rename", "Delete"]);
+		await user.keyboard("{Escape}");
+
+		const [, contoso] = within(screen.getByRole("table"))
+			.getAllByRole("row")
+			.slice(1);
+		await user.click(
+			within(contoso).getByRole("button", {
+				name: "Default Identity · Contoso actions",
+			}),
+		);
+		expect(
+			screen.getAllByRole("menuitem").map((item) => item.textContent),
+		).toEqual(["Open"]);
+		await user.click(screen.getByRole("menuitem", { name: "Open" }));
+		expect(
+			screen.getByRole("status", { name: "location" }),
+		).toHaveTextContent("/users/identity-contoso");
+	});
+
+	it("offers no selection to someone who can only read identities", () => {
+		authz.summary = readerSummary();
+		renderPage();
+
+		expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+		expect(
+			within(screen.getByRole("table"))
+				.getAllByRole("columnheader")
+				.map((header) => header.textContent),
+		).toEqual([
+			"Organization",
+			"Name",
+			"Kind",
+			"Roles",
+			"Workflows Using",
+			"Actions",
+		]);
+	});
+
+	it("selects and acts on records on narrow screens", async () => {
+		mockUseMediaQuery.mockReturnValue(true);
+		const { user } = renderPage();
+
+		await user.click(
+			screen.getByRole("checkbox", {
+				name: "Select Backup Runner · Contoso",
+			}),
+		);
+		expect(
+			screen.getByRole("region", { name: "Bulk identity actions" }),
+		).toHaveTextContent("1 selected");
+		expect(
+			screen.getByRole("checkbox", {
+				name: "Select all visible identities",
+			}),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", {
+				name: "Backup Runner · Contoso actions",
+			}),
+		).toBeInTheDocument();
 	});
 });

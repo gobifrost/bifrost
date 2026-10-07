@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Plus, RefreshCw, Workflow } from "lucide-react";
+import { Plus, RefreshCw, Shield, Trash2, Workflow } from "lucide-react";
 
+import { BulkDeleteIdentitiesDialog } from "@/components/identities/BulkDeleteIdentitiesDialog";
+import { IdentityActions } from "@/components/identities/IdentityActions";
 import { IdentityKindBadge } from "@/components/identities/IdentityKindBadge";
 import { IdentityOrganizationChip } from "@/components/identities/IdentityName";
 import { NewIdentityDialog } from "@/components/identities/NewIdentityDialog";
@@ -25,20 +27,47 @@ import {
 } from "@/components/ui/data-table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+	BulkActionBar,
+	BulkActionButton,
+} from "@/components/users/BulkActionBar";
+import {
+	BulkReplaceRolesDialog,
+	BulkResultDialog,
+	type BulkTarget,
+} from "@/components/users/BulkUserDialogs";
+import {
+	ActionsCell,
+	ActionsHead,
+	RecordListBar,
+	RecordSelectAll,
+	RecordSelectTarget,
+	RowSelectCheckbox,
+	SelectionCell,
+	SelectionHead,
+} from "@/components/users/SelectableTable";
 import { UsersViewTabs } from "@/components/users/UsersViewTabs";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useUserSelection } from "@/hooks/useUserSelection";
 import { placeLabel } from "@/lib/role-boundaries";
+import type { components } from "@/lib/v1";
 import { cn } from "@/lib/utils";
 import { useAuthorization } from "@/services/authorization";
 import {
+	identityLabel,
 	identityOrganization,
 	useIdentities,
 	type Identity,
 } from "@/services/identities";
 
+type BulkUserResponse = components["schemas"]["BulkUserResponse"];
+
 /** The global identity's row: a reach-tinted surface with a leading stripe. */
 const PINNED_CLASS_NAME =
 	"bg-[color-mix(in_srgb,var(--bf-reach-soft)_55%,transparent)] shadow-[inset_3px_0_0_var(--bf-reach)]";
+/** The pinned row's sticky actions cell: the same tint, opaque over the card. */
+const PINNED_ACTIONS_CLASS_NAME =
+	"bg-[color-mix(in_srgb,var(--bf-reach-soft)_55%,var(--card))]";
 
 /** The base role, then each additional role, with where it applies. */
 function RoleChips({ identity }: { identity: Identity }) {
@@ -87,6 +116,8 @@ function matches(identity: Identity, search: string): boolean {
 /**
  * The accounts that run work no person started: each organization's default
  * identity, the global one, and custom ones. Each opens on the person page.
+ * The table is the Users list's: row selection with bulk actions (Replace
+ * Roles; Delete, custom identities only) and a ⋮ menu on each row.
  */
 export function Identities() {
 	const navigate = useNavigate();
@@ -95,13 +126,55 @@ export function Identities() {
 	const [isCreateOpen, setIsCreateOpen] = useState(false);
 	const [search, setSearch] = useState("");
 	const identitiesQuery = useIdentities();
-	const identities = (identitiesQuery.data ?? []).filter((identity) =>
-		matches(identity, search),
+	const identities = useMemo(
+		() =>
+			(identitiesQuery.data ?? []).filter((identity) =>
+				matches(identity, search),
+			),
+		[identitiesQuery.data, search],
 	);
 	const open = (identity: Pick<Identity, "id">) =>
 		navigate(`/users/${identity.id}`);
 	const pinned = (identity: Identity) =>
 		identity.identity_kind === "global_default";
+
+	// Bulk operations are offered where the caller holds them anywhere; the
+	// server still decides each identity and reports the ones it refuses.
+	const canReplaceRoles =
+		authorization.canAnywhere("roleassignments.readwrite") &&
+		// The replace-roles dialog lists every role, which needs roles.read.
+		authorization.meets({ permission: "roles.read", at: "global" });
+	const canDelete = authorization.canAnywhere("users.lifecycle.readwrite");
+	const showSelection = canReplaceRoles || canDelete;
+	const selection = useUserSelection(identities);
+	const deletable = selection.selectedItems.filter(
+		(identity) => identity.identity_kind === "custom",
+	);
+	const [bulkMode, setBulkMode] = useState<"replace_roles" | "delete" | null>(
+		null,
+	);
+	const [bulkResult, setBulkResult] = useState<BulkUserResponse | null>(null);
+	const [bulkResultTargets, setBulkResultTargets] = useState<BulkTarget[]>(
+		[],
+	);
+	const handlePartialFailure = (
+		result: BulkUserResponse,
+		targets: BulkTarget[],
+	) => {
+		setBulkResult(result);
+		setBulkResultTargets(targets);
+	};
+	const closeBulk = () => setBulkMode(null);
+
+	const selectLabel = (identity: Identity) =>
+		`Select ${identityLabel(identity)}`;
+	const renderActions = (identity: Identity) => (
+		<IdentityActions
+			identity={identity}
+			label={`${identityLabel(identity)} actions`}
+			onOpen={() => open(identity)}
+		/>
+	);
 
 	return (
 		<PageWorkspace className="mx-auto max-w-7xl">
@@ -189,67 +262,98 @@ export function Identities() {
 						}
 					/>
 				) : isNarrow ? (
-					<ul
-						aria-label="Identities"
-						className="divide-y overflow-hidden rounded-[var(--bf-radius-surface)] border bg-card"
-					>
-						{identities.map((identity) => (
-							<li
-								key={identity.id}
-								data-pinned={pinned(identity) || undefined}
-								className={cn(
-									"min-w-0 space-y-3 p-4",
-									pinned(identity) && PINNED_CLASS_NAME,
-								)}
-							>
-								<div className="flex flex-wrap items-center gap-2">
-									<Link
-										to={`/users/${identity.id}`}
-										className="inline-flex min-h-11 items-center font-medium [overflow-wrap:anywhere] hover:text-primary focus-visible:outline-2 focus-visible:outline-ring"
-									>
-										{identity.name}
-									</Link>
-									<IdentityKindBadge
-										kind={identity.identity_kind}
-									/>
-								</div>
-								<dl className="grid grid-cols-2 gap-3 text-sm">
-									<div>
-										<dt className="text-xs text-muted-foreground">
-											Organization
-										</dt>
-										<dd className="mt-1">
-											<IdentityOrganizationChip
-												organizationName={
-													identity.organization_name
-												}
+					<div className="overflow-hidden rounded-[var(--bf-radius-surface)] border bg-card">
+						{showSelection && (
+							<RecordListBar>
+								<RecordSelectAll
+									selection={selection}
+									label="Select all visible identities"
+								>
+									Select All
+								</RecordSelectAll>
+							</RecordListBar>
+						)}
+						<ul aria-label="Identities" className="divide-y">
+							{identities.map((identity) => (
+								<li
+									key={identity.id}
+									data-pinned={pinned(identity) || undefined}
+									className={cn(
+										"min-w-0 space-y-3 p-4",
+										pinned(identity) && PINNED_CLASS_NAME,
+									)}
+								>
+									<div className="flex items-start gap-2">
+										{showSelection && (
+											<RecordSelectTarget>
+												<RowSelectCheckbox
+													selection={selection}
+													id={identity.id}
+													label={selectLabel(
+														identity,
+													)}
+												/>
+											</RecordSelectTarget>
+										)}
+										<div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+											<Link
+												to={`/users/${identity.id}`}
+												className="inline-flex min-h-11 items-center font-medium [overflow-wrap:anywhere] hover:text-primary focus-visible:outline-2 focus-visible:outline-ring"
+											>
+												{identity.name}
+											</Link>
+											<IdentityKindBadge
+												kind={identity.identity_kind}
 											/>
-										</dd>
+										</div>
+										{renderActions(identity)}
 									</div>
-									<div>
-										<dt className="text-xs text-muted-foreground">
-											Workflows Using
-										</dt>
-										<dd className="mt-1 font-mono text-xs tabular-nums">
-											{identity.workflows_using}
-										</dd>
-									</div>
-									<div className="col-span-2">
-										<dt className="text-xs text-muted-foreground">
-											Roles
-										</dt>
-										<dd className="mt-1">
-											<RoleChips identity={identity} />
-										</dd>
-									</div>
-								</dl>
-							</li>
-						))}
-					</ul>
+									<dl className="grid grid-cols-2 gap-3 text-sm">
+										<div>
+											<dt className="text-xs text-muted-foreground">
+												Organization
+											</dt>
+											<dd className="mt-1">
+												<IdentityOrganizationChip
+													organizationName={
+														identity.organization_name
+													}
+												/>
+											</dd>
+										</div>
+										<div>
+											<dt className="text-xs text-muted-foreground">
+												Workflows Using
+											</dt>
+											<dd className="mt-1 font-mono text-xs tabular-nums">
+												{identity.workflows_using}
+											</dd>
+										</div>
+										<div className="col-span-2">
+											<dt className="text-xs text-muted-foreground">
+												Roles
+											</dt>
+											<dd className="mt-1">
+												<RoleChips
+													identity={identity}
+												/>
+											</dd>
+										</div>
+									</dl>
+								</li>
+							))}
+						</ul>
+					</div>
 				) : (
 					<DataTable className="max-h-full">
 						<DataTableHeader>
 							<DataTableRow>
+								{showSelection && (
+									<SelectionHead
+										selection={selection}
+										label="Select all visible identities"
+									/>
+								)}
 								<DataTableHead className="w-0 whitespace-nowrap">
 									Organization
 								</DataTableHead>
@@ -263,6 +367,7 @@ export function Identities() {
 								<DataTableHead className="w-0 whitespace-nowrap text-right">
 									Workflows Using
 								</DataTableHead>
+								<ActionsHead />
 							</DataTableRow>
 						</DataTableHeader>
 						<DataTableBody>
@@ -273,9 +378,17 @@ export function Identities() {
 									onClick={() => open(identity)}
 									data-pinned={pinned(identity) || undefined}
 									className={cn(
+										"group/row",
 										pinned(identity) && PINNED_CLASS_NAME,
 									)}
 								>
+									{showSelection && (
+										<SelectionCell
+											selection={selection}
+											id={identity.id}
+											label={selectLabel(identity)}
+										/>
+									)}
 									<DataTableCell className="w-0 whitespace-nowrap text-sm">
 										<IdentityOrganizationChip
 											organizationName={
@@ -302,12 +415,72 @@ export function Identities() {
 									<DataTableCell className="w-0 whitespace-nowrap text-right font-mono text-sm tabular-nums">
 										{identity.workflows_using}
 									</DataTableCell>
+									<ActionsCell
+										className={cn(
+											pinned(identity) &&
+												PINNED_ACTIONS_CLASS_NAME,
+										)}
+									>
+										{renderActions(identity)}
+									</ActionsCell>
 								</DataTableRow>
 							))}
 						</DataTableBody>
 					</DataTable>
 				)}
 			</PageScrollArea>
+
+			<BulkActionBar
+				count={selection.count}
+				label="Bulk identity actions"
+				onClear={selection.clear}
+			>
+				{canReplaceRoles && (
+					<BulkActionButton
+						icon={Shield}
+						onClick={() => setBulkMode("replace_roles")}
+					>
+						Replace Roles
+					</BulkActionButton>
+				)}
+				{canDelete && (
+					<BulkActionButton
+						icon={Trash2}
+						onClick={() => setBulkMode("delete")}
+						disabled={deletable.length === 0}
+						title={
+							deletable.length === 0
+								? "Default identities can't be deleted"
+								: undefined
+						}
+					>
+						Delete
+					</BulkActionButton>
+				)}
+			</BulkActionBar>
+
+			<BulkReplaceRolesDialog
+				open={bulkMode === "replace_roles"}
+				subject="identities"
+				onOpenChange={(o) => !o && closeBulk()}
+				users={selection.selectedItems}
+				onPartialFailure={handlePartialFailure}
+				onSuccess={selection.clear}
+			/>
+			<BulkDeleteIdentitiesDialog
+				open={bulkMode === "delete"}
+				onOpenChange={(o) => !o && closeBulk()}
+				deletable={deletable}
+				skipped={selection.count - deletable.length}
+				onPartialFailure={handlePartialFailure}
+				onSuccess={selection.clear}
+			/>
+			<BulkResultDialog
+				open={bulkResult !== null}
+				onOpenChange={(o) => !o && setBulkResult(null)}
+				result={bulkResult}
+				users={bulkResultTargets}
+			/>
 
 			<NewIdentityDialog
 				open={isCreateOpen}

@@ -25,15 +25,20 @@ import { useAuthorization } from "@/services/authorization";
 
 import type { components } from "@/lib/v1";
 
-type User = components["schemas"]["UserPublic"];
 type BulkUserResponse = components["schemas"]["BulkUserResponse"];
+
+/** A selected row: a user, or an identity on the Identities list. */
+export type BulkTarget = Pick<components["schemas"]["UserPublic"], "id"> & {
+	name?: string | null;
+	email?: string;
+};
 
 export interface BulkDialogSharedProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	users: User[];
+	users: BulkTarget[];
 	/** Fires when the operation resolved with at least one failed entry. */
-	onPartialFailure: (result: BulkUserResponse, users: User[]) => void;
+	onPartialFailure: (result: BulkUserResponse, users: BulkTarget[]) => void;
 	/**
 	 * Fires after a successful submit (any rows succeeded). Parent uses this
 	 * to clear the row selection. Cancel/dismiss intentionally does NOT call
@@ -75,7 +80,7 @@ function BulkSubmitError({ message }: { message: string | null }) {
 	);
 }
 
-function BulkDialogFrame({
+export function BulkDialogFrame({
 	open,
 	onOpenChange,
 	title,
@@ -276,7 +281,28 @@ function BulkMoveOrgDialogInner({
 // Replace roles
 // =============================================================================
 
-export function BulkReplaceRolesDialog(props: BulkDialogSharedProps) {
+export interface BulkReplaceRolesDialogProps extends BulkDialogSharedProps {
+	/** Who is selected: people on Users, identities on Identities. */
+	subject?: "users" | "identities";
+}
+
+const REPLACE_ROLES_COPY = {
+	users: {
+		title: (count: number) => `Replace roles for ${count} user(s)`,
+		description:
+			"The selected roles below replace every user's current role set (overwrite, not additive). Your own account will be skipped.",
+		empty: "No roles selected — submitting will clear every selected user's roles.",
+	},
+	identities: {
+		title: (count: number) =>
+			`Replace Roles for ${count} ${count === 1 ? "Identity" : "Identities"}`,
+		description:
+			"The selected roles replace each identity's additional roles (overwrite, not additive), placed in its own organization. Base roles stay.",
+		empty: "No roles selected — submitting will remove every selected identity's additional roles.",
+	},
+};
+
+export function BulkReplaceRolesDialog(props: BulkReplaceRolesDialogProps) {
 	if (!props.open) return null;
 	return <BulkReplaceRolesDialogInner {...props} />;
 }
@@ -287,7 +313,9 @@ function BulkReplaceRolesDialogInner({
 	users,
 	onPartialFailure,
 	onSuccess,
-}: BulkDialogSharedProps) {
+	subject = "users",
+}: BulkReplaceRolesDialogProps) {
+	const copy = REPLACE_ROLES_COPY[subject];
 	const [selected, setSelected] = useState<string[]>([]);
 	const [submitError, setSubmitError] = useState<string | null>(null);
 	const lookup = useRoles();
@@ -324,8 +352,8 @@ function BulkReplaceRolesDialogInner({
 			open={open}
 			onOpenChange={onOpenChange}
 			busy={bulkOp.isPending}
-			title={`Replace roles for ${users.length} user(s)`}
-			description="The selected roles below replace every user's current role set (overwrite, not additive). Your own account will be skipped."
+			title={copy.title(users.length)}
+			description={copy.description}
 			footer={
 				<DialogFooter className="gap-3">
 					<Button
@@ -365,10 +393,7 @@ function BulkReplaceRolesDialogInner({
 			{lookupReady && selected.length === 0 && (
 				<div className="mt-3 flex items-start gap-2 rounded-[var(--bf-radius-surface)] border border-[var(--bf-warning)]/20 bg-[var(--bf-warning-soft)] p-3 text-xs text-[var(--bf-warning)]">
 					<AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-					<span>
-						No roles selected — submitting will clear every selected
-						user's roles.
-					</span>
+					<span>{copy.empty}</span>
 				</div>
 			)}
 			<BulkSubmitError message={submitError} />
@@ -475,7 +500,7 @@ export interface BulkResultDialogProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	result: BulkUserResponse | null;
-	users: User[];
+	users: BulkTarget[];
 }
 
 export function BulkResultDialog({
@@ -485,7 +510,7 @@ export function BulkResultDialog({
 	users,
 }: BulkResultDialogProps) {
 	const userById = useMemo(() => {
-		const map = new Map<string, User>();
+		const map = new Map<string, BulkTarget>();
 		for (const u of users) map.set(u.id, u);
 		return map;
 	}, [users]);

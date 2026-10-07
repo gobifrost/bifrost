@@ -63,14 +63,15 @@ test.describe("Identities tab", () => {
 		).toBeVisible();
 
 		// Global first: its Kind and Organization both say Global.
+		// The first cell is the row's selection checkbox.
 		const pinned = page.locator("table tbody tr").first();
 		await expect(
-			pinned.getByRole("cell").nth(0).getByLabel("Organization"),
+			pinned.getByRole("cell").nth(1).getByLabel("Organization"),
 		).toHaveText("Global");
-		await expect(pinned.getByRole("cell").nth(1)).toHaveText(
+		await expect(pinned.getByRole("cell").nth(2)).toHaveText(
 			"Default Identity",
 		);
-		await expect(pinned.getByRole("cell").nth(2)).toHaveText("Global");
+		await expect(pinned.getByRole("cell").nth(3)).toHaveText("Global");
 
 		await page.getByRole("button", { name: "New Identity" }).click();
 		const dialog = page.getByRole("dialog", { name: "New Identity" });
@@ -96,9 +97,9 @@ test.describe("Identities tab", () => {
 			.fill(IDENTITY_NAME);
 		const row = page.getByRole("row").filter({ hasText: IDENTITY_NAME });
 		await expect(
-			row.getByRole("cell").nth(0).getByLabel("Organization"),
+			row.getByRole("cell").nth(1).getByLabel("Organization"),
 		).toHaveText(ORG_NAME);
-		await expect(row.getByRole("cell").nth(2)).toHaveText("Custom");
+		await expect(row.getByRole("cell").nth(3)).toHaveText("Custom");
 		await row.getByRole("link", { name: IDENTITY_NAME }).click();
 		await expect(page).toHaveURL(/\/users\/[0-9a-f-]+$/);
 
