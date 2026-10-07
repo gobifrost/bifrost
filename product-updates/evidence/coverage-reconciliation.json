@@ -6,13 +6,14 @@
   "cached_commit_count": 124,
   "verified_pr_count": 124,
   "disposition_counts": {
-    "other": 39,
+    "omit": 39,
     "highlight": 68,
-    "omit": 17
+    "other": 17
   },
   "unresolved_commits": [],
   "unresolved_prs": [],
   "review_status": "draft",
   "credit_evidence": "pr-744.json",
-  "security_evidence": "security-review.json"
+  "security_evidence": "security-review.json",
+  "editorial_note": "Customer-facing curation: routine dependencies and internal maintenance omitted from app/release summaries; required dependency security notice retained in release material with in_app=false."
 }

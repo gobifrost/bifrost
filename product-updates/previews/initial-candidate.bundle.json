@@ -14,9 +14,10 @@
       ],
       "contributors": [],
       "id": "fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8",
+      "in_app": true,
       "markdown": "\nSee a user's effective access, role assignments, and organization scope. Workflow permission checks remain report-only.\n\n[Open Users](/users) \u00b7 [Open Roles](/roles)\n\n![Roles and organization scope](assets/fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8/roles.png)",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 2,
+      "revision": 3,
       "sources": [
         {
           "commit": "d29fab00a6cb50a3eeb541fde4539be2b98d2238",
@@ -74,9 +75,10 @@
         }
       ],
       "id": "e3c123ca-33cb-5c12-880c-f05521c4ac0b",
-      "markdown": "\nAgents use the configured model context window and can fail over to another profile. Run details show cost, context, and cache use; timed-out specialists retain completed-work evidence.\n\n[Open Agents](/agents)",
+      "in_app": true,
+      "markdown": "\nAgent runs handle context limits, failover, timeouts, and interrupted specialists more reliably.",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 2,
+      "revision": 3,
       "sources": [
         {
           "commit": "ea0f14a01a4ee8979f41faf6d3782918eeb4bd9c",
@@ -120,7 +122,7 @@
         }
       ],
       "title": "More Reliable Agent Runs",
-      "type": "Improved"
+      "type": "Fixed"
     },
     {
       "action_required": true,
@@ -128,9 +130,10 @@
       "assets": [],
       "contributors": [],
       "id": "e2e8b98b-8707-5db3-acc4-7fce73125358",
-      "markdown": "\nAdmin reads no longer expose decrypted credentials. Webhook signing secrets are encrypted and shown only on creation or rotation; Graph clientState is removed from delivered events.\n\n**Update integrations:** save new signing secrets when shown, stop relying on delivered clientState, and use the authorized workflow SDK for runtime secrets.\n\n[Open Integrations](/integrations)",
+      "in_app": true,
+      "markdown": "\nIntegration credentials and webhook signing secrets have tighter access controls.\n\n**Update integrations:** save signing secrets when created or rotated, stop relying on delivered clientState, and use the authorized workflow SDK for runtime secrets.",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 2,
+      "revision": 3,
       "sources": [
         {
           "commit": "29f5ab1735e1039a36dddcf3fc521d2772210fd2",
@@ -153,7 +156,7 @@
           "role": "implementation"
         }
       ],
-      "title": "Protect Integration and Webhook Secrets",
+      "title": "Integration Credential Handling",
       "type": "Security"
     },
     {
@@ -162,9 +165,10 @@
       "assets": [],
       "contributors": [],
       "id": "cd2688ce-bc8c-501c-ab74-68b896d7ec7d",
+      "in_app": true,
       "markdown": "\nRun long-lived listeners as supervised services. Start, stop, or restart them and inspect attempts and live logs.\n\n[Open Services](/services)",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 2,
+      "revision": 3,
       "sources": [
         {
           "commit": "c3f8e2cadbcd33972d6c192f2f35b5290f85e3e4",
@@ -191,9 +195,10 @@
       "assets": [],
       "contributors": [],
       "id": "c2ac76ce-8a68-540b-8c56-a2c8b00ed3da",
-      "markdown": "\nFull backups preserve file inventories and table document IDs. Large encrypted restores use less temporary storage, and downloads go directly to object storage.\n\n[Open Solutions](/solutions)",
+      "in_app": true,
+      "markdown": "\nSolution backups restore file inventories and table documents correctly, including large encrypted archives.",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 2,
+      "revision": 3,
       "sources": [
         {
           "commit": "91294a7a48a29d449dc50acb5f2f907eb5ed5bfd",
@@ -237,7 +242,7 @@
         }
       ],
       "title": "Restore Complete Solution Backups",
-      "type": "Improved"
+      "type": "Fixed"
     },
     {
       "action_required": true,
@@ -245,9 +250,10 @@
       "assets": [],
       "contributors": [],
       "id": "c001044d-7255-59ce-814f-070e6cc37aa8",
-      "markdown": "\nSync protects Solution-owned entities and rejects missing manifests. Reimport reports missing source instead of deleting entities.\n\n**Update your sync routine:** Fetch before Commit, Sync, or Discard after changing files in Bifrost. Review source deletions through git sync.\n\n[Open GitHub Settings](/settings/github)",
+      "in_app": true,
+      "markdown": "\nSync protects Solution-owned resources and reports missing source instead of deleting entities.\n\n**Update sync:** Fetch before Commit, Sync, or Discard after changing files in Bifrost; review deletions through git sync.\n\n[Open GitHub Settings](/settings/github)",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 2,
+      "revision": 3,
       "sources": [
         {
           "commit": "da56e589c55945a14190f66322f7dab6433fb411",
@@ -276,7 +282,7 @@
         }
       ],
       "title": "Safer Sync and Reimport",
-      "type": "Improved"
+      "type": "Fixed"
     },
     {
       "action_required": false,
@@ -284,9 +290,10 @@
       "assets": [],
       "contributors": [],
       "id": "a37e2a01-1645-5cf9-8e78-0dfc0167565f",
+      "in_app": true,
       "markdown": "\nCompare workflows by CPU, memory, duration, and AI usage. Older runs without telemetry show blank resource values.\n\n[Open Usage](/reports/usage)",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 2,
+      "revision": 3,
       "sources": [
         {
           "commit": "c894749503255f67bda596610836e40dbc97ae86",
@@ -303,9 +310,10 @@
       "assets": [],
       "contributors": [],
       "id": "657a8947-1cc8-5050-b312-a43033ad02b7",
+      "in_app": true,
       "markdown": "\nThe app SDK adds user, role, branding, and organization helpers, plus responsive navigation. Update the SDK or redeploy existing apps to use them.\n\n[Open Apps](/apps)",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 2,
+      "revision": 3,
       "sources": [
         {
           "commit": "00f5e7d40606836bd16a8898dd048714a3e0c77b",
@@ -347,9 +355,10 @@
       "assets": [],
       "contributors": [],
       "id": "5a021295-d85e-5d79-bc30-dc764cecab0d",
+      "in_app": true,
       "markdown": "\nRun app deploys and SDK rebuilds in isolated Kubernetes pods with memory limits. Requires the compatible Kubernetes builds overlay and execution policy; existing installs keep local execution.\n\n[Open Execution Settings](/settings/kubernetes-executions)",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 2,
+      "revision": 3,
       "sources": [
         {
           "commit": "2399fbb049e6b6c121ca07980ffa649844c0d477",
@@ -366,9 +375,10 @@
       "assets": [],
       "contributors": [],
       "id": "54ca0580-5047-5ba9-bf2f-8d33dba99e0b",
+      "in_app": true,
       "markdown": "\nTable updates check permissions before and after changes. Agent artifacts and WebSocket channels enforce caller scope; app embeds stay within app endpoints.\n\n**Check custom clients:** ordinary session tokens no longer read SDK secrets, and admin endpoints require Platform Admin. These restrictions are enforced; newer workflow permission checks remain report-only.",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 2,
+      "revision": 3,
       "sources": [
         {
           "commit": "927327d4377af540d81cf07d9c3b7b4a4394dce7",
@@ -405,9 +415,10 @@
       "assets": [],
       "contributors": [],
       "id": "46cd9f78-2680-5597-ae31-3ead081b6af8",
+      "in_app": true,
       "markdown": "\nChoose entities and source from a Solution ZIP or repository snapshot before importing. Review collisions and unchanged items before applying changes.\n\n[Open Solutions](/solutions)",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 2,
+      "revision": 3,
       "sources": [
         {
           "commit": "cbb98cc152f6bd76449969adcf3fef75df7c2077",
@@ -430,9 +441,10 @@
         }
       ],
       "id": "3446112d-fcde-5861-9a99-9accc96f2302",
-      "markdown": "\nChoose models from the models.dev catalog, including OpenCode Go. Profile tests now send a real model request.\n\n[Open AI Settings](/settings/ai)",
+      "in_app": true,
+      "markdown": "\nTest an AI profile with a real model request before using it in an agent.\n\n[Open AI Settings](/settings/ai)",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 2,
+      "revision": 3,
       "sources": [
         {
           "commit": "410375a11baf4f7765b2e1d64ce45bb5cba04fd7",
@@ -465,7 +477,7 @@
           "role": "implementation"
         }
       ],
-      "title": "Choose and Test Models",
+      "title": "Test Model Connections",
       "type": "Improved"
     },
     {
@@ -474,9 +486,10 @@
       "assets": [],
       "contributors": [],
       "id": "21f60d8e-18e9-5a5d-a730-e7d55cd77a3a",
+      "in_app": false,
       "markdown": "\nUpdated pydantic-ai to 2.53.0 for [GHSA-6fqq-452j-qhrp](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-6fqq-452j-qhrp) and js-yaml to bound YAML merge CPU use.\n\n**Release review pending:** confirm applicability and CVE identifiers. The SimpleWebAuthn browser update mentions a separate server advisory; it does not establish that Bifrost used the affected server package.",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 2,
+      "revision": 3,
       "sources": [
         {
           "commit": "347a783251c7041ce5ccc95e50982724bdabea0d",
@@ -503,9 +516,10 @@
       "assets": [],
       "contributors": [],
       "id": "0cf7ed8c-3fc1-5d28-b89b-09ca20a59262",
+      "in_app": true,
       "markdown": "\nChoose how long to keep completed runs, events, and audit records.\n\n**Before upgrading:** run and event history defaults to 30 days, including existing installs. Select **Keep forever** before cleanup to retain older runs; deleted run details have no archive. Existing installs retain audit archives indefinitely. New installs keep audits for 90 days in the database and 365 days in the archive.\n\n[Open Maintenance](/settings/maintenance)",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 2,
+      "revision": 3,
       "sources": [
         {
           "commit": "3d678951a2d187e31139ffcdd5a4dcc5f4a98209",
@@ -527,9 +541,10 @@
       "assets": [],
       "contributors": [],
       "id": "05998cb0-6d43-5c62-9121-c4b7b468e88a",
+      "in_app": true,
       "markdown": "\nSearch workspace files and retained Solution source together. Solution results are read-only.\n\n[Open Files](/files)",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 2,
+      "revision": 3,
       "sources": [
         {
           "commit": "59001666f5644f29feb484b7c992ed3ed285b548",
@@ -546,9 +561,10 @@
       "assets": [],
       "contributors": [],
       "id": "007e847d-a72e-5ae9-b0a8-ced754e74ffe",
+      "in_app": true,
       "markdown": "\nUpgrade the CLI/SDK with the platform: SDKs through 1.4.1 cannot parse the new execution response. Refresh external MCP clients for the renamed `bifrost_<noun>_<verb>` tools. The interactive local runner is removed; direct workflow runs remain. App management now requires Platform Admin.\n\n[Open MCP Settings](/settings/mcp)",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 2,
+      "revision": 3,
       "sources": [
         {
           "commit": "4a9c6998e70bccdb679d02c9bbb1257081f44616",
@@ -582,35 +598,101 @@
         }
       ],
       "title": "Update the CLI and MCP Clients",
-      "type": "Improved"
+      "type": "Fixed"
     }
   ],
   "other_changes": [
     {
-      "contributors": [],
-      "source": "pr:842",
-      "title": "Apply three minor and patch updates to GitHub Actions.",
-      "url": "https://github.com/gobifrost/bifrost/pull/842"
-    },
-    {
-      "contributors": [],
-      "source": "pr:839",
-      "title": "Apply two minor and patch updates to client dependencies.",
-      "url": "https://github.com/gobifrost/bifrost/pull/839"
-    },
-    {
-      "contributors": [],
-      "source": "pr:860",
-      "title": "Commit request database changes before sending the response.",
-      "url": "https://github.com/gobifrost/bifrost/pull/860"
-    },
-    {
+      "category": "fix",
       "contributors": [],
       "source": "pr:856",
-      "title": "Finish legacy logo migration for Solutions, forms, and integrations.",
+      "title": "Apply custom logos consistently across Solutions, forms, and integrations.",
       "url": "https://github.com/gobifrost/bifrost/pull/856"
     },
     {
+      "category": "hardening",
+      "contributors": [],
+      "source": "pr:888",
+      "title": "Apply organization permissions to live table subscriptions.",
+      "url": "https://github.com/gobifrost/bifrost/pull/888"
+    },
+    {
+      "category": "hardening",
+      "contributors": [],
+      "source": "pr:892",
+      "title": "Audit failed sign-ins.",
+      "url": "https://github.com/gobifrost/bifrost/pull/892"
+    },
+    {
+      "category": "hardening",
+      "contributors": [],
+      "source": "pr:885",
+      "title": "Audit permission-rule changes.",
+      "url": "https://github.com/gobifrost/bifrost/pull/885"
+    },
+    {
+      "category": "fix",
+      "contributors": [
+        {
+          "login": "MTG-Thomas",
+          "profile_url": "https://github.com/MTG-Thomas",
+          "source_pr": 764
+        }
+      ],
+      "source": "pr:764",
+      "title": "Avoid duplicate sign-in redirects when a session expires.",
+      "url": "https://github.com/gobifrost/bifrost/pull/764"
+    },
+    {
+      "category": "fix",
+      "contributors": [],
+      "source": "pr:866",
+      "title": "Find global Solutions when working inside an organization.",
+      "url": "https://github.com/gobifrost/bifrost/pull/866"
+    },
+    {
+      "category": "fix",
+      "contributors": [],
+      "source": "pr:795",
+      "title": "Include the latest README in Solution exports.",
+      "url": "https://github.com/gobifrost/bifrost/pull/795"
+    },
+    {
+      "category": "fix",
+      "contributors": [
+        {
+          "login": "MTG-Thomas",
+          "profile_url": "https://github.com/MTG-Thomas",
+          "source_pr": 756
+        }
+      ],
+      "source": "pr:756",
+      "title": "Keep streaming responses visible when a new conversation is saved.",
+      "url": "https://github.com/gobifrost/bifrost/pull/756"
+    },
+    {
+      "category": "fix",
+      "contributors": [],
+      "source": "pr:844",
+      "title": "Keep workflow services connected after credentials renew.",
+      "url": "https://github.com/gobifrost/bifrost/pull/844"
+    },
+    {
+      "category": "fix",
+      "contributors": [],
+      "source": "pr:818",
+      "title": "Let embedded apps view the workflow runs they started.",
+      "url": "https://github.com/gobifrost/bifrost/pull/818"
+    },
+    {
+      "category": "hardening",
+      "contributors": [],
+      "source": "pr:832",
+      "title": "Restrict system-account roles and unavailable agent tools.",
+      "url": "https://github.com/gobifrost/bifrost/pull/832"
+    },
+    {
+      "category": "fix",
       "contributors": [
         {
           "login": "MTG-Thomas",
@@ -620,224 +702,43 @@
         }
       ],
       "source": "pr:745",
-      "title": "Give each event-delivery retry a fresh timeout window.",
+      "title": "Retry event deliveries with a fresh timeout.",
       "url": "https://github.com/gobifrost/bifrost/pull/745"
     },
     {
+      "category": "fix",
       "contributors": [],
-      "source": "pr:795",
-      "title": "Include the latest Solution README in shareable and full exports.",
-      "url": "https://github.com/gobifrost/bifrost/pull/795"
+      "source": "pr:860",
+      "title": "Save changes reliably before requests complete.",
+      "url": "https://github.com/gobifrost/bifrost/pull/860"
     },
     {
-      "contributors": [],
-      "source": "pr:832",
-      "title": "Keep roles off the system account and list only usable agent tools.",
-      "url": "https://github.com/gobifrost/bifrost/pull/832"
-    },
-    {
-      "contributors": [],
-      "source": "pr:844",
-      "title": "Keep service SDK authentication working after credential renewal.",
-      "url": "https://github.com/gobifrost/bifrost/pull/844"
-    },
-    {
-      "contributors": [],
-      "source": "pr:818",
-      "title": "Let embedded apps read the workflow executions they started.",
-      "url": "https://github.com/gobifrost/bifrost/pull/818"
-    },
-    {
-      "contributors": [],
-      "source": "pr:811",
-      "title": "Preserve audit attribution and API error behavior on the worker SDK path.",
-      "url": "https://github.com/gobifrost/bifrost/pull/811"
-    },
-    {
-      "contributors": [],
-      "source": "pr:822",
-      "title": "Preserve separately discovered MCP resource documents.",
-      "url": "https://github.com/gobifrost/bifrost/pull/822"
-    },
-    {
-      "contributors": [
-        {
-          "login": "MTG-Thomas",
-          "profile_url": "https://github.com/MTG-Thomas",
-          "source_pr": 756
-        }
-      ],
-      "source": "pr:756",
-      "title": "Preserve streaming activity when a new conversation receives its id.",
-      "url": "https://github.com/gobifrost/bifrost/pull/756"
-    },
-    {
-      "contributors": [],
-      "source": "pr:848",
-      "title": "Record operation ids and caller surfaces in audit rows, and measure workflow operation use.",
-      "url": "https://github.com/gobifrost/bifrost/pull/848"
-    },
-    {
-      "contributors": [],
-      "source": "pr:885",
-      "title": "Record policy-rule changes in the audit log.",
-      "url": "https://github.com/gobifrost/bifrost/pull/885"
-    },
-    {
-      "contributors": [],
-      "source": "pr:892",
-      "title": "Record refused sign-ins in the audit log.",
-      "url": "https://github.com/gobifrost/bifrost/pull/892"
-    },
-    {
-      "contributors": [],
-      "source": "pr:911",
-      "title": "Refresh client dependencies with fifteen minor and patch updates.",
-      "url": "https://github.com/gobifrost/bifrost/pull/911"
-    },
-    {
-      "contributors": [],
-      "source": "pr:828",
-      "title": "Refresh client dependencies with ten minor and patch updates.",
-      "url": "https://github.com/gobifrost/bifrost/pull/828"
-    },
-    {
-      "contributors": [],
-      "source": "pr:710",
-      "title": "Refresh the Nginx client image.",
-      "url": "https://github.com/gobifrost/bifrost/pull/710"
-    },
-    {
-      "contributors": [],
-      "source": "pr:752",
-      "title": "Refresh the Node container image.",
-      "url": "https://github.com/gobifrost/bifrost/pull/752"
-    },
-    {
-      "contributors": [],
-      "source": "pr:708",
-      "title": "Refresh the Python container image.",
-      "url": "https://github.com/gobifrost/bifrost/pull/708"
-    },
-    {
-      "contributors": [],
-      "source": "pr:825",
-      "title": "Remove failed repository Solution installs in the same transaction as job failure.",
-      "url": "https://github.com/gobifrost/bifrost/pull/825"
-    },
-    {
-      "contributors": [],
-      "source": "pr:857",
-      "title": "Remove withdrawn Builder schema residue before later migrations.",
-      "url": "https://github.com/gobifrost/bifrost/pull/857"
-    },
-    {
-      "contributors": [],
-      "source": "pr:866",
-      "title": "Resolve global Solution installs by name from an organization-scoped caller.",
-      "url": "https://github.com/gobifrost/bifrost/pull/866"
-    },
-    {
-      "contributors": [],
-      "source": "pr:821",
-      "title": "Restore the audit actor in platform-job execution.",
-      "url": "https://github.com/gobifrost/bifrost/pull/821"
-    },
-    {
-      "contributors": [],
-      "source": "pr:797",
-      "title": "Retry safe SDK reads and explicitly keyed writes after transient disconnects.",
-      "url": "https://github.com/gobifrost/bifrost/pull/797"
-    },
-    {
-      "contributors": [],
-      "source": "pr:819",
-      "title": "Return consistent totals and items when listing service attempts.",
-      "url": "https://github.com/gobifrost/bifrost/pull/819"
-    },
-    {
-      "contributors": [],
-      "source": "pr:810",
-      "title": "Run engine SDK requests through the worker-local HTTP socket.",
-      "url": "https://github.com/gobifrost/bifrost/pull/810"
-    },
-    {
+      "category": "fix",
       "contributors": [],
       "source": "pr:794",
-      "title": "Save organization configuration overrides before an integration mapping exists.",
+      "title": "Save organization settings before an integration is mapped.",
       "url": "https://github.com/gobifrost/bifrost/pull/794"
     },
     {
+      "category": "fix",
+      "contributors": [],
+      "source": "pr:819",
+      "title": "Show consistent totals when listing service attempts.",
+      "url": "https://github.com/gobifrost/bifrost/pull/819"
+    },
+    {
+      "category": "fix",
       "contributors": [],
       "source": "pr:852",
-      "title": "Show the provider error when an OAuth refresh returns success=false.",
+      "title": "Show the actual error when OAuth renewal fails.",
       "url": "https://github.com/gobifrost/bifrost/pull/852"
     },
     {
-      "contributors": [
-        {
-          "login": "MTG-Thomas",
-          "profile_url": "https://github.com/MTG-Thomas",
-          "source_pr": 764
-        }
-      ],
-      "source": "pr:764",
-      "title": "Start one login redirect when concurrent requests lose authentication.",
-      "url": "https://github.com/gobifrost/bifrost/pull/764"
-    },
-    {
+      "category": "fix",
       "contributors": [],
       "source": "pr:886",
-      "title": "Stop child Node processes when app builds are cancelled.",
+      "title": "Stop app builds when they are cancelled.",
       "url": "https://github.com/gobifrost/bifrost/pull/886"
-    },
-    {
-      "contributors": [],
-      "source": "pr:827",
-      "title": "Update client dependencies and resolve the accompanying compatibility issues.",
-      "url": "https://github.com/gobifrost/bifrost/pull/827"
-    },
-    {
-      "contributors": [],
-      "source": "pr:709",
-      "title": "Update Playwright to 1.63.0 for browser testing.",
-      "url": "https://github.com/gobifrost/bifrost/pull/709"
-    },
-    {
-      "contributors": [],
-      "source": "pr:824",
-      "title": "Update the AI runtime libraries and their provider dependencies.",
-      "url": "https://github.com/gobifrost/bifrost/pull/824"
-    },
-    {
-      "contributors": [],
-      "source": "pr:786",
-      "title": "Update the GitHub Actions used to build, sign, and test releases.",
-      "url": "https://github.com/gobifrost/bifrost/pull/786"
-    },
-    {
-      "contributors": [],
-      "source": "pr:837",
-      "title": "Update the Python AI runtime dependencies.",
-      "url": "https://github.com/gobifrost/bifrost/pull/837"
-    },
-    {
-      "contributors": [],
-      "source": "pr:826",
-      "title": "Update Vitest and its UI to 5.0.2.",
-      "url": "https://github.com/gobifrost/bifrost/pull/826"
-    },
-    {
-      "contributors": [],
-      "source": "pr:888",
-      "title": "Use the REST organization rule for WebSocket table subscriptions.",
-      "url": "https://github.com/gobifrost/bifrost/pull/888"
-    },
-    {
-      "contributors": [],
-      "source": "pr:858",
-      "title": "Wait for the database schema before starting workers and the scheduler.",
-      "url": "https://github.com/gobifrost/bifrost/pull/858"
     }
   ],
   "schema_version": 1,

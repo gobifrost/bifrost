@@ -6,14 +6,12 @@
 
 ## Security
 
-### Protect Integration and Webhook Secrets
+### Integration Credential Handling
 
 
-Admin reads no longer expose decrypted credentials. Webhook signing secrets are encrypted and shown only on creation or rotation; Graph clientState is removed from delivered events.
+Integration credentials and webhook signing secrets have tighter access controls.
 
-**Update integrations:** save new signing secrets when shown, stop relying on delivered clientState, and use the authorized workflow SDK for runtime secrets.
-
-**Open Integrations** (in Bifrost)
+**Update integrations:** save signing secrets when created or rotated, stop relying on delivered clientState, and use the authorized workflow SDK for runtime secrets.
 
 Sources: [#845](https://github.com/gobifrost/bifrost/pull/845), [#870](https://github.com/gobifrost/bifrost/pull/870), [#871](https://github.com/gobifrost/bifrost/pull/871), [#874](https://github.com/gobifrost/bifrost/pull/874)
 
@@ -40,9 +38,9 @@ Sources: [#718](https://github.com/gobifrost/bifrost/pull/718), [#910](https://g
 ### Safer Sync and Reimport
 
 
-Sync protects Solution-owned entities and rejects missing manifests. Reimport reports missing source instead of deleting entities.
+Sync protects Solution-owned resources and reports missing source instead of deleting entities.
 
-**Update your sync routine:** Fetch before Commit, Sync, or Discard after changing files in Bifrost. Review source deletions through git sync.
+**Update sync:** Fetch before Commit, Sync, or Discard after changing files in Bifrost; review deletions through git sync.
 
 **Open GitHub Settings** (in Bifrost)
 
@@ -86,9 +84,7 @@ Sources: [#879](https://github.com/gobifrost/bifrost/pull/879), [#889](https://g
 ### More Reliable Agent Runs
 
 
-Agents use the configured model context window and can fail over to another profile. Run details show cost, context, and cache use; timed-out specialists retain completed-work evidence.
-
-**Open Agents** (in Bifrost)
+Agent runs handle context limits, failover, timeouts, and interrupted specialists more reliably.
 
 Sources: [#783](https://github.com/gobifrost/bifrost/pull/783), [#785](https://github.com/gobifrost/bifrost/pull/785), [#796](https://github.com/gobifrost/bifrost/pull/796), [#801](https://github.com/gobifrost/bifrost/pull/801), [#849](https://github.com/gobifrost/bifrost/pull/849), [#863](https://github.com/gobifrost/bifrost/pull/863), [#904](https://github.com/gobifrost/bifrost/pull/904), [#916](https://github.com/gobifrost/bifrost/pull/916)
 
@@ -106,9 +102,7 @@ Sources: [#788](https://github.com/gobifrost/bifrost/pull/788), [#789](https://g
 ### Restore Complete Solution Backups
 
 
-Full backups preserve file inventories and table document IDs. Large encrypted restores use less temporary storage, and downloads go directly to object storage.
-
-**Open Solutions** (in Bifrost)
+Solution backups restore file inventories and table documents correctly, including large encrypted archives.
 
 Sources: [#878](https://github.com/gobifrost/bifrost/pull/878), [#880](https://github.com/gobifrost/bifrost/pull/880), [#881](https://github.com/gobifrost/bifrost/pull/881), [#882](https://github.com/gobifrost/bifrost/pull/882), [#899](https://github.com/gobifrost/bifrost/pull/899), [#901](https://github.com/gobifrost/bifrost/pull/901), [#902](https://github.com/gobifrost/bifrost/pull/902), [#907](https://github.com/gobifrost/bifrost/pull/907)
 
@@ -148,10 +142,10 @@ Choose entities and source from a Solution ZIP or repository snapshot before imp
 
 Sources: [#792](https://github.com/gobifrost/bifrost/pull/792)
 
-### Choose and Test Models
+### Test Model Connections
 
 
-Choose models from the models.dev catalog, including OpenCode Go. Profile tests now send a real model request.
+Test an AI profile with a real model request before using it in an agent.
 
 **Open AI Settings** (in Bifrost)
 
@@ -170,45 +164,23 @@ Sources: [#873](https://github.com/gobifrost/bifrost/pull/873)
 
 ## Other changes
 
-- [Apply three minor and patch updates to GitHub Actions.](https://github.com/gobifrost/bifrost/pull/842)
-- [Apply two minor and patch updates to client dependencies.](https://github.com/gobifrost/bifrost/pull/839)
-- [Commit request database changes before sending the response.](https://github.com/gobifrost/bifrost/pull/860)
-- [Finish legacy logo migration for Solutions, forms, and integrations.](https://github.com/gobifrost/bifrost/pull/856)
-- [Give each event-delivery retry a fresh timeout window.](https://github.com/gobifrost/bifrost/pull/745) — [MTG-Thomas](https://github.com/MTG-Thomas)
-- [Include the latest Solution README in shareable and full exports.](https://github.com/gobifrost/bifrost/pull/795)
-- [Keep roles off the system account and list only usable agent tools.](https://github.com/gobifrost/bifrost/pull/832)
-- [Keep service SDK authentication working after credential renewal.](https://github.com/gobifrost/bifrost/pull/844)
-- [Let embedded apps read the workflow executions they started.](https://github.com/gobifrost/bifrost/pull/818)
-- [Preserve audit attribution and API error behavior on the worker SDK path.](https://github.com/gobifrost/bifrost/pull/811)
-- [Preserve separately discovered MCP resource documents.](https://github.com/gobifrost/bifrost/pull/822)
-- [Preserve streaming activity when a new conversation receives its id.](https://github.com/gobifrost/bifrost/pull/756) — [MTG-Thomas](https://github.com/MTG-Thomas)
-- [Record operation ids and caller surfaces in audit rows, and measure workflow operation use.](https://github.com/gobifrost/bifrost/pull/848)
-- [Record policy-rule changes in the audit log.](https://github.com/gobifrost/bifrost/pull/885)
-- [Record refused sign-ins in the audit log.](https://github.com/gobifrost/bifrost/pull/892)
-- [Refresh client dependencies with fifteen minor and patch updates.](https://github.com/gobifrost/bifrost/pull/911)
-- [Refresh client dependencies with ten minor and patch updates.](https://github.com/gobifrost/bifrost/pull/828)
-- [Refresh the Nginx client image.](https://github.com/gobifrost/bifrost/pull/710)
-- [Refresh the Node container image.](https://github.com/gobifrost/bifrost/pull/752)
-- [Refresh the Python container image.](https://github.com/gobifrost/bifrost/pull/708)
-- [Remove failed repository Solution installs in the same transaction as job failure.](https://github.com/gobifrost/bifrost/pull/825)
-- [Remove withdrawn Builder schema residue before later migrations.](https://github.com/gobifrost/bifrost/pull/857)
-- [Resolve global Solution installs by name from an organization-scoped caller.](https://github.com/gobifrost/bifrost/pull/866)
-- [Restore the audit actor in platform-job execution.](https://github.com/gobifrost/bifrost/pull/821)
-- [Retry safe SDK reads and explicitly keyed writes after transient disconnects.](https://github.com/gobifrost/bifrost/pull/797)
-- [Return consistent totals and items when listing service attempts.](https://github.com/gobifrost/bifrost/pull/819)
-- [Run engine SDK requests through the worker-local HTTP socket.](https://github.com/gobifrost/bifrost/pull/810)
-- [Save organization configuration overrides before an integration mapping exists.](https://github.com/gobifrost/bifrost/pull/794)
-- [Show the provider error when an OAuth refresh returns success=false.](https://github.com/gobifrost/bifrost/pull/852)
-- [Start one login redirect when concurrent requests lose authentication.](https://github.com/gobifrost/bifrost/pull/764) — [MTG-Thomas](https://github.com/MTG-Thomas)
-- [Stop child Node processes when app builds are cancelled.](https://github.com/gobifrost/bifrost/pull/886)
-- [Update client dependencies and resolve the accompanying compatibility issues.](https://github.com/gobifrost/bifrost/pull/827)
-- [Update Playwright to 1.63.0 for browser testing.](https://github.com/gobifrost/bifrost/pull/709)
-- [Update the AI runtime libraries and their provider dependencies.](https://github.com/gobifrost/bifrost/pull/824)
-- [Update the GitHub Actions used to build, sign, and test releases.](https://github.com/gobifrost/bifrost/pull/786)
-- [Update the Python AI runtime dependencies.](https://github.com/gobifrost/bifrost/pull/837)
-- [Update Vitest and its UI to 5.0.2.](https://github.com/gobifrost/bifrost/pull/826)
-- [Use the REST organization rule for WebSocket table subscriptions.](https://github.com/gobifrost/bifrost/pull/888)
-- [Wait for the database schema before starting workers and the scheduler.](https://github.com/gobifrost/bifrost/pull/858)
+- [Apply custom logos consistently across Solutions, forms, and integrations.](https://github.com/gobifrost/bifrost/pull/856)
+- [Apply organization permissions to live table subscriptions.](https://github.com/gobifrost/bifrost/pull/888)
+- [Audit failed sign-ins.](https://github.com/gobifrost/bifrost/pull/892)
+- [Audit permission-rule changes.](https://github.com/gobifrost/bifrost/pull/885)
+- [Avoid duplicate sign-in redirects when a session expires.](https://github.com/gobifrost/bifrost/pull/764) — [MTG-Thomas](https://github.com/MTG-Thomas)
+- [Find global Solutions when working inside an organization.](https://github.com/gobifrost/bifrost/pull/866)
+- [Include the latest README in Solution exports.](https://github.com/gobifrost/bifrost/pull/795)
+- [Keep streaming responses visible when a new conversation is saved.](https://github.com/gobifrost/bifrost/pull/756) — [MTG-Thomas](https://github.com/MTG-Thomas)
+- [Keep workflow services connected after credentials renew.](https://github.com/gobifrost/bifrost/pull/844)
+- [Let embedded apps view the workflow runs they started.](https://github.com/gobifrost/bifrost/pull/818)
+- [Restrict system-account roles and unavailable agent tools.](https://github.com/gobifrost/bifrost/pull/832)
+- [Retry event deliveries with a fresh timeout.](https://github.com/gobifrost/bifrost/pull/745) — [MTG-Thomas](https://github.com/MTG-Thomas)
+- [Save changes reliably before requests complete.](https://github.com/gobifrost/bifrost/pull/860)
+- [Save organization settings before an integration is mapped.](https://github.com/gobifrost/bifrost/pull/794)
+- [Show consistent totals when listing service attempts.](https://github.com/gobifrost/bifrost/pull/819)
+- [Show the actual error when OAuth renewal fails.](https://github.com/gobifrost/bifrost/pull/852)
+- [Stop app builds when they are cancelled.](https://github.com/gobifrost/bifrost/pull/886)
 
 ## Contributors
 

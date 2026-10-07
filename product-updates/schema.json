@@ -264,6 +264,9 @@
         },
         "review": {
           "$ref": "#/$defs/review"
+        },
+        "in_app": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false
@@ -536,6 +539,9 @@
         },
         "release": {
           "type": "string"
+        },
+        "in_app": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false
@@ -624,6 +630,12 @@
           "items": {
             "$ref": "#/$defs/bundleContributor"
           }
+        },
+        "category": {
+          "enum": [
+            "fix",
+            "hardening"
+          ]
         }
       },
       "additionalProperties": false
@@ -695,6 +707,12 @@
               },
               "action_required": {
                 "type": "boolean"
+              },
+              "category": {
+                "enum": [
+                  "fix",
+                  "hardening"
+                ]
               }
             },
             "allOf": [

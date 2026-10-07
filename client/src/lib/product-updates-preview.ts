@@ -106,6 +106,7 @@ export function visibleProductUpdates(
 	entries: readonly ProductUpdateEntry[],
 	state: ProductUpdatesPreviewState,
 ): ProductUpdateEntry[] {
+	entries = entries.filter((entry) => entry.in_app !== false);
 	if (state === "empty") return [];
 	if (state === "rollback") return entries.slice(1);
 	if (state === "future")

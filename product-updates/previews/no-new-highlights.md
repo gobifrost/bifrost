@@ -4,8 +4,4 @@
 
 # Bifrost release notes
 
-## Other changes
-
-- [Refresh client dependencies with fifteen minor and patch updates.](https://github.com/gobifrost/bifrost/pull/911)
-
 > Release preparation: the canonical helper adds Docker, type-stub, signature and attestation instructions after an actual tag/version and the required review record are approved.

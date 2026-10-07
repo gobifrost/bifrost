@@ -33,13 +33,21 @@ describe("shared product update content", () => {
 	it("groups updates by their displayed date, newest first, with one date heading per group", () => {
 		const earlier = {
 			...entry,
+			type: "New" as const,
 			id: "earlier",
 			title: "Earlier Update",
 			published_at: "2026-10-05T12:00:00Z",
 		};
-		const sameDay = { ...entry, id: "same-day", title: "Another Update" };
+		const sameDay = {
+			...entry,
+			type: "New" as const,
+			id: "same-day",
+			title: "Another Update",
+		};
 		renderWithProviders(
-			<UpdateGroups entries={[earlier, entry, sameDay]} />,
+			<UpdateGroups
+				entries={[earlier, { ...entry, type: "New" }, sameDay]}
+			/>,
 		);
 		const format = (date: string) =>
 			new Intl.DateTimeFormat(undefined, { dateStyle: "long" }).format(
@@ -55,7 +63,7 @@ describe("shared product update content", () => {
 		});
 		expect(
 			within(group)
-				.getAllByRole("heading", { level: 3 })
+				.getAllByRole("heading", { level: 4 })
 				.map((heading) => heading.textContent),
 		).toEqual(["Upgrade Notice", "Another Update"]);
 		expect(
@@ -63,12 +71,65 @@ describe("shared product update content", () => {
 		).not.toBeInTheDocument();
 	});
 
+	it("keeps features as headlines and corrections in separate bullet lists, excluding release-only notes", () => {
+		const feature = {
+			...entry,
+			id: "feature",
+			type: "New" as const,
+			title: "A New Capability",
+			action_required: false,
+		};
+		const fix = {
+			...entry,
+			id: "fix",
+			type: "Fixed" as const,
+			title: "A Repair",
+			markdown: "A repair users can understand.",
+			action_required: false,
+		};
+		const hidden = {
+			...entry,
+			id: "internal",
+			title: "Dependencies",
+			in_app: false,
+		};
+		renderWithProviders(
+			<UpdateGroups
+				entries={[feature, fix, entry, hidden]}
+				changes={[
+					{
+						source: "pr:20",
+						title: "A smaller fix",
+						url: "https://github.com/gobifrost/bifrost/pull/20",
+						contributors: [],
+						category: "fix",
+					},
+				]}
+			/>,
+		);
+		expect(
+			screen.getByRole("heading", {
+				name: "New Features and Functionality",
+			}),
+		).toBeVisible();
+		expect(
+			screen.getAllByRole("heading", { name: "Bug Fixes" }),
+		).toHaveLength(1);
+		expect(
+			screen.getByText("A repair users can understand.").closest("li"),
+		).not.toBeNull();
+		expect(
+			screen.getByRole("heading", { name: "Hardening" }),
+		).toBeVisible();
+		expect(screen.queryByText("Dependencies")).not.toBeInTheDocument();
+	});
+
 	it("preserves upgrade metadata, source links, and a useful image failure state without unread labels", () => {
 		renderWithProviders(<UpdateEntry entry={entry} />);
 		expect(
 			screen.getByRole("heading", { name: "Upgrade Notice" }),
 		).toBeVisible();
-		expect(screen.getByText("Security")).toBeVisible();
+		expect(screen.getByText("Action Required")).toBeVisible();
 		fireEvent.click(screen.getByText("Source Details"));
 		expect(screen.getByRole("link", { name: "PR #10" })).toHaveAttribute(
 			"href",

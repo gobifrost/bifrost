@@ -294,6 +294,19 @@ class ProductUpdatesTests(unittest.TestCase):
         )
         self.assertTrue(any("exceeds 60 words" in error for error in errors))
 
+    def test_release_only_notice_remains_in_release_material(self) -> None:
+        data = self.entry_data()
+        data["in_app"] = False
+        self.write_entry(data, "A required release notice.")
+        bundle = product_updates.build_bundle(
+            self.content, self.inventory, self.dispositions, TARGET, "/product-updates/"
+        )
+        self.assertFalse(bundle["entries"][0]["in_app"])
+        rendered = product_updates.render_release(
+            bundle, f"https://raw.githubusercontent.com/gobifrost/bifrost/{TARGET}/"
+        )
+        self.assertIn("A required release notice.", rendered)
+
     def test_release_uses_app_link_labels_without_inventing_a_deployment_url(
         self,
     ) -> None:
@@ -555,6 +568,7 @@ class ProductUpdatesTests(unittest.TestCase):
             "classification": "other",
             "entry_ids": [],
             "summary": "A reader-friendly summary",
+            "category": "hardening",
             "review": {"status": "approved", "evidence": ["review"]},
         }
         self._write_json(self.dispositions, dispositions)
@@ -565,6 +579,7 @@ class ProductUpdatesTests(unittest.TestCase):
         self.assertEqual(
             "A reader-friendly summary", bundle["other_changes"][0]["title"]
         )
+        self.assertEqual("hardening", bundle["other_changes"][0]["category"])
 
     def test_release_assets_are_pinned_to_content_ref_not_eligibility_target(
         self,

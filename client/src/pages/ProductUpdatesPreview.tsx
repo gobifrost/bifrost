@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { AlertCircle, LoaderCircle, Megaphone } from "lucide-react";
+import { useSearchParams, Link } from "react-router-dom";
+import { AlertCircle, LoaderCircle, Megaphone, X } from "lucide-react";
 import {
 	CommunityFooter,
 	UpdateGroups,
@@ -8,6 +8,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { ListPageHeader } from "@/components/layout/ListPageHeader";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -143,9 +144,24 @@ export function ProductUpdatesPreview({
 				<ListPageHeader
 					title="What's New"
 					titleAccessory={
-						<Badge variant="warning">
-							Preview · Draft Backfill
-						</Badge>
+						<>
+							<Badge
+								variant="warning"
+								className="hidden sm:inline-flex"
+							>
+								Preview · Draft Backfill
+							</Badge>
+							<Button
+								asChild
+								variant="ghost"
+								className="ml-auto h-10 px-3"
+							>
+								<Link to="/">
+									<X aria-hidden="true" className="size-4" />
+									Done
+								</Link>
+							</Button>
+						</>
 					}
 					description="New features, improvements, and fixes in Bifrost."
 				/>
@@ -264,7 +280,7 @@ export function ProductUpdatesPreview({
 						</AlertDescription>
 					</Alert>
 				)}
-				<div className="max-h-[calc(100dvh-19rem)] overflow-auto pr-3 pb-6">
+				<div className="min-h-0 overflow-auto pr-1 pb-3">
 					{state === "failure" || failedRequestKey === requestKey ? (
 						<FeedFailure />
 					) : state === "loading" ||
@@ -273,7 +289,8 @@ export function ProductUpdatesPreview({
 						<FeedLoading />
 					) : (
 						<>
-							{visibleEntries.length === 0 ? (
+							{visibleEntries.length === 0 &&
+							otherChanges.length === 0 ? (
 								<EmptyState
 									icon={Megaphone}
 									title="No Updates Yet"
@@ -283,34 +300,8 @@ export function ProductUpdatesPreview({
 								<UpdateGroups
 									entries={visibleEntries}
 									missingImage={state === "missingimage"}
+									changes={otherChanges}
 								/>
-							)}
-							{otherChanges.length > 0 && (
-								<section
-									aria-labelledby="other-changes-heading"
-									className="mt-8"
-								>
-									<h2
-										id="other-changes-heading"
-										className="font-display text-lg font-semibold"
-									>
-										Other Changes
-									</h2>
-									<ul className="mt-3 space-y-2 text-sm">
-										{otherChanges.map((change) => (
-											<li key={change.source}>
-												<a
-													className="text-primary underline underline-offset-2"
-													href={change.url}
-													target="_blank"
-													rel="noreferrer"
-												>
-													{change.title}
-												</a>
-											</li>
-										))}
-									</ul>
-								</section>
 							)}
 						</>
 					)}

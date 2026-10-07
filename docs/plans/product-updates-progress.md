@@ -19,7 +19,7 @@ Latest published non-draft final release verified through `gh release list` on 2
 Authoritative schema/tool: `product-updates/schema.json`, `scripts/product_updates.py`. Verified metadata: `product-updates/inventory.json`; durable classifications: `product-updates/dispositions.json`; draft backfill: `product-updates/drafts/initial-backfill/entries/`. Required release review uses the same schema's `releaseReview` definition and `scripts/release_gate.py`.
 
 - Tooling: deterministic schema validation, cached-source coverage, Git ancestry eligibility, release interval filtering, schema-generated TypeScript/bundles, local assets, external credits, and PR/merge-group event validation are implemented. Pending sources are structurally validated but withheld until cached metadata and ancestry verify every cited source and prerequisite. Reviewed landed portions remain Other changes; required security and upgrade notices block release until eligible. Metadata collection is an explicit preparation command; rendering has no GitHub or LLM dependency.
-- Backfill: all 124 PRs reconciled: 68 grouped into 16 highlights, 39 Other changes with plain-English summaries, and 17 Omit decisions with reasons. No unresolved authors or PR associations. The preview adds one staged Product Updates/Discord announcement, with no invented PR number. Content remains draft for Jack's review.
+- Backfill: all 124 PRs reconciled: 68 grouped into 16 canonical notes, 17 smaller customer-facing fixes/hardening summaries, and 39 Omit decisions with reasons. The latest app curation uses nine feature cards, four fix bullets, two hardening bullets, and keeps the dependency security notice release-only. No unresolved authors or PR associations. The preview adds one staged Product Updates/Discord announcement, with no invented PR number. Content remains draft for Jack's review.
 - Client: development-only automatic admin modal and history route reachable through the admin Help menu; automatic batch acknowledgment through a replaceable local receipt adapter; safe screenshots and shared GitHub/Discord/Website brand footer with a rainbow edge. The manual action, per-item unread badges, inbox tabs, and duplicate sidebar entry were removed after Jack reviewed the first design. Production build excludes the preview. No product API/database contract changed.
 - CI/release: a real always-triggered Product Updates workflow uses the trusted base validator/schema. Initial bootstrap fails visibly until the validator exists on main; no green stub or candidate-code fallback. The live ruleset rollout is prepared, not applied. Release publication consumes a prepared body, and its gate refuses unreviewed coverage, security/CVE or breaking-change material.
 - Preview stack: running at https://bifrost-3fc9b38f-lsk5.eu1.netbird.services/whats-new. Obtain login locally with `./debug.sh status`; credentials are not stored here.
@@ -164,3 +164,40 @@ Preview Controls is omitted from normal `/whats-new` rendering; development fixt
 Focused checks: `docker exec -w /app bifrost-debug-3fc9b38f-client-1 npm test -- src/pages/ProductUpdatesPreview.test.tsx` passed all 5 tests, including default controls absence and opt-in fixture recovery. `./test.sh client preview` passed in 10.8 seconds, asserting controls absence on the normal history path. `docker exec -w /app bifrost-debug-3fc9b38f-client-1 npx eslint src/pages/ProductUpdatesPreview.tsx src/pages/ProductUpdatesPreview.test.tsx` passed, as did the actual browser spec ESLint via the mounted whole-client Playwright image. Broader suites and backend checks were not run for this UI-only change.
 
 `docker exec -w /app bifrost-debug-3fc9b38f-client-1 npx tsc -b --pretty false` also passed.
+
+## Customer-Facing Curation and Mobile Exit
+
+Jack rejected maintenance inventories and security implementation detail as feature highlights. The app now uses New Features and Functionality with individual feature headlines, followed by separate Bug Fixes and Hardening bullet lists. Nine landed feature notes plus the staged announcement remain feature cards; four repairs and two hardening notes become compact bullets. Thirteen smaller fixes and four smaller hardening items join their respective lists in history. Twenty-two previously Other maintenance/dependency changes are now Omit with preserved original summaries and reasons. All 124 PRs remain accounted for (68 source PRs on canonical entries, 17 Other, 39 Omit). Coverage-reconciliation evidence was updated.
+
+The model note focuses on testing a real connection instead of the models.dev catalog vendor. Credential hardening is phrased as access controls, without implying an incident. Upgrade steps, including Fetch before Commit/Sync/Discard and client/SDK requirements, remain inline. Compact fix/hardening sources are collected under one Source Details per list. Required dependency review material uses `in_app: false` and remains in the shared release bundle/body and security gate; app display and acknowledgment exclude it. Source and bundle schemas/types support this explicit editorial decision; Other category metadata round-trips deterministically. All draft revisions are now 3. Saved previews were regenerated, including the now-empty no-new-highlights range after routine maintenance was omitted.
+
+History has a Done link in its fixed header back to the app. The modal has a Done button tested to close it. Its actions and social links share one compact footer; mobile socials use icons with accessible labels/titles and retain 40px targets. Footer height is reduced and the page scroller uses available constrained space instead of reserving the old control-panel height. Desktop/mobile history, modal and fix/hardening screenshots were captured and inspected.
+
+Focused verification:
+
+```bash
+python3 -m unittest scripts.test_product_updates scripts.test_release_gate -q
+# 34 passed; includes release-only notice retention and Other category propagation.
+python3 scripts/product_updates.py coverage --target 32aeea16c99c27d1278b5576f09080e29a59cca2 --draft-dir product-updates/drafts/initial-backfill --allow-draft
+# Unclassified/uncovered/unrepresented all empty.
+bash scripts/test_prepare_release_body.sh
+bash scripts/test_release_check.sh
+# Passed.
+docker exec -w /app bifrost-debug-3fc9b38f-client-1 npm test -- src/components/layout/ProductUpdateContent.test.tsx src/components/layout/ProductUpdatesDialog.test.tsx src/pages/ProductUpdatesPreview.test.tsx src/lib/product-updates-preview.test.ts
+# 4 files / 16 tests passed.
+docker exec -w /app bifrost-debug-3fc9b38f-client-1 npx tsc -b --pretty false
+# Passed after the final component edit.
+docker exec -w /app bifrost-debug-3fc9b38f-client-1 npx eslint src/components/layout/ProductUpdateContent.tsx src/components/layout/ProductUpdateContent.test.tsx src/components/layout/ProductUpdatesDialog.tsx src/components/layout/ProductUpdatesDialog.test.tsx src/pages/ProductUpdatesPreview.tsx src/pages/ProductUpdatesPreview.test.tsx src/lib/product-updates-preview.ts src/lib/product-updates-preview.test.ts
+# Passed; actual browser spec lint also passed through the whole-client Playwright mount.
+docker run --rm -v "$PWD:/app" -w /app bifrost-test-api-dev:latest sh -c 'ruff format --no-cache scripts/product_updates.py scripts/test_product_updates.py && ruff check --no-cache scripts/product_updates.py scripts/test_product_updates.py && pyright scripts/product_updates.py scripts/test_product_updates.py'
+# Passed, Pyright zero errors.
+./test.sh client preview
+# Desktop/mobile automatic modal, no receipt for release-only notice, single fix/hardening
+# lists, Done visible while scrolling, mobile captures and full-page Done navigation.
+docker exec -w /app bifrost-debug-3fc9b38f-client-1 npx vite build --outDir /tmp/product-updates-production-build --emptyOutDir
+# Passed; preview dialog/receipt key/announcement absent from production build.
+```
+
+Failure dispositions: an automated edit accidentally shadowed the imported visibility helper with a nonexistent prop, keeping the modal quiet. Component tests, types and lint exposed it; removing the shadow restored the imported helper and all checks passed. The initial Ruff format invocation hit the known host-cache permission boundary; `--no-cache` preserves formatting/lint enforcement without using that cache. Screenshot review then reduced correction card prose to compact sentences; final verification used the changed content. Broad suites and production/live publication were not run.
+
+Final browser capture after restoring the explicit Fetch-before-sync upgrade instruction passed in 8.0 seconds. The final generated previews contain 16 canonical notes/17 smaller changes for full and candidate, 17/17 with the staged announcement, and 0/0 for the maintenance-only interval.

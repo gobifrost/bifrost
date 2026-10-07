@@ -6,7 +6,7 @@
   },
   "items": {
     "pr:708": {
-      "classification": "other",
+      "classification": "omit",
       "entry_ids": [],
       "review": {
         "status": "draft",
@@ -14,10 +14,10 @@
           "https://github.com/gobifrost/bifrost/pull/708"
         ]
       },
-      "summary": "Refresh the Python container image."
+      "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Refresh the Python container image."
     },
     "pr:709": {
-      "classification": "other",
+      "classification": "omit",
       "entry_ids": [],
       "review": {
         "status": "draft",
@@ -25,10 +25,10 @@
           "https://github.com/gobifrost/bifrost/pull/709"
         ]
       },
-      "summary": "Update Playwright to 1.63.0 for browser testing."
+      "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Update Playwright to 1.63.0 for browser testing."
     },
     "pr:710": {
-      "classification": "other",
+      "classification": "omit",
       "entry_ids": [],
       "review": {
         "status": "draft",
@@ -36,7 +36,7 @@
           "https://github.com/gobifrost/bifrost/pull/710"
         ]
       },
-      "summary": "Refresh the Nginx client image."
+      "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Refresh the Nginx client image."
     },
     "pr:714": {
       "classification": "highlight",
@@ -79,10 +79,11 @@
           "https://github.com/gobifrost/bifrost/pull/745"
         ]
       },
-      "summary": "Give each event-delivery retry a fresh timeout window."
+      "summary": "Retry event deliveries with a fresh timeout.",
+      "category": "fix"
     },
     "pr:752": {
-      "classification": "other",
+      "classification": "omit",
       "entry_ids": [],
       "review": {
         "status": "draft",
@@ -90,7 +91,7 @@
           "https://github.com/gobifrost/bifrost/pull/752"
         ]
       },
-      "summary": "Refresh the Node container image."
+      "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Refresh the Node container image."
     },
     "pr:756": {
       "classification": "other",
@@ -101,7 +102,8 @@
           "https://github.com/gobifrost/bifrost/pull/756"
         ]
       },
-      "summary": "Preserve streaming activity when a new conversation receives its id."
+      "summary": "Keep streaming responses visible when a new conversation is saved.",
+      "category": "fix"
     },
     "pr:764": {
       "classification": "other",
@@ -112,7 +114,8 @@
           "https://github.com/gobifrost/bifrost/pull/764"
         ]
       },
-      "summary": "Start one login redirect when concurrent requests lose authentication."
+      "summary": "Avoid duplicate sign-in redirects when a session expires.",
+      "category": "fix"
     },
     "pr:781": {
       "classification": "highlight",
@@ -151,7 +154,7 @@
       }
     },
     "pr:786": {
-      "classification": "other",
+      "classification": "omit",
       "entry_ids": [],
       "review": {
         "status": "draft",
@@ -159,7 +162,7 @@
           "https://github.com/gobifrost/bifrost/pull/786"
         ]
       },
-      "summary": "Update the GitHub Actions used to build, sign, and test releases."
+      "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Update the GitHub Actions used to build, sign, and test releases."
     },
     "pr:788": {
       "classification": "highlight",
@@ -218,7 +221,8 @@
           "https://github.com/gobifrost/bifrost/pull/794"
         ]
       },
-      "summary": "Save organization configuration overrides before an integration mapping exists."
+      "summary": "Save organization settings before an integration is mapped.",
+      "category": "fix"
     },
     "pr:795": {
       "classification": "other",
@@ -229,7 +233,8 @@
           "https://github.com/gobifrost/bifrost/pull/795"
         ]
       },
-      "summary": "Include the latest Solution README in shareable and full exports."
+      "summary": "Include the latest README in Solution exports.",
+      "category": "fix"
     },
     "pr:796": {
       "classification": "highlight",
@@ -244,7 +249,7 @@
       }
     },
     "pr:797": {
-      "classification": "other",
+      "classification": "omit",
       "entry_ids": [],
       "review": {
         "status": "draft",
@@ -252,7 +257,7 @@
           "https://github.com/gobifrost/bifrost/pull/797"
         ]
       },
-      "summary": "Retry safe SDK reads and explicitly keyed writes after transient disconnects."
+      "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Retry safe SDK reads and explicitly keyed writes after transient disconnects."
     },
     "pr:798": {
       "classification": "omit",
@@ -347,7 +352,7 @@
       }
     },
     "pr:810": {
-      "classification": "other",
+      "classification": "omit",
       "entry_ids": [],
       "review": {
         "status": "draft",
@@ -355,10 +360,10 @@
           "https://github.com/gobifrost/bifrost/pull/810"
         ]
       },
-      "summary": "Run engine SDK requests through the worker-local HTTP socket."
+      "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Run engine SDK requests through the worker-local HTTP socket."
     },
     "pr:811": {
-      "classification": "other",
+      "classification": "omit",
       "entry_ids": [],
       "review": {
         "status": "draft",
@@ -366,7 +371,7 @@
           "https://github.com/gobifrost/bifrost/pull/811"
         ]
       },
-      "summary": "Preserve audit attribution and API error behavior on the worker SDK path."
+      "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Preserve audit attribution and API error behavior on the worker SDK path."
     },
     "pr:812": {
       "classification": "highlight",
@@ -448,7 +453,8 @@
           "https://github.com/gobifrost/bifrost/pull/818"
         ]
       },
-      "summary": "Let embedded apps read the workflow executions they started."
+      "summary": "Let embedded apps view the workflow runs they started.",
+      "category": "fix"
     },
     "pr:819": {
       "classification": "other",
@@ -459,7 +465,8 @@
           "https://github.com/gobifrost/bifrost/pull/819"
         ]
       },
-      "summary": "Return consistent totals and items when listing service attempts."
+      "summary": "Show consistent totals when listing service attempts.",
+      "category": "fix"
     },
     "pr:820": {
       "classification": "highlight",
@@ -474,7 +481,7 @@
       }
     },
     "pr:821": {
-      "classification": "other",
+      "classification": "omit",
       "entry_ids": [],
       "review": {
         "status": "draft",
@@ -482,10 +489,10 @@
           "https://github.com/gobifrost/bifrost/pull/821"
         ]
       },
-      "summary": "Restore the audit actor in platform-job execution."
+      "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Restore the audit actor in platform-job execution."
     },
     "pr:822": {
-      "classification": "other",
+      "classification": "omit",
       "entry_ids": [],
       "review": {
         "status": "draft",
@@ -493,10 +500,10 @@
           "https://github.com/gobifrost/bifrost/pull/822"
         ]
       },
-      "summary": "Preserve separately discovered MCP resource documents."
+      "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Preserve separately discovered MCP resource documents."
     },
     "pr:824": {
-      "classification": "other",
+      "classification": "omit",
       "entry_ids": [],
       "review": {
         "status": "draft",
@@ -504,10 +511,10 @@
           "https://github.com/gobifrost/bifrost/pull/824"
         ]
       },
-      "summary": "Update the AI runtime libraries and their provider dependencies."
+      "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Update the AI runtime libraries and their provider dependencies."
     },
     "pr:825": {
-      "classification": "other",
+      "classification": "omit",
       "entry_ids": [],
       "review": {
         "status": "draft",
@@ -515,10 +522,10 @@
           "https://github.com/gobifrost/bifrost/pull/825"
         ]
       },
-      "summary": "Remove failed repository Solution installs in the same transaction as job failure."
+      "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Remove failed repository Solution installs in the same transaction as job failure."
     },
     "pr:826": {
-      "classification": "other",
+      "classification": "omit",
       "entry_ids": [],
       "review": {
         "status": "draft",
@@ -526,10 +533,10 @@
           "https://github.com/gobifrost/bifrost/pull/826"
         ]
       },
-      "summary": "Update Vitest and its UI to 5.0.2."
+      "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Update Vitest and its UI to 5.0.2."
     },
     "pr:827": {
-      "classification": "other",
+      "classification": "omit",
       "entry_ids": [],
       "review": {
         "status": "draft",
@@ -537,10 +544,10 @@
           "https://github.com/gobifrost/bifrost/pull/827"
         ]
       },
-      "summary": "Update client dependencies and resolve the accompanying compatibility issues."
+      "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Update client dependencies and resolve the accompanying compatibility issues."
     },
     "pr:828": {
-      "classification": "other",
+      "classification": "omit",
       "entry_ids": [],
       "review": {
         "status": "draft",
@@ -548,7 +555,7 @@
           "https://github.com/gobifrost/bifrost/pull/828"
         ]
       },
-      "summary": "Refresh client dependencies with ten minor and patch updates."
+      "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Refresh client dependencies with ten minor and patch updates."
     },
     "pr:829": {
       "classification": "omit",
@@ -594,7 +601,8 @@
           "https://github.com/gobifrost/bifrost/pull/832"
         ]
       },
-      "summary": "Keep roles off the system account and list only usable agent tools."
+      "summary": "Restrict system-account roles and unavailable agent tools.",
+      "category": "hardening"
     },
     "pr:833": {
       "classification": "highlight",
@@ -633,7 +641,7 @@
       }
     },
     "pr:837": {
-      "classification": "other",
+      "classification": "omit",
       "entry_ids": [],
       "review": {
         "status": "draft",
@@ -641,10 +649,10 @@
           "https://github.com/gobifrost/bifrost/pull/837"
         ]
       },
-      "summary": "Update the Python AI runtime dependencies."
+      "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Update the Python AI runtime dependencies."
     },
     "pr:839": {
-      "classification": "other",
+      "classification": "omit",
       "entry_ids": [],
       "review": {
         "status": "draft",
@@ -652,10 +660,10 @@
           "https://github.com/gobifrost/bifrost/pull/839"
         ]
       },
-      "summary": "Apply two minor and patch updates to client dependencies."
+      "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Apply two minor and patch updates to client dependencies."
     },
     "pr:842": {
-      "classification": "other",
+      "classification": "omit",
       "entry_ids": [],
       "review": {
         "status": "draft",
@@ -663,7 +671,7 @@
           "https://github.com/gobifrost/bifrost/pull/842"
         ]
       },
-      "summary": "Apply three minor and patch updates to GitHub Actions."
+      "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Apply three minor and patch updates to GitHub Actions."
     },
     "pr:843": {
       "classification": "omit",
@@ -685,7 +693,8 @@
           "https://github.com/gobifrost/bifrost/pull/844"
         ]
       },
-      "summary": "Keep service SDK authentication working after credential renewal."
+      "summary": "Keep workflow services connected after credentials renew.",
+      "category": "fix"
     },
     "pr:845": {
       "classification": "highlight",
@@ -722,7 +731,7 @@
       "reason": "Authorization access-list scaffolding; not runtime enforcement."
     },
     "pr:848": {
-      "classification": "other",
+      "classification": "omit",
       "entry_ids": [],
       "review": {
         "status": "draft",
@@ -730,7 +739,7 @@
           "https://github.com/gobifrost/bifrost/pull/848"
         ]
       },
-      "summary": "Record operation ids and caller surfaces in audit rows, and measure workflow operation use."
+      "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Record operation ids and caller surfaces in audit rows, and measure workflow operation use."
     },
     "pr:849": {
       "classification": "highlight",
@@ -776,7 +785,8 @@
           "https://github.com/gobifrost/bifrost/pull/852"
         ]
       },
-      "summary": "Show the provider error when an OAuth refresh returns success=false."
+      "summary": "Show the actual error when OAuth renewal fails.",
+      "category": "fix"
     },
     "pr:853": {
       "classification": "highlight",
@@ -822,10 +832,11 @@
           "https://github.com/gobifrost/bifrost/pull/856"
         ]
       },
-      "summary": "Finish legacy logo migration for Solutions, forms, and integrations."
+      "summary": "Apply custom logos consistently across Solutions, forms, and integrations.",
+      "category": "fix"
     },
     "pr:857": {
-      "classification": "other",
+      "classification": "omit",
       "entry_ids": [],
       "review": {
         "status": "draft",
@@ -833,10 +844,10 @@
           "https://github.com/gobifrost/bifrost/pull/857"
         ]
       },
-      "summary": "Remove withdrawn Builder schema residue before later migrations."
+      "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Remove withdrawn Builder schema residue before later migrations."
     },
     "pr:858": {
-      "classification": "other",
+      "classification": "omit",
       "entry_ids": [],
       "review": {
         "status": "draft",
@@ -844,7 +855,7 @@
           "https://github.com/gobifrost/bifrost/pull/858"
         ]
       },
-      "summary": "Wait for the database schema before starting workers and the scheduler."
+      "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Wait for the database schema before starting workers and the scheduler."
     },
     "pr:859": {
       "classification": "omit",
@@ -866,7 +877,8 @@
           "https://github.com/gobifrost/bifrost/pull/860"
         ]
       },
-      "summary": "Commit request database changes before sending the response."
+      "summary": "Save changes reliably before requests complete.",
+      "category": "fix"
     },
     "pr:861": {
       "classification": "highlight",
@@ -913,7 +925,8 @@
           "https://github.com/gobifrost/bifrost/pull/866"
         ]
       },
-      "summary": "Resolve global Solution installs by name from an organization-scoped caller."
+      "summary": "Find global Solutions when working inside an organization.",
+      "category": "fix"
     },
     "pr:867": {
       "classification": "highlight",
@@ -1101,7 +1114,8 @@
           "https://github.com/gobifrost/bifrost/pull/885"
         ]
       },
-      "summary": "Record policy-rule changes in the audit log."
+      "summary": "Audit permission-rule changes.",
+      "category": "hardening"
     },
     "pr:886": {
       "classification": "other",
@@ -1112,7 +1126,8 @@
           "https://github.com/gobifrost/bifrost/pull/886"
         ]
       },
-      "summary": "Stop child Node processes when app builds are cancelled."
+      "summary": "Stop app builds when they are cancelled.",
+      "category": "fix"
     },
     "pr:887": {
       "classification": "omit",
@@ -1134,7 +1149,8 @@
           "https://github.com/gobifrost/bifrost/pull/888"
         ]
       },
-      "summary": "Use the REST organization rule for WebSocket table subscriptions."
+      "summary": "Apply organization permissions to live table subscriptions.",
+      "category": "hardening"
     },
     "pr:889": {
       "classification": "highlight",
@@ -1181,7 +1197,8 @@
           "https://github.com/gobifrost/bifrost/pull/892"
         ]
       },
-      "summary": "Record refused sign-ins in the audit log."
+      "summary": "Audit failed sign-ins.",
+      "category": "hardening"
     },
     "pr:893": {
       "classification": "omit",
@@ -1391,7 +1408,7 @@
       }
     },
     "pr:911": {
-      "classification": "other",
+      "classification": "omit",
       "entry_ids": [],
       "review": {
         "status": "draft",
@@ -1399,7 +1416,7 @@
           "https://github.com/gobifrost/bifrost/pull/911"
         ]
       },
-      "summary": "Refresh client dependencies with fifteen minor and patch updates."
+      "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Refresh client dependencies with fifteen minor and patch updates."
     },
     "pr:913": {
       "classification": "highlight",

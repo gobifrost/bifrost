@@ -52,6 +52,10 @@ describe("ProductUpdatesPreview", () => {
 		});
 		await screen.findByRole("heading", { name: "Readable Update" });
 		expect(screen.queryByText("Preview Controls")).not.toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "Done" })).toHaveAttribute(
+			"href",
+			"/",
+		);
 
 		expect(
 			screen.getByText("Preview · Draft Backfill"),

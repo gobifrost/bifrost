@@ -13,6 +13,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { CommunityFooter, UpdateGroups } from "./ProductUpdateContent";
 import {
 	productUpdatesPreviewAdapter,
+	visibleProductUpdates,
 	type ProductUpdatesAdapter,
 } from "@/lib/product-updates-preview";
 import type { ProductUpdateEntry } from "@/generated/product-updates";
@@ -43,9 +44,10 @@ export function ProductUpdatesDialog({
 			.then(([bundle, receipts]) => {
 				if (!active || document.querySelector('[role="dialog"]'))
 					return;
-				const unseen = bundle.entries.filter(
-					(entry) => !receipts.has(entry.id),
-				);
+				const unseen = visibleProductUpdates(
+					bundle.entries,
+					"normal",
+				).filter((entry) => !receipts.has(entry.id));
 				if (unseen.length === 0) return;
 				setEntries(unseen);
 				setOpen(true);
@@ -107,23 +109,34 @@ export function ProductUpdatesDialog({
 					)}
 					<UpdateGroups entries={entries} />
 				</div>
-				<div className="flex shrink-0 justify-end border-t px-6 py-4 sm:px-8">
-					<Button
-						asChild
-						variant="outline"
-						className="h-11 gap-2 px-4"
-					>
-						<a
-							href="/whats-new"
-							target="_blank"
-							rel="noopener noreferrer"
+				<CommunityFooter>
+					<div className="flex items-center gap-1">
+						<Button
+							asChild
+							variant="ghost"
+							className="h-10 px-2 text-xs sm:text-sm"
 						>
-							View All Updates{" "}
-							<ArrowRight aria-hidden="true" className="size-4" />
-						</a>
-					</Button>
-				</div>
-				<CommunityFooter />
+							<a
+								href="/whats-new"
+								target="_blank"
+								rel="noopener noreferrer"
+							>
+								View All Updates{" "}
+								<ArrowRight
+									aria-hidden="true"
+									className="size-4"
+								/>
+							</a>
+						</Button>
+						<Button
+							variant="outline"
+							className="h-10 px-3"
+							onClick={() => setOpen(false)}
+						>
+							Done
+						</Button>
+					</div>
+				</CommunityFooter>
 			</DialogContent>
 		</Dialog>
 	);

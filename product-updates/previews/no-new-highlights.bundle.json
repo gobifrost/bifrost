@@ -1,14 +1,7 @@
 {
   "content_ref": "72e730fec8d11ecb65b7220b1de7b82ebe7e98f5",
   "entries": [],
-  "other_changes": [
-    {
-      "contributors": [],
-      "source": "pr:911",
-      "title": "Refresh client dependencies with fifteen minor and patch updates.",
-      "url": "https://github.com/gobifrost/bifrost/pull/911"
-    }
-  ],
+  "other_changes": [],
   "schema_version": 1,
   "target_ref": "abcaed3abfed2853fe4e8b89d6edd19e0504e2e5"
 }

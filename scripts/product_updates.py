@@ -744,6 +744,9 @@ def build_bundle(
                         "title": item.get("summary") or commit["subject"],
                         "url": f"https://github.com/gobifrost/bifrost/commit/{commit_sha}",
                         "contributors": [],
+                        **(
+                            {"category": item["category"]} if "category" in item else {}
+                        ),
                     }
                 )
             continue
@@ -756,6 +759,7 @@ def build_bundle(
                     "source": key,
                     "title": item.get("summary") or pr["title"],
                     "url": pr["url"],
+                    **({"category": item["category"]} if "category" in item else {}),
                     "contributors": _external_contributors(
                         _contributors({"sources": [{"pr": pr["number"]}]}, prs)
                     ),

@@ -23,6 +23,21 @@ Use verified installation-relative routes for app links. All links in the app
 notes open in a new tab. GitHub rendering keeps app-link labels as plain directions
 because each installation has its own URL; it never invents a deployment URL.
 
+## Customer-Facing Selection
+
+Feature headlines are for new capabilities and meaningful functionality people can
+use. Do not promote internal plumbing, catalog vendor names, routine dependencies,
+or maintenance inventories to feature notes. Use `Fixed` for repairs and
+`Security` for hardening; the app presents these as separate compact bullet lists.
+Smaller `other` dispositions use `category: fix` or `category: hardening` and a short
+customer-facing summary. Omitted PRs stay in the coverage ledger with a reason.
+
+A required release notice can set `in_app: false` to keep detailed release-review
+material out of the app feed. This does not omit its source, remove its release
+body, bypass security review, or weaken the release gate. Necessary customer
+upgrade steps stay visible in the appropriate note. Do not describe strengthened
+access controls as an incident unless the evidence establishes an incident.
+
 ## Before and during a pull request
 
 Classify every landed change in `product-updates/dispositions.json` under its
@@ -35,8 +50,8 @@ canonical classification.
   people should see in the product or release notes.
 - `other` records a concise, user-readable change without a full entry.
 - `omit` requires a concrete reason. Use it only when there is no announcement
-  value, such as internal CI work. Routine dependency updates are normally
-  `other`; security-impacting updates require explicit review.
+  value, such as internal CI work. Routine dependency, catalog, container, and CI updates are normally
+  omitted from customer notes; security-impacting updates still require explicit review.
 
 An entry may be drafted before its PR exists. Add its actual PR number and
 verified author/source metadata after the PR opens, then validate it before

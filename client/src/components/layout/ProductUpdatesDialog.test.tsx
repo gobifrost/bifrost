@@ -57,7 +57,7 @@ describe("ProductUpdatesDialog", () => {
 		expect(
 			within(dialog).getByRole("link", { name: "View All Updates" }),
 		).toHaveAttribute("href", "/whats-new");
-		await user.keyboard("{Escape}");
+		await user.click(within(dialog).getByRole("button", { name: "Done" }));
 		await waitFor(() =>
 			expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
 		);

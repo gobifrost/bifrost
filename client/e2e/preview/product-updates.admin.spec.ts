@@ -45,13 +45,14 @@ test("admin sees new updates automatically and reopens history from Help", async
 					.reduce((a, b) => a + b, 0),
 			),
 		)
-		.toBe(17);
+		.toBe(16);
 	await page.screenshot({
 		animations: "disabled",
 		path: testInfo.outputPath("whats-new-modal-desktop.png"),
 	});
 	await page.setViewportSize({ width: 390, height: 844 });
 	await expect(community).toBeVisible();
+	await expect(dialog.getByRole("button", { name: "Done", exact: true })).toBeVisible();
 	await expect
 		.poll(async () => {
 			const box = await dialog.boundingBox();
@@ -82,10 +83,20 @@ test("admin sees new updates automatically and reopens history from Help", async
 	await expect(
 		history.getByRole("button", { name: /Mark.*Read/ }),
 	).toHaveCount(0);
+	await expect(history.getByRole("link", { name: "Done", exact: true })).toBeVisible();
+	await expect(history.getByText("models.dev", { exact: false })).toHaveCount(0);
+	await expect(history.getByRole("heading", { name: "Dependency Security Updates" })).toHaveCount(0);
 	await history.screenshot({
 		animations: "disabled",
 		path: testInfo.outputPath("whats-new-mobile.png"),
 	});
+	await history.getByRole("heading", { name: "Bug Fixes", exact: true }).scrollIntoViewIfNeeded();
+	await expect(history.getByRole("heading", { name: "Bug Fixes", exact: true })).toHaveCount(1);
+	await expect(history.getByRole("link", { name: "Done", exact: true })).toBeVisible();
+	await history.screenshot({ animations: "disabled", path: testInfo.outputPath("whats-new-fixes-mobile.png") });
+	await history.getByRole("heading", { name: "Hardening", exact: true }).scrollIntoViewIfNeeded();
+	await history.screenshot({ animations: "disabled", path: testInfo.outputPath("whats-new-hardening-mobile.png") });
+	await history.getByRole("heading", { name: "Release Notes and Discord", exact: true }).scrollIntoViewIfNeeded();
 	await history.getByRole("button", { name: "Help", exact: true }).click();
 	await expect(
 		history.getByRole("menuitem", { name: "Release Notes", exact: true }),
@@ -122,4 +133,6 @@ test("admin sees new updates automatically and reopens history from Help", async
 		history.getByRole("heading", { name: "What's New", exact: true }),
 	).toBeVisible();
 	await expect(history.getByRole("dialog")).toHaveCount(0);
+	await history.getByRole("link", { name: "Done", exact: true }).click();
+	await expect(history).toHaveURL(/\/$/);
 });

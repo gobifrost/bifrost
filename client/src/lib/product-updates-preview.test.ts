@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ProductUpdatesBundle } from "@/generated/product-updates";
-import { createProductUpdatesPreviewAdapter } from "./product-updates-preview";
+import {
+	createProductUpdatesPreviewAdapter,
+	visibleProductUpdates,
+} from "./product-updates-preview";
 
 const bundle: ProductUpdatesBundle = {
 	schema_version: 1,
@@ -38,6 +41,20 @@ const bundle: ProductUpdatesBundle = {
 };
 
 describe("createProductUpdatesPreviewAdapter", () => {
+	it("withholds release-only notes from every app preview state", () => {
+		const entries = [
+			...bundle.entries,
+			{ ...bundle.entries[0], id: "release-only", in_app: false },
+		];
+		for (const state of ["normal", "rollback", "future"] as const) {
+			expect(
+				visibleProductUpdates(entries, state).some(
+					(entry) => entry.id === "release-only",
+				),
+			).toBe(false);
+		}
+	});
+
 	it("keeps UUID receipts independent per admin while dev and stable use the same entry identity", async () => {
 		const values = new Map<string, string>();
 		const storage = {
