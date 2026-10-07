@@ -37,7 +37,7 @@ describe("shared product update content", () => {
 		expect(screen.queryByText("Action Required")).not.toBeInTheDocument();
 	});
 
-	it("groups updates by their displayed date, newest first, with one date heading per group", () => {
+	it("keeps newest features first without visible date groups", () => {
 		const earlier = {
 			...entry,
 			type: "New" as const,
@@ -56,26 +56,17 @@ describe("shared product update content", () => {
 				entries={[earlier, { ...entry, type: "New" }, sameDay]}
 			/>,
 		);
-		const format = (date: string) =>
-			new Intl.DateTimeFormat(undefined, { dateStyle: "long" }).format(
-				new Date(date),
-			);
 		expect(
-			screen
-				.getAllByRole("heading", { level: 2 })
-				.map((heading) => heading.textContent),
-		).toEqual([format(entry.published_at), format(earlier.published_at)]);
+			screen.queryByRole("heading", { level: 2 }),
+		).not.toBeInTheDocument();
 		const group = screen.getByRole("region", {
-			name: format(entry.published_at),
+			name: "New Features and Functionality",
 		});
 		expect(
 			within(group)
 				.getAllByRole("heading", { level: 4 })
 				.map((heading) => heading.textContent),
-		).toEqual(["Upgrade Notice", "Another Update"]);
-		expect(
-			within(group).queryByRole("heading", { name: "Earlier Update" }),
-		).not.toBeInTheDocument();
+		).toEqual(["Upgrade Notice", "Another Update", "Earlier Update"]);
 	});
 
 	it("keeps features as headlines and corrections in separate bullet lists, excluding release-only notes", () => {

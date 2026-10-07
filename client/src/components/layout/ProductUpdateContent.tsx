@@ -20,59 +20,33 @@ export function UpdateGroups({
 	missingImage?: boolean;
 	changes?: ProductUpdateOtherChange[];
 }) {
-	const formatter = new Intl.DateTimeFormat(undefined, { dateStyle: "long" });
-	const groups = new Map<string, ProductUpdateEntry[]>();
-	for (const entry of entries
+	const updates = entries
 		.filter((entry) => entry.in_app !== false)
 		.sort(
 			(a, b) => Date.parse(b.published_at) - Date.parse(a.published_at),
-		)) {
-		const date = formatter.format(new Date(entry.published_at));
-		const group = groups.get(date);
-		if (group) group.push(entry);
-		else groups.set(date, [entry]);
-	}
+		);
+	const features = updates.filter(
+		(entry) => entry.type === "New" || entry.type === "Improved",
+	);
 	return (
 		<div className="space-y-8">
-			{groups.size === 0 && (
-				<CorrectionLists entries={[]} changes={changes} />
-			)}
-			{Array.from(groups, ([date, updates], index) => (
-				<section key={date} aria-label={date}>
-					<h2 className="mb-4 text-sm font-medium text-muted-foreground">
-						{date}
-					</h2>
-					{updates.some(
-						(entry) =>
-							entry.type === "New" || entry.type === "Improved",
-					) && (
-						<>
-							<h3 className="mb-4 text-sm font-semibold">
-								New Features and Functionality
-							</h3>
-							<div className="divide-y divide-border">
-								{updates
-									.filter(
-										(entry) =>
-											entry.type === "New" ||
-											entry.type === "Improved",
-									)
-									.map((entry) => (
-										<UpdateEntry
-											key={entry.id}
-											entry={entry}
-											missingImage={missingImage}
-										/>
-									))}
-							</div>
-						</>
-					)}
-					<CorrectionLists
-						entries={updates}
-						changes={index === 0 ? changes : []}
-					/>
+			{features.length > 0 && (
+				<section aria-label="New Features and Functionality">
+					<h3 className="mb-4 text-sm font-semibold">
+						New Features and Functionality
+					</h3>
+					<div className="divide-y divide-border">
+						{features.map((entry) => (
+							<UpdateEntry
+								key={entry.id}
+								entry={entry}
+								missingImage={missingImage}
+							/>
+						))}
+					</div>
 				</section>
-			))}
+			)}
+			<CorrectionLists entries={updates} changes={changes} />
 		</div>
 	);
 }
