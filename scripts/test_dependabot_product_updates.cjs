@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { recordDependabotDisposition } = require('./dependabot_product_updates.cjs');
 function fixture() {
   const pr = { state: 'open', user: { login: 'dependabot[bot]', type: 'Bot' }, html_url: 'https://github.com/gobifrost/bifrost/pull/920', base: { ref: 'main', sha: 'a'.repeat(40), repo: { full_name: 'gobifrost/bifrost' } }, head: { ref: 'dependabot/npm/source-map-js', sha: 'b'.repeat(40), repo: { full_name: 'gobifrost/bifrost' } } };
@@ -65,4 +67,13 @@ test('fixed and dismissed advisory metadata are recognized states', async () => 
     const f = fixture(); await f.run(state);
     assert.equal(JSON.parse(f.writes[0].content).items['pr:920'].security_review, undefined);
   }
+});
+
+test('Dependabot automation accepts bot PR follow-ups regardless of event sender', () => {
+  const workflow = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'dependabot-auto-merge.yml'), 'utf8');
+
+  assert.match(workflow, /if: github\.event\.pull_request\.user\.login == 'dependabot\[bot\]'/);
+  assert.doesNotMatch(workflow, /github\.actor/);
+  assert.match(workflow, /uses: dependabot\/fetch-metadata@[a-f0-9]{40}/);
+  assert.doesNotMatch(workflow, /skip-(?:commit-)?verification:\s*true/);
 });

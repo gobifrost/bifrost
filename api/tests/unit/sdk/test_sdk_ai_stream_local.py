@@ -203,7 +203,7 @@ async def test_facade_stream_cancellation_exits_response():
     started = asyncio.Event()
 
     async def _consume() -> None:
-        async for _chunk in ai_facade.stream("Hi"):
+        async for _ in ai_facade.stream("Hi"):
             started.set()
 
     with patch("bifrost.ai.get_client", return_value=client):

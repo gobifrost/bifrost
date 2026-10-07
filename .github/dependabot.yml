@@ -80,6 +80,40 @@ updates:
       - dependencies
       - docker
 
+  # App compiler — api/src/services/app_compiler/
+  - package-ecosystem: npm
+    directory: "/api/src/services/app_compiler"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: "America/Chicago"
+    open-pull-requests-limit: 10
+    groups:
+      npm-minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    labels:
+      - dependencies
+      - javascript
+
+  # Docs screenshot pipeline — scripts/docs/
+  - package-ecosystem: npm
+    directory: "/scripts/docs"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: "America/Chicago"
+    open-pull-requests-limit: 10
+    groups:
+      npm-minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    labels:
+      - dependencies
+      - javascript
+
   # Docker base images — client/
   - package-ecosystem: docker
     directory: "/client"

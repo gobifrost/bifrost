@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from src.core.cache.redis_client import get_shared_redis
+from src.core.log_safety import log_safe
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -125,9 +126,13 @@ async def invalidate_user(user_id: UUID) -> None:
     try:
         r = await get_shared_redis()
         await r.delete(_key(user_id))
-        logger.debug(f"Invalidated role cache for user {user_id}")
+        logger.debug("Invalidated role cache for user %s", log_safe(user_id))
     except Exception as e:
-        logger.warning(f"Failed to invalidate role cache for user {user_id}: {e}")
+        logger.warning(
+            "Failed to invalidate role cache for user %s: %s",
+            log_safe(user_id),
+            log_safe(e),
+        )
 
 
 async def invalidate_role(role_id: UUID) -> None:

@@ -143,7 +143,6 @@ export function useWorkflowMutation<T = unknown>(
 			if (responseError) {
 				const errorMessage =
 					typeof responseError === "object" &&
-					responseError !== null &&
 					"detail" in responseError
 						? String((responseError as { detail: unknown }).detail)
 						: "Workflow execution failed";

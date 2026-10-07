@@ -751,75 +751,73 @@ class BifrostClient:
         ):
             return instance
 
-        if instance is None or selected_api_url is not None:
-            # Try credentials file from CLI login
-            creds = get_credentials(
+        # The cached-client return above leaves only a cold start or an explicit
+        # URL override, both of which resolve credentials below.
+        creds = get_credentials(
+            selected_api_url,
+            prompt_for_default=require_auth and selected_api_url is None,
+        )
+
+        # Check if token needs refresh
+        if creds and is_token_expired(api_url=creds["api_url"]):
+            # Try to refresh
+            access_token = _refresh_connection_access_token_sync(
+                creds["api_url"], creds["access_token"]
+            )
+            if access_token is not None:
+                # Use the coordinator result directly so startup and
+                # request-time refresh share the same token generation.
+                creds = {**creds, "access_token": access_token}
+            else:
+                creds = None  # Refresh failed, need to re-login
+
+        if creds:
+            # Use credentials from file
+            instance = cls(creds["api_url"], creds["access_token"])
+            _thread_local.bifrost_client = instance
+            return instance
+
+        # No credentials - trigger login flow if required
+        if require_auth:
+            selected_url, _selected_source = resolve_current_connection(
                 selected_api_url,
-                prompt_for_default=require_auth and selected_api_url is None,
+                prompt_for_default=selected_api_url is None,
             )
-
-            # Check if token needs refresh
-            if creds and is_token_expired(api_url=creds["api_url"]):
-                # Try to refresh
-                access_token = _refresh_connection_access_token_sync(
-                    creds["api_url"], creds["access_token"]
-                )
-                if access_token is not None:
-                    # Use the coordinator result directly so startup and
-                    # request-time refresh share the same token generation.
-                    creds = {**creds, "access_token": access_token}
-                else:
-                    creds = None  # Refresh failed, need to re-login
-
-            if creds:
-                # Use credentials from file
-                instance = cls(creds["api_url"], creds["access_token"])
-                _thread_local.bifrost_client = instance
-                return instance
-
-            # No credentials - trigger login flow if required
-            if require_auth:
-                selected_url, _selected_source = resolve_current_connection(
-                    selected_api_url,
-                    prompt_for_default=selected_api_url is None,
-                )
-                if selected_url is None:
-                    stored_urls = []
-                    try:
-                        from bifrost.credentials import list_credentials
-                        stored_urls = list_credentials()
-                    except Exception:
-                        stored_urls = []
-                    if stored_urls:
-                        raise RuntimeError(
-                            "Multiple Bifrost connections are stored, but no default "
-                            "connection is selected. Run 'bifrost auth use <url>' "
-                            "or rerun in an interactive terminal to choose one."
-                        )
+            if selected_url is None:
+                stored_urls = []
                 try:
-                    # If a loop is already running we're in an async context
-                    # (e.g. tests). Don't trigger interactive login.
-                    asyncio.get_running_loop()
-                except RuntimeError:
-                    # No running loop, safe to use asyncio.run()
-                    if asyncio.run(login_flow(selected_url)):
-                        # Login successful, load credentials
-                        creds = get_credentials(selected_url)
-                        if creds:
-                            instance = cls(creds["api_url"], creds["access_token"])
-                            _thread_local.bifrost_client = instance
-                            return instance
-                else:
+                    from bifrost.credentials import list_credentials
+                    stored_urls = list_credentials()
+                except Exception:
+                    stored_urls = []
+                if stored_urls:
                     raise RuntimeError(
-                        "Not logged in. Run 'bifrost login' to authenticate."
+                        "Multiple Bifrost connections are stored, but no default "
+                        "connection is selected. Run 'bifrost auth use <url>' "
+                        "or rerun in an interactive terminal to choose one."
                     )
+            try:
+                # If a loop is already running we're in an async context
+                # (e.g. tests). Don't trigger interactive login.
+                asyncio.get_running_loop()
+            except RuntimeError:
+                # No running loop, safe to use asyncio.run()
+                if asyncio.run(login_flow(selected_url)):
+                    # Login successful, load credentials
+                    creds = get_credentials(selected_url)
+                    if creds:
+                        instance = cls(creds["api_url"], creds["access_token"])
+                        _thread_local.bifrost_client = instance
+                        return instance
+            else:
+                raise RuntimeError(
+                    "Not logged in. Run 'bifrost login' to authenticate."
+                )
 
-            # No auth available
-            raise RuntimeError(
-                "Not logged in. Run 'bifrost login' to authenticate."
-            )
-
-        return instance
+        # No auth available
+        raise RuntimeError(
+            "Not logged in. Run 'bifrost login' to authenticate."
+        )
 
     def _fetch_context_sync(self) -> dict[str, Any]:
         """Fetch development context synchronously.
