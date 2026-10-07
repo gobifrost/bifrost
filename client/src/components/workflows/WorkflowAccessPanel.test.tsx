@@ -42,6 +42,7 @@ const SYNC = identity({
 const state = vi.hoisted(() => ({
 	identities: [] as Identity[],
 	recommendations: undefined as RecommendedAccess | undefined,
+	recommendationsError: null as Error | null,
 	assignableRoles: [] as AssignableRole[],
 	reach: [] as UserAccessMap["reach"],
 }));
@@ -52,11 +53,17 @@ const grantToIdentity = vi.hoisted(() => ({
 	grantedTo: vi.fn(),
 }));
 const accessMapFor = vi.hoisted(() => vi.fn());
+const refetchRecommendations = vi.hoisted(() => vi.fn());
 
 vi.mock("@/services/workflowAccess", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@/services/workflowAccess")>()),
 	useWorkflowRunIdentities: () => ({ data: state.identities }),
-	useWorkflowRecommendedAccess: () => ({ data: state.recommendations }),
+	useWorkflowRecommendedAccess: () => ({
+		data: state.recommendations,
+		error: state.recommendationsError,
+		isError: !!state.recommendationsError,
+		refetch: refetchRecommendations,
+	}),
 	useSetWorkflowRunIdentity: () => ({ ...setRunIdentity, isPending: false }),
 	useGrantToIdentity: (identityId: string | undefined) => {
 		grantToIdentity.grantedTo(identityId);
@@ -167,6 +174,8 @@ function assignableRole(overrides: Partial<AssignableRole>): AssignableRole {
 beforeEach(() => {
 	state.identities = [DEFAULT, SYNC];
 	state.recommendations = recommendations([]);
+	state.recommendationsError = null;
+	refetchRecommendations.mockReset();
 	state.assignableRoles = [];
 	state.reach = [
 		{
@@ -328,6 +337,32 @@ describe("WorkflowAccessPanel", () => {
 		).toBeDisabled();
 		expect(screen.queryByTestId("test-access")).not.toBeInTheDocument();
 		expect(accessMapFor).toHaveBeenLastCalledWith(undefined);
+	});
+
+	it("acts on no identity while the server's answer is out of date", async () => {
+		// A failed refresh keeps the last answer, which may name the identity
+		// the workflow ran as before a change.
+		state.recommendationsError = new Error("Network error");
+		render(<WorkflowAccessPanel workflow={makeWorkflow()} />);
+
+		expect(
+			screen.getByRole("combobox", { name: "Runs Unattended As" }),
+		).toBeDisabled();
+		expect(
+			screen.queryByRole("button", { name: "Grant to Identity" }),
+		).not.toBeInTheDocument();
+		expect(screen.queryByTestId("test-access")).not.toBeInTheDocument();
+		expect(grantToIdentity.grantedTo).toHaveBeenLastCalledWith(undefined);
+		expect(
+			screen.getByText(
+				"Couldn't load who this workflow runs as. Try again before changing it.",
+			),
+		).toBeInTheDocument();
+
+		await userEvent.click(
+			screen.getByRole("button", { name: "Try Again" }),
+		);
+		expect(refetchRecommendations).toHaveBeenCalled();
 	});
 
 	it("keeps a Solution's workflow on its identity, while still granting it access", async () => {

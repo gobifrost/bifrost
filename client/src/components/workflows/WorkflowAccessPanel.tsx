@@ -324,10 +324,13 @@ export function WorkflowAccessPanel({ workflow }: { workflow: Workflow }) {
 	const [granting, setGranting] = useState(false);
 
 	const identities = identitiesQuery.data ?? [];
-	const recommendations = recommendationsQuery.data;
 	// The server names the identity the workflow runs as now; the dialog's
 	// copy of the workflow can be older than a change made here. Nothing acts
-	// on an identity until the server has said which.
+	// on an identity until the server has said which, and a failed refresh
+	// keeps an answer that may predate a change, so it says nothing.
+	const recommendations = recommendationsQuery.isError
+		? undefined
+		: recommendationsQuery.data;
 	const current = recommendations
 		? identities.find(
 				(identity) => identity.id === recommendations.identity_id,
@@ -561,6 +564,26 @@ export function WorkflowAccessPanel({ workflow }: { workflow: Workflow }) {
 				}
 			>
 				{grantError && <ErrorAlert message={grantError} />}
+				{recommendationsQuery.isError && (
+					<Alert variant="destructive">
+						<AlertCircle aria-hidden="true" className="size-4" />
+						<AlertDescription className="flex flex-wrap items-center gap-3">
+							Couldn't load who this workflow runs as. Try again
+							before changing it.
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								className="min-h-11 sm:min-h-8"
+								onClick={() =>
+									void recommendationsQuery.refetch()
+								}
+							>
+								Try Again
+							</Button>
+						</AlertDescription>
+					</Alert>
+				)}
 				{recommendations &&
 					recommendations.items.length === 0 &&
 					(recommendations.observed_runs === 0 ? (
