@@ -28,6 +28,8 @@ The first live Product Updates check exposed the Python 3.12 conditional `typing
 
 The first full feature-PR unit run passed 8,452 backend tests and all 3,619 client tests but found three integration omissions: two Product Updates routes absent from the authorization access list, the public ORM export count still at 540 after adding the receipt model, and a stale generated OpenAPI skill digest. The fixes retain admin-only route gates, update the explicit public count to 541, and regenerate/sync the appendix. `./test.sh tests/unit/test_access_list.py tests/unit/test_model_import_boundaries.py tests/unit/test_skill_appendix_fresh.py -v` passed 35 tests after regenerating the access-list projection. `./test.sh quality api` passed again. The operation generator produced no additional changes, and skill mirrors/diff checks passed before pushing the corrected commit. Direct GitHub job logs identify the failures; the aggregate `gh --log-failed` output returned a different successful client step and was not used to diagnose them.
 
+Final review removed CodeQL's redundant compact-title conditional and unused preview-only missing-image switches; actual image-error handling remains covered. The shared content/dialog/history checks passed 18 tests, TypeScript and scoped ESLint passed. Jack then replaced the Discord invite with `https://discord.gg/x84pft2YDa`; Help, the community footer, approved announcement, saved preview and browser assertions now use it. Help/content link checks passed six tests and source validation passed. The announcement keeps its UUID and advances to revision 5, preserving receipts.
+
 ## Historical Implementation Record
 
 ## Frozen Coverage
@@ -56,7 +58,7 @@ Authoritative schema/tool: `product-updates/schema.json`, `scripts/product_updat
 
 Initial prose and security/upgrade material remain drafts. The reviewed design authorizes implementation, not a claim that this newly drafted prose has received Jack's approval. Dependency PR #910 includes advisory GHSA-6fqq-452j-qhrp; #718 includes a js-yaml CPU-use security fix. CVE applicability requires explicit release review, not an invented “none” statement. Retention defaults and removed/renamed CLI/MCP surfaces require prominent operator review.
 
-Production seed/read-receipt API and database integration, publication delivery, tags, release publishing, deployment, and live ruleset changes are outside this slice. Jack supplied https://discord.gg/f7TCcWX2s for the branded footer. Actual invite expiry/use settings and server safety are not verified by this implementation. No external messages or GitHub settings have been changed.
+Production seed/read-receipt API and database integration, publication delivery, tags, release publishing, deployment, and live ruleset changes are outside this slice. Jack supplied https://discord.gg/x84pft2YDa for the branded footer. Actual invite expiry/use settings and server safety are not verified by this implementation. No external messages or GitHub settings have been changed.
 
 ## Initial Baseline Verification
 

@@ -13,11 +13,9 @@ import type {
 
 export function UpdateGroups({
 	entries,
-	missingImage = false,
 	changes = [],
 }: {
 	entries: ProductUpdateEntry[];
-	missingImage?: boolean;
 	changes?: ProductUpdateOtherChange[];
 }) {
 	const updates = entries
@@ -40,7 +38,6 @@ export function UpdateGroups({
 							<UpdateEntry
 								key={entry.id}
 								entry={entry}
-								missingImage={missingImage}
 							/>
 						))}
 					</div>
@@ -53,11 +50,9 @@ export function UpdateGroups({
 
 export function UpdateEntry({
 	entry,
-	missingImage = false,
 	compact = false,
 }: {
 	entry: ProductUpdateEntry;
-	missingImage?: boolean;
 	compact?: boolean;
 }) {
 	return (
@@ -66,11 +61,7 @@ export function UpdateEntry({
 				<div className="flex flex-col gap-3">
 					<div className="min-w-0">
 						<h4
-							className={
-								compact
-									? "font-semibold"
-									: "font-display text-xl font-semibold leading-snug [overflow-wrap:anywhere] sm:text-2xl"
-							}
+							className="font-display text-xl font-semibold leading-snug [overflow-wrap:anywhere] sm:text-2xl"
 						>
 							{entry.title}
 						</h4>
@@ -110,10 +101,7 @@ export function UpdateEntry({
 								candidate.path === src || candidate.url === src,
 						);
 						return asset ? (
-							<UpdateImage
-								asset={asset}
-								forceMissing={missingImage}
-							/>
+							<UpdateImage asset={asset} />
 						) : (
 							<span className="text-muted-foreground">{alt}</span>
 						);
@@ -309,13 +297,11 @@ function CorrectionLists({
 
 function UpdateImage({
 	asset,
-	forceMissing,
 }: {
 	asset: ProductUpdateAsset;
-	forceMissing: boolean;
 }) {
 	const [failedToLoad, setFailedToLoad] = useState(false);
-	const missing = forceMissing || failedToLoad;
+	const missing = failedToLoad;
 	if (missing)
 		return (
 			<span
@@ -373,7 +359,7 @@ export function CommunityFooter({
 						GitHub
 					</CommunityLink>
 					<CommunityLink
-						href="https://discord.gg/f7TCcWX2s"
+						href="https://discord.gg/x84pft2YDa"
 						icon={<DiscordIcon className="size-4" />}
 					>
 						Discord

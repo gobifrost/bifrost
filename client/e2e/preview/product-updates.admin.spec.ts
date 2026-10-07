@@ -30,7 +30,7 @@ test("admin sees new updates automatically and reopens history from Help", async
 	});
 	await expect(
 		community.getByRole("link", { name: "Discord", exact: true }),
-	).toHaveAttribute("href", "https://discord.gg/f7TCcWX2s");
+	).toHaveAttribute("href", "https://discord.gg/x84pft2YDa");
 	const receipt = await receiptResponse;
 	expect(receipt.status()).toBe(200);
 	expect((await receipt.json()).seen_entry_ids).toHaveLength(15);

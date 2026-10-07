@@ -150,7 +150,7 @@ describe("shared product update content", () => {
 		]);
 		expect(links[1]).toHaveAttribute(
 			"href",
-			"https://discord.gg/f7TCcWX2s",
+			"https://discord.gg/x84pft2YDa",
 		);
 	});
 });

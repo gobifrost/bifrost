@@ -74,7 +74,7 @@ export function HelpMenu() {
 				</DropdownMenuItem>
 				<DropdownMenuItem asChild className="min-h-11">
 					<a
-						href="https://discord.gg/f7TCcWX2s"
+						href="https://discord.gg/x84pft2YDa"
 						target="_blank"
 						rel="noreferrer"
 					>

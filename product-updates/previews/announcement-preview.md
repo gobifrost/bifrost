@@ -45,7 +45,7 @@ Sources: [#820](https://github.com/gobifrost/bifrost/pull/820), [#830](https://g
 
 Product release notes are now available in the app.
 
-**Open Release Notes** (in Bifrost) · [Join Discord](https://discord.gg/f7TCcWX2s)
+**Open Release Notes** (in Bifrost) · [Join Discord](https://discord.gg/x84pft2YDa)
 
 ### See a User's Effective Access
 

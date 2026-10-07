@@ -17,7 +17,7 @@ Dates are this preparation/publication cycle, not invented retrospective announc
 - Check the minimum CLI/SDK floor against the version that actually ships these changes.
 - Review dependency advisories and applicability; upstream evidence is cached in `product-updates/evidence/security-review.json`. A server-only advisory in browser package release notes does not prove a Bifrost server exposure.
 - Keep report-only workflow authorization separate from already-enforced identity/data restrictions.
-- Approve the supplied community invite `https://discord.gg/f7TCcWX2s` for release prose; it was explicitly provided for the UI by Jack. Verify Never/No Limit in the separate Discord setup chat before relying on permanence.
+- Approve the supplied community invite `https://discord.gg/x84pft2YDa` for release prose; it was explicitly provided for the UI by Jack. Verify Never/No Limit in the separate Discord setup chat before relying on permanence.
 
 ## Assets
 
