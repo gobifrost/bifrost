@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -218,5 +221,40 @@ describe("Command filtering", () => {
 		const list = screen.getByRole("listbox");
 		expect(list).toHaveClass("overflow-y-auto");
 		expect(list).not.toHaveClass("no-scrollbar");
+	});
+});
+
+describe("Command highlight", () => {
+	it("highlights the active item with the accent surface, like menu items", () => {
+		render(
+			<Command>
+				<CommandList>
+					<CommandGroup>
+						<CommandItem value="contoso">Contoso</CommandItem>
+					</CommandGroup>
+				</CommandList>
+			</Command>,
+		);
+
+		expect(screen.getByRole("option", { name: "Contoso" })).toHaveClass(
+			"data-selected:bg-accent",
+			"data-selected:text-accent-foreground",
+		);
+	});
+
+	it("keeps the accent surface distinct from the popover in both themes", () => {
+		const themeCss = readFileSync(
+			resolve(dirname(fileURLToPath(import.meta.url)), "../../index.css"),
+			"utf8",
+		);
+		const token = (block: string, name: string) =>
+			new RegExp(`--${name}:\\s*([^;]+);`).exec(block)?.[1];
+		const light = /:root\s*{([^}]*)}/.exec(themeCss)?.[1] ?? "";
+		const dark = /\.dark\s*{([^}]*)}/.exec(themeCss)?.[1] ?? "";
+
+		for (const block of [light, dark]) {
+			expect(token(block, "accent")).toBeTruthy();
+			expect(token(block, "accent")).not.toBe(token(block, "popover"));
+		}
 	});
 });
