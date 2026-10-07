@@ -536,9 +536,11 @@ class ManifestResolver:
         org_result = await self.db.execute(select(Organization.id, Organization.name))
         cache["org_ids"] = set()
         cache["org_by_name"] = {}
+        cache["org_name_by_id"] = {}
         for row in org_result.all():
             cache["org_ids"].add(row[0])
             cache["org_by_name"][row[1]] = row[0]
+            cache["org_name_by_id"][row[0]] = row[1]
 
         # Roles: {id} set + {name: id} dict
         role_result = await self.db.execute(select(Role.id, Role.name))
@@ -1369,7 +1371,7 @@ class ManifestResolver:
 
         from bifrost.manifest_codec import Destination
 
-        from shared.identities import run_identity_allowed
+        from shared.identities import identity_label, run_identity_allowed
         from src.models.orm.workflow_roles import WorkflowRole
         from src.models.orm.workflows import Workflow
         from src.services.sync_ops import SyncOp, SyncRoles, Upsert  # noqa: F401
@@ -1394,7 +1396,8 @@ class ManifestResolver:
             workflow_organization_id=wf_values["organization_id"], identity=identity
         ):
             raise ValueError(
-                f"Workflow {mwf.path}::{mwf.function_name} runs unattended as {identity.name} "
+                f"Workflow {mwf.path}::{mwf.function_name} runs unattended as "
+                f"{identity_label(identity, cache['org_name_by_id'].get(identity.organization_id))} "
                 f"(run_identity_id), which can't run workflows of organization "
                 f"{wf_values['organization_id'] or 'Global'}; change its run_identity_id first"
             )

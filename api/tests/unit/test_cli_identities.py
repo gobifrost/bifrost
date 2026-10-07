@@ -181,7 +181,7 @@ class TestUsersList:
         assert result.output.splitlines() == [
             "Default Identity (Global)  Global",
             "Default Identity (Contoso)  Default",
-            "Contoso Nightly  Custom",
+            "Contoso Nightly (Contoso)  Custom",
         ]
 
     def test_identities_json_passes_the_identities_through(self, fake_client: _FakeClient) -> None:

@@ -333,11 +333,9 @@ async def _resolve_user(client: Any, value: str) -> tuple[str, list[dict[str, An
 
 
 def identity_label(identity: dict[str, Any]) -> str:
-    """How the CLI names an identity. Every default identity is named Default
-    Identity, so a default one carries its place: ``Default Identity (Contoso)``,
-    ``Default Identity (Global)``."""
-    if identity["identity_kind"] == "custom":
-        return identity["name"]
+    """How the CLI names an identity: with its place, since every default
+    identity is named Default Identity — ``Default Identity (Contoso)``,
+    ``Nightly (Global)``. Matches the server's ``shared.identities.identity_label``."""
     return f"{identity['name']} ({identity['organization_name'] or 'Global'})"
 
 

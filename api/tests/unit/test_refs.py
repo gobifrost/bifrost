@@ -555,7 +555,10 @@ async def test_a_custom_name_repeated_across_organizations_is_ambiguous() -> Non
     )
     with pytest.raises(AmbiguousRefError) as exc_info:
         await resolve_ref(client, "identity", "nightly")
-    assert {(c["name"], c["uuid"]) for c in exc_info.value.candidates} == {("Nightly", str(first)), ("NIGHTLY", str(second))}
+    assert {(c["name"], c["uuid"]) for c in exc_info.value.candidates} == {
+        ("Nightly (Contoso)", str(first)),
+        ("NIGHTLY (Global)", str(second)),
+    }
 
 
 @pytest.mark.asyncio
@@ -584,10 +587,10 @@ async def test_default_identity_by_name_is_ambiguous_and_candidates_carry_their_
     [
         (_identity(uuid4(), "Default Identity", "org_default"), "Default Identity (Contoso)"),
         (_identity(uuid4(), "Default Identity", "global_default", organization=None), "Default Identity (Global)"),
-        (_identity(uuid4(), "Contoso Nightly"), "Contoso Nightly"),
+        (_identity(uuid4(), "Contoso Nightly"), "Contoso Nightly (Contoso)"),
     ],
 )
-def test_identity_label_gives_a_default_its_place(identity: dict, label: str) -> None:
+def test_identity_label_gives_every_identity_its_place(identity: dict, label: str) -> None:
     assert identity_label(identity) == label
 
 

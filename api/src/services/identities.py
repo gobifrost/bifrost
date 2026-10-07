@@ -19,7 +19,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.builtin_roles import USER_BASE_PERMISSIONS, USER_ROLE_ID
-from shared.identities import IDENTITY_EMAIL_DOMAIN, is_identity, run_identity_allowed
+from shared.identities import (
+    IDENTITY_EMAIL_DOMAIN,
+    identity_label,
+    is_identity,
+    organization_name,
+    run_identity_allowed,
+)
 from shared.sdk_users import set_user_base_role
 from src.models.contracts.identities import (
     IdentityBaseRole,
@@ -325,7 +331,8 @@ async def delete_identity(session: AsyncSession, caller: Caller, identity_id: UU
     if names:
         listed = ", ".join(names[:_NAMED_WORKFLOWS])
         more = f" and {len(names) - _NAMED_WORKFLOWS} more" if len(names) > _NAMED_WORKFLOWS else ""
-        raise IdentityError(409, f"Can't delete {identity.name}: these workflows run as it: {listed}{more}")
+        label = identity_label(identity, await organization_name(session, identity))
+        raise IdentityError(409, f"Can't delete {label}: these workflows run as it: {listed}{more}")
     details = {"name": identity.name, "organization_id": str(identity.organization_id) if identity.organization_id else None}
     await session.delete(identity)
     await session.flush()
@@ -364,7 +371,8 @@ async def require_delegation(session: AsyncSession, caller: Caller, identity_id:
     assert identity is not None
     for permission, boundary in _powers(await build_authorization_context(session, identity_id)):
         if not _holds(permitted_organizations(caller, permission), boundary):
+            label = identity_label(identity, await organization_name(session, identity))
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
-                f"{identity.name} holds powers you don't, so you can't make a workflow run as it",
+                f"{label} holds powers you don't, so you can't make a workflow run as it",
             )

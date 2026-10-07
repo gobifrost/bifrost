@@ -231,7 +231,7 @@ class TestChange:
             await delete_identity(db_session, admin, custom.id)
         detail = refused.value.detail
         assert refused.value.status_code == 409
-        assert detail.startswith("Can't delete Busy: these workflows run as it: wf_00, wf_01")
+        assert detail.startswith(f"Can't delete Busy ({contoso.name}): these workflows run as it: wf_00, wf_01")
         assert "wf_09" in detail and "wf_10" not in detail and detail.endswith("and 2 more")
 
 
@@ -320,8 +320,10 @@ class TestDelegation:
         ):
             with pytest.raises(HTTPException) as refused:
                 await require_delegation(db_session, caller, custom.id)
-            assert refused.value.status_code == 403
-            assert "Writer" in refused.value.detail
+            assert (refused.value.status_code, refused.value.detail) == (
+                403,
+                f"Writer ({contoso.name}) holds powers you don't, so you can't make a workflow run as it",
+            )
 
     async def test_a_platform_admin_may_delegate_any_identity(self, db_session) -> None:
         contoso = await _organization(db_session, "Contoso")
