@@ -1642,6 +1642,22 @@
           "Required announcement activation within the user-approved production delivery scope."
         ]
       }
+    },
+    "pr:925": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/925",
+          "User authorized verified security-maintenance repairs and merge on 2026-10-07; 37 focused backend tests and API quality checks passed."
+        ]
+      },
+      "reason": "Internal execution and cache log-format hardening; no user workflow change. Retain canonical security notice review for formal releases.",
+      "security_review": {
+        "status": "required",
+        "review_ref": "https://github.com/gobifrost/bifrost/pull/925"
+      }
     }
   }
 }
