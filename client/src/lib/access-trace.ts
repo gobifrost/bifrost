@@ -175,7 +175,26 @@ export function stoppedStep(trace: AccessTrace): AccessStep | undefined {
 	return trace.steps.find((step) => step.status === "stopped");
 }
 
-/** Keys of the steps that decided differently now than then. */
+/** `value` as text that ignores the order of object keys and list items. */
+function canonical(value: unknown): string {
+	if (Array.isArray(value))
+		return `[${value.map(canonical).sort().join(",")}]`;
+	if (typeof value === "object" && value !== null)
+		return `{${Object.keys(value)
+			.sort()
+			.map(
+				(key) =>
+					`${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`,
+			)
+			.join(",")}}`;
+	return JSON.stringify(value);
+}
+
+/**
+ * Keys of the steps that decided differently now than then: their status,
+ * reason or facts (a Restricted workflow's grants, the run user's home)
+ * differ.
+ */
 export function changedStepKeys(
 	then: AccessTrace,
 	now: AccessTrace,
@@ -187,7 +206,8 @@ export function changedStepKeys(
 				const earlier = before.get(step.key);
 				return (
 					earlier?.status !== step.status ||
-					earlier.reason !== step.reason
+					earlier.reason !== step.reason ||
+					canonical(earlier.facts) !== canonical(step.facts)
 				);
 			})
 			.map((step) => step.key),
@@ -199,8 +219,9 @@ export function changeSentence(then: AccessTrace, now: AccessTrace): string {
 	if (changedStepKeys(then, now).size === 0)
 		return "Nothing changed since then.";
 	const stop = stoppedStep(now);
-	return stop
-		? `Now this check would stop at ${stepTitle(stop.label)}.`
+	if (stop) return `Now this check would stop at ${stepTitle(stop.label)}.`;
+	return then.outcome === "success"
+		? "This check would still be allowed now; the marked steps changed."
 		: "Now this check would be allowed.";
 }
 

@@ -183,6 +183,23 @@ const stoppedNow = trace(
 	step("permission", "", {}, "not_reached"),
 );
 
+const grantA = {
+	boundary: { kind: "organization", organization_id: "org-1" },
+	permission: "tables.read",
+};
+const grantB = {
+	boundary: { kind: "organization", organization_id: "org-2" },
+	permission: "tables.readwrite",
+};
+function restricted(...grants: object[]): AccessTrace {
+	return trace(
+		"success",
+		step("run_user", "identity"),
+		step("powers", "restricted", { grants }),
+		step("permission", "base_role:tables.read"),
+	);
+}
+
 describe("changedStepKeys", () => {
 	it("names the steps whose status or reason differ", () => {
 		expect([...changedStepKeys(allowedThen, stoppedNow)]).toEqual([
@@ -194,9 +211,33 @@ describe("changedStepKeys", () => {
 	it("is empty when nothing changed", () => {
 		expect(changedStepKeys(allowedThen, allowedThen).size).toBe(0);
 	});
+
+	it("names a step whose facts changed under the same status and reason", () => {
+		expect([
+			...changedStepKeys(restricted(grantA, grantB), restricted(grantA)),
+		]).toEqual(["powers"]);
+	});
+
+	it("ignores the order of keys and list items in facts", () => {
+		const reordered = restricted(grantB, {
+			permission: grantA.permission,
+			boundary: grantA.boundary,
+		});
+		expect(
+			changedStepKeys(restricted(grantA, grantB), reordered).size,
+		).toBe(0);
+	});
 });
 
 describe("changeSentence", () => {
+	it("says an allowed check is still allowed when only its inputs changed", () => {
+		expect(
+			changeSentence(restricted(grantA, grantB), restricted(grantA)),
+		).toBe(
+			"This check would still be allowed now; the marked steps changed.",
+		);
+	});
+
 	it("says nothing changed", () => {
 		expect(changeSentence(allowedThen, allowedThen)).toBe(
 			"Nothing changed since then.",
