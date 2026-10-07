@@ -1,6 +1,26 @@
 {
-  "content_ref": "1837da2cfcfc8646ef5b094894bba4edd9d767f9",
+  "content_ref": "e8295e7bf386d8d2223a639f70ab9c2f2dc2c5b1",
   "entries": [
+    {
+      "action_required": false,
+      "area": "Platform",
+      "assets": [],
+      "contributors": [],
+      "id": "fff7e9e4-e072-590b-a65d-8873e2be4438",
+      "in_app": true,
+      "markdown": "\nProduct release notes are now available in the app.\n\n[Open Release Notes](/whats-new) \u00b7 [Join Discord](https://discord.gg/x84pft2YDa)",
+      "published_at": "2026-10-06T22:06:01Z",
+      "revision": 5,
+      "sources": [
+        {
+          "commit": "e8295e7bf386d8d2223a639f70ab9c2f2dc2c5b1",
+          "pr": 918,
+          "role": "implementation"
+        }
+      ],
+      "title": "Release Notes and Discord",
+      "type": "New"
+    },
     {
       "action_required": false,
       "area": "Administration",
@@ -749,5 +769,5 @@
     }
   ],
   "schema_version": 1,
-  "target_ref": "1837da2cfcfc8646ef5b094894bba4edd9d767f9"
+  "target_ref": "e8295e7bf386d8d2223a639f70ab9c2f2dc2c5b1"
 }
