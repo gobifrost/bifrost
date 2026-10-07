@@ -87,7 +87,8 @@ class TestEngineRequestRolesFacade:
             assert args == ("PATCH", f"/api/roles/{body['id']}")
             assert kwargs["json"] == {"description": "d2"}
 
-            assert await roles_facade.delete(body["id"]) is None
+            deleted = await roles_facade.delete(body["id"])
+            assert deleted is None
             args, _ = client.engine_request.await_args_list[4]
             assert args == ("DELETE", f"/api/roles/{body['id']}")
 
