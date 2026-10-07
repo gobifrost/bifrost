@@ -1601,6 +1601,23 @@
           "Product Updates implementation scope approved for merge."
         ]
       }
+    },
+    "pr:918": {
+      "classification": "highlight",
+      "entry_ids": [
+        "fff7e9e4-e072-590b-a65d-8873e2be4438"
+      ],
+      "summary": "Product release notes in the app and the Bifrost Discord community.",
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/918",
+          "User approved the announcement and production delivery for merge."
+        ]
+      },
+      "security_review": {
+        "status": "not_required"
+      }
     }
   }
 }
