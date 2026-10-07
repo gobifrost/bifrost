@@ -2,9 +2,9 @@
   "schema_version": 1,
   "repository": "gobifrost/bifrost",
   "base_ref": "ade714a08b95c84daa285e859ebece55f45c6754",
-  "target_ref": "14c6d9c92d845f1451d5d62c3a53ebf155a1c66a",
-  "collected_at": "2026-10-07T02:30:33Z",
-  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...14c6d9c92d845f1451d5d62c3a53ebf155a1c66a",
+  "target_ref": "e8295e7bf386d8d2223a639f70ab9c2f2dc2c5b1",
+  "collected_at": "2026-10-07T02:56:47Z",
+  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...e8295e7bf386d8d2223a639f70ab9c2f2dc2c5b1",
   "commits": [
     {
       "sha": "2399fbb049e6b6c121ca07980ffa649844c0d477",
@@ -886,6 +886,13 @@
       "subject": "Fix Product Updates validation in squash merge queues (#919)",
       "prs": [
         919
+      ]
+    },
+    {
+      "sha": "e8295e7bf386d8d2223a639f70ab9c2f2dc2c5b1",
+      "subject": "Deliver in-app Product Updates with automatic durable acknowledgements (#918)",
+      "prs": [
+        918
       ]
     }
   ],
@@ -2523,6 +2530,19 @@
       "merge_commit": "5d4d5224f008e7e041f01300d8577f744776daee",
       "body": "The Product Updates content check must run validator code from trusted main, rather than from the PR being evaluated. Land the schema and deterministic validator before enabling that check in the feature PR. This also adds the image-bundle preparation entry point used by the upcoming runtime integration.\n\nValidation: 35 Python tool/release-gate tests, 3 merge-group scope tests, scoped Ruff and Pyright (zero errors). Full application suites were not run locally; the merge queue provides the complete candidate gate.\n\nThis PR adds tooling only. It does not enable the UI, publish notes, alter branch protection, or cut a release.\n",
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/917"
+    },
+    {
+      "number": 918,
+      "title": "Deliver in-app Product Updates with automatic durable acknowledgements",
+      "url": "https://github.com/gobifrost/bifrost/pull/918",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-07T02:52:39Z",
+      "merge_commit": "e8295e7bf386d8d2223a639f70ab9c2f2dc2c5b1",
+      "body": "Product Updates now opens automatically for platform admins when their installed image contains approved entry UUIDs they have not seen. Opening the modal or history acknowledges the displayed batch; authenticated PostgreSQL receipts preserve that state across browsers, editorial changes, rollbacks and dev-to-stable promotion.\n\nHelp \u2192 Release Notes provides the permanent history path. Desktop/mobile share a scrollable feed, visible exit controls, concise feature cards, separate fix/hardening lists, verified feature screenshots and compact branded community links. Every image build packages the approved cumulative feed; formal GitHub release preparation separately filters the previous-full-release interval.\n\nValidation: 22 focused client tests, TypeScript, ESLint, 37 tooling tests and shell release regressions passed. The production Docker-image browser journey passed, including a fresh-browser check that the modal does not repeat. Backend receipt/bundle tests cover authenticated ownership, hidden/unknown IDs and idempotent concurrent acknowledgement. The merge queue runs the broad suite; full suites were not run locally.\n\n## Product Updates\n\n- [x] Highlight \u2014 Release Notes and Discord, UUID `fff7e9e4-e072-590b-a65d-8873e2be4438`.\n\nThe initial backfill accounts for every PR since v1.4.1; routine maintenance is omitted with reasons. The announcement retains its UUID and will activate after this PR's landed metadata is verified in the cumulative inventory. No GitHub release, tag, Discord message or live ruleset change is part of this PR.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/918"
     },
     {
       "number": 919,
