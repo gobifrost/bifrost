@@ -5,7 +5,6 @@ import {
 	Globe,
 	History,
 	Loader2,
-	Plus,
 	Shield,
 	ShieldCheck,
 	Workflow as WorkflowIcon,
@@ -15,7 +14,6 @@ import { toast } from "sonner";
 
 import { ReachChip } from "@/components/access/ReachChip";
 import { TestAccessPanel } from "@/components/access/TestAccessPanel";
-import { IdentityName } from "@/components/identities/IdentityName";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
 	AlertDialog,
@@ -450,55 +448,45 @@ export function WorkflowAccessPanel({ workflow }: { workflow: Workflow }) {
 				description="The identity this workflow runs as when no person starts it: schedules, events and API keys. Changes here apply right away."
 			>
 				{identityError && <ErrorAlert message={identityError} />}
-				<div className="flex flex-col gap-2 sm:flex-row">
-					<div className="min-w-0 flex-1">
-						<Label
-							htmlFor="workflow-run-identity"
-							className="sr-only"
-						>
-							Runs Unattended As
-						</Label>
-						<Combobox
-							id="workflow-run-identity"
-							aria-label="Runs Unattended As"
-							options={identityOptions}
-							value={current?.id ?? ""}
-							onValueChange={(value) => void handleChoose(value)}
-							isLoading={identitiesQuery.isLoading}
-							showSelectedDescription
-							disabled={busy || !current || isSolutionManaged}
-							aria-describedby={
-								isSolutionManaged
-									? "workflow-run-identity-managed"
-									: undefined
-							}
-							placeholder="Choose an identity"
-							searchPlaceholder="Search identities"
-							emptyText="No identity found."
-						/>
-					</div>
-					<Button
-						type="button"
-						variant="outline"
-						className="min-h-11 sm:min-h-10"
-						disabled={busy || isSolutionManaged}
+				<div className="space-y-1">
+					<Label htmlFor="workflow-run-identity" className="sr-only">
+						Runs Unattended As
+					</Label>
+					<Combobox
+						id="workflow-run-identity"
+						aria-label="Runs Unattended As"
+						options={identityOptions}
+						value={current?.id ?? ""}
+						onValueChange={(value) => void handleChoose(value)}
+						isLoading={identitiesQuery.isLoading}
+						showSelectedDescription
+						disabled={busy || !current || isSolutionManaged}
 						aria-describedby={
 							isSolutionManaged
 								? "workflow-run-identity-managed"
 								: undefined
 						}
-						onClick={() => void handleCreateDedicated()}
-					>
-						{creating ? (
-							<Loader2
-								aria-hidden="true"
-								className="size-4 animate-spin motion-reduce:animate-none"
-							/>
-						) : (
-							<Plus aria-hidden="true" className="size-4" />
-						)}
-						Create a Dedicated Identity
-					</Button>
+						placeholder="Choose an identity"
+						searchPlaceholder="Search identities"
+						emptyText="No identity found."
+					/>
+					{!isSolutionManaged && (
+						<Button
+							type="button"
+							variant="link"
+							className="h-auto min-h-11 px-0 sm:min-h-8"
+							disabled={busy}
+							onClick={() => void handleCreateDedicated()}
+						>
+							{creating && (
+								<Loader2
+									aria-hidden="true"
+									className="size-4 animate-spin motion-reduce:animate-none"
+								/>
+							)}
+							Create a dedicated identity for this workflow
+						</Button>
+					)}
 				</div>
 				{isSolutionManaged && (
 					<p
@@ -509,6 +497,23 @@ export function WorkflowAccessPanel({ workflow }: { workflow: Workflow }) {
 						Solution to change who it runs as.
 					</p>
 				)}
+				{current && (
+					<div className="flex flex-wrap items-center gap-1.5 text-sm">
+						<span className="text-muted-foreground">
+							{identityLabel(current)} can reach:
+						</span>
+						{(reachQuery.data?.reach ?? []).map((place) => (
+							<ReachChip
+								key={`${place.kind}:${place.organization_id ?? ""}`}
+								place={place}
+							/>
+						))}
+					</div>
+				)}
+				<p className="text-xs text-muted-foreground">
+					When a person starts this workflow, it runs as that person
+					instead.
+				</p>
 				<div className="flex flex-wrap items-center gap-2 text-sm">
 					<span className="text-muted-foreground">Access Mode</span>
 					<Badge variant="secondary">
@@ -520,40 +525,6 @@ export function WorkflowAccessPanel({ workflow }: { workflow: Workflow }) {
 					mode, which limits it to what it declares, arrives in a
 					later release.
 				</p>
-			</Section>
-
-			<Section title="Reach Summary">
-				<dl className="divide-y divide-border/70 rounded-[var(--bf-radius-surface)] border border-border/70">
-					<div className="flex flex-col gap-2 px-3 py-3 sm:flex-row sm:items-center">
-						<dt className="w-40 shrink-0 text-sm text-muted-foreground">
-							Started by a Person
-						</dt>
-						<dd className="min-w-0">
-							<Badge
-								variant="secondary"
-								className="bg-[var(--bf-reach-soft)] text-[var(--bf-reach)]"
-							>
-								That Person's Reach
-							</Badge>
-						</dd>
-					</div>
-					<div className="flex flex-col gap-2 px-3 py-3 sm:flex-row sm:items-start">
-						<dt className="w-40 shrink-0 text-sm text-muted-foreground sm:pt-1">
-							Unattended
-						</dt>
-						<dd className="min-w-0 flex-1 space-y-2">
-							{current && <IdentityName identity={current} />}
-							<div className="flex flex-wrap gap-1.5">
-								{(reachQuery.data?.reach ?? []).map((place) => (
-									<ReachChip
-										key={`${place.kind}:${place.organization_id ?? ""}`}
-										place={place}
-									/>
-								))}
-							</div>
-						</dd>
-					</div>
-				</dl>
 			</Section>
 
 			<Section

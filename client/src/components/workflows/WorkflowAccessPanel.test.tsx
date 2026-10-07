@@ -383,10 +383,10 @@ describe("WorkflowAccessPanel", () => {
 			}),
 		).toBeDisabled();
 		expect(
-			within(section).getByRole("button", {
-				name: "Create a Dedicated Identity",
+			within(section).queryByRole("button", {
+				name: "Create a dedicated identity for this workflow",
 			}),
-		).toBeDisabled();
+		).not.toBeInTheDocument();
 		expect(section).toHaveTextContent(
 			"This workflow is managed by a Solution. Re-deploy the Solution to change who it runs as.",
 		);
@@ -418,7 +418,9 @@ describe("WorkflowAccessPanel", () => {
 		render(<WorkflowAccessPanel workflow={makeWorkflow()} />);
 
 		await user.click(
-			screen.getByRole("button", { name: "Create a Dedicated Identity" }),
+			screen.getByRole("button", {
+				name: "Create a dedicated identity for this workflow",
+			}),
 		);
 
 		expect(createIdentity.mutateAsync).toHaveBeenCalledWith({
@@ -438,7 +440,9 @@ describe("WorkflowAccessPanel", () => {
 		render(<WorkflowAccessPanel workflow={makeWorkflow()} />);
 
 		await user.click(
-			screen.getByRole("button", { name: "Create a Dedicated Identity" }),
+			screen.getByRole("button", {
+				name: "Create a dedicated identity for this workflow",
+			}),
 		);
 
 		expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -654,19 +658,35 @@ describe("WorkflowAccessPanel", () => {
 		expect(within(section).queryByRole("button")).toBeNull();
 	});
 
-	it("summarizes reach for person-started and unattended runs", () => {
+	it("says where the identity reaches, and that a person's run uses theirs", () => {
 		render(<WorkflowAccessPanel workflow={makeWorkflow()} />);
 
-		const section = screen.getByRole("region", { name: "Reach Summary" });
-		expect(section).toHaveTextContent("Started by a Person");
-		expect(section).toHaveTextContent("That Person's Reach");
-		expect(section).toHaveTextContent("Unattended");
-		expect(section).toHaveTextContent("Default Identity");
-		expect(
-			within(section).getByLabelText("Organization"),
-		).toHaveTextContent("Contoso");
-		expect(section).toHaveTextContent("Contoso (Home)");
+		const section = screen.getByRole("region", {
+			name: "Runs Unattended As",
+		});
+		expect(section).toHaveTextContent(
+			"Default Identity · Contoso can reach:Contoso (Home)",
+		);
+		expect(section).toHaveTextContent(
+			"When a person starts this workflow, it runs as that person instead.",
+		);
 		expect(accessMapFor).toHaveBeenCalledWith("identity-default");
+		expect(
+			screen.queryByRole("region", { name: "Reach Summary" }),
+		).not.toBeInTheDocument();
+	});
+
+	it("offers a dedicated identity as a link under the picker", () => {
+		render(<WorkflowAccessPanel workflow={makeWorkflow()} />);
+
+		const section = screen.getByRole("region", {
+			name: "Runs Unattended As",
+		});
+		expect(
+			within(section).getByRole("button", {
+				name: "Create a dedicated identity for this workflow",
+			}),
+		).toHaveAttribute("data-variant", "link");
 	});
 
 	it("shows the access mode read-only", () => {

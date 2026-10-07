@@ -131,6 +131,20 @@ test.describe("Workflow access panel", () => {
 		expect((await readWorkflow(api, workflowId)).run_identity_id).toBe(
 			identityId,
 		);
+		const unattended = dialog.getByRole("region", {
+			name: "Runs Unattended As",
+		});
+		await expect(unattended).toContainText(
+			`${IDENTITY_NAME} · ${ORG_NAME} can reach:`,
+		);
+		await expect(unattended).toContainText(
+			"When a person starts this workflow, it runs as that person instead.",
+		);
+		await expect(
+			unattended.getByRole("button", {
+				name: "Create a dedicated identity for this workflow",
+			}),
+		).toBeVisible();
 
 		await expect(
 			dialog
