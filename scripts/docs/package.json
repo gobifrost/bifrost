@@ -8,7 +8,7 @@
     "test": "node --test post-process.test.mjs"
   },
   "dependencies": {
-    "js-yaml": "^4.3.2",
+    "js-yaml": "^5.4.2",
     "pixelmatch": "^7.1.0",
     "pngjs": "^7.0.0",
     "sharp": "^0.35.5",
