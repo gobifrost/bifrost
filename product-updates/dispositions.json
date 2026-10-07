@@ -1654,6 +1654,22 @@
         ]
       },
       "reason": "Repair internal Dependabot classification automation; no customer-facing announcement."
+    },
+    "pr:929": {
+      "classification": "omit",
+      "entry_ids": [],
+      "reason": "Internal build-toolchain integrity verification and private-reporting documentation; no customer-facing functionality change. Retain formal-release security notice review.",
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/929",
+          "User authorized verified backend security repairs and merge on 2026-10-07; focused tests, quality checks, and both Docker install paths passed."
+        ]
+      },
+      "security_review": {
+        "status": "required",
+        "review_ref": "https://github.com/gobifrost/bifrost/pull/929"
+      }
     }
   }
 }
