@@ -2,7 +2,7 @@
   "name": "bifrost-app-compiler",
   "private": true,
   "dependencies": {
-    "@babel/standalone": "^7.26.0",
+    "@babel/standalone": "^8.0.6",
     "@tailwindcss/node": "^4.0.0"
   }
 }
