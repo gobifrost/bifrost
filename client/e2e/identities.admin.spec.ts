@@ -3,7 +3,7 @@
  *
  * A Platform Admin opens Users → Identities: the global Default Identity is
  * pinned first. They create a custom identity in an organization, find its
- * row, open it, rename it on its Profile tab, and delete it.
+ * row, open it, rename it from its actions menu, and delete it.
  */
 
 import { randomUUID } from "node:crypto";
@@ -102,11 +102,15 @@ test.describe("Identities tab", () => {
 		await row.getByRole("link", { name: IDENTITY_NAME }).click();
 		await expect(page).toHaveURL(/\/users\/[0-9a-f-]+$/);
 
-		await page.getByRole("tab", { name: "Profile" }).click();
-		const name = page.getByRole("textbox", { name: "Name" });
+		await page
+			.getByRole("button", { name: `${IDENTITY_NAME} actions` })
+			.click();
+		await page.getByRole("menuitem", { name: "Rename" }).click();
+		const rename = page.getByRole("dialog", { name: "Rename Identity" });
+		const name = rename.getByRole("textbox", { name: "Name" });
 		await expect(name).toHaveValue(IDENTITY_NAME);
 		await name.fill(RENAMED);
-		await page.getByRole("button", { name: "Save Name" }).click();
+		await rename.getByRole("button", { name: "Rename" }).click();
 		await expect(page.getByText("Identity renamed")).toBeVisible();
 		await expect(
 			page.getByRole("heading", { level: 1, name: new RegExp(RENAMED) }),

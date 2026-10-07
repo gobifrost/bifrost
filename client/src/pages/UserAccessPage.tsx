@@ -17,7 +17,6 @@ import { TestAccessPanel } from "@/components/access/TestAccessPanel";
 import { IdentityActions } from "@/components/identities/IdentityActions";
 import { IdentityGlyph } from "@/components/identities/IdentityGlyph";
 import { IdentityOrganizationChip } from "@/components/identities/IdentityName";
-import { IdentityProfileForm } from "@/components/identities/IdentityProfileForm";
 import { ReachChip } from "@/components/access/ReachChip";
 import { ListLoadError } from "@/components/layout/ListLoadError";
 import {
@@ -357,7 +356,8 @@ function TestAccessSheet({
 
 /**
  * One person: who they are, where their access reaches, and what they can
- * do there (`access`), with their profile one tab over (`profile`).
+ * do there (`access`), with their profile one tab over (`profile`). An
+ * identity has no profile, so its page is the access content alone.
  */
 export function UserAccessPage() {
 	const { userId, tab } = useParams<{ userId: string; tab?: string }>();
@@ -404,14 +404,17 @@ export function UserAccessPage() {
 			/>
 		);
 
-	// Without roleassignments.read the profile is the only tab, so its address
-	// is the only one that shows it.
-	if (!canViewAccess && tab !== "profile")
+	// The server's IdentityKind enum; null for people.
+	const identityKind = (person.identity_kind ?? null) as IdentityKind | null;
+	// An identity has no profile, so its page has no tabs and one address.
+	if (identityKind && tab)
+		return <Navigate to={`/users/${person.id}`} replace />;
+	// Without roleassignments.read the profile is a person's only tab, so its
+	// address is the only one that shows it.
+	if (!identityKind && !canViewAccess && tab !== "profile")
 		return <Navigate to={`/users/${person.id}/profile`} replace />;
 
 	const map = accessQuery.data;
-	// The server's IdentityKind enum; null for people.
-	const identityKind = (person.identity_kind ?? null) as IdentityKind | null;
 	const sectionCopy = identityKind
 		? {
 				access: "What this identity can do, in each organization its roles reach. Hover a permission to see which role grants it.",
@@ -444,6 +447,62 @@ export function UserAccessPage() {
 				})
 			: person.name || person.email;
 
+	const accessContent = (
+		<Disclosure>
+			<section aria-labelledby="access-map-heading" className="space-y-3">
+				<SectionHeading
+					id="access-map-heading"
+					title="Effective Access"
+					description={sectionCopy.access}
+					action={
+						<TestAccessSheet
+							person={person}
+							subjectLabel={subjectLabel}
+						/>
+					}
+				/>
+				{map && catalogQuery.data ? (
+					<AccessMap rows={map.rows} catalog={catalogQuery.data} />
+				) : accessQuery.isError || catalogQuery.isError ? (
+					<ListLoadError
+						resource="their access"
+						hasCachedData={false}
+						isRetrying={
+							accessQuery.isFetching || catalogQuery.isFetching
+						}
+						onRetry={() => {
+							if (accessQuery.isError) void accessQuery.refetch();
+							if (catalogQuery.isError)
+								void catalogQuery.refetch();
+						}}
+					/>
+				) : (
+					<Skeleton
+						role="status"
+						aria-label="Loading access"
+						className="h-40 w-full"
+					/>
+				)}
+			</section>
+			<section
+				aria-labelledby="role-assignments-heading"
+				className="space-y-3"
+			>
+				<SectionHeading
+					id="role-assignments-heading"
+					title="Role Assignments"
+					description={sectionCopy.roles}
+				/>
+				<div className="flex flex-col overflow-hidden rounded-[var(--bf-radius-surface)] border bg-card">
+					<UserRoleAssignmentsPanel
+						user={person}
+						isSelf={currentUser?.id === person.id}
+					/>
+				</div>
+			</section>
+		</Disclosure>
+	);
+
 	return (
 		<PageWorkspace className="mx-auto w-full max-w-7xl gap-5">
 			<PersonHeader
@@ -455,7 +514,10 @@ export function UserAccessPage() {
 				actions={
 					identityKind ? (
 						<IdentityActions
-							identity={person}
+							identity={{
+								...person,
+								name: person.name || person.email,
+							}}
 							onDeleted={() => navigate("/users/identities")}
 						/>
 					) : (
@@ -468,126 +530,68 @@ export function UserAccessPage() {
 					)
 				}
 			/>
-			<Tabs
-				value={currentTab}
-				onValueChange={(next) =>
-					navigate(`/users/${person.id}/${next}`)
-				}
-				className="flex min-h-0 flex-1 flex-col gap-4"
-			>
-				<TabsList variant="line" className="w-full justify-start">
-					{canViewAccess && (
+			{identityKind ? (
+				canViewAccess ? (
+					<PageScrollArea className="lg:overflow-auto">
+						{accessContent}
+					</PageScrollArea>
+				) : (
+					<p className="text-sm text-muted-foreground">
+						Your roles don't let you see this identity's access.
+					</p>
+				)
+			) : (
+				<Tabs
+					value={currentTab}
+					onValueChange={(next) =>
+						navigate(`/users/${person.id}/${next}`)
+					}
+					className="flex min-h-0 flex-1 flex-col gap-4"
+				>
+					<TabsList variant="line" className="w-full justify-start">
+						{canViewAccess && (
+							<TabsTrigger
+								value="access"
+								className="min-h-11 flex-none px-3"
+							>
+								<KeyRound aria-hidden="true" />
+								Access
+							</TabsTrigger>
+						)}
 						<TabsTrigger
-							value="access"
+							value="profile"
 							className="min-h-11 flex-none px-3"
 						>
-							<KeyRound aria-hidden="true" />
-							Access
+							<UserRound aria-hidden="true" />
+							Profile
 						</TabsTrigger>
+					</TabsList>
+					{canViewAccess && (
+						<TabsContent
+							value="access"
+							className="flex min-h-0 flex-1 flex-col"
+						>
+							<PageScrollArea className="lg:overflow-auto">
+								{accessContent}
+							</PageScrollArea>
+						</TabsContent>
 					)}
-					<TabsTrigger
-						value="profile"
-						className="min-h-11 flex-none px-3"
-					>
-						<UserRound aria-hidden="true" />
-						Profile
-					</TabsTrigger>
-				</TabsList>
-				{canViewAccess && (
 					<TabsContent
-						value="access"
+						value="profile"
 						className="flex min-h-0 flex-1 flex-col"
 					>
 						<PageScrollArea className="lg:overflow-auto">
 							<Disclosure>
-								<section
-									aria-labelledby="access-map-heading"
-									className="space-y-3"
-								>
-									<SectionHeading
-										id="access-map-heading"
-										title="Effective Access"
-										description={sectionCopy.access}
-										action={
-											<TestAccessSheet
-												person={person}
-												subjectLabel={subjectLabel}
-											/>
-										}
-									/>
-									{map && catalogQuery.data ? (
-										<AccessMap
-											rows={map.rows}
-											catalog={catalogQuery.data}
-										/>
-									) : accessQuery.isError ||
-									  catalogQuery.isError ? (
-										<ListLoadError
-											resource="their access"
-											hasCachedData={false}
-											isRetrying={
-												accessQuery.isFetching ||
-												catalogQuery.isFetching
-											}
-											onRetry={() => {
-												if (accessQuery.isError)
-													void accessQuery.refetch();
-												if (catalogQuery.isError)
-													void catalogQuery.refetch();
-											}}
-										/>
-									) : (
-										<Skeleton
-											role="status"
-											aria-label="Loading access"
-											className="h-40 w-full"
-										/>
-									)}
-								</section>
-								<section
-									aria-labelledby="role-assignments-heading"
-									className="space-y-3"
-								>
-									<SectionHeading
-										id="role-assignments-heading"
-										title="Role Assignments"
-										description={sectionCopy.roles}
-									/>
-									<div className="flex flex-col overflow-hidden rounded-[var(--bf-radius-surface)] border bg-card">
-										<UserRoleAssignmentsPanel
-											user={person}
-											isSelf={
-												currentUser?.id === person.id
-											}
-										/>
-									</div>
-								</section>
-							</Disclosure>
-						</PageScrollArea>
-					</TabsContent>
-				)}
-				<TabsContent
-					value="profile"
-					className="flex min-h-0 flex-1 flex-col"
-				>
-					<PageScrollArea className="lg:overflow-auto">
-						<Disclosure>
-							{identityKind ? (
-								<IdentityProfileForm
-									key={person.id}
-									identity={person}
-								/>
-							) : (
 								<UserProfileForm
 									key={person.id}
 									user={person}
 									variant="page"
 								/>
-							)}
-						</Disclosure>
-					</PageScrollArea>
-				</TabsContent>
-			</Tabs>
+							</Disclosure>
+						</PageScrollArea>
+					</TabsContent>
+				</Tabs>
+			)}
 			{accountActions.dialogs}
 		</PageWorkspace>
 	);

@@ -732,7 +732,53 @@ describe("UserAccessPage for an identity", () => {
 		).not.toBeInTheDocument();
 	});
 
-	it("offers only Delete on a custom identity, and returns to Identities after", async () => {
+	it("shows an identity's access without tabs", () => {
+		showIdentity({ name: "Backup Runner", identity_kind: "custom" });
+		renderPage("/users/identity-1");
+
+		expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("heading", { name: "Effective Access" }),
+		).toBeInTheDocument();
+		expect(screen.getByText("Role assignments editor")).toBeInTheDocument();
+	});
+
+	it("moves an identity's old Profile address to its page", () => {
+		showIdentity({ name: "Backup Runner", identity_kind: "custom" });
+		renderPage("/users/identity-1/profile");
+
+		expect(
+			screen.getByRole("status", { name: "location" }),
+		).toHaveTextContent(/^\/users\/identity-1$/);
+		expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+	});
+
+	it("says why an identity's access isn't shown to someone who can't see role assignments", () => {
+		authz.summary = {
+			...adminSummary(),
+			is_platform_admin: false,
+			grants: [
+				{
+					permission: "users.read",
+					boundary: {
+						kind: "managed_organizations",
+						organization_id: null,
+					},
+				},
+			],
+		};
+		showIdentity({ name: "Backup Runner", identity_kind: "custom" });
+		renderPage("/users/identity-1");
+
+		expect(
+			screen.getByText(
+				"Your roles don't let you see this identity's access.",
+			),
+		).toBeInTheDocument();
+		expect(mockUseUserAccessMap).toHaveBeenLastCalledWith(undefined);
+	});
+
+	it("offers Rename and Delete on a custom identity, and returns to Identities after deleting", async () => {
 		showIdentity({ name: "Backup Runner", identity_kind: "custom" });
 		const { user } = renderPage("/users/identity-1");
 
@@ -741,7 +787,7 @@ describe("UserAccessPage for an identity", () => {
 		);
 		expect(
 			screen.getAllByRole("menuitem").map((item) => item.textContent),
-		).toEqual(["Delete"]);
+		).toEqual(["Rename", "Delete"]);
 		await user.click(screen.getByRole("menuitem", { name: "Delete" }));
 		await user.click(
 			within(await screen.findByRole("alertdialog")).getByRole("button", {
@@ -784,31 +830,69 @@ describe("UserAccessPage for an identity", () => {
 		).toHaveTextContent("/users/identity-1");
 	});
 
-	it("edits only the name on the Profile tab", async () => {
+	it("renames a custom identity from its actions menu", async () => {
 		showIdentity({ name: "Backup Runner", identity_kind: "custom" });
-		const { user } = renderPage("/users/identity-1/profile");
+		const { user } = renderPage("/users/identity-1");
 
-		expect(screen.queryByText(/^Profile form for/)).not.toBeInTheDocument();
-		expect(screen.queryByText("Email Address")).not.toBeInTheDocument();
-		const name = screen.getByRole("textbox", { name: "Name" });
+		await user.click(
+			screen.getByRole("button", { name: "Backup Runner actions" }),
+		);
+		await user.click(screen.getByRole("menuitem", { name: "Rename" }));
+		const dialog = await screen.findByRole("dialog", {
+			name: "Rename Identity",
+		});
+		const name = within(dialog).getByRole("textbox", { name: "Name" });
 		expect(name).toHaveValue("Backup Runner");
 		await user.clear(name);
 		await user.type(name, "Contoso Automation");
-		await user.click(screen.getByRole("button", { name: "Save Name" }));
+		await user.click(
+			within(dialog).getByRole("button", { name: "Rename" }),
+		);
 
 		expect(identityMutations.rename).toHaveBeenCalledWith({
 			params: { path: { identity_id: "identity-1" } },
 			body: { name: "Contoso Automation" },
 		});
+		await waitFor(() =>
+			expect(
+				screen.queryByRole("dialog", { name: "Rename Identity" }),
+			).not.toBeInTheDocument(),
+		);
 	});
 
-	it("shows the name read-only to someone who can't rename identities", () => {
+	it("shows why a custom identity can't take a name its organization already has", async () => {
+		identityMutations.rename.mockRejectedValue({
+			detail: 'An identity named "Nightly Sync" already exists in Contoso',
+		});
+		showIdentity({ name: "Backup Runner", identity_kind: "custom" });
+		const { user } = renderPage("/users/identity-1");
+
+		await user.click(
+			screen.getByRole("button", { name: "Backup Runner actions" }),
+		);
+		await user.click(screen.getByRole("menuitem", { name: "Rename" }));
+		const dialog = await screen.findByRole("dialog", {
+			name: "Rename Identity",
+		});
+		const name = within(dialog).getByRole("textbox", { name: "Name" });
+		await user.clear(name);
+		await user.type(name, "Nightly Sync");
+		await user.click(
+			within(dialog).getByRole("button", { name: "Rename" }),
+		);
+
+		expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+			'An identity named "Nightly Sync" already exists in Contoso',
+		);
+	});
+
+	it("offers no actions on a custom identity to someone who can't rename or delete it", () => {
 		authz.summary = {
 			...adminSummary(),
 			is_platform_admin: false,
 			grants: [
 				{
-					permission: "users.read",
+					permission: "roleassignments.read",
 					boundary: {
 						kind: "managed_organizations",
 						organization_id: null,
@@ -817,11 +901,10 @@ describe("UserAccessPage for an identity", () => {
 			],
 		};
 		showIdentity({ name: "Backup Runner", identity_kind: "custom" });
-		renderPage("/users/identity-1/profile");
+		renderPage("/users/identity-1");
 
-		expect(screen.getByRole("textbox", { name: "Name" })).toBeDisabled();
 		expect(
-			screen.queryByRole("button", { name: "Save Name" }),
+			screen.queryByRole("button", { name: "Backup Runner actions" }),
 		).not.toBeInTheDocument();
 	});
 });
