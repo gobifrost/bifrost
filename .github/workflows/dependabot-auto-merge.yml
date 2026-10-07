@@ -60,17 +60,49 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      # Requires bifrost-lockfile-bot's Repository permission "Dependabot alerts"
+      # at Read-only. An App owner updates https://github.com/organizations/
+      # gobifrost/settings/apps/bifrost-lockfile-bot/permissions, then a
+      # gobifrost organization owner must approve the installation's requested
+      # permission increase before this runs.
+      - name: Mint read-only GitHub App advisory token
+        id: advisory-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.DEPENDABOT_LOCKFILE_APP_ID }}
+          private-key: ${{ secrets.DEPENDABOT_LOCKFILE_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: read
+          permission-pull-requests: read
+          permission-vulnerability-alerts: read
+
       - name: Fetch Dependabot metadata
         id: metadata
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
         with:
-          github-token: "${{ secrets.GITHUB_TOKEN }}"
-          alert-lookup: true
+          github-token: "${{ steps.advisory-token.outputs.token }}"
+
+      - name: Resolve open Dependabot advisories
+        id: advisory
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          UPDATED_DEPENDENCIES: ${{ steps.metadata.outputs.updated-dependencies-json }}
+        with:
+          github-token: ${{ steps.advisory-token.outputs.token }}
+          script: |
+            const { findOpenDependabotAlert } = require(`${process.env.GITHUB_WORKSPACE}/scripts/dependabot_alert_lookup.cjs`);
+            const alertState = await findOpenDependabotAlert({
+              github,
+              repository: context.repo,
+              pullNumber: context.payload.pull_request.number,
+              dependencies: JSON.parse(process.env.UPDATED_DEPENDENCIES),
+            });
+            core.setOutput("alert-state", alertState);
 
       - name: Decide whether this PR auto-merges
         id: eligible
         env:
-          ALERT_STATE: ${{ steps.metadata.outputs.alert-state }}
+          ALERT_STATE: ${{ steps.advisory.outputs.alert-state }}
           ECOSYSTEM: ${{ steps.metadata.outputs.package-ecosystem }}
           UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
         run: |
@@ -95,7 +127,7 @@ jobs:
       - name: Record canonical dependency disposition
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         env:
-          DEPENDABOT_ALERT_STATE: ${{ steps.metadata.outputs.alert-state }}
+          DEPENDABOT_ALERT_STATE: ${{ steps.advisory.outputs.alert-state }}
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
