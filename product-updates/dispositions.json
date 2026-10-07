@@ -1738,6 +1738,34 @@
         ]
       },
       "reason": "Dependabot dependency maintenance; omitted under the repository's customer-facing selection policy. CI and dependency security review remain required."
+    },
+    "pr:929": {
+      "classification": "omit",
+      "entry_ids": [],
+      "reason": "Internal build-toolchain integrity verification and private-reporting documentation; no customer-facing functionality change. Retain formal-release security notice review.",
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/929",
+          "User authorized verified backend security repairs and merge on 2026-10-07; focused tests, quality checks, and both Docker install paths passed."
+        ]
+      },
+      "security_review": {
+        "status": "required",
+        "review_ref": "https://github.com/gobifrost/bifrost/pull/929"
+      }
+    },
+    "pr:938": {
+      "classification": "omit",
+      "entry_ids": [],
+      "reason": "Internal dependency-maintenance event handling and automation regression coverage; no customer-facing functionality change.",
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/938",
+          "User authorized verified security-maintenance repairs and merge; signed metadata verification is retained and 9 Node 26 automation tests passed."
+        ]
+      }
     }
   }
 }
