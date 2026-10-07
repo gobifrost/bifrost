@@ -9,6 +9,7 @@ import {
 	Loader2,
 	Shield,
 	SlidersHorizontal,
+	X,
 } from "lucide-react";
 import { RadioGroup as RadioGroupPrimitive } from "radix-ui";
 import { toast } from "sonner";
@@ -350,6 +351,7 @@ interface AdditionalRoleCardProps {
 		places: RolePlace[],
 	) => { value: string; label: string }[];
 	homeIfAllowed: (role: AssignableRole) => string[];
+	onRemove: () => void;
 	onPlacesChange: (places: RolePlace[]) => void;
 }
 
@@ -375,12 +377,13 @@ function AdditionalRoleCard({
 	orgName,
 	organizationChoices,
 	homeIfAllowed,
+	onRemove,
 	onPlacesChange,
 }: AdditionalRoleCardProps) {
 	const name = info?.name ?? "Unknown Role";
 	// Grantable but not as an additional role: the user holds a role they
 	// could no longer be given (e.g. Platform Operator outside the provider
-	// org). It can only be removed, from the roles picker.
+	// org). It can only be removed.
 	const removable = canEdit && !!grantable;
 	const editable = removable && !!grantable?.can_be_additional;
 	// The server fixes where some roles apply; nobody picks.
@@ -448,6 +451,18 @@ function AdditionalRoleCard({
 						catalog={catalog}
 					/>
 				</div>
+				{removable && (
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon"
+						className="h-11 w-11 shrink-0 sm:h-8 sm:w-8"
+						aria-label={`Remove ${name}`}
+						onClick={onRemove}
+					>
+						<X className="h-4 w-4" />
+					</Button>
+				)}
 			</div>
 			<div className="space-y-3 border-t border-border/60 px-3 py-3 sm:px-4">
 				{fixedPlaces ? (
@@ -892,7 +907,6 @@ export function UserRoleAssignmentsPanel({
 								aria-describedby="base-role-help"
 								value={draft.baseRoleId}
 								onValueChange={(value) =>
-									value &&
 									setDraft({ ...draft, baseRoleId: value })
 								}
 								options={baseOptions.map((role) => ({
@@ -951,6 +965,8 @@ export function UserRoleAssignmentsPanel({
 							options={roleOptions}
 							value={draft.additional.map((r) => r.roleId)}
 							onValueChange={chooseRoles}
+							// Each chosen role is listed below with its places.
+							showSelected={false}
 							placeholder="Select additional roles..."
 							searchPlaceholder="Search roles..."
 							emptyText="No roles found."
@@ -990,6 +1006,16 @@ export function UserRoleAssignmentsPanel({
 											organizationChoices
 										}
 										homeIfAllowed={homeIfAllowed}
+										onRemove={() =>
+											chooseRoles(
+												draft.additional
+													.map((r) => r.roleId)
+													.filter(
+														(id) =>
+															id !== role.roleId,
+													),
+											)
+										}
 										onPlacesChange={(places) =>
 											updateRole(role.roleId, places)
 										}
