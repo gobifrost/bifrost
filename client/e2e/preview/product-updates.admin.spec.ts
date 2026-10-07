@@ -90,6 +90,11 @@ test("admin sees new updates automatically and reopens history from Help", async
 		animations: "disabled",
 		path: testInfo.outputPath("whats-new-mobile.png"),
 	});
+	await expect.poll(() => history.getByRole("img", { name: "Effective access and role assignments", exact: true }).evaluate((element) => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+	await history.getByRole("heading", { name: "Set History Retention", exact: true }).scrollIntoViewIfNeeded();
+	await expect.poll(() => history.getByRole("img", { name: "Run history retention settings", exact: true }).evaluate((element) => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+	await history.getByRole("img", { name: "Run history retention settings", exact: true }).scrollIntoViewIfNeeded();
+	await history.screenshot({ animations: "disabled", path: testInfo.outputPath("whats-new-retention-mobile.png") });
 	await history.getByRole("heading", { name: "Bug Fixes", exact: true }).scrollIntoViewIfNeeded();
 	await expect(history.getByRole("heading", { name: "Bug Fixes", exact: true })).toHaveCount(1);
 	await expect(history.getByRole("link", { name: "Done", exact: true })).toBeVisible();

@@ -55,6 +55,10 @@ Choose how long to keep completed runs, events, and audit records.
 
 **Open Maintenance** (in Bifrost)
 
+![Run history retention settings](https://raw.githubusercontent.com/gobifrost/bifrost/2ac8231e74e3d4bc0f09e727d5af65e2a38c0a70/product-updates/assets/0cf7ed8c-3fc1-5d28-b89b-09ca20a59262/retention.png)
+
+Choose a retention period or keep finished runs and events indefinitely.
+
 Sources: [#905](https://github.com/gobifrost/bifrost/pull/905), [#908](https://github.com/gobifrost/bifrost/pull/908)
 
 ### Update the CLI and MCP Clients
@@ -75,9 +79,9 @@ See a user's effective access, role assignments, and organization scope. Workflo
 
 **Open Users** (in Bifrost) · **Open Roles** (in Bifrost)
 
-![Roles and organization scope](https://raw.githubusercontent.com/gobifrost/bifrost/72e730fec8d11ecb65b7220b1de7b82ebe7e98f5/product-updates/assets/fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8/roles.png)
+![Effective access and role assignments](https://raw.githubusercontent.com/gobifrost/bifrost/2ac8231e74e3d4bc0f09e727d5af65e2a38c0a70/product-updates/assets/fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8/effective-access.png)
 
-Built-in role grants and organization scope.
+A user's effective permissions and organization scope.
 
 Sources: [#879](https://github.com/gobifrost/bifrost/pull/879), [#889](https://github.com/gobifrost/bifrost/pull/889), [#890](https://github.com/gobifrost/bifrost/pull/890), [#895](https://github.com/gobifrost/bifrost/pull/895), [#900](https://github.com/gobifrost/bifrost/pull/900), [#903](https://github.com/gobifrost/bifrost/pull/903), [#914](https://github.com/gobifrost/bifrost/pull/914), [#915](https://github.com/gobifrost/bifrost/pull/915)
 

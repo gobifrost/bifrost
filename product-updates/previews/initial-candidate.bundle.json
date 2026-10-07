@@ -1,23 +1,23 @@
 {
-  "content_ref": "72e730fec8d11ecb65b7220b1de7b82ebe7e98f5",
+  "content_ref": "2ac8231e74e3d4bc0f09e727d5af65e2a38c0a70",
   "entries": [
     {
       "action_required": false,
       "area": "Administration",
       "assets": [
         {
-          "alt": "Roles and organization scope",
-          "caption": "Built-in role grants and organization scope.",
-          "path": "assets/fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8/roles.png",
-          "url": "/product-updates/assets/fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8/roles.png"
+          "alt": "Effective access and role assignments",
+          "caption": "A user's effective permissions and organization scope.",
+          "path": "assets/fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8/effective-access.png",
+          "url": "/product-updates/assets/fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8/effective-access.png"
         }
       ],
       "contributors": [],
       "id": "fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8",
       "in_app": true,
-      "markdown": "\nSee a user's effective access, role assignments, and organization scope. Workflow permission checks remain report-only.\n\n[Open Users](/users) \u00b7 [Open Roles](/roles)\n\n![Roles and organization scope](assets/fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8/roles.png)",
+      "markdown": "\nSee a user's effective access, role assignments, and organization scope. Workflow permission checks remain report-only.\n\n[Open Users](/users) \u00b7 [Open Roles](/roles)\n\n![Effective access and role assignments](assets/fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8/effective-access.png)",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 3,
+      "revision": 4,
       "sources": [
         {
           "commit": "d29fab00a6cb50a3eeb541fde4539be2b98d2238",
@@ -513,13 +513,20 @@
     {
       "action_required": true,
       "area": "Administration",
-      "assets": [],
+      "assets": [
+        {
+          "alt": "Run history retention settings",
+          "caption": "Choose a retention period or keep finished runs and events indefinitely.",
+          "path": "assets/0cf7ed8c-3fc1-5d28-b89b-09ca20a59262/retention.png",
+          "url": "/product-updates/assets/0cf7ed8c-3fc1-5d28-b89b-09ca20a59262/retention.png"
+        }
+      ],
       "contributors": [],
       "id": "0cf7ed8c-3fc1-5d28-b89b-09ca20a59262",
       "in_app": true,
-      "markdown": "\nChoose how long to keep completed runs, events, and audit records.\n\n**Before upgrading:** run and event history defaults to 30 days, including existing installs. Select **Keep forever** before cleanup to retain older runs; deleted run details have no archive. Existing installs retain audit archives indefinitely. New installs keep audits for 90 days in the database and 365 days in the archive.\n\n[Open Maintenance](/settings/maintenance)",
+      "markdown": "\nChoose how long to keep completed runs, events, and audit records.\n\n**Before upgrading:** run and event history defaults to 30 days, including existing installs. Select **Keep forever** before cleanup to retain older runs; deleted run details have no archive. Existing installs retain audit archives indefinitely. New installs keep audits for 90 days in the database and 365 days in the archive.\n\n[Open Maintenance](/settings/maintenance)\n\n![Run history retention settings](assets/0cf7ed8c-3fc1-5d28-b89b-09ca20a59262/retention.png)",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 3,
+      "revision": 4,
       "sources": [
         {
           "commit": "3d678951a2d187e31139ffcdd5a4dcc5f4a98209",

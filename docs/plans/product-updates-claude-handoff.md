@@ -31,3 +31,5 @@ The release skill separates adding/preparing release data from publication. Prep
 Preview Controls is hidden on the normal review URL. Opt in with `/whats-new?controls=1` to use development fixture controls. The plain `/whats-new` route is the customer-style review surface.
 
 Features retain individual headlines under New Features and Functionality. Fixed and Security notes render as compact bullet lists under Bug Fixes and Hardening, with necessary upgrade actions inline and grouped source/credit details collapsed. Smaller notes join the matching lists in history; omitted maintenance stays in the ledger. `in_app: false` withholds a note from app display and receipts without deleting release material or bypassing review.
+
+Completeness was rechecked against freshly fetched main: it still matches frozen 32aeea16c. Effective Access and retention notes now have actual feature screenshots (revision 4); the older generic Roles illustration was replaced. GitHub preview images are pinned to asset-bearing commit 2ac8231e7. This Docker environment has no Kubernetes connection, so it cannot capture that conditionally available settings panel.
