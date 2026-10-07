@@ -26,6 +26,8 @@ Bootstrap post-merge CI failed the exact-candidate promotion lookup with zero li
 
 The first live Product Updates check exposed the Python 3.12 conditional `typing-extensions` dependency missing from the slim lock, which had been assembled for Python 3.14. The trusted-validator workflow now uses 3.14 consistently with image preparation, and the lock also retains the root-pinned, hashed typing-extensions block for older Python environments. Clean-container `pip install --require-hashes` passed with both `python:3.14-slim` and `python:3.12-slim`, verifying this fix; the check is rerun only on the corrected commit.
 
+The first full feature-PR unit run passed 8,452 backend tests and all 3,619 client tests but found three integration omissions: two Product Updates routes absent from the authorization access list, the public ORM export count still at 540 after adding the receipt model, and a stale generated OpenAPI skill digest. The fixes retain admin-only route gates, update the explicit public count to 541, and regenerate/sync the appendix. `./test.sh tests/unit/test_access_list.py tests/unit/test_model_import_boundaries.py tests/unit/test_skill_appendix_fresh.py -v` passed 35 tests after regenerating the access-list projection. `./test.sh quality api` passed again. The operation generator produced no additional changes, and skill mirrors/diff checks passed before pushing the corrected commit. Direct GitHub job logs identify the failures; the aggregate `gh --log-failed` output returned a different successful client step and was not used to diagnose them.
+
 ## Historical Implementation Record
 
 ## Frozen Coverage
