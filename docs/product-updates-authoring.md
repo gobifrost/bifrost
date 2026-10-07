@@ -84,6 +84,19 @@ review evidence. Entry Markdown is reviewed prose, not generated at release
 time. Assets live beneath the entry's asset directory, have useful alt text,
 and must not contain executable HTML or embeds.
 
+## Dependabot Maintenance
+
+The trusted Dependabot workflow writes an `omit` disposition onto same-repository
+Dependabot branches when their diff contains only dependency maintenance files.
+This applies the existing customer-facing selection policy; it does not execute
+PR code, replace a maintainer's disposition, or bypass CI. Major and Docker updates
+retain their existing review policy.
+
+Advisory updates retain `security_review: required` and the source PR as evidence.
+They may land under the dependency security-update policy, but a formal release
+still requires a reviewed canonical security notice. Routine dependency fixes do
+not become individual in-app announcements.
+
 ## Local validation and previews
 
 The deterministic tool never calls an LLM or GitHub. It uses the committed
