@@ -16,18 +16,22 @@ type User = components["schemas"]["UserPublic"];
 
 /**
  * An identity's profile is its name: identities have no email, sign-in or
- * status to edit. Renaming is users.lifecycle.readwrite at its organization.
+ * status to edit. Default identities keep theirs; renaming a custom one is
+ * users.lifecycle.readwrite at its organization.
  */
 export function IdentityProfileForm({ identity }: { identity: User }) {
 	const authorization = useAuthorization();
 	const rename = useRenameIdentity();
 	const [name, setName] = useState(identity.name || "");
 	const [error, setError] = useState<string | null>(null);
+	const isDefault = identity.identity_kind !== "custom";
 	const canRename =
+		!isDefault &&
 		authorization.canAt(
 			"users.lifecycle.readwrite",
 			orgTarget(identity.organization_id),
-		) && !(identity.is_protected && !authorization.isPlatformAdmin);
+		) &&
+		!(identity.is_protected && !authorization.isPlatformAdmin);
 	const trimmed = name.trim();
 	const dirty = trimmed !== (identity.name || "");
 
@@ -68,7 +72,8 @@ export function IdentityProfileForm({ identity }: { identity: User }) {
 					id="identity-profile-name"
 					value={name}
 					onChange={(event) => setName(event.target.value)}
-					disabled={!canRename}
+					readOnly={isDefault}
+					disabled={!isDefault && !canRename}
 					maxLength={255}
 					aria-describedby={
 						canRename ? undefined : "identity-profile-name-hint"
@@ -79,8 +84,9 @@ export function IdentityProfileForm({ identity }: { identity: User }) {
 						id="identity-profile-name-hint"
 						className="text-xs text-muted-foreground"
 					>
-						Only people who can create, move, or delete users in
-						this organization can rename it.
+						{isDefault
+							? "Default identities keep their name."
+							: "Only people who can create, move, or delete users in this organization can rename it."}
 					</p>
 				)}
 			</div>

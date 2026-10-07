@@ -16,7 +16,7 @@ import { AccessMap } from "@/components/access/AccessMap";
 import { TestAccessPanel } from "@/components/access/TestAccessPanel";
 import { IdentityActions } from "@/components/identities/IdentityActions";
 import { IdentityGlyph } from "@/components/identities/IdentityGlyph";
-import { IdentityKindBadge } from "@/components/identities/IdentityKindBadge";
+import { IdentityOrganizationChip } from "@/components/identities/IdentityName";
 import { IdentityProfileForm } from "@/components/identities/IdentityProfileForm";
 import { ReachChip } from "@/components/access/ReachChip";
 import { ListLoadError } from "@/components/layout/ListLoadError";
@@ -185,13 +185,15 @@ function PersonHeader({
 	actions,
 }: {
 	user: User;
-	/** Set for an identity, which shows a glyph and kind instead of an email. */
+	/** Set for an identity, which shows a glyph and its organization chip instead of an email. */
 	identityKind: IdentityKind | null;
 	homeOrganization: string | undefined;
 	map: UserAccessMap | undefined;
 	catalog: PermissionCatalogEntry[] | undefined;
 	actions: ReactNode;
 }) {
+	// An identity's organization chip: null for Global, unknown until loaded.
+	const identityOrganization = user.organization_id ? homeOrganization : null;
 	return (
 		<header className="min-w-0 space-y-3">
 			<Link
@@ -215,12 +217,12 @@ function PersonHeader({
 					<div className="space-y-1">
 						<h1 className="flex flex-wrap items-center gap-2 font-display text-2xl font-semibold tracking-tight [overflow-wrap:anywhere] sm:text-3xl">
 							{user.name || user.email}
-							{identityKind && (
-								<IdentityKindBadge
-									kind={identityKind}
-									withNoun
-								/>
-							)}
+							{identityKind &&
+								identityOrganization !== undefined && (
+									<IdentityOrganizationChip
+										organizationName={identityOrganization}
+									/>
+								)}
 							{!user.is_active && (
 								<Badge variant="outline">Disabled</Badge>
 							)}
@@ -231,22 +233,22 @@ function PersonHeader({
 									/>
 								)}
 						</h1>
-						<p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-							{!identityKind && (
+						{!identityKind && (
+							<p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
 								<span className="[overflow-wrap:anywhere]">
 									{user.email}
 								</span>
-							)}
-							{homeOrganization && (
-								<span className="inline-flex items-center gap-1.5">
-									<Building2
-										aria-hidden="true"
-										className="size-3.5"
-									/>
-									{homeOrganization}
-								</span>
-							)}
-						</p>
+								{homeOrganization && (
+									<span className="inline-flex items-center gap-1.5">
+										<Building2
+											aria-hidden="true"
+											className="size-3.5"
+										/>
+										{homeOrganization}
+									</span>
+								)}
+							</p>
+						)}
 					</div>
 					{map && (
 						<div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">

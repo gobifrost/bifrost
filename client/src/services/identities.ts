@@ -21,6 +21,23 @@ export function identityKindLabel(kind: IdentityKind): string {
 	return KIND_LABELS[kind];
 }
 
+/** Where an identity belongs: its organization's name, or "Global". */
+export function identityOrganization(
+	identity: Pick<Identity, "organization_name">,
+): string {
+	return identity.organization_name ?? "Global";
+}
+
+/**
+ * "Default Identity · Contoso": an identity named in text. Every default
+ * identity has the same name, so its organization always comes with it.
+ */
+export function identityLabel(
+	identity: Pick<Identity, "name" | "organization_name">,
+): string {
+	return `${identity.name} · ${identityOrganization(identity)}`;
+}
+
 /** The identities the caller can read, the global identity first. */
 export function useIdentities() {
 	return $api.useQuery("get", "/api/identities");

@@ -626,11 +626,15 @@ const identity = {
 	...person,
 	id: "identity-1",
 	email: "identity-1@identities.bifrost.internal",
-	name: "Contoso Identity",
+	name: "Default Identity",
 	identity_kind: "org_default",
 };
 
-function showIdentity(overrides: Partial<typeof identity> = {}) {
+function showIdentity(
+	overrides: Partial<Omit<typeof identity, "organization_id">> & {
+		organization_id?: string | null;
+	} = {},
+) {
 	mockUseUser.mockReturnValue({
 		data: { ...identity, ...overrides },
 		isLoading: false,
@@ -639,17 +643,29 @@ function showIdentity(overrides: Partial<typeof identity> = {}) {
 }
 
 describe("UserAccessPage for an identity", () => {
-	it("introduces the identity by glyph and kind, without an email", () => {
-		showIdentity();
+	it("places the global identity in Global", () => {
+		showIdentity({ identity_kind: "global_default", organization_id: null });
 		renderPage("/users/identity-1");
 
 		expect(
-			screen.getByRole("heading", { level: 1, name: /Contoso Identity/ }),
-		).toBeInTheDocument();
+			within(screen.getByRole("heading", { level: 1 })).getByLabelText(
+				"Organization",
+			),
+		).toHaveTextContent("Global");
+	});
+
+	it("introduces the identity by glyph, name and organization, without an email", () => {
+		showIdentity();
+		renderPage("/users/identity-1");
+
+		const heading = screen.getByRole("heading", { level: 1 });
+		expect(heading).toHaveTextContent(/^Default Identity/);
+		expect(within(heading).getByLabelText("Organization")).toHaveTextContent(
+			"Contoso",
+		);
 		expect(
 			screen.getByRole("img", { name: "Identity" }),
 		).toBeInTheDocument();
-		expect(screen.getByText("Default Identity")).toBeInTheDocument();
 		expect(screen.queryByText(identity.email)).not.toBeInTheDocument();
 		expect(
 			screen.getByRole("link", { name: "Identities" }),
@@ -677,7 +693,7 @@ describe("UserAccessPage for an identity", () => {
 		renderPage("/users/identity-1");
 
 		expect(
-			screen.queryByRole("button", { name: "Contoso Identity actions" }),
+			screen.queryByRole("button", { name: "Default Identity actions" }),
 		).not.toBeInTheDocument();
 	});
 
@@ -734,13 +750,13 @@ describe("UserAccessPage for an identity", () => {
 	});
 
 	it("edits only the name on the Profile tab", async () => {
-		showIdentity();
+		showIdentity({ name: "Backup Runner", identity_kind: "custom" });
 		const { user } = renderPage("/users/identity-1/profile");
 
 		expect(screen.queryByText(/^Profile form for/)).not.toBeInTheDocument();
 		expect(screen.queryByText("Email Address")).not.toBeInTheDocument();
 		const name = screen.getByRole("textbox", { name: "Name" });
-		expect(name).toHaveValue("Contoso Identity");
+		expect(name).toHaveValue("Backup Runner");
 		await user.clear(name);
 		await user.type(name, "Contoso Automation");
 		await user.click(screen.getByRole("button", { name: "Save Name" }));
@@ -765,7 +781,7 @@ describe("UserAccessPage for an identity", () => {
 				},
 			],
 		};
-		showIdentity();
+		showIdentity({ name: "Backup Runner", identity_kind: "custom" });
 		renderPage("/users/identity-1/profile");
 
 		expect(screen.getByRole("textbox", { name: "Name" })).toBeDisabled();

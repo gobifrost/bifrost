@@ -21,6 +21,8 @@ import { USER_ACCESS_QUERY_KEY } from "./access";
 import {
 	IDENTITIES_QUERY_KEY,
 	identityKindLabel,
+	identityLabel,
+	identityOrganization,
 	useCreateIdentity,
 	useDeleteIdentity,
 	useIdentities,
@@ -54,6 +56,36 @@ describe("identities service", () => {
 		expect(identityKindLabel("org_default")).toBe("Default");
 		expect(identityKindLabel("global_default")).toBe("Global");
 		expect(identityKindLabel("custom")).toBe("Custom");
+	});
+
+	it("places an identity in its organization, or Global", () => {
+		expect(identityOrganization({ organization_name: "Contoso" })).toBe(
+			"Contoso",
+		);
+		expect(identityOrganization({ organization_name: null })).toBe(
+			"Global",
+		);
+	});
+
+	it("names an identity with its organization, since every default is named alike", () => {
+		expect(
+			identityLabel({
+				name: "Default Identity",
+				organization_name: "Contoso",
+			}),
+		).toBe("Default Identity · Contoso");
+		expect(
+			identityLabel({
+				name: "Default Identity",
+				organization_name: null,
+			}),
+		).toBe("Default Identity · Global");
+		expect(
+			identityLabel({
+				name: "Nightly Sync Identity",
+				organization_name: "Fabrikam",
+			}),
+		).toBe("Nightly Sync Identity · Fabrikam");
 	});
 
 	it("refreshes the list after creating an identity", () => {

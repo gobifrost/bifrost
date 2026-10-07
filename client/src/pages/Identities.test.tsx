@@ -99,7 +99,7 @@ function readerSummary(): AuthorizationSummary {
 const identities: Identity[] = [
 	{
 		id: "identity-global",
-		name: "Global Identity",
+		name: "Default Identity",
 		identity_kind: "global_default",
 		organization_id: null,
 		organization_name: null,
@@ -126,7 +126,7 @@ const identities: Identity[] = [
 	},
 	{
 		id: "identity-contoso",
-		name: "Contoso Identity",
+		name: "Default Identity",
 		identity_kind: "org_default",
 		organization_id: "org-1",
 		organization_name: "Contoso",
@@ -218,7 +218,7 @@ describe("Identities", () => {
 				.getAllByRole("cell")
 				.map((cell) => cell.textContent),
 		).toEqual([
-			"Contoso Identity",
+			"Default Identity",
 			"Default",
 			"Contoso",
 			"UserTicket Sync",
@@ -226,18 +226,18 @@ describe("Identities", () => {
 		]);
 	});
 
-	it("pins the global identity first, highlighted", () => {
+	it("pins the global identity first, highlighted, as the Default Identity of Global", () => {
 		renderPage();
 
 		const rows = within(screen.getByRole("table"))
 			.getAllByRole("row")
 			.slice(1);
-		expect(within(rows[0]).getAllByRole("cell")[1]).toHaveTextContent(
-			"Global",
-		);
-		expect(within(rows[0]).getAllByRole("cell")[2]).toHaveTextContent(
-			"Global",
-		);
+		const cells = within(rows[0]).getAllByRole("cell");
+		expect(cells[0]).toHaveTextContent("Default Identity");
+		expect(cells[1]).toHaveTextContent("Global");
+		expect(
+			within(cells[2]).getByLabelText("Organization"),
+		).toHaveTextContent("Global");
 		expect(rows[0]).toHaveAttribute("data-pinned", "true");
 		expect(rows[1]).not.toHaveAttribute("data-pinned");
 	});

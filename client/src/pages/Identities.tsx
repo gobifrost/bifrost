@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Building2, Globe, Plus, RefreshCw, Workflow } from "lucide-react";
+import { Plus, RefreshCw, Workflow } from "lucide-react";
 
 import { IdentityKindBadge } from "@/components/identities/IdentityKindBadge";
+import { IdentityOrganizationChip } from "@/components/identities/IdentityName";
 import { NewIdentityDialog } from "@/components/identities/NewIdentityDialog";
 import { ListLoadError } from "@/components/layout/ListLoadError";
 import { ListPageHeader } from "@/components/layout/ListPageHeader";
@@ -29,26 +30,15 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { placeLabel } from "@/lib/role-boundaries";
 import { cn } from "@/lib/utils";
 import { useAuthorization } from "@/services/authorization";
-import { useIdentities, type Identity } from "@/services/identities";
+import {
+	identityOrganization,
+	useIdentities,
+	type Identity,
+} from "@/services/identities";
 
 /** The global identity's row: a reach-tinted surface with a leading stripe. */
 const PINNED_CLASS_NAME =
 	"bg-[color-mix(in_srgb,var(--bf-reach-soft)_55%,transparent)] shadow-[inset_3px_0_0_var(--bf-reach)]";
-
-function OrganizationName({ identity }: { identity: Identity }) {
-	const Icon = identity.organization_id ? Building2 : Globe;
-	return (
-		<span className="inline-flex min-w-0 items-center gap-1.5">
-			<Icon
-				aria-hidden="true"
-				className="size-3.5 shrink-0 text-muted-foreground"
-			/>
-			<span className="[overflow-wrap:anywhere]">
-				{identity.organization_name ?? "Global"}
-			</span>
-		</span>
-	);
-}
 
 /** The base role, then each additional role, with where it applies. */
 function RoleChips({ identity }: { identity: Identity }) {
@@ -90,7 +80,7 @@ function matches(identity: Identity, search: string): boolean {
 	return (
 		!term ||
 		identity.name.toLowerCase().includes(term) ||
-		(identity.organization_name ?? "Global").toLowerCase().includes(term)
+		identityOrganization(identity).toLowerCase().includes(term)
 	);
 }
 
@@ -229,8 +219,10 @@ export function Identities() {
 											Organization
 										</dt>
 										<dd className="mt-1">
-											<OrganizationName
-												identity={identity}
+											<IdentityOrganizationChip
+												organizationName={
+													identity.organization_name
+												}
 											/>
 										</dd>
 									</div>
@@ -298,7 +290,11 @@ export function Identities() {
 										/>
 									</DataTableCell>
 									<DataTableCell className="w-0 whitespace-nowrap text-sm">
-										<OrganizationName identity={identity} />
+										<IdentityOrganizationChip
+											organizationName={
+												identity.organization_name
+											}
+										/>
 									</DataTableCell>
 									<DataTableCell>
 										<RoleChips identity={identity} />

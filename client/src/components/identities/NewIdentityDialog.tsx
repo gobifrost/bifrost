@@ -20,6 +20,7 @@ import { getErrorMessage } from "@/lib/api-error";
 import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
 import { useAuthorization } from "@/services/authorization";
 import {
+	identityLabel,
 	useCreateIdentity,
 	useIdentities,
 	type Identity,
@@ -104,7 +105,7 @@ function NewIdentityDialogContent({
 				},
 			});
 			toast.success("Identity created", {
-				description: `${identity.name} runs with the User base role until you give it more`,
+				description: `${identityLabel(identity)} runs with the User base role until you give it more`,
 			});
 			onOpenChange(false);
 			onCreated(identity);

@@ -33,7 +33,7 @@ function defaultIdentity(
 ): Identity {
 	return {
 		id: `identity-${organizationId ?? "global"}`,
-		name: `${organizationName ?? "Global"} Identity`,
+		name: "Default Identity",
 		identity_kind: organizationId ? "org_default" : "global_default",
 		organization_id: organizationId,
 		organization_name: organizationName,
@@ -69,12 +69,14 @@ vi.mock("@/hooks/useOrganizations", () => ({
 }));
 
 const create = vi.hoisted(() => ({ mutateAsync: vi.fn() }));
-vi.mock("@/services/identities", () => ({
+vi.mock("@/services/identities", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/services/identities")>()),
 	useIdentities: () => ({ data: visible.identities }),
 	useCreateIdentity: () => ({ ...create, isPending: false }),
 }));
 
-vi.mock("sonner", () => ({ toast: { success: vi.fn() } }));
+const toastSuccess = vi.hoisted(() => vi.fn());
+vi.mock("sonner", () => ({ toast: { success: toastSuccess } }));
 
 import { NewIdentityDialog } from "./NewIdentityDialog";
 
@@ -124,7 +126,11 @@ beforeEach(() => {
 
 describe("NewIdentityDialog", () => {
 	it("creates a Global identity from a name", async () => {
-		const created = { id: "identity-new", name: "Nightly Sync" };
+		const created = {
+			id: "identity-new",
+			name: "Nightly Sync",
+			organization_name: null,
+		};
 		create.mutateAsync.mockResolvedValue(created);
 		const { user, onCreated, onOpenChange } = renderDialog();
 
@@ -145,6 +151,10 @@ describe("NewIdentityDialog", () => {
 		});
 		expect(onCreated).toHaveBeenCalledWith(created);
 		expect(onOpenChange).toHaveBeenCalledWith(false);
+		expect(toastSuccess).toHaveBeenCalledWith("Identity created", {
+			description:
+				"Nightly Sync · Global runs with the User base role until you give it more",
+		});
 	});
 
 	it("waits for a name and an organization", async () => {
@@ -178,6 +188,27 @@ describe("NewIdentityDialog", () => {
 
 		expect(await screen.findByRole("alert")).toHaveTextContent(
 			"Organization not found",
+		);
+		expect(onCreated).not.toHaveBeenCalled();
+	});
+
+	it("shows the server's message when the organization already has the name", async () => {
+		create.mutateAsync.mockRejectedValue({
+			detail: 'An identity named "Backup Runner" already exists in Contoso',
+		});
+		const { user, onCreated } = renderDialog();
+
+		await user.type(
+			screen.getByRole("textbox", { name: "Name" }),
+			"Backup Runner",
+		);
+		await choose(user, "Contoso");
+		await user.click(
+			screen.getByRole("button", { name: "Create Identity" }),
+		);
+
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			'An identity named "Backup Runner" already exists in Contoso',
 		);
 		expect(onCreated).not.toHaveBeenCalled();
 	});
