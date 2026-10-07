@@ -13750,14 +13750,24 @@ export interface components {
             user_name?: string | null;
             /**
              * Organization Id
-             * @description Acting user's organization
+             * @description Organization the event happened in (an access check's target organization)
              */
             organization_id?: string | null;
             /**
              * Organization Name
-             * @description Acting user's organization name
+             * @description Name of the organization the event happened in
              */
             organization_name?: string | null;
+            /**
+             * Home Organization Id
+             * @description The organization the acting user belongs to (null for Global or a deleted user)
+             */
+            home_organization_id?: string | null;
+            /**
+             * Home Organization Name
+             * @description Name of the acting user's own organization
+             */
+            home_organization_name?: string | null;
         };
         /**
          * AuditLogEntry
@@ -13827,6 +13837,11 @@ export interface components {
             details?: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Workflow Name
+             * @description Name of the workflow the event names (details.workflow_id), when it still exists
+             */
+            workflow_name?: string | null;
         };
         /**
          * AuditLogGroup
@@ -25387,6 +25402,11 @@ export interface components {
              * @default false
              */
             organization_is_provider: boolean;
+            /**
+             * Identity Kind
+             * @description org_default, global_default or custom for an identity; null for a person.
+             */
+            identity_kind?: string | null;
             /**
              * Boundaries
              * @description Where the role applies for this user.

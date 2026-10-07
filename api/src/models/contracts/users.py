@@ -378,6 +378,10 @@ class RoleUserSummary(BaseModel):
     organization_id: UUID | None
     organization_name: str | None
     organization_is_provider: bool = False
+    identity_kind: str | None = Field(
+        default=None,
+        description="org_default, global_default or custom for an identity; null for a person.",
+    )
     boundaries: list[RoleBoundaryPublic] = Field(
         default_factory=list,
         description="Where the role applies for this user.",

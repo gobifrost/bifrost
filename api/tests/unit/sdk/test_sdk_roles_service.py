@@ -265,6 +265,23 @@ class TestRoleService:
             ("organization", customer.id, customer.name),
         ]
 
+    async def test_lists_identities_by_kind(self, db_session):
+        from shared.sdk_roles import assign_users_to_role, create_role, list_role_users
+
+        role = await create_role(db_session, name="Crew", description=None, actor_email="a@t.local")
+        person = await _seed_user(db_session)
+        identity = await _seed_user(db_session, name="Fleet Reporting")
+        identity.identity_kind = "custom"
+        await db_session.flush()
+        await assign_users_to_role(
+            db_session, admin_caller(), role_id=role.id, user_ids=[str(person.id), str(identity.id)]
+        )
+
+        listed = await list_role_users(db_session, role_id=role.id, reach=EVERYTHING)
+
+        kinds = {user.id: user.identity_kind for user in listed.users}
+        assert kinds == {person.id: None, identity.id: "custom"}
+
     async def test_list_users_unknown_role_is_empty_not_404(self, db_session):
         from shared.sdk_roles import list_role_users
 

@@ -349,7 +349,12 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # `inputs_not_stored` (2026-10-07): older and worker-written access checks
     # stored no trace, or no inputs either. `bifrost audit explain` is
     # unreleased and ships handling both. Fingerprint refreshed only.
-    "ad1993f588218ba570aea28e1f25f4a4774073b55a77e6c2a30466d95c0d10b9"
+    #
+    # AuditLogEntry gained `workflow_name`, AuditLogActor `home_organization_id`
+    # and `home_organization_name`, and RoleUserSummary `identity_kind`
+    # (2026-10-07): optional additive fields the CLI ignores. Fingerprint
+    # refreshed only.
+    "063684feb78cf33f46fe3419c03752adbc1d1836c98d7e43509b9e184da44b03"
 )
 
 

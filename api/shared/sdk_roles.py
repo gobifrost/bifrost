@@ -509,6 +509,7 @@ async def list_role_users(
             organization_id=assigned_user.organization_id,
             organization_name=organization_name,
             organization_is_provider=bool(organization_is_provider),
+            identity_kind=assigned_user.identity_kind,
         )
         for assigned_user, organization_name, organization_is_provider in result.all()
     ]
