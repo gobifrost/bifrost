@@ -155,7 +155,7 @@ export function TestAccessPanel({
 			setResult(undefined);
 			setError(null);
 		};
-	const workflowId = workflow && workflow !== NO_WORKFLOW ? workflow : null;
+	const workflowId = workflow !== NO_WORKFLOW ? workflow : null;
 	const ready = organization !== "" && operation.trim() !== "";
 
 	const handleSubmit = async (event: React.FormEvent) => {

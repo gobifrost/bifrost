@@ -38,6 +38,8 @@ interface ComboboxProps {
 	isLoading?: boolean;
 	/** Show the selected option's description after its label in the trigger. */
 	showSelectedDescription?: boolean;
+	/** Choosing the selected option again clears it. For optional fields only. */
+	allowClear?: boolean;
 	className?: string;
 	id?: string;
 }
@@ -52,6 +54,7 @@ export function Combobox({
 	disabled = false,
 	isLoading = false,
 	showSelectedDescription = false,
+	allowClear = false,
 	className,
 	id,
 	"aria-describedby": describedBy,
@@ -160,7 +163,8 @@ export function Combobox({
 										data-checked={value === option.value}
 										onSelect={() => {
 											onValueChange?.(
-												option.value === value
+												allowClear &&
+													option.value === value
 													? ""
 													: option.value,
 											);

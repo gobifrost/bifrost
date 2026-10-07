@@ -889,6 +889,7 @@ function FormRendererInner({
 					options={options && options.length > 0 ? options : []}
 					value={value}
 					onValueChange={onValueChange}
+					allowClear={!fieldRequired}
 					placeholder={fieldPlaceholder || "Select an option..."}
 					emptyText="No options available"
 					isLoading={isLoading}
@@ -1085,6 +1086,7 @@ function FormRendererInner({
 									shouldValidate: true,
 								})
 							}
+							allowClear={!field.required}
 							placeholder={
 								field.placeholder || "Select an option..."
 							}

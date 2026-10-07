@@ -357,6 +357,33 @@ describe("FormRenderer — field types", () => {
 		const textarea = screen.getByPlaceholderText("Tell us");
 		expect(textarea.tagName).toBe("TEXTAREA");
 	});
+
+	it.each([
+		[false, "Choose a site"],
+		[true, "Contoso HQ"],
+	])(
+		"re-choosing the selected option of a select (required: %s) leaves %s",
+		async (required, shown) => {
+			const form = makeForm([
+				{
+					name: "site",
+					label: "Site",
+					type: "select",
+					required,
+					placeholder: "Choose a site",
+					options: [{ value: "hq", label: "Contoso HQ" }],
+				},
+			]);
+			const { user } = renderWithProviders(<FormRenderer form={form} />);
+
+			await user.click(screen.getByRole("combobox"));
+			await user.click(screen.getByRole("option", { name: "Contoso HQ" }));
+			await user.click(screen.getByRole("combobox"));
+			await user.click(screen.getByRole("option", { name: "Contoso HQ" }));
+
+			expect(screen.getByRole("combobox")).toHaveTextContent(shown);
+		},
+	);
 });
 
 describe("FormRenderer — scheduling", () => {

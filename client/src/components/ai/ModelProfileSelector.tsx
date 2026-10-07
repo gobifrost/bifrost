@@ -236,9 +236,7 @@ export function ModelProfileSelector({
 			<Combobox
 				id={id}
 				value={savedProfile ? (value ?? "") : ""}
-				onValueChange={(nextValue) => {
-					if (nextValue) onValueChange(nextValue);
-				}}
+				onValueChange={onValueChange}
 				options={profileOptions}
 				placeholder={comboboxPlaceholder}
 				searchPlaceholder="Search profiles..."
