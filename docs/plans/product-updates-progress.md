@@ -24,6 +24,8 @@ The cumulative inventory was refreshed through bootstrap merge `5d4d5224f`: 125 
 
 Bootstrap post-merge CI failed the exact-candidate promotion lookup with zero listed merge-group runs. A subsequent read-only GitHub lookup found the successful exact-SHA run `37554995630`; the promotion job's token had no explicit Actions read permission. The feature adds that least-privilege permission. The next post-merge promotion run must verify this disposition; no timeout, retry or relaxed gate was added.
 
+The first live Product Updates check exposed the Python 3.12 conditional `typing-extensions` dependency missing from the slim lock, which had been assembled for Python 3.14. The trusted-validator workflow now uses 3.14 consistently with image preparation, and the lock also retains the root-pinned, hashed typing-extensions block for older Python environments. Clean-container `pip install --require-hashes` passed with both `python:3.14-slim` and `python:3.12-slim`, verifying this fix; the check is rerun only on the corrected commit.
+
 ## Historical Implementation Record
 
 ## Frozen Coverage
