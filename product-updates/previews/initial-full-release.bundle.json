@@ -1,5 +1,5 @@
 {
-  "content_ref": "2ac8231e74e3d4bc0f09e727d5af65e2a38c0a70",
+  "content_ref": "963a1d7e5d6b3be401cc22390e30999a27deffe8",
   "entries": [
     {
       "action_required": false,
@@ -125,15 +125,15 @@
       "type": "Fixed"
     },
     {
-      "action_required": true,
+      "action_required": false,
       "area": "Integrations",
       "assets": [],
       "contributors": [],
       "id": "e2e8b98b-8707-5db3-acc4-7fce73125358",
       "in_app": true,
-      "markdown": "\nIntegration credentials and webhook signing secrets have tighter access controls.\n\n**Update integrations:** save signing secrets when created or rotated, stop relying on delivered clientState, and use the authorized workflow SDK for runtime secrets.",
+      "markdown": "\nIntegration credentials and webhook signing secrets have tighter access controls.\n\nSigning secrets are shown when created or rotated. Webhook deliveries omit clientState, and runtime secrets are available through the authorized workflow SDK.",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 3,
+      "revision": 4,
       "sources": [
         {
           "commit": "29f5ab1735e1039a36dddcf3fc521d2772210fd2",
@@ -245,15 +245,15 @@
       "type": "Fixed"
     },
     {
-      "action_required": true,
+      "action_required": false,
       "area": "Platform",
       "assets": [],
       "contributors": [],
       "id": "c001044d-7255-59ce-814f-070e6cc37aa8",
       "in_app": true,
-      "markdown": "\nSync protects Solution-owned resources and reports missing source instead of deleting entities.\n\n**Update sync:** Fetch before Commit, Sync, or Discard after changing files in Bifrost; review deletions through git sync.\n\n[Open GitHub Settings](/settings/github)",
+      "markdown": "\nSync protects Solution-owned resources and reports missing source instead of deleting entities.\n\nFetch changes made in Bifrost before Commit, Sync, or Discard; review deletions through git sync.\n\n[Open GitHub Settings](/settings/github)",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 3,
+      "revision": 4,
       "sources": [
         {
           "commit": "da56e589c55945a14190f66322f7dab6433fb411",
@@ -370,15 +370,15 @@
       "type": "New"
     },
     {
-      "action_required": true,
+      "action_required": false,
       "area": "Platform",
       "assets": [],
       "contributors": [],
       "id": "54ca0580-5047-5ba9-bf2f-8d33dba99e0b",
       "in_app": true,
-      "markdown": "\nTable updates check permissions before and after changes. Agent artifacts and WebSocket channels enforce caller scope; app embeds stay within app endpoints.\n\n**Check custom clients:** ordinary session tokens no longer read SDK secrets, and admin endpoints require Platform Admin. These restrictions are enforced; newer workflow permission checks remain report-only.",
+      "markdown": "\nTable updates check permissions before and after changes. Agent artifacts and WebSocket channels enforce caller scope; app embeds stay within app endpoints.\n\nSDK secrets require authorized workflow access, and admin endpoints require Platform Admin. These restrictions are enforced; newer workflow permission checks remain report-only.",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 3,
+      "revision": 4,
       "sources": [
         {
           "commit": "927327d4377af540d81cf07d9c3b7b4a4394dce7",
@@ -481,7 +481,7 @@
       "type": "Improved"
     },
     {
-      "action_required": true,
+      "action_required": false,
       "area": "Platform",
       "assets": [],
       "contributors": [],
@@ -489,7 +489,7 @@
       "in_app": false,
       "markdown": "\nUpdated pydantic-ai to 2.53.0 for [GHSA-6fqq-452j-qhrp](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-6fqq-452j-qhrp) and js-yaml to bound YAML merge CPU use.\n\n**Release review pending:** confirm applicability and CVE identifiers. The SimpleWebAuthn browser update mentions a separate server advisory; it does not establish that Bifrost used the affected server package.",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 3,
+      "revision": 4,
       "sources": [
         {
           "commit": "347a783251c7041ce5ccc95e50982724bdabea0d",
@@ -511,7 +511,7 @@
       "type": "Security"
     },
     {
-      "action_required": true,
+      "action_required": false,
       "area": "Administration",
       "assets": [
         {
@@ -524,9 +524,9 @@
       "contributors": [],
       "id": "0cf7ed8c-3fc1-5d28-b89b-09ca20a59262",
       "in_app": true,
-      "markdown": "\nChoose how long to keep completed runs, events, and audit records.\n\n**Before upgrading:** run and event history defaults to 30 days, including existing installs. Select **Keep forever** before cleanup to retain older runs; deleted run details have no archive. Existing installs retain audit archives indefinitely. New installs keep audits for 90 days in the database and 365 days in the archive.\n\n[Open Maintenance](/settings/maintenance)\n\n![Run history retention settings](assets/0cf7ed8c-3fc1-5d28-b89b-09ca20a59262/retention.png)",
+      "markdown": "Choose how long to keep completed runs, events, and audit records.\n\nRun and event history defaults to 30 days, including existing installs. Choose **Keep forever** to retain older runs; deleted run details aren\u2019t archived. Existing audit archives remain indefinitely. New installs keep audits for 90 days in the database and 365 days in the archive.\n\n[Open Maintenance](/settings/maintenance)\n\n![Run history retention settings](assets/0cf7ed8c-3fc1-5d28-b89b-09ca20a59262/retention.png)",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 4,
+      "revision": 5,
       "sources": [
         {
           "commit": "3d678951a2d187e31139ffcdd5a4dcc5f4a98209",
@@ -569,9 +569,9 @@
       "contributors": [],
       "id": "007e847d-a72e-5ae9-b0a8-ced754e74ffe",
       "in_app": true,
-      "markdown": "\nUpgrade the CLI/SDK with the platform: SDKs through 1.4.1 cannot parse the new execution response. Refresh external MCP clients for the renamed `bifrost_<noun>_<verb>` tools. The interactive local runner is removed; direct workflow runs remain. App management now requires Platform Admin.\n\n[Open MCP Settings](/settings/mcp)",
+      "markdown": "\n**CLI/SDK users:** upgrade to 1.4.2 or later with the platform. Versions through 1.4.1 cannot parse the new execution response. Refresh external MCP clients for the renamed `bifrost_<noun>_<verb>` tools. The interactive local runner is removed; direct workflow runs remain. App management now requires Platform Admin.\n\n[Open MCP Settings](/settings/mcp)",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 3,
+      "revision": 4,
       "sources": [
         {
           "commit": "4a9c6998e70bccdb679d02c9bbb1257081f44616",

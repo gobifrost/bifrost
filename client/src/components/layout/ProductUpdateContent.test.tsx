@@ -30,6 +30,13 @@ const entry: ProductUpdateEntry = {
 	],
 };
 describe("shared product update content", () => {
+	it("shows an ordinary update without an action-required label", () => {
+		renderWithProviders(
+			<UpdateEntry entry={{ ...entry, action_required: false }} />,
+		);
+		expect(screen.queryByText("Action Required")).not.toBeInTheDocument();
+	});
+
 	it("groups updates by their displayed date, newest first, with one date heading per group", () => {
 		const earlier = {
 			...entry,

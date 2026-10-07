@@ -11,7 +11,7 @@
 
 Integration credentials and webhook signing secrets have tighter access controls.
 
-**Update integrations:** save signing secrets when created or rotated, stop relying on delivered clientState, and use the authorized workflow SDK for runtime secrets.
+Signing secrets are shown when created or rotated. Webhook deliveries omit clientState, and runtime secrets are available through the authorized workflow SDK.
 
 Sources: [#845](https://github.com/gobifrost/bifrost/pull/845), [#870](https://github.com/gobifrost/bifrost/pull/870), [#871](https://github.com/gobifrost/bifrost/pull/871), [#874](https://github.com/gobifrost/bifrost/pull/874)
 
@@ -20,7 +20,7 @@ Sources: [#845](https://github.com/gobifrost/bifrost/pull/845), [#870](https://g
 
 Table updates check permissions before and after changes. Agent artifacts and WebSocket channels enforce caller scope; app embeds stay within app endpoints.
 
-**Check custom clients:** ordinary session tokens no longer read SDK secrets, and admin endpoints require Platform Admin. These restrictions are enforced; newer workflow permission checks remain report-only.
+SDK secrets require authorized workflow access, and admin endpoints require Platform Admin. These restrictions are enforced; newer workflow permission checks remain report-only.
 
 Sources: [#791](https://github.com/gobifrost/bifrost/pull/791), [#813](https://github.com/gobifrost/bifrost/pull/813), [#814](https://github.com/gobifrost/bifrost/pull/814), [#815](https://github.com/gobifrost/bifrost/pull/815), [#817](https://github.com/gobifrost/bifrost/pull/817)
 
@@ -35,36 +35,10 @@ Sources: [#718](https://github.com/gobifrost/bifrost/pull/718), [#910](https://g
 
 ## Action Required
 
-### Safer Sync and Reimport
-
-
-Sync protects Solution-owned resources and reports missing source instead of deleting entities.
-
-**Update sync:** Fetch before Commit, Sync, or Discard after changing files in Bifrost; review deletions through git sync.
-
-**Open GitHub Settings** (in Bifrost)
-
-Sources: [#864](https://github.com/gobifrost/bifrost/pull/864), [#867](https://github.com/gobifrost/bifrost/pull/867), [#868](https://github.com/gobifrost/bifrost/pull/868), [#875](https://github.com/gobifrost/bifrost/pull/875), [#891](https://github.com/gobifrost/bifrost/pull/891)
-
-### Set History Retention
-
-
-Choose how long to keep completed runs, events, and audit records.
-
-**Before upgrading:** run and event history defaults to 30 days, including existing installs. Select **Keep forever** before cleanup to retain older runs; deleted run details have no archive. Existing installs retain audit archives indefinitely. New installs keep audits for 90 days in the database and 365 days in the archive.
-
-**Open Maintenance** (in Bifrost)
-
-![Run history retention settings](https://raw.githubusercontent.com/gobifrost/bifrost/2ac8231e74e3d4bc0f09e727d5af65e2a38c0a70/product-updates/assets/0cf7ed8c-3fc1-5d28-b89b-09ca20a59262/retention.png)
-
-Choose a retention period or keep finished runs and events indefinitely.
-
-Sources: [#905](https://github.com/gobifrost/bifrost/pull/905), [#908](https://github.com/gobifrost/bifrost/pull/908)
-
 ### Update the CLI and MCP Clients
 
 
-Upgrade the CLI/SDK with the platform: SDKs through 1.4.1 cannot parse the new execution response. Refresh external MCP clients for the renamed `bifrost_<noun>_<verb>` tools. The interactive local runner is removed; direct workflow runs remain. App management now requires Platform Admin.
+**CLI/SDK users:** upgrade to 1.4.2 or later with the platform. Versions through 1.4.1 cannot parse the new execution response. Refresh external MCP clients for the renamed `bifrost_<noun>_<verb>` tools. The interactive local runner is removed; direct workflow runs remain. App management now requires Platform Admin.
 
 **Open MCP Settings** (in Bifrost)
 
@@ -79,7 +53,7 @@ See a user's effective access, role assignments, and organization scope. Workflo
 
 **Open Users** (in Bifrost) · **Open Roles** (in Bifrost)
 
-![Effective access and role assignments](https://raw.githubusercontent.com/gobifrost/bifrost/2ac8231e74e3d4bc0f09e727d5af65e2a38c0a70/product-updates/assets/fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8/effective-access.png)
+![Effective access and role assignments](https://raw.githubusercontent.com/gobifrost/bifrost/963a1d7e5d6b3be401cc22390e30999a27deffe8/product-updates/assets/fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8/effective-access.png)
 
 A user's effective permissions and organization scope.
 
@@ -109,6 +83,17 @@ Sources: [#788](https://github.com/gobifrost/bifrost/pull/788), [#789](https://g
 Solution backups restore file inventories and table documents correctly, including large encrypted archives.
 
 Sources: [#878](https://github.com/gobifrost/bifrost/pull/878), [#880](https://github.com/gobifrost/bifrost/pull/880), [#881](https://github.com/gobifrost/bifrost/pull/881), [#882](https://github.com/gobifrost/bifrost/pull/882), [#899](https://github.com/gobifrost/bifrost/pull/899), [#901](https://github.com/gobifrost/bifrost/pull/901), [#902](https://github.com/gobifrost/bifrost/pull/902), [#907](https://github.com/gobifrost/bifrost/pull/907)
+
+### Safer Sync and Reimport
+
+
+Sync protects Solution-owned resources and reports missing source instead of deleting entities.
+
+Fetch changes made in Bifrost before Commit, Sync, or Discard; review deletions through git sync.
+
+**Open GitHub Settings** (in Bifrost)
+
+Sources: [#864](https://github.com/gobifrost/bifrost/pull/864), [#867](https://github.com/gobifrost/bifrost/pull/867), [#868](https://github.com/gobifrost/bifrost/pull/868), [#875](https://github.com/gobifrost/bifrost/pull/875), [#891](https://github.com/gobifrost/bifrost/pull/891)
 
 ### Compare Workflow Resource Use
 
@@ -156,6 +141,20 @@ Test an AI profile with a real model request before using it in an agent.
 Sources: [#807](https://github.com/gobifrost/bifrost/pull/807), [#809](https://github.com/gobifrost/bifrost/pull/809), [#850](https://github.com/gobifrost/bifrost/pull/850), [#853](https://github.com/gobifrost/bifrost/pull/853), [#855](https://github.com/gobifrost/bifrost/pull/855), [#861](https://github.com/gobifrost/bifrost/pull/861)
 
 Credits: [wilhil](https://github.com/wilhil) (#807)
+
+### Set History Retention
+
+Choose how long to keep completed runs, events, and audit records.
+
+Run and event history defaults to 30 days, including existing installs. Choose **Keep forever** to retain older runs; deleted run details aren’t archived. Existing audit archives remain indefinitely. New installs keep audits for 90 days in the database and 365 days in the archive.
+
+**Open Maintenance** (in Bifrost)
+
+![Run history retention settings](https://raw.githubusercontent.com/gobifrost/bifrost/963a1d7e5d6b3be401cc22390e30999a27deffe8/product-updates/assets/0cf7ed8c-3fc1-5d28-b89b-09ca20a59262/retention.png)
+
+Choose a retention period or keep finished runs and events indefinitely.
+
+Sources: [#905](https://github.com/gobifrost/bifrost/pull/905), [#908](https://github.com/gobifrost/bifrost/pull/908)
 
 ### Search Workspace and Solution Source
 

@@ -86,6 +86,8 @@ test("admin sees new updates automatically and reopens history from Help", async
 	await expect(history.getByRole("link", { name: "Done", exact: true })).toBeVisible();
 	await expect(history.getByText("models.dev", { exact: false })).toHaveCount(0);
 	await expect(history.getByRole("heading", { name: "Dependency Security Updates" })).toHaveCount(0);
+	await expect(history.getByText("Action Required", { exact: true })).toHaveCount(1);
+	await expect(history.getByText("CLI/SDK users:", { exact: true })).toBeVisible();
 	await history.screenshot({
 		animations: "disabled",
 		path: testInfo.outputPath("whats-new-mobile.png"),

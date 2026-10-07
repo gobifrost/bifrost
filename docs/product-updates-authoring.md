@@ -19,6 +19,13 @@ Action Required). Image markup and URL targets do not consume the body budget.
 A word limit checks length, not quality: the human content review must also check
 this standard and retain copy-review evidence in the existing review record.
 
+Set `action_required: true` only when an affected customer must take a concrete
+step to keep an existing setup working after the upgrade. Name that audience,
+state the required step, and retain evidence of the incompatibility. Optional
+settings choices, ordinary workflow guidance, stronger access controls, and
+internal release-review tasks do not earn this label. Explain consequential
+defaults plainly even when no action is required.
+
 Use verified installation-relative routes for app links. All links in the app
 notes open in a new tab. GitHub rendering keeps app-link labels as plain directions
 because each installation has its own URL; it never invents a deployment URL.
