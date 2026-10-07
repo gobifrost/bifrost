@@ -1642,6 +1642,18 @@
           "Required announcement activation within the user-approved production delivery scope."
         ]
       }
+    },
+    "pr:926": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/926",
+          "User authorized verified security-maintenance repairs and merge on 2026-10-07; 139 targeted tests passed."
+        ]
+      },
+      "reason": "Internal test clarity and collection repairs; no customer-facing functionality change."
     }
   }
 }
