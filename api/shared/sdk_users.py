@@ -219,7 +219,6 @@ async def list_users(
     sort_direction: Literal["asc", "desc"] = "asc",
     limit: int | None = None,
     offset: int = 0,
-    identities: Literal["only"] | None = None,
 ) -> tuple[list[UserPublic], int]:
     """List the users ``caller`` may read (users.read), filtered before
     counting and paging.
@@ -230,8 +229,7 @@ async def list_users(
     invite status. Defaults match the historical handler (legacy email
     order, unbounded when ``limit`` is None).
 
-    People only, unless ``identities="only"``, which lists identities
-    instead (and only them), decided the same way.
+    People only: identities are listed by ``GET /api/identities``.
 
     ``scope``: omitted for every user the caller reaches, ``"global"`` for
     Global users only, or an organization id for exactly that organization.
@@ -253,7 +251,7 @@ async def list_users(
     reach = operation_reach(caller, "users.list")
     query = select(UserORM).where(
         UserORM.is_system.is_(False),
-        UserORM.identity_kind.is_not(None) if identities == "only" else UserORM.identity_kind.is_(None),
+        UserORM.identity_kind.is_(None),
     )
     if scope == "global":
         require_operation(caller, "users.list", GLOBAL)

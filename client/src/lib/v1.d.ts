@@ -32282,8 +32282,6 @@ export interface operations {
                 limit?: number | null;
                 /** @description Rows to skip when limit is set */
                 offset?: number;
-                /** @description 'only' lists identities instead of people; omit for people */
-                identities?: "only" | null;
             };
             header?: never;
             path?: never;

@@ -14,7 +14,6 @@ from typing import Any
 
 import pytest
 
-from shared.identities import IDENTITY_EMAIL_DOMAIN
 from src.core.constants import PROVIDER_ORG_ID
 from tests.e2e.conftest import write_and_register
 from tests.e2e.fixtures.setup import _register_and_authenticate_user
@@ -182,10 +181,6 @@ def test_create_custom_in_organization_and_global(e2e_client, platform_admin, wo
     assert in_org in listed and global_one in listed
     people = _ok(e2e_client.get("/api/users", headers=admin, params={"include_inactive": True}))
     assert in_org["id"] not in {person["id"] for person in people}
-
-    only = _ok(e2e_client.get("/api/users", headers=admin, params={"identities": "only"}))
-    row = next(user for user in only if user["id"] == in_org["id"])
-    assert row["identity_kind"] == "custom" and row["email"].endswith("@" + IDENTITY_EMAIL_DOMAIN)
 
 
 def test_create_refuses_bad_input(e2e_client, platform_admin, world) -> None:
@@ -398,10 +393,6 @@ def test_operator_reads_only_what_it_reaches_and_changes_nothing(e2e_client, pla
     assert e2e_client.patch(f"/api/identities/{custom['id']}", headers=operator, json={"name": "Nope"}).status_code == 403
     assert e2e_client.delete(f"/api/identities/{custom['id']}", headers=operator).status_code == 403
 
-    # An Operator reads the identities through the user list, too, inside the same reach.
-    only = _ok(e2e_client.get("/api/users", headers=operator, params={"identities": "only"}))
-    assert {u["organization_id"] for u in only} == organizations
-
 
 def test_lifecycle_holder_changes_identities_at_their_organization(e2e_client, platform_admin, world) -> None:
     holder, admin = world["lifecycle"].headers, platform_admin.headers
@@ -431,15 +422,12 @@ def test_plain_user_is_refused(e2e_client, world) -> None:
     assert _create(e2e_client, plain, "Nope", world["contoso"]["id"]).status_code == 403
     assert e2e_client.patch(f"/api/identities/{default['id']}", headers=plain, json={"name": "Nope"}).status_code == 403
     assert e2e_client.delete(f"/api/identities/{default['id']}", headers=plain).status_code == 403
-    assert e2e_client.get("/api/users", headers=plain, params={"identities": "only"}).status_code == 403
 
 
-def test_user_list_keeps_people_and_identities_apart(e2e_client, platform_admin, world) -> None:
+def test_user_list_excludes_identities(e2e_client, platform_admin, world) -> None:
     admin = platform_admin.headers
+    default = _default(e2e_client, admin, world["contoso"]["id"])
     people = _ok(e2e_client.get("/api/users", headers=admin, params={"scope": world["contoso"]["id"]}))
     assert {person["email"] for person in people} >= {world["plain"].email, world["lifecycle"].email}
     assert all(person["identity_kind"] is None for person in people)
-
-    only = _ok(e2e_client.get("/api/users", headers=admin, params={"scope": world["contoso"]["id"], "identities": "only"}))
-    assert only and all(user["identity_kind"] is not None for user in only)
-    assert world["plain"].email not in {user["email"] for user in only}
+    assert default["id"] not in {person["id"] for person in people}
