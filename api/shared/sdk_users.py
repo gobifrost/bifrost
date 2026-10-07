@@ -802,7 +802,9 @@ async def bulk_update_users(
         if u.is_system:
             fail(uid, "System user cannot be modified")
             continue
-        if u.identity_kind is not None:
+        # Identities take roles like anyone (built-in base roles stay put below);
+        # moving or deactivating one is not a person's lifecycle.
+        if u.identity_kind is not None and request.operation != "replace_roles":
             fail(uid, IDENTITY_MANAGEMENT_MESSAGE)
             continue
         if request.operation in ("replace_roles", "set_active") and uid == actor_id:
