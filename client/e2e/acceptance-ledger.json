@@ -840,6 +840,48 @@
 					"proof": "real-platform"
 				}
 			]
+		},
+		{
+			"id": "IDENTITY-01",
+			"area": "Users",
+			"title": "IDENTITY-01 creates, opens, renames and deletes a custom identity",
+			"tests": [
+				{
+					"spec": "identities.admin.spec.ts",
+					"title": "IDENTITY-01 creates, opens, renames and deletes a custom identity",
+					"project": "platform-admin",
+					"variant": "desktop",
+					"proof": "real-platform"
+				}
+			]
+		},
+		{
+			"id": "WORKFLOW-ACCESS-01",
+			"area": "Workflows",
+			"title": "WORKFLOW-ACCESS-01 chooses who a workflow runs as unattended",
+			"tests": [
+				{
+					"spec": "workflow-access.admin.spec.ts",
+					"title": "WORKFLOW-ACCESS-01 chooses who a workflow runs as unattended",
+					"project": "platform-admin",
+					"variant": "desktop",
+					"proof": "real-platform"
+				}
+			]
+		},
+		{
+			"id": "TEST-ACCESS-01",
+			"area": "Users",
+			"title": "TEST-ACCESS-01 tests a person's access and reads the live trace",
+			"tests": [
+				{
+					"spec": "test-access.admin.spec.ts",
+					"title": "TEST-ACCESS-01 tests a person's access and reads the live trace",
+					"project": "platform-admin",
+					"variant": "desktop",
+					"proof": "real-platform"
+				}
+			]
 		}
 	],
 	"inventoryScope": "Supported route families, settings panels, and primary user journeys. Detailed action dispositions and lower-layer/external limits are in docs/design-modernization/acceptance-closure-matrix.md; this is not every interaction permutation."

@@ -20,10 +20,14 @@ async function createDeniedFileRead(page: Page, path: string) {
 	}, path);
 }
 
-test("filters policy denials by file path", async ({ page }) => {
+test("filters policy denials by file path and opens one in the detail drawer", async ({
+	page,
+}) => {
 	const path = `browser-denial-${Date.now()}.txt`;
 	await page.goto("/audit");
-	await expect(page.getByRole("heading", { name: "Audit Log" })).toBeVisible();
+	await expect(
+		page.getByRole("heading", { name: "Audit Log" }),
+	).toBeVisible();
 	expect(await createDeniedFileRead(page, path)).toBe(403);
 
 	await page.getByRole("combobox", { name: "Action filter" }).click();
@@ -35,5 +39,23 @@ test("filters policy denials by file path", async ({ page }) => {
 		.fill(path);
 
 	await expect(page.getByText(`audit-browser / ${path}`)).toBeVisible();
-	await expect(page.getByText("policy.deny", { exact: true })).toBeVisible();
+	const opener = page.getByRole("button", {
+		name: "policy.deny",
+		exact: true,
+	});
+	await expect(opener).toBeVisible();
+
+	await opener.click();
+	const drawer = page.getByRole("dialog", { name: "Audit Event" });
+	await expect(drawer.getByText(path, { exact: true })).toBeVisible();
+	await page.keyboard.press("Escape");
+	await expect(drawer).toBeHidden();
+	await expect(opener).toBeFocused();
+});
+
+test("Access Checks shows its empty state when no check would be denied", async ({
+	page,
+}) => {
+	await page.goto("/audit/access-checks");
+	await expect(page.getByText("No Would-Deny Checks")).toBeVisible();
 });
