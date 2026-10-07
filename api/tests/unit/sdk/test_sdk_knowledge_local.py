@@ -53,7 +53,8 @@ class TestEngineRequestFacade:
             ) == [doc["id"]]
             results = await knowledge.search("hello", namespace="ns")
             assert [d.key for d in results] == ["k"]
-            assert await knowledge.delete("k", namespace="ns") is True
+            deleted = await knowledge.delete("k", namespace="ns")
+            assert deleted is True
             assert await knowledge.delete_namespace("ns") == 2
             namespaces = await knowledge.list_namespaces()
             assert [n.namespace for n in namespaces] == ["ns"]

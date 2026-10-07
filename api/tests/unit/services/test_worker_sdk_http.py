@@ -1527,9 +1527,8 @@ class TestEngineLocalTransportSelection:
                 )
                 listed = await bifrost_config.list(scope="global")
                 assert listed[key] == "socket-crud"
-                assert (
-                    await bifrost_config.delete(key, scope="global") is True
-                )
+                deleted = await bifrost_config.delete(key, scope="global")
+                assert deleted is True
                 assert (
                     await bifrost_config.get(
                         key, default="gone", scope="global"
@@ -1555,7 +1554,8 @@ class TestEngineLocalTransportSelection:
             with _no_cache():
                 await bifrost_config.set(key, big, scope="global")
                 assert await bifrost_config.get(key, scope="global") == big
-                assert await bifrost_config.delete(key, scope="global") is True
+                deleted = await bifrost_config.delete(key, scope="global")
+                assert deleted is True
         finally:
             await server.stop()
 
