@@ -1,6 +1,10 @@
 /** Access-trace steps as people read them: Title Case labels and plain sentences for the server's machine reasons. */
 
-import type { AccessStep } from "@/services/access";
+import type {
+	AccessStep,
+	AccessTrace,
+	NowUnavailable,
+} from "@/services/access";
 
 /** Names for the ids a step's reason and facts carry. */
 export interface TraceNames {
@@ -164,4 +168,80 @@ export function stepSentence(
 		permission: () => permissionSentence(step, names, runUserId),
 	};
 	return sentences[step.key]?.() ?? step.reason;
+}
+
+/** The step that would stop `trace`, if any. */
+export function stoppedStep(trace: AccessTrace): AccessStep | undefined {
+	return trace.steps.find((step) => step.status === "stopped");
+}
+
+/** Keys of the steps that decided differently now than then. */
+export function changedStepKeys(
+	then: AccessTrace,
+	now: AccessTrace,
+): Set<string> {
+	const before = new Map(then.steps.map((step) => [step.key, step]));
+	return new Set(
+		now.steps
+			.filter((step) => {
+				const earlier = before.get(step.key);
+				return (
+					earlier?.status !== step.status ||
+					earlier.reason !== step.reason
+				);
+			})
+			.map((step) => step.key),
+	);
+}
+
+/** One sentence for what changed between a stored check and now. */
+export function changeSentence(then: AccessTrace, now: AccessTrace): string {
+	if (changedStepKeys(then, now).size === 0)
+		return "Nothing changed since then.";
+	const stop = stoppedStep(now);
+	return stop
+		? `Now this check would stop at ${stepTitle(stop.label)}.`
+		: "Now this check would be allowed.";
+}
+
+/** Why a stored check can't be judged again, as a sentence. */
+export function nowUnavailableSentence(reason: NowUnavailable): string {
+	return {
+		rows_not_stored:
+			"Table row checks can't be tested again: the rows aren't stored.",
+		run_user_missing:
+			"The user or identity it ran as no longer exists, so this check can't be tested again.",
+		workflow_missing:
+			"The workflow no longer exists, so this check can't be tested again.",
+		solution_not_recorded:
+			"This file check was recorded before its Solution was stored with it, so it can't be tested again.",
+	}[reason];
+}
+
+const CHECK_KINDS: Record<string, string> = {
+	scope_switch: "Organization Switch",
+	child_run: "Child Run",
+	run_as: "Run As",
+	entry: "Workflow or Agent Access",
+	policy: "Data Policy",
+	secret: "Secret",
+};
+
+/** An access check's kind (its resource type) in Title Case. */
+export function checkKindTitle(kind: string): string {
+	return CHECK_KINDS[kind] ?? stepTitle(kind.replaceAll("_", " "));
+}
+
+function isTrace(value: unknown): value is AccessTrace {
+	if (typeof value !== "object" || value === null) return false;
+	const trace = value as Partial<AccessTrace>;
+	return typeof trace.outcome === "string" && Array.isArray(trace.steps);
+}
+
+/** The trace an `access.check` event stored in its details. */
+export function storedTrace(
+	details: Record<string, unknown> | null | undefined,
+): AccessTrace | undefined {
+	const trace = details?.trace;
+	return isTrace(trace) ? trace : undefined;
 }

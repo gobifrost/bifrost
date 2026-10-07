@@ -1,8 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import type { AccessStep } from "@/services/access";
+import type { AccessStep, AccessTrace } from "@/services/access";
 
-import { stepSentence, stepTitle, type TraceNames } from "./access-trace";
+import {
+	changeSentence,
+	changedStepKeys,
+	checkKindTitle,
+	nowUnavailableSentence,
+	stepSentence,
+	stepTitle,
+	stoppedStep,
+	storedTrace,
+	type TraceNames,
+} from "./access-trace";
 
 const names: TraceNames = {
 	role: (id) => ({ "role-helpdesk": "Helpdesk" })[id],
@@ -150,5 +160,109 @@ describe("stepSentence", () => {
 		expect(sentence(step("permission", "denied:something_new"))).toBe(
 			"denied:something_new",
 		);
+	});
+});
+
+function trace(
+	outcome: AccessTrace["outcome"],
+	...steps: AccessStep[]
+): AccessTrace {
+	return { outcome, enforced: false, steps };
+}
+
+const allowedThen = trace(
+	"success",
+	step("run_user", "person"),
+	step("target", "home"),
+	step("permission", "base_role:tables.read"),
+);
+const stoppedNow = trace(
+	"failure",
+	{ ...step("run_user", "person"), label: "Run user" },
+	{ ...step("target", "outside", {}, "stopped"), label: "Target in reach" },
+	step("permission", "", {}, "not_reached"),
+);
+
+describe("changedStepKeys", () => {
+	it("names the steps whose status or reason differ", () => {
+		expect([...changedStepKeys(allowedThen, stoppedNow)]).toEqual([
+			"target",
+			"permission",
+		]);
+	});
+
+	it("is empty when nothing changed", () => {
+		expect(changedStepKeys(allowedThen, allowedThen).size).toBe(0);
+	});
+});
+
+describe("changeSentence", () => {
+	it("says nothing changed", () => {
+		expect(changeSentence(allowedThen, allowedThen)).toBe(
+			"Nothing changed since then.",
+		);
+	});
+
+	it("names the step the check would now stop at", () => {
+		expect(changeSentence(allowedThen, stoppedNow)).toBe(
+			"Now this check would stop at Target in Reach.",
+		);
+	});
+
+	it("says the check would now be allowed", () => {
+		expect(changeSentence(stoppedNow, allowedThen)).toBe(
+			"Now this check would be allowed.",
+		);
+	});
+});
+
+describe("stoppedStep", () => {
+	it("finds the step that would stop the check", () => {
+		expect(stoppedStep(stoppedNow)?.key).toBe("target");
+		expect(stoppedStep(allowedThen)).toBeUndefined();
+	});
+});
+
+describe("storedTrace", () => {
+	it("reads the trace an access check stored", () => {
+		expect(storedTrace({ trace: stoppedNow })).toEqual(stoppedNow);
+	});
+
+	it("is undefined without a stored trace", () => {
+		expect(storedTrace(null)).toBeUndefined();
+		expect(storedTrace({ trace: "nope" })).toBeUndefined();
+		expect(storedTrace({ trace: { outcome: "failure" } })).toBeUndefined();
+	});
+});
+
+describe("nowUnavailableSentence", () => {
+	it("explains why a check can't be judged again", () => {
+		expect(nowUnavailableSentence("workflow_missing")).toBe(
+			"The workflow no longer exists, so this check can't be tested again.",
+		);
+		expect(nowUnavailableSentence("run_user_missing")).toBe(
+			"The user or identity it ran as no longer exists, so this check can't be tested again.",
+		);
+		expect(nowUnavailableSentence("rows_not_stored")).toBe(
+			"Table row checks can't be tested again: the rows aren't stored.",
+		);
+		expect(nowUnavailableSentence("solution_not_recorded")).toBe(
+			"This file check was recorded before its Solution was stored with it, so it can't be tested again.",
+		);
+	});
+});
+
+describe("checkKindTitle", () => {
+	it("names each kind of access check in Title Case", () => {
+		expect(checkKindTitle("scope_switch")).toBe("Organization Switch");
+		expect(checkKindTitle("child_run")).toBe("Child Run");
+		expect(checkKindTitle("run_as")).toBe("Run As");
+		expect(checkKindTitle("entry")).toBe("Workflow or Agent Access");
+		expect(checkKindTitle("policy")).toBe("Data Policy");
+		expect(checkKindTitle("secret")).toBe("Secret");
+	});
+
+	it("title-cases a kind it doesn't know", () => {
+		expect(checkKindTitle("new_kind")).toBe("New Kind");
 	});
 });

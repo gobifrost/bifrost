@@ -25,6 +25,7 @@ import { Button } from "@/components/ui/button";
 import { AuditFilters } from "./AuditFilters";
 import { AuditRetentionBanner } from "./AuditRetentionBanner";
 import { AuditExportDialog } from "./AuditExportDialog";
+import { AuditEventDrawer } from "@/components/audit/AuditEventDrawer";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent } from "@/components/ui/card";
@@ -60,6 +61,16 @@ export function AuditLogPage() {
 	const [continuationTokens, setContinuationTokens] = useState<string[]>([]);
 	const [currentPage, setCurrentPage] = useState(0);
 	const [exportOpen, setExportOpen] = useState(false);
+	const [selected, setSelected] = useState<{
+		entry: AuditLogEntry;
+		opener: HTMLElement | null;
+	}>();
+	const [drawerOpen, setDrawerOpen] = useState(false);
+
+	const openEvent = (entry: AuditLogEntry, opener: HTMLElement | null) => {
+		setSelected({ entry, opener });
+		setDrawerOpen(true);
+	};
 
 	const resetPagination = () => {
 		setContinuationTokens([]);
@@ -273,16 +284,38 @@ export function AuditLogPage() {
 									</DataTableHeader>
 									<DataTableBody>
 										{entries.map((entry: AuditLogEntry) => (
-											<DataTableRow key={entry.id}>
+											<DataTableRow
+												key={entry.id}
+												clickable
+												onClick={(event) =>
+													openEvent(
+														entry,
+														event.currentTarget.querySelector(
+															"button",
+														),
+													)
+												}
+											>
 												<DataTableCell className="font-mono text-xs whitespace-nowrap">
 													{new Date(
 														entry.timestamp,
 													).toLocaleString()}
 												</DataTableCell>
 												<DataTableCell>
-													<Badge variant="secondary">
-														{entry.action}
-													</Badge>
+													<button
+														type="button"
+														className="rounded-[var(--bf-radius-control)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+														onClick={(event) =>
+															openEvent(
+																entry,
+																event.currentTarget,
+															)
+														}
+													>
+														<Badge variant="secondary">
+															{entry.action}
+														</Badge>
+													</button>
 												</DataTableCell>
 												<DataTableCell>
 													<AuditOutcome
@@ -319,6 +352,7 @@ export function AuditLogPage() {
 								<AuditEventCards
 									entries={entries}
 									context={auditContext}
+									onOpen={openEvent}
 								/>
 							)}
 							<AuditPagination
@@ -348,6 +382,12 @@ export function AuditLogPage() {
 					)}
 				</div>
 			</PageScrollArea>
+			<AuditEventDrawer
+				entry={selected?.entry}
+				open={drawerOpen}
+				onOpenChange={setDrawerOpen}
+				returnFocus={selected?.opener}
+			/>
 			{exportOpen && (
 				<AuditExportDialog
 					defaultAction={actionGroup === "All" ? "" : actionGroup}

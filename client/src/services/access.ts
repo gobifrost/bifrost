@@ -12,6 +12,9 @@ export type AccessRow = components["schemas"]["AccessRow"];
 export type UserAccessMap = components["schemas"]["UserAccessMap"];
 export type AccessTrace = components["schemas"]["AccessTrace"];
 export type AccessStep = components["schemas"]["AccessStep"];
+export type AccessExplanation = components["schemas"]["AccessExplanation"];
+/** Why a stored access check can't be judged again now. */
+export type NowUnavailable = NonNullable<AccessExplanation["now_unavailable"]>;
 
 /** Prefix of every access-map query key; mutations that change access invalidate it. */
 export const USER_ACCESS_QUERY_KEY = [

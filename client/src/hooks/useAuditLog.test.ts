@@ -6,7 +6,7 @@ vi.mock("@/lib/api-client", () => ({
 	$api: { useQuery: (...args: unknown[]) => mockUseQuery(...args) },
 }));
 
-import { useAuditLog } from "./useAuditLog";
+import { useAuditExplain, useAuditGroups, useAuditLog } from "./useAuditLog";
 
 describe("useAuditLog", () => {
 	beforeEach(() => {
@@ -60,5 +60,51 @@ describe("useAuditLog", () => {
 		expect(
 			changedFilterOptions.placeholderData(previousData, previousQuery),
 		).toBeUndefined();
+	});
+});
+
+describe("useAuditGroups", () => {
+	beforeEach(() => {
+		mockUseQuery.mockReset();
+	});
+
+	it("groups the filtered audit log by the chosen key", () => {
+		useAuditGroups("resource_type", {
+			action: "access.check",
+			outcome: "failure",
+		});
+
+		expect(mockUseQuery).toHaveBeenCalledWith("get", "/api/audit", {
+			params: {
+				query: {
+					action: "access.check",
+					outcome: "failure",
+					group_by: "resource_type",
+				},
+			},
+		});
+	});
+});
+
+describe("useAuditExplain", () => {
+	beforeEach(() => {
+		mockUseQuery.mockReset();
+	});
+
+	it("explains one event, only once asked", () => {
+		useAuditExplain("event-1", false);
+
+		expect(mockUseQuery).toHaveBeenCalledWith(
+			"get",
+			"/api/audit/{event_id}/explain",
+			{ params: { path: { event_id: "event-1" } } },
+			{ enabled: false, retry: false },
+		);
+
+		useAuditExplain("event-1", true);
+		expect(mockUseQuery.mock.calls[1][3]).toEqual({
+			enabled: true,
+			retry: false,
+		});
 	});
 });

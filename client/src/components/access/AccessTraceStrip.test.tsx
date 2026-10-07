@@ -170,4 +170,23 @@ describe("AccessTraceStrip", () => {
 
 		for (const step of steps()) expect(step.style.opacity).not.toBe("0");
 	});
+
+	it("marks the steps that changed, by name and ring", () => {
+		render(
+			<AccessTraceStrip
+				trace={blocked}
+				names={names}
+				label="Now"
+				changed={new Set(["target"])}
+			/>,
+		);
+
+		const list = screen.getByRole("list", { name: "Now" });
+		const [, , , target, permission] =
+			within(list).getAllByRole("listitem");
+		expect(target).toHaveTextContent("Changed");
+		expect(target).toHaveClass("ring-2");
+		expect(permission).not.toHaveTextContent("Changed");
+		expect(permission).not.toHaveClass("ring-2");
+	});
 });

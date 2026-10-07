@@ -13,19 +13,12 @@ import {
 	CommandList,
 } from "@/components/ui/command";
 import { Label } from "@/components/ui/label";
-import { useOrganizations } from "@/hooks/useOrganizations";
+import { useTraceNames } from "@/hooks/useTraceNames";
 import { useWorkflowsMetadata } from "@/hooks/useWorkflows";
 import { OPERATION_SUGGESTIONS } from "@/lib/access-operations";
-import type { TraceNames } from "@/lib/access-trace";
 import { getErrorMessage } from "@/lib/api-error";
 import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
-import { permissionDisplayName, permissionParts } from "@/lib/permission-words";
-import {
-	useCheckUserAccess,
-	usePermissionCatalog,
-	useUserAccessMap,
-	type AccessTrace,
-} from "@/services/access";
+import { useCheckUserAccess, type AccessTrace } from "@/services/access";
 import { useAuthorization } from "@/services/authorization";
 
 /** The organization choice the access check names Global by. */
@@ -109,11 +102,7 @@ export function TestAccessPanel({
 	defaultOrganizationId?: string;
 }) {
 	const authorization = useAuthorization();
-	const accessQuery = useUserAccessMap(subjectId);
-	const catalogQuery = usePermissionCatalog();
-	const organizationsQuery = useOrganizations({
-		enabled: authorization.canAnywhere("organizations.read"),
-	});
+	const { names, organizationNames } = useTraceNames(subjectId);
 	const workflowsQuery = useWorkflowsMetadata({
 		enabled: authorization.canAnywhere("workflows.read"),
 	});
@@ -130,17 +119,6 @@ export function TestAccessPanel({
 	// an earlier request is never shown under the new selections.
 	const requestRef = useRef(0);
 
-	// Organization names from the organizations list and the subject's reach.
-	const map = accessQuery.data;
-	const organizationNames = new Map<string, string>();
-	for (const { id, name } of organizationsQuery.data ?? [])
-		organizationNames.set(id, name);
-	for (const place of map?.reach ?? [])
-		if (place.organization_id && place.organization_name)
-			organizationNames.set(
-				place.organization_id,
-				place.organization_name,
-			);
 	const canTestAt = (organizationId: string | null) =>
 		authorization.canAt(
 			TEST_PERMISSION,
@@ -167,24 +145,6 @@ export function TestAccessPanel({
 			icon: Workflow,
 		})),
 	];
-
-	const roleNames = new Map<string, string>();
-	for (const row of map?.rows ?? [])
-		for (const grant of row.grants)
-			for (const source of grant.sources)
-				roleNames.set(source.role_id, source.role_name);
-	const names: TraceNames = {
-		role: (id) => roleNames.get(id),
-		organization: (id) => organizationNames.get(id),
-		permission: (permission) =>
-			permissionDisplayName(
-				permission,
-				catalogQuery.data?.find(
-					(entry) =>
-						entry.domain === permissionParts(permission).domain,
-				),
-			),
-	};
 
 	const changed =
 		<T,>(set: (value: T) => void) =>

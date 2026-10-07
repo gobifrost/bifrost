@@ -52,15 +52,20 @@ function runUserId(trace: AccessTrace): string | undefined {
 
 /**
  * An access trace, step by step: what each check decided and why, the step
- * that would stop it in amber, and the report-only outcome. Steps reveal in
- * sequence on the feedback token's stagger; reduced motion shows them at once.
+ * that would stop it in amber, and the report-only outcome. Steps in
+ * `changed` (keys) are ringed and marked Changed. Steps reveal in sequence
+ * on the feedback token's stagger; reduced motion shows them at once.
  */
 export function AccessTraceStrip({
 	trace,
 	names,
+	label = "Access Trace",
+	changed,
 }: {
 	trace: AccessTrace;
 	names: TraceNames;
+	label?: string;
+	changed?: ReadonlySet<string>;
 }) {
 	const reduceMotion = useReducedMotion();
 	const stagger = motionSeconds("--bf-motion-feedback");
@@ -78,7 +83,7 @@ export function AccessTraceStrip({
 	return (
 		<div className="space-y-4">
 			<motion.ol
-				aria-label="Access Trace"
+				aria-label={label}
 				className="space-y-1"
 				initial={reduceMotion ? false : "hidden"}
 				animate="shown"
@@ -89,6 +94,7 @@ export function AccessTraceStrip({
 					const Icon = status.icon;
 					const sentence = stepSentence(step, names, user);
 					const last = index === trace.steps.length - 1;
+					const isChanged = changed?.has(step.key) ?? false;
 					return (
 						<motion.li
 							key={step.key}
@@ -99,6 +105,8 @@ export function AccessTraceStrip({
 									"bg-[var(--bf-warning-soft)]/60",
 								step.status === "not_reached" &&
 									"text-muted-foreground",
+								isChanged &&
+									"ring-2 ring-inset ring-[var(--bf-info)]",
 							)}
 						>
 							{!last && (
@@ -121,14 +129,18 @@ export function AccessTraceStrip({
 									<h3 className="text-sm font-medium">
 										{stepTitle(step.label)}
 									</h3>
-									<span
-										data-testid="step-status"
-										className={cn(
-											"text-xs font-medium",
-											status.badge,
+									<span className="flex items-baseline gap-2 text-xs font-medium">
+										{isChanged && (
+											<span className="text-[var(--bf-info)]">
+												Changed
+											</span>
 										)}
-									>
-										{status.label}
+										<span
+											data-testid="step-status"
+											className={status.badge}
+										>
+											{status.label}
+										</span>
 									</span>
 								</div>
 								{sentence && (

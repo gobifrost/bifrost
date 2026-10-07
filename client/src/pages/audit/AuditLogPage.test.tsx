@@ -6,6 +6,30 @@ const mockUseAuth = vi.fn();
 
 vi.mock("@/hooks/useAuditLog", () => ({
 	useAuditLog: (...args: unknown[]) => mockUseAuditLog(...args),
+	useAuditExplain: () => ({
+		data: undefined,
+		error: null,
+		isFetching: false,
+	}),
+}));
+
+vi.mock("@/hooks/useTraceNames", () => ({
+	useTraceNames: () => ({
+		names: {
+			role: () => undefined,
+			organization: () => undefined,
+			permission: (permission: string) => permission,
+		},
+		organizationNames: new Map(),
+	}),
+}));
+
+vi.mock("@/hooks/useWorkflows", () => ({
+	useWorkflowsMetadata: () => ({ data: { workflows: [] } }),
+}));
+
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => ({ canAnywhere: () => true }),
 }));
 
 vi.mock("@/contexts/AuthContext", () => ({
@@ -267,5 +291,43 @@ describe("AuditLogPage policy filters", () => {
 		expect(
 			screen.queryByRole("region", { name: "Audit retention" }),
 		).not.toBeInTheDocument();
+	});
+
+	it("opens an event from the keyboard and returns focus to its row on close", async () => {
+		const { user } = renderWithProviders(<AuditLogPage />);
+
+		const open = screen.getByRole("button", {
+			name: "organization.update",
+		});
+		open.focus();
+		await user.keyboard("{Enter}");
+
+		const dialog = await screen.findByRole("dialog", {
+			name: "Audit Event",
+		});
+		expect(dialog).toHaveTextContent("organization.update");
+		await user.keyboard("{Escape}");
+
+		await waitFor(() =>
+			expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+		);
+		expect(open).toHaveFocus();
+	});
+
+	it("opens an event from a click anywhere on its row", async () => {
+		const { user } = renderWithProviders(<AuditLogPage />);
+
+		await user.click(screen.getByText("192.0.2.11"));
+
+		expect(
+			await screen.findByRole("dialog", { name: "Audit Event" }),
+		).toHaveTextContent("organization.update");
+		await user.keyboard("{Escape}");
+		await waitFor(() =>
+			expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+		);
+		expect(
+			screen.getByRole("button", { name: "organization.update" }),
+		).toHaveFocus();
 	});
 });
