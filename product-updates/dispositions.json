@@ -1726,6 +1726,18 @@
           "User authorized verified backend repairs and merge on 2026-10-07; 19 backend and 2 hook tests plus quality checks passed."
         ]
       }
+    },
+    "pr:934": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/934",
+          "https://github.com/gobifrost/bifrost/blob/37387260d6962fb8fa0b09cc5e482fe031d8e0ee/docs/product-updates-authoring.md"
+        ]
+      },
+      "reason": "Dependabot dependency maintenance; omitted under the repository's customer-facing selection policy. CI and dependency security review remain required."
     }
   }
 }
