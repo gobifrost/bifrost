@@ -1643,6 +1643,66 @@
         ]
       }
     },
+    "pr:923": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/923",
+          "User authorized verified security-maintenance fixes and merge on 2026-10-07."
+        ]
+      },
+      "reason": "Repair internal Dependabot classification automation; no customer-facing announcement."
+    },
+    "pr:920": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/920",
+          "Reviewed the isolated source-map-js 1.2.1 to 1.2.2 patch; user authorized tested dependency security fixes and merge on 2026-10-07."
+        ]
+      },
+      "reason": "Routine app-compiler dependency security patch; no individual in-app announcement. Preserve canonical security notice review for formal publication.",
+      "security_review": {
+        "status": "required",
+        "review_ref": "https://github.com/gobifrost/bifrost/pull/920"
+      }
+    },
+    "pr:924": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/924",
+          "Verified client/docs npm audits report zero vulnerabilities; user authorized tested security fixes and merge on 2026-10-07."
+        ]
+      },
+      "reason": "Routine dependency patches; no separate in-app announcement. Retain CVE review and canonical security notice during formal release preparation.",
+      "security_review": {
+        "status": "required",
+        "review_ref": "https://github.com/gobifrost/bifrost/pull/924"
+      }
+    },
+    "pr:925": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/925",
+          "User authorized verified security-maintenance repairs and merge on 2026-10-07; 37 focused backend tests and API quality checks passed."
+        ]
+      },
+      "reason": "Internal execution and cache log-format hardening; no user workflow change. Retain canonical security notice review for formal releases.",
+      "security_review": {
+        "status": "required",
+        "review_ref": "https://github.com/gobifrost/bifrost/pull/925"
+      }
+    },
     "pr:926": {
       "classification": "omit",
       "entry_ids": [],
@@ -1654,6 +1714,18 @@
         ]
       },
       "reason": "Internal test clarity and collection repairs; no customer-facing functionality change."
+    },
+    "pr:927": {
+      "classification": "omit",
+      "entry_ids": [],
+      "reason": "Internal quality cleanup preserves existing credential, workflow error, and solution-lock behavior; no standalone customer-facing announcement.",
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/927",
+          "User authorized verified backend repairs and merge on 2026-10-07; 19 backend and 2 hook tests plus quality checks passed."
+        ]
+      }
     }
   }
 }
