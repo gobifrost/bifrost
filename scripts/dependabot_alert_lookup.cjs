@@ -22,7 +22,7 @@ function alertMatchesDependency(alert, dependency, changedManifests) {
   if (!isExactTarget) return false;
 
   const expectedEcosystem = ECOSYSTEMS.get(dependency.packageEcosystem);
-  return expectedEcosystem === alert.dependency?.package?.ecosystem;
+  return expectedEcosystem !== undefined && expectedEcosystem === alert.dependency?.package?.ecosystem;
 }
 
 async function findOpenDependabotAlert({ github, repository, pullNumber, dependencies }) {
