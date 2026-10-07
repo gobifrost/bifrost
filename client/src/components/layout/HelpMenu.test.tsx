@@ -1,8 +1,8 @@
 import { expect, it, vi } from "vitest";
-import { renderWithProviders, screen } from "@/test-utils";
+import { renderWithProviders, screen, within } from "@/test-utils";
 import { HelpMenu } from "./HelpMenu";
 vi.mock("@/components/branding/Logo", () => ({
-	Logo: () => <svg aria-hidden="true" />,
+	Logo: () => <img src="/covi-logo.svg" alt="" />,
 }));
 it("groups documentation, internal release notes, community destinations and the installed version", async () => {
 	const { user } = renderWithProviders(<HelpMenu />);
@@ -16,6 +16,13 @@ it("groups documentation, internal release notes, community destinations and the
 	expect(screen.getByRole("menuitem", { name: "Discord" })).toHaveAttribute(
 		"href",
 		"https://discord.gg/x84pft2YDa",
+	);
+	const website = screen.getByRole("menuitem", { name: "Website" });
+	expect(website).toHaveAttribute("href", "https://gobifrost.com");
+	expect(website).toHaveAttribute("target", "_blank");
+	expect(within(website).getByRole("presentation")).toHaveAttribute(
+		"src",
+		"/logo.svg",
 	);
 	expect(
 		screen.getByRole("menuitem", { name: /Copy version/ }),

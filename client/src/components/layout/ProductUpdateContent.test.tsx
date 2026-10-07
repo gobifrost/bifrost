@@ -7,7 +7,7 @@ import {
 	UpdateGroups,
 } from "./ProductUpdateContent";
 vi.mock("@/components/branding/Logo", () => ({
-	Logo: () => <svg aria-hidden="true" />,
+	Logo: () => <img src="/covi-logo.svg" alt="" />,
 }));
 const entry: ProductUpdateEntry = {
 	id: "one",
@@ -148,6 +148,13 @@ describe("shared product update content", () => {
 			"Discord",
 			"Website",
 		]);
+		const website = screen.getByRole("link", { name: "Website" });
+		expect(website).toHaveAttribute("href", "https://gobifrost.com");
+		expect(website).toHaveAttribute("target", "_blank");
+		expect(within(website).getByRole("presentation")).toHaveAttribute(
+			"src",
+			"/logo.svg",
+		);
 		expect(links[1]).toHaveAttribute(
 			"href",
 			"https://discord.gg/x84pft2YDa",
