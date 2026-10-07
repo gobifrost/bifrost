@@ -90,7 +90,8 @@ class TestEngineRequestFacadeMutations:
             listed = await config.list(scope="global")
             assert listed["a"] == 1
             assert listed.a == 1
-            assert await config.delete("k", scope="global") is True
+            deleted = await config.delete("k", scope="global")
+            assert deleted is True
         assert [
             (call.args[0], call.args[1])
             for call in client.engine_request.await_args_list
