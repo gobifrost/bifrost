@@ -1642,6 +1642,22 @@
           "Required announcement activation within the user-approved production delivery scope."
         ]
       }
+    },
+    "pr:924": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/924",
+          "Verified client/docs npm audits report zero vulnerabilities; user authorized tested security fixes and merge on 2026-10-07."
+        ]
+      },
+      "reason": "Routine dependency patches; no separate in-app announcement. Retain CVE review and canonical security notice during formal release preparation.",
+      "security_review": {
+        "status": "required",
+        "review_ref": "https://github.com/gobifrost/bifrost/pull/924"
+      }
     }
   }
 }
