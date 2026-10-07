@@ -133,7 +133,7 @@ jobs:
           cache-dependency-path: client/package-lock.json
 
       - name: Dependabot automation contracts
-        run: node --test scripts/test_dependabot_product_updates.cjs
+        run: node --test scripts/test_dependabot_product_updates.cjs scripts/test_dependabot_alert_lookup.cjs
 
       - name: Install client deps
         working-directory: client
