@@ -327,7 +327,7 @@ async def _in_use(session: AsyncSession, identity: User) -> IdentityError | None
     them; None when none do."""
     names = (
         await session.execute(
-            select(func.coalesce(Workflow.display_name, Workflow.name))
+            select(func.coalesce(func.nullif(Workflow.display_name, ""), Workflow.name))
             .where(Workflow.run_identity_id == identity.id)
             .order_by(Workflow.name, Workflow.id)
         )

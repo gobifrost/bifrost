@@ -61,11 +61,19 @@ async def _organization(db_session, name: str):
     return organization
 
 
-async def _workflow(db_session, organization_id: UUID | None, *, name: str, run_identity_id: UUID | None = None):
+async def _workflow(
+    db_session,
+    organization_id: UUID | None,
+    *,
+    name: str,
+    run_identity_id: UUID | None = None,
+    display_name: str | None = None,
+):
     from src.models.orm.workflows import Workflow
 
     workflow = Workflow(
         name=name,
+        display_name=display_name,
         function_name=name,
         path=f"workflows/{name}.py",
         organization_id=organization_id,
@@ -233,6 +241,16 @@ class TestChange:
         assert refused.value.status_code == 409
         assert detail.startswith(f"Can't delete Busy ({contoso.name}): these workflows run as it: wf_00, wf_01")
         assert "wf_09" in detail and "wf_10" not in detail and detail.endswith("and 2 more")
+
+    async def test_a_workflow_with_a_blank_display_name_is_named_by_its_name(self, db_session) -> None:
+        admin = admin_caller()
+        contoso = await _organization(db_session, "Contoso")
+        custom = await create_identity(db_session, admin, IdentityCreate(name="Blank", organization_id=contoso.id))
+        await _workflow(db_session, contoso.id, name="sync_invoices", run_identity_id=custom.id, display_name="")
+
+        with pytest.raises(IdentityError) as refused:
+            await delete_identity(db_session, admin, custom.id)
+        assert refused.value.detail.endswith("these workflows run as it: sync_invoices")
 
     async def test_a_workflow_pointed_at_it_during_the_delete_is_named_too(self, db_session, monkeypatch) -> None:
         """The race: the check finds no workflow, then one is pointed at the

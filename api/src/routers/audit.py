@@ -288,7 +288,7 @@ async def _entries(db: AsyncSession, rows: list[AuditLog]) -> list[AuditLogEntry
     workflow_names: dict[UUID, str] = {}
     if workflow_ids:
         result = await db.execute(
-            select(WorkflowORM.id, func.coalesce(WorkflowORM.display_name, WorkflowORM.name)).where(
+            select(WorkflowORM.id, func.coalesce(func.nullif(WorkflowORM.display_name, ""), WorkflowORM.name)).where(
                 WorkflowORM.id.in_(workflow_ids)
             )
         )

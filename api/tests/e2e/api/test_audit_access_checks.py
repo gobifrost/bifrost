@@ -192,6 +192,25 @@ def test_operators_see_the_workflow_and_the_run_user_s_own_organization(e2e_clie
         assert shown["actor"]["organization_name"] == world["customer"]["name"]
 
 
+def test_a_blank_display_name_names_the_workflow_by_its_name(e2e_client, platform_admin, async_session_factory) -> None:
+    name = f"blank_{uuid.uuid4().hex[:8]}"
+    workflow_id = asyncio.run(_seed_workflow(async_session_factory, name, ""))
+    run = uuid.uuid4()
+    try:
+        asyncio.run(
+            _seed(
+                async_session_factory,
+                [{"action": "access.check", "outcome": "failure", "execution_id": run, "details": {"workflow_id": str(workflow_id)}}],
+            )
+        )
+        params = {"action": "access.check", "execution_id": str(run)}
+        [entry] = _ok(e2e_client.get("/api/audit", headers=platform_admin.headers, params=params))["entries"]
+    finally:
+        asyncio.run(_delete_workflow(async_session_factory, workflow_id))
+
+    assert entry["workflow_name"] == name
+
+
 def test_admins_group_access_checks_by_workflow(e2e_client, platform_admin, world) -> None:
     body = _ok(
         e2e_client.get(
