@@ -67,6 +67,8 @@ DEFAULT_DELETE_MESSAGE = "Default identities can't be deleted"
 DEFAULT_RENAME_MESSAGE = "Default identities can't be renamed"
 # Identity names are unique per organization (Global counts as one), ignoring case.
 NAME_INDEX = "uq_users_identity_name_per_org"
+# workflows.run_identity_id is RESTRICT: an identity a workflow runs as stays.
+RUN_IDENTITY_FK = "workflows_run_identity_id_fkey"
 _NAMED_WORKFLOWS = 10
 
 _KIND_ORDER = case(
@@ -197,8 +199,7 @@ async def _flush_named(session: AsyncSession, identity: User, name: str) -> None
             session.add(identity)
             await session.flush()
     except IntegrityError as e:
-        # SQLAlchemy chains the driver's error, which names the constraint.
-        if getattr(e.orig and e.orig.__cause__, "constraint_name", None) != NAME_INDEX:
+        if _constraint(e) != NAME_INDEX:
             raise
         place = (
             await session.scalar(select(Organization.name).where(Organization.id == organization_id))
@@ -206,6 +207,11 @@ async def _flush_named(session: AsyncSession, identity: User, name: str) -> None
             else "Global"
         )
         raise IdentityError(409, f'An identity named "{name}" already exists in {place}') from None
+
+
+def _constraint(e: IntegrityError) -> str | None:
+    """The constraint the database refused with; SQLAlchemy chains the driver's error, which names it."""
+    return getattr(e.orig and e.orig.__cause__, "constraint_name", None)
 
 
 def _identities_query():
@@ -316,11 +322,9 @@ async def rename_identity(
     return public
 
 
-async def delete_identity(session: AsyncSession, caller: Caller, identity_id: UUID) -> None:
-    """Delete a custom identity no workflow runs as."""
-    identity = await _managed_identity(session, caller, identity_id, DELETE_OPERATION)
-    if identity.identity_kind != IdentityKind.CUSTOM:
-        raise IdentityError(409, DEFAULT_DELETE_MESSAGE)
+async def _in_use(session: AsyncSession, identity: User) -> IdentityError | None:
+    """The refusal to delete ``identity`` while workflows run as it, naming
+    them; None when none do."""
     names = (
         await session.execute(
             select(func.coalesce(Workflow.display_name, Workflow.name))
@@ -328,14 +332,31 @@ async def delete_identity(session: AsyncSession, caller: Caller, identity_id: UU
             .order_by(Workflow.name, Workflow.id)
         )
     ).scalars().all()
-    if names:
-        listed = ", ".join(names[:_NAMED_WORKFLOWS])
-        more = f" and {len(names) - _NAMED_WORKFLOWS} more" if len(names) > _NAMED_WORKFLOWS else ""
-        label = identity_label(identity, await organization_name(session, identity))
-        raise IdentityError(409, f"Can't delete {label}: these workflows run as it: {listed}{more}")
+    if not names:
+        return None
+    listed = ", ".join(names[:_NAMED_WORKFLOWS])
+    more = f" and {len(names) - _NAMED_WORKFLOWS} more" if len(names) > _NAMED_WORKFLOWS else ""
+    label = identity_label(identity, await organization_name(session, identity))
+    return IdentityError(409, f"Can't delete {label}: these workflows run as it: {listed}{more}")
+
+
+async def delete_identity(session: AsyncSession, caller: Caller, identity_id: UUID) -> None:
+    """Delete a custom identity no workflow runs as."""
+    identity = await _managed_identity(session, caller, identity_id, DELETE_OPERATION)
+    if identity.identity_kind != IdentityKind.CUSTOM:
+        raise IdentityError(409, DEFAULT_DELETE_MESSAGE)
+    if refusal := await _in_use(session, identity):
+        raise refusal
     details = {"name": identity.name, "organization_id": str(identity.organization_id) if identity.organization_id else None}
-    await session.delete(identity)
-    await session.flush()
+    try:
+        async with session.begin_nested():
+            await session.delete(identity)
+            await session.flush()
+    except IntegrityError as e:
+        # A workflow was pointed at the identity after the check above.
+        if _constraint(e) != RUN_IDENTITY_FK or (refusal := await _in_use(session, identity)) is None:
+            raise
+        raise refusal from None
     await emit_audit(session, "identity.delete", resource_type="user", resource_id=identity_id, details=details)
 
 

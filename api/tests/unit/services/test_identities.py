@@ -234,6 +234,40 @@ class TestChange:
         assert detail.startswith(f"Can't delete Busy ({contoso.name}): these workflows run as it: wf_00, wf_01")
         assert "wf_09" in detail and "wf_10" not in detail and detail.endswith("and 2 more")
 
+    async def test_a_workflow_pointed_at_it_during_the_delete_is_named_too(self, db_session, monkeypatch) -> None:
+        """The race: the check finds no workflow, then one is pointed at the
+        identity before the delete flushes; the foreign key refuses it."""
+        from sqlalchemy import insert
+
+        from src.models.orm.workflows import Workflow
+
+        admin = admin_caller()
+        contoso = await _organization(db_session, "Contoso")
+        custom = await create_identity(db_session, admin, IdentityCreate(name="Racing", organization_id=contoso.id))
+        execute = db_session.execute
+
+        async def point_after_the_check(statement, *args, **kwargs):
+            result = await execute(statement, *args, **kwargs)
+            if "run_identity_id" in str(statement) and not hasattr(point_after_the_check, "done"):
+                point_after_the_check.done = True
+                await execute(
+                    insert(Workflow).values(
+                        name="late", function_name="late", path="workflows/late.py",
+                        organization_id=contoso.id, run_identity_id=custom.id,
+                    )
+                )
+            return result
+
+        monkeypatch.setattr(db_session, "execute", point_after_the_check)
+        with pytest.raises(IdentityError) as refused:
+            await delete_identity(db_session, admin, custom.id)
+
+        assert (refused.value.status_code, refused.value.detail) == (
+            409,
+            f"Can't delete Racing ({contoso.name}): these workflows run as it: late",
+        )
+        assert custom.id in {i.id for i in await list_identities(db_session, admin, organization_id=contoso.id)}
+
 
 def _holding(permissions: set[str], *organization_ids: UUID) -> Caller:
     """Holds ``permissions`` at each organization through one role, and nothing else."""
