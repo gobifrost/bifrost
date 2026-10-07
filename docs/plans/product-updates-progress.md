@@ -30,6 +30,8 @@ The first full feature-PR unit run passed 8,452 backend tests and all 3,619 clie
 
 Final review removed CodeQL's redundant compact-title conditional and unused preview-only missing-image switches; actual image-error handling remains covered. The shared content/dialog/history checks passed 18 tests, TypeScript and scoped ESLint passed. Jack then replaced the Discord invite with `https://discord.gg/x84pft2YDa`; Help, the community footer, approved announcement, saved preview and browser assertions now use it. Help/content link checks passed six tests and source validation passed. The announcement keeps its UUID and advances to revision 5, preserving receipts.
 
+The rebuilt production-image browser journey passed again with the replacement Discord invite (10.1 seconds overall). The feature PR's full checks passed on `6dba827f01dbc38e2896620c2e690a7fcbed27ed`, but its first merge-group Product Updates check exposed an ancestry assumption that fails for a squash queue. The PR was dequeued and auto-merge disabled while correcting the trusted base helper in PR #919. The replacement resolves GitHub MergeQueueEntry head/base commit metadata and rejects missing, ambiguous or cyclic chains. Eight focused Node tests passed, including the actual failed candidate, and the workflow adapter passed syntax and two-page pagination checks. No failed validation gate was bypassed.
+
 ## Historical Implementation Record
 
 ## Frozen Coverage

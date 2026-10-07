@@ -61,21 +61,40 @@ jobs:
             try {
               const normalized = await normalizeMergeGroup({
                 mergeGroup: context.payload.merge_group,
-                listOpenPulls: async (base) => github.paginate(github.rest.pulls.list, {
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  state: "open",
-                  base,
-                  per_page: 100,
-                }),
-                compare: async ({ base, head }) => {
-                  const response = await github.rest.repos.compareCommits({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    base,
-                    head,
-                  });
-                  return response.data;
+                listQueueEntries: async (base) => {
+                  const query = `query($owner: String!, $repo: String!, $base: String!, $cursor: String) {
+                    repository(owner: $owner, name: $repo) {
+                      mergeQueue(branch: $base) {
+                        entries(first: 100, after: $cursor) {
+                          nodes {
+                            headCommit { oid }
+                            baseCommit { oid }
+                            pullRequest { number author { login } }
+                          }
+                          pageInfo { hasNextPage endCursor }
+                        }
+                      }
+                    }
+                  }`;
+                  const entries = [];
+                  let cursor = null;
+                  while (true) {
+                    const result = await github.graphql(query, {
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      base,
+                      cursor,
+                    });
+                    const page = result.repository?.mergeQueue?.entries;
+                    if (!page) throw new Error("Merge queue metadata is unavailable");
+                    entries.push(...page.nodes);
+                    if (!page.pageInfo.hasNextPage) return entries;
+                    const nextCursor = page.pageInfo.endCursor;
+                    if (!nextCursor || nextCursor === cursor) {
+                      throw new Error("Merge queue pagination did not advance");
+                    }
+                    cursor = nextCursor;
+                  }
                 },
               });
               fs.writeFileSync("/tmp/product-updates-event.json", JSON.stringify({

@@ -1618,6 +1618,18 @@
       "security_review": {
         "status": "not_required"
       }
+    },
+    "pr:919": {
+      "classification": "omit",
+      "entry_ids": [],
+      "reason": "Internal merge-queue validation repair; no separate customer-facing change.",
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/919",
+          "Required validation repair within the approved Product Updates merge scope."
+        ]
+      }
     }
   }
 }
