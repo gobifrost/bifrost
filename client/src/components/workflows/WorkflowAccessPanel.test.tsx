@@ -116,12 +116,14 @@ function makeWorkflow(overrides: Partial<Workflow> = {}): Workflow {
 	} as Workflow;
 }
 
+/** What the server computed, for the identity the workflow runs as now. */
 function recommendations(
 	items: RecommendedAccessItem[],
 	observedRuns = items.length ? 3 : 0,
+	identityId = DEFAULT.id,
 ): RecommendedAccess {
 	return {
-		identity_id: DEFAULT.id,
+		identity_id: identityId,
 		observed_runs: observedRuns,
 		window_days: 30,
 		items,
@@ -231,8 +233,21 @@ describe("WorkflowAccessPanel", () => {
 	});
 
 	it("saves another identity, and the default as none", async () => {
+		// The server's answer moves to the identity just saved.
+		setRunIdentity.mutateAsync.mockImplementation(
+			async ({ body }: { body: { run_identity_id: string | null } }) => {
+				state.recommendations = recommendations(
+					[],
+					0,
+					body.run_identity_id ?? DEFAULT.id,
+				);
+				return {};
+			},
+		);
 		const user = userEvent.setup();
-		render(<WorkflowAccessPanel workflow={makeWorkflow()} />);
+		const { rerender } = render(
+			<WorkflowAccessPanel workflow={makeWorkflow()} />,
+		);
 
 		await chooseIdentity(user, /Contoso Sync/);
 		expect(setRunIdentity.mutateAsync).toHaveBeenLastCalledWith({
@@ -243,6 +258,10 @@ describe("WorkflowAccessPanel", () => {
 			description:
 				"Nightly Sync runs as Contoso Sync · Contoso when no person starts it",
 		});
+		rerender(<WorkflowAccessPanel workflow={makeWorkflow()} />);
+		expect(
+			screen.getByRole("combobox", { name: "Runs Unattended As" }),
+		).toHaveTextContent("Contoso Sync");
 
 		await chooseIdentity(user, /Default Identity/);
 		expect(setRunIdentity.mutateAsync).toHaveBeenLastCalledWith({
@@ -270,6 +289,85 @@ describe("WorkflowAccessPanel", () => {
 		expect(
 			screen.getByRole("combobox", { name: "Runs Unattended As" }),
 		).toHaveTextContent("Default Identity");
+	});
+
+	it("follows the identity the server says the workflow runs as, not the dialog's older copy", async () => {
+		// The dialog still holds the workflow as it was opened (no identity),
+		// but it has since been set to Contoso Sync: reopening the Access tab
+		// must act on Contoso Sync.
+		state.recommendations = recommendations([POLICY_ROLE], 3, SYNC.id);
+		const user = userEvent.setup();
+		render(<WorkflowAccessPanel workflow={makeWorkflow()} />);
+
+		expect(
+			screen.getByRole("combobox", { name: "Runs Unattended As" }),
+		).toHaveTextContent("Contoso Sync");
+		expect(screen.getByTestId("test-access")).toHaveTextContent(
+			"identity-sync",
+		);
+		await user.click(
+			screen.getByRole("button", { name: "Grant to Identity" }),
+		);
+		expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+		expect(grantToIdentity.grantedTo).toHaveBeenLastCalledWith(
+			"identity-sync",
+		);
+		expect(grantToIdentity.grant).toHaveBeenCalledWith(POLICY_ROLE.grant);
+	});
+
+	it("waits to act on an identity until the server says which it is", () => {
+		state.recommendations = undefined;
+		render(
+			<WorkflowAccessPanel
+				workflow={makeWorkflow({ run_identity_id: "identity-sync" })}
+			/>,
+		);
+
+		expect(
+			screen.getByRole("combobox", { name: "Runs Unattended As" }),
+		).toBeDisabled();
+		expect(screen.queryByTestId("test-access")).not.toBeInTheDocument();
+		expect(accessMapFor).toHaveBeenLastCalledWith(undefined);
+	});
+
+	it("keeps a Solution's workflow on its identity, while still granting it access", async () => {
+		state.recommendations = recommendations([POLICY_ROLE]);
+		const user = userEvent.setup();
+		render(
+			<WorkflowAccessPanel
+				workflow={makeWorkflow({ is_solution_managed: true })}
+			/>,
+		);
+
+		const section = screen.getByRole("region", {
+			name: "Runs Unattended As",
+		});
+		expect(
+			within(section).getByRole("combobox", {
+				name: "Runs Unattended As",
+			}),
+		).toBeDisabled();
+		expect(
+			within(section).getByRole("button", {
+				name: "Create a Dedicated Identity",
+			}),
+		).toBeDisabled();
+		expect(section).toHaveTextContent(
+			"This workflow is managed by a Solution. Re-deploy the Solution to change who it runs as.",
+		);
+
+		await user.click(
+			screen.getByRole("button", { name: "Grant to Identity" }),
+		);
+		const dialog = await screen.findByRole("alertdialog");
+		expect(
+			within(dialog).queryByRole("button", {
+				name: "Create a Dedicated Identity Instead",
+			}),
+		).not.toBeInTheDocument();
+		await user.click(within(dialog).getByRole("button", { name: "Grant" }));
+		expect(grantToIdentity.grant).toHaveBeenCalledWith(POLICY_ROLE.grant);
+		expect(screen.getByTestId("test-access")).toBeInTheDocument();
 	});
 
 	it("creates a dedicated identity named for the workflow and runs as it", async () => {
@@ -345,7 +443,7 @@ describe("WorkflowAccessPanel", () => {
 	});
 
 	it("grants a custom identity a missing role right away", async () => {
-		state.recommendations = recommendations([POLICY_ROLE]);
+		state.recommendations = recommendations([POLICY_ROLE], 3, SYNC.id);
 		const user = userEvent.setup();
 		render(
 			<WorkflowAccessPanel
@@ -428,7 +526,7 @@ describe("WorkflowAccessPanel", () => {
 	});
 
 	it("grants access to an organization outside the identity's reach with a role chosen for it", async () => {
-		state.recommendations = recommendations([REACH]);
+		state.recommendations = recommendations([REACH], 3, SYNC.id);
 		state.assignableRoles = [
 			assignableRole({}),
 			assignableRole({
@@ -559,6 +657,7 @@ describe("WorkflowAccessPanel", () => {
 				organization_name: null,
 			}),
 		];
+		state.recommendations = recommendations([], 0, "identity-global");
 		rerender(
 			<WorkflowAccessPanel
 				workflow={makeWorkflow({ id: "wf-2", organization_id: null })}

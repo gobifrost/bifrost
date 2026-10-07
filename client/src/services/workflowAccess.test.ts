@@ -87,14 +87,31 @@ describe("workflow access service", () => {
 		);
 	});
 
-	it("refreshes workflows, recommendations and identity use after changing who it runs as", () => {
+	it("refreshes workflows, recommendations and identity use before a change of who it runs as settles", async () => {
+		let refreshed!: () => void;
+		invalidateQueries.mockReturnValue(
+			new Promise<void>((resolve) => {
+				refreshed = resolve;
+			}),
+		);
 		useSetWorkflowRunIdentity();
 		const [method, path, options] = useMutationMock.mock.calls[0] as [
 			string,
 			string,
-			{ onSuccess: () => void },
+			{ onSuccess: () => Promise<unknown> },
 		];
-		options.onSuccess();
+		let settled = false;
+		const success = options.onSuccess().then(() => {
+			settled = true;
+		});
+
+		// The mutation settles only once the refreshed queries are back, so
+		// the panel never reads the identity it ran as before.
+		await Promise.resolve();
+		expect(settled).toBe(false);
+		refreshed();
+		await success;
+		expect(settled).toBe(true);
 
 		expect([method, path]).toEqual([
 			"patch",
@@ -234,7 +251,10 @@ describe("workflow access service", () => {
 				],
 			},
 		]);
-		assignmentsQuery.refetch.mockResolvedValue({ data: current });
+		assignmentsQuery.refetch.mockResolvedValue({
+			data: current,
+			status: "success",
+		});
 		replace.mutateAsync.mockResolvedValue(current);
 		const grant = {
 			role_id: "role-tickets",
@@ -301,6 +321,25 @@ describe("workflow access service", () => {
 		assignmentsQuery.refetch.mockResolvedValue({
 			data: undefined,
 			error: failure,
+			status: "error",
+		});
+
+		await expect(
+			useGrantToIdentity("identity-1").grant({
+				role_id: "role-tickets",
+				boundaries: [],
+			}),
+		).rejects.toBe(failure);
+		expect(replace.mutateAsync).not.toHaveBeenCalled();
+	});
+
+	it("grants nothing from cached roles when reading the current ones fails", async () => {
+		const failure = new Error("offline");
+		// A failed refetch keeps the cached data beside the error.
+		assignmentsQuery.refetch.mockResolvedValue({
+			data: assignments(),
+			error: failure,
+			status: "error",
 		});
 
 		await expect(

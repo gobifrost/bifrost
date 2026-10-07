@@ -316,9 +316,6 @@ export function WorkflowAccessPanel({ workflow }: { workflow: Workflow }) {
 	const setRunIdentity = useSetWorkflowRunIdentity();
 	const createIdentity = useCreateIdentity();
 
-	const [runIdentityId, setRunIdentityId] = useState(
-		workflow.run_identity_id ?? null,
-	);
 	const [identityError, setIdentityError] = useState<string | null>(null);
 	const [grantError, setGrantError] = useState<string | null>(null);
 	const [confirming, setConfirming] = useState<PendingGrant | null>(null);
@@ -327,17 +324,22 @@ export function WorkflowAccessPanel({ workflow }: { workflow: Workflow }) {
 	const [granting, setGranting] = useState(false);
 
 	const identities = identitiesQuery.data ?? [];
-	const defaultIdentity = identities.find((identity) =>
-		isDefaultIdentityFor(identity, workflowOrganizationId),
-	);
-	const current = runIdentityId
-		? identities.find((identity) => identity.id === runIdentityId)
-		: defaultIdentity;
+	const recommendations = recommendationsQuery.data;
+	// The server names the identity the workflow runs as now; the dialog's
+	// copy of the workflow can be older than a change made here. Nothing acts
+	// on an identity until the server has said which.
+	const current = recommendations
+		? identities.find(
+				(identity) => identity.id === recommendations.identity_id,
+			)
+		: undefined;
 	const grants = useGrantToIdentity(current?.id);
 	const reachQuery = useUserAccessMap(current?.id);
-	const recommendations = recommendationsQuery.data;
 	const currentLabel = current ? identityLabel(current) : "The identity";
 
+	// A Solution's deployment owns the workflow, so who it runs as stays
+	// put; granting the identity access doesn't change the workflow.
+	const isSolutionManaged = workflow.is_solution_managed;
 	const busy = setRunIdentity.isPending || creating || granting;
 	const workflowName = workflow.display_name || workflow.name;
 
@@ -350,12 +352,18 @@ export function WorkflowAccessPanel({ workflow }: { workflow: Workflow }) {
 			// Generated as required; false leaves the workflow's roles alone.
 			body: { run_identity_id: next, clear_roles: false },
 		});
-		setRunIdentityId(next);
 	};
 
 	const handleChoose = async (identityId: string) => {
 		const identity = identities.find((item) => item.id === identityId);
-		if (!identity || identity.id === current?.id || busy) return;
+		if (
+			!identity ||
+			!current ||
+			identity.id === current.id ||
+			busy ||
+			isSolutionManaged
+		)
+			return;
 		setIdentityError(null);
 		try {
 			await runAs(identity);
@@ -373,7 +381,7 @@ export function WorkflowAccessPanel({ workflow }: { workflow: Workflow }) {
 	};
 
 	const handleCreateDedicated = async () => {
-		if (busy) return;
+		if (busy || isSolutionManaged) return;
 		setConfirming(null);
 		setIdentityError(null);
 		setCreating(true);
@@ -455,7 +463,12 @@ export function WorkflowAccessPanel({ workflow }: { workflow: Workflow }) {
 							onValueChange={(value) => void handleChoose(value)}
 							isLoading={identitiesQuery.isLoading}
 							showSelectedDescription
-							disabled={busy}
+							disabled={busy || !current || isSolutionManaged}
+							aria-describedby={
+								isSolutionManaged
+									? "workflow-run-identity-managed"
+									: undefined
+							}
 							placeholder="Choose an identity"
 							searchPlaceholder="Search identities"
 							emptyText="No identity found."
@@ -465,7 +478,12 @@ export function WorkflowAccessPanel({ workflow }: { workflow: Workflow }) {
 						type="button"
 						variant="outline"
 						className="min-h-11 sm:min-h-10"
-						disabled={busy}
+						disabled={busy || isSolutionManaged}
+						aria-describedby={
+							isSolutionManaged
+								? "workflow-run-identity-managed"
+								: undefined
+						}
 						onClick={() => void handleCreateDedicated()}
 					>
 						{creating ? (
@@ -479,6 +497,15 @@ export function WorkflowAccessPanel({ workflow }: { workflow: Workflow }) {
 						Create a Dedicated Identity
 					</Button>
 				</div>
+				{isSolutionManaged && (
+					<p
+						id="workflow-run-identity-managed"
+						className="text-xs text-muted-foreground"
+					>
+						This workflow is managed by a Solution. Re-deploy the
+						Solution to change who it runs as.
+					</p>
+				)}
 				<div className="flex flex-wrap items-center gap-2 text-sm">
 					<span className="text-muted-foreground">Access Mode</span>
 					<Badge variant="secondary">
@@ -613,23 +640,25 @@ export function WorkflowAccessPanel({ workflow }: { workflow: Workflow }) {
 							Grant to the Default Identity?
 						</AlertDialogTitle>
 						<AlertDialogDescription>
-							{current && defaultIdentityReach(current)}. To give{" "}
-							{confirming?.roleName} to this workflow alone,
-							create a dedicated identity and grant it there.
+							{current && defaultIdentityReach(current)}.
+							{!isSolutionManaged &&
+								` To give ${confirming?.roleName} to this workflow alone, create a dedicated identity and grant it there.`}
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
 						<AlertDialogCancel className="min-h-11 sm:min-h-9">
 							Cancel
 						</AlertDialogCancel>
-						<Button
-							type="button"
-							variant="outline"
-							className="min-h-11 sm:min-h-9"
-							onClick={() => void handleCreateDedicated()}
-						>
-							Create a Dedicated Identity Instead
-						</Button>
+						{!isSolutionManaged && (
+							<Button
+								type="button"
+								variant="outline"
+								className="min-h-11 sm:min-h-9"
+								onClick={() => void handleCreateDedicated()}
+							>
+								Create a Dedicated Identity Instead
+							</Button>
+						)}
 						<AlertDialogAction
 							className="min-h-11 sm:min-h-9"
 							onClick={() => {

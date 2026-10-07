@@ -50,23 +50,31 @@ export function useWorkflowRecommendedAccess(workflowId: string | undefined) {
 	);
 }
 
-/** Sets `run_identity_id` (null: the organization's default identity). */
+/**
+ * Sets `run_identity_id` (null: the organization's default identity). The
+ * mutation settles once the queries it changes are refetched, so the
+ * recommended access, which names the identity the workflow runs as, is
+ * current by then.
+ */
 export function useSetWorkflowRunIdentity() {
 	const queryClient = useQueryClient();
 	return $api.useMutation("patch", "/api/workflows/{workflow_id}", {
-		onSuccess: () => {
-			queryClient.invalidateQueries({
-				queryKey: ["get", "/api/workflows"],
-			});
-			queryClient.invalidateQueries({
-				queryKey: RECOMMENDED_ACCESS_QUERY_KEY,
-			});
-			queryClient.invalidateQueries({
-				queryKey: RUN_IDENTITIES_QUERY_KEY,
-			});
-			// Workflows Using moves from one identity to the other.
-			queryClient.invalidateQueries({ queryKey: IDENTITIES_QUERY_KEY });
-		},
+		onSuccess: () =>
+			Promise.all([
+				queryClient.invalidateQueries({
+					queryKey: ["get", "/api/workflows"],
+				}),
+				queryClient.invalidateQueries({
+					queryKey: RECOMMENDED_ACCESS_QUERY_KEY,
+				}),
+				queryClient.invalidateQueries({
+					queryKey: RUN_IDENTITIES_QUERY_KEY,
+				}),
+				// Workflows Using moves from one identity to the other.
+				queryClient.invalidateQueries({
+					queryKey: IDENTITIES_QUERY_KEY,
+				}),
+			]),
 	});
 }
 
@@ -153,11 +161,13 @@ export function useGrantToIdentity(identityId: string | undefined) {
 		assignableRoles: assignments.data?.assignable_roles ?? [],
 		isPending: replace.isPending,
 		grant: async (grant: RecommendedGrant) => {
-			const { data, error } = await assignments.refetch();
-			if (!data) throw error;
+			// A failed refetch keeps the cached roles; granting from them could
+			// drop a role given since.
+			const current = await assignments.refetch();
+			if (current.status !== "success") throw current.error;
 			const result = await replace.mutateAsync({
 				params: { path: { user_id: identityId! } },
-				body: mergeGrant(data, grant),
+				body: mergeGrant(current.data, grant),
 			});
 			queryClient.invalidateQueries({
 				queryKey: RECOMMENDED_ACCESS_QUERY_KEY,
