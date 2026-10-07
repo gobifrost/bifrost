@@ -19,6 +19,8 @@ test("admin sees new updates automatically and reopens history from Help", async
 	await page.waitForURL((url) => !url.pathname.startsWith("/login"));
 	const dialog = page.getByRole("dialog", { name: "What's New" });
 	await expect(dialog).toBeVisible();
+	await expect(dialog.getByRole("heading", { name: "Release Notes and Discord", exact: true })).toBeVisible();
+	await expect(dialog.getByRole("link", { name: "Join Discord", exact: true })).toHaveAttribute("href", "https://discord.gg/x84pft2YDa");
 	await expect(
 		dialog.getByRole("heading", {
 			name: "See a User's Effective Access",
@@ -33,7 +35,7 @@ test("admin sees new updates automatically and reopens history from Help", async
 	).toHaveAttribute("href", "https://discord.gg/x84pft2YDa");
 	const receipt = await receiptResponse;
 	expect(receipt.status()).toBe(200);
-	expect((await receipt.json()).seen_entry_ids).toHaveLength(15);
+	expect((await receipt.json()).seen_entry_ids).toHaveLength(16);
 	await page.screenshot({
 		animations: "disabled",
 		path: testInfo.outputPath("whats-new-modal-desktop.png"),
@@ -139,7 +141,7 @@ test("admin sees new updates automatically and reopens history from Help", async
 		await freshPage.getByLabel("Password", { exact: true }).fill(password);
 		await freshPage.getByRole("button", { name: "Sign In", exact: true }).click();
 		const feed = await (await feedResponse).json();
-		expect(feed.seen_entry_ids).toHaveLength(15);
+		expect(feed.seen_entry_ids).toHaveLength(16);
 		await expect(freshPage.getByRole("button", { name: "Help", exact: true })).toBeVisible();
 		await expect(freshPage.getByRole("dialog", { name: "What's New" })).toHaveCount(0);
 	} finally {
