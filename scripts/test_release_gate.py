@@ -27,6 +27,7 @@ class ReleaseGateTests(unittest.TestCase):
         write_json(
             self.root / "inventory.json",
             {
+                "base_ref": "b" * 40,
                 "target_ref": SHA,
                 "commits": [{"sha": SHA, "prs": [1]}],
                 "prs": [{"number": 1, "merge_commit": SHA}],
@@ -87,6 +88,11 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertEqual([], result.errors)
         self.assertIn("## Fixed CVEs", result.markdown)
         self.assertIn("## Breaking Changes", result.markdown)
+
+    def test_release_subrange_does_not_require_an_older_notice_again(self) -> None:
+        (self.root / "entries" / f"{ENTRY}.md").unlink()
+        result = release_gate.validate(self.root, SHA, base=SHA)
+        self.assertEqual([], result.errors)
 
     def test_draft_disposition_blocks_a_release(self) -> None:
         data = json.loads((self.root / "dispositions.json").read_text())

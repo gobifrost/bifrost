@@ -12,16 +12,32 @@ import {
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { CommunityFooter, UpdateGroups } from "./ProductUpdateContent";
 import {
-	productUpdatesPreviewAdapter,
+	productUpdatesAdapter,
 	visibleProductUpdates,
 	type ProductUpdatesAdapter,
-} from "@/lib/product-updates-preview";
-import type { ProductUpdateEntry } from "@/generated/product-updates";
+	type ProductUpdateEntry,
+} from "@/services/productUpdates";
 
-/** Development-only announcement; opening the displayed batch acknowledges it. */
+const PRODUCT_UPDATES_CHANNEL = "bifrost:product-updates-presented";
+
+type PresentedMessage = { adminId: string; entryIds: string[] };
+
+function isPresentedMessage(value: unknown): value is PresentedMessage {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		"adminId" in value &&
+		typeof value.adminId === "string" &&
+		"entryIds" in value &&
+		Array.isArray(value.entryIds) &&
+		value.entryIds.every((entryId) => typeof entryId === "string")
+	);
+}
+
+/** Presents server-authorized announcements once for the signed-in admin. */
 export function ProductUpdatesDialog({
 	adminId,
-	adapter = productUpdatesPreviewAdapter,
+	adapter = productUpdatesAdapter,
 }: {
 	adminId: string;
 	adapter?: ProductUpdatesAdapter;
@@ -29,53 +45,89 @@ export function ProductUpdatesDialog({
 	const { pathname } = useLocation();
 	const initialPath = useRef(pathname);
 	const title = useRef<HTMLHeadingElement>(null);
+	const channel = useRef<BroadcastChannel | null>(null);
+	const acknowledgedBatches = useRef(new Set<string>());
+	const presentedElsewhereRef = useRef(new Set<string>());
+	const [presentedElsewhere, setPresentedElsewhere] = useState<
+		ReadonlySet<string>
+	>(new Set());
 	const [entries, setEntries] = useState<ProductUpdateEntry[]>([]);
 	const [open, setOpen] = useState(false);
 	const [receiptError, setReceiptError] = useState(false);
 
 	useEffect(() => {
+		if (typeof BroadcastChannel === "undefined") return;
+		const nextChannel = new BroadcastChannel(PRODUCT_UPDATES_CHANNEL);
+		channel.current = nextChannel;
+		nextChannel.onmessage = (event: MessageEvent<unknown>) => {
+			if (
+				!isPresentedMessage(event.data) ||
+				event.data.adminId !== adminId
+			)
+				return;
+			const presented = event.data;
+			setPresentedElsewhere((current) => {
+				const next = new Set(current);
+				for (const entryId of presented.entryIds) {
+					presentedElsewhereRef.current.add(entryId);
+					next.add(entryId);
+				}
+				return next;
+			});
+		};
+		return () => {
+			nextChannel.close();
+			if (channel.current === nextChannel) channel.current = null;
+		};
+	}, [adminId]);
+
+	useEffect(() => {
 		let active = true;
 		// History itself presents the updates; avoid covering it on direct visits.
 		if (initialPath.current === "/whats-new") return;
-		void Promise.all([
-			adapter.getBundle("dev"),
-			adapter.getReadEntryIds(adminId),
-		])
-			.then(([bundle, receipts]) => {
+		void adapter
+			.getFeed()
+			.then((feed) => {
 				if (!active || document.querySelector('[role="dialog"]'))
 					return;
 				const unseen = visibleProductUpdates(
-					bundle.entries,
-					"normal",
-				).filter((entry) => !receipts.has(entry.id));
+					feed.bundle.entries,
+				).filter(
+					(entry) =>
+						!feed.seen_entry_ids.includes(entry.id) &&
+						!presentedElsewhereRef.current.has(entry.id),
+				);
 				if (unseen.length === 0) return;
 				setEntries(unseen);
 				setOpen(true);
 			})
 			.catch(() => {
-				// Automatic announcements are optional; history stays available.
-				// No receipt is saved when loading fails.
+				// Automatic announcements stay quiet if the authenticated feed fails.
 			});
 		return () => {
 			active = false;
 		};
-	}, [adminId, adapter]);
+	}, [adapter, presentedElsewhere]);
 
 	useEffect(() => {
 		if (!open || entries.length === 0) return;
+		const entryIds = entries.map((entry) => entry.id);
+		const batchKey = [...entryIds].sort().join(",");
+		if (acknowledgedBatches.current.has(batchKey)) return;
+		acknowledgedBatches.current.add(batchKey);
+		channel.current?.postMessage({
+			adminId,
+			entryIds,
+		} satisfies PresentedMessage);
+
 		let active = true;
-		void adapter
-			.markRead(
-				adminId,
-				entries.map((entry) => entry.id),
-			)
-			.catch(() => {
-				if (active) setReceiptError(true);
-			});
+		void adapter.acknowledge(entryIds).catch(() => {
+			if (active) setReceiptError(true);
+		});
 		return () => {
 			active = false;
 		};
-	}, [open, entries, adapter, adminId]);
+	}, [adapter, adminId, entries, open]);
 
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>

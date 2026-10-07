@@ -360,6 +360,17 @@ SOLUTION_OPERATIONS = {
     ),
 }
 
+PRODUCT_UPDATES_OPERATIONS = {
+    "productupdates.get": ("GET", "/api/product-updates", None, None, False),
+    "productupdates.receipts.create": (
+        "POST",
+        "/api/product-updates/receipts",
+        None,
+        None,
+        False,
+    ),
+}
+
 ROLE_OPERATIONS = {
     "roles.list": (
         "GET",
@@ -1127,6 +1138,7 @@ CANONICAL_OPERATIONS = {
     **WORKSPACE_FILE_OPERATIONS,
     **PLATFORM_JOB_OPERATIONS,
     **SOLUTION_OPERATIONS,
+    **PRODUCT_UPDATES_OPERATIONS,
     **ROLE_RESOURCE_ASSIGNMENT_OPERATIONS,
 }
 
@@ -1308,5 +1320,4 @@ def test_action_scopes_use_the_closed_permission_domain_vocabulary() -> None:
     assert not unknown, (
         f"catalog action_scopes outside the grammar or PERMISSION_DOMAINS: {unknown}"
     )
-
 

@@ -13,9 +13,10 @@ it("groups documentation, internal release notes, community destinations and the
 	expect(
 		screen.getByRole("menuitem", { name: "Release Notes" }),
 	).toHaveAttribute("href", "/whats-new");
-	expect(
-		screen.getByRole("menuitem", { name: "Discord" }),
-	).toHaveAttribute("href", "https://discord.gg/f7TCcWX2s");
+	expect(screen.getByRole("menuitem", { name: "Discord" })).toHaveAttribute(
+		"href",
+		"https://discord.gg/f7TCcWX2s",
+	);
 	expect(
 		screen.getByRole("menuitem", { name: /Copy version/ }),
 	).toBeVisible();

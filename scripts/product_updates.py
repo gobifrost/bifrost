@@ -1185,6 +1185,21 @@ def collect_inventory(base: str, target: str, repository: str) -> dict[str, Any]
     }
 
 
+def retain_contribution_evidence(
+    collected: dict[str, Any], previous: dict[str, Any]
+) -> None:
+    """Keep reviewed additional credits when refreshing the same landed PR."""
+    prior = {pr["number"]: pr for pr in previous.get("prs", [])}
+    for pr in collected["prs"]:
+        old = prior.get(pr["number"])
+        if (
+            old
+            and old["merge_commit"] == pr["merge_commit"]
+            and old.get("contributions")
+        ):
+            pr["contributions"] = old["contributions"]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1349,12 +1364,12 @@ def main() -> int:
                 raise ValueError("\n".join(errors))
             return 0
         if args.command == "collect-inventory":
+            collected = collect_inventory(args.base, args.target, args.repository)
+            if args.output.exists():
+                retain_contribution_evidence(collected, read_json(args.output))
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(
-                json.dumps(
-                    collect_inventory(args.base, args.target, args.repository), indent=2
-                )
-                + "\n",
+                json.dumps(collected, indent=2) + "\n",
                 encoding="utf-8",
             )
             return 0

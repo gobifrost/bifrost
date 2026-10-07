@@ -9,8 +9,9 @@ if (!email || !password || !process.env.BIFROST_PREVIEW_URL) {
 }
 
 test("admin sees new updates automatically and reopens history from Help", async ({
-	page,
+	page, browser,
 }, testInfo) => {
+	const receiptResponse = page.waitForResponse((response) => response.url().endsWith("/api/product-updates/receipts") && response.request().method() === "POST");
 	await page.goto("/login");
 	await page.getByLabel("Email").fill(email);
 	await page.getByLabel("Password", { exact: true }).fill(password);
@@ -20,7 +21,7 @@ test("admin sees new updates automatically and reopens history from Help", async
 	await expect(dialog).toBeVisible();
 	await expect(
 		dialog.getByRole("heading", {
-			name: "Release Notes and Discord",
+			name: "See a User's Effective Access",
 		}),
 	).toBeVisible();
 	await expect(dialog.getByRole("heading", { name: "October 6, 2026", exact: true })).toHaveCount(0);
@@ -30,22 +31,9 @@ test("admin sees new updates automatically and reopens history from Help", async
 	await expect(
 		community.getByRole("link", { name: "Discord", exact: true }),
 	).toHaveAttribute("href", "https://discord.gg/f7TCcWX2s");
-	await expect
-		.poll(() =>
-			page.evaluate(() =>
-				Object.keys(localStorage)
-					.filter((key) =>
-						key.startsWith("bifrost.product-updates.receipts:"),
-					)
-					.map(
-						(key) =>
-							JSON.parse(localStorage.getItem(key) ?? "[]")
-								.length,
-					)
-					.reduce((a, b) => a + b, 0),
-			),
-		)
-		.toBe(16);
+	const receipt = await receiptResponse;
+	expect(receipt.status()).toBe(200);
+	expect((await receipt.json()).seen_entry_ids).toHaveLength(15);
 	await page.screenshot({
 		animations: "disabled",
 		path: testInfo.outputPath("whats-new-modal-desktop.png"),
@@ -75,7 +63,7 @@ test("admin sees new updates automatically and reopens history from Help", async
 	await history.setViewportSize({ width: 390, height: 844 });
 	await expect(history.getByRole("dialog")).toHaveCount(0);
 	await expect(
-		history.getByRole("heading", { name: "Release Notes and Discord" }),
+		history.getByRole("heading", { name: "See a User's Effective Access" }),
 	).toBeVisible();
 	await expect(history.getByRole("heading", { name: "October 6, 2026", exact: true })).toHaveCount(0);
 	await expect(history.getByText("Preview Controls", { exact: true })).toHaveCount(0);
@@ -103,7 +91,7 @@ test("admin sees new updates automatically and reopens history from Help", async
 	await history.screenshot({ animations: "disabled", path: testInfo.outputPath("whats-new-fixes-mobile.png") });
 	await history.getByRole("heading", { name: "Hardening", exact: true }).scrollIntoViewIfNeeded();
 	await history.screenshot({ animations: "disabled", path: testInfo.outputPath("whats-new-hardening-mobile.png") });
-	await history.getByRole("heading", { name: "Release Notes and Discord", exact: true }).scrollIntoViewIfNeeded();
+	await history.getByRole("heading", { name: "See a User's Effective Access", exact: true }).scrollIntoViewIfNeeded();
 	await history.getByRole("button", { name: "Help", exact: true }).click();
 	await expect(
 		history.getByRole("menuitem", { name: "Release Notes", exact: true }),
@@ -142,4 +130,20 @@ test("admin sees new updates automatically and reopens history from Help", async
 	await expect(history.getByRole("dialog")).toHaveCount(0);
 	await history.getByRole("link", { name: "Done", exact: true }).click();
 	await expect(history).toHaveURL(/\/$/);
+	const freshContext = await browser.newContext({ baseURL: process.env.BIFROST_PREVIEW_URL });
+	try {
+		const freshPage = await freshContext.newPage();
+		const feedResponse = freshPage.waitForResponse((response) => response.url().endsWith("/api/product-updates") && response.request().method() === "GET");
+		await freshPage.goto("/login");
+		await freshPage.getByLabel("Email").fill(email);
+		await freshPage.getByLabel("Password", { exact: true }).fill(password);
+		await freshPage.getByRole("button", { name: "Sign In", exact: true }).click();
+		const feed = await (await feedResponse).json();
+		expect(feed.seen_entry_ids).toHaveLength(15);
+		await expect(freshPage.getByRole("button", { name: "Help", exact: true })).toBeVisible();
+		await expect(freshPage.getByRole("dialog", { name: "What's New" })).toHaveCount(0);
+	} finally {
+		await freshContext.close();
+	}
+
 });

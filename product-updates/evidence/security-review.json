@@ -1,5 +1,5 @@
 {
-  "review_status": "draft",
+  "review_status": "source_verified",
   "checked_at": "2026-10-06",
   "sources": [
     {
@@ -14,7 +14,7 @@
       "patched": "2.53.0",
       "cve_id": null,
       "cve_status": "Upstream page reports no known CVE at verification time.",
-      "applicability": "Dependency version patched; review deployment use of model concurrency wrappers before making exploitability claims."
+      "applicability": "Repository search found no ConcurrencyLimitedModel or limit_model_concurrency wrappers. Patched dependency version; no deployment exploitability claim. Upstream advisory reports no known CVE."
     },
     {
       "advisory": "GHSA-6hxq-p678-4hr2",

@@ -36,8 +36,11 @@ when an authenticated platform admin enters the shell. A displayed batch is
 acknowledged automatically. Reusing an entry UUID for editorial corrections or
 promotion from dev to stable does not reopen it. New noteworthy entries can
 appear in dev builds; a formal release aggregates them without re-announcing
-previously seen entries. Production receipt persistence remains the follow-on
-contract in `docs/plans/product-updates-production-contract.md`.
+previously seen entries. Receipts are persisted per authenticated admin on the server. The feed is enabled
+on every image, including `:dev`, candidates, and stable. Runtime history retains
+all applicable approved UUIDs; a formal release interval never clears history or
+receipts. Every image build runs `scripts.prepare_product_updates_image` before
+Docker packaging, including the exact merge-candidate images promoted to `:dev`.
 
 ## Step 1: Resolve the Requested Operation
 
@@ -206,7 +209,7 @@ only when that material is reviewed and committed:
 TAG="vX.Y.Z-rc.N"
 TARGET=$(jq -r .target_ref product-updates/inventory.json)
 CONTENT_REF=$(git rev-parse HEAD)
-./scripts/prepare-release-body.sh "$TAG" "$TARGET" "$CONTENT_REF" \
+./scripts/prepare-release-body.sh "$TAG" "$PREVIOUS_COMMIT" "$TARGET" "$CONTENT_REF" \
   "product-updates/release-bodies/${TAG}.md"
 git add "product-updates/release-bodies/${TAG}.md"
 git commit -m "docs(release): prepare ${TAG} notes"
@@ -305,6 +308,7 @@ Let it run. The docs PR is independent of the bifrost tag — you can tag in par
 PREVIOUS_FINAL=$(gh release list --limit 100 --json tagName,isDraft,isPrerelease,publishedAt \
   --jq '[.[] | select(.isDraft == false and .isPrerelease == false)] | sort_by(.publishedAt) | last | .tagName')
 PREVIOUS_COMMIT=$(git rev-parse "${PREVIOUS_FINAL}^{commit}")
+LEDGER_BASE=$(jq -r .base_ref product-updates/inventory.json)
 TARGET=$(git rev-parse HEAD)
 git merge-base --is-ancestor "$PREVIOUS_COMMIT" "$TARGET"
 git log "${PREVIOUS_COMMIT}..${TARGET}" --oneline
@@ -321,8 +325,10 @@ Present the summary as:
 > - `<sha>` `<message>`
 > - ...
 
-Before authoring, refresh the verified inventory for exactly this ancestor
-range. The frozen inventory is the source of truth for landed coverage, verified
+Before authoring, refresh the cumulative verified inventory from its retained
+`LEDGER_BASE` through `TARGET`. Never discard earlier entry source metadata when
+cutting a release; image history must retain those entries. The GitHub body alone
+uses the explicit `PREVIOUS_COMMIT..TARGET` interval. The frozen inventory is the source of truth for landed coverage, verified
 authors, source PRs, and contributor credits. The validator fails if any
 landed PR lacks a canonical Highlight, Other, or reasoned Omit disposition.
 Resolve security advisories, upgrade instructions, and breaking changes as
@@ -334,7 +340,7 @@ step that calls GitHub for release-source metadata:
 
 ```bash
 python3 scripts/product_updates.py collect-inventory \
-  --base "$PREVIOUS_COMMIT" --target "$TARGET" --repository gobifrost/bifrost \
+  --base "$LEDGER_BASE" --target "$TARGET" --repository gobifrost/bifrost \
   --output product-updates/inventory.json
 ```
 
@@ -344,7 +350,7 @@ metadata. Investigate every count mismatch and every direct commit instead of
 dropping it from the disposition ledger:
 
 ```bash
-git log "${PREVIOUS_COMMIT}..${TARGET}" --format='%s' \
+git log "${LEDGER_BASE}..${TARGET}" --format='%s' \
   | grep -oE '\(#[0-9]+\)' | tr -d '()#' | sort -u > /tmp/release-pr-numbers.txt
 while read -r pr; do
   gh api "repos/gobifrost/bifrost/pulls/${pr}" \
@@ -357,7 +363,7 @@ test "$(wc -l < /tmp/release-pr-numbers.txt)" = "$(wc -l < /tmp/release-pr-metad
 TAG="vX.Y.Z"
 TARGET=$(jq -r .target_ref product-updates/inventory.json)
 CONTENT_REF=$(git rev-parse HEAD)
-./scripts/prepare-release-body.sh "$TAG" "$TARGET" "$CONTENT_REF" \
+./scripts/prepare-release-body.sh "$TAG" "$PREVIOUS_COMMIT" "$TARGET" "$CONTENT_REF" \
   "product-updates/release-bodies/${TAG}.md"
 git diff --check
 # Review the exact Markdown, then commit it through the normal PR path.

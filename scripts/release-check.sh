@@ -48,19 +48,20 @@ if ! RELEASE_MARKER="$(head -n 1 "$RELEASE_BODY")"; then
     echo -e "${RED}Prepared release body cannot be read: $RELEASE_BODY${NC}"
     exit 1
 fi
-if [[ ! "$RELEASE_MARKER" =~ ^\<\!--\ product-updates:\ target=([0-9a-f]{40})\ content-ref=([0-9a-f]{40})\ --\>$ ]]; then
+if [[ ! "$RELEASE_MARKER" =~ ^\<\!--\ product-updates:\ base=([0-9a-f]{40})\ target=([0-9a-f]{40})\ content-ref=([0-9a-f]{40})\ --\>$ ]]; then
     echo -e "${RED}Prepared release body has no deterministic Product Updates marker.${NC}"
     exit 1
 fi
-TARGET_SHA="${BASH_REMATCH[1]}"
-CONTENT_SHA="${BASH_REMATCH[2]}"
+BASE_SHA="${BASH_REMATCH[1]}"
+TARGET_SHA="${BASH_REMATCH[2]}"
+CONTENT_SHA="${BASH_REMATCH[3]}"
 if [[ "$(jq -r .target_ref product-updates/inventory.json)" != "$TARGET_SHA" ]]; then
     echo -e "${RED}Prepared release body target does not match the frozen inventory target_ref.${NC}"
     exit 1
 fi
 RENDERED_BODY="$(mktemp)"
 trap 'rm -f "$RENDERED_BODY"' EXIT
-if ! ./scripts/prepare-release-body.sh "$TAG" "$TARGET_SHA" "$CONTENT_SHA" "$RENDERED_BODY"; then
+if ! ./scripts/prepare-release-body.sh "$TAG" "$BASE_SHA" "$TARGET_SHA" "$CONTENT_SHA" "$RENDERED_BODY"; then
     echo -e "${RED}Prepared release body could not be regenerated from approved Product Updates.${NC}"
     exit 1
 fi

@@ -113,17 +113,20 @@ durable review status, not a checked PR-template box.
 
 ## Preparing a release
 
-Before a candidate or final tag, use `collect-inventory` to freeze the landed
-range. The target remains the applicability boundary; the later content ref is
+Before a candidate or final tag, refresh the cumulative inventory without
+dropping historical source metadata. Pass the previous final commit explicitly
+to release-body preparation; it filters that cumulative ledger to the release
+interval. Runtime image bundles retain all applicable approved entries. The target remains the applicability boundary; the later content ref is
 only the commit that contains reviewed prose and assets.
 
 ```bash
 PREVIOUS_FINAL=$(gh release list --limit 100 --json tagName,isDraft,isPrerelease,publishedAt \
   --jq '[.[] | select(.isDraft | not) | select(.isPrerelease | not)] | sort_by(.publishedAt) | last.tagName')
 BASE=$(git rev-list -n1 "$PREVIOUS_FINAL")
+LEDGER_BASE=$(jq -r .base_ref product-updates/inventory.json)
 TARGET=$(git rev-parse HEAD)
 python3 scripts/product_updates.py collect-inventory \
-  --base "$BASE" --target "$TARGET" --repository gobifrost/bifrost \
+  --base "$LEDGER_BASE" --target "$TARGET" --repository gobifrost/bifrost \
   --output product-updates/inventory.json
 
 # Review and approve the resulting dispositions and entries before preparing.
@@ -132,9 +135,9 @@ CONTENT_REF=$(git rev-parse HEAD)
 python3 scripts/product_updates.py validate \
   --content-dir product-updates \
   --inventory product-updates/inventory.json \
-  --dispositions product-updates/dispositions.json
+  --dispositions product-updates/dispositions.json \
   --target "$TARGET"
-./scripts/prepare-release-body.sh vX.Y.Z "$TARGET" "$CONTENT_REF" \
+./scripts/prepare-release-body.sh vX.Y.Z "$BASE" "$TARGET" "$CONTENT_REF" \
   product-updates/release-bodies/vX.Y.Z.md
 ```
 
@@ -150,6 +153,16 @@ and signed-artifact material. `./scripts/release-check.sh vX.Y.Z
 --release-body product-updates/release-bodies/vX.Y.Z.md` rejects a missing,
 untracked, or stale body; the release skill contains the full release gate.
 
-The initial backfill remains draft until its prose, source claims, security
-review, and upgrade guidance are approved. Its frozen inventory is evidence of
-coverage, not approved release content.
+The curated initial backfill is approved for in-app delivery. Formal publication
+still requires the separate release security/CVE and breaking-change review.
+Unapproved or staged entries remain excluded from ordinary image builds.
+
+## Runtime Delivery and Receipts
+
+All image channels deliver their applicable approved feed, including `:dev`.
+`scripts.prepare_product_updates_image` prepares the immutable API bundle and
+static screenshots before image packaging. The running bundle is the visibility
+boundary; retained receipts never expose content absent from that image.
+Authenticated platform admins automatically acknowledge displayed UUIDs using
+server-owned receipts. Revising an entry or moving it to a stable release keeps
+that receipt. Fetching a feed alone does not acknowledge it.

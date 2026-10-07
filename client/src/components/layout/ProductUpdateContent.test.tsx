@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, renderWithProviders, screen, within } from "@/test-utils";
-import type { ProductUpdateEntry } from "@/generated/product-updates";
+import type { ProductUpdateEntry } from "@/services/productUpdates";
 import {
 	CommunityFooter,
 	UpdateEntry,

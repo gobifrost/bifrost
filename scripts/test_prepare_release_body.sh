@@ -19,7 +19,7 @@ content_ref="$(git -C "$repo_root" rev-parse HEAD)"
 body="${TMPDIR:-/tmp}/bifrost-release-body-$$.md"
 trap 'rm -f "$body"' EXIT
 set +e
-output="$(cd "$repo_root" && ./scripts/prepare-release-body.sh v999.0.0 "$target" "$content_ref" "$body" 2>&1)"
+output="$(cd "$repo_root" && ./scripts/prepare-release-body.sh v999.0.0 "$(jq -r .base_ref "$repo_root/product-updates/inventory.json")" "$target" "$content_ref" "$body" 2>&1)"
 status=$?
 set -e
 
@@ -45,6 +45,7 @@ git -C "$fixture" commit --quiet -m base
 fixture_base="$(git -C "$fixture" rev-parse HEAD)"
 git -C "$fixture" commit --quiet --allow-empty -m target
 fixture_target="$(git -C "$fixture" rev-parse HEAD)"
+fixture_base="$(git -C "$fixture" rev-parse HEAD^)"
 FIXTURE_TARGET="$fixture_target" FIXTURE_BASE="$fixture_base" python3 - "$fixture/product-updates" <<'PY'
 import json
 import os
@@ -73,7 +74,7 @@ PY
 git -C "$fixture" add product-updates
 git -C "$fixture" commit --quiet -m 'reviewed release material'
 fixture_ref="$(git -C "$fixture" rev-parse HEAD)"
-(cd "$fixture" && ./scripts/prepare-release-body.sh v999.0.0 "$fixture_target" "$fixture_ref" release.md)
-[[ "$(head -n 1 "$fixture/release.md")" == "<!-- product-updates: target=${fixture_target} content-ref=${fixture_ref} -->" ]]
+(cd "$fixture" && ./scripts/prepare-release-body.sh v999.0.0 "$fixture_base" "$fixture_target" "$fixture_ref" release.md)
+[[ "$(head -n 1 "$fixture/release.md")" == "<!-- product-updates: base=${fixture_base} target=${fixture_target} content-ref=${fixture_ref} -->" ]]
 grep -q '^## Fixed CVEs$' "$fixture/release.md"
 grep -q '^## Docker Images$' "$fixture/release.md"

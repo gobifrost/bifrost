@@ -1,39 +1,27 @@
 # Product Updates: Current Handoff for Claude
 
-The earlier detailed UX revision plan is superseded by Jack's feedback and the simpler implementation in this branch. This file is context for a later Claude review; no Claude session has been launched.
+Jack authorized completing production delivery and merging. This branch implements the runtime rather than a development preview. Inspect current git/PR status before editing; no Claude session has been launched.
 
-Worktree: `/home/jack/.codex/worktrees/ae47/bifrost`, branch `codex/product-updates`. Inspect current status and commits before editing. Jack owns design/content approval. Read current AGENTS.md, DESIGN.md and `docs/plans/product-updates-progress.md` for test evidence and remaining scope.
+## Current Experience
 
-## Current Interaction
+Platform admins on every image receive a scrollable What's New modal for unseen approved entry UUIDs. Rendering the modal or history acknowledges the displayed batch automatically. PostgreSQL receipts belong to the authenticated admin and survive browser changes, editorial revisions, rollbacks and dev-to-stable promotion. There is no manual Mark Read action or unread badge. Direct history visits remain unobstructed.
 
-- Eligible unseen updates automatically open in a scrollable modal for platform admins entering the authenticated shell. The displayed batch is acknowledged after rendering; fetching or a failed load alone writes no receipt. Closing keeps the underlying route intact. The modal stays quiet after the batch has been presented.
-- The modal has **View All Updates**, which opens `/whats-new` in a new tab, keeping the original modal available. The permanent path is **Help → Release Notes**. The admin-only Help (?) trigger sits immediately left of the user icon and contains Documentation, Release Notes, Website, Discord, GitHub, and the copyable version. Direct history visits remain unobstructed.
-- Modal and history group notes under a single date heading per local calendar day, newest first. History is a plain feed. No manual mark-read action, per-item unread badge, inbox tabs, carousel, counters, or viewport-tracking system.
-- Modal and history share content rendering and the compact GitHub / Discord / Website footer with brand icons and a rainbow edge. Mobile links are labeled icons; the modal combines them with View All Updates and Done in one row, and full history has Done in its fixed header. Dates, feature screenshots and substantive upgrade/security instructions remain; routine area/type badges are removed. Sources and credits sit under collapsed Source Details. All note links open a new tab.
-- The announcement says release notes are available in the app and Bifrost is now on Discord. All initial prose remains draft; publication has not occurred.
+Help (?) immediately left of the avatar contains Documentation, Release Notes, Website, Discord, GitHub and the copyable version. `/whats-new` is the permanent history path. View All Updates and note links open new tabs. Modal and history have visible Done controls, fixed metadata/actions outside the scroller, a rainbow edge and compact branded social links. Dates remain metadata and are not displayed.
 
-## Preserve
+Features have concise individual headlines and verified screenshots where available. Bug Fixes and Hardening use compact bullet lists. Source Details collapse attribution. Routine dependency/catalog maintenance is omitted from the app; the dependency security notice remains release-only. Action Required is limited to the scoped CLI/SDK compatibility notice.
 
-The frozen backfill accounts for 124 PRs since `v1.4.1`: 16 canonical notes covering 68 PRs, 17 smaller customer-facing fix/hardening bullets, and 39 documented omissions. Nine of the canonical notes are feature cards, four are compact fixes, two are compact hardening notes, and one dependency security notice is release-only. The app fixture adds a staged announcement. Tool/schema, coverage reconciliation, source eligibility, attribution evidence and release generation are already implemented. Use `docs/plans/product-updates-progress.md` and `product-updates/previews/` rather than inventing release claims or regenerating prose independently.
+## Content and Build
 
-Primary UI files: `client/src/components/layout/ProductUpdatesDialog.tsx`, `ProductUpdateContent.tsx`, `HelpMenu.tsx`, `VersionMenuItem.tsx`, `Header.tsx`, `client/src/pages/ProductUpdatesPreview.tsx`, and the local adapter `client/src/lib/product-updates-preview.ts`. Their sibling tests and the dedicated browser happy path cover the interaction.
+The initial cumulative inventory covers 124 PRs since v1.4.1: 16 approved canonical notes covering 68 PRs, 17 smaller customer-facing changes and 39 documented omissions. Fifteen canonical entries are visible in the app. The Release Notes and Discord announcement keeps its stable UUID and must cite this feature's actual PR; pending sources stay withheld until their landed metadata is verified.
 
-This remains a development-only admin preview. Production API/database persistence, publishing, deployment, tags, live ruleset changes and Discord/server changes are separate work. The production contract proposal lives in `docs/plans/product-updates-production-contract.md`.
+Every API/client image is prepared from the shared approved source. The API serves an immutable bundle; screenshots have content-hashed URLs. Database storage contains presentation receipts, not a second editable release-note source. No runtime GitHub requests, model generation or polling are involved.
 
-Inspect the actual rendered desktop/mobile flow before calling the design accepted. Current screenshots, exact test commands and failures are recorded in the progress document. Continue in this worktree; preserve existing edits and coordinate before starting overlapping writers. Do not treat a passing test as Jack's design approval.
+GitHub release preparation independently filters the explicit previous-full-release commit through the target commit. The inventory stays cumulative so later releases do not erase app history. Adding/preparing content is separate from publishing a tag, GitHub release or Discord message. Those publication actions have not been requested.
 
-## Copy and Release Trigger
+## Files and Evidence
 
-The 17 draft notes now use short titles, one or two sentences, verified app links and screenshots where available. Authoring requires a General Writing/Humanizer pass; validation caps titles at 10 words and bodies at 60 words, or 100 for security/action-required notes. These limits constrain length; a human review still checks clarity and accuracy. Relative app links render as plain in-Bifrost instructions in GitHub release bodies.
+Read `docs/product-updates-authoring.md`, `docs/plans/product-updates-production-contract.md` and the current section of `docs/plans/product-updates-progress.md`. Primary client files are `ProductUpdatesDialog.tsx`, `ProductUpdateContent.tsx`, `HelpMenu.tsx`, `Header.tsx`, `pages/ProductUpdates.tsx` and `services/productUpdates.ts`. The API contract, router, service, receipt ORM and migration use the existing platform patterns.
 
-The release skill separates adding/preparing release data from publication. Prepare and review notes during their PR, aggregate approved entries since the previous final, then freeze the body for publication. Production announcements should trigger on unseen approved UUIDs in the installed build at admin shell entry. Editorial revisions and promotion from dev to stable preserve receipts. The current DEV mock uses local receipts; durable production receipts remain unimplemented.
+The production Docker-image browser journey proves automatic presentation, durable acknowledgement, Help navigation, screenshots, desktop/mobile scrolling and suppression in a fresh browser. Current screenshots are `docs/plans/product-updates-*-review.png`. The former Preview Controls/local-storage fixture path has been removed.
 
-Preview Controls is hidden on the normal review URL. Opt in with `/whats-new?controls=1` to use development fixture controls. The plain `/whats-new` route is the customer-style review surface.
-
-Features retain individual headlines under New Features and Functionality. Fixed and Security notes render as compact bullet lists under Bug Fixes and Hardening, with necessary upgrade actions inline and grouped source/credit details collapsed. Smaller notes join the matching lists in history; omitted maintenance stays in the ledger. `in_app: false` withholds a note from app display and receipts without deleting release material or bypassing review.
-
-Completeness was rechecked against freshly fetched main: it still matches frozen 32aeea16c. Effective Access and retention notes now have actual feature screenshots (revision 4); the older generic Roles illustration was replaced. GitHub preview images are pinned to asset-bearing commit 2ac8231e7. This Docker environment has no Kubernetes connection, so it cannot capture that conditionally available settings panel.
-
-Action Required is now limited to the verified CLI/SDK compatibility break and names that audience. Retention and general hardening/sync notes have no such label; the retention default and Keep forever choice remain explicit. Follow the stricter authoring criteria in `docs/product-updates-authoring.md`, rather than flagging optional configuration or release-review chores.
-
-Latest design removes visible date grouping from both surfaces; dates remain metadata. A merge-readiness audit confirmed production delivery and server-owned show-once receipts are still missing. Do not describe this preview branch as a shipped in-app feature. The user is deciding whether to extend scope to the production slice before merging.
+Use focused tests and the merge queue. Preserve user-approved copy and source evidence; do not invent release claims or future merge commits. Live ruleset changes, release publication and Discord/server administration remain separate work.

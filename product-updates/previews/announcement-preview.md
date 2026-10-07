@@ -27,9 +27,7 @@ Sources: [#791](https://github.com/gobifrost/bifrost/pull/791), [#813](https://g
 ### Dependency Security Updates
 
 
-Updated pydantic-ai to 2.53.0 for [GHSA-6fqq-452j-qhrp](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-6fqq-452j-qhrp) and js-yaml to bound YAML merge CPU use.
-
-**Release review pending:** confirm applicability and CVE identifiers. The SimpleWebAuthn browser update mentions a separate server advisory; it does not establish that Bifrost used the affected server package.
+Updated pydantic-ai to 2.53.0, which patches [GHSA-6fqq-452j-qhrp](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-6fqq-452j-qhrp). No affected wrappers were found in platform code. The docs-tooling js-yaml update bounds YAML merge CPU use. The SimpleWebAuthn browser update does not change an affected server package.
 
 Sources: [#718](https://github.com/gobifrost/bifrost/pull/718), [#910](https://github.com/gobifrost/bifrost/pull/910), [#714](https://github.com/gobifrost/bifrost/pull/714)
 
@@ -60,7 +58,7 @@ See a user's effective access, role assignments, and organization scope. Workflo
 
 **Open Users** (in Bifrost) · **Open Roles** (in Bifrost)
 
-![Effective access and role assignments](https://raw.githubusercontent.com/gobifrost/bifrost/963a1d7e5d6b3be401cc22390e30999a27deffe8/product-updates/assets/fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8/effective-access.png)
+![Effective access and role assignments](https://raw.githubusercontent.com/gobifrost/bifrost/24dacd52c3c655a0e3dc45e8f6609596d9c70b7c/product-updates/assets/fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8/effective-access.png)
 
 A user's effective permissions and organization scope.
 
@@ -157,7 +155,7 @@ Run and event history defaults to 30 days, including existing installs. Choose *
 
 **Open Maintenance** (in Bifrost)
 
-![Run history retention settings](https://raw.githubusercontent.com/gobifrost/bifrost/963a1d7e5d6b3be401cc22390e30999a27deffe8/product-updates/assets/0cf7ed8c-3fc1-5d28-b89b-09ca20a59262/retention.png)
+![Run history retention settings](https://raw.githubusercontent.com/gobifrost/bifrost/24dacd52c3c655a0e3dc45e8f6609596d9c70b7c/product-updates/assets/0cf7ed8c-3fc1-5d28-b89b-09ca20a59262/retention.png)
 
 Choose a retention period or keep finished runs and events indefinitely.
 

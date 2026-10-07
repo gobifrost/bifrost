@@ -29,13 +29,11 @@ import { BifrostRunMenu } from "@/components/layout/BifrostRunMenu";
 import { HelpMenu } from "./HelpMenu";
 import { lazyWithReload } from "@/lib/lazy-with-reload";
 
-const ProductUpdatesDialog = import.meta.env.DEV
-	? lazyWithReload(() =>
-			import("./ProductUpdatesDialog").then((module) => ({
-				default: module.ProductUpdatesDialog,
-			})),
-		)
-	: null;
+const ProductUpdatesDialog = lazyWithReload(() =>
+	import("./ProductUpdatesDialog").then((module) => ({
+		default: module.ProductUpdatesDialog,
+	})),
+);
 
 interface HeaderProps {
 	onMobileMenuToggle?: () => void;
@@ -214,7 +212,7 @@ export function Header({
 					<HeaderStatusIndicators isPlatformAdmin={isPlatformAdmin} />
 				</div>
 			)}
-			{isPlatformAdmin && user?.id && ProductUpdatesDialog && (
+			{isPlatformAdmin && user?.id && (
 				<Suspense fallback={null}>
 					<ProductUpdatesDialog key={user.id} adminId={user.id} />
 				</Suspense>

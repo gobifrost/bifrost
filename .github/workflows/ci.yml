@@ -200,6 +200,9 @@ jobs:
         id: version
         run: echo "version=$(./scripts/compute-dev-version.sh)" >> "$GITHUB_OUTPUT"
 
+      - name: Prepare approved in-app updates
+        uses: ./.github/actions/prepare-product-updates
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -267,6 +270,9 @@ jobs:
         id: version
         run: echo "version=$(./scripts/compute-dev-version.sh)" >> "$GITHUB_OUTPUT"
 
+      - name: Prepare approved in-app updates
+        uses: ./.github/actions/prepare-product-updates
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -329,6 +335,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Prepare approved in-app updates
+        uses: ./.github/actions/prepare-product-updates
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -580,22 +591,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Validate and bundle approved Product Updates
+      - name: Validate cumulative Product Updates coverage
         run: |
-          python -m pip install --require-hashes -r requirements.lock
+          python -m pip install --require-hashes -r requirements-product-updates.lock
           FROZEN_TARGET=$(jq -r .target_ref product-updates/inventory.json)
           python3 scripts/product_updates.py validate \
             --content-dir product-updates \
             --inventory product-updates/inventory.json \
             --dispositions product-updates/dispositions.json \
             --target "$FROZEN_TARGET"
-          python3 scripts/product_updates.py bundle \
-            --content-dir product-updates \
-            --inventory product-updates/inventory.json \
-            --dispositions product-updates/dispositions.json \
-            --target "$GITHUB_SHA" \
-            --content-ref "$GITHUB_SHA" \
-            --output /tmp/product-updates-dev-bundle.json
 
       - name: Verify exact merge candidate gate
         env:
@@ -938,6 +942,9 @@ jobs:
             exit 1
           fi
 
+      - name: Prepare approved in-app updates
+        uses: ./.github/actions/prepare-product-updates
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -1025,6 +1032,9 @@ jobs:
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Prepare approved in-app updates
+        uses: ./.github/actions/prepare-product-updates
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1

@@ -92,7 +92,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install trusted validator dependencies
-        run: python -m pip install --require-hashes -r validator/requirements.lock
+        run: python -m pip install --require-hashes -r validator/requirements-product-updates.lock
 
       - name: Validate canonical event disposition
         if: github.event_name != 'workflow_dispatch'

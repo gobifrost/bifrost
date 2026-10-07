@@ -192,6 +192,7 @@ services:
       - /app/src/services/sdk_package/node_modules
       - /app/src/services/sdk_package/sdk_src
       - ./api/shared:/app/shared:ro
+      - ./api/product-updates.bundle.json:/app/product-updates.bundle.json:ro
       - ./api/bifrost:/app/bifrost:ro
       - ./api/alembic:/app/alembic:ro
       - ./api/alembic.ini:/app/alembic.ini:ro

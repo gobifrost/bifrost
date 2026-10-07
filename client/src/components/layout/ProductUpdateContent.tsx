@@ -9,7 +9,7 @@ import type {
 	ProductUpdateAsset,
 	ProductUpdateEntry,
 	ProductUpdateOtherChange,
-} from "@/generated/product-updates";
+} from "@/services/productUpdates";
 
 export function UpdateGroups({
 	entries,

@@ -15,7 +15,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from scripts.product_updates import _entry_eligible, read_entry, schema_errors
+from scripts.product_updates import (
+    _entry_eligible,
+    _in_interval,
+    read_entry,
+    schema_errors,
+)
 
 
 @dataclass(frozen=True)
@@ -97,7 +102,7 @@ def _release_material(review: dict[str, Any], errors: list[str]) -> str:
     return f"## Fixed CVEs\n\n{cve_lines}\n\n## Breaking Changes\n\n{summary}\n"
 
 
-def validate(content_dir: Path, target: str) -> GateResult:
+def validate(content_dir: Path, target: str, base: str | None = None) -> GateResult:
     """Validate frozen-release review material and return deterministic sections."""
     errors: list[str] = []
     inventory = _load_json(content_dir / "inventory.json", errors)
@@ -125,6 +130,7 @@ def validate(content_dir: Path, target: str) -> GateResult:
         errors.append("release target does not match inventory target_ref")
     if release_review.get("target_ref") != target:
         errors.append("release review target does not match the frozen target")
+    interval_base = base if base is not None else str(inventory.get("base_ref", ""))
 
     entries: dict[str, dict[str, Any]] = {}
     entries_dir = content_dir / "entries"
@@ -142,6 +148,7 @@ def validate(content_dir: Path, target: str) -> GateResult:
             pr
             for commit in inventory.get("commits", [])
             if isinstance(commit, dict)
+            and _in_interval(commit["sha"], interval_base, target, inventory)
             for pr in commit.get("prs", [])
             if isinstance(pr, int)
         }
@@ -214,6 +221,8 @@ def validate(content_dir: Path, target: str) -> GateResult:
         if not isinstance(sha, str):
             errors.append("frozen inventory has a direct commit without a SHA")
             continue
+        if not _in_interval(sha, interval_base, target, inventory):
+            continue
         key = f"commit:{sha}"
         disposition = items.get(key)
         if not isinstance(disposition, dict):
@@ -233,9 +242,10 @@ def main() -> int:
     )
     parser.add_argument("--content-dir", required=True, type=Path)
     parser.add_argument("--target", required=True)
+    parser.add_argument("--base", required=True)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
-    result = validate(args.content_dir, args.target)
+    result = validate(args.content_dir, args.target, args.base)
     if result.errors:
         for error in result.errors:
             print(f"release material gate: {error}", file=sys.stderr)

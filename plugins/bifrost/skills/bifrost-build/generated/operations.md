@@ -6,6 +6,8 @@ harness.
 
 | Intent | CLI | MCP | Scope |
 |---|---|---|---|
+| `productupdates.get` | — | — | `settings.read` |
+| `productupdates.receipts.create` | — | — | `settings.readwrite` |
 | `agents.list` | `bifrost agents list` | `bifrost_agent_list` | `agents.read` |
 | `agents.get` | `bifrost agents get` | `bifrost_agent_get` | `agents.read` |
 | `agents.create` | `bifrost agents create` | `bifrost_agent_create` | `agents.readwrite` |

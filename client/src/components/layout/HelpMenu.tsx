@@ -51,14 +51,12 @@ export function HelpMenu() {
 						/>
 					</a>
 				</DropdownMenuItem>
-				{import.meta.env.DEV && (
-					<DropdownMenuItem asChild className="min-h-11">
-						<Link to="/whats-new">
-							<Megaphone aria-hidden="true" className="size-4" />
-							Release Notes
-						</Link>
-					</DropdownMenuItem>
-				)}
+				<DropdownMenuItem asChild className="min-h-11">
+					<Link to="/whats-new">
+						<Megaphone aria-hidden="true" className="size-4" />
+						Release Notes
+					</Link>
+				</DropdownMenuItem>
 				<DropdownMenuSeparator />
 				<DropdownMenuItem asChild className="min-h-11">
 					<a

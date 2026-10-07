@@ -4,6 +4,22 @@ Worktree: `/home/jack/.codex/worktrees/ae47/bifrost`
 Branch: `codex/product-updates`  
 Executor: this Codex chat, with disjoint Terra implementation tasks for tooling, client preview, and CI/release integration.
 
+## Current Production Status
+
+This section supersedes historical preview-only status below. Jack authorized finishing production delivery and merging on 2026-10-06. All image channels now use the immutable approved bundle and authenticated per-admin PostgreSQL receipts. The local-storage adapter, development gates and Preview Controls were removed. Fifteen visible entries from sixteen approved canonical notes are ready; the app/Discord announcement still needs its actual feature PR as verified source.
+
+Production-image browser verification passed with the rebuilt `client/Dockerfile` image, using `BIFROST_PRODUCT_UPDATES_TEST_URL=http://bifrost-product-updates-production-proof bash scripts/test-product-updates-preview.sh`: one journey passed in 9.8 seconds. It checks the automatic modal, receipt POST, loaded feature screenshots, desktop/mobile scrolling and exit controls, Help navigation, and no repeated modal when the same admin signs into a fresh browser. Screenshots were refreshed from that production run.
+
+Focused client verification: `./test.sh client unit src/components/layout/HelpMenu.test.tsx src/services/productUpdates.test.ts src/components/layout/ProductUpdateContent.test.tsx src/components/layout/ProductUpdatesDialog.test.tsx src/pages/ProductUpdates.test.tsx` passed 22 tests in five files; scoped ESLint, full `npm run lint` (zero errors; four existing warnings outside the changed files) and `npm run tsc` passed. Tests cover UUID identity versus revisions, new IDs, same-admin/other-admin tab messages, failed receipts and empty feeds.
+
+Tooling verification: `python3 -m unittest scripts.test_product_updates scripts.test_release_gate -q` passed 37 tests; `bash scripts/test_prepare_release_body.sh`, `bash scripts/test_release_check.sh`, and `python3 scripts/check_skill_mirrors.py` passed. Dockerized Ruff and Pyright passed for the five changed tool/test modules. Coverage includes cumulative image history, explicit release subranges and preserving reviewed contribution credits during inventory refresh.
+
+Durable failure dispositions: the first production browser run found Help's remaining DEV gate; removing it made the same journey pass. The API operation-catalog ID grammar rejected underscore names; valid IDs are now `productupdates.get` and `productupdates.receipts.create`. The real-bundle unit test exposed a missing test-runner bundle mount; the compose definition now supplies it. A browser assertion used an APIResponse matcher on a browser Response; it now asserts the numeric HTTP status without dumping response objects. Focused backend verification passed three real-bundle unit tests and three API/service E2E tests, including admin ownership, release-only/unknown ID rejection, revised UUID persistence and concurrent duplicate upserts. API quality and contract verification are recorded as they complete.
+
+The trusted validator bootstrap PR #917 merged as `5d4d5224f008e7e041f01300d8577f744776daee` after its PR and merge-group checks passed. The feature PR follows it so its Product Updates check can run trusted code from main. No live ruleset changes, release tag, GitHub release publication or Discord messages have been made. Full suites were not run locally; the merge queue runs the broad gates.
+
+## Historical Implementation Record
+
 ## Frozen Coverage
 
 Latest published non-draft final release verified through `gh release list` on 2026-10-06: `v1.4.1`, published 2026-09-17T22:43:44Z.

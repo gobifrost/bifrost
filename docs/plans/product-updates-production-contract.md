@@ -1,45 +1,21 @@
-# Product Updates Production Contract (Follow-On Slice)
+# Product Updates Runtime Contract
 
-This branch implements a development-only preview and repository toolchain. It adds no product database tables, REST endpoints, runtime seeding, polling, or announcement delivery.
+Every API/client image pair, including `:dev`, candidates and stable, carries the approved updates supported by that build. `scripts.prepare_product_updates_image` validates the cumulative content ledger before Docker packaging, writes the immutable API bundle and copies screenshots into the client public directory. Screenshot URLs include their content hash. No GitHub request, LLM, mutable entry table, seed transaction, background job, or polling loop is involved at runtime.
 
-## Initialization and Authorization Evidence
+## Feed and Authorization
 
-`api/src/main.py::app_lifespan` initializes the database, registers shared entity hooks, creates the configured debug admin, and idempotently seeds built-in policies through a service transaction. A follow-on seed service can use this existing lifecycle; a simple bundled feed requires no PlatformJob. Migrations remain the schema owner. Multiple API replicas must safely execute the same seed transaction.
+`GET /api/product-updates` requires Platform Admin and returns the running bundle plus the authenticated admin's seen entry UUIDs. Database receipts never widen the running image's visibility. A rollback serves the older bundle's content; newer receipts remain stored and become applicable again after upgrading. Production images consume approved canonical entries only. Draft and staged entries are not included.
 
-`api/src/core/auth.py::RequirePlatformAdmin` / `CurrentSuperuser` currently route through the platform-admin dependency. Use the same admin-only boundary for feed and receipt endpoints, plus a canonical operation/access-catalog entry. Provider-organization membership alone does not grant feed access. Receipts belong to the authenticated admin; callers cannot supply a different admin id. New MCP surfaces, if justified, use thin HTTP wrappers.
+## Automatic Acknowledgement
 
-## Proposed Data and Seed Transaction
+`POST /api/product-updates/receipts` receives the displayed UUID list. The server derives the admin from authentication, rejects unknown or release-only entry IDs, and upserts `(admin_id, entry_uuid)` idempotently. Callers cannot write another admin's receipts. Presentation timestamps mean the entry was displayed, not that somebody read or understood it.
 
-- Entry key is the permanent UUID; content stores revision, approved Markdown, dates, source/credit metadata, and assets identified by bundle manifest hash.
-- Upsert is idempotent on `(entry_uuid, revision)`. Only approved entries seed. A lower revision cannot overwrite a retained higher approved revision. Same UUID/revision with different content is an integrity error, not last-writer-wins.
-- Receipt key is `(admin_id, entry_uuid)` with acknowledgement timestamp. An entry revision upsert never touches receipts. A genuinely new capability or corrective announcement receives a new UUID.
-- Fetching alone does not acknowledge entries. Rendering the modal or history automatically acknowledges the batch presented by that surface; the user has no mark-read chore. A receipt means presented, not proof of reading or understanding. The receipt endpoint receives the presented UUID list and validates every UUID against the running bundle before writing. Duplicate ids are harmless; invalid/ineligible ids fail validation.
-- Independent admins maintain independent receipts. Dev → candidate → stable transitions retain the UUID and receipt. Logout, profile change, or another browser tab cannot transfer receipt ownership.
+The admin shell fetches the feed once on entry and opens the modal for unseen visible UUIDs. Rendering the modal or history automatically acknowledges that displayed batch. There is no Mark Read task. Direct history visits are unobstructed; history remains accessible through Help. Receipt failures are shown honestly and do not pretend persistence succeeded. Tabs communicate presentation through BroadcastChannel without sharing admin identity or introducing polling.
 
-## Running Build Is the Visibility Boundary
+## Release Intervals
 
-Feed queries intersect retained database entries with the immutable running bundle's applicable UUID list. Database retention and publication time never widen this set. Source PR/commit inclusion is proven at build time by ancestry; all declared prerequisites must land. A staged entry needs explicit approved eligibility, not a version/date guess. `/api/version` currently lacks a commit/channel; leave its existing semantics alone.
+The source inventory remains cumulative so image history does not lose earlier notes after a full release. GitHub release preparation takes an explicit previous-final commit and target commit, filters that interval, and freezes a reviewed Markdown body. Publication consumes it. Entry revisions and dev-to-stable promotion preserve UUIDs and receipts; a new capability receives a new UUID.
 
-Rollback must remain coherent: serve the immutable Markdown revision and local assets pinned by the running bundle, even when the database retains a newer approved revision. The database can retain newer content, but an older runtime cannot render it with absent assets. Return bundle identity and content revision for cache isolation. An empty applicable set is a valid feed.
+## Separate Publication
 
-## Proposed Transport
-
-The mock adapter defines list and mark-read boundaries; implementation can map these to short request-scoped admin endpoints. No background worker or browser polling loop is needed. If receipt changes are later broadcast, use the existing user notification/WebSocket transport and authenticated admin channel. Bundle delivery remains locally available offline; receipt writes can show an honest connection failure instead of pretending acknowledgement persisted.
-
-## Acceptance Evidence Required Later
-
-A real API/database slice needs transaction tests for repeat/concurrent seed, older-revision rejection, same-revision integrity, and receipt preservation; endpoint tests for admin-only read/write and authenticated receipt ownership; a rollback test against newer retained rows; and a two-admin browser happy path. Mock local storage in this branch proves preview interactions only and is not evidence of production persistence.
-
-## Future Publication Consumer
-
-Approved publication events can feed Discord independently of software tags. Define a durable publication identity and destination-specific receipt so repeated delivery cannot repost the same revision. Consumer invocation and live posting remain separately authorized work. The preview never sends Discord messages and no private invite is bundled.
-
-## Announcement Trigger
-
-Check the running build's eligible approved UUIDs when an authenticated platform
-admin enters the shell. Open the modal when any are unseen by that admin; a
-successful render acknowledges that batch. Revisions and dev-to-stable promotion
-retain UUID receipts. A new capability needs a new UUID. Fetches, version changes,
-draft notes, and retained rows outside the running bundle do not trigger it.
-Release-data preparation does not publish or activate drafts. Publication and
-production build activation are separately authorized operations.
+Preparing or merging release data does not cut a tag, publish a GitHub release, post to Discord, or change repository rulesets. A future Discord publication consumer needs its own durable publication identity and destination receipt. Live publication remains separately authorized.

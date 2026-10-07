@@ -1,5 +1,5 @@
 {
-  "content_ref": "963a1d7e5d6b3be401cc22390e30999a27deffe8",
+  "content_ref": "24dacd52c3c655a0e3dc45e8f6609596d9c70b7c",
   "entries": [
     {
       "action_required": false,
@@ -487,9 +487,9 @@
       "contributors": [],
       "id": "21f60d8e-18e9-5a5d-a730-e7d55cd77a3a",
       "in_app": false,
-      "markdown": "\nUpdated pydantic-ai to 2.53.0 for [GHSA-6fqq-452j-qhrp](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-6fqq-452j-qhrp) and js-yaml to bound YAML merge CPU use.\n\n**Release review pending:** confirm applicability and CVE identifiers. The SimpleWebAuthn browser update mentions a separate server advisory; it does not establish that Bifrost used the affected server package.",
+      "markdown": "\nUpdated pydantic-ai to 2.53.0, which patches [GHSA-6fqq-452j-qhrp](https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-6fqq-452j-qhrp). No affected wrappers were found in platform code. The docs-tooling js-yaml update bounds YAML merge CPU use. The SimpleWebAuthn browser update does not change an affected server package.",
       "published_at": "2026-10-06T22:01:18Z",
-      "revision": 4,
+      "revision": 5,
       "sources": [
         {
           "commit": "347a783251c7041ce5ccc95e50982724bdabea0d",

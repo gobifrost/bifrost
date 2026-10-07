@@ -1,8 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 
 /**
- * Development-only What's New preview against a running debug Vite stack.
- * It deliberately has no production-client setup or CI project.
+ * Product Updates runtime against the isolated debug stack, including real
+ * API/database receipts and a second browser with no local storage.
  */
 export default defineConfig({
 	testDir: "./e2e/preview",

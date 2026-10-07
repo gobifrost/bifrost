@@ -86,6 +86,7 @@ services:
       - /app/src/services/app_compiler/node_modules  # preserve npm deps from image
       - /app/src/services/app_bundler/node_modules  # preserve npm deps from image
       - ./api/shared:/app/shared:ro
+      - ./api/product-updates.bundle.json:/app/product-updates.bundle.json:ro
       - ./api/bifrost:/app/bifrost:ro
       - ./api/alembic:/app/alembic:ro
       - ./api/alembic.ini:/app/alembic.ini:ro

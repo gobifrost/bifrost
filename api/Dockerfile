@@ -69,6 +69,7 @@ RUN printf '#!/bin/sh\nexec python -m bifrost "$@"\n' > /usr/local/bin/bifrost \
 # Copy application code (paths relative to root context)
 COPY api/src/ /app/src/
 COPY api/shared/ /app/shared/
+COPY api/product-updates.bundle.json /app/product-updates.bundle.json
 COPY api/alembic/ /app/alembic/
 COPY api/alembic.ini /app/
 COPY api/bifrost/ /app/bifrost/

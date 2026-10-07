@@ -171,6 +171,7 @@ services:
       - /app/src/services/sdk_package/node_modules  # preserve npm deps from image
       - /app/src/services/sdk_package/sdk_src  # preserve image-baked SDK source (masked by :ro src mount)
       - ./api/shared:/app/shared:ro
+      - ./api/product-updates.bundle.json:/app/product-updates.bundle.json:ro
       - ./api/bifrost:/app/bifrost:ro
       - ./api/alembic:/app/alembic:ro
       - ./api/alembic.ini:/app/alembic.ini:ro
@@ -408,6 +409,7 @@ services:
       - /app/src/services/sdk_package/node_modules  # preserve npm deps from image
       - /app/src/services/sdk_package/sdk_src  # preserve image-baked SDK source (masked by :ro src mount)
       - ./api/shared:/app/shared:ro
+      - ./api/product-updates.bundle.json:/app/product-updates.bundle.json:ro
       - ./api/bifrost:/app/bifrost:ro
       - ./api/scripts:/app/scripts:ro  # Scripts for migration utilities
       - ./api/tests:/app/tests:ro

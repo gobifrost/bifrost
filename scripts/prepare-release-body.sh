@@ -2,19 +2,24 @@
 # Render the reviewed release body before a version tag exists.
 set -euo pipefail
 
-if [[ $# -ne 4 ]]; then
-    echo "Usage: $0 <tag> <40-character-target-sha> <40-character-content-sha> <output-body.md>" >&2
+if [[ $# -ne 5 ]]; then
+    echo "Usage: $0 <tag> <40-character-base-sha> <40-character-target-sha> <40-character-content-sha> <output-body.md>" >&2
     exit 2
 fi
 
 tag="$1"
-target="$2"
-content_ref="$3"
-output="$4"
+base="$2"
+target="$3"
+content_ref="$4"
+output="$5"
 version="${tag#v}"
 
 if [[ "$tag" != v* ]]; then
     echo "tag must start with v: $tag" >&2
+    exit 2
+fi
+if [[ ! "$base" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "base must be a 40-character lowercase commit SHA" >&2
     exit 2
 fi
 if [[ ! "$target" =~ ^[0-9a-f]{40}$ ]]; then
@@ -33,6 +38,7 @@ review_material="$tmp_dir/release-review.md"
 
 python3 -m scripts.release_gate \
     --content-dir product-updates \
+    --base "$base" \
     --target "$target" \
     --output "$review_material"
 if ! git merge-base --is-ancestor "$target" "$content_ref"; then
@@ -58,6 +64,7 @@ python3 scripts/product_updates.py bundle \
     --content-dir product-updates \
     --inventory product-updates/inventory.json \
     --dispositions product-updates/dispositions.json \
+    --base "$base" \
     --target "$target" \
     --content-ref "$content_ref" \
     --output "$bundle"
@@ -73,8 +80,8 @@ python3 scripts/product_updates.py render-release \
     --output "$product_body"
 
 mkdir -p "$(dirname "$output")"
-awk -v target="$target" -v content_ref="$content_ref" \
-    'BEGIN { printf "<!-- product-updates: target=%s content-ref=%s -->\n\n", target, content_ref } { print }' \
+awk -v base="$base" -v target="$target" -v content_ref="$content_ref" \
+    'BEGIN { printf "<!-- product-updates: base=%s target=%s content-ref=%s -->\n\n", base, target, content_ref } { print }' \
     "$product_body" > "$output"
 printf '\n' >> "$output"
 awk '{ print }' "$review_material" >> "$output"
