@@ -344,7 +344,12 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # RecommendedGrant), served at /recommended-access and parsed by `bifrost
     # workflows recommendations/grant`. Same shape, renamed; the route and the
     # commands are unreleased. Fingerprint refreshed only.
-    "6f77e10e77caed158f0f96218638c4dd52e804e78be7d16962d4a3f08d6d6fb0"
+    #
+    # AccessExplanation.then became nullable and NowUnavailable gained
+    # `inputs_not_stored` (2026-10-07): older and worker-written access checks
+    # stored no trace, or no inputs either. `bifrost audit explain` is
+    # unreleased and ships handling both. Fingerprint refreshed only.
+    "ad1993f588218ba570aea28e1f25f4a4774073b55a77e6c2a30466d95c0d10b9"
 )
 
 

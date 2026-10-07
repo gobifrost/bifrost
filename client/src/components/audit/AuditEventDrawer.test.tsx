@@ -246,6 +246,33 @@ describe("AuditEventDrawer", () => {
 		).not.toBeInTheDocument();
 	});
 
+	it("shows only now for a check stored without its trace", async () => {
+		const untraced = {
+			...accessCheck,
+			details: { workflow_id: accessCheck.details?.workflow_id },
+		};
+		explain.data = {
+			event: untraced,
+			then: null,
+			now,
+			now_unavailable: null,
+			changed: null,
+		};
+		const { user } = renderDrawer(untraced);
+
+		await user.click(
+			screen.getByRole("button", { name: "Test Again Now" }),
+		);
+
+		expect(
+			screen.getByText("Now this check would stop at Target in Reach."),
+		).toBeVisible();
+		expect(screen.getByRole("list", { name: "Now" })).toBeVisible();
+		expect(
+			screen.queryByRole("list", { name: "Then" }),
+		).not.toBeInTheDocument();
+	});
+
 	it("says an archived event must be exported", async () => {
 		explain.error = {
 			detail: "Audit event not found. Events older than 90 days are archived; export that day from the audit log to see them.",

@@ -214,13 +214,17 @@ export function changedStepKeys(
 	);
 }
 
-/** One sentence for what changed between a stored check and now. */
-export function changeSentence(then: AccessTrace, now: AccessTrace): string {
-	if (changedStepKeys(then, now).size === 0)
+/** One sentence for what changed between a stored check and now; with no
+ * stored trace (older checks), what now decides. */
+export function changeSentence(
+	then: AccessTrace | null,
+	now: AccessTrace,
+): string {
+	if (then && changedStepKeys(then, now).size === 0)
 		return "Nothing changed since then.";
 	const stop = stoppedStep(now);
 	if (stop) return `Now this check would stop at ${stepTitle(stop.label)}.`;
-	return then.outcome === "success"
+	return then?.outcome === "success"
 		? "This check would still be allowed now; the marked steps changed."
 		: "Now this check would be allowed.";
 }
@@ -236,6 +240,8 @@ export function nowUnavailableSentence(reason: NowUnavailable): string {
 			"The workflow no longer exists, so this check can't be tested again.",
 		solution_not_recorded:
 			"This file check was recorded before its Solution was stored with it, so it can't be tested again.",
+		inputs_not_stored:
+			"This check was recorded before its inputs were stored with it, so it can't be tested again.",
 	}[reason];
 }
 

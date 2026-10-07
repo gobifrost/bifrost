@@ -170,7 +170,9 @@ function AccessCheckTrace({
 	const then = storedTrace(entry.details);
 	const explanation = explain.data;
 	const changed =
-		explanation?.now && changedStepKeys(explanation.then, explanation.now);
+		explanation?.then &&
+		explanation.now &&
+		changedStepKeys(explanation.then, explanation.now);
 	const compared = Boolean(explanation && !explain.error);
 
 	const testAgain = () => {

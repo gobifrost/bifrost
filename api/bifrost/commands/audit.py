@@ -27,6 +27,7 @@ _NOW_UNAVAILABLE = {
     "run_user_missing": "the run's user no longer exists",
     "workflow_missing": "the workflow no longer exists",
     "solution_not_recorded": "this file check was recorded before Solutions were stored with it",
+    "inputs_not_stored": "this check was recorded before its inputs were stored with it",
 }
 
 
@@ -66,6 +67,8 @@ def _print_list(response: dict[str, Any]) -> None:
 @click.option("--resource-type", help="Only events on this resource type.")
 @click.option("--user", "user_ref", help="Acting user: UUID or email.")
 @click.option("--execution", help="Workflow execution ID.")
+@click.option("--workflow", "workflow_ref", help="Only events naming this workflow: UUID, name, or path::function.")
+@click.option("--org", "org_ref", help="Only events in this organization: UUID or name, or 'global'.")
 @click.option("--since", help="Start of the time range (ISO 8601, inclusive).")
 @click.option("--until", help="End of the time range (ISO 8601, inclusive).")
 @click.option("--search", help="Free-text search on actor, organization, action, resource type, IP, and details.")
@@ -85,6 +88,8 @@ async def list_audit(
     resource_type: str | None,
     user_ref: str | None,
     execution: str | None,
+    workflow_ref: str | None,
+    org_ref: str | None,
     since: str | None,
     until: str | None,
     search: str | None,
@@ -106,6 +111,10 @@ async def list_audit(
         params["user_id"] = await resolver.resolve("user", user_ref)
     if execution is not None:
         params["execution_id"] = execution
+    if workflow_ref is not None:
+        params["workflow_id"] = await resolver.resolve("workflow", workflow_ref)
+    if org_ref is not None:
+        params["organization_id"] = "none" if org_ref == "global" else await resolver.resolve("org", org_ref)
     if since is not None:
         params["start_date"] = since
     if until is not None:
@@ -139,19 +148,21 @@ def _print_explanation(explanation: dict[str, Any]) -> None:
         click.echo(f"{label + ':':<14}{value}")
     click.echo()
 
-    then_steps = explanation["then"]["steps"]
-    rows = [["STEP", "THEN"]] + [[step["label"], _cell(step)] for step in then_steps]
-    now = explanation["now"]
-    if now is not None:
-        now_by_key = {step["key"]: step for step in now["steps"]}
-        rows[0].append("NOW")
-        for row, step in zip(rows[1:], then_steps):
-            row.append(_cell(now_by_key[step["key"]]))
-    click.echo("\n".join(_columns(rows, " | ")))
+    then, now = explanation["then"], explanation["now"]
+    traces = [(title, trace) for title, trace in (("THEN", then), ("NOW", now)) if trace is not None]
+    if traces:
+        steps_by_key = [{step["key"]: step for step in trace["steps"]} for _, trace in traces]
+        rows = [["STEP", *(title for title, _ in traces)]] + [
+            [step["label"], *(_cell(steps[step["key"]]) for steps in steps_by_key)]
+            for step in traces[0][1]["steps"]
+        ]
+        click.echo("\n".join(_columns(rows, " | ")))
 
+    if then is None:
+        click.echo("THEN: not stored — this check was recorded before its decision was stored with it")
     if now is None:
         click.echo(f"NOW: not available — {_NOW_UNAVAILABLE[explanation['now_unavailable']]}")
-    else:
+    elif then is not None:
         click.echo(f"Changed: {'yes' if explanation['changed'] else 'no'}")
 
 

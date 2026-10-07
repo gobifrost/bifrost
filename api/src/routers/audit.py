@@ -11,7 +11,6 @@ organizations that permission reaches (decision R3b P2).
 import logging
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
-from typing import Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
@@ -32,8 +31,8 @@ from src.models.contracts.audit_retention import AuditExportRequest
 from src.models.contracts.platform_jobs import PlatformJobAccepted
 from src.models.orm.audit import AuditLog
 from src.models.orm.platform_jobs import PlatformJob
-from src.repositories.audit_logs import AuditLogRepository, GroupBy
-from src.services.access_explain import rerun
+from src.repositories.audit_logs import AuditLogRepository, GroupBy, IdOrNone
+from src.services.access_explain import rerun, stored_trace
 from src.services.audit_retention.archiver import audit_retention_info
 from src.services.audit_retention.export import (
     ACCESS_CHECK_ACTIONS,
@@ -70,6 +69,12 @@ async def list_audit_logs(
     execution_id: UUID | None = Query(
         None, description="Filter by workflow execution ID"
     ),
+    workflow_id: IdOrNone | None = Query(
+        None, description="Filter by the workflow an entry names, or 'none' for entries naming no workflow"
+    ),
+    organization_id: IdOrNone | None = Query(
+        None, description="Filter by organization ID, or 'none' for Global entries"
+    ),
     start_date: datetime | None = Query(None, description="Start of time range (inclusive)"),
     end_date: datetime | None = Query(None, description="End of time range (inclusive)"),
     search: str | None = Query(
@@ -94,6 +99,8 @@ async def list_audit_logs(
         "outcome": outcome,
         "user_id": user_id,
         "execution_id": execution_id,
+        "workflow_id": workflow_id,
+        "organization_id": organization_id,
         "start_date": start_date,
         "end_date": end_date,
         "search": search,
@@ -226,14 +233,14 @@ async def explain_access_check(event_id: UUID, user: CurrentActiveUser, db: DbSe
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Only access checks can be explained"
         )
-    then = AccessTrace.model_validate(cast(dict[str, Any], row.details)["trace"])
+    then = stored_trace(row)
     now, now_unavailable = await rerun(db, row)
     return AccessExplanation(
         event=(await _entries(db, [row]))[0],
         then=then,
         now=None if now is None else AccessTrace.model_validate(now.as_dict()),
         now_unavailable=now_unavailable,
-        changed=None if now is None else now.outcome != then.outcome,
+        changed=None if now is None or then is None else now.outcome != then.outcome,
     )
 
 

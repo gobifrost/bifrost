@@ -255,6 +255,15 @@ describe("changeSentence", () => {
 			"Now this check would be allowed.",
 		);
 	});
+
+	it("says what now decides when no trace was stored", () => {
+		expect(changeSentence(null, stoppedNow)).toBe(
+			"Now this check would stop at Target in Reach.",
+		);
+		expect(changeSentence(null, allowedThen)).toBe(
+			"Now this check would be allowed.",
+		);
+	});
 });
 
 describe("stoppedStep", () => {
@@ -289,6 +298,9 @@ describe("nowUnavailableSentence", () => {
 		);
 		expect(nowUnavailableSentence("solution_not_recorded")).toBe(
 			"This file check was recorded before its Solution was stored with it, so it can't be tested again.",
+		);
+		expect(nowUnavailableSentence("inputs_not_stored")).toBe(
+			"This check was recorded before its inputs were stored with it, so it can't be tested again.",
 		);
 	});
 });

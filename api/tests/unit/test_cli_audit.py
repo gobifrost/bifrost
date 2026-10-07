@@ -138,6 +138,16 @@ class TestAuditList:
             ("GET", "/api/audit", {"user_id": user_id}),
         ]
 
+    def test_workflow_and_organization_filters(self, fake_client: _FakeClient) -> None:
+        workflow_id, organization_id = str(uuid4()), str(uuid4())
+        fake_client.respond("/api/audit", {"entries": [], "groups": None, "continuation_token": None})
+        assert _invoke(["list", "--workflow", workflow_id, "--org", organization_id]).exit_code == 0
+        assert _invoke(["list", "--org", "global"]).exit_code == 0
+        assert fake_client.calls == [
+            ("GET", "/api/audit", {"workflow_id": workflow_id, "organization_id": organization_id}),
+            ("GET", "/api/audit", {"organization_id": "none"}),
+        ]
+
     def test_renders_one_line_per_entry(self, fake_client: _FakeClient) -> None:
         fake_client.respond(
             "/api/audit",
@@ -280,6 +290,7 @@ class TestAuditExplain:
                 "solution_not_recorded",
                 "this file check was recorded before Solutions were stored with it",
             ),
+            ("inputs_not_stored", "this check was recorded before its inputs were stored with it"),
         ],
     )
     def test_unavailable_now_prints_the_reason_instead_of_the_column(
@@ -299,6 +310,32 @@ class TestAuditExplain:
         ]
         assert f"NOW: not available — {sentence}" in output.splitlines()
         assert "Changed" not in output
+
+    def test_no_stored_trace_shows_now_only(self, fake_client: _FakeClient) -> None:
+        event_id = str(uuid4())
+        fake_client.respond(f"/api/audit/{event_id}/explain", _explanation(then=None, changed=None))
+        output = _invoke(["explain", event_id]).output
+        assert _table(output) == [
+            ["STEP", "NOW"],
+            ["Run user", "passed"],
+            ["Permission", "passed (full)"],
+            ["Reach", "passed (home)"],
+        ]
+        assert "THEN: not stored — this check was recorded before its decision was stored with it" in output.splitlines()
+        assert "Changed" not in output
+
+    def test_neither_then_nor_now_prints_both_reasons(self, fake_client: _FakeClient) -> None:
+        event_id = str(uuid4())
+        fake_client.respond(
+            f"/api/audit/{event_id}/explain",
+            _explanation(then=None, now=None, now_unavailable="inputs_not_stored", changed=None),
+        )
+        output = _invoke(["explain", event_id]).output
+        assert _table(output) == []
+        assert output.rstrip().splitlines()[-2:] == [
+            "THEN: not stored — this check was recorded before its decision was stored with it",
+            "NOW: not available — this check was recorded before its inputs were stored with it",
+        ]
 
     def test_json_passes_the_explanation_through(self, fake_client: _FakeClient) -> None:
         event_id = str(uuid4())

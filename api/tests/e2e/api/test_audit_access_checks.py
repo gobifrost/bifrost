@@ -84,7 +84,27 @@ def world(e2e_client, platform_admin, async_session_factory):
             ],
         )
     )
-    yield {"customer": customer, "operator": operator, "run": str(run), "workflow": workflow}
+    # Would-deny checks the Access Checks drill-in filters by workflow and organization.
+    drill = uuid.uuid4()
+    first, second = str(uuid.uuid4()), str(uuid.uuid4())
+    denied = {**check, "outcome": "failure", "execution_id": drill}
+    asyncio.run(
+        _seed(
+            async_session_factory,
+            [
+                {**denied, "organization_id": uuid.UUID(customer["id"]), "details": {"workflow_id": first}},
+                {**denied, "organization_id": uuid.UUID(customer["id"]), "details": {"workflow_id": second}},
+                {**denied, "organization_id": None, "details": {"inputs": {}}},
+            ],
+        )
+    )
+    yield {
+        "customer": customer,
+        "operator": operator,
+        "run": str(run),
+        "workflow": workflow,
+        "drill": {"run": str(drill), "first": first, "second": second},
+    }
     e2e_client.delete(f"/api/users/{created['id']}", headers=platform_admin.headers)
     e2e_client.delete(f"/api/organizations/{customer['id']}", headers=platform_admin.headers)
 
@@ -102,6 +122,50 @@ def test_admins_group_access_checks_by_workflow(e2e_client, platform_admin, worl
     [group] = body["groups"]
     assert (group["key"], group["count"]) == (world["workflow"], 4)
     assert group["sample"]["action"] == "access.check"
+
+
+def _drill_in(e2e_client, headers: dict, world, **filters: str) -> list[dict]:
+    params = {"action": "access.check", "outcome": "failure", "execution_id": world["drill"]["run"], **filters}
+    return _ok(e2e_client.get("/api/audit", headers=headers, params=params))["entries"]
+
+
+def test_access_checks_filter_by_workflow(e2e_client, platform_admin, world) -> None:
+    admin, drill = platform_admin.headers, world["drill"]
+
+    [entry] = _drill_in(e2e_client, admin, world, workflow_id=drill["first"])
+    assert entry["details"]["workflow_id"] == drill["first"]
+    [entry] = _drill_in(e2e_client, admin, world, workflow_id="none")
+    assert "workflow_id" not in entry["details"]
+    bad = e2e_client.get("/api/audit", headers=admin, params={"action": "access.check", "workflow_id": "nowhere"})
+    assert bad.status_code == 422
+
+    body = _ok(
+        e2e_client.get(
+            "/api/audit",
+            headers=admin,
+            params={"action": "access.check", "execution_id": drill["run"], "workflow_id": drill["second"], "group_by": "workflow"},
+        )
+    )
+    assert [(group["key"], group["count"]) for group in body["groups"]] == [(drill["second"], 1)]
+
+
+def test_access_checks_filter_by_organization(e2e_client, platform_admin, world) -> None:
+    admin, customer = platform_admin.headers, world["customer"]["id"]
+
+    in_customer = _drill_in(e2e_client, admin, world, organization_id=customer)
+    assert sorted(entry["details"]["workflow_id"] for entry in in_customer) == sorted(
+        (world["drill"]["first"], world["drill"]["second"])
+    )
+    [entry] = _drill_in(e2e_client, admin, world, organization_id="none")
+    assert entry["actor"]["organization_id"] is None
+
+
+def test_operators_filter_inside_their_reach(e2e_client, world) -> None:
+    operator = world["operator"].headers
+
+    [entry] = _drill_in(e2e_client, operator, world, workflow_id=world["drill"]["first"])
+    assert entry["actor"]["organization_id"] == world["customer"]["id"]
+    assert _drill_in(e2e_client, operator, world, organization_id="none") == []
 
 
 def test_operators_see_access_checks_in_their_reach_only(e2e_client, world) -> None:

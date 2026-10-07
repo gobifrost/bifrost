@@ -12024,10 +12024,10 @@ export interface components {
          */
         AccessExplanation: {
             event: components["schemas"]["AuditLogEntry"];
-            then: components["schemas"]["AccessTrace"];
+            then: components["schemas"]["AccessTrace"] | null;
             now: components["schemas"]["AccessTrace"] | null;
             /** Now Unavailable */
-            now_unavailable: ("rows_not_stored" | "run_user_missing" | "workflow_missing" | "solution_not_recorded") | null;
+            now_unavailable: ("rows_not_stored" | "run_user_missing" | "workflow_missing" | "solution_not_recorded" | "inputs_not_stored") | null;
             /** Changed */
             changed: boolean | null;
         };
@@ -36673,6 +36673,10 @@ export interface operations {
                 user_id?: string | null;
                 /** @description Filter by workflow execution ID */
                 execution_id?: string | null;
+                /** @description Filter by the workflow an entry names, or 'none' for entries naming no workflow */
+                workflow_id?: string | "none" | null;
+                /** @description Filter by organization ID, or 'none' for Global entries */
+                organization_id?: string | "none" | null;
                 /** @description Start of time range (inclusive) */
                 start_date?: string | null;
                 /** @description End of time range (inclusive) */
