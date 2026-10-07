@@ -164,6 +164,11 @@ async def _state(database_url: str) -> dict:
                 )
             )
         ).scalar_one()
+        name_index = (
+            await connection.execute(
+                sa.text("SELECT indexdef FROM pg_indexes WHERE indexname = 'uq_users_identity_name_per_org'")
+            )
+        ).scalar_one_or_none()
         users_org_on_update = (
             await connection.execute(
                 sa.text("SELECT confupdtype::text FROM pg_constraint WHERE conname = 'users_organization_id_fkey'")
@@ -226,6 +231,7 @@ async def _state(database_url: str) -> dict:
         }
         return {
             "constraint": constraint,
+            "name_index": name_index,
             "users_org_on_update": users_org_on_update,
             "columns": columns,
             "identities": identities,
@@ -252,6 +258,7 @@ def test_identities_are_created_and_unattended_global_workflows_point_at_the_pro
         assert before["constraint"] == "CHECK (((organization_id IS NOT NULL) OR (is_superuser = true)))"
         assert before["columns"] == set()
         assert before["users_org_on_update"] == "a"
+        assert before["name_index"] is None
 
         _upgrade(database_url, REVISION)
         after = asyncio.run(_state(database_url))
@@ -298,8 +305,9 @@ def test_identities_are_created_and_unattended_global_workflows_point_at_the_pro
         }
 
         # Head widens the constraint (custom identities may have no
-        # organization) and names every default identity "Default Identity",
-        # an edited name too: defaults have no editable name.
+        # organization), names every default identity "Default Identity", an
+        # edited name too (defaults have no editable name), and makes names
+        # unique per organization.
         asyncio.run(_edit_default_identity_name(database_url, ids["org_b"], "Billing Robot"))
         edited = asyncio.run(_state(database_url))
         assert {row[2] for row in edited["identities"]} >= {"Billing Robot", "Global identity", "Rehearsal A identity"}
@@ -308,8 +316,15 @@ def test_identities_are_created_and_unattended_global_workflows_point_at_the_pro
         assert at_head["constraint"] == (
             "CHECK (((organization_id IS NOT NULL) OR (is_superuser = true) OR (identity_kind IS NOT NULL)))"
         )
+        assert at_head["name_index"] == (
+            "CREATE UNIQUE INDEX uq_users_identity_name_per_org ON public.users USING btree "
+            "(COALESCE(organization_id, '00000000-0000-0000-0000-000000000000'::uuid), lower((name)::text)) "
+            "WHERE (identity_kind IS NOT NULL)"
+        )
         every_default = {row[2]: "Default Identity" for row in edited["identities"]}
-        assert _named({**at_head, "constraint": after["constraint"]}, {}) == _named(edited, every_default)
+        assert _named({**at_head, "constraint": after["constraint"], "name_index": None}, {}) == _named(
+            edited, every_default
+        )
         asyncio.run(_rerun_data_step(database_url))
         assert asyncio.run(_state(database_url)) == at_head
 

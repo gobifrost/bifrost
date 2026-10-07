@@ -1,4 +1,4 @@
-"""Custom identities may have no organization; every default is named Default Identity
+"""Custom identities may have no organization; defaults named Default Identity; names unique per organization
 
 Revision ID: 20261007_custom_global_identity
 Revises: 20261006_run_retention
@@ -12,6 +12,10 @@ Every default identity (org_default, global_default) is named "Default
 Identity", an edited name too: defaults have no editable name, and the UI
 shows their organization. The downgrade restores the names generated at
 creation ("{organization} identity", "Global identity").
+
+Identity names are unique per organization, ignoring case, with Global
+counted as one organization (uq_users_identity_name_per_org). Created after
+the rename: each organization has one default, so no names collide.
 """
 from __future__ import annotations
 
@@ -30,6 +34,11 @@ _RESTORE_ORG = (
     "WHERE u.organization_id = o.id AND u.identity_kind = 'org_default'"
 )
 _RESTORE_GLOBAL = "UPDATE users SET name = 'Global identity' WHERE identity_kind = 'global_default'"
+_NAME_INDEX = (
+    "CREATE UNIQUE INDEX uq_users_identity_name_per_org ON users "
+    "(COALESCE(organization_id, '00000000-0000-0000-0000-000000000000'::uuid), lower(name)) "
+    "WHERE identity_kind IS NOT NULL"
+)
 
 
 def upgrade() -> None:
@@ -40,9 +49,11 @@ def upgrade() -> None:
         "users",
         "organization_id IS NOT NULL OR is_superuser = true OR identity_kind IS NOT NULL",
     )
+    op.execute(_NAME_INDEX)
 
 
 def downgrade() -> None:
+    op.drop_index("uq_users_identity_name_per_org", table_name="users")
     op.execute(_RESTORE_ORG)
     op.execute(_RESTORE_GLOBAL)
     op.execute(

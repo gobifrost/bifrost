@@ -18,6 +18,7 @@ from src.services.authorization.context import AuthorizationContext, Boundary, B
 from src.services.authorization.enforce import Caller
 from src.services.identities import (
     DEFAULT_DELETE_MESSAGE,
+    DEFAULT_RENAME_MESSAGE,
     IdentityError,
     create_identity,
     delete_identity,
@@ -189,6 +190,35 @@ class TestChange:
         with pytest.raises(IdentityError) as refused:
             await delete_identity(db_session, admin, default.id)
         assert (refused.value.status_code, refused.value.detail) == (409, DEFAULT_DELETE_MESSAGE)
+
+    async def test_a_default_identity_is_never_renamed(self, db_session) -> None:
+        admin = admin_caller()
+        contoso = await _organization(db_session, "Contoso")
+        default = await _by_kind(db_session, admin, contoso.id, "org_default")
+
+        with pytest.raises(IdentityError) as refused:
+            await rename_identity(db_session, admin, default.id, IdentityUpdate(name="Contoso Robot"))
+        assert (refused.value.status_code, refused.value.detail) == (409, DEFAULT_RENAME_MESSAGE)
+        assert (await _by_kind(db_session, admin, contoso.id, "org_default")).name == "Default Identity"
+
+    async def test_a_taken_name_is_refused_and_the_session_carries_on(self, db_session) -> None:
+        admin = admin_caller()
+        contoso = await _organization(db_session, "Contoso")
+        await create_identity(db_session, admin, IdentityCreate(name="Nightly", organization_id=contoso.id))
+        other = await create_identity(db_session, admin, IdentityCreate(name="Other", organization_id=contoso.id))
+
+        with pytest.raises(IdentityError) as refused:
+            await create_identity(db_session, admin, IdentityCreate(name="NIGHTLY", organization_id=contoso.id))
+        assert (refused.value.status_code, refused.value.detail) == (
+            409,
+            f'An identity named "NIGHTLY" already exists in {contoso.name}',
+        )
+        with pytest.raises(IdentityError) as refused:
+            await rename_identity(db_session, admin, other.id, IdentityUpdate(name="nightly"))
+        assert refused.value.status_code == 409
+
+        names = {i.name for i in await list_identities(db_session, admin, organization_id=contoso.id)}
+        assert names == {"Default Identity", "Nightly", "Other"}
 
     async def test_delete_names_the_workflows_that_run_as_it_up_to_ten(self, db_session) -> None:
         admin = admin_caller()

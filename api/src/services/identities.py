@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
 from sqlalchemy import case, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.builtin_roles import USER_BASE_PERMISSIONS, USER_ROLE_ID
@@ -58,6 +59,8 @@ DELETE_OPERATION = "DELETE /api/identities/{identity_id}"
 
 DEFAULT_DELETE_MESSAGE = "Default identities can't be deleted"
 DEFAULT_RENAME_MESSAGE = "Default identities can't be renamed"
+# Identity names are unique per organization (Global counts as one), ignoring case.
+NAME_INDEX = "uq_users_identity_name_per_org"
 _NAMED_WORKFLOWS = 10
 
 _KIND_ORDER = case(
@@ -176,6 +179,29 @@ async def _public(session: AsyncSession, identities: Sequence[User]) -> list[Ide
     ]
 
 
+async def _flush_named(session: AsyncSession, identity: User, name: str) -> None:
+    """Name ``identity`` and flush it; a name its organization already holds
+    is a 409. The unique index decides, so two writers can't both take a
+    name. The name is set inside the savepoint (opening one flushes what is
+    pending), so a refusal rolls back only the savepoint."""
+    organization_id = identity.organization_id
+    try:
+        async with session.begin_nested():
+            identity.name = name
+            session.add(identity)
+            await session.flush()
+    except IntegrityError as e:
+        # SQLAlchemy chains the driver's error, which names the constraint.
+        if getattr(e.orig and e.orig.__cause__, "constraint_name", None) != NAME_INDEX:
+            raise
+        place = (
+            await session.scalar(select(Organization.name).where(Organization.id == organization_id))
+            if organization_id
+            else "Global"
+        )
+        raise IdentityError(409, f'An identity named "{name}" already exists in {place}') from None
+
+
 def _identities_query():
     """Every identity: Global first, then by organization name, default before custom, then by name."""
     return (
@@ -228,7 +254,6 @@ async def create_identity(session: AsyncSession, caller: Caller, request: Identi
     identity = User(
         id=identity_id,
         email=f"identity-{identity_id}@{IDENTITY_EMAIL_DOMAIN}",
-        name=request.name,
         is_active=True,
         is_verified=True,
         is_registered=True,
@@ -238,8 +263,7 @@ async def create_identity(session: AsyncSession, caller: Caller, request: Identi
         identity_kind=IdentityKind.CUSTOM,
     )
     await set_user_base_role(session, identity, USER_ROLE_ID)
-    session.add(identity)
-    await session.flush()
+    await _flush_named(session, identity, request.name)
     await emit_audit(
         session,
         "identity.create",
@@ -274,8 +298,7 @@ async def rename_identity(
     if identity.identity_kind != IdentityKind.CUSTOM:
         raise IdentityError(409, DEFAULT_RENAME_MESSAGE)
     before = identity.name
-    identity.name = request.name
-    await session.flush()
+    await _flush_named(session, identity, request.name)
     await emit_audit(
         session,
         "identity.rename",

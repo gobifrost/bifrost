@@ -194,6 +194,46 @@ def test_create_refuses_bad_input(e2e_client, platform_admin, world) -> None:
     assert _create(e2e_client, admin, "   ", contoso["id"]).status_code == 422
 
 
+def _refused(response, detail: str) -> None:
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == detail
+
+
+def test_names_are_unique_per_organization_ignoring_case(e2e_client, platform_admin, world) -> None:
+    admin, tag, contoso, fabrikam = platform_admin.headers, world["tag"], world["contoso"], world["fabrikam"]
+    _ok(_create(e2e_client, admin, f"Payroll {tag}", contoso["id"]), 201)
+
+    _refused(
+        _create(e2e_client, admin, f"PAYROLL {tag}", contoso["id"]),
+        f'An identity named "PAYROLL {tag}" already exists in {contoso["name"]}',
+    )
+    _ok(_create(e2e_client, admin, f"Payroll {tag}", fabrikam["id"]), 201)
+
+    _ok(_create(e2e_client, admin, f"Shared Payroll {tag}", None), 201)
+    _refused(
+        _create(e2e_client, admin, f"Shared Payroll {tag}", None),
+        f'An identity named "Shared Payroll {tag}" already exists in Global',
+    )
+
+    # The default identity holds its name in its organization.
+    _refused(
+        _create(e2e_client, admin, "Default Identity", contoso["id"]),
+        f'An identity named "Default Identity" already exists in {contoso["name"]}',
+    )
+
+
+def test_rename_into_a_taken_name_is_refused(e2e_client, platform_admin, world) -> None:
+    admin, tag, contoso = platform_admin.headers, world["tag"], world["contoso"]
+    _ok(_create(e2e_client, admin, f"Taken {tag}", contoso["id"]), 201)
+    moving = _ok(_create(e2e_client, admin, f"Moving {tag}", contoso["id"]), 201)
+
+    _refused(
+        e2e_client.patch(f"/api/identities/{moving['id']}", headers=admin, json={"name": f"taken {tag}"}),
+        f'An identity named "taken {tag}" already exists in {contoso["name"]}',
+    )
+    assert _by_name(_identities(e2e_client, admin, organization_id=contoso["id"]), f"Moving {tag}")["id"] == moving["id"]
+
+
 def test_rename_custom_but_not_default(e2e_client, platform_admin, world) -> None:
     admin, tag, contoso = platform_admin.headers, world["tag"], world["contoso"]
     default = _default(e2e_client, admin, contoso["id"])
