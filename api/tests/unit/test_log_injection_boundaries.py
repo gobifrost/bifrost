@@ -3,6 +3,7 @@
 import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
 
@@ -136,3 +137,86 @@ async def test_sdk_scanner_sanitizes_reference_and_path(caplog):
         _assert_sanitized(message)
     assert any("example.py\\nFORGED" in message for message in caplog.messages)
     assert any("danger" in message for message in caplog.messages)
+
+
+@pytest.mark.asyncio
+async def test_agent_run_enqueue_sanitizes_trigger_in_log(monkeypatch, caplog):
+    from src.services.execution import agent_run_service
+
+    session = AsyncMock()
+    session_context = MagicMock()
+    session_context.__aenter__ = AsyncMock(return_value=session)
+    session_context.__aexit__ = AsyncMock(return_value=False)
+    session_factory = MagicMock(return_value=session_context)
+    monkeypatch.setattr(
+        agent_run_service,
+        "get_session_factory",
+        MagicMock(return_value=session_factory),
+    )
+
+    redis_context = MagicMock()
+    redis_context.__aenter__ = AsyncMock(return_value=AsyncMock())
+    redis_context.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(agent_run_service, "get_redis", lambda: redis_context)
+    monkeypatch.setattr(agent_run_service, "publish_message", AsyncMock())
+
+    with caplog.at_level(logging.INFO, logger=agent_run_service.__name__):
+        await agent_run_service.enqueue_agent_run(
+            agent_id=str(uuid4()),
+            trigger_type="sdk\nFORGED\x1b[31m",
+            lineage=None,
+        )
+
+    message = caplog.messages[-1]
+    _assert_sanitized(message)
+    assert "trigger=sdk\\nFORGED" in message
+
+
+@pytest.mark.asyncio
+async def test_role_cache_sanitizes_redis_error_in_log(monkeypatch, caplog):
+    from shared import role_cache
+
+    redis = AsyncMock()
+    redis.delete.side_effect = RuntimeError("redis unavailable\nFORGED\x1b[31m")
+    monkeypatch.setattr(role_cache, "get_shared_redis", AsyncMock(return_value=redis))
+
+    with caplog.at_level(logging.WARNING, logger=role_cache.__name__):
+        await role_cache.invalidate_user(uuid4())
+
+    message = caplog.messages[-1]
+    _assert_sanitized(message)
+    assert "redis unavailable\\nFORGED" in message
+
+
+@pytest.mark.asyncio
+async def test_role_cache_sanitizes_user_id_in_invalidation_log(monkeypatch, caplog):
+    from shared import role_cache
+
+    user_id = MagicMock()
+    user_id.__str__.return_value = "user\nFORGED\x1b[31m"
+    redis = AsyncMock()
+    monkeypatch.setattr(role_cache, "get_shared_redis", AsyncMock(return_value=redis))
+
+    with caplog.at_level(logging.DEBUG, logger=role_cache.__name__):
+        await role_cache.invalidate_user(user_id)
+
+    message = caplog.messages[-1]
+    _assert_sanitized(message)
+    assert "user\\nFORGED" in message
+
+
+@pytest.mark.asyncio
+async def test_pending_execution_miss_sanitizes_execution_id_in_log(caplog):
+    from src.core import redis_client
+
+    client = redis_client.RedisClient()
+    client._redis = AsyncMock()
+    client._redis.get.return_value = None
+
+    with caplog.at_level(logging.WARNING, logger=redis_client.__name__):
+        result = await client.get_pending_execution("run\nFORGED\x1b[31m")
+
+    assert result is None
+    message = caplog.messages[-1]
+    _assert_sanitized(message)
+    assert "run\\nFORGED" in message
