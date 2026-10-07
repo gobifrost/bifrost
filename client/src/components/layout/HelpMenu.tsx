@@ -9,7 +9,6 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Logo } from "@/components/branding/Logo";
 import { DiscordIcon } from "@/components/icons/DiscordIcon";
 import { Github } from "@/components/icons/GithubIcon";
 import { VersionMenuItem } from "./VersionMenuItem";
@@ -64,7 +63,7 @@ export function HelpMenu() {
 						target="_blank"
 						rel="noreferrer"
 					>
-						<Logo type="square" alt="" className="size-4" />
+						<img src="/logo.svg" alt="" className="size-4" />
 						Website
 						<ExternalLink
 							aria-hidden="true"

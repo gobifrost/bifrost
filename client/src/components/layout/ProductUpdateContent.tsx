@@ -1,7 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { ExternalLink, ImageOff } from "lucide-react";
 import { MarkdownContent } from "@/components/common/MarkdownContent";
-import { Logo } from "@/components/branding/Logo";
 import { DiscordIcon } from "@/components/icons/DiscordIcon";
 import { Github } from "@/components/icons/GithubIcon";
 import { Badge } from "@/components/ui/badge";
@@ -366,7 +365,7 @@ export function CommunityFooter({
 					</CommunityLink>
 					<CommunityLink
 						href="https://gobifrost.com"
-						icon={<Logo type="square" alt="" className="size-4" />}
+						icon={<img src="/logo.svg" alt="" className="size-4" />}
 					>
 						Website
 					</CommunityLink>
