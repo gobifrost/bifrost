@@ -36,6 +36,8 @@ interface ComboboxProps {
 	emptyText?: string;
 	disabled?: boolean;
 	isLoading?: boolean;
+	/** Show the selected option's description after its label in the trigger. */
+	showSelectedDescription?: boolean;
 	className?: string;
 	id?: string;
 }
@@ -49,6 +51,7 @@ export function Combobox({
 	emptyText = "No option found.",
 	disabled = false,
 	isLoading = false,
+	showSelectedDescription = false,
 	className,
 	id,
 	"aria-describedby": describedBy,
@@ -115,6 +118,12 @@ export function Combobox({
 									{selectedOption?.label ??
 										(value || placeholder)}
 								</span>
+								{showSelectedDescription &&
+									selectedOption?.description && (
+										<span className="min-w-0 shrink truncate text-xs text-muted-foreground">
+											{selectedOption.description}
+										</span>
+									)}
 							</span>
 							<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
 						</>

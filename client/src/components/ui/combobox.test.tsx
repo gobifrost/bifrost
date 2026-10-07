@@ -21,6 +21,33 @@ describe("Combobox", () => {
 		expect(screen.getByText(label)).toHaveClass("truncate");
 	});
 
+	it("shows the selected option's description beside its label when asked", () => {
+		const options = [
+			{
+				value: "identity-default",
+				label: "Default Identity",
+				description: "Contoso · Default",
+			},
+		];
+		const { rerender } = renderWithProviders(
+			<Combobox options={options} value="identity-default" />,
+		);
+		expect(screen.getByRole("combobox")).toHaveTextContent(
+			/^Default Identity$/,
+		);
+
+		rerender(
+			<Combobox
+				options={options}
+				value="identity-default"
+				showSelectedDescription
+			/>,
+		);
+		expect(screen.getByRole("combobox")).toHaveTextContent(
+			"Default IdentityContoso · Default",
+		);
+	});
+
 	it("keeps the selected value visible when options are unavailable", () => {
 		renderWithProviders(<Combobox options={[]} value="ticket_id" placeholder="Pick key" />);
 		expect(screen.getByRole("combobox")).toHaveTextContent("ticket_id");
