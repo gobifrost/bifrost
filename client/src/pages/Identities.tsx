@@ -202,11 +202,6 @@ export function Identities() {
 									pinned(identity) && PINNED_CLASS_NAME,
 								)}
 							>
-								<IdentityOrganizationChip
-									organizationName={
-										identity.organization_name
-									}
-								/>
 								<div className="flex flex-wrap items-center gap-2">
 									<Link
 										to={`/users/${identity.id}`}
@@ -219,6 +214,18 @@ export function Identities() {
 									/>
 								</div>
 								<dl className="grid grid-cols-2 gap-3 text-sm">
+									<div>
+										<dt className="text-xs text-muted-foreground">
+											Organization
+										</dt>
+										<dd className="mt-1">
+											<IdentityOrganizationChip
+												organizationName={
+													identity.organization_name
+												}
+											/>
+										</dd>
+									</div>
 									<div>
 										<dt className="text-xs text-muted-foreground">
 											Workflows Using

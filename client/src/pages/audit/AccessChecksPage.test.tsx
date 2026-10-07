@@ -34,6 +34,11 @@ vi.mock("@/hooks/useTraceNames", () => ({
 }));
 
 const lists = vi.hoisted(() => ({ readable: true }));
+const media = vi.hoisted(() => ({ desktop: true }));
+
+vi.mock("@/hooks/useMediaQuery", () => ({
+	useMediaQuery: () => media.desktop,
+}));
 
 vi.mock("@/hooks/useOrganizations", () => ({
 	useOrganizations: () => ({
@@ -139,6 +144,7 @@ const search = () => screen.getByTestId("location").textContent;
 
 beforeEach(() => {
 	lists.readable = true;
+	media.desktop = true;
 	audit.groups.mockReset();
 	audit.list.mockReset();
 	audit.groups.mockReturnValue(query({ entries: [], groups }));
@@ -299,5 +305,33 @@ describe("AccessChecksPage", () => {
 			selector: "dt",
 		}).nextElementSibling;
 		expect(workflow).toHaveTextContent("Nightly Sync");
+	});
+
+	it("leads each check's phone record with its organization", async () => {
+		media.desktop = false;
+		const { user } = renderPage(
+			"/audit/access-checks?group_by=workflow&key=wf-1",
+		);
+
+		const [record] = within(
+			screen.getByRole("list", { name: "Checks" }),
+		).getAllByRole("listitem");
+		const labels = within(record).getAllByRole("term");
+		expect(labels.map((label) => label.textContent)).toEqual([
+			"Organization",
+			"Time",
+			"Run User",
+			"Resource Type",
+		]);
+		expect(labels[0].nextElementSibling).toHaveTextContent("Fabrikam");
+		expect(labels[2].nextElementSibling).toHaveTextContent(
+			"Default Identity · Contoso",
+		);
+		expect(record).toHaveTextContent("Would Stop Here · Target in Reach");
+
+		await user.click(within(record).getByRole("button"));
+		expect(
+			await screen.findByRole("dialog", { name: "Access Check" }),
+		).toBeVisible();
 	});
 });

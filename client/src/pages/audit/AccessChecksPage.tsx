@@ -271,25 +271,54 @@ function CheckList({
 				{entries.map((entry) => (
 					<li
 						key={entry.id}
-						className="relative space-y-2 rounded-[var(--bf-radius-surface)] border bg-card p-4 text-sm"
+						className="relative space-y-3 rounded-[var(--bf-radius-surface)] border bg-card p-4 text-sm"
 					>
-						<h3>
-							<button
-								type="button"
-								className="text-left font-semibold after:absolute after:inset-0 after:rounded-[var(--bf-radius-surface)] focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:outline-ring"
-								onClick={(event) =>
-									onOpen(entry, event.currentTarget)
-								}
-							>
-								{new Date(entry.timestamp).toLocaleString()}
-							</button>
-						</h3>
-						<RunUserLabel entry={entry} />
-						<p className="text-muted-foreground">
-							{organization(entry)}
-							{entry.resource_type &&
-								` · ${checkKindTitle(entry.resource_type)}`}
-						</p>
+						<dl className="grid grid-cols-2 gap-3">
+							<div>
+								<dt className="text-xs text-muted-foreground">
+									Organization
+								</dt>
+								<dd className="mt-1 [overflow-wrap:anywhere]">
+									{organization(entry)}
+								</dd>
+							</div>
+							<div>
+								<dt className="text-xs text-muted-foreground">
+									Time
+								</dt>
+								<dd className="mt-1">
+									<button
+										type="button"
+										className="text-left font-semibold after:absolute after:inset-0 after:rounded-[var(--bf-radius-surface)] focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:outline-ring"
+										onClick={(event) =>
+											onOpen(entry, event.currentTarget)
+										}
+									>
+										{new Date(
+											entry.timestamp,
+										).toLocaleString()}
+									</button>
+								</dd>
+							</div>
+							<div className="col-span-2">
+								<dt className="text-xs text-muted-foreground">
+									Run User
+								</dt>
+								<dd className="mt-1">
+									<RunUserLabel entry={entry} />
+								</dd>
+							</div>
+							<div className="col-span-2">
+								<dt className="text-xs text-muted-foreground">
+									Resource Type
+								</dt>
+								<dd className="mt-1">
+									{entry.resource_type
+										? checkKindTitle(entry.resource_type)
+										: "—"}
+								</dd>
+							</div>
+						</dl>
 						<StopChip entry={entry} labelled />
 					</li>
 				))}

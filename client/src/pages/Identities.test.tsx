@@ -315,11 +315,10 @@ describe("Identities", () => {
 			.filter((item) => item.parentElement === list);
 		expect(records).toHaveLength(3);
 		expect(records[0]).toHaveAttribute("data-pinned", "true");
-		// The organization leads each record.
-		expect(records[1].firstElementChild).toHaveAccessibleName(
-			"Organization",
-		);
-		expect(records[1].firstElementChild).toHaveTextContent("Contoso");
+		// The organization is each record's first labeled value.
+		const [label] = within(records[1]).getAllByRole("term");
+		expect(label).toHaveTextContent("Organization");
+		expect(label.nextElementSibling).toHaveTextContent("Contoso");
 		expect(within(records[1]).getByText("Ticket Sync")).toBeInTheDocument();
 		expect(within(records[1]).getByText("12")).toBeInTheDocument();
 	});
