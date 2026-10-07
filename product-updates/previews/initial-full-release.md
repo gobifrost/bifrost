@@ -1,7 +1,3 @@
-# Full Release Backfill Preview
-
-> **Draft review preview — not a published release.** Copy, security/CVE findings and upgrade guidance await review. Asset URLs pin the implementation commit and become accessible when that commit is published to GitHub.
-
 # Bifrost release notes
 
 ## Security
@@ -51,7 +47,7 @@ See a user's effective access, role assignments, and organization scope. Workflo
 
 **Open Users** (in Bifrost) · **Open Roles** (in Bifrost)
 
-![Effective access and role assignments](https://raw.githubusercontent.com/gobifrost/bifrost/24dacd52c3c655a0e3dc45e8f6609596d9c70b7c/product-updates/assets/fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8/effective-access.png)
+![Effective access and role assignments](https://raw.githubusercontent.com/gobifrost/bifrost/25db03042f39a0e613423652dfc860af00247459/product-updates/assets/fd0c7319-fcc0-5901-8eeb-3ec1b74f98c8/effective-access.png)
 
 A user's effective permissions and organization scope.
 
@@ -148,7 +144,7 @@ Run and event history defaults to 30 days, including existing installs. Choose *
 
 **Open Maintenance** (in Bifrost)
 
-![Run history retention settings](https://raw.githubusercontent.com/gobifrost/bifrost/24dacd52c3c655a0e3dc45e8f6609596d9c70b7c/product-updates/assets/0cf7ed8c-3fc1-5d28-b89b-09ca20a59262/retention.png)
+![Run history retention settings](https://raw.githubusercontent.com/gobifrost/bifrost/25db03042f39a0e613423652dfc860af00247459/product-updates/assets/0cf7ed8c-3fc1-5d28-b89b-09ca20a59262/retention.png)
 
 Choose a retention period or keep finished runs and events indefinitely.
 
@@ -186,5 +182,3 @@ Sources: [#873](https://github.com/gobifrost/bifrost/pull/873)
 ## Contributors
 
 [MTG-Thomas](https://github.com/MTG-Thomas), [sdc53](https://github.com/sdc53), [wilhil](https://github.com/wilhil)
-
-> Release preparation: the canonical helper adds Docker, type-stub, signature and attestation instructions after an actual tag/version and the required review record are approved.

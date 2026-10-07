@@ -31,6 +31,12 @@ release, aggregate the eligible approved entries since the previous final and
 freeze the complete body. Publishing consumes that prepared body without a new
 writing pass. Draft or staged entries never activate production announcements.
 
+After a source PR lands, refresh the cumulative verified inventory and commit the
+metadata in a content follow-up PR before considering its announcement delivered.
+Keep its reviewed UUID and prose; cite the actual landed PR/commit. Validate the
+prepared image bundle includes the entry. This activation step applies to dev
+images too and does not require publishing a GitHub release.
+
 The in-app trigger is unseen approved entry UUIDs in the running build, checked
 when an authenticated platform admin enters the shell. A displayed batch is
 acknowledged automatically. Reusing an entry UUID for editorial corrections or
@@ -94,11 +100,7 @@ python3 scripts/product_updates.py validate \
   --inventory product-updates/inventory.json \
   --dispositions product-updates/dispositions.json \
   --target "$TARGET"
-python3 scripts/product_updates.py bundle \
-  --content-dir product-updates \
-  --inventory product-updates/inventory.json \
-  --dispositions product-updates/dispositions.json \
-  --target "$TARGET" --content-ref "$CONTENT_REF" --output /tmp/product-updates-dev-bundle.json
+python3 -m scripts.prepare_product_updates_image --target "$CONTENT_REF"
 ```
 
 Only approved entries enter the bundle. Draft previews use an explicit

@@ -12,7 +12,7 @@ Features have concise individual headlines and verified screenshots where availa
 
 ## Content and Build
 
-The initial cumulative inventory covers 124 PRs since v1.4.1: 16 approved canonical notes covering 68 PRs, 17 smaller customer-facing changes and 39 documented omissions. Fifteen canonical entries are visible in the app. The Release Notes and Discord announcement keeps its stable UUID and must cite this feature's actual PR; pending sources stay withheld until their landed metadata is verified.
+The initial cumulative inventory covers 125 PRs since v1.4.1: 16 approved canonical notes covering 68 PRs, 17 smaller customer-facing changes and 40 documented omissions (including the validator bootstrap). Fifteen canonical entries are visible in the app. The Release Notes and Discord announcement keeps its stable UUID and must cite this feature's actual PR; pending sources stay withheld until their landed metadata is verified.
 
 Every API/client image is prepared from the shared approved source. The API serves an immutable bundle; screenshots have content-hashed URLs. Database storage contains presentation receipts, not a second editable release-note source. No runtime GitHub requests, model generation or polling are involved.
 

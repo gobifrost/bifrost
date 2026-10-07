@@ -73,7 +73,7 @@ and `omit` are visibility decisions, not areas or types.
 A pending source does not prevent structural validation or a development build.
 The renderer withholds its highlight until every cited source and declared
 prerequisite is present in the verified metadata and reachable from the build.
-Refresh cached metadata after landing before publishing that highlight. Approved
+After landing, refresh the cumulative cached metadata in a content follow-up PR and verify the prepared image bundle contains the entry. This activation is required for dev delivery as well as formal release preparation; it does not publish a GitHub release. Approved
 landed portions of a pending group appear as Other changes using their persisted
 summary (or cached PR title); omitted and unreviewed sources stay excluded.
 Security and action-required sources cannot use this smaller-change treatment

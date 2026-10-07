@@ -577,6 +577,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     permissions:
+      actions: read
       contents: read
       packages: write
 

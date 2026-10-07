@@ -2,7 +2,7 @@
   "schema_version": 1,
   "inventory": {
     "base_ref": "ade714a08b95c84daa285e859ebece55f45c6754",
-    "target_ref": "32aeea16c99c27d1278b5576f09080e29a59cca2"
+    "target_ref": "5d4d5224f008e7e041f01300d8577f744776daee"
   },
   "items": {
     "pr:708": {
@@ -1587,6 +1587,18 @@
         "evidence": [
           "https://github.com/gobifrost/bifrost/pull/916",
           "Product review: approved curated backfill for merge on 2026-10-06."
+        ]
+      }
+    },
+    "pr:917": {
+      "classification": "omit",
+      "entry_ids": [],
+      "reason": "Trusted validation bootstrap; internal release tooling has no standalone customer-facing announcement.",
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/917",
+          "Product Updates implementation scope approved for merge."
         ]
       }
     }

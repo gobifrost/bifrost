@@ -18,6 +18,12 @@ Durable failure dispositions: the first production browser run found Help's rema
 
 The trusted validator bootstrap PR #917 merged as `5d4d5224f008e7e041f01300d8577f744776daee` after its PR and merge-group checks passed. The feature PR follows it so its Product Updates check can run trusted code from main. No live ruleset changes, release tag, GitHub release publication or Discord messages have been made. Full suites were not run locally; the merge queue runs the broad gates.
 
+Final backend commands: `./test.sh tests/unit/services/test_product_updates.py -v` (3 passed), `./test.sh tests/e2e/api/test_product_updates.py -v --durations=0` (3 passed), `./test.sh quality api` (Ruff passed; Pyright zero errors/warnings), `./test.sh tests/unit/test_contract_version.py -v` (2 passed), and `./test.sh tests/unit/services/test_operation_catalog.py tests/unit/services/test_operation_inventory.py -v` (14 passed, including generated-document freshness).
+
+The cumulative inventory was refreshed through bootstrap merge `5d4d5224f`: 125 verified PRs/commits, no missing associations, 68 Highlight, 17 Other and 40 Omit. PR #917 is the added internal-tooling omission. Reviewed extra attribution for PR #745 survived refresh. Saved previews and the runtime bundle were regenerated. The release skill now explicitly requires a metadata activation follow-up after a feature lands, for dev delivery as well as formal releases.
+
+Bootstrap post-merge CI failed the exact-candidate promotion lookup with zero listed merge-group runs. A subsequent read-only GitHub lookup found the successful exact-SHA run `37554995630`; the promotion job's token had no explicit Actions read permission. The feature adds that least-privilege permission. The next post-merge promotion run must verify this disposition; no timeout, retry or relaxed gate was added.
+
 ## Historical Implementation Record
 
 ## Frozen Coverage
