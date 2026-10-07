@@ -1317,6 +1317,7 @@ class TestAutonomousAgentExecutor:
         assert result["status"] == "completed"
         assert result["iterations_used"] == 2
         assert "configured run budget" in str(result["output"])
+        assert mock_exec_tool.await_count == 1
 
     @pytest.mark.asyncio
     @patch("src.services.agent_runtime.model_factory.create_agent_model")
