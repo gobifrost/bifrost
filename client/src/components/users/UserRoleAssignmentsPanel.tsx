@@ -895,9 +895,9 @@ export function UserRoleAssignmentsPanel({
 						id="base-role-help"
 						className="text-xs leading-5 text-muted-foreground"
 					>
-						What this person can do in their own organization.
-						Everyone has exactly one. A custom base role replaces
-						the User role's defaults.
+						What the account can do in its home organization.
+						Every account has exactly one. A custom base role
+						replaces the User role's defaults.
 					</p>
 					<div className="space-y-3 rounded-[var(--bf-radius-surface)] border border-border/60 bg-muted/30 p-3 sm:p-4">
 						{canChangeBase ? (
