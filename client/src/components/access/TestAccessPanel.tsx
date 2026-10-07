@@ -15,7 +15,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { useTraceNames } from "@/hooks/useTraceNames";
 import { useWorkflowsMetadata } from "@/hooks/useWorkflows";
-import { OPERATION_SUGGESTIONS } from "@/lib/access-operations";
+import { OPERATION_SUGGESTIONS, operationFor } from "@/lib/access-operations";
 import { getErrorMessage } from "@/lib/api-error";
 import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
 import { useCheckUserAccess, type AccessTrace } from "@/services/access";
@@ -32,7 +32,7 @@ function OperationInput({
 	onChange,
 }: {
 	value: string;
-	onChange: (operation: string) => void;
+	onChange: (text: string) => void;
 }) {
 	const [suggesting, setSuggesting] = useState(false);
 	return (
@@ -67,7 +67,8 @@ function OperationInput({
 								keywords={[suggestion.label]}
 								className="min-h-11 flex-col items-start gap-0"
 								onSelect={() => {
-									onChange(suggestion.operation);
+									// Shown by name; operationFor reads it back as the operation.
+									onChange(suggestion.label);
 									setSuggesting(false);
 								}}
 							>
@@ -167,7 +168,7 @@ export function TestAccessPanel({
 				params: { path: { user_id: subjectId } },
 				body: {
 					organization_id: organization,
-					operation: operation.trim(),
+					operation: operationFor(operation),
 					workflow_id: workflowId,
 				},
 			});

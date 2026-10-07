@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { OPERATION_SUGGESTIONS } from "./access-operations";
+import { OPERATION_SUGGESTIONS, operationFor } from "./access-operations";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -48,5 +48,17 @@ describe("OPERATION_SUGGESTIONS", () => {
 		const labels = OPERATION_SUGGESTIONS.map(({ label }) => label);
 
 		expect(new Set(labels).size).toBe(labels.length);
+	});
+});
+
+describe("operationFor", () => {
+	it("reads a suggestion's name, in any case, as its operation", () => {
+		expect(operationFor("Read Tables")).toBe("tables.list");
+		expect(operationFor("  read tables ")).toBe("tables.list");
+	});
+
+	it("takes anything else as typed", () => {
+		expect(operationFor(" GET /api/users ")).toBe("GET /api/users");
+		expect(operationFor("agents.list")).toBe("agents.list");
 	});
 });

@@ -223,6 +223,9 @@ describe("TestAccessPanel", () => {
 			"read tab",
 		);
 		await user.click(screen.getByRole("option", { name: /Read Tables/ }));
+		expect(screen.getByRole("combobox", { name: "Operation" })).toHaveValue(
+			"Read Tables",
+		);
 		await user.click(screen.getByRole("button", { name: "Test Access" }));
 
 		expect(check.mutateAsync).toHaveBeenCalledWith(
@@ -232,6 +235,24 @@ describe("TestAccessPanel", () => {
 					operation: "tables.list",
 					workflow_id: null,
 				},
+			}),
+		);
+	});
+
+	it("tests a suggested operation typed by its name", async () => {
+		const user = userEvent.setup();
+		render(<TestAccessPanel subjectId="user-1" />);
+
+		await choose(user, "Organization", "Global");
+		await user.type(
+			screen.getByRole("combobox", { name: "Operation" }),
+			"read agents",
+		);
+		await user.click(screen.getByRole("button", { name: "Test Access" }));
+
+		expect(check.mutateAsync).toHaveBeenCalledWith(
+			expect.objectContaining({
+				body: expect.objectContaining({ operation: "agents.list" }),
 			}),
 		);
 	});
