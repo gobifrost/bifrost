@@ -108,6 +108,8 @@ export function EntitySelector({
 			placeholder={placeholder}
 			searchPlaceholder="Search entities..."
 			emptyText="No entities found."
+			// Optional: choosing the mapped entity again unmaps it.
+			allowClear
 			disabled={disabled}
 			className="min-h-11 text-sm"
 		/>
