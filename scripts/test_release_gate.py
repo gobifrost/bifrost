@@ -79,6 +79,21 @@ class ReleaseGateTests(unittest.TestCase):
             },
         )
 
+    def test_dependency_advisory_omission_still_requires_a_release_notice(self) -> None:
+        path = self.root / "dispositions.json"
+        data = json.loads(path.read_text())
+        item = data["items"]["pr:1"]
+        item["classification"] = "omit"
+        item["entry_ids"] = []
+        item.pop("action_required")
+        item["security_review"]["review_ref"] = "https://github.com/gobifrost/bifrost/pull/1"
+        write_json(path, data)
+        result = release_gate.validate(self.root, SHA)
+        self.assertIn(
+            "pr:1: security or action-required source must use a canonical highlight entry",
+            result.errors,
+        )
+
     def tearDown(self) -> None:
         self.temp.cleanup()
 
