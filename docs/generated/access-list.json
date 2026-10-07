@@ -4284,7 +4284,7 @@
     "operation_id": null,
     "path": "/api/identities/{identity_id}",
     "permission": "users.lifecycle.readwrite",
-    "reason": "Renames an identity, default or custom. Decided by the evaluator (src.services.authorization.enforce) at the identity's organization; privileged identities only for a Platform Admin."
+    "reason": "Renames a custom identity; default identities are never renamed. Decided by the evaluator (src.services.authorization.enforce) at the identity's organization; privileged identities only for a Platform Admin."
   },
   {
     "access_class": "permission",

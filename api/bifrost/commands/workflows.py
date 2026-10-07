@@ -58,7 +58,7 @@ from bifrost.dto_flags import (
     build_cli_flags,
 )
 from bifrost.org_target import org_option, resolve_org_target
-from bifrost.refs import RefResolver
+from bifrost.refs import RefResolver, identity_label
 from bifrost.contracts import WorkflowUpdateRequest
 
 from .base import _apply_flags, entity_group, output_result, pass_resolver, run_async
@@ -574,7 +574,7 @@ async def grant_requirements(
     if identity["identity_kind"] != "custom" and not yes:
         place = identity["organization_name"] or "Global"
         raise click.UsageError(
-            f"{identity['name']} is the default identity: this applies to all {identity['workflows_using']} "
+            f"{identity_label(identity)} is shared: this applies to all {identity['workflows_using']} "
             f"workflows in {place} that run as it. Pass --yes to continue, or give the workflow its own "
             "identity with `bifrost users create --identity` and `bifrost workflows update --run-as`."
         )

@@ -62,8 +62,8 @@ async def create_identity(request: IdentityCreate, user: CurrentActiveUser, db: 
 @router.patch(
     "/{identity_id}",
     response_model=IdentityPublic,
-    summary="Rename an identity",
-    description="Rename any identity, default or custom.",
+    summary="Rename a custom identity",
+    description="Rename a custom identity; default identities are all named Default Identity and can't be renamed.",
 )
 async def rename_identity(
     identity_id: UUID, request: IdentityUpdate, user: CurrentActiveUser, db: DbSession

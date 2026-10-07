@@ -12,7 +12,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from shared.identities import IDENTITY_EMAIL_DOMAIN
+from shared.identities import DEFAULT_IDENTITY_NAME, IDENTITY_EMAIL_DOMAIN
 from src.models.enums import IdentityKind
 from src.models.orm.audit import AuditLog
 from src.models.orm.users import User
@@ -66,7 +66,7 @@ async def test_identity_cannot_be_registered(private_client, org1, db_session) -
 
     await db_session.refresh(identity)
     assert identity.hashed_password is None
-    assert identity.name == f"{org1['name']} Identity"
+    assert identity.name == DEFAULT_IDENTITY_NAME
 
 
 def test_identity_email_domain_is_reserved(e2e_client, platform_admin, org1) -> None:
@@ -115,7 +115,7 @@ async def test_identity_is_not_edited_or_deleted_as_a_person(e2e_client, platfor
     ]
 
     await db_session.refresh(identity)
-    assert (identity.name, identity.is_active) == (f"{org1['name']} Identity", True)
+    assert (identity.name, identity.is_active) == (DEFAULT_IDENTITY_NAME, True)
 
 
 @pytest.mark.asyncio

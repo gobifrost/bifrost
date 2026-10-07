@@ -1,10 +1,11 @@
 """Identities API: list, create, rename and delete.
 
 Every organization has a default identity, there is one global default, and
-admins add custom ones (see ``shared.identities``). Reading is ``users.read``
-at the identity's organization; creating, renaming and deleting are
-``users.lifecycle.readwrite`` there (Global for a Global identity), decided by
-the evaluator. Roles are assigned through the user role-assignment routes.
+admins add custom ones (see ``shared.identities``); only custom ones are
+renamed or deleted. Reading is ``users.read`` at the identity's organization;
+creating, renaming and deleting are ``users.lifecycle.readwrite`` there
+(Global for a Global identity), decided by the evaluator. Roles are assigned
+through the user role-assignment routes.
 """
 
 from __future__ import annotations
@@ -56,6 +57,7 @@ UPDATE_OPERATION = "PATCH /api/identities/{identity_id}"
 DELETE_OPERATION = "DELETE /api/identities/{identity_id}"
 
 DEFAULT_DELETE_MESSAGE = "Default identities can't be deleted"
+DEFAULT_RENAME_MESSAGE = "Default identities can't be renamed"
 _NAMED_WORKFLOWS = 10
 
 _KIND_ORDER = case(
@@ -267,8 +269,10 @@ async def _managed_identity(session: AsyncSession, caller: Caller, identity_id: 
 async def rename_identity(
     session: AsyncSession, caller: Caller, identity_id: UUID, request: IdentityUpdate
 ) -> IdentityPublic:
-    """Rename an identity of any kind."""
+    """Rename a custom identity."""
     identity = await _managed_identity(session, caller, identity_id, UPDATE_OPERATION)
+    if identity.identity_kind != IdentityKind.CUSTOM:
+        raise IdentityError(409, DEFAULT_RENAME_MESSAGE)
     before = identity.name
     identity.name = request.name
     await session.flush()

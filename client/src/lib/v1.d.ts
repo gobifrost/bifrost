@@ -7635,8 +7635,8 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Rename an identity
-         * @description Rename any identity, default or custom.
+         * Rename a custom identity
+         * @description Rename a custom identity; default identities are all named Default Identity and can't be renamed.
          */
         patch: operations["rename_identity_api_identities__identity_id__patch"];
         trace?: never;

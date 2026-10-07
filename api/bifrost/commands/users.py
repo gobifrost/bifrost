@@ -1,6 +1,7 @@
 """CLI commands for asking what a user's access is, and for changing their roles.
 
-* ``bifrost users list [--identities]`` → ``GET /api/users``
+* ``bifrost users list`` → ``GET /api/users``
+* ``bifrost users list --identities`` → ``GET /api/identities``
 * ``bifrost users create --identity`` → ``POST /api/identities``
 * ``bifrost users access <user>`` → ``GET /api/users/{id}/access``
 * ``bifrost users access check <user>`` → ``POST /api/users/{id}/access/check``
@@ -21,7 +22,7 @@ import click
 
 from bifrost.client import BifrostClient
 from bifrost.org_target import resolve_org_target
-from bifrost.refs import RefResolver
+from bifrost.refs import RefResolver, identity_label
 
 from .base import EntityGroup, entity_group, output_result, pass_resolver, run_async
 from .permissions import SCOPE_LABELS, permission_names
@@ -35,8 +36,12 @@ _MARKS = {"passed": "✓", "stopped": "✗", "not_applicable": "–", "not_reach
 
 def _print_users(users: list[dict[str, Any]]) -> None:
     for user in users:
-        kind = _IDENTITY_KINDS.get(user.get("identity_kind"))
-        click.echo(f"{user['name']}  {kind or user['email']}")
+        click.echo(f"{user['name']}  {user['email']}")
+
+
+def _print_identities(identities: list[dict[str, Any]]) -> None:
+    for identity in identities:
+        click.echo(f"{identity_label(identity)}  {_IDENTITY_KINDS[identity['identity_kind']]}")
 
 
 def _print_created_identity(identity: dict[str, Any]) -> None:
@@ -80,7 +85,12 @@ async def list_users(
 
     Identities are the accounts that run work no person started: each organization's default, the global default, and custom ones.
     """
-    response = await client.get("/api/users", params={"identities": "only"} if identities else None)
+    if identities:
+        response = await client.get("/api/identities")
+        response.raise_for_status()
+        output_result(response.json(), ctx=ctx, human=_print_identities)
+        return
+    response = await client.get("/api/users")
     response.raise_for_status()
     output_result(response.json(), ctx=ctx, human=_print_users)
 

@@ -298,28 +298,24 @@ def test_identities_are_created_and_unattended_global_workflows_point_at_the_pro
         }
 
         # Head widens the constraint (custom identities may have no
-        # organization) and renames the generated default names to Title
-        # Case, leaving an edited name alone.
+        # organization) and names every default identity "Default Identity",
+        # an edited name too: defaults have no editable name.
         asyncio.run(_edit_default_identity_name(database_url, ids["org_b"], "Billing Robot"))
         edited = asyncio.run(_state(database_url))
         assert {row[2] for row in edited["identities"]} >= {"Billing Robot", "Global identity", "Rehearsal A identity"}
-        title_cased = {
-            row[2]: row[2].removesuffix("identity") + "Identity"
-            for row in edited["identities"]
-            if row[2].endswith("identity")
-        }
         _upgrade(database_url, "head")
         at_head = asyncio.run(_state(database_url))
         assert at_head["constraint"] == (
             "CHECK (((organization_id IS NOT NULL) OR (is_superuser = true) OR (identity_kind IS NOT NULL)))"
         )
-        assert _named({**at_head, "constraint": after["constraint"]}, {}) == _named(edited, title_cased)
+        every_default = {row[2]: "Default Identity" for row in edited["identities"]}
+        assert _named({**at_head, "constraint": after["constraint"]}, {}) == _named(edited, every_default)
         asyncio.run(_rerun_data_step(database_url))
         assert asyncio.run(_state(database_url)) == at_head
 
-        # The downgrade of head reverts exactly the names it changed.
+        # The downgrade of head restores the generated names.
         _downgrade(database_url, REVISION)
-        assert asyncio.run(_state(database_url)) == edited
+        assert asyncio.run(_state(database_url)) == after
         _upgrade(database_url, "head")
         assert asyncio.run(_state(database_url)) == at_head
 

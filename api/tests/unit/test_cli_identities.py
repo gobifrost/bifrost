@@ -45,7 +45,7 @@ def _identity(identity_id: str, name: str, kind: str, workflows_using: int) -> d
     }
 
 
-DEFAULT_IDENTITY = _identity(DEFAULT_IDENTITY_ID, "Contoso Default", "org_default", 4)
+DEFAULT_IDENTITY = _identity(DEFAULT_IDENTITY_ID, "Default Identity", "org_default", 4)
 NIGHTLY_IDENTITY = _identity(NIGHTLY_IDENTITY_ID, "Contoso Nightly", "custom", 1)
 
 REQUIREMENTS: dict[str, Any] = {
@@ -171,18 +171,21 @@ class TestUsersList:
         assert fake_client.calls == [("GET", "/api/users", None)]
         assert [line.split() for line in result.output.splitlines()] == [["Ada", "Lovelace", "ada@contoso.test"]]
 
-    def test_identities_switch_asks_for_identities_only(self, fake_client: _FakeClient) -> None:
-        fake_client._responses[("GET", "/api/users")] = [
-            {"id": DEFAULT_IDENTITY_ID, "name": "Contoso Default", "email": "x@identities.test", "identity_kind": "org_default"},
-            {"id": NIGHTLY_IDENTITY_ID, "name": "Contoso Nightly", "email": "y@identities.test", "identity_kind": "custom"},
-        ]
+    def test_identities_switch_lists_identities_and_names_a_default_by_its_place(self, fake_client: _FakeClient) -> None:
+        global_default = {**DEFAULT_IDENTITY, "identity_kind": "global_default", "organization_id": None, "organization_name": None}
+        fake_client._responses[("GET", "/api/identities")] = [global_default, DEFAULT_IDENTITY, NIGHTLY_IDENTITY]
         result = _users(["list", "--identities"])
         assert result.exit_code == 0, result.output
-        assert fake_client.calls == [("GET", "/api/users", {"identities": "only"})]
-        assert [line.split() for line in result.output.splitlines()] == [
-            ["Contoso", "Default", "Default"],
-            ["Contoso", "Nightly", "Custom"],
+        assert fake_client.calls == [("GET", "/api/identities", None)]
+        assert result.output.splitlines() == [
+            "Default Identity (Global)  Global",
+            "Default Identity (Contoso)  Default",
+            "Contoso Nightly  Custom",
         ]
+
+    def test_identities_json_passes_the_identities_through(self, fake_client: _FakeClient) -> None:
+        result = _users(["list", "--identities", "--json"])
+        assert json.loads(result.output) == [DEFAULT_IDENTITY, NIGHTLY_IDENTITY]
 
     def test_json_passes_the_list_through(self, fake_client: _FakeClient) -> None:
         result = _users(["list", "--json"])
@@ -397,7 +400,9 @@ class TestWorkflowsGrant:
     ) -> None:
         result = CliRunner().invoke(workflows_group, ["grant", WORKFLOW_ID, "--requirement", "1"], standalone_mode=False)
         assert result.exit_code != 0
-        assert "applies to all 4 workflows in Contoso that run as it" in str(result.exception)
+        assert str(result.exception).startswith(
+            "Default Identity (Contoso) is shared: this applies to all 4 workflows in Contoso that run as it."
+        )
         assert "--yes" in str(result.exception)
         assert [call[0] for call in fake_client.calls] == ["GET", "GET"]
 
@@ -406,7 +411,9 @@ class TestWorkflowsGrant:
             {**DEFAULT_IDENTITY, "identity_kind": "global_default", "organization_id": None, "organization_name": None}
         ]
         result = CliRunner().invoke(workflows_group, ["grant", WORKFLOW_ID, "--requirement", "1"], standalone_mode=False)
-        assert "applies to all 4 workflows in Global that run as it" in str(result.exception)
+        assert str(result.exception).startswith(
+            "Default Identity (Global) is shared: this applies to all 4 workflows in Global that run as it."
+        )
 
     def test_a_custom_identity_needs_no_yes(self, fake_client: _FakeClient) -> None:
         fake_client._responses[("GET", f"/api/workflows/{WORKFLOW_ID}/requirements")] = {

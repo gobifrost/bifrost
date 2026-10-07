@@ -332,13 +332,22 @@ async def _resolve_user(client: Any, value: str) -> tuple[str, list[dict[str, An
     return "", candidates
 
 
+def identity_label(identity: dict[str, Any]) -> str:
+    """How the CLI names an identity. Every default identity is named Default
+    Identity, so a default one carries its place: ``Default Identity (Contoso)``,
+    ``Default Identity (Global)``."""
+    if identity["identity_kind"] == "custom":
+        return identity["name"]
+    return f"{identity['name']} ({identity['organization_name'] or 'Global'})"
+
+
 async def _resolve_identity(
     client: Any, value: str
 ) -> tuple[str, list[dict[str, Any]]]:
     items = await _get_json(client, "/api/identities")
     matches = [i for i in items if str(i.get("name", "")).lower() == value.lower()]
     candidates = [
-        _candidate(i["name"], str(i["id"]), _as_opt_str(i.get("organization_id")))
+        _candidate(identity_label(i), str(i["id"]), _as_opt_str(i.get("organization_id")))
         for i in matches
     ]
     if len(matches) == 1:
@@ -449,5 +458,6 @@ __all__ = [
     "RefNotFoundError",
     "RefResolutionError",
     "RefResolver",
+    "identity_label",
     "resolve_ref",
 ]

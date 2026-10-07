@@ -155,7 +155,7 @@ def test_list_has_defaults_global_first(e2e_client, platform_admin, world) -> No
 
     default = _default(e2e_client, platform_admin.headers, contoso["id"])
     assert default["identity_kind"] == "org_default"
-    assert default["name"] == f"{contoso['name']} Identity"
+    assert default["name"] == "Default Identity"
     assert (default["organization_id"], default["organization_name"]) == (contoso["id"], contoso["name"])
     assert default["base_role"]["name"] == "User"
     assert default["additional_roles"] == []
@@ -194,19 +194,23 @@ def test_create_refuses_bad_input(e2e_client, platform_admin, world) -> None:
     assert _create(e2e_client, admin, "   ", contoso["id"]).status_code == 422
 
 
-def test_rename_default_and_custom(e2e_client, platform_admin, world) -> None:
+def test_rename_custom_but_not_default(e2e_client, platform_admin, world) -> None:
     admin, tag, contoso = platform_admin.headers, world["tag"], world["contoso"]
     default = _default(e2e_client, admin, contoso["id"])
     custom = _ok(_create(e2e_client, admin, f"Before {tag}", contoso["id"]), 201)
 
     renamed = _ok(e2e_client.patch(f"/api/identities/{custom['id']}", headers=admin, json={"name": f"After {tag}"}))
     assert renamed["name"] == f"After {tag}"
-    renamed_default = _ok(e2e_client.patch(f"/api/identities/{default['id']}", headers=admin, json={"name": f"Contoso Default {tag}"}))
-    assert (renamed_default["identity_kind"], renamed_default["name"]) == ("org_default", f"Contoso Default {tag}")
+
+    refused = e2e_client.patch(f"/api/identities/{default['id']}", headers=admin, json={"name": f"Contoso Default {tag}"})
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["detail"] == "Default identities can't be renamed"
+    assert _default(e2e_client, admin, contoso["id"])["name"] == "Default Identity"
+    global_default = _identities(e2e_client, admin)[0]
+    refused = e2e_client.patch(f"/api/identities/{global_default['id']}", headers=admin, json={"name": f"Shared {tag}"})
+    assert refused.status_code == 409, refused.text
 
     assert e2e_client.patch(f"/api/identities/{uuid.uuid4()}", headers=admin, json={"name": "Nobody"}).status_code == 404
-
-    _ok(e2e_client.patch(f"/api/identities/{default['id']}", headers=admin, json={"name": default["name"]}))
 
 
 def test_rename_refuses_a_person(e2e_client, platform_admin, world) -> None:

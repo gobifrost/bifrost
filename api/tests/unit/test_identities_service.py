@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.builtin_roles import USER_ROLE_ID
 from shared.identities import (
+    DEFAULT_IDENTITY_NAME,
     IDENTITY_EMAIL_DOMAIN,
     IdentityKind,
     ensure_default_identity,
@@ -63,7 +64,7 @@ async def test_ensure_default_identity_creates_one_ordinary_account(db_session: 
     identity = await ensure_default_identity(db_session, org)
 
     assert identity.email == f"identity-{org.id}@{IDENTITY_EMAIL_DOMAIN}"
-    assert identity.name == "Identity Test Org Identity"
+    assert identity.name == DEFAULT_IDENTITY_NAME == "Default Identity"
     assert identity.identity_kind == IdentityKind.ORG_DEFAULT
     assert identity.organization_id == org.id
     assert identity.base_role_id == USER_ROLE_ID
