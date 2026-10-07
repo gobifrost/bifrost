@@ -1,7 +1,7 @@
 """Custom identities may have no organization; defaults named Default Identity; names unique per organization
 
 Revision ID: 20261007_custom_global_identity
-Revises: 20261006_run_retention
+Revises: 20261006_product_update_receipts
 Create Date: 2026-10-07
 
 A custom identity can belong to Global (no organization) as well as to an
@@ -24,7 +24,7 @@ from typing import Sequence, Union
 from alembic import op
 
 revision: str = "20261007_custom_global_identity"
-down_revision: Union[str, None] = "20261006_run_retention"
+down_revision: Union[str, None] = "20261006_product_update_receipts"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
