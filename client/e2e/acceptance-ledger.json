@@ -882,6 +882,20 @@
 					"proof": "real-platform"
 				}
 			]
+		},
+		{
+			"id": "ACCESS-CHECKS-01",
+			"area": "Audit",
+			"title": "ACCESS-CHECKS-01 opens a recorded check and tests it again now",
+			"tests": [
+				{
+					"spec": "audit-log.admin.spec.ts",
+					"title": "ACCESS-CHECKS-01 opens a recorded check and tests it again now",
+					"project": "platform-admin",
+					"variant": "desktop",
+					"proof": "real-platform"
+				}
+			]
 		}
 	],
 	"inventoryScope": "Supported route families, settings panels, and primary user journeys. Detailed action dispositions and lower-layer/external limits are in docs/design-modernization/acceptance-closure-matrix.md; this is not every interaction permutation."
