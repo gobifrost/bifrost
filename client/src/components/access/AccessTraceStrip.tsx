@@ -170,8 +170,8 @@ export function AccessTraceStrip({
 			>
 				<Outcome aria-hidden="true" className="size-4 shrink-0" />
 				{allowed
-					? "Would be allowed"
-					: "Would be blocked — not enforced yet"}
+					? "Would Be Allowed"
+					: "Would Be Blocked — Not Enforced Yet"}
 			</motion.p>
 		</div>
 	);

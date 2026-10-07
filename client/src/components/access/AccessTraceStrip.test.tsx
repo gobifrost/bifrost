@@ -150,11 +150,11 @@ describe("AccessTraceStrip", () => {
 		const { rerender } = render(
 			<AccessTraceStrip trace={allowed} names={names} />,
 		);
-		expect(screen.getByText("Would be allowed")).toBeInTheDocument();
+		expect(screen.getByText("Would Be Allowed")).toBeInTheDocument();
 
 		rerender(<AccessTraceStrip trace={blocked} names={names} />);
 		expect(
-			screen.getByText("Would be blocked — not enforced yet"),
+			screen.getByText("Would Be Blocked — Not Enforced Yet"),
 		).toBeInTheDocument();
 	});
 

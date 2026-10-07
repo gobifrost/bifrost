@@ -336,7 +336,7 @@ describe("TestAccessPanel", () => {
 		expect(
 			screen.queryByRole("list", { name: "Access Trace" }),
 		).not.toBeInTheDocument();
-		expect(screen.queryByText("Would be allowed")).not.toBeInTheDocument();
+		expect(screen.queryByText("Would Be Allowed")).not.toBeInTheDocument();
 	});
 
 	it("explains a refused check", async () => {

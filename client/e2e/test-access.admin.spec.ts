@@ -78,6 +78,6 @@ test.describe("Test Access", () => {
 			});
 		await expect(step("Target in Reach")).toContainText("Passed");
 		await expect(step("Permission")).toContainText("Passed");
-		await expect(sheet.getByRole("status")).toHaveText("Would be allowed");
+		await expect(sheet.getByRole("status")).toHaveText("Would Be Allowed");
 	});
 });
