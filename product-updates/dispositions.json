@@ -1642,6 +1642,18 @@
           "Required announcement activation within the user-approved production delivery scope."
         ]
       }
+    },
+    "pr:923": {
+      "classification": "omit",
+      "entry_ids": [],
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/923",
+          "User authorized verified security-maintenance fixes and merge on 2026-10-07."
+        ]
+      },
+      "reason": "Repair internal Dependabot classification automation; no customer-facing announcement."
     }
   }
 }
