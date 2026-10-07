@@ -22,6 +22,27 @@ describe("useWorkflowMutation", () => {
 		vi.clearAllMocks();
 	});
 
+	it("surfaces the execute API error detail", async () => {
+		(apiClient.POST as Mock).mockResolvedValue({
+			data: undefined,
+			error: { detail: "Workflow is disabled" },
+		});
+
+		const { result } = renderHook(() =>
+			useWorkflowMutation<{ value: number }>("workflow-1"),
+		);
+		let executionPromise!: Promise<{ value: number }>;
+		act(() => {
+			executionPromise = result.current.execute();
+		});
+
+		await expect(executionPromise).rejects.toThrow("Workflow is disabled");
+		await waitFor(() => {
+			expect(result.current.errorMessage).toBe("Workflow is disabled");
+			expect(result.current.isLoading).toBe(false);
+		});
+	});
+
 	it("uses the reconnecting SDK stream and reconciles a result after reconnect", async () => {
 		(apiClient.POST as Mock).mockResolvedValue({
 			data: { execution_id: "exec-1", status: "Running" },
