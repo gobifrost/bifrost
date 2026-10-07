@@ -1839,6 +1839,18 @@
           "User requested that the Bifrost website destination use Bifrost branding rather than the Covi installation logo."
         ]
       }
+    },
+    "pr:942": {
+      "classification": "highlight",
+      "entry_ids": [
+        "293d312e-a4b4-42b0-a7ee-85b4e8ab4ad8"
+      ],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/942"
+        ]
+      }
     }
   }
 }
