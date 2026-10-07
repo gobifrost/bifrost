@@ -24,6 +24,7 @@ from src.services.execution.autonomous_agent_executor import (
     MAX_DELEGATION_DEPTH,
     ToolError,
     _parse_structured_output,
+    format_delegation_timeout_receipt,
 )
 from src.services.llm.base import LLMConfig, LLMResponse, ToolCallRequest, ToolDefinition
 
@@ -34,6 +35,93 @@ def _tool(name: str) -> ToolDefinition:
         description=f"Test tool {name}",
         parameters={"type": "object", "properties": {}},
     )
+
+
+def test_timeout_receipt_keeps_only_sanitized_terminal_tool_evidence() -> None:
+    """A timeout receipt contains finished tool facts, never prompts or LLM text."""
+    executor = AutonomousAgentExecutor(MagicMock())
+    executor._pending_steps = [
+        {
+            "id": "completed-step",
+            "step_number": 1,
+            "type": "tool_result",
+            "content": {
+                "tool_name": "read_device",
+                "result": "device reachable",
+                "execution_id": "exec-1",
+                "child_run_id": "child-1",
+            },
+        },
+        {
+            "id": "failed-step",
+            "step_number": 2,
+            "type": "tool_error",
+            "content": {
+                "tool_name": "apply_patch",
+                "error": "access denied",
+            },
+        },
+        {
+            "id": "unfinished-step",
+            "step_number": 3,
+            "type": "tool_call",
+            "content": {
+                "tool_name": "restart_service",
+                "arguments": {"secret": "must not leak"},
+            },
+        },
+        {
+            "id": "llm-step",
+            "step_number": 4,
+            "type": "llm_response",
+            "content": {"content": "must not leak", "tool_calls": []},
+        },
+    ]
+    executor._finalized_delegation_outcomes = [
+        DelegationOutcome(
+            child_run_id=uuid4(),
+            agent_name="Nested Specialist",
+            status="completed",
+            output="nested completed receipt",
+            error=None,
+            duration_ms=10,
+        )
+    ]
+
+    receipt = format_delegation_timeout_receipt("Slow Specialist", executor)
+
+    assert "Delegation to Slow Specialist timed out after 600s" in receipt
+    assert "completed step completed-step (read_device)" in receipt
+    assert "device reachable" in receipt
+    assert "execution_id=exec-1" in receipt
+    assert "child_run_id=child-1" in receipt
+    assert "failed step failed-step (apply_patch): access denied" in receipt
+    assert "unfinished step unfinished-step (restart_service)" in receipt
+    assert "side effects are unverified" in receipt
+    assert "Nested Specialist) status=completed; completed receipt: nested completed receipt" in receipt
+    assert "must not leak" not in receipt
+
+
+def test_timeout_receipt_has_a_global_evidence_bound_and_omission_marker() -> None:
+    executor = AutonomousAgentExecutor(MagicMock())
+    executor._pending_steps = [
+        {
+            "id": f"step-{index}",
+            "step_number": index,
+            "type": "tool_result",
+            "content": {
+                "tool_name": "read_status",
+                "result": "x" * 10_000,
+                "is_error": False,
+            },
+        }
+        for index in range(10)
+    ]
+
+    receipt = format_delegation_timeout_receipt("Slow Specialist", executor)
+
+    assert len(receipt) <= 20_000
+    assert "[partial evidence truncated;" in receipt
 
 
 @pytest.fixture(autouse=True)
@@ -654,10 +742,10 @@ class TestAutonomousAgentExecutor:
         assert created_runs[0].completed_at is not None
 
     @pytest.mark.asyncio
-    async def test_run_delegation_keeps_child_tokens_when_child_times_out(
+    async def test_run_delegation_keeps_completed_evidence_when_wait_for_times_out(
         self, mock_session, mock_agent
     ):
-        """A timed-out child still reports the calls it made before the deadline."""
+        """The deadline retains completed facts and marks unfinished work unverified."""
         delegated = MagicMock()
         delegated.id = uuid4()
         delegated.name = "Slow Specialist"
@@ -684,17 +772,54 @@ class TestAutonomousAgentExecutor:
             else None
         )
 
-        async def child_run_then_time_out(child_executor, **_kwargs):
+        completed_step_id = str(uuid4())
+        unfinished_step_id = str(uuid4())
+
+        async def child_run_until_deadline(child_executor, **_kwargs):
             # Two model responses land before the delegation deadline.
             child_executor._own_tokens = 1_200 + 800
-            raise asyncio.TimeoutError()
+            child_executor._current_run_id = _kwargs["run_id"]
+            child_executor._pending_steps = [
+                {
+                    "id": completed_step_id,
+                    "run_id": _kwargs["run_id"],
+                    "step_number": 1,
+                    "type": "tool_result",
+                    "content": {
+                        "tool_name": "inspect_device",
+                        "result": "device reachable",
+                        "is_error": False,
+                    },
+                },
+                {
+                    "id": unfinished_step_id,
+                    "run_id": _kwargs["run_id"],
+                    "step_number": 2,
+                    "type": "tool_call",
+                    "content": {
+                        "tool_name": "restart_device",
+                        "arguments": {"device": "must not leak"},
+                    },
+                },
+            ]
+            await asyncio.Event().wait()
 
         executor = AutonomousAgentExecutor(mock_session)
+        original_wait_for = asyncio.wait_for
+
+        async def shortened_deadline(coro, timeout):
+            if timeout == DELEGATION_TIMEOUT_SECONDS:
+                return await original_wait_for(coro, timeout=0.01)
+            return await original_wait_for(coro, timeout=timeout)
+
         with patch.object(
             AutonomousAgentExecutor,
             "run",
             autospec=True,
-            side_effect=child_run_then_time_out,
+            side_effect=child_run_until_deadline,
+        ), patch(
+            "src.services.execution.autonomous_agent_executor.asyncio.wait_for",
+            new=shortened_deadline,
         ):
             outcome = await executor.run_delegation(
                 parent_agent=mock_agent,
@@ -708,7 +833,13 @@ class TestAutonomousAgentExecutor:
             )
 
         assert outcome.status == "timeout"
+        assert f"completed step {completed_step_id} (inspect_device)" in (outcome.error or "")
+        assert f"unfinished step {unfinished_step_id} (restart_device)" in (outcome.error or "")
+        assert "must not leak" not in (outcome.error or "")
         assert created_runs[0].tokens_used == 2_000
+        assert created_runs[0].output["text"] == outcome.output
+        assert "device reachable" in created_runs[0].output["text"]
+        assert created_runs[0].error == "Delegation to Slow Specialist timed out after 600s"
         assert executor.subtree_tokens == 2_000
 
     @pytest.mark.asyncio
@@ -856,12 +987,28 @@ class TestAutonomousAgentExecutor:
             else None
         )
 
+        nested_child_run_id = uuid4()
+
+        async def cancel_after_nested_child_finalizes(child_executor, **_kwargs):
+            child_executor._finalized_delegation_outcomes.append(
+                DelegationOutcome(
+                    child_run_id=nested_child_run_id,
+                    agent_name="Nested Specialist",
+                    status="cancelled",
+                    output=None,
+                    error="Delegation to Nested Specialist was cancelled",
+                    duration_ms=5,
+                    evidence="completed step nested-tool-step (read_device): reachable",
+                )
+            )
+            raise asyncio.CancelledError()
+
         executor = AutonomousAgentExecutor(mock_session)
         with patch.object(
             AutonomousAgentExecutor,
             "run",
-            new_callable=AsyncMock,
-            side_effect=asyncio.CancelledError(),
+            autospec=True,
+            side_effect=cancel_after_nested_child_finalizes,
         ), pytest.raises(asyncio.CancelledError):
             await executor.run_delegation(
                 parent_agent=mock_agent,
@@ -876,6 +1023,17 @@ class TestAutonomousAgentExecutor:
 
         assert created_runs[0].status == "cancelled"
         assert created_runs[0].completed_at is not None
+        assert executor._finalized_delegation_outcomes[0].status == "cancelled"
+        assert "completed step nested-tool-step" in (
+            executor._finalized_delegation_outcomes[0].evidence or ""
+        )
+        outer_timeout_receipt = format_delegation_timeout_receipt(
+            "Outer Specialist", executor
+        )
+        assert "status=cancelled" in outer_timeout_receipt
+        assert "completed step nested-tool-step (read_device): reachable" in (
+            outer_timeout_receipt
+        )
 
     @pytest.mark.asyncio
     async def test_child_checks_ancestor_cancel_flags(self, mock_session):
@@ -917,6 +1075,37 @@ class TestAutonomousAgentExecutor:
                 ToolCallRequest(
                     id="tc1",
                     name="delegate_to_broken_specialist",
+                    arguments={"task": "Do work"},
+                ),
+                mock_agent,
+            )
+
+    @pytest.mark.asyncio
+    async def test_autonomous_delegation_exposes_timeout_receipt_as_tool_error(
+        self, mock_session, mock_agent
+    ):
+        executor = AutonomousAgentExecutor(mock_session)
+        executor._current_run_id = str(uuid4())
+        receipt = (
+            "Delegation to Slow Specialist timed out after 600s\n"
+            "completed step evidence-step (read_device): reachable"
+        )
+        executor.run_delegation = AsyncMock(
+            return_value=DelegationOutcome(
+                child_run_id=uuid4(),
+                agent_name="Slow Specialist",
+                status="timeout",
+                output=receipt,
+                error=receipt,
+                duration_ms=600_000,
+            )
+        )
+
+        with pytest.raises(ToolError, match="completed step evidence-step"):
+            await executor._execute_delegation(
+                ToolCallRequest(
+                    id="tc1",
+                    name="delegate_to_slow_specialist",
                     arguments={"task": "Do work"},
                 ),
                 mock_agent,
@@ -1128,6 +1317,7 @@ class TestAutonomousAgentExecutor:
         assert result["status"] == "completed"
         assert result["iterations_used"] == 2
         assert "configured run budget" in str(result["output"])
+        assert mock_exec_tool.await_count == 1
 
     @pytest.mark.asyncio
     @patch("src.services.agent_runtime.model_factory.create_agent_model")

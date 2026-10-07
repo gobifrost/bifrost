@@ -6415,6 +6415,34 @@
     "reason": "Platform-admin-only operation."
   },
   {
+    "access_class": "permission",
+    "boundary": "platform",
+    "current_gate": "superuser",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "GET",
+    "operation_id": "productupdates.get",
+    "path": "/api/product-updates",
+    "permission": "settings.read",
+    "reason": "Platform-admin-only Product Updates feed."
+  },
+  {
+    "access_class": "permission",
+    "boundary": "platform",
+    "current_gate": "superuser",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "POST",
+    "operation_id": "productupdates.receipts.create",
+    "path": "/api/product-updates/receipts",
+    "permission": "settings.readwrite",
+    "reason": "Platform-admin-only Product Updates receipt write."
+  },
+  {
     "access_class": "personal",
     "boundary": null,
     "current_gate": "authenticated",

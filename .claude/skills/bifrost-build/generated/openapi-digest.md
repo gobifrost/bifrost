@@ -422,6 +422,8 @@
 | GET | `/api/policy-rules/{domain}/{name}` |
 | PUT | `/api/policy-rules/{domain}/{name}` |
 | GET | `/api/policy-rules/{domain}/{name}/usages` |
+| GET | `/api/product-updates` |
+| POST | `/api/product-updates/receipts` |
 | GET | `/api/profile` |
 | PATCH | `/api/profile` |
 | DELETE | `/api/profile/avatar` |

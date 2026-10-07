@@ -1,0 +1,856 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gobifrost.com/schemas/product-updates/v1.json",
+  "title": "Bifrost product updates",
+  "description": "The version-controlled source contract for product updates, release notes, and their verified GitHub inventory.",
+  "$defs": {
+    "sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https://"
+    },
+    "review": {
+      "type": "object",
+      "required": [
+        "status",
+        "evidence"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "draft",
+            "approved"
+          ]
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "securityReview": {
+      "type": "object",
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "required",
+            "not_required"
+          ]
+        },
+        "review_ref": {
+          "$ref": "#/$defs/url"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "required"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "review_ref"
+            ]
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "entry": {
+      "type": "object",
+      "required": [
+        "id",
+        "revision",
+        "published_at",
+        "title",
+        "visibility",
+        "area",
+        "type",
+        "action_required",
+        "security_review",
+        "sources",
+        "eligibility",
+        "assets",
+        "review"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "published_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "visibility": {
+          "const": "highlight"
+        },
+        "area": {
+          "enum": [
+            "Agents",
+            "Apps & Forms",
+            "Workflows",
+            "Integrations",
+            "Administration",
+            "Platform",
+            "Developer Tools"
+          ]
+        },
+        "type": {
+          "enum": [
+            "New",
+            "Improved",
+            "Fixed",
+            "Security"
+          ]
+        },
+        "action_required": {
+          "type": "boolean"
+        },
+        "security_review": {
+          "$ref": "#/$defs/securityReview"
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "pr": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "commit": {
+                "$ref": "#/$defs/sha"
+              },
+              "role": {
+                "type": "string"
+              }
+            },
+            "anyOf": [
+              {
+                "required": [
+                  "pr"
+                ]
+              },
+              {
+                "required": [
+                  "commit"
+                ]
+              }
+            ],
+            "additionalProperties": false
+          }
+        },
+        "contributors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "login",
+              "profile_url",
+              "source_pr"
+            ],
+            "properties": {
+              "login": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profile_url": {
+                "$ref": "#/$defs/url"
+              },
+              "source_pr": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "role": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "eligibility": {
+          "type": "object",
+          "required": [
+            "requires_prs",
+            "requires_commits"
+          ],
+          "properties": {
+            "requires_prs": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "requires_commits": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/sha"
+              }
+            },
+            "staged": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "additional_areas": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "Agents",
+              "Apps & Forms",
+              "Workflows",
+              "Integrations",
+              "Administration",
+              "Platform",
+              "Developer Tools"
+            ]
+          }
+        },
+        "release": {
+          "type": "string",
+          "minLength": 1
+        },
+        "assets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "path",
+              "alt"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "pattern": "^assets/[A-Za-z0-9._/-]+\\.(png|jpe?g|webp|gif)$"
+              },
+              "alt": {
+                "type": "string",
+                "minLength": 1
+              },
+              "caption": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "review": {
+          "$ref": "#/$defs/review"
+        },
+        "in_app": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "inventory": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "repository",
+        "base_ref",
+        "target_ref",
+        "collected_at",
+        "source_ref",
+        "commits",
+        "prs"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "repository": {
+          "const": "gobifrost/bifrost"
+        },
+        "base_ref": {
+          "$ref": "#/$defs/sha"
+        },
+        "target_ref": {
+          "$ref": "#/$defs/sha"
+        },
+        "collected_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source_ref": {
+          "$ref": "#/$defs/url"
+        },
+        "commits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "sha",
+              "subject",
+              "prs"
+            ],
+            "properties": {
+              "sha": {
+                "$ref": "#/$defs/sha"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "prs": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "prs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "number",
+              "title",
+              "url",
+              "author",
+              "merged_at",
+              "merge_commit",
+              "metadata_ref"
+            ],
+            "properties": {
+              "number": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "title": {
+                "type": "string"
+              },
+              "url": {
+                "$ref": "#/$defs/url"
+              },
+              "author": {
+                "type": "object",
+                "required": [
+                  "login"
+                ],
+                "properties": {
+                  "login": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "merged_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "merge_commit": {
+                "$ref": "#/$defs/sha"
+              },
+              "body": {
+                "type": "string"
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "metadata_ref": {
+                "$ref": "#/$defs/url"
+              },
+              "contributions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "login",
+                    "profile_url",
+                    "source_pr",
+                    "evidence_ref"
+                  ],
+                  "properties": {
+                    "login": {
+                      "type": "string"
+                    },
+                    "profile_url": {
+                      "$ref": "#/$defs/url"
+                    },
+                    "source_pr": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "role": {
+                      "type": "string"
+                    },
+                    "evidence_ref": {
+                      "$ref": "#/$defs/url"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "bundle": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "target_ref",
+        "content_ref",
+        "entries",
+        "other_changes"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "target_ref": {
+          "$ref": "#/$defs/sha"
+        },
+        "content_ref": {
+          "$ref": "#/$defs/sha"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/bundleEntry"
+          }
+        },
+        "other_changes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/otherChange"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "bundleEntry": {
+      "type": "object",
+      "required": [
+        "id",
+        "revision",
+        "published_at",
+        "title",
+        "markdown",
+        "area",
+        "type",
+        "action_required",
+        "sources",
+        "contributors",
+        "assets"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer"
+        },
+        "published_at": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "markdown": {
+          "type": "string"
+        },
+        "area": {
+          "enum": [
+            "Agents",
+            "Apps & Forms",
+            "Workflows",
+            "Integrations",
+            "Administration",
+            "Platform",
+            "Developer Tools"
+          ]
+        },
+        "type": {
+          "enum": [
+            "New",
+            "Improved",
+            "Fixed",
+            "Security"
+          ]
+        },
+        "action_required": {
+          "type": "boolean"
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/bundleSource"
+          }
+        },
+        "contributors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/bundleContributor"
+          }
+        },
+        "assets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/bundleAsset"
+          }
+        },
+        "additional_areas": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "release": {
+          "type": "string"
+        },
+        "in_app": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "bundleSource": {
+      "type": "object",
+      "properties": {
+        "pr": {
+          "type": "integer"
+        },
+        "commit": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "bundleContributor": {
+      "type": "object",
+      "required": [
+        "login",
+        "profile_url",
+        "source_pr"
+      ],
+      "properties": {
+        "login": {
+          "type": "string"
+        },
+        "profile_url": {
+          "type": "string"
+        },
+        "source_pr": {
+          "type": "integer"
+        },
+        "role": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "bundleAsset": {
+      "type": "object",
+      "required": [
+        "path",
+        "url",
+        "alt"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "alt": {
+          "type": "string"
+        },
+        "caption": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "otherChange": {
+      "type": "object",
+      "required": [
+        "source",
+        "title",
+        "url",
+        "contributors"
+      ],
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "contributors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/bundleContributor"
+          }
+        },
+        "category": {
+          "enum": [
+            "fix",
+            "hardening"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "dispositions": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "inventory",
+        "items"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "inventory": {
+          "type": "object",
+          "required": [
+            "base_ref",
+            "target_ref"
+          ],
+          "properties": {
+            "base_ref": {
+              "$ref": "#/$defs/sha"
+            },
+            "target_ref": {
+              "$ref": "#/$defs/sha"
+            }
+          },
+          "additionalProperties": false
+        },
+        "items": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "classification",
+              "entry_ids",
+              "review"
+            ],
+            "properties": {
+              "classification": {
+                "enum": [
+                  "highlight",
+                  "other",
+                  "omit"
+                ]
+              },
+              "entry_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "summary": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "review": {
+                "$ref": "#/$defs/review"
+              },
+              "security_review": {
+                "$ref": "#/$defs/securityReview"
+              },
+              "action_required": {
+                "type": "boolean"
+              },
+              "category": {
+                "enum": [
+                  "fix",
+                  "hardening"
+                ]
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "classification": {
+                      "const": "omit"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "reason"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "classification": {
+                      "const": "highlight"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "entry_ids": {
+                      "minItems": 1
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "classification": {
+                      "enum": [
+                        "other",
+                        "omit"
+                      ]
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "entry_ids": {
+                      "maxItems": 0
+                    }
+                  }
+                }
+              }
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "releaseReview": {
+      "type": "object",
+      "required": [
+        "target_ref",
+        "review",
+        "security",
+        "breaking_changes"
+      ],
+      "properties": {
+        "target_ref": {
+          "$ref": "#/$defs/sha"
+        },
+        "review": {
+          "$ref": "#/$defs/review"
+        },
+        "security": {
+          "type": "object",
+          "required": [
+            "status",
+            "evidence",
+            "fixed_cves"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "draft",
+                "approved"
+              ]
+            },
+            "evidence": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "fixed_cves": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "breaking_changes": {
+          "type": "object",
+          "required": [
+            "status",
+            "evidence",
+            "summary"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "draft",
+                "approved"
+              ]
+            },
+            "evidence": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "summary": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

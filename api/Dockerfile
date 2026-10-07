@@ -50,8 +50,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Debian's npm 9.2.0 crashes in Arborist peer-set resolution on valid V2 App
 # dependency trees ("Cannot read properties of null (reading 'edgesOut')").
-# Keep the build toolchain pinned so App deploys and SDK rebuilds resolve them.
-RUN npm install --global npm@10.9.3 --no-audit --no-fund
+# Keep the build toolchain pinned and verify its official registry tarball
+# before installing it so App deploys and SDK rebuilds resolve them.
+COPY api/scripts/install-npm.sh /usr/local/bin/install-npm.sh
+RUN sh /usr/local/bin/install-npm.sh && rm /usr/local/bin/install-npm.sh
 
 # Copy installed packages from builder
 COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
@@ -69,6 +71,7 @@ RUN printf '#!/bin/sh\nexec python -m bifrost "$@"\n' > /usr/local/bin/bifrost \
 # Copy application code (paths relative to root context)
 COPY api/src/ /app/src/
 COPY api/shared/ /app/shared/
+COPY api/product-updates.bundle.json /app/product-updates.bundle.json
 COPY api/alembic/ /app/alembic/
 COPY api/alembic.ini /app/
 COPY api/bifrost/ /app/bifrost/

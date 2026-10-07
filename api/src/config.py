@@ -42,6 +42,11 @@ class Settings(BaseSettings):
         description="Enable debug mode"
     )
 
+    product_updates_bundle_path: Path = Field(
+        default=Path("/app/product-updates.bundle.json"),
+        description="Immutable approved Product Updates bundle mounted into this API image",
+    )
+
     # ==========================================================================
     # Database (PostgreSQL)
     # ==========================================================================

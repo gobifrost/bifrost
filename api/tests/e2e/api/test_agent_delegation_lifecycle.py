@@ -1,5 +1,6 @@
 """Durable delegation lifecycle coverage across chat and autonomous surfaces."""
 
+import asyncio
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
@@ -262,6 +263,118 @@ async def test_chat_delegation_creates_terminal_run_with_conversation_and_caller
             f"/api/chat/conversations/{conversation_id}",
             headers=alice_user.headers,
         )
+        for agent in (parent, child):
+            e2e_client.delete(
+                f"/api/agents/{agent['id']}",
+                headers=platform_admin.headers,
+            )
+
+
+async def test_delegation_timeout_persists_sanitized_partial_evidence(
+    e2e_client,
+    platform_admin,
+    db_session,
+):
+    """A real delegation deadline persists only caller-safe tool evidence."""
+    child = _create_agent(
+        e2e_client,
+        platform_admin,
+        f"Timeout Evidence Child {uuid4().hex[:8]}",
+    )
+    parent = _create_agent(
+        e2e_client,
+        platform_admin,
+        f"Timeout Evidence Parent {uuid4().hex[:8]}",
+    )
+    db_session.add(
+        AgentDelegation(
+            parent_agent_id=UUID(parent["id"]),
+            child_agent_id=UUID(child["id"]),
+        )
+    )
+    await db_session.commit()
+
+    session_factory = _session_factory_for(db_session)
+    try:
+        parent_result = await db_session.execute(
+            select(Agent)
+            .options(selectinload(Agent.delegated_agents))
+            .where(Agent.id == UUID(parent["id"]))
+        )
+        parent_agent = parent_result.scalar_one()
+
+        async def block_after_completed_tool(child_executor, **_kwargs):
+            child_executor._current_run_id = _kwargs["run_id"]
+            child_executor._pending_steps = [
+                {
+                    "id": str(uuid4()),
+                    "run_id": _kwargs["run_id"],
+                    "step_number": 1,
+                    "type": "tool_result",
+                    "content": {
+                        "tool_name": "read_status",
+                        "result": "service is running",
+                        "is_error": False,
+                    },
+                },
+                {
+                    "id": str(uuid4()),
+                    "run_id": _kwargs["run_id"],
+                    "step_number": 2,
+                    "type": "tool_call",
+                    "content": {
+                        "tool_name": "restart_service",
+                        "arguments": {"token": "must not leak"},
+                    },
+                },
+            ]
+            await asyncio.Event().wait()
+
+        original_wait_for = asyncio.wait_for
+
+        async def shortened_deadline(coro, timeout):
+            if timeout == 600:
+                return await original_wait_for(coro, timeout=0.01)
+            return await original_wait_for(coro, timeout=timeout)
+
+        with (
+            patch.object(
+                AutonomousAgentExecutor,
+                "run",
+                autospec=True,
+                side_effect=block_after_completed_tool,
+            ),
+            patch(
+                "src.services.execution.autonomous_agent_executor.asyncio.wait_for",
+                new=shortened_deadline,
+            ),
+        ):
+            outcome = await AutonomousAgentExecutor(session_factory).run_delegation(
+                parent_agent=parent_agent,
+                tool_call=ToolCallRequest(
+                    id="timeout-call",
+                    name=f"delegate_to_{child['name'].lower().replace(' ', '_')}",
+                    arguments={"task": "Check the service"},
+                ),
+                run_user_id=None,
+            )
+
+        assert outcome.status == "timeout"
+        assert "completed step" in (outcome.error or "")
+        assert "service is running" in (outcome.error or "")
+        assert "restart_service" in (outcome.error or "")
+        assert "must not leak" not in (outcome.error or "")
+
+        persisted = await db_session.get(AgentRun, outcome.child_run_id)
+        assert persisted is not None
+        assert persisted.status == "timeout"
+        assert persisted.error == (
+            f"Delegation to {child['name']} timed out after 600s"
+        )
+        assert persisted.output is not None
+        assert "service is running" in persisted.output["text"]
+        assert "must not leak" not in persisted.output["text"]
+    finally:
         for agent in (parent, child):
             e2e_client.delete(
                 f"/api/agents/{agent['id']}",

@@ -86,7 +86,8 @@ class TestEngineRequestOrganizationsFacade:
             assert args == ("PATCH", f"/api/organizations/{body['id']}")
             assert kwargs["json"] == {"name": "New"}
 
-            assert await organizations_facade.delete(body["id"]) is True
+            deleted = await organizations_facade.delete(body["id"])
+            assert deleted is True
             args, _ = client.engine_request.await_args_list[4]
             assert args == ("DELETE", f"/api/organizations/{body['id']}")
 

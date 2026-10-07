@@ -539,6 +539,7 @@ ORM_EXPORTS: tuple[str, ...] = (
     'SchedulerTaskState',
     'SystemDiagnosticLog',
     'AppRole',
+    'ProductUpdateReceipt',
 )
 
 ENUM_EXPORTS: tuple[str, ...] = (

@@ -562,6 +562,10 @@ Options:
   --resource-type TEXT            Only events on this resource type.
   --user TEXT                     Acting user: UUID or email.
   --execution TEXT                Workflow execution ID.
+  --workflow TEXT                 Only events naming this workflow: UUID,
+                                  name, or path::function.
+  --org TEXT                      Only events in this organization: UUID or
+                                  name, or 'global'.
   --since TEXT                    Start of the time range (ISO 8601,
                                   inclusive).
   --until TEXT                    End of the time range (ISO 8601, inclusive).

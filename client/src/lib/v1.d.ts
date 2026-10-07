@@ -11414,6 +11414,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/product-updates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Product Updates
+         * @description Return this build's approved bundle and the caller's prior receipts.
+         */
+        get: operations["productupdates.get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/product-updates/receipts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Product Update Receipts
+         * @description Persist receipt(s) for entries presented from the current bundle only.
+         */
+        post: operations["productupdates.receipts.create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/": {
         parameters: {
             query?: never;
@@ -24138,6 +24178,125 @@ export interface components {
              * @default true
              */
             is_alive: boolean;
+        };
+        /** ProductUpdateAsset */
+        ProductUpdateAsset: {
+            /** Path */
+            path: string;
+            /** Url */
+            url: string;
+            /** Alt */
+            alt: string;
+            /** Caption */
+            caption?: string | null;
+        };
+        /** ProductUpdateContributor */
+        ProductUpdateContributor: {
+            /** Login */
+            login: string;
+            /** Profile Url */
+            profile_url: string;
+            /** Source Pr */
+            source_pr: number;
+            /** Role */
+            role?: string | null;
+        };
+        /** ProductUpdateEntry */
+        ProductUpdateEntry: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Revision */
+            revision: number;
+            /** Published At */
+            published_at: string;
+            /** Title */
+            title: string;
+            /** Markdown */
+            markdown: string;
+            /**
+             * Area
+             * @enum {string}
+             */
+            area: "Agents" | "Apps & Forms" | "Workflows" | "Integrations" | "Administration" | "Platform" | "Developer Tools";
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "New" | "Improved" | "Fixed" | "Security";
+            /** Action Required */
+            action_required: boolean;
+            /** Sources */
+            sources: components["schemas"]["ProductUpdateSource"][];
+            /** Contributors */
+            contributors: components["schemas"]["ProductUpdateContributor"][];
+            /** Assets */
+            assets: components["schemas"]["ProductUpdateAsset"][];
+            /** Additional Areas */
+            additional_areas?: string[] | null;
+            /** Release */
+            release?: string | null;
+            /** In App */
+            in_app?: boolean | null;
+        };
+        /** ProductUpdateOtherChange */
+        ProductUpdateOtherChange: {
+            /** Source */
+            source: string;
+            /** Title */
+            title: string;
+            /** Url */
+            url: string;
+            /** Contributors */
+            contributors: components["schemas"]["ProductUpdateContributor"][];
+            /** Category */
+            category?: ("fix" | "hardening") | null;
+        };
+        /** ProductUpdateSource */
+        ProductUpdateSource: {
+            /** Pr */
+            pr?: number | null;
+            /** Commit */
+            commit?: string | null;
+            /** Role */
+            role?: string | null;
+        };
+        /**
+         * ProductUpdatesBundle
+         * @description The approved, build-pinned Product Updates bundle served at runtime.
+         */
+        ProductUpdatesBundle: {
+            /**
+             * Schema Version
+             * @constant
+             */
+            schema_version: 1;
+            /** Target Ref */
+            target_ref: string;
+            /** Content Ref */
+            content_ref: string;
+            /** Entries */
+            entries: components["schemas"]["ProductUpdateEntry"][];
+            /** Other Changes */
+            other_changes: components["schemas"]["ProductUpdateOtherChange"][];
+        };
+        /** ProductUpdatesFeedResponse */
+        ProductUpdatesFeedResponse: {
+            bundle: components["schemas"]["ProductUpdatesBundle"];
+            /** Seen Entry Ids */
+            seen_entry_ids: string[];
+        };
+        /** ProductUpdatesReceiptRequest */
+        ProductUpdatesReceiptRequest: {
+            /** Entry Ids */
+            entry_ids: string[];
+        };
+        /** ProductUpdatesReceiptResponse */
+        ProductUpdatesReceiptResponse: {
+            /** Seen Entry Ids */
+            seen_entry_ids: string[];
         };
         /**
          * ProfileResponse
@@ -51243,6 +51402,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PolicyRuleUsagesPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "productupdates.get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductUpdatesFeedResponse"];
+                };
+            };
+        };
+    };
+    "productupdates.receipts.create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProductUpdatesReceiptRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductUpdatesReceiptResponse"];
                 };
             };
             /** @description Validation Error */

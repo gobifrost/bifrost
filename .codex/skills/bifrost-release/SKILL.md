@@ -1,6 +1,6 @@
 ---
 name: bifrost:release
-description: Build and release Bifrost. Use when pushing commits to main, cutting a versioned release, or deploying to K8s. Handles dev push (CI builds :dev image), pre-release (vX.Y.Z-rc.N tag → pre-release GitHub Release), and full release (version tag → GitHub Release + :latest).
+description: Prepare Bifrost release data, build, and release. Use when adding or aggregating release notes, pushing commits to main, cutting a versioned release, or deploying to K8s. Handles dev push (CI builds :dev image), pre-release (vX.Y.Z-rc.N tag → pre-release GitHub Release), and full release (version tag → GitHub Release + :latest).
 ---
 
 # Bifrost Release
@@ -17,7 +17,41 @@ Bifrost ships on a deliberate three-rung ladder. Know which audience each rung s
 
 The intent going forward (announce this in the first full release that introduces it): **full releases land roughly monthly; between them we cut `-rc.N` pre-releases that are intended to be safer but more frequent. `:dev` remains bleeding edge and will contain bugs the maintainer intends to find in his own production first.** When you draft notes for the release that introduces this cadence, include a short "Release cadence going forward" callout stating exactly that.
 
-## Step 1: Ask which workflow
+## Release Data and Publication
+
+Treat content preparation and publication as separate operations. If asked only to
+add or prepare release data, stop after a reviewable committed draft, coverage
+reconciliation, validation, and previews. That request does not authorize a tag,
+GitHub Release, deployment, Discord post, or publication approval.
+
+Write each noteworthy change once in `product-updates/` during its PR. Read
+`docs/product-updates-authoring.md` and apply its General Writing/Humanizer pass,
+short-note format, verified app links, and enforced word budgets. Before a formal
+release, aggregate the eligible approved entries since the previous final and
+freeze the complete body. Publishing consumes that prepared body without a new
+writing pass. Draft or staged entries never activate production announcements.
+
+After a source PR lands, refresh the cumulative verified inventory and commit the
+metadata in a content follow-up PR before considering its announcement delivered.
+Keep its reviewed UUID and prose; cite the actual landed PR/commit. Validate the
+prepared image bundle includes the entry. This activation step applies to dev
+images too and does not require publishing a GitHub release.
+
+The in-app trigger is unseen approved entry UUIDs in the running build, checked
+when an authenticated platform admin enters the shell. A displayed batch is
+acknowledged automatically. Reusing an entry UUID for editorial corrections or
+promotion from dev to stable does not reopen it. New noteworthy entries can
+appear in dev builds; a formal release aggregates them without re-announcing
+previously seen entries. Receipts are persisted per authenticated admin on the server. The feed is enabled
+on every image, including `:dev`, candidates, and stable. Runtime history retains
+all applicable approved UUIDs; a formal release interval never clears history or
+receipts. Every image build runs `scripts.prepare_product_updates_image` before
+Docker packaging, including the exact merge-candidate images promoted to `:dev`.
+
+## Step 1: Resolve the Requested Operation
+
+For release-data-only requests, use the preparation path above. Resolve a release
+rung only when publication is requested, using the conversation before asking.
 
 > "Which release rung?
 > - **dev push** — commits to main → CI builds `:dev` (every merge; you + community track bleeding edge)
@@ -51,6 +85,27 @@ Report: any uncommitted changes, how many commits ahead of origin.
 ```
 
 **If tests fail:** show the failures and stop. Do not push until they pass.
+
+### 2b. Validate approved product updates
+
+Every ordinary build validates and bundles approved entries against the frozen
+coverage target, with assets pinned to the build commit. This is deterministic
+and uses no AI summary step:
+
+```bash
+TARGET=$(jq -r .target_ref product-updates/inventory.json)
+CONTENT_REF=$(git rev-parse HEAD)
+python3 scripts/product_updates.py validate \
+  --content-dir product-updates \
+  --inventory product-updates/inventory.json \
+  --dispositions product-updates/dispositions.json \
+  --target "$TARGET"
+python3 -m scripts.prepare_product_updates_image --target "$CONTENT_REF"
+```
+
+Only approved entries enter the bundle. Draft previews use an explicit
+`--allow-draft` command from the authoring guide and never run in a dev image
+or release build.
 
 ### 3. Documentation freshness check
 
@@ -146,14 +201,35 @@ scripts/update-plugin-version.sh "$VERSION"
 
 Same guard and trade-off as a full release — forgetting it fails the build, it doesn't ship stale.
 
-### 3. Tag and push
+### 3. Prepare Release Data
+
+Prepare and review the candidate body before the tag. It uses the same approved
+entries as a final release and adds candidate-specific test/known-issue material
+only when that material is reviewed and committed:
+
+```bash
+TAG="vX.Y.Z-rc.N"
+TARGET=$(jq -r .target_ref product-updates/inventory.json)
+CONTENT_REF=$(git rev-parse HEAD)
+./scripts/prepare-release-body.sh "$TAG" "$PREVIOUS_COMMIT" "$TARGET" "$CONTENT_REF" \
+  "product-updates/release-bodies/${TAG}.md"
+git add "product-updates/release-bodies/${TAG}.md"
+git commit -m "docs(release): prepare ${TAG} notes"
+./scripts/release-check.sh "$TAG" \
+  --release-body "product-updates/release-bodies/${TAG}.md"
+```
+
+The generated body is deterministic and reviewed before the tag. Do not edit a
+GitHub Release after CI creates it.
+
+### 4. Tag and push
 
 ```bash
 git tag vX.Y.Z-rc.N
 git push origin vX.Y.Z-rc.N
 ```
 
-### 4. What CI does
+### 5. What CI does
 
 > "Pushed the pre-release tag. CI will:
 > 1. Run the gate jobs on the tag ref.
@@ -167,12 +243,10 @@ git push origin vX.Y.Z-rc.N
 >
 > Watch CI: https://github.com/gobifrost/bifrost/actions"
 
-### 5. Release notes (scaled rigor)
-
-Pre-releases still get human notes via `gh release edit <tag> --notes-file <file>` — a short
-"what's new to test / known issues" is enough. The full Contributors + Fixed-CVEs rigor below is for
-*final* releases. Do **not** draft a gobifrost.com blog post for a pre-release (that's a full-release
-step).
+The committed prepared body is published directly with the type stubs, source
+archive, checksums, signatures, Docker instructions, and pre-release flag.
+Do **not** draft a gobifrost.com blog post for a pre-release (that's a
+full-release step).
 
 ---
 
@@ -229,11 +303,18 @@ For drift on **existing** entries, dispatch the docs skill regardless of the fre
 
 Let it run. The docs PR is independent of the bifrost tag — you can tag in parallel after the docs PR is open.
 
-### 2. Summarize commits since last release
+### 2. Freeze, reconcile, and prepare the release body
 
 ```bash
-LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null)
-git log ${LAST_TAG}..HEAD --oneline
+# Do not use git describe here: an RC is not the previous final release.
+PREVIOUS_FINAL=$(gh release list --limit 100 --json tagName,isDraft,isPrerelease,publishedAt \
+  --jq '[.[] | select(.isDraft == false and .isPrerelease == false)] | sort_by(.publishedAt) | last | .tagName')
+PREVIOUS_COMMIT=$(git rev-parse "${PREVIOUS_FINAL}^{commit}")
+LEDGER_BASE=$(jq -r .base_ref product-updates/inventory.json)
+TARGET=$(git rev-parse HEAD)
+git merge-base --is-ancestor "$PREVIOUS_COMMIT" "$TARGET"
+git log "${PREVIOUS_COMMIT}..${TARGET}" --oneline
+printf 'Frozen final range: %s (%s) .. %s\n' "$PREVIOUS_FINAL" "$PREVIOUS_COMMIT" "$TARGET"
 ```
 
 Present the summary as:
@@ -246,60 +327,59 @@ Present the summary as:
 > - `<sha>` `<message>`
 > - ...
 
-Show this to the user and confirm they want to proceed with tagging.
+Before authoring, refresh the cumulative verified inventory from its retained
+`LEDGER_BASE` through `TARGET`. Never discard earlier entry source metadata when
+cutting a release; image history must retain those entries. The GitHub body alone
+uses the explicit `PREVIOUS_COMMIT..TARGET` interval. The frozen inventory is the source of truth for landed coverage, verified
+authors, source PRs, and contributor credits. The validator fails if any
+landed PR lacks a canonical Highlight, Other, or reasoned Omit disposition.
+Resolve security advisories, upgrade instructions, and breaking changes as
+reviewed content before preparation; never infer a CVE or claim a warning is
+irrelevant from a commit title.
 
-### 2b. Credit external contributors (REQUIRED — gate before drafting notes)
-
-Every PR landed in this release must be checked for authorship. Missing a contributor — especially on a headline feature — is the most common and most embarrassing failure mode of the release flow. **Prior failures:** v0.9.0 nearly shipped with @sdc53's external-MCP-client headline feature uncredited because the original `gh pr list --search merged:>=...` filter quietly missed PRs that were merged into the merge queue rather than directly to main. Don't trust a single query.
-
-Use this **two-query cross-check** — get the canonical PR list from git history (which never lies), then query each PR's author directly:
+Collect the inventory with the same exact base and target; this is the only
+step that calls GitHub for release-source metadata:
 
 ```bash
-LAST_TAG=$(git describe --tags --abbrev=0)
-
-# Step 1: Extract every PR number from squash-merge subjects since LAST_TAG.
-# git log is the source of truth — it captures every PR that actually landed,
-# regardless of merge mechanism (direct merge, merge queue, rebase, squash).
-git log ${LAST_TAG}..HEAD --format='%s' \
-    | grep -oE '\(#[0-9]+\)' | grep -oE '[0-9]+' | sort -u > /tmp/pr-nums.txt
-echo "PRs to check: $(wc -l < /tmp/pr-nums.txt)"
-
-# Step 2: Fetch author for each PR (one gh call per PR, ~1-2s each).
-# The output line goes into /tmp/pr-authors.txt: "<num>\t<author>\t<title>"
-> /tmp/pr-authors.txt
-while read num; do
-    gh pr view "$num" --json number,title,author 2>/dev/null \
-        | jq -r --arg n "$num" 'select(.author.login != null) | "\(.number)\t\(.author.login)\t\(.title)"' \
-        >> /tmp/pr-authors.txt
-done < /tmp/pr-nums.txt
-
-# Step 3: Group by author. Anyone who is NOT jackmusick AND NOT a bot is an
-# external contributor and MUST be credited.
-awk -F'\t' '{print $2}' /tmp/pr-authors.txt | sort | uniq -c | sort -rn
-
-# Step 4: Print just the external-contributor PRs (excludes you and bots).
-grep -vE $'\t(jackmusick|app/dependabot|app/renovate|github-actions\\[bot\\])\t' /tmp/pr-authors.txt
+python3 scripts/product_updates.py collect-inventory \
+  --base "$LEDGER_BASE" --target "$TARGET" --repository gobifrost/bifrost \
+  --output product-updates/inventory.json
 ```
 
-**Sanity checks before proceeding** (do these every release, no exceptions):
+Cross-check its PR count against landed history before review. Commit subjects
+identify candidate PR numbers; the per-PR API response verifies authors and
+metadata. Investigate every count mismatch and every direct commit instead of
+dropping it from the disposition ledger:
 
-1. **Counts match.** The PR-numbers count from step 1 should match the line count in `/tmp/pr-authors.txt`. If not, some PRs failed to fetch — re-run step 2 and investigate.
-2. **The headline feature has an author.** Look at the `feat:` / `feat!:` commits since the last tag. For each, confirm its author appears in `/tmp/pr-authors.txt`. If a major feature was authored by someone other than `jackmusick`, that name must appear in your final Contributors section. Spot-checking the highest-impact PR every release is mandatory.
-3. **Spec PRs count too.** A spec/design PR (`docs(spec):`) authored by a contributor is part of their contribution to the feature — credit it alongside the implementation PR.
+```bash
+git log "${LEDGER_BASE}..${TARGET}" --format='%s' \
+  | grep -oE '\(#[0-9]+\)' | tr -d '()#' | sort -u > /tmp/release-pr-numbers.txt
+while read -r pr; do
+  gh api "repos/gobifrost/bifrost/pulls/${pr}" \
+    --jq '[.number, .user.login, .html_url] | @tsv'
+done < /tmp/release-pr-numbers.txt | tee /tmp/release-pr-metadata.tsv
+test "$(wc -l < /tmp/release-pr-numbers.txt)" = "$(wc -l < /tmp/release-pr-metadata.tsv)"
+```
 
-**Then build the credits section:**
+```bash
+TAG="vX.Y.Z"
+TARGET=$(jq -r .target_ref product-updates/inventory.json)
+CONTENT_REF=$(git rev-parse HEAD)
+./scripts/prepare-release-body.sh "$TAG" "$PREVIOUS_COMMIT" "$TARGET" "$CONTENT_REF" \
+  "product-updates/release-bodies/${TAG}.md"
+git diff --check
+# Review the exact Markdown, then commit it through the normal PR path.
+git add "product-updates/release-bodies/${TAG}.md"
+git commit -m "docs(release): prepare ${TAG} notes"
+```
 
-- Include a **Contributors** section in the release notes listing each external contributor's PRs with attribution. Lead with the most impactful contribution per person, not chronological.
-- **Per-bullet credits are mandatory, not optional.** For every feature/fix/security bullet elsewhere in the notes that maps to an external contributor's PR, append `(#NN by @user)` directly to that bullet. The Contributors section is *additional* attribution, not a replacement — credit appears both where the change is described AND in the Contributors roll-up.
-- For a feature whose spec was authored separately from the implementation, list both PRs on the same Contributors line (e.g., `**@sdc53** — designed and implemented the external MCP client (#176 spec, #177 implementation)`).
-- Bots (dependabot, renovate, github-actions) are NOT credited as contributors — they're a different category. If their PRs land security or dep updates worth highlighting, those go under "Security & Supply-Chain Hardening" without an `@bot` credit.
-
-**Anti-patterns to avoid:**
-
-- ❌ Writing "None in this release — solo-maintained cycle" without running the two-query cross-check.
-- ❌ Trusting a single `gh pr list --search` query. Squash-merge subjects in `git log` are the canonical record; everything else is a derived view that can have edge-case gaps (merge queue, force-pushes, deleted branches).
-- ❌ Crediting only in the Contributors section without per-bullet `(#NN by @user)` markers. Readers scanning the feature list shouldn't have to scroll to find out who shipped it.
-- ❌ Putting external contributors as a footnote. They led the work — lead with their name on the bullet that describes it.
+The generated body keeps rich reviewed entry Markdown and pinned screenshots,
+credits each included external contributor inline and in the rollup, and
+subtracts highlighted and omitted PRs from Other changes. Before approval,
+verify that the reviewed source supplies explicit Security, Action Required,
+Fixed CVE, and Breaking Change material where applicable; a renderer must not
+invent those claims from commit messages. A release with no new highlights
+still renders its reviewed Other changes.
 
 ### 2c. Bump the Claude and Codex plugin manifests (REQUIRED)
 
@@ -323,7 +403,8 @@ The tag-build CI job (`build-api`) has a hard guard that fails the release if an
 ### 3. Run pre-tag checks
 
 ```bash
-./scripts/release-check.sh <tag>
+./scripts/release-check.sh <tag> \
+  --release-body product-updates/release-bodies/<tag>.md
 ```
 
 This verifies:
@@ -331,6 +412,7 @@ This verifies:
 - Tag doesn't exist locally or on remote
 - You're on `main`
 - Unit tests pass
+- The tracked release body exists and matches deterministic approved content
 
 **If it fails:** show the failures and stop. Do not proceed.
 
@@ -339,53 +421,6 @@ This verifies:
 ```bash
 git tag <tag>
 git push origin <tag>
-```
-
-### 4b. Draft human-readable release notes (REQUIRED for OSPS Passing)
-
-CI's `create-release` job in `.github/workflows/ci.yml` writes a templated body covering Docker pulls, type stubs, and Sigstore verification. That template is **not** sufficient for the OpenSSF Best Practices "Passing" criteria `release_notes` and `release_notes_vulns`, which require a human-readable change summary and an explicit list of CVEs fixed (or "None in this release"). After the tag is pushed, draft notes and overwrite CI's body via `gh release edit <tag> --notes-file <file>`.
-
-**Always-required sections** (drop a section only if explicitly empty AND verifiably so):
-
-1. **Headline** — 1–2 sentences naming what this release is about. Plus the commit count since the previous tag.
-2. **Themed groupings** — pick from this set as appropriate; use human judgment on ordering and which apply:
-   - Security & Supply-Chain Hardening
-   - Bug Fixes
-   - Reliability
-   - Developer Experience
-   - Features
-   - Breaking Changes
-3. **Contributors** — REQUIRED, and you MUST cross-check this against step 2b's two-query scan. If the scan found ANY non-jackmusick / non-bot author, this section is non-empty.
-   - **Lead each contributor's line with their highest-impact PR**, not chronological order. Format: `**@login** — <verb-led description of what they shipped> (#NN <role>, #MM <role>)`. Roles: `spec` for design PRs, `implementation` for the matching feature PR. For a single-PR contribution: `**@login** — <description> (#NN)`.
-   - **Per-bullet credits are mandatory in OTHER sections**, not just this one. For every feature/fix/security bullet whose underlying PR was authored externally, the bullet must end with `(#NN by @login)` (or `(#NN spec, #MM implementation by @login)` for paired PRs). The Contributors section is *additive* — readers scanning Features should see attribution inline, AND there should be a Contributors roll-up at the bottom.
-   - Only write "None in this release — solo-maintained cycle" after step 2b's scan has been re-run AND its sanity checks (counts match, headline feature has an author) all pass with zero external authors.
-4. **Fixed CVEs** — REQUIRED. Cross-reference commits via `git log <prev-tag>..HEAD --grep='CVE\|GHSA\|PYSEC\|vuln\|security'` and read the bodies of dep-bump PRs (`gh pr view <num> --json body`) for specific CVE/GHSA IDs. List each package bumped and the specific CVEs/GHSAs the bump closed. If nothing was fixed, write "None in this release". **Do NOT fabricate IDs** — if a bump didn't list a specific CVE, say "multiple Dependabot security advisories closed via dep bumps; see commit log for details" rather than inventing one.
-5. **Breaking Changes** — REQUIRED. If none, write "None in this release". If anything moved, was renamed, or changed install/upgrade procedure, document the migration step.
-6. **Docker Images / Type Stubs / Signed Artifacts** — keep the corresponding blocks from CI's template body (the verification commands matter for users).
-
-**Format rules:**
-
-- Markdown bullets, one line per item.
-- Link PRs as `(#123)` — GitHub auto-links these.
-- Group by theme, **NOT** chronologically. Raw `git log` output does not satisfy `release_notes`.
-- Cap individual sections at ~10 bullets; collapse routine Dependabot bumps into a single line referencing the commit log.
-
-**Drafting workflow:**
-
-```bash
-# 1. Get the commit list
-git log <prev-tag>..HEAD --oneline
-
-# 2. Get security-tagged commits for the Fixed CVEs section
-git log <prev-tag>..HEAD --grep='CVE\|GHSA\|PYSEC\|vuln\|security' --oneline
-
-# 3. For any dep-bump PR or security PR you need details on
-gh pr view <num> --json title,body
-
-# 4. (Reuse the contributor list from step 2b)
-
-# 5. Write the notes to a file, then (after CI's create-release job finishes) overwrite the body
-gh release edit <tag> --notes-file /tmp/release-notes-<tag>.md
 ```
 
 ### 5. Tell the user what happens next

@@ -50,6 +50,7 @@ from src.services.agent_runtime import (
     BifrostToolset,
     ModelCallEvent,
     ToolEvent,
+    bound_tool_result_for_model,
     build_chain_model,
     build_runtime_capabilities,
     provider_reported_cost,
@@ -80,6 +81,8 @@ logger = logging.getLogger(__name__)
 
 MAX_DELEGATION_DEPTH = 5  # Prevent infinite delegation chains
 DELEGATION_TIMEOUT_SECONDS = 600  # 10 minutes per delegation
+MAX_DELEGATION_TIMEOUT_RECEIPT_CHARS = 20_000
+MAX_DELEGATION_TIMEOUT_EVIDENCE_ITEM_CHARS = 4_000
 
 _JSON_FENCE_RE = re.compile(r"^```[a-zA-Z]*\s*\n(.*)\n\s*```$", re.DOTALL)
 
@@ -116,10 +119,177 @@ class DelegationOutcome:
     output: str | dict | None
     error: str | None
     duration_ms: int
+    evidence: str | None = None
 
     @property
     def succeeded(self) -> bool:
         return self.status == "completed"
+
+
+def _truncate_timeout_evidence_item(value: Any) -> tuple[str, bool]:
+    """Keep one saved tool fact small without pretending it is structured JSON."""
+    text = str(value)
+    if len(text) <= MAX_DELEGATION_TIMEOUT_EVIDENCE_ITEM_CHARS:
+        return text, False
+    omitted = len(text) - MAX_DELEGATION_TIMEOUT_EVIDENCE_ITEM_CHARS
+    return (
+        text[:MAX_DELEGATION_TIMEOUT_EVIDENCE_ITEM_CHARS]
+        + f" [stored result truncated; {omitted} characters omitted]",
+        True,
+    )
+
+
+def _capture_tool_result_for_timeout_evidence(value: Any) -> tuple[str, bool]:
+    """Keep the durable step copy bounded and make loss explicit at capture."""
+    text = str(value)
+    if len(text) <= MAX_DELEGATION_TIMEOUT_RECEIPT_CHARS:
+        return text, False
+    omitted = len(text) - MAX_DELEGATION_TIMEOUT_RECEIPT_CHARS
+    while True:
+        marker = f" [stored result truncated; {omitted} characters omitted]"
+        actual_omitted = len(text) - (
+            MAX_DELEGATION_TIMEOUT_RECEIPT_CHARS - len(marker)
+        )
+        if actual_omitted == omitted:
+            break
+        omitted = actual_omitted
+    return (
+        text[:MAX_DELEGATION_TIMEOUT_RECEIPT_CHARS - len(marker)] + marker,
+        True,
+    )
+
+
+def _delegation_evidence_lines(executor: Any) -> list[str]:
+    """Extract only the executor's captured, non-LLM tool lifecycle facts."""
+    lines: list[str] = []
+    completed_child_runs: set[str] = set()
+    settled_by_tool: dict[str, int] = {}
+    calls: list[tuple[str, str]] = []
+
+    for step in executor._pending_steps:
+        content = step.get("content") or {}
+        step_type = step.get("type")
+        if step_type == "tool_call":
+            tool_name = content.get("tool_name")
+            if tool_name:
+                calls.append((str(step.get("id")), str(tool_name)))
+            continue
+        if step_type not in {"tool_result", "tool_error"}:
+            continue
+
+        tool_name = str(content.get("tool_name") or "unknown tool")
+        settled_by_tool[tool_name] = settled_by_tool.get(tool_name, 0) + 1
+        step_id = str(step.get("id"))
+        ids = ""
+        if content.get("execution_id"):
+            ids += f" execution_id={content['execution_id']}"
+        if content.get("child_run_id"):
+            child_run_id = str(content["child_run_id"])
+            completed_child_runs.add(child_run_id)
+            ids += f" child_run_id={child_run_id}"
+
+        is_error = step_type == "tool_error" or bool(content.get("is_error"))
+        if is_error:
+            detail, _ = _truncate_timeout_evidence_item(
+                content.get("error") or content.get("result") or "tool failed"
+            )
+            lines.append(f"failed step {step_id} ({tool_name}): {detail}{ids}")
+            continue
+
+        detail, was_truncated = _truncate_timeout_evidence_item(
+            content.get("result", "")
+        )
+        truncation = " [stored result truncated]" if (
+            was_truncated or content.get("result_truncated")
+        ) else ""
+        lines.append(
+            f"completed step {step_id} ({tool_name}): {detail}{truncation}{ids}"
+        )
+
+    for step_id, tool_name in calls:
+        remaining_settled = settled_by_tool.get(tool_name, 0)
+        if remaining_settled:
+            settled_by_tool[tool_name] = remaining_settled - 1
+            continue
+        lines.append(
+            f"unfinished step {step_id} ({tool_name}); side effects are unverified"
+        )
+
+    for outcome in executor._finalized_delegation_outcomes:
+        if str(outcome.child_run_id) in completed_child_runs:
+            continue
+        status = outcome.status
+        prefix = (
+            f"nested delegation child_run_id={outcome.child_run_id} "
+            f"({outcome.agent_name}) status={status}"
+        )
+        if outcome.evidence:
+            detail, _ = _truncate_timeout_evidence_item(outcome.evidence)
+            lines.append(f"{prefix}; captured evidence: {detail}")
+        if status == "completed" and outcome.output is not None:
+            detail, _ = _truncate_timeout_evidence_item(outcome.output)
+            lines.append(f"{prefix}; completed receipt: {detail}")
+        elif status != "completed":
+            lines.append(f"{prefix}; side effects are unverified")
+
+    return lines
+
+
+def _bounded_timeout_receipt(
+    lines: list[str],
+    *,
+    max_chars: int = MAX_DELEGATION_TIMEOUT_RECEIPT_CHARS,
+) -> str:
+    """Apply one global evidence cap and say explicitly when facts were omitted."""
+    if not lines:
+        return "No completed tool evidence was captured before the deadline."
+
+    selected: list[str] = []
+    used = 0
+    for index, line in enumerate(lines):
+        addition = len(line) + (1 if selected else 0)
+        if used + addition <= max_chars:
+            selected.append(line)
+            used += addition
+            continue
+        omitted = len(lines) - index
+        while True:
+            marker = f"[partial evidence truncated; {omitted} item(s) omitted]"
+            if used + len(marker) + (1 if selected else 0) <= max_chars:
+                selected.append(marker)
+                break
+            if not selected:
+                # The normal timeout prefix leaves far more than this marker,
+                # but retain a valid explicit omission if a caller supplies a
+                # deliberately tiny evidence budget.
+                return marker[:max_chars]
+            removed = selected.pop()
+            used -= len(removed) + (1 if selected else 0)
+            omitted += 1
+        return "\n".join(selected)
+    return "\n".join(selected)
+
+
+def format_delegation_timeout_receipt(
+    agent_name: str,
+    executor: Any,
+) -> str:
+    """Build caller-safe timeout evidence from one executing child's own subtree."""
+    prefix = (
+        f"Delegation to {agent_name} timed out after {DELEGATION_TIMEOUT_SECONDS}s.\n"
+        "Partial execution evidence follows. Captured tool receipts do not establish "
+        "overall completion. "
+        "Unfinished side effects are unverified.\n"
+    )
+    evidence = _bounded_timeout_receipt(
+        _delegation_evidence_lines(executor),
+        max_chars=MAX_DELEGATION_TIMEOUT_RECEIPT_CHARS - len(prefix),
+    )
+    receipt = prefix + evidence
+    # Keep the model-facing copy on the shared 32K result policy even though
+    # the durable receipt has the stricter 20K cap above.
+    bounded = bound_tool_result_for_model(receipt)
+    return bounded if isinstance(bounded, str) else str(bounded)
 
 
 class AutonomousAgentExecutor:
@@ -160,6 +330,10 @@ class AutonomousAgentExecutor:
         # Buffers for Redis-first pattern (flushed to DB after run completes)
         self._pending_steps: list[dict[str, Any]] = []
         self._pending_ai_usage: list[dict[str, Any]] = []
+        # Terminal child outcomes belonging to this executor. This closes the
+        # cancellation gap where a nested child is finalized but its parent
+        # never receives a BifrostToolset result event before cancellation.
+        self._finalized_delegation_outcomes: list[DelegationOutcome] = []
         self._knowledge_search_budget = KnowledgeSearchBudget()
         # Delegated executors receive these same objects. Pydantic AI mutates
         # RunUsage in place, so every model request in the delegation tree is
@@ -213,6 +387,7 @@ class AutonomousAgentExecutor:
         self._knowledge_search_budget.reset()
         self._own_tokens = 0
         self._delegated_tokens = 0
+        self._finalized_delegation_outcomes = []
 
         # Resolve caller_user_id from _caller metadata. If a webhook ran
         # without a signed user claim, _caller is either absent or has no
@@ -404,7 +579,12 @@ class AutonomousAgentExecutor:
             if event.type == "tool_error":
                 content["error"] = event.error
             else:
-                content["result"] = str(event.result)[:20000]
+                result, result_truncated = _capture_tool_result_for_timeout_evidence(
+                    event.result
+                )
+                content["result"] = result
+                if result_truncated:
+                    content["result_truncated"] = True
             if event.tool_name.startswith("delegate_to_") and self._last_delegation_run_id:
                 content["child_run_id"] = self._last_delegation_run_id
             if self._last_workflow_execution_id:
@@ -1086,8 +1266,11 @@ class AutonomousAgentExecutor:
                 f"Delegation to '{target_agent.name}' timed out after "
                 f"{DELEGATION_TIMEOUT_SECONDS}s"
             )
+            receipt = format_delegation_timeout_receipt(target_agent.name, sub_executor)
             sub_result = {
-                "output": None,
+                # Durable, sanitized facts from the interrupted subtree are
+                # useful for the run record, but do not change timeout status.
+                "output": receipt,
                 "iterations_used": 0,
                 "tokens_used": 0,
                 "status": "timeout",
@@ -1143,13 +1326,24 @@ class AutonomousAgentExecutor:
             status = "failed"
 
         error = self._delegation_error(target_agent.name, status, sub_result)
+        evidence = (
+            None
+            if status == "completed"
+            else _bounded_timeout_receipt(_delegation_evidence_lines(sub_executor))
+        )
+        caller_error = error
+        if status == "timeout":
+            caller_error = format_delegation_timeout_receipt(
+                target_agent.name, sub_executor
+            )
         outcome = DelegationOutcome(
             child_run_id=sub_run_id,
             agent_name=target_agent.name,
             status=status,
             output=sub_result.get("output"),
-            error=error,
+            error=caller_error,
             duration_ms=duration_ms,
+            evidence=evidence,
         )
 
         async with self._session_factory() as db:
@@ -1206,6 +1400,7 @@ class AutonomousAgentExecutor:
             f"Delegation to '{target_agent.name}' completed with status={status}"
         )
 
+        self._finalized_delegation_outcomes.append(outcome)
         if cancellation is not None:
             raise cancellation
         return outcome

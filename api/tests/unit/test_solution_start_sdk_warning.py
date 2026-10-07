@@ -201,7 +201,6 @@ def _start_workspace(tmp_path, monkeypatch):
     import shutil
     import subprocess
 
-    import bifrost.client as client_mod
     from bifrost.solution_dev import function_host
 
     monkeypatch.chdir(tmp_path)

@@ -1,0 +1,139 @@
+name: Product Updates
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled, ready_for_review]
+  merge_group:
+  workflow_dispatch:
+
+# No path filters: content-only changes bypass ci.yml, but never this real
+# validator. The token can only read repository and pull-request metadata.
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate:
+    name: Product Updates
+    runs-on: ubuntu-latest
+    steps:
+      # The pull-request candidate is untrusted data. Run the validator from
+      # the trusted base commit, persist no checkout credentials, and pass no
+      # secrets to shell steps. Merge-group candidates use the queue base,
+      # never the synthetic candidate SHA, as their validator ref.
+      - name: Checkout trusted validator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          path: validator
+          persist-credentials: false
+
+      # The first PR which adds this validator cannot load trusted validator
+      # code from its base. Keep this check non-required until main contains
+      # the workflow and tool; it must fail visibly rather than turn into a
+      # green candidate-code fallback.
+      - name: Check trusted validator availability
+        id: trusted-validator
+        working-directory: validator
+        run: |
+          if [ -f scripts/product_updates.py ] && [ -f product-updates/schema.json ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "The trusted base does not yet contain the Product Updates validator." >&2
+            exit 1
+          fi
+
+      - name: Checkout candidate content
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: candidate
+          persist-credentials: false
+
+      - name: Normalize merge-group scope
+        if: github.event_name == 'merge_group'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const fs = require("fs");
+            const { normalizeMergeGroup } = require(`${process.env.GITHUB_WORKSPACE}/validator/scripts/product_updates_scope.cjs`);
+            try {
+              const normalized = await normalizeMergeGroup({
+                mergeGroup: context.payload.merge_group,
+                listQueueEntries: async (base) => {
+                  const query = `query($owner: String!, $repo: String!, $base: String!, $cursor: String) {
+                    repository(owner: $owner, name: $repo) {
+                      mergeQueue(branch: $base) {
+                        entries(first: 100, after: $cursor) {
+                          nodes {
+                            headCommit { oid }
+                            baseCommit { oid }
+                            pullRequest { number author { login } }
+                          }
+                          pageInfo { hasNextPage endCursor }
+                        }
+                      }
+                    }
+                  }`;
+                  const entries = [];
+                  let cursor = null;
+                  while (true) {
+                    const result = await github.graphql(query, {
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      base,
+                      cursor,
+                    });
+                    const page = result.repository?.mergeQueue?.entries;
+                    if (!page) throw new Error("Merge queue metadata is unavailable");
+                    entries.push(...page.nodes);
+                    if (!page.pageInfo.hasNextPage) return entries;
+                    const nextCursor = page.pageInfo.endCursor;
+                    if (!nextCursor || nextCursor === cursor) {
+                      throw new Error("Merge queue pagination did not advance");
+                    }
+                    cursor = nextCursor;
+                  }
+                },
+              });
+              fs.writeFileSync("/tmp/product-updates-event.json", JSON.stringify({
+                ...context.payload,
+                merge_group: normalized,
+              }));
+            } catch (error) {
+              core.setFailed(error.message);
+            }
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Install trusted validator dependencies
+        run: python -m pip install --require-hashes -r validator/requirements-product-updates.lock
+
+      - name: Validate canonical event disposition
+        if: github.event_name != 'workflow_dispatch'
+        working-directory: candidate
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            cp "$GITHUB_EVENT_PATH" /tmp/product-updates-event.json
+          fi
+          python3 ../validator/scripts/product_updates.py validate-event \
+            --event-path /tmp/product-updates-event.json \
+            --content-dir product-updates \
+            --schema ../validator/product-updates/schema.json \
+            --dispositions product-updates/dispositions.json
+
+      - name: Validate frozen source on manual dispatch
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: candidate
+        run: |
+          TARGET=$(jq -r .target_ref product-updates/inventory.json)
+          python3 ../validator/scripts/product_updates.py validate \
+            --content-dir product-updates \
+            --schema ../validator/product-updates/schema.json \
+            --inventory product-updates/inventory.json \
+            --dispositions product-updates/dispositions.json \
+            --target "$TARGET"

@@ -975,8 +975,11 @@ class TestChatDelegation:
                     child_run_id=child_run_id,
                     agent_name="Slow Agent",
                     status="timeout",
-                    output=None,
-                    error="Delegation to Slow Agent timed out after 600s",
+                    output="completed step evidence-step (read_device): reachable",
+                    error=(
+                        "Delegation to Slow Agent timed out after 600s\n"
+                        "completed step evidence-step (read_device): reachable"
+                    ),
                     duration_ms=600_000,
                 )
             )
@@ -984,5 +987,7 @@ class TestChatDelegation:
 
             result = await executor._execute_delegation(tool_call, agent)
 
+        assert result.result is None
         assert result.error is not None
         assert "timed out" in result.error
+        assert "completed step evidence-step (read_device): reachable" in result.error

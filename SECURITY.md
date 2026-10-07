@@ -19,9 +19,9 @@ Two ways to report privately:
 
 ### 1. GitHub private vulnerability reporting (preferred)
 
-Go to https://github.com/gobifrost/bifrost/security/advisories/new
-and submit a draft advisory. This keeps the report confidential and lets
-us discuss + patch + coordinate disclosure inside GitHub's tooling.
+Submit a draft advisory through [GitHub's private vulnerability reporting](https://github.com/gobifrost/bifrost/security/advisories/new).
+This keeps the report confidential and lets us discuss + patch + coordinate
+disclosure inside GitHub's tooling.
 
 ### 2. Email
 
@@ -72,6 +72,19 @@ Auto-merged PRs still go through the full CI suite (lint, typecheck,
 unit, e2e). If a green-CI auto-merge later breaks something, the
 behavior is by definition uncovered by tests — the response is to add
 the test and fix forward, not to gate the auto-merge harder.
+
+### GitHub App advisory lookup permission
+
+The `bifrost-lockfile-bot` GitHub App reads open Dependabot alerts before
+auto-merging security advisory updates. An App owner must set its repository
+**Dependabot alerts** permission to **Read-only** at
+https://github.com/organizations/gobifrost/settings/apps/bifrost-lockfile-bot/permissions.
+GitHub then requires a `gobifrost` organization owner to approve that additional
+permission for the existing installation. The workflow treats an open alert on
+the same Dependabot package and changed manifest as an advisory association; CI
+and closure of the alert after merge remain the evidence that the bump is safe
+and effective. Until approval is complete, the workflow fails before it makes
+an eligibility decision.
 
 ## What's Out of Scope
 

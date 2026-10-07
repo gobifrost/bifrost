@@ -3,6 +3,114 @@
     {
       "observed": {
         "cli": {
+          "path": null,
+          "status": "intentionally_unsupported"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "productupdates.get",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "settings.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "RequirePlatformAdmin",
+        "cli": null,
+        "exclusions": {
+          "cli": "Product Updates are presented in the authenticated platform shell.",
+          "manifest": "The immutable build bundle, not a workspace manifest, is the content source.",
+          "mcp": "Product Updates are an authenticated platform-shell feed.",
+          "native_builder": "Product Updates are not a Builder authoring target.",
+          "sdk": "Application runtimes do not present platform administrator announcements."
+        },
+        "manifest": null,
+        "mcp": null,
+        "native_builder": false,
+        "operation_id": "productupdates.get",
+        "rest": {
+          "method": "GET",
+          "path": "/api/product-updates",
+          "request_model": null,
+          "response_model": "ProductUpdatesFeedResponse"
+        },
+        "side_effects": [],
+        "summary": "Get this build's Product Updates feed",
+        "target_kind": "platform"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": null,
+          "status": "intentionally_unsupported"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "productupdates.receipts.create",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "settings.readwrite"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "RequirePlatformAdmin; receipt owner is CurrentSuperuser",
+        "cli": null,
+        "exclusions": {
+          "cli": "Product Updates are presented in the authenticated platform shell.",
+          "manifest": "Presentation receipts are per-admin runtime state.",
+          "mcp": "Product Updates are an authenticated platform-shell feed.",
+          "native_builder": "Product Updates are not a Builder authoring target.",
+          "sdk": "Application runtimes do not present platform administrator announcements."
+        },
+        "manifest": null,
+        "mcp": null,
+        "native_builder": false,
+        "operation_id": "productupdates.receipts.create",
+        "rest": {
+          "method": "POST",
+          "path": "/api/product-updates/receipts",
+          "request_model": "ProductUpdatesReceiptRequest",
+          "response_model": "ProductUpdatesReceiptResponse"
+        },
+        "side_effects": [
+          "persist Product Updates presentation receipts"
+        ],
+        "summary": "Record Product Updates presented to the authenticated administrator",
+        "target_kind": "platform"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
           "path": [
             "agents",
             "list"
@@ -9970,7 +10078,7 @@
     "cli": 171,
     "manifest": 16,
     "mcp": 94,
-    "rest": 675,
+    "rest": 677,
     "sdk": 21
   },
   "schema_version": 1,
