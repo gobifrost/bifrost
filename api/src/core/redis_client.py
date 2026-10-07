@@ -217,7 +217,7 @@ class RedisClient:
         try:
             data = await redis_client.get(key)
             if data is None:
-                logger.warning(f"Pending execution not found: {execution_id}")
+                logger.warning("Pending execution not found: %s", log_safe(execution_id))
                 return None
             return json.loads(data)
         except Exception as e:

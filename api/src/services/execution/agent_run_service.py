@@ -145,7 +145,12 @@ async def enqueue_agent_run(
             )
         raise
 
-    logger.info(f"Enqueued agent run {run_id} for agent {agent_id} (trigger={trigger_type})")
+    logger.info(
+        "Enqueued agent run %s for agent %s (trigger=%s)",
+        log_safe(run_id),
+        log_safe(agent_id),
+        log_safe(trigger_type),
+    )
     return run_id
 
 
