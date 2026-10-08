@@ -6,6 +6,9 @@ import {
   setDefaultAppScope,
   tables,
 } from "./tables";
+import type { PlatformAuthBridge } from "./transport";
+
+type AuthGlobal = typeof globalThis & { __BIFROST_PLATFORM_AUTH_V1__?: PlatformAuthBridge };
 
 let restoreTransport: (() => void) | null = null;
 
@@ -16,6 +19,9 @@ afterEach(() => {
     restoreTransport();
     restoreTransport = null;
   }
+  delete (globalThis as AuthGlobal).__BIFROST_PLATFORM_AUTH_V1__;
+  document.cookie = "csrf_token=; max-age=0";
+  vi.unstubAllGlobals();
 });
 
 describe("tables web SDK", () => {
@@ -550,4 +556,147 @@ describe("tables web SDK", () => {
       expect(opts.credentials).toBe("include");
     });
   });
+});
+
+function installBridge(over: Partial<PlatformAuthBridge> = {}) {
+	const bridge: PlatformAuthBridge = {
+		getAccessToken: () => null,
+		canRefreshAccessToken: () => true,
+		refreshAccessToken: vi.fn(async () => true),
+		handleAuthenticationFailure: vi.fn(),
+		...over,
+	};
+	(globalThis as AuthGlobal).__BIFROST_PLATFORM_AUTH_V1__ = bridge;
+	return bridge;
+}
+
+const unauth = () => new Response('{"detail":"Not authenticated"}', { status: 401 });
+const page = () =>
+	new Response(JSON.stringify({ documents: [], table_id: "tbl", total: 0 }), {
+		status: 200,
+		headers: { "content-type": "application/json" },
+	});
+
+describe("session renewal on 401 (same-origin v1 transport)", () => {
+	it("renews once and retries the request", async () => {
+		const bridge = installBridge();
+		const fetchMock = vi.fn().mockResolvedValueOnce(unauth()).mockResolvedValueOnce(page());
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(tables.query("t1")).resolves.toMatchObject({ table_id: "tbl" });
+		expect(bridge.refreshAccessToken).toHaveBeenCalledTimes(1);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(bridge.handleAuthenticationFailure).not.toHaveBeenCalled();
+	});
+
+	it("sends the rotated CSRF token on the retried mutation", async () => {
+		document.cookie = "csrf_token=old";
+		installBridge({
+			refreshAccessToken: vi.fn(async () => {
+				document.cookie = "csrf_token=new";
+				return true;
+			}),
+		});
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(unauth())
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ id: "r1", data: {} }), {
+					status: 201,
+					headers: { "content-type": "application/json" },
+				}),
+			);
+		vi.stubGlobal("fetch", fetchMock);
+
+		await tables.insert("t1", { k: "v" });
+		const csrf = (call: unknown[]) =>
+			new Headers((call[1] as RequestInit).headers).get("X-CSRF-Token");
+		expect(csrf(fetchMock.mock.calls[0])).toBe("old");
+		expect(csrf(fetchMock.mock.calls[1])).toBe("new");
+		expect((fetchMock.mock.calls[1][1] as RequestInit).body).toBe(
+			(fetchMock.mock.calls[0][1] as RequestInit).body,
+		);
+	});
+
+	it("applies normal status handling to the retried response (404 → null)", async () => {
+		installBridge();
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValueOnce(unauth()).mockResolvedValueOnce(new Response(null, { status: 404 })),
+		);
+		await expect(tables.get("t1", "row-1")).resolves.toBeNull();
+	});
+
+	it("hands off to the host and throws the 401 when renewal fails", async () => {
+		const bridge = installBridge({ refreshAccessToken: vi.fn(async () => false) });
+		const fetchMock = vi.fn().mockResolvedValue(unauth());
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(tables.query("t1")).rejects.toThrow(/tables: 401/);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(bridge.handleAuthenticationFailure).toHaveBeenCalledTimes(1);
+	});
+
+	it("retries at most once and hands off when the retry is still 401", async () => {
+		const bridge = installBridge();
+		const fetchMock = vi.fn().mockImplementation(async () => unauth());
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(tables.query("t1")).rejects.toThrow(/tables: 401/);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(bridge.refreshAccessToken).toHaveBeenCalledTimes(1);
+		expect(bridge.handleAuthenticationFailure).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not renew when the host forbids it (embed session)", async () => {
+		const bridge = installBridge({ canRefreshAccessToken: () => false });
+		const fetchMock = vi.fn().mockResolvedValue(unauth());
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(tables.query("t1")).rejects.toThrow(/tables: 401/);
+		expect(bridge.refreshAccessToken).not.toHaveBeenCalled();
+		expect(bridge.handleAuthenticationFailure).not.toHaveBeenCalled();
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("keeps today's behavior when no host bridge exists", async () => {
+		const fetchMock = vi.fn().mockResolvedValue(unauth());
+		vi.stubGlobal("fetch", fetchMock);
+		await expect(tables.query("t1")).rejects.toThrow(/tables: 401/);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("leaves renewal to the provider transport's fetchImpl (v2)", async () => {
+		const bridge = installBridge();
+		const fetchImpl = vi.fn().mockResolvedValue(unauth());
+		restoreTransport = setBifrostTransport({ baseUrl: "https://api.example", fetchImpl });
+
+		await expect(tables.query("t1")).rejects.toThrow(/tables: 401/);
+		expect(fetchImpl).toHaveBeenCalledTimes(1);
+		expect(bridge.refreshAccessToken).not.toHaveBeenCalled();
+	});
+
+	it("recovers a parallel burst with one shared renewal", async () => {
+		// Mirror the host's single-flight lock.
+		let inflight: Promise<boolean> | null = null;
+		let renewed = false;
+		const refresh = vi.fn(() => {
+			inflight ??= Promise.resolve().then(() => {
+				renewed = true;
+				return true;
+			});
+			return inflight;
+		});
+		installBridge({ refreshAccessToken: refresh });
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockImplementation(async () => (renewed ? page() : unauth())),
+		);
+
+		const results = await Promise.all(Array.from({ length: 8 }, (_, i) => tables.query(`t${i}`)));
+		expect(results).toHaveLength(8);
+		expect(results.every((r) => r.table_id === "tbl")).toBe(true);
+		// Every caller asks; the host lock collapses them into one renewal.
+		expect(await inflight).toBe(true);
+	});
 });

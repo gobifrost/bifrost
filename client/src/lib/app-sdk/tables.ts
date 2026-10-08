@@ -1,5 +1,5 @@
 import type { components } from "@/lib/v1";
-import { getBifrostTransport } from "./transport";
+import { getBifrostTransport, getPlatformAuth } from "./transport";
 import { subscribeToTable } from "./ws-client";
 
 // Transport state lives in ./transport (shared with the ws client); re-export
@@ -99,27 +99,42 @@ async function http<T>(
   const method = (init.method ?? "GET").toUpperCase();
   const transport = getBifrostTransport();
   const usingProvider = Boolean(transport.baseUrl || transport.headers);
-  // Same-origin (v1) uses cookie + CSRF. A provider transport (v2) carries its
-  // own auth headers (bearer) and targets a possibly cross-origin baseUrl, so
-  // CSRF/cookies don't apply.
-  const csrfHeaders: Record<string, string> =
-    usingProvider || method === "GET" || method === "HEAD"
-      ? {}
-      : { "X-CSRF-Token": getCsrfToken() };
   const url = transport.baseUrl
     ? `${transport.baseUrl.replace(/\/$/, "")}${path}`
     : path;
   const doFetch = transport.fetchImpl ?? fetch;
-  const r = await doFetch(url, {
-    ...init,
-    credentials: usingProvider ? "omit" : "include",
-    headers: {
-      "content-type": "application/json",
-      ...csrfHeaders,
-      ...(transport.headers ?? {}),
-      ...(init.headers ?? {}),
-    },
-  });
+  // Built per attempt: a session refresh rotates the csrf_token cookie, so a
+  // retry must carry the new value, not the one read before the refresh.
+  const send = () => {
+    // Same-origin (v1) uses cookie + CSRF. A provider transport (v2) carries its
+    // own auth headers (bearer) and targets a possibly cross-origin baseUrl, so
+    // CSRF/cookies don't apply.
+    const csrfHeaders: Record<string, string> =
+      usingProvider || method === "GET" || method === "HEAD"
+        ? {}
+        : { "X-CSRF-Token": getCsrfToken() };
+    return doFetch(url, {
+      ...init,
+      credentials: usingProvider ? "omit" : "include",
+      headers: {
+        "content-type": "application/json",
+        ...csrfHeaders,
+        ...(transport.headers ?? {}),
+        ...(init.headers ?? {}),
+      },
+    });
+  };
+  let r = await send();
+  // v1 apps run on the host's 30-minute session cookie, and nothing else in
+  // the app renews it. Renew through the host's single-flight refresh and
+  // retry once. A provider transport (v2) already does this in its fetchImpl.
+  if (r.status === 401 && !usingProvider) {
+    const auth = getPlatformAuth();
+    if (auth?.canRefreshAccessToken()) {
+      if (await auth.refreshAccessToken()) r = await send();
+      if (r.status === 401) auth.handleAuthenticationFailure();
+    }
+  }
   if (r.status === 403) {
     const body = await r.text().catch(() => "");
     throw new TableAccessDeniedError(body || "Access denied");
