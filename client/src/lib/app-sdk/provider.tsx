@@ -30,6 +30,7 @@ import {
 
 import { setDefaultFileScope } from "./files";
 import { setBifrostTransport, setDefaultAppScope } from "./tables";
+import { getPlatformAuth } from "./transport";
 
 export interface BifrostContextValue {
   /** Absolute base URL of the Bifrost API (no trailing slash). */
@@ -75,21 +76,6 @@ export type Theme = "light" | "dark";
 const BifrostContext = createContext<BifrostContextValue | null>(null);
 
 const THEME_KEY = "theme";
-
-interface PlatformAuthBridge {
-	getAccessToken: () => string | null;
-	canRefreshAccessToken: () => boolean;
-	refreshAccessToken: () => Promise<boolean>;
-	handleAuthenticationFailure: () => void;
-}
-
-type PlatformAuthGlobal = typeof globalThis & {
-	__BIFROST_PLATFORM_AUTH_V1__?: PlatformAuthBridge;
-};
-
-function platformAuth(): PlatformAuthBridge | undefined {
-	return (globalThis as PlatformAuthGlobal).__BIFROST_PLATFORM_AUTH_V1__;
-}
 
 export interface BifrostProviderProps {
   baseUrl: string;
@@ -195,7 +181,7 @@ export function BifrostProvider({
   );
 
 	const currentToken = useCallback(() => {
-		const auth = platformAuth();
+		const auth = getPlatformAuth();
 		return auth ? auth.getAccessToken() : token;
 	}, [token]);
 
@@ -225,7 +211,7 @@ export function BifrostProvider({
 
 			const attemptedToken = currentToken();
 			let response = await requestWithToken(attemptedToken);
-			const auth = platformAuth();
+			const auth = getPlatformAuth();
 			if (
 				response.status !== 401 ||
 				!managesAuthorization ||
@@ -322,7 +308,7 @@ export function BifrostProvider({
       // an Authorization header). HTTP calls use the header below.
       token,
 			getToken: () => {
-				const auth = platformAuth();
+				const auth = getPlatformAuth();
 				return auth ? (auth.getAccessToken() ?? undefined) : token;
 			},
 			fetchImpl: value.authedFetch,

@@ -48,3 +48,25 @@ export function setBifrostTransport(next: BifrostTransport): () => void {
 export function getBifrostTransport(): BifrostTransport {
   return transport;
 }
+
+/**
+ * Session bridge the host platform installs (`lib/api-client.ts`). Lets the
+ * data SDK, including a standalone v2 app's own SDK copy, share the host's
+ * live token and single-flight refresh without importing host internals.
+ * Absent outside the platform document (tests, external embeds).
+ */
+export interface PlatformAuthBridge {
+	getAccessToken: () => string | null;
+	canRefreshAccessToken: () => boolean;
+	refreshAccessToken: () => Promise<boolean>;
+	handleAuthenticationFailure: () => void;
+}
+
+type PlatformAuthGlobal = typeof globalThis & {
+	__BIFROST_PLATFORM_AUTH_V1__?: PlatformAuthBridge;
+};
+
+/** Read the host session bridge at call time (it is installed at host boot). */
+export function getPlatformAuth(): PlatformAuthBridge | undefined {
+	return (globalThis as PlatformAuthGlobal).__BIFROST_PLATFORM_AUTH_V1__;
+}
