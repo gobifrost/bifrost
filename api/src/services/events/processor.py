@@ -12,6 +12,7 @@ Handles the core event processing logic:
 Events are always processed asynchronously and return 202 immediately.
 """
 
+import base64
 import logging
 import re
 import uuid
@@ -502,6 +503,7 @@ class EventProcessor:
             received_at=datetime.now(timezone.utc),
             headers=deliver.raw_headers,
             data=deliver.data,
+            raw_body=request.body,
             source_ip=request.client_ip,
             status=EventStatus.RECEIVED,
         )
@@ -757,8 +759,8 @@ class EventProcessor:
         Uses the same execution infrastructure as the rest of the platform.
 
         If the subscription has an input_mapping defined, it is processed to build
-        workflow parameters using template substitution. Otherwise, the raw event
-        data is used as parameters (legacy behavior).
+        workflow parameters using template substitution. Otherwise, the parsed event
+        payload is used as parameters (legacy behavior).
         """
         from shared.run_lineage import unattended_lineage
         from src.services.execution.async_executor import enqueue_system_workflow_execution
@@ -800,16 +802,20 @@ class EventProcessor:
                 },
             )
         else:
-            # Legacy behavior: extract body fields as flat params
+            # Legacy behavior: extract parsed payload fields as flat parameters
             if isinstance(event.data, dict):
                 parameters.update(event.data)
 
-        # Always include full event context under reserved key
-        # This includes the COMPLETE raw body for complex/non-dict payloads
+        # Always include parsed payload and original accepted bytes under the reserved key.
         parameters["_event"] = {
             "id": str(event.id),
             "type": event.event_type,
-            "body": event.data,  # Full raw body (dict, list, string, whatever)
+            "body": event.data,  # Parsed payload (dict, list, string, whatever)
+            "raw_body_base64": (
+                base64.b64encode(event.raw_body).decode("ascii")
+                if event.raw_body is not None
+                else None
+            ),
             "headers": event.headers,
             "received_at": event.received_at.isoformat() if event.received_at else None,
             "source_ip": event.source_ip,
@@ -865,7 +871,7 @@ class EventProcessor:
         if not agent:
             raise ValueError(f"Delivery {delivery.id} subscription has no agent")
 
-        # Build parameters from input mapping or raw event data
+        # Build parameters from input mapping or parsed event data
         parameters: dict[str, Any] = {}
         if subscription.input_mapping:
             parameters = _process_input_mapping(
@@ -882,6 +888,11 @@ class EventProcessor:
             "id": str(event.id),
             "type": event.event_type,
             "body": event.data,
+            "raw_body_base64": (
+                base64.b64encode(event.raw_body).decode("ascii")
+                if event.raw_body is not None
+                else None
+            ),
             "headers": event.headers,
             "received_at": event.received_at.isoformat() if event.received_at else None,
             "source_ip": event.source_ip,

@@ -7,6 +7,7 @@ the subscription's target_type, and that _queue_agent_run calls
 enqueue_agent_run with the expected parameters.
 """
 
+import base64
 import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -34,6 +35,7 @@ def _make_event(
     event.headers = {"content-type": "application/json"}
     event.received_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     event.source_ip = "10.0.0.1"
+    event.raw_body = None
     event.status = "processing"
     return event
 
@@ -228,6 +230,30 @@ async def test_queue_agent_run_calls_enqueue():
         assert input_data["_event"]["body"] == event.data
         assert input_data["_event"]["headers"] == event.headers
         assert input_data["_event"]["source_ip"] == event.source_ip
+
+
+@pytest.mark.asyncio
+async def test_queue_agent_run_receives_trusted_byte_exact_raw_webhook_body():
+    """Agent dispatch receives raw bytes under reserved event context only."""
+    processor = _create_processor()
+    agent = MagicMock()
+    agent.id = uuid.uuid4()
+    agent.organization_id = uuid.uuid4()
+    delivery = _make_delivery(target_type="agent", agent=agent)
+    raw_body = b'{"a":1, "_event":{"raw_body_base64":"caller-spoofed"}}'
+    event = _make_event(data={"a": 1, "_event": {"raw_body_base64": "caller-spoofed"}})
+    event.raw_body = raw_body
+
+    with patch(
+        "src.services.execution.agent_run_service.enqueue_agent_run",
+        new_callable=AsyncMock,
+        return_value=str(uuid.uuid4()),
+    ) as mock_enqueue:
+        await processor._queue_agent_run(delivery, event)
+
+    input_data = mock_enqueue.await_args.kwargs["input_data"]
+    assert input_data["_event"]["body"] == event.data
+    assert input_data["_event"]["raw_body_base64"] == base64.b64encode(raw_body).decode("ascii")
 
 
 @pytest.mark.asyncio

@@ -9,6 +9,7 @@ Tests the full event lifecycle:
 - Delivery retry
 """
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -16,6 +17,7 @@ import uuid
 
 import pytest
 
+from src.models.orm.executions import Execution
 from tests.e2e.conftest import poll_until, write_and_register
 
 
@@ -767,6 +769,72 @@ class TestEventDelivery:
         deliveries = result["deliveries"]
         assert len(deliveries) >= 1
         assert deliveries[0]["workflow_id"] == subscription["workflow_id"]
+
+    @pytest.mark.asyncio
+    async def test_webhook_queues_byte_exact_trusted_raw_body(
+        self, e2e_client, platform_admin, event_source, subscription, db_session
+    ):
+        """Ingress preserves noncanonical bytes through the workflow queue exactly once."""
+        marker = uuid.uuid4().hex
+        raw_body = (
+            b'{"marker":"'
+            + marker.encode("ascii")
+            + b'",  "nested" : {"b":2,"a":1},'
+            b'"_event":{"raw_body_base64":"caller-spoofed"}}'
+        )
+        response = e2e_client.post(
+            f"/api/hooks/{event_source['id']}",
+            content=raw_body,
+            headers={"Content-Type": "application/json"},
+        )
+        assert response.status_code == 202, response.text
+
+        def find_delivery():
+            events_response = e2e_client.get(
+                f"/api/events/sources/{event_source['id']}/events",
+                headers=platform_admin.headers,
+            )
+            if events_response.status_code != 200:
+                return None
+            matching = [
+                event
+                for event in events_response.json()["items"]
+                if event.get("data", {}).get("marker") == marker
+            ]
+            if not matching:
+                return None
+            event = matching[0]
+            deliveries_response = e2e_client.get(
+                f"/api/events/{event['id']}/deliveries",
+                headers=platform_admin.headers,
+            )
+            if deliveries_response.status_code != 200:
+                return None
+            deliveries = deliveries_response.json()["items"]
+            if not deliveries or not deliveries[0].get("execution_id"):
+                return None
+            return event, deliveries[0]
+
+        result = poll_until(find_delivery, max_wait=10.0)
+        assert result is not None, "Webhook delivery was not queued"
+        event, delivery = result
+        assert "raw_body" not in event
+        assert "raw_body_base64" not in event
+        assert event["data"]["_event"]["raw_body_base64"] == "caller-spoofed"
+
+        execution = None
+        deadline = asyncio.get_running_loop().time() + 10.0
+        while asyncio.get_running_loop().time() < deadline:
+            await db_session.rollback()
+            execution = await db_session.get(Execution, uuid.UUID(delivery["execution_id"]))
+            if execution is not None:
+                break
+            await asyncio.sleep(0.2)
+
+        assert execution is not None, "Queued webhook execution was not persisted"
+        trusted_event = execution.parameters["_event"]
+        assert trusted_event["raw_body_base64"] == base64.b64encode(raw_body).decode("ascii")
+        assert trusted_event["raw_body_base64"] != event["data"]["_event"]["raw_body_base64"]
 
     def test_event_type_filter_matches(
         self, e2e_client, platform_admin, event_source, test_workflow
