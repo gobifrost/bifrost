@@ -31,6 +31,7 @@ import pytest
 from fastapi.routing import APIRoute
 from starlette.routing import WebSocketRoute
 
+from shared.builtin_roles import PLATFORM_OPERATOR_PERMISSIONS, USER_BASE_PERMISSIONS
 from src.core import auth as auth_mod
 from src.main import app
 from src.models.contracts.access_list import (
@@ -414,15 +415,6 @@ def _entry_functions(entry: AccessEntry, routes: dict) -> list[tuple[str, str]]:
     return [(_qualname(func), source) for func, source in found if _qualname(func) not in _ELEVATED_PLUMBING]
 
 
-def _elevated_findings(functions: list[tuple[str, str]]) -> dict[str, set[str]]:
-    """``{token: {qualified function, ...}}`` over an entry's functions."""
-    findings: dict[str, set[str]] = {}
-    for where, source in functions:
-        for token in _elevated_tokens_in(source):
-            findings.setdefault(token, set()).add(where)
-    return findings
-
-
 # Functions that mention an elevated token without deciding anything about
 # the caller. Each must be agreed by a reviewer; never list a function that
 # branches on the flag to allow or widen something (the plumbing test below
@@ -439,6 +431,22 @@ _ELEVATED_PLUMBING: dict[str, str] = {
     ),
     "src.services.user_provisioning.ensure_user_provisioned": (
         "Bootstrap: the first account is created as platform admin; reads no caller's privilege."
+    ),
+    "shared.claims.preresolve._load_source_policies": (
+        "Loads a claim source's policy rules as system before the caller is evaluated against them."
+    ),
+    "src.routers.websocket._load_policies_for_table": (
+        "Loads a table's policy rules as system before the subscriber is evaluated against them."
+    ),
+    "src.services.table_policy_loader.load_resolved_table_policies": (
+        "Loads a table's policy rules as system before the caller is evaluated against them."
+    ),
+    "shared.sdk_users.list_users": "Filters the listed users by their own flag (?type=platform); not the caller's.",
+    "src.routers.files.test_file_policy_access": (
+        "Reports whether the tested principal passes workspace access; the caller is gated by the route."
+    ),
+    "src.services.user_access_map.build_access_map": (
+        "Reports the mapped user's own admin status in their access map."
     ),
 }
 
@@ -946,25 +954,224 @@ def entry_functions() -> dict:
 #   "route": the site is a route's own gate (a superuser/bypass dependency
 #            or the evaluator's admin short-circuit); the entry's named
 #            permission replaces it.
-#   a permission string: the power the flag unlocks.
+#   "delete": a follow-up change removes the branch outright.
+#   "cutover": closed at the cutover (workflows stop calling as superuser,
+#            Redis-held authority goes).
+#   a permission string: the power the flag unlocks. No such permission is
+#            held by the User or Platform Operator role.
 # A site with several checks maps to a tuple of these.
-_ELEVATED_SITES: dict[str, str | tuple[str, ...]] = {}
-_SITE_KINDS = {"reach", "route"}
+_ELEVATED_SITES: dict[str, str | tuple[str, ...]] = {
+    "shared.event_emission.emit_topic_event": "reach",
+    "shared.execution_timeseries.get_execution_time_series": "reach",
+    "shared.external_access.resolve_external_claim": "delete",
+    "shared.file_access.authorize_file_policy": ("repository.read", "repository.readwrite"),
+    "shared.form_provider.execute_form_field_provider": "reach",
+    "shared.form_publication._resolve_form_workflow": "reach",
+    "shared.home.can_edit_collection": ("home.readwrite", "home.readwrite.all"),
+    "shared.home.can_read_collection": "home.read.all",
+    "shared.home.catalog": "reach",
+    "shared.home.get_home": "home.readwrite",
+    "shared.home.save_collection": "home.readwrite",
+    "shared.pending_execution.get_pending_execution_fallback": ("executions.read.all", "reach"),
+    "shared.scope_resolver.resolve_effective_scope": "reach",
+    "shared.sdk_agent_runs.resolve_executable_agent": "reach",
+    "shared.sdk_ai.complete_sdk_ai": "reach",
+    "shared.sdk_artifact_generation.sdk_generate_image_artifact": "artifacts.readwrite.all",
+    "shared.sdk_artifact_generation.sdk_render_document_artifact": "artifacts.readwrite.all",
+    "shared.sdk_artifact_generation.sdk_render_spreadsheet_artifact": "artifacts.readwrite.all",
+    "shared.sdk_artifact_generation.sdk_render_text_artifact": "artifacts.readwrite.all",
+    "shared.sdk_artifacts.sdk_artifact_download_url": "artifacts.read.all",
+    "shared.sdk_artifacts.sdk_list_artifacts": "artifacts.read.all",
+    "shared.sdk_artifacts.sdk_read_artifact": "artifacts.read.all",
+    "shared.sdk_artifacts.sdk_store_artifact": "artifacts.readwrite.all",
+    "shared.sdk_config.get_sdk_config_value": "reach",
+    "shared.sdk_config.list_sdk_config_values": "reach",
+    "shared.sdk_context.get_sdk_context": "reach",
+    "shared.sdk_execution_reads.get_sdk_execution": ("executions.read.all", "executions.read"),
+    "shared.sdk_execution_reads.list_sdk_executions": ("executions.read.all", "reach"),
+    "shared.sdk_execution_reads.list_sdk_workflows": "reach",
+    "shared.sdk_forms.get_sdk_form": ("reach", "forms.read"),
+    "shared.sdk_forms.list_sdk_forms": ("reach", "forms.read"),
+    "shared.sdk_integrations.get_sdk_integration_dict": "reach",
+    "shared.sdk_table_metadata.delete_sdk_table": "reach",
+    "shared.sdk_users._authorize_update": "privilegedaccess.readwrite",
+    "shared.sdk_users.bulk_update_users": ("privilegedaccess.readwrite", "userlifecycle.readwrite"),
+    "shared.sdk_video.can_read_platform_job": ("platformjobs.read.all", "platformjobs.readwrite.all"),
+    "shared.sdk_workflow_execution.cancel_scheduled_sdk_execution": "executions.readwrite.all",
+    "shared.sdk_workflow_execution.execute_sdk_workflow": ("repository.readwrite", "users.impersonate", "reach"),
+    "shared.table_document_writes.resolve_attribution": "tableattribution.readwrite",
+    "shared.table_resolution.assert_explicit_scope_targets_table": "reach",
+    "shared.table_resolution.get_table_or_404": "reach",
+    "src.core.auth.get_current_engine_or_bypass_user": "route",
+    "src.core.auth.get_current_superuser": "route",
+    "src.core.org_filter.resolve_org_filter": "reach",
+    "src.core.org_filter.resolve_target_org": "reach",
+    "src.routers.agent_runs._require_own_private_agent_run": "agentruns.readwrite.all",
+    "src.routers.agent_tuning._load_agent_with_access": ("agents.readwrite", "agents.readwrite.all"),
+    "src.routers.agents.create_agent": "agents.readwrite",
+    "src.routers.agents.delete_agent": ("agents.readwrite", "agents.readwrite.all"),
+    "src.routers.agents.delete_agent_logo": ("agents.readwrite", "agents.readwrite.all"),
+    "src.routers.agents.get_accessible_tools": "reach",
+    "src.routers.agents.get_agent": ("reach", "agents.read", "agents.read.all"),
+    "src.routers.agents.get_agent_delegations": ("reach", "agents.read", "agents.read.all"),
+    "src.routers.agents.get_agent_logo": ("reach", "agents.read", "agents.read.all"),
+    "src.routers.agents.get_agent_stats_endpoint": ("reach", "agents.read", "agents.read.all"),
+    "src.routers.agents.get_agent_tools": ("reach", "agents.read", "agents.read.all"),
+    "src.routers.agents.get_fleet_stats_endpoint": "reach",
+    "src.routers.agents.list_agents": ("reach", "agents.read", "agents.read.all"),
+    "src.routers.agents.promote_agent": ("agents.readwrite", "agents.readwrite.all"),
+    "src.routers.agents.update_agent": ("agents.readwrite", "agents.readwrite.all"),
+    "src.routers.agents.upload_agent_logo": ("agents.readwrite", "agents.readwrite.all"),
+    "src.routers.app_code_files.get_application_for_write_or_404": ("reach", "apps.readwrite"),
+    "src.routers.app_code_files.get_application_or_404": ("reach", "apps.read"),
+    "src.routers.app_code_files.get_bundle_manifest": "apps.read",
+    "src.routers.applications.batch_update_application_sdks": "reach",
+    "src.routers.applications.create_application": "reach",
+    "src.routers.applications.delete_application": ("reach", "apps.readwrite"),
+    "src.routers.applications.export_application": ("reach", "apps.read"),
+    "src.routers.applications.get_application": ("reach", "apps.read"),
+    "src.routers.applications.get_application_by_id_or_404": ("reach", "apps.read"),
+    "src.routers.applications.get_application_for_write_or_404": ("reach", "apps.readwrite"),
+    "src.routers.applications.get_application_or_404": ("reach", "apps.read"),
+    "src.routers.applications.get_draft": ("reach", "apps.read"),
+    "src.routers.applications.list_applications": ("reach", "apps.read"),
+    "src.routers.applications.replace_application_endpoint": ("reach", "apps.readwrite"),
+    "src.routers.applications.rollback_application": ("reach", "apps.readwrite"),
+    "src.routers.applications.save_draft": ("reach", "apps.readwrite"),
+    "src.routers.applications.swap_application_slugs": ("reach", "apps.readwrite"),
+    "src.routers.applications.update_application": ("reach", "apps.readwrite"),
+    "src.routers.chat._check_agent_access": "reach",
+    "src.routers.cli._resolve_sdk_org_id": "reach",
+    "src.routers.cli.cli_create_table": "reach",
+    "src.routers.cli.cli_delete_config": "reach",
+    "src.routers.cli.cli_get_config": "reach",
+    "src.routers.cli.cli_list_config": "reach",
+    "src.routers.cli.cli_list_tables": "reach",
+    "src.routers.cli.cli_set_config": "reach",
+    "src.routers.cli.sdk_integrations_delete_mapping": "reach",
+    "src.routers.cli.sdk_integrations_get": "reach",
+    "src.routers.cli.sdk_integrations_get_mapping": "reach",
+    "src.routers.cli.sdk_integrations_list_mappings": "reach",
+    "src.routers.cli.sdk_integrations_refresh_token": "reach",
+    "src.routers.cli.sdk_integrations_upsert_mapping": "reach",
+    "src.routers.config.delete_config": "reach",
+    "src.routers.config.get_config": "reach",
+    "src.routers.config.get_config_by_id": "reach",
+    "src.routers.config.set_config": "reach",
+    "src.routers.config.update_config": "reach",
+    "src.routers.endpoints._execute_sync": "reach",
+    "src.routers.endpoints.execute_endpoint": "reach",
+    "src.routers.executions.ExecutionRepository._to_pydantic": "executions.read",
+    "src.routers.executions.ExecutionRepository.cancel_execution": "executions.readwrite.all",
+    "src.routers.executions.ExecutionRepository.get_execution_logs": ("executions.read.all", "executions.read"),
+    "src.routers.executions.ExecutionRepository.get_execution_result": "executions.read.all",
+    "src.routers.executions.ExecutionRepository.get_execution_variables": "executions.read",
+    "src.routers.files._test_principal": "filepolicies.read",
+    "src.routers.files.set_file_policy": "reach",
+    "src.routers.forms._authorize_form_runtime": ("reach", "forms.read"),
+    "src.routers.forms.execute_startup_workflow": "reach",
+    "src.routers.forms.get_form_field_options": "forms.read",
+    "src.routers.forms.get_form_logo": ("reach", "forms.read"),
+    "src.routers.forms.get_form_runtime": ("reach", "forms.read"),
+    "src.routers.forms.submit_form": "reach",
+    "src.routers.integrations.test_integration_connection": "reach",
+    "src.routers.knowledge_sources.get_document": "reach",
+    "src.routers.mcp._gateway_service": "reach",
+    "src.routers.mcp.delete_mcp_config": "route",
+    "src.routers.mcp.get_mcp_config": "route",
+    "src.routers.mcp.list_mcp_tools": "route",
+    "src.routers.mcp.update_mcp_config": "route",
+    "src.routers.mcp_connections._enforce_can_write_org": "reach",
+    "src.routers.mcp_connections._get_connection_or_404": "reach",
+    "src.routers.mcp_connections.create_mcp_connection": "reach",
+    "src.routers.mcp_connections.list_mcp_connections": "reach",
+    "src.routers.mcp_servers.delete_mcp_server": "reach",
+    "src.routers.mcp_servers.get_mcp_server": "reach",
+    "src.routers.mcp_servers.list_mcp_servers": "reach",
+    "src.routers.mcp_servers.update_mcp_server": "reach",
+    "src.routers.metrics._compute_metrics_directly": "reach",
+    "src.routers.metrics.get_metrics": "reach",
+    "src.routers.notifications.get_notification": "platform.read",
+    "src.routers.notifications.list_notifications": "platform.read",
+    "src.routers.oauth_connections.authorize_connection": "reach",
+    "src.routers.oauth_connections.cancel_authorization": "reach",
+    "src.routers.oauth_connections.create_connection": "reach",
+    "src.routers.oauth_connections.delete_connection": "reach",
+    "src.routers.oauth_connections.get_connection": "reach",
+    "src.routers.oauth_connections.get_credentials": "reach",
+    "src.routers.oauth_connections.oauth_callback": "reach",
+    "src.routers.oauth_connections.refresh_token": "reach",
+    "src.routers.oauth_connections.update_connection": "reach",
+    "src.routers.platform_jobs.list_platform_jobs": "platformjobs.read.all",
+    "src.routers.policy_rules.list_policy_rules": "reach",
+    "src.routers.roles.get_role": "route",
+    "src.routers.roles.list_roles": "route",
+    "src.routers.sdk_modules._module_source_caller": "route",
+    "src.routers.tables.create_table": "reach",
+    "src.routers.tables.list_tables": "reach",
+    "src.routers.tables.update_table": "reach",
+    "src.routers.tables.validate_policies": "reach",
+    "src.routers.tools.list_tools": "reach",
+    "src.routers.users.create_user": "privilegedaccess.readwrite",
+    "src.routers.users.get_user_forms": ("reach", "forms.read"),
+    "src.routers.users.update_user": "privilegedaccess.readwrite",
+    "src.routers.websocket._file_org_and_scope": "reach",
+    "src.routers.websocket._resolve_table_id": "reach",
+    "src.routers.websocket.can_access_agent_run": ("agentruns.read.all", "reach"),
+    "src.routers.websocket.can_access_app": ("reach", "apps.read"),
+    "src.routers.websocket.can_access_execution": ("executions.read.all", "reach"),
+    "src.routers.websocket.can_access_service": "platform.read",
+    "src.routers.websocket.websocket_connect": ("reach", "platform.read"),
+    "src.services.access_check_entry.run_user_may_open": "route",
+    "src.services.access_check_policies.load_policy_principal": "reach",
+    "src.services.agent_executor.AgentExecutor._execute_knowledge_search": "reach",
+    "src.services.agent_executor.AgentExecutor._execute_system_tool": "reach",
+    "src.services.agent_executor.AgentExecutor._execute_tool": "reach",
+    "src.services.agent_executor.AgentExecutor._switch_agent": "reach",
+    "src.services.authorization.enforce.decide_for": "route",
+    "src.services.authorization.enforce.permitted_organizations": "reach",
+    "src.services.authorization.enforce.require_unprotected": "privilegedaccess.readwrite",
+    "src.services.authorization.evaluator.decide": "route",
+    "src.services.authorization.explain.in_reach": "reach",
+    "src.services.chat_artifacts.execute_artifact_tool": "artifacts.read.all",
+    "src.services.chat_runs._load_authorized_agent": "reach",
+    "src.services.chat_runs.create_chat_run": "reach",
+    "src.services.docs_indexer.index_platform_docs": "route",
+    "src.services.execution.agent_run_access.agent_run_visibility_conditions": ("agentruns.read.all", "reach"),
+    "src.services.execution.agent_workflow_tools.execute_agent_workflow_tool": "reach",
+    "src.services.execution.async_executor.enqueue_code_execution": "reach",
+    "src.services.execution.async_executor.enqueue_system_workflow_execution": "reach",
+    "src.services.execution.async_executor.enqueue_workflow_execution": "reach",
+    "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor._execute_knowledge_search": "reach",
+    "src.services.file_policy_service.FilePolicyService.is_allowed": "reach",
+    "src.services.identities.require_delegation": "delete",
+    "src.services.mcp_server.tools._org_scope.mcp_write_scope_bypass": "reach",
+    "src.services.mcp_server.tools.code_editor._check_read_scope": "repository.read",
+    "src.services.mcp_server.tools.code_editor._check_write_scope": "repository.readwrite",
+    "src.services.mcp_server.tools.knowledge.search_knowledge": "reach",
+    "src.services.policy_rule_service.PolicyRuleService._get": "reach",
+    "src.services.solution_scope.is_service_principal": "reach",
+    "src.services.solution_scope.resolve_solution_table_by_name": "reach",
+    "src.services.user_access_map._place_for": "reach",
+    "src.services.user_role_assignments._assignable_roles": "privilegedaccess.readwrite",
+    "src.services.user_role_assignments.boundary_placement": "reach",
+    "src.services.user_role_assignments.check_boundaries": "reach",
+    "src.services.user_role_assignments.check_role_change": "privilegedaccess.readwrite",
+    "src.services.user_role_assignments.replace_role_assignments": "privilegedaccess.readwrite",
+}
+_SITE_KINDS = {"reach", "route", "delete", "cutover"}
 
 
 class TestEveryElevatedCheckHasAScope:
     """Every route and MCP tool names the permission that gates it, except
-    public entry points, table/file-policy data, and personal routes with no
-    elevated branch. ``own_private_agent`` always names one.
-    An elevated check (superuser, platform admin, provider org, scope bypass)
-    anywhere in the call chain requires the permission that replaces it,
-    whatever the class; user-controlled table and file policies are the only
-    exception. Each check site, wherever it sits, also names its
-    replacement in ``_ELEVATED_SITES`` — so a permissioned route whose
-    chain unlocks something extra on a flag cannot pass on its route
-    permission alone."""
+    public entry points, personal routes and table/file-policy data.
+    ``own_private_agent`` always names one. An elevated check (superuser,
+    platform admin, provider org, scope bypass) anywhere in any entry's call
+    chain names its replacement in ``_ELEVATED_SITES`` — so neither a
+    permissioned route nor a public or personal one can unlock something
+    extra on a flag without saying what replaces it."""
 
-    _EXEMPT_UNLESS_ELEVATED = {AccessClass.PUBLIC, AccessClass.PERSONAL}
+    _SITE_REGISTERED = {AccessClass.PUBLIC, AccessClass.PERSONAL}
     _POLICY_GOVERNED = {AccessClass.TABLE_POLICY}
 
     def test_entries_name_a_permission_where_the_rule_requires_one(self, entry_functions) -> None:
@@ -972,17 +1179,21 @@ class TestEveryElevatedCheckHasAScope:
         for entry in ACCESS_LIST:
             if entry.permission or entry.access_class in self._POLICY_GOVERNED:
                 continue
-            findings = _elevated_findings(entry_functions[entry.key])
-            if not findings and entry.access_class in self._EXEMPT_UNLESS_ELEVATED:
-                continue
-            tokens = ", ".join(sorted(findings)) or "-"
-            where = ", ".join(sorted(set().union(*findings.values()))) if findings else "-"
             cls = entry.access_class.value
-            offenders.append((cls, f"{_entry_target(entry)} | {cls} | {tokens} | {where}"))
+            if entry.access_class in self._SITE_REGISTERED:
+                unregistered = sorted(
+                    where
+                    for where, source in entry_functions[entry.key]
+                    if where not in _ELEVATED_SITES and _elevated_site_tokens(source)
+                )
+                if unregistered:
+                    detail = f"elevated-check sites not in _ELEVATED_SITES: {', '.join(unregistered)}"
+                    offenders.append((cls, f"{_entry_target(entry)} | {cls} | {detail}"))
+                continue
+            offenders.append((cls, f"{_entry_target(entry)} | {cls} | needs a permission"))
         offenders.sort()
         assert not offenders, (
-            f"{len(offenders)} entries need a permission "
-            "(METHOD path | class | elevated tokens found | where):\n"
+            f"{len(offenders)} entries fail the rule (METHOD path | class | why):\n"
             + "\n".join(line for _cls, line in offenders)
         )
 
@@ -1008,18 +1219,35 @@ class TestEveryElevatedCheckHasAScope:
             + (f"\n_ELEVATED_SITES entries that are no longer sites: {stale}" if stale else "")
         )
 
-    def test_registered_replacements_are_reach_route_or_a_permission(self) -> None:
+    def test_registered_replacements_are_a_site_kind_or_a_permission(self) -> None:
         invalid = []
         for where, replacement in sorted(_ELEVATED_SITES.items()):
-            for item in (replacement,) if isinstance(replacement, str) else replacement:
+            items = (replacement,) if isinstance(replacement, str) else replacement
+            if not items:
+                invalid.append(f"{where}: empty tuple")
+            for item in items:
                 if item in _SITE_KINDS:
                     continue
                 try:
                     parse_permission(item)
                 except ValueError as exc:
                     invalid.append(f"{where}: {exc}")
-        assert not invalid, "_ELEVATED_SITES replacements that are not reach/route/a permission:\n" + "\n".join(
-            invalid
+        assert not invalid, (
+            "_ELEVATED_SITES replacements that are not reach/route/delete/cutover/a permission:\n"
+            + "\n".join(invalid)
+        )
+
+    def test_site_permissions_are_held_by_neither_user_nor_operator(self) -> None:
+        everyday = USER_BASE_PERMISSIONS | PLATFORM_OPERATOR_PERMISSIONS
+        held = sorted(
+            f"{where}: {item}"
+            for where, replacement in _ELEVATED_SITES.items()
+            for item in ((replacement,) if isinstance(replacement, str) else replacement)
+            if item in everyday
+        )
+        assert not held, (
+            "_ELEVATED_SITES permissions that the User or Platform Operator role holds "
+            "(a flag replacement must not be an everyday permission):\n" + "\n".join(held)
         )
 
     def test_plumbing_exclusions_exist_and_never_branch_on_a_flag(self) -> None:
