@@ -215,8 +215,10 @@ async def test_record_with_altered_user_id_is_rejected(
     [
         "not json {",
         json.dumps({"record": {"user_id": "someone"}, "tag": "\u00e9t\u00e9-not-a-hex-tag"}),
+        '{"record": {}, "tag": "\\ud800"}',
+        json.dumps({"record": {"user_id": "someone"}, "tag": "0" * 63}),
     ],
-    ids=["invalid-json", "non-ascii-tag"],
+    ids=["invalid-json", "non-ascii-tag", "lone-surrogate-tag", "wrong-length-hex-tag"],
 )
 async def test_malformed_record_at_the_derived_key_is_rejected(
     stored: str, redis: _FakeRedis, minted: list[dict[str, Any]]

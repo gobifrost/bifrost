@@ -17,6 +17,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 import secrets
 from typing import Any
 
@@ -40,6 +41,9 @@ logger = logging.getLogger(__name__)
 # TTLs for MCP OAuth flow
 TTL_MCP_AUTH_CODE = 300  # 5 minutes for authorization code
 TTL_MCP_CLIENT = 86400 * 30  # 30 days for registered clients
+
+# Shape of the hex HMAC-SHA256 tags produced by _secret_hmac.
+_AUTH_CODE_TAG = re.compile(r"[0-9a-f]{64}")
 
 
 def _secret_hmac(message: str) -> str:
@@ -80,8 +84,9 @@ def _open_auth_code_record(code: str, stored_json: str) -> dict[str, Any] | None
     tag = stored.get("tag")
     if not isinstance(record, dict) or not isinstance(tag, str):
         return None
-    # Compare bytes: compare_digest rejects non-ASCII str arguments.
-    if not hmac.compare_digest(_auth_code_tag(code, record).encode(), tag.encode()):
+    if not _AUTH_CODE_TAG.fullmatch(tag):
+        return None
+    if not hmac.compare_digest(_auth_code_tag(code, record), tag):
         return None
     return record
 
