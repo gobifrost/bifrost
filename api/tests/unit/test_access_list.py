@@ -765,11 +765,25 @@ _REDIS_GENERIC_READS = {"get", "getdel", "mget", "exists", "lrange"}
 
 
 def _is_redis_type(annotation: ast.AST | None) -> bool:
-    """An annotation naming a Redis client (``Redis``, ``redis.Redis``, ``Redis | None``, ...)."""
-    if annotation is None:
-        return False
-    text = annotation.value if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str) else ""
-    return bool(re.search(r"\bRedis\b", text or ast.unparse(annotation)))
+    """An annotation naming a Redis client: ``Redis``, ``redis.Redis``,
+    ``"Redis"``, ``Redis | None``, ``Optional[Redis]``, ``Annotated[Redis, ...]``.
+    A container of clients (``dict[str, Redis]``, ``list[Redis]``) is not one."""
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        try:
+            annotation = ast.parse(annotation.value, mode="eval").body
+        except SyntaxError:
+            return False
+    if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+        return _is_redis_type(annotation.left) or _is_redis_type(annotation.right)
+    if isinstance(annotation, ast.Subscript):
+        if _terminal_name(annotation.value) not in ("Optional", "Union", "Annotated"):
+            return False
+        inner = annotation.slice
+        members = inner.elts if isinstance(inner, ast.Tuple) else [inner]
+        if _terminal_name(annotation.value) == "Annotated":
+            members = members[:1]
+        return any(_is_redis_type(member) for member in members)
+    return isinstance(annotation, (ast.Name, ast.Attribute)) and _terminal_name(annotation) in ("Redis", "StrictRedis")
 
 
 @functools.cache
@@ -856,30 +870,43 @@ def _unscrubbed_package_subprocesses(nodes: list[ast.AST], tree: ast.Module) -> 
     (its argv names ``pip``, ``npm``, ``npx``, ``yarn``, ``pnpm`` or ``uv``)
     and pass no ``env=``, so the tool's install and build scripts inherit
     every credential in the platform's environment. The argv is read
-    through local variables built up before the call (``cmd = [...]``,
-    ``cmd.append(...)``, ``cmd += [...]``), and the spawning function
-    through the module's import aliases."""
+    through local variables, names resolved to the strings they are bound
+    to (``tool = "npm"; cmd = [tool]``, ``cmd.append(tool)``, ``cmd +=
+    [...]``), and the spawning function through the module's import aliases."""
     modules, functions = _subprocess_names(tree)
-    strings: dict[str, set[str]] = {}
-
-    def add(name: str, value: ast.AST) -> None:
-        strings.setdefault(name, set()).update(
-            c.value for c in ast.walk(value) if isinstance(c, ast.Constant) and isinstance(c.value, str)
-        )
-
+    bindings: list[tuple[str, ast.AST]] = []
     for node in nodes:
         if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)) and node.value is not None:
             for target in node.targets if isinstance(node, ast.Assign) else [node.target]:
                 if isinstance(target, ast.Name):
-                    add(target.id, node.value)
+                    bindings.append((target.id, node.value))
         elif (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr in ("append", "extend", "insert")
             and isinstance(node.func.value, ast.Name)
         ):
-            for arg in node.args:
-                add(node.func.value.id, arg)
+            bindings.extend((node.func.value.id, arg) for arg in node.args)
+    strings: dict[str, set[str]] = {}
+
+    def literals(value: ast.AST) -> set[str]:
+        """String constants in an expression, names resolved to theirs."""
+        found: set[str] = set()
+        for part in ast.walk(value):
+            if isinstance(part, ast.Constant) and isinstance(part.value, str):
+                found.add(part.value)
+            elif isinstance(part, ast.Name):
+                found |= strings.get(part.id, set())
+        return found
+
+    grown = True
+    while grown:
+        grown = False
+        for name, value in bindings:
+            new = literals(value) - strings.get(name, set())
+            if new:
+                strings.setdefault(name, set()).update(new)
+                grown = True
     found: list[str] = []
     for node in nodes:
         if not isinstance(node, ast.Call) or any(kw.arg == "env" for kw in node.keywords):
@@ -893,13 +920,7 @@ def _unscrubbed_package_subprocesses(nodes: list[ast.AST], tree: ast.Module) -> 
         ) or (isinstance(func, ast.Name) and func.id in functions)
         if not spawns:
             continue
-        argv: set[str] = set()
-        for arg in node.args:
-            for part in ast.walk(arg):
-                if isinstance(part, ast.Constant) and isinstance(part.value, str):
-                    argv.add(part.value)
-                elif isinstance(part, ast.Name):
-                    argv |= strings.get(part.id, set())
+        argv = {text for arg in node.args for text in literals(arg)}
         tools = sorted(t for t in argv if _PACKAGE_TOOL.fullmatch(t))
         if tools:
             found.append(f"{_terminal_name(func)}({tools[0]})")
@@ -1017,7 +1038,15 @@ def _elevated_site_tokens(source: str) -> set[str]:
 
 
 def _is_pure_echo(node: ast.AST, parent: ast.AST | None) -> bool:
-    """A token that is a dict entry's value or an f-string interpolation as is."""
+    """A bare flag read (``x.flag``, ``x["flag"]``, ``getattr(x, "flag")``,
+    ``x.get("flag")``) that is a dict entry's value or an f-string
+    interpolation as is. A comparison, sentinel check, boolean, ternary or
+    call there is a decision, not an echo."""
+    is_bare_read = isinstance(node, (ast.Attribute, ast.Subscript)) or (
+        isinstance(node, ast.Call) and _string_keyed_flag_read(node) is not None
+    )
+    if not is_bare_read:
+        return False
     if isinstance(parent, ast.Dict):
         return any(value is node for value in parent.values)
     return isinstance(parent, ast.FormattedValue) and parent.value is node
@@ -2746,6 +2775,47 @@ class TestScannerReviewFindings:
         """
         nodes = list(ast.walk(ast.parse(textwrap.dedent(source))))
         assert sorted(_redis_reads(nodes, frozenset({"make_cache_client"}))) == ["cache.get", "client.get", "conn.exists"]
+
+    def test_a_sentinel_comparison_inside_a_dict_value_or_f_string_is_a_site(self) -> None:
+        source = """
+            def describe(user):
+                return {"system": user.id == SYSTEM_USER_UUID}
+        """
+        assert _elevated_site_tokens(textwrap.dedent(source)) == {"== SYSTEM_USER_UUID"}
+        source = """
+            def describe(user):
+                return f"system={user.id == SYSTEM_USER_UUID}"
+        """
+        assert _elevated_site_tokens(textwrap.dedent(source)) == {"== SYSTEM_USER_UUID"}
+
+    def test_package_tools_named_through_a_variable_are_found(self) -> None:
+        tree = ast.parse(textwrap.dedent("""
+            import subprocess
+
+            def listed():
+                tool = "npm"
+                cmd = [tool, "install"]
+                subprocess.run(cmd)
+
+            def appended():
+                tool = "pip"
+                cmd = []
+                cmd.append(tool)
+                subprocess.run(cmd)
+        """))
+        assert _subprocess_inventory((("src.synthetic", tree),)) == {
+            "src.synthetic.listed": ["run(npm)"],
+            "src.synthetic.appended": ["run(pip)"],
+        }
+
+    def test_a_container_of_redis_clients_is_not_a_client(self) -> None:
+        def annotation(text: str) -> ast.AST:
+            return ast.parse(text, mode="eval").body
+
+        for text in ("Redis", "redis.Redis", "'Redis'", "Redis | None", "Optional[Redis]", "Annotated[Redis, 1]"):
+            assert _is_redis_type(annotation(text)), text
+        for text in ("dict[str, Redis]", "list[Redis]", "Optional[list[Redis]]", "RedisSettings"):
+            assert not _is_redis_type(annotation(text)), text
 
     def test_lock_owner_reads_are_authority(self) -> None:
         # The stored owner is compared with the requester before the lock is
