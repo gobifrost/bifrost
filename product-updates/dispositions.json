@@ -1980,6 +1980,18 @@
       },
       "summary": "Package installs and app builds run without platform credentials, and MCP sign-in codes are bound to the server secret.",
       "category": "hardening"
+    },
+    "pr:961": {
+      "classification": "omit",
+      "entry_ids": [],
+      "reason": "Local test-harness fix only; no product change.",
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/961",
+          "Product review: Jack approved on 2026-10-09 with no release note (test harness only)."
+        ]
+      }
     }
   }
 }

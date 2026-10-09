@@ -484,6 +484,10 @@ services:
       args:
         VITE_BIFROST_VERSION: test
     command: ["sh", "-c", "npm run tsc && npm run lint && npm test"]
+    # Client tests read generated repository files (access list) at the
+    # repository root, which resolves to / inside /app.
+    volumes:
+      - ./docs/generated:/docs/generated:ro
     profiles:
       - client-check
 
