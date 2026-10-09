@@ -1068,10 +1068,12 @@ async def get_solution(solution_id: UUID, ctx: Context, user: CurrentSuperuser) 
     row = await ctx.db.get(SolutionORM, solution_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+    entity_counts = await _solution_entity_counts(ctx, [row.id])
     sdk_statuses = await _solution_sdk_statuses_for_rows(ctx, [row])
     sdk_status = sdk_statuses.get(row.id)
     return _solution_to_public(
         row,
+        entity_counts=entity_counts.get(row.id, SolutionEntityCounts()),
         sdk_status=sdk_status,
     )
 
@@ -1574,8 +1576,13 @@ async def get_solution_entities(
     ]
     required_unset = [d.key for d in decls if d.required and d.key not in set_keys]
 
+    entity_counts = await _solution_entity_counts(ctx, [sol.id])
+
     return SolutionEntities(
-        solution=SolutionDTO.model_validate(sol),
+        solution=_solution_to_public(
+            sol,
+            entity_counts=entity_counts.get(sol.id, SolutionEntityCounts()),
+        ),
         workflows=workflows,
         apps=apps,
         forms=forms,
