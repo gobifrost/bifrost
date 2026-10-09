@@ -1,0 +1,13 @@
+{
+  "key": "pr:963",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Product Updates tooling: dispositions stored one file per item; no product change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/963",
+      "Product review: tooling only, no release note (CLAUDE.md Product Updates)."
+    ]
+  }
+}

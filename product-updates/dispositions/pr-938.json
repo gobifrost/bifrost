@@ -1,0 +1,13 @@
+{
+  "key": "pr:938",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal dependency-maintenance event handling and automation regression coverage; no customer-facing functionality change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/938",
+      "User authorized verified security-maintenance repairs and merge; signed metadata verification is retained and 9 Node 26 automation tests passed."
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "key": "pr:920",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/920",
+      "Reviewed the isolated source-map-js 1.2.1 to 1.2.2 patch; user authorized tested dependency security fixes and merge on 2026-10-07."
+    ]
+  },
+  "reason": "Routine app-compiler dependency security patch; no individual in-app announcement. Preserve canonical security notice review for formal publication.",
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/920"
+  }
+}

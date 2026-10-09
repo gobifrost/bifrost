@@ -1,0 +1,14 @@
+{
+  "key": "pr:959",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Solution details now show the same managed-entity counts as the Solution list.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/issues/958",
+      "Product review: Codex root classified this bounded Solution detail count-projection repair as Other/fix under Jack’s authorized solution verification work on 2026-10-09."
+    ]
+  }
+}

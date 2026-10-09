@@ -16,6 +16,11 @@ BASE = "a" * 40
 TARGET = "b" * 40
 COMMIT = "c" * 40
 ENTRY_ID = "11111111-1111-4111-8111-111111111111"
+# The single-file ledger as it stood before items moved to one file each. The
+# live ledger changes with every PR, so the round-trip pins this frozen copy.
+PRE_SPLIT_LEDGER = (
+    Path(__file__).parent / "testdata" / "product_updates_dispositions_pre_split.json"
+)
 
 
 class ProductUpdatesTests(unittest.TestCase):
@@ -33,7 +38,7 @@ class ProductUpdatesTests(unittest.TestCase):
         self.inventory = self.content / "inventory.json"
         self.dispositions = self.content / "dispositions.json"
         self._write_json(self.inventory, self.inventory_data())
-        self._write_json(self.dispositions, self.disposition_data())
+        self.write_dispositions(self.disposition_data())
         self.write_entry()
 
     def tearDown(self) -> None:
@@ -119,6 +124,15 @@ class ProductUpdatesTests(unittest.TestCase):
     def _write_json(path: Path, data: dict) -> None:
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
+    def write_dispositions(self, data: dict) -> None:
+        """Write the canonical layout: a header plus one file per item."""
+        shutil.rmtree(self.content / "dispositions", ignore_errors=True)
+        self.write_item_files(data["items"])
+        self._write_json(
+            self.dispositions,
+            {name: value for name, value in data.items() if name != "items"},
+        )
+
     def write_item_files(self, items: dict) -> Path:
         """Write each disposition to its own file beside the ledger header."""
         directory = self.content / "dispositions"
@@ -201,7 +215,7 @@ class ProductUpdatesTests(unittest.TestCase):
     def test_coverage_reconciles_every_cached_landed_item_once(self) -> None:
         report = product_updates.coverage_report(
             product_updates.read_json(self.inventory),
-            product_updates.read_json(self.dispositions),
+            product_updates.load_dispositions(self.dispositions),
             [self.entry_data()],
         )
 
@@ -212,9 +226,8 @@ class ProductUpdatesTests(unittest.TestCase):
     def test_each_pr_disposition_is_its_own_file(self) -> None:
         data = self.disposition_data()
         data["items"]["pr:11"] = self.other_item()
-        header = {key: value for key, value in data.items() if key != "items"}
-        self._write_json(self.dispositions, header)
-        directory = self.write_item_files(data["items"])
+        self.write_dispositions(data)
+        directory = self.content / "dispositions"
 
         self.assertEqual(
             ["pr-10.json", "pr-11.json"],
@@ -224,31 +237,22 @@ class ProductUpdatesTests(unittest.TestCase):
             {"key": "pr:11", **data["items"]["pr:11"]},
             json.loads((directory / "pr-11.json").read_text(encoding="utf-8")),
         )
+        self.assertNotIn("items", json.loads(self.dispositions.read_text()))
         self.assertEqual(data, product_updates.load_dispositions(self.dispositions))
 
-    def test_header_items_and_item_files_assemble_one_ledger(self) -> None:
-        inventory = self.inventory_data()
-        inventory["commits"][0]["prs"].append(11)
-        self._write_json(self.inventory, inventory)
-        self.write_item_files({"pr:11": self.other_item()})
-        expected = self.disposition_data()
-        expected["items"]["pr:11"] = self.other_item()
+    def test_per_item_layout_assembles_the_pre_split_ledger(self) -> None:
+        original = json.loads(PRE_SPLIT_LEDGER.read_text(encoding="utf-8"))
+        self.write_dispositions(original)
 
-        self.assertEqual(expected, product_updates.load_dispositions(self.dispositions))
-        self.assertEqual(
-            [],
-            product_updates.validate_content(
-                self.content, self.inventory, self.dispositions, TARGET
-            ),
-        )
+        self.assertEqual(original, product_updates.load_dispositions(self.dispositions))
 
-    def test_a_key_in_the_header_and_its_own_file_fails(self) -> None:
-        self.write_item_files({"pr:10": self.other_item()})
+    def test_ledger_header_rejects_inline_items(self) -> None:
+        self._write_json(self.dispositions, self.disposition_data())
         errors = product_updates.validate_content(
             self.content, self.inventory, self.dispositions, TARGET
         )
         self.assertEqual(1, len(errors))
-        self.assertIn("pr:10 is recorded both in items and in its own file", errors[0])
+        self.assertIn("items belong in", errors[0])
 
     def test_disposition_keys_map_to_distinct_safe_file_names(self) -> None:
         self.assertEqual(
@@ -302,6 +306,7 @@ class ProductUpdatesTests(unittest.TestCase):
         self.assertIn("pr-11.json: invalid JSON", errors[0])
 
     def test_disposition_directory_must_be_a_directory(self) -> None:
+        shutil.rmtree(self.content / "dispositions")
         (self.content / "dispositions").write_text("{}\n")
         errors = product_updates.validate_content(
             self.content, self.inventory, self.dispositions, TARGET
@@ -345,7 +350,7 @@ class ProductUpdatesTests(unittest.TestCase):
         self._write_json(self.inventory, inventory)
         disposition = self.disposition_data()
         disposition["inventory"] = {"base_ref": refs[0], "target_ref": refs[1]}
-        self._write_json(self.dispositions, disposition)
+        self.write_dispositions(disposition)
         entry = self.entry_data()
         entry["sources"][0]["commit"] = refs[1]
         entry["eligibility"]["requires_commits"] = [refs[1]]
@@ -431,7 +436,7 @@ class ProductUpdatesTests(unittest.TestCase):
         data["items"]["pr:10"].update(
             classification="other", entry_ids=[], summary="Reviewed smaller change"
         )
-        self._write_json(self.dispositions, data)
+        self.write_dispositions(data)
         bundle = product_updates.build_bundle(
             self.content, self.inventory, self.dispositions, TARGET, "/product-updates/"
         )
@@ -441,7 +446,7 @@ class ProductUpdatesTests(unittest.TestCase):
     def test_draft_source_review_withholds_approved_entry(self) -> None:
         data = self.disposition_data()
         data["items"]["pr:10"]["review"]["status"] = "draft"
-        self._write_json(self.dispositions, data)
+        self.write_dispositions(data)
         bundle = product_updates.build_bundle(
             self.content, self.inventory, self.dispositions, TARGET, "/product-updates/"
         )
@@ -540,12 +545,12 @@ class ProductUpdatesTests(unittest.TestCase):
     def test_event_scope_requires_a_canonical_disposition_for_each_pr(self) -> None:
         errors = product_updates.validate_event(
             {"pull_request": {"number": 10}},
-            product_updates.read_json(self.dispositions),
+            product_updates.load_dispositions(self.dispositions),
         )
         self.assertEqual([], errors)
         errors = product_updates.validate_event(
             {"merge_group": {"pull_requests": [{"number": 10}, {"number": 11}]}},
-            product_updates.read_json(self.dispositions),
+            product_updates.load_dispositions(self.dispositions),
         )
         self.assertEqual(["missing canonical disposition for pr:11"], errors)
 
@@ -560,13 +565,13 @@ class ProductUpdatesTests(unittest.TestCase):
         ]
         errors = product_updates.validate_event(
             {"pull_request": {"number": 10, "user": {"login": "octocat"}}},
-            product_updates.read_json(self.dispositions),
+            product_updates.load_dispositions(self.dispositions),
             [entry],
         )
         self.assertEqual([], errors)
         errors = product_updates.validate_event(
             {"pull_request": {"number": 10, "user": {"login": "wrong"}}},
-            product_updates.read_json(self.dispositions),
+            product_updates.load_dispositions(self.dispositions),
             [entry],
         )
         self.assertTrue(any("verified event author" in error for error in errors))
@@ -666,7 +671,7 @@ class ProductUpdatesTests(unittest.TestCase):
             "entry_ids": [],
             "review": {"status": "draft", "evidence": ["audit"]},
         }
-        self._write_json(self.dispositions, dispositions)
+        self.write_dispositions(dispositions)
 
         errors = product_updates.validate_content(
             self.content, self.inventory, self.dispositions, TARGET
@@ -688,7 +693,7 @@ class ProductUpdatesTests(unittest.TestCase):
                 "review": {"status": "approved", "evidence": ["review"]},
             }
         }
-        self._write_json(self.dispositions, disposition)
+        self.write_dispositions(disposition)
         (self.content / "entries" / f"{ENTRY_ID}.md").unlink()
         bundle = product_updates.build_bundle(
             self.content, self.inventory, self.dispositions, TARGET, "/product-updates/"
@@ -732,7 +737,7 @@ class ProductUpdatesTests(unittest.TestCase):
             "category": "hardening",
             "review": {"status": "approved", "evidence": ["review"]},
         }
-        self._write_json(self.dispositions, dispositions)
+        self.write_dispositions(dispositions)
         bundle = product_updates.build_bundle(
             self.content, self.inventory, self.dispositions, TARGET, "/product-updates/"
         )

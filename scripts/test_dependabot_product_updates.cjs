@@ -5,10 +5,9 @@ const path = require('node:path');
 const { recordDependabotDisposition } = require('./dependabot_product_updates.cjs');
 function fixture() {
   const pr = { state: 'open', user: { login: 'dependabot[bot]', type: 'Bot' }, html_url: 'https://github.com/gobifrost/bifrost/pull/920', base: { ref: 'main', sha: 'a'.repeat(40), repo: { full_name: 'gobifrost/bifrost' } }, head: { ref: 'dependabot/npm/source-map-js', sha: 'b'.repeat(40), repo: { full_name: 'gobifrost/bifrost' } } };
-  // Repository files at the PR head: the ledger header, whose items are migrating
-  // into per-item files, plus one file per disposition.
+  // Repository files at the PR head: the ledger header plus one file per disposition.
   const contents = {
-    'product-updates/dispositions.json': { schema_version: 1, inventory: {}, items: { 'pr:2': { classification: 'other' } } },
+    'product-updates/dispositions.json': { schema_version: 1, inventory: {} },
     'product-updates/dispositions/pr-1.json': { key: 'pr:1', classification: 'highlight' },
   };
   const writes = [];
@@ -45,13 +44,8 @@ test('preserves required security review for advisory updates', async () => {
   assert.deepEqual(item.security_review, { status: 'required', review_ref: f.pr.html_url });
 });
 test('never replaces a human disposition and is idempotent', async () => {
-  for (const record of [
-    f => { f.contents['product-updates/dispositions/pr-920.json'] = { key: 'pr:920', classification: 'highlight', review: { status: 'draft' } }; },
-    f => { f.contents['product-updates/dispositions.json'].items['pr:920'] = { classification: 'highlight', review: { status: 'draft' } }; },
-  ]) {
-    const f = fixture(); record(f);
-    assert.deepEqual(await f.run('OPEN'), { changed: false }); assert.deepEqual(f.writes, []);
-  }
+  const f = fixture(); f.contents['product-updates/dispositions/pr-920.json'] = { key: 'pr:920', classification: 'highlight', review: { status: 'draft' } };
+  assert.deepEqual(await f.run('OPEN'), { changed: false }); assert.deepEqual(f.writes, []);
 });
 test('a rerun after recording accepts the PR\'s own disposition file', async () => {
   const f = fixture(); await f.run('');
@@ -60,18 +54,13 @@ test('a rerun after recording accepts the PR\'s own disposition file', async () 
   rerun.contents['product-updates/dispositions/pr-920.json'] = JSON.parse(f.writes[0].content);
   assert.deepEqual(await rerun.run(''), { changed: false }); assert.deepEqual(rerun.writes, []);
 });
-test('a rerun on a PR the previous writer annotated in the header is unchanged', async () => {
+test('a PR whose diff moved its disposition from the header into its file is unchanged', async () => {
   const f = fixture();
-  f.files.push({ filename: 'product-updates/dispositions.json', status: 'modified' });
-  f.contents['product-updates/dispositions.json'].items['pr:920'] = {
-    classification: 'omit', entry_ids: [], review: { status: 'approved', evidence: [f.pr.html_url] }, reason: 'Dependabot dependency maintenance',
+  f.files.push({ filename: 'product-updates/dispositions.json', status: 'modified' }, { filename: 'product-updates/dispositions/pr-920.json', status: 'added' });
+  f.contents['product-updates/dispositions/pr-920.json'] = {
+    key: 'pr:920', classification: 'omit', entry_ids: [], review: { status: 'approved', evidence: [f.pr.html_url] }, reason: 'Dependabot dependency maintenance',
   };
   assert.deepEqual(await f.run(''), { changed: false }); assert.deepEqual(f.writes, []);
-});
-test('a ledger without header items records the file', async () => {
-  const f = fixture(); delete f.contents['product-updates/dispositions.json'].items;
-  assert.deepEqual(await f.run(''), { changed: true, sha: 'new-commit' });
-  assert.deepEqual(f.writes[1].tree.map(x => x.path), ['product-updates/dispositions/pr-920.json']);
 });
 test('two PRs record two different files', async () => {
   const paths = [];
@@ -82,10 +71,9 @@ test('two PRs record two different files', async () => {
   }
   assert.deepEqual(paths, ['product-updates/dispositions/pr-920.json', 'product-updates/dispositions/pr-921.json']);
 });
-test('a malformed ledger, a mismatched file, or another PR\'s file fails closed', async () => {
+test('a pre-split ledger, a mismatched file, or another PR\'s file fails closed', async () => {
   for (const mutate of [
-    f => { f.contents['product-updates/dispositions.json'].items = []; },
-    f => { f.contents['product-updates/dispositions.json'].items = null; },
+    f => { f.contents['product-updates/dispositions.json'].items = {}; },
     f => { f.contents['product-updates/dispositions.json'].schema_version = 2; },
     f => { f.contents['product-updates/dispositions/pr-920.json'] = { key: 'pr:921', classification: 'omit' }; },
     f => f.files.push({ filename: 'product-updates/dispositions/pr-921.json', status: 'added' }),

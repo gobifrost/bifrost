@@ -65,8 +65,11 @@ entry = "11111111-1111-4111-8111-111111111111"
 }) + "\n")
 (root / "dispositions.json").write_text(json.dumps({
     "schema_version": 1, "inventory": {"base_ref": base, "target_ref": target},
-    "items": {"pr:1": {"classification": "highlight", "entry_ids": [entry], "review": {"status": "approved", "evidence": ["review"]}, "security_review": {"status": "required", "review_ref": "https://github.com/gobifrost/bifrost/security/advisories/1"}, "action_required": True}},
 }) + "\n")
+(root / "dispositions").mkdir()
+(root / "dispositions" / "pr-1.json").write_text(json.dumps(
+    {"key": "pr:1", "classification": "highlight", "entry_ids": [entry], "review": {"status": "approved", "evidence": ["review"]}, "security_review": {"status": "required", "review_ref": "https://github.com/gobifrost/bifrost/security/advisories/1"}, "action_required": True},
+) + "\n")
 metadata = {"id": entry, "revision": 1, "published_at": "2026-01-01T00:00:00Z", "title": "Reviewed change", "visibility": "highlight", "area": "Platform", "type": "Security", "action_required": True, "security_review": {"status": "required", "review_ref": "https://github.com/gobifrost/bifrost/security/advisories/1"}, "sources": [{"pr": 1}], "contributors": [{"login": "octo", "profile_url": "https://github.com/octo", "source_pr": 1}], "eligibility": {"requires_prs": [1], "requires_commits": []}, "assets": [], "review": {"status": "approved", "evidence": ["review"]}}
 (root / "entries" / f"{entry}.md").write_text("---json\n" + json.dumps(metadata) + "\n---\nReviewed release prose.\n")
 (root / "release-review.json").write_text(json.dumps({"target_ref": target, "review": {"status": "approved", "evidence": ["release review"]}, "security": {"status": "approved", "evidence": ["advisory review"], "fixed_cves": ["None in this release"]}, "breaking_changes": {"status": "approved", "evidence": ["compatibility review"], "summary": "None in this release"}}) + "\n")

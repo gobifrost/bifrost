@@ -80,20 +80,12 @@ def load_dispositions(path: Path) -> dict[str, Any]:
     """Assemble the ledger header with one file per item from ``dispositions/``.
 
     Separate item files keep concurrent pull requests from editing one shared map.
-    Items still in the header's ``items`` map are read only until the data moves
-    into files in the next merge; the trusted-base validator needs both layouts
-    for that one change. A key recorded in both places fails.
     """
     dispositions = read_json(path)
-    items = dispositions.pop("items", {})
-    if not isinstance(items, dict):
-        raise ValueError(f"{path}: items must be an object")
-    for key, item in _disposition_files(path.parent / "dispositions").items():
-        if key in items:
-            raise ValueError(
-                f"{path}: {key} is recorded both in items and in its own file"
-            )
-        items[key] = item
+    directory = path.parent / "dispositions"
+    if "items" in dispositions:
+        raise ValueError(f"{path}: items belong in {directory}/, one file per key")
+    items = _disposition_files(directory)
     return {**dispositions, "items": dict(sorted(items.items()))}
 
 

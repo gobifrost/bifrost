@@ -1,0 +1,13 @@
+{
+  "key": "pr:940",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Small branding correction to the existing Bifrost community links; no new functionality or customer upgrade action.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/940",
+      "User requested that the Bifrost website destination use Bifrost branding rather than the Covi installation logo."
+    ]
+  }
+}

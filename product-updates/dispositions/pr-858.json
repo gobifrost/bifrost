@@ -1,0 +1,13 @@
+{
+  "key": "pr:858",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/858",
+      "Product review: approved curated backfill for merge on 2026-10-06."
+    ]
+  },
+  "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Wait for the database schema before starting workers and the scheduler."
+}
