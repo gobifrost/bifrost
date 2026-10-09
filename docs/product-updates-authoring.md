@@ -47,10 +47,41 @@ access controls as an incident unless the evidence establishes an incident.
 
 ## Before and during a pull request
 
-Classify every landed change in `product-updates/dispositions.json` under its
-`pr:<number>` key. The disposition is the durable decision read by CI and the
+Classify every landed change under its `pr:<number>` key (or `commit:<sha>` for
+a direct commit). The disposition is the durable decision read by CI and the
 merge queue; the PR template records the author’s proposal, but is never the
 canonical classification.
+
+Each disposition is its own file, so concurrent pull requests never edit the same
+file. `product-updates/dispositions/pr-1234.json` holds the decision for `pr:1234`:
+the file name is the key with `:` replaced by `-`, and the file repeats the exact
+key first.
+
+```json
+{
+  "key": "pr:1234",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal CI work; no customer-facing change.",
+  "review": {
+    "status": "approved",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1234"]
+  }
+}
+```
+
+`product-updates/dispositions.json` holds the ledger header (`schema_version`
+and the `inventory` range). The tools assemble the header and every file in
+`dispositions/` into one ledger before schema validation, so
+`--dispositions product-updates/dispositions.json` still names the whole ledger.
+A key that cannot round-trip through its file name, a file whose key does not
+match its name, or any other entry in `dispositions/` fails validation.
+
+Existing dispositions are being migrated out of the header's `items` map. Until
+that migration merges, the tools read both places, and a key recorded in both
+fails. The dual read exists only between the loader change and the data migration
+(one merge), because the Product Updates check validates candidate content with
+the trusted base's validator. Record new dispositions only as files.
 
 - `highlight` points to one or more entry UUIDs in `entries/`. Use a highlight
   for a capability, important correction, upgrade warning, or security notice
@@ -86,8 +117,9 @@ and must not contain executable HTML or embeds.
 
 ## Dependabot Maintenance
 
-The trusted Dependabot workflow writes an `omit` disposition onto same-repository
-Dependabot branches when their diff contains only dependency maintenance files.
+The trusted Dependabot workflow writes an `omit` disposition file onto
+same-repository Dependabot branches when their diff contains only dependency
+maintenance files.
 This applies the existing customer-facing selection policy; it does not execute
 PR code, replace a maintainer's disposition, or bypass CI. Major and Docker updates
 retain their existing review policy.

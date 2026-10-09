@@ -119,6 +119,25 @@ class ProductUpdatesTests(unittest.TestCase):
     def _write_json(path: Path, data: dict) -> None:
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
+    def write_item_files(self, items: dict) -> Path:
+        """Write each disposition to its own file beside the ledger header."""
+        directory = self.content / "dispositions"
+        directory.mkdir(exist_ok=True)
+        for key, item in items.items():
+            self._write_json(
+                directory / product_updates.disposition_file_name(key),
+                {"key": key, **item},
+            )
+        return directory
+
+    def other_item(self) -> dict:
+        return {
+            "classification": "omit",
+            "entry_ids": [],
+            "reason": "Internal CI work",
+            "review": {"status": "approved", "evidence": ["review"]},
+        }
+
     def test_bundle_is_stable_eligible_and_uses_cached_verified_credits(self) -> None:
         first = product_updates.build_bundle(
             self.content, self.inventory, self.dispositions, TARGET, "/product-updates/"
@@ -189,6 +208,106 @@ class ProductUpdatesTests(unittest.TestCase):
         self.assertEqual([], report["unclassified"])
         self.assertEqual([], report["unrepresented_highlights"])
         self.assertEqual([], report["uncovered_commits"])
+
+    def test_each_pr_disposition_is_its_own_file(self) -> None:
+        data = self.disposition_data()
+        data["items"]["pr:11"] = self.other_item()
+        header = {key: value for key, value in data.items() if key != "items"}
+        self._write_json(self.dispositions, header)
+        directory = self.write_item_files(data["items"])
+
+        self.assertEqual(
+            ["pr-10.json", "pr-11.json"],
+            sorted(path.name for path in directory.iterdir()),
+        )
+        self.assertEqual(
+            {"key": "pr:11", **data["items"]["pr:11"]},
+            json.loads((directory / "pr-11.json").read_text(encoding="utf-8")),
+        )
+        self.assertEqual(data, product_updates.load_dispositions(self.dispositions))
+
+    def test_header_items_and_item_files_assemble_one_ledger(self) -> None:
+        inventory = self.inventory_data()
+        inventory["commits"][0]["prs"].append(11)
+        self._write_json(self.inventory, inventory)
+        self.write_item_files({"pr:11": self.other_item()})
+        expected = self.disposition_data()
+        expected["items"]["pr:11"] = self.other_item()
+
+        self.assertEqual(expected, product_updates.load_dispositions(self.dispositions))
+        self.assertEqual(
+            [],
+            product_updates.validate_content(
+                self.content, self.inventory, self.dispositions, TARGET
+            ),
+        )
+
+    def test_a_key_in_the_header_and_its_own_file_fails(self) -> None:
+        self.write_item_files({"pr:10": self.other_item()})
+        errors = product_updates.validate_content(
+            self.content, self.inventory, self.dispositions, TARGET
+        )
+        self.assertEqual(1, len(errors))
+        self.assertIn("pr:10 is recorded both in items and in its own file", errors[0])
+
+    def test_disposition_keys_map_to_distinct_safe_file_names(self) -> None:
+        self.assertEqual(
+            f"commit-{COMMIT}.json",
+            product_updates.disposition_file_name(f"commit:{COMMIT}"),
+        )
+        for key in ("pr-10", "../pr:10", "pr:10/escape", "pr:", ""):
+            with self.assertRaises(ValueError):
+                product_updates.disposition_file_name(key)
+
+    def test_misnamed_item_file_fails(self) -> None:
+        directory = self.write_item_files({"pr:11": self.other_item()})
+        (directory / "pr-11.json").rename(directory / "pr-12.json")
+        errors = product_updates.validate_content(
+            self.content, self.inventory, self.dispositions, TARGET
+        )
+        self.assertEqual(1, len(errors))
+        self.assertIn("pr-12.json: key must match the file name", errors[0])
+
+    def test_stray_entries_in_the_disposition_directory_fail(self) -> None:
+        strays = {
+            "orphan.txt": lambda path: path.write_text("{}\n"),
+            "PR-12.JSON": lambda path: path.write_text("{}\n"),
+            "pr-12.json.bak": lambda path: path.write_text("{}\n"),
+            ".gitkeep": lambda path: path.write_text(""),
+            "pr-12.json": lambda path: path.mkdir(),
+            "nested": lambda path: path.mkdir(),
+            "pr-13.json": lambda path: path.symlink_to(path.parent / "pr-11.json"),
+        }
+        for name, create in strays.items():
+            with self.subTest(name=name):
+                directory = self.content / "dispositions"
+                shutil.rmtree(directory, ignore_errors=True)
+                self.write_item_files({"pr:11": self.other_item()})
+                create(directory / name)
+                errors = product_updates.validate_content(
+                    self.content, self.inventory, self.dispositions, TARGET
+                )
+                self.assertEqual(1, len(errors))
+                self.assertIn(
+                    f"{name}: only <key>.json disposition files belong", errors[0]
+                )
+
+    def test_malformed_item_file_fails(self) -> None:
+        directory = self.write_item_files({"pr:11": self.other_item()})
+        (directory / "pr-11.json").write_text('{"key": "pr:11",\n')
+        errors = product_updates.validate_content(
+            self.content, self.inventory, self.dispositions, TARGET
+        )
+        self.assertEqual(1, len(errors))
+        self.assertIn("pr-11.json: invalid JSON", errors[0])
+
+    def test_disposition_directory_must_be_a_directory(self) -> None:
+        (self.content / "dispositions").write_text("{}\n")
+        errors = product_updates.validate_content(
+            self.content, self.inventory, self.dispositions, TARGET
+        )
+        self.assertEqual(1, len(errors))
+        self.assertIn("must be a directory of disposition files", errors[0])
 
     def test_build_target_may_be_a_real_git_descendant_of_the_frozen_range(
         self,

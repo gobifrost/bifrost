@@ -1992,6 +1992,18 @@
           "Product review: Jack approved on 2026-10-09 with no release note (test harness only)."
         ]
       }
+    },
+    "pr:962": {
+      "classification": "omit",
+      "entry_ids": [],
+      "reason": "Product Updates tooling: dispositions read from one file per item; no product change.",
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/962",
+          "Product review: tooling only, no release note (CLAUDE.md Product Updates)."
+        ]
+      }
     }
   }
 }

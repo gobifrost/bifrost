@@ -224,7 +224,7 @@ Entity mutations have three parallel surfaces: **CLI** (`bifrost <entity> ...`),
 
 ## Product Updates
 
-For a user-visible change, classify the PR in the canonical `product-updates/dispositions.json` and author approved entry prose in the shared `product-updates/` source. The PR template is a proposal, not the durable decision. Read [`docs/product-updates-authoring.md`](docs/product-updates-authoring.md) before editing entries, preparing a release, or validating Product Updates; it defines draft versus approved content, source/credit evidence, and deterministic release-body preparation.
+For a user-visible change, classify the PR in its canonical disposition file, `product-updates/dispositions/pr-<number>.json`, and author approved entry prose in the shared `product-updates/` source. The PR template is a proposal, not the durable decision. Read [`docs/product-updates-authoring.md`](docs/product-updates-authoring.md) before editing entries, preparing a release, or validating Product Updates; it defines draft versus approved content, source/credit evidence, and deterministic release-body preparation.
 
 ## Project Structure
 

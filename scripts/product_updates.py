@@ -31,6 +31,8 @@ SHA = re.compile(r"^[0-9a-f]{40}$")
 RAW_HTML = re.compile(r"<[A-Za-z][^>]*>")
 REMOTE_IMAGE = re.compile(r"!\[[^]]*\]\(https?://", re.I)
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+DISPOSITION_KEY = re.compile(r"^[A-Za-z0-9]+(?::[A-Za-z0-9]+)*$")
+DISPOSITION_FILE = re.compile(r"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*\.json$")
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -41,6 +43,58 @@ def read_json(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{path}: expected an object")
     return value
+
+
+def disposition_file_name(key: str) -> str:
+    """Map a disposition key to its own file; the key charset keeps this one-to-one."""
+    if not DISPOSITION_KEY.fullmatch(key):
+        raise ValueError(f"disposition key {key!r} cannot be stored as a file name")
+    return f"{key.replace(':', '-')}.json"
+
+
+def _disposition_files(directory: Path) -> dict[str, Any]:
+    """Read one disposition per ``<key>.json`` file; any other entry is an error."""
+    if not directory.exists() and not directory.is_symlink():
+        return {}
+    if directory.is_symlink() or not directory.is_dir():
+        raise ValueError(f"{directory}: must be a directory of disposition files")
+    items: dict[str, Any] = {}
+    for item_path in sorted(directory.iterdir()):
+        if (
+            item_path.is_symlink()
+            or not item_path.is_file()
+            or not DISPOSITION_FILE.fullmatch(item_path.name)
+        ):
+            raise ValueError(
+                f"{item_path}: only <key>.json disposition files belong in {directory}"
+            )
+        item = read_json(item_path)
+        key = item.pop("key", None)
+        if not isinstance(key, str) or disposition_file_name(key) != item_path.name:
+            raise ValueError(f"{item_path}: key must match the file name")
+        items[key] = item
+    return items
+
+
+def load_dispositions(path: Path) -> dict[str, Any]:
+    """Assemble the ledger header with one file per item from ``dispositions/``.
+
+    Separate item files keep concurrent pull requests from editing one shared map.
+    Items still in the header's ``items`` map are read only until the data moves
+    into files in the next merge; the trusted-base validator needs both layouts
+    for that one change. A key recorded in both places fails.
+    """
+    dispositions = read_json(path)
+    items = dispositions.pop("items", {})
+    if not isinstance(items, dict):
+        raise ValueError(f"{path}: items must be an object")
+    for key, item in _disposition_files(path.parent / "dispositions").items():
+        if key in items:
+            raise ValueError(
+                f"{path}: {key} is recorded both in items and in its own file"
+            )
+        items[key] = item
+    return {**dispositions, "items": dict(sorted(items.items()))}
 
 
 def read_entry(path: Path) -> tuple[dict[str, Any], str]:
@@ -473,7 +527,7 @@ def validate_content(
     errors: list[str] = []
     try:
         inventory = read_json(inventory_path)
-        dispositions = read_json(dispositions_path)
+        dispositions = load_dispositions(dispositions_path)
     except ValueError as exc:
         return [str(exc)]
     schema_path = schema_path or content_dir / "schema.json"
@@ -663,7 +717,7 @@ def build_bundle(
         raise ValueError("content_ref must be a 40-character commit SHA")
     inventory = read_json(inventory_path)
     base = base or str(inventory["base_ref"])
-    dispositions = read_json(dispositions_path)
+    dispositions = load_dispositions(dispositions_path)
     prs, _ = _metadata_indexes(inventory)
     entries: list[dict[str, Any]] = []
     for entry in load_entries(content_dir, draft_dir):
@@ -1285,7 +1339,7 @@ def main() -> int:
                     json.dumps(
                         coverage_report(
                             read_json(args.inventory),
-                            read_json(args.dispositions),
+                            load_dispositions(args.dispositions),
                             entries,
                         ),
                         indent=2,
@@ -1319,7 +1373,7 @@ def main() -> int:
             )
             return 0
         if args.command == "validate-event":
-            dispositions = read_json(args.dispositions)
+            dispositions = load_dispositions(args.dispositions)
             schema_path = args.schema or args.content_dir / "schema.json"
             errors = schema_errors(
                 schema_path, "dispositions", dispositions, str(args.dispositions)
