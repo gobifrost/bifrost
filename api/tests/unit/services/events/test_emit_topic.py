@@ -353,6 +353,7 @@ async def test_emit_topic_payload_under_event_key():
         event_mock.headers = None
         event_mock.received_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
         event_mock.source_ip = None
+        event_mock.raw_body = None
 
         delivery_mock = MagicMock()
         delivery_mock.id = uuid.uuid4()

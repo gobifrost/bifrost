@@ -141,6 +141,7 @@ from src.services.application_sdk_status import (
 )
 from src.services.platform_job_memory_profiles import build_solution_memory_profile_key
 from src.services.solutions.deploy_job_storage import SolutionDeployJobStorage
+from shared.solution_deploy_status import project_solution_deploy_job_status
 from src.services.solutions.deploy import (
     SolutionDeployConflict,
     SolutionDowngradeBlocked,
@@ -2715,12 +2716,19 @@ async def deploy_solution(
 async def get_deploy_job(
     job_id: UUID, ctx: Context, user: CurrentSuperuser
 ) -> SolutionDeployJobStatus:
-    job = await ctx.db.get(SolutionDeployJob, job_id)
-    if job is None:
+    projection = await ctx.db.get(SolutionDeployJob, job_id)
+    canonical = await ctx.db.get(PlatformJob, job_id)
+    if (
+        projection is None
+        or canonical is None
+        or canonical.job_type != "solution.deploy"
+        or canonical.resource_type != "solution_deploy"
+        or canonical.resource_id != str(job_id)
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Deploy job not found"
         )
-    return SolutionDeployJobStatus.model_validate(job)
+    return project_solution_deploy_job_status(projection, canonical)
 
 
 @router.post(
