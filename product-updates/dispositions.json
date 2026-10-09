@@ -1967,6 +1967,18 @@
           "Product review: Codex root classified this bounded Solution detail count-projection repair as Other/fix under Jack’s authorized solution verification work on 2026-10-09."
         ]
       }
+    },
+    "pr:961": {
+      "classification": "omit",
+      "entry_ids": [],
+      "reason": "Local test-harness fix only; no product change.",
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/961",
+          "Product review: awaiting Jack's approval (no release note)."
+        ]
+      }
     }
   }
 }
