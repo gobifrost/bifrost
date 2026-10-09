@@ -7,6 +7,8 @@ that candidate reaches ``main``. The live required-check settings are audited
 separately because they are GitHub repository configuration, not source code.
 """
 
+import os
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -260,6 +262,67 @@ def test_dev_artifact_is_built_on_merge_candidate_and_promoted_without_rebuild()
     assert "port-forward service/client" in deploy_source
     assert "http://127.0.0.1:18000/health/ready" in deploy_source
     assert "http://127.0.0.1:18080/" in deploy_source
+
+
+def test_worker_rollout_budget_executes_for_component_and_uses_live_values(
+    tmp_path: Path,
+) -> None:
+    """A worker timeout follows its component, replicas, and shutdown grace."""
+    deploy = _load_workflow(CI_WORKFLOW)["jobs"]["deploy-dev"]
+    rollout = next(
+        step for step in deploy["steps"] if step.get("name") == "Wait for rollouts"
+    )
+    source = rollout["run"]
+
+    calls = tmp_path / "kubectl-calls"
+    kubectl = tmp_path / "kubectl"
+    kubectl.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == "-n" ]]; then
+  shift 2
+fi
+
+case "$*" in
+  "get deployment -l "*)
+    printf '%s\\n' api-main browser-gateway background-executor
+    ;;
+  "get deployment/api-main "*)
+    printf 'api'
+    ;;
+  "get deployment/browser-gateway "*)
+    printf 'client'
+    ;;
+  "get deployment/background-executor "*)
+    if [[ "$*" == *"terminationGracePeriodSeconds"* ]]; then
+      printf '6 330'
+    else
+      printf 'worker'
+    fi
+    ;;
+  "rollout status "*)
+    printf '%s\\n' "$*" >> "$KUBECTL_CALLS"
+    ;;
+  *)
+    printf 'unexpected kubectl arguments: %s\\n' "$*" >&2
+    exit 1
+    ;;
+esac
+"""
+    )
+    kubectl.chmod(0o755)
+    environment = os.environ | {
+        "PATH": f"{tmp_path}:{os.environ['PATH']}",
+        "KUBECTL_CALLS": str(calls),
+    }
+
+    subprocess.run(["bash", "-c", source], check=True, cwd=REPO_ROOT, env=environment)
+
+    assert calls.read_text().splitlines() == [
+        "rollout status deployment/api-main --timeout=5m",
+        "rollout status deployment/browser-gateway --timeout=5m",
+        "rollout status deployment/background-executor --timeout=2580s",
+    ]
 
 
 def test_pull_request_reports_required_e2e_context_without_running_full_suite() -> None:
