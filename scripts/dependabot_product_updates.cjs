@@ -53,9 +53,7 @@ async function recordDependabotDisposition({ github, repository, number, alertSt
     throw new Error("Dependabot PR changes files outside dependency maintenance");
   }
   const ledger = await readLedgerFile(github, repository, LEDGER, pr.head.sha);
-  // Header items remain only until the data moves into per-item files.
-  const headerItems = Object.hasOwn(ledger, "items") ? ledger.items : {};
-  if (ledger.schema_version !== 1 || !headerItems || typeof headerItems !== "object" || Array.isArray(headerItems)) {
+  if (ledger.schema_version !== 1 || Object.hasOwn(ledger, "items")) {
     throw new Error("Invalid canonical disposition ledger");
   }
   let existing;
@@ -66,7 +64,6 @@ async function recordDependabotDisposition({ github, repository, number, alertSt
     if (error.status !== 404) throw error;
   }
   // Human decisions, including security notices, always take precedence.
-  if (Object.hasOwn(headerItems, key)) return { changed: false };
   if (existing !== undefined) {
     if (existing.key !== key) throw new Error(`${itemPath} does not hold ${key}`);
     return { changed: false };

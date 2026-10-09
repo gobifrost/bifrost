@@ -1,0 +1,13 @@
+{
+  "key": "pr:709",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/709",
+      "Product review: approved curated backfill for merge on 2026-10-06."
+    ]
+  },
+  "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Update Playwright to 1.63.0 for browser testing."
+}

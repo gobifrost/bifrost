@@ -1,0 +1,15 @@
+{
+  "key": "pr:955",
+  "classification": "other",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/955",
+      "Root review: approved omitting inherited Solution scope while preserving explicit caller scope and existing router authorization.",
+      "Targeted SDK and live worker checks passed: 16 SDK tests and 5 Solution-table E2E tests."
+    ]
+  },
+  "summary": "Solution workflows can batch-write their global tables while preserving the executing organization.",
+  "category": "fix"
+}

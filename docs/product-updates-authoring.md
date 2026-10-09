@@ -70,18 +70,13 @@ key first.
 }
 ```
 
-`product-updates/dispositions.json` holds the ledger header (`schema_version`
-and the `inventory` range). The tools assemble the header and every file in
-`dispositions/` into one ledger before schema validation, so
-`--dispositions product-updates/dispositions.json` still names the whole ledger.
-A key that cannot round-trip through its file name, a file whose key does not
-match its name, or any other entry in `dispositions/` fails validation.
-
-Existing dispositions are being migrated out of the header's `items` map. Until
-that migration merges, the tools read both places, and a key recorded in both
-fails. The dual read exists only between the loader change and the data migration
-(one merge), because the Product Updates check validates candidate content with
-the trusted base's validator. Record new dispositions only as files.
+`product-updates/dispositions.json` holds only the ledger header
+(`schema_version` and the `inventory` range) and has no `items` field. The tools
+assemble the header and every file in `dispositions/` into one ledger before
+schema validation, so `--dispositions product-updates/dispositions.json` still
+names the whole ledger. A key that cannot round-trip through its file name, a file
+whose key does not match its name, any other entry in `dispositions/`, or an
+`items` field in the header fails validation.
 
 - `highlight` points to one or more entry UUIDs in `entries/`. Use a highlight
   for a capability, important correction, upgrade warning, or security notice

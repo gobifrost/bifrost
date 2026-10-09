@@ -1,0 +1,13 @@
+{
+  "key": "pr:859",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/859",
+      "Product review: approved curated backfill for merge on 2026-10-06."
+    ]
+  },
+  "reason": "Intermediate evaluator scaffolding; no request enforcement in this PR."
+}

@@ -1,0 +1,13 @@
+{
+  "key": "pr:877",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/877",
+      "Product review: approved curated backfill for merge on 2026-10-06."
+    ]
+  },
+  "reason": "Removed unused helpers with no behavior change."
+}

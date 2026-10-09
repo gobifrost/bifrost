@@ -1,0 +1,14 @@
+{
+  "key": "pr:819",
+  "classification": "other",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/819",
+      "Product review: approved curated backfill for merge on 2026-10-06."
+    ]
+  },
+  "summary": "Show consistent totals when listing service attempts.",
+  "category": "fix"
+}
