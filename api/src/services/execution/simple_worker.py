@@ -64,11 +64,17 @@ def _parse_requirements(content: str) -> tuple[list[str], list[str]]:
 
 
 def _pip_install(args: list[str]) -> "subprocess.CompletedProcess[str]":
+    # Imported here, not at module level: forked execution children import this
+    # module after the workspace import hook is installed, and only the
+    # requirements setup helper process installs packages.
+    from shared.subprocess_env import package_tool_env
+
     return subprocess.run(
         [sys.executable, "-m", "pip", "install", *args, "--quiet"],
         capture_output=True,
         text=True,
         timeout=300,  # 5 minute timeout
+        env=package_tool_env(),
     )
 
 

@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, status
 
+from shared.subprocess_env import package_tool_env
 from src.models import (
     InstallPackageRequest,
     InstalledPackage,
@@ -125,6 +126,7 @@ async def check_package_updates() -> list[PackageUpdate]:
             "pip", "list", "--outdated", "--format=json",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=package_tool_env(),
         )
 
         try:
@@ -169,6 +171,7 @@ async def get_installed_packages_local() -> list[InstalledPackage]:
             "pip", "list", "--format=json",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=package_tool_env(),
         )
 
         try:
