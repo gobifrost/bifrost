@@ -143,11 +143,7 @@ async def resolve_executable_agent(
                 f"Agent '{agent.name}' belongs to an inactive solution. "
                 "Reinstall the solution to execute this agent.",
             )
-    access_checks.note_power(
-        "agents.execute",
-        access_checks.launch_target(agent.organization_id, principal.organization_id),
-        subject=f"agent:{agent.id}",
-    )
+    access_checks.note_launch("agents.execute", agent.organization_id, principal.organization_id, subject=f"agent:{agent.id}")
 
     return agent
 

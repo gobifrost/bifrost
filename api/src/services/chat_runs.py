@@ -96,11 +96,7 @@ async def _load_authorized_agent(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have access to this agent",
         )
-    access_checks.note_power(
-        "agents.execute",
-        access_checks.launch_target(agent.organization_id, user.organization_id),
-        subject=f"agent:{agent.id}",
-    )
+    access_checks.note_launch("agents.execute", agent.organization_id, user.organization_id, subject=f"agent:{agent.id}")
     return agent
 
 
@@ -260,6 +256,9 @@ async def create_chat_run(
             if conversation.agent_id is None:
                 conversation.agent_id = authorized_agent.id
                 conversation.agent = authorized_agent
+    if conversation.agent_id is None:
+        # Chat without an agent spends AI directly.
+        access_checks.note_launch("ai.execute", None, user.organization_id, subject="ai:chat")
 
     existing_message = await db.get(Message, user_message_id)
     if existing_message is not None:

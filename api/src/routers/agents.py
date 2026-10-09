@@ -55,6 +55,8 @@ from src.repositories.agents import AgentRepository
 from src.services.agent_write_policy import (
     enforce_non_admin_create,
     enforce_non_admin_update,
+    needs_admin_to_create,
+    needs_admin_to_update,
     validate_agent_references,
 )
 from src.services.solutions.guard import assert_not_solution_managed
@@ -381,10 +383,7 @@ async def create_agent(
         await _validate_user_tool_access(
             db, user.user_id, agent_data.tool_ids, is_external=user.is_external
         )
-    elif (
-        agent_data.access_level != AgentAccessLevel.PRIVATE
-        or agent_data.organization_id != user.organization_id
-    ):
+    elif needs_admin_to_create(agent_data, caller_org_id=user.organization_id):
         access_checks.note_power("agents.readwrite", agent_data.organization_id, subject="agents")
 
     # Validate references before creating the agent (every caller, admins
@@ -692,12 +691,11 @@ async def update_agent(
         # see agent_write_policy for the full gate (includes clear_roles and
         # the organization_id rescope gate below).
         enforce_non_admin_update(agent, agent_data)
-    elif agent.owner_user_id != user.user_id:
-        access_checks.note_power(
-            "agents.readwrite.all" if _others_private(agent, user.user_id) else "agents.readwrite",
-            agent.organization_id,
-            subject=f"agent:{agent.id}",
-        )
+    else:
+        if _others_private(agent, user.user_id):
+            access_checks.note_power("agents.readwrite.all", agent.organization_id, subject=f"agent:{agent.id}")
+        if agent.access_level != AgentAccessLevel.PRIVATE or needs_admin_to_update(agent, agent_data):
+            access_checks.note_power("agents.readwrite", agent.organization_id, subject=f"agent:{agent.id}")
 
     final_access_level = agent_data.access_level or agent.access_level
 

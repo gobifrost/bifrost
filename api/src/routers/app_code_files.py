@@ -529,9 +529,7 @@ async def render_app(
     Unlike /files, this returns only `path` + `code` (no source).
     """
     app = await get_application_or_404(ctx, app_id)
-    access_checks.note_power(
-        "apps.readbasic", access_checks.launch_target(app.organization_id, ctx.org_id), subject=f"application:{app_id}"
-    )
+    access_checks.note_launch("apps.readbasic", app.organization_id, ctx.org_id, subject=f"application:{app_id}")
     app_storage = AppStorageService()
     storage_mode = "preview" if mode == FileMode.draft else "live"
     app_id_str = str(app.id)
@@ -837,9 +835,7 @@ async def get_bundle_asset(
     from fastapi.responses import Response
 
     app = await get_application_or_404(ctx, app_id)
-    access_checks.note_power(
-        "apps.readbasic", access_checks.launch_target(app.organization_id, ctx.org_id), subject=f"application:{app_id}"
-    )
+    access_checks.note_launch("apps.readbasic", app.organization_id, ctx.org_id, subject=f"application:{app_id}")
     app_storage = AppStorageService()
     storage_mode = "preview" if mode == FileMode.draft else "live"
 
@@ -890,9 +886,7 @@ async def get_v2_dist_asset(
     from src.services.solutions.app_build import SolutionAppBuilder
 
     app = await get_application_or_404(ctx, app_id)
-    access_checks.note_power(
-        "apps.readbasic", access_checks.launch_target(app.organization_id, ctx.org_id), subject=f"application:{app_id}"
-    )
+    access_checks.note_launch("apps.readbasic", app.organization_id, ctx.org_id, subject=f"application:{app_id}")
     rel = path or "index.html"
     try:
         data = await SolutionAppBuilder().read_dist(

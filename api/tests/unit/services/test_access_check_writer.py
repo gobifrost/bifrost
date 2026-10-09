@@ -330,3 +330,72 @@ async def test_nothing_noted_opens_no_session() -> None:
         await flush_detached(collector, operation="GET /api/agents", route=("GET", "/api/agents"))
 
     assert collector.closed is True
+
+
+async def test_an_execution_noted_unloaded_is_judged_in_its_own_org(db_session: AsyncSession) -> None:
+    from src.models.enums import ExecutionStatus
+    from src.models.orm import Execution
+
+    home, other = await _org(db_session), await _org(db_session)
+    person, someone = await _person(db_session, home), await _person(db_session, other)
+    theirs = Execution(
+        workflow_name="w", status=ExecutionStatus.SUCCESS, organization_id=other.id, executed_by=someone.id, executed_by_name="S"
+    )
+    own = Execution(
+        workflow_name="w", status=ExecutionStatus.SUCCESS, organization_id=other.id, executed_by=person.id, executed_by_name="P"
+    )
+    db_session.add_all([theirs, own])
+    await db_session.flush()
+
+    def owned(execution: Execution) -> Note:
+        return Note(
+            "permission",
+            None,
+            {
+                "permission": "executions.read.all",
+                "subject": f"execution:{execution.id}",
+                "owned": "execution",
+                "object_id": str(execution.id),
+                "actor": str(person.id),
+            },
+        )
+
+    await flush(db_session, _person_collector(person.id, owned(theirs), owned(own)), **ROUTE)
+
+    [row] = await _person_rows(db_session, person.id)
+    assert row.organization_id == other.id
+    assert row.details is not None
+    assert row.details["inputs"]["subject"] == f"execution:{theirs.id}"
+    assert "owned" not in row.details["inputs"]
+
+
+async def test_a_note_judged_today_is_not_judged_again(db_session: AsyncSession) -> None:
+    from src.services import access_check_writer
+
+    home = await _org(db_session)
+    person = await _person(db_session, home)
+    loads: list[UUID] = []
+    real = access_check_writer.load_run_user
+
+    async def counting(db, user_id):
+        loads.append(user_id)
+        return await real(db, user_id)
+
+    with patch.object(access_check_writer, "load_run_user", counting):
+        for _ in range(3):
+            await flush(db_session, _person_collector(person.id, _power("apps.readbasic", home.id)), **ROUTE)
+
+    assert loads == [person.id]
+
+
+async def test_a_persons_scope_switch_writes_would_denies_only(db_session: AsyncSession) -> None:
+    home, other = await _org(db_session), await _org(db_session)
+    person = await _person(db_session, home)
+    collector = _person_collector(person.id, Note("scope_switch", other.id), Note("scope_switch", home.id))
+
+    await flush(db_session, collector, **ROUTE)
+
+    [row] = await _person_rows(db_session, person.id)
+    assert (row.resource_type, row.outcome, row.organization_id) == ("scope_switch", "failure", other.id)
+    assert row.details is not None
+    assert row.details["trace"]["steps"][1]["reason"] == "no_workflow"

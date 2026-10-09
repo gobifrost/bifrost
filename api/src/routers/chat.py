@@ -745,11 +745,15 @@ async def send_message(
             detail="You don't have access to this agent",
         )
     if conversation.agent:
-        access_checks.note_power(
+        access_checks.note_launch(
             "agents.execute",
-            access_checks.launch_target(conversation.agent.organization_id, user.organization_id),
+            conversation.agent.organization_id,
+            user.organization_id,
             subject=f"agent:{conversation.agent.id}",
         )
+    else:
+        # Chat without an agent spends AI directly.
+        access_checks.note_launch("ai.execute", None, user.organization_id, subject="ai:chat")
 
     # Agent is now optional - agentless chat uses default system prompt
 

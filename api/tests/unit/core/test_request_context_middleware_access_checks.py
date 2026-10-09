@@ -25,8 +25,13 @@ def _app() -> FastAPI:
 
     @app.get("/__test__/power")
     async def _power():
-        access_checks.note("scope_switch", None)
+        access_checks.note("secret", None, kind="config", name="k")
         access_checks.note_power("agents.read", None, subject="agent:1")
+        return {"ok": True}
+
+    @app.get("/__test__/secret")
+    async def _secret():
+        access_checks.note("secret", None, kind="config", name="k")
         return {"ok": True}
 
     @app.get("/__test__/refused")
@@ -84,10 +89,10 @@ def _person_token(person: str) -> str:
     return create_access_token({"sub": person, "email": "p@x.example", "org_id": str(uuid4())})
 
 
-async def test_a_persons_request_without_a_named_permission_is_not_judged() -> None:
+async def test_a_persons_request_noting_only_run_kinds_is_not_judged() -> None:
     flushed: list = []
 
-    response = await _get("/__test__/checked/a", _person_token(str(uuid4())), flushed)
+    response = await _get("/__test__/secret", _person_token(str(uuid4())), flushed)
 
     assert response.status_code == 200
     assert flushed == []

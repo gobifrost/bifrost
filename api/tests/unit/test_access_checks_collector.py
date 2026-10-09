@@ -64,7 +64,7 @@ def test_anonymous_and_system_subject_tokens_are_not_collected() -> None:
     assert access_checks.start_collecting(embed) is None
 
 
-def test_a_persons_request_collects_named_permissions_only() -> None:
+def test_a_persons_request_collects_permissions_and_scope_switches_only() -> None:
     person, org = uuid4(), uuid4()
     token = access_checks.start_collecting({"sub": str(person), "org_id": str(uuid4())})
     try:
@@ -75,7 +75,8 @@ def test_a_persons_request_collects_named_permissions_only() -> None:
         assert collector is not None
         assert (collector.direct, collector.run_user_id, collector.execution_id) == (True, person, None)
         assert collector.notes == [
-            access_checks.Note("permission", org, {"permission": "agents.read", "subject": "agent:1"})
+            access_checks.Note("scope_switch", org, {}),
+            access_checks.Note("permission", org, {"permission": "agents.read", "subject": "agent:1"}),
         ]
     finally:
         access_checks.stop_collecting(token)
@@ -98,8 +99,15 @@ def test_renew_hands_back_the_notes_and_collects_afresh() -> None:
 
 def test_a_global_object_is_launched_where_the_caller_is() -> None:
     contoso, fabrikam = uuid4(), uuid4()
-    assert access_checks.launch_target(fabrikam, contoso) == fabrikam
-    assert access_checks.launch_target(None, contoso) == contoso
+    token = access_checks.collect_person(uuid4())
+    try:
+        access_checks.note_launch("apps.readbasic", fabrikam, contoso, subject="application:1")
+        access_checks.note_launch("apps.readbasic", None, contoso, subject="application:2")
+        collector = access_checks.current()
+        assert collector is not None
+        assert [note.target for note in collector.notes] == [fabrikam, contoso]
+    finally:
+        access_checks.stop_collecting(token)
 
 
 def test_a_note_after_the_collector_closed_is_not_kept() -> None:

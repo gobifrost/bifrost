@@ -558,7 +558,7 @@ async def rerun_agent_run(
             detail=f"Agent run {run_id} not found",
         )
     await _require_own_private_agent_run(db, user, original)
-    access_checks.note_power("agents.execute", original.org_id, subject=f"agent:{original.agent_id}")
+    access_checks.note_launch("agents.execute", original.org_id, user.organization_id, subject=f"agent:{original.agent_id}")
 
     new_run_id = await enqueue_agent_run(
         agent_id=str(original.agent_id),
@@ -905,7 +905,7 @@ async def dry_run_agent_run(
             detail=f"Agent run {run_id} not found",
         )
     await _require_own_private_agent_run(db, user, run)
-    access_checks.note_power("agents.execute", run.org_id, subject=f"agent:{run.agent_id}")
+    access_checks.note_launch("agents.execute", run.org_id, user.organization_id, subject=f"agent:{run.agent_id}")
     if run.status != "completed":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

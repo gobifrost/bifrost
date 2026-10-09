@@ -90,7 +90,7 @@ class ArtifactService:
             raise ValueError("Artifact filename is required.")
         if not content:
             raise ValueError(f"{filename} is empty.")
-        if workspace_id is not None:
+        if workspace_id is not None and not bypass:
             existing_owner = (
                 await self.db.execute(
                     select(Artifact.created_by_user_id)
@@ -99,11 +99,14 @@ class ArtifactService:
                 )
             ).scalar_one_or_none()
             if existing_owner is not None and existing_owner != created_by_user_id:
-                if not bypass:
-                    raise ArtifactAccessError("Artifact workspace is not accessible.")
-                access_checks.note_power(
-                    "artifacts.readwrite.all", organization_id, subject=f"artifact_workspace:{workspace_id}"
-                )
+                raise ArtifactAccessError("Artifact workspace is not accessible.")
+        elif workspace_id is not None:
+            # Whose workspace it is, and where, is read when the note is judged.
+            access_checks.note_power(
+                "artifacts.readwrite.all",
+                access_checks.Owned("artifact_workspace", workspace_id, created_by_user_id),
+                subject=f"artifact_workspace:{workspace_id}",
+            )
         artifact_id = uuid4()
         safe_name = filename.replace("/", "_").replace("\\", "_")
         resolved_path = (

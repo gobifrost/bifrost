@@ -3,8 +3,7 @@
 An elevated branch a person takes today (a provider-org member reading
 another organization's agent) is judged against their own roles and written
 as an ``access.check`` failure with ``enforced: false``; the request itself
-is unchanged. An ordinary launch the person's roles already cover writes
-nothing.
+is unchanged.
 """
 
 from __future__ import annotations
@@ -15,20 +14,11 @@ from typing import Any
 
 import pytest
 
-from tests.e2e.conftest import execute_workflow_sync, poll_until, write_and_register
+from tests.e2e.conftest import poll_until
 from tests.e2e.fixtures.setup import PROVIDER_ORG_ID, _register_and_authenticate_user
 from tests.e2e.fixtures.users import E2EUser
 
 pytestmark = pytest.mark.e2e
-
-PROBE = '''"""Permission-check launch probe."""
-from bifrost import workflow
-
-
-@workflow(name="{name}", description="Permission-check launch probe")
-async def {name}():
-    return {{"ok": True}}
-'''
 
 
 def _ok(response) -> Any:
@@ -117,24 +107,3 @@ def test_a_provider_member_reading_another_orgs_agent_records_one_would_deny(
         e2e_client.delete(f"/api/agents/{agent['id']}", headers=admin)
         e2e_client.delete(f"/api/users/{created['id']}", headers=admin)
 
-
-def test_an_ordinary_users_own_launch_records_nothing(
-    e2e_client, platform_admin, org1, async_session_factory
-) -> None:
-    """The person holds Run Workflows at home through the User role. The
-    launch is judged right after its response, long before the run it
-    starts completes, so a would-deny would be written by then."""
-    admin = platform_admin.headers
-    created, person = _person(e2e_client, admin, org1["id"], "launcher")
-    name = f"pc_probe_{uuid.uuid4().hex[:8]}"
-    path = f"workflows/{name}.py"
-    probe = write_and_register(e2e_client, admin, path, PROBE.format(name=name), name, organization_id=org1["id"])
-    _ok(e2e_client.patch(f"/api/workflows/{probe['id']}", headers=admin, json={"access_level": "authenticated"}))
-    try:
-        execution = execute_workflow_sync(e2e_client, person.headers, probe["id"], {}, max_wait=60)
-
-        assert execution["status"] == "Success", execution
-        assert asyncio.run(_permission_checks(async_session_factory, uuid.UUID(created["id"]))) == []
-    finally:
-        e2e_client.delete(f"/api/files/editor?path={path}", headers=admin)
-        e2e_client.delete(f"/api/users/{created['id']}", headers=admin)

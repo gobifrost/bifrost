@@ -12,9 +12,9 @@ a request does.
 
 Every elevated branch (a superuser, platform-admin or provider-org check that
 unlocks more) and every launch of a workflow, agent or AI also notes the named
-permission that gates it (``note_power``). A person's own request is collected
-too, for those notes only: their own roles decide, and only would-deny
-decisions are written.
+permission that gates it (``note_power``, ``note_launch``). A person's own
+request is collected too, for those notes and the organizations it acts in:
+their own roles decide, and only would-deny decisions are written.
 
 FastAPI-free: imported by shared resolvers that worker closures load.
 """
@@ -36,6 +36,21 @@ NoteKind = Literal["scope_switch", "child_run", "run_as", "entry", "policy", "se
 ALL_ORGS: Literal["*"] = "*"
 # A target organization; None is Global.
 NoteTarget = UUID | None | Literal["*"]
+# What a person's own request notes; every kind is noted for a run.
+_DIRECT_KINDS = frozenset({"permission", "scope_switch"})
+# Objects whose organization and owner are read when the note is judged,
+# after the response, instead of in the request.
+OwnedKind = Literal["execution", "agent_run", "artifact_workspace"]
+
+
+@dataclass(frozen=True)
+class Owned:
+    """An object a request used without loading it: the note is judged in
+    the object's organization, and only when ``actor`` does not own it."""
+
+    kind: OwnedKind
+    id: UUID
+    actor: UUID
 
 
 @dataclass
@@ -55,7 +70,7 @@ class Collector:
     closed: bool = False
     # Per-request cache for helpers that need the run user's principal.
     cache: dict[str, Any] = field(default_factory=dict)
-    # A person acting directly (no run): only ``permission`` notes are kept,
+    # A person acting directly (no run): only ``_DIRECT_KINDS`` are kept,
     # judged against their own roles.
     direct: bool = False
 
@@ -135,7 +150,7 @@ def renew() -> Collector | None:
 def note(kind: NoteKind, target: NoteTarget, /, **facts: Any) -> None:
     """Note one decision-relevant input for the current request."""
     collector = _current.get()
-    if collector is None or (collector.direct and kind != "permission"):
+    if collector is None or (collector.direct and kind not in _DIRECT_KINDS):
         return
     if collector.closed:
         logger.warning("access check noted after the request was judged; dropped (kind=%s)", kind)
@@ -143,18 +158,37 @@ def note(kind: NoteKind, target: NoteTarget, /, **facts: Any) -> None:
     collector.notes.append(Note(kind, target, facts))
 
 
-def note_power(permission: str, target: NoteTarget, *, subject: str) -> None:
-    """Note that the request uses ``permission`` on ``subject`` in ``target``
-    (the object's organization; None is Global): an elevated branch, or the
-    launch or opening of a workflow, agent, AI call, app or form."""
+def note_power(permission: str, target: NoteTarget | Owned, *, subject: str) -> None:
+    """Note that an elevated branch uses ``permission`` on ``subject`` in
+    ``target``, the object's organization (None is Global), or on an
+    ``Owned`` object resolved when judged."""
+    if isinstance(target, Owned):
+        note(
+            "permission",
+            None,
+            permission=permission,
+            subject=subject,
+            owned=target.kind,
+            object_id=str(target.id),
+            actor=str(target.actor),
+        )
+        return
     note("permission", target, permission=permission, subject=subject)
 
 
 def launch_target(object_org: UUID | None, caller_org: UUID | None) -> NoteTarget:
     """Where launching or opening an object acts: its organization, or for a
-    Global object the caller's own (Global objects are shared defaults, used
-    at home)."""
+    Global object the caller's own. Run Workflows (and every launch
+    permission) means "may launch at all, in this organization", and Global
+    objects are shared defaults read at home, so using one is never a
+    Global action."""
     return object_org if object_org is not None else caller_org
+
+
+def note_launch(permission: str, object_org: UUID | None, caller_org: UUID | None, *, subject: str) -> None:
+    """Note that the request launches or opens ``subject`` (a workflow, agent,
+    AI call, app or form) under ``permission``, at ``launch_target``."""
+    note("permission", launch_target(object_org, caller_org), permission=permission, subject=subject)
 
 
 def note_failure(kind: NoteKind, target: NoteTarget, error: BaseException) -> None:

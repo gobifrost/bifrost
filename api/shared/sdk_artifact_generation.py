@@ -226,7 +226,7 @@ async def sdk_generate_image_artifact(
         record_media_usage,
     )
 
-    access_checks.note_power("ai.execute", caller.user.organization_id, subject="ai:image")
+    access_checks.note_launch("ai.execute", None, caller.user.organization_id, subject="ai:image")
     async with _isolated_session(caller.db) as config_db:
         config = await get_media_provider_config(config_db, "image")
     generated = await generate_image_with_config(

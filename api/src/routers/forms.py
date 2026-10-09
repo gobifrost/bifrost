@@ -1031,9 +1031,7 @@ async def get_form_logo(
     else:
         if ctx.user.is_superuser:
             access_checks.note_power("forms.read", form.organization_id, subject=f"form:{form.id}")
-        access_checks.note_power(
-            "forms.readbasic", access_checks.launch_target(form.organization_id, ctx.org_id), subject=f"form:{form.id}"
-        )
+        access_checks.note_launch("forms.readbasic", form.organization_id, ctx.org_id, subject=f"form:{form.id}")
 
     thumbnail_ready = bool(form.logo_thumbnail_data and form.logo_thumbnail_version)
     headers = (
@@ -1225,9 +1223,7 @@ async def _authorize_form_runtime(
         )
     if ctx.user.is_superuser:
         access_checks.note_power("forms.read", form.organization_id, subject=f"form:{form.id}")
-    access_checks.note_power(
-        "forms.readbasic", access_checks.launch_target(form.organization_id, ctx.org_id), subject=f"form:{form.id}"
-    )
+    access_checks.note_launch("forms.readbasic", form.organization_id, ctx.org_id, subject=f"form:{form.id}")
     return None
 
 
@@ -1397,7 +1393,9 @@ async def submit_form(
             detail=f"Workflow not found: {form.workflow_id}",
         )
     resolved_workflow_id = str(_resolved_wf.id)
-    access_checks.note_power("workflows.execute", anchor_org_id, subject=f"workflow:{resolved_workflow_id}")
+    access_checks.note_launch(
+        "workflows.execute", form.organization_id, ctx.org_id, subject=f"workflow:{resolved_workflow_id}"
+    )
 
     # Keep signed embed context out of top-level workflow parameters. Validated
     # form inputs remain top-level for workflow signature compatibility and are
@@ -1694,8 +1692,8 @@ async def execute_startup_workflow(
             detail=f"Launch workflow not found: {form.launch_workflow_id}",
         )
     resolved_launch_workflow_id = str(_resolved_launch.id)
-    access_checks.note_power(
-        "workflows.execute", launch_anchor_org_id, subject=f"workflow:{resolved_launch_workflow_id}"
+    access_checks.note_launch(
+        "workflows.execute", form.organization_id, ctx.org_id, subject=f"workflow:{resolved_launch_workflow_id}"
     )
 
     # Signed HMAC values stay in context.embed and are never flattened into
@@ -1803,11 +1801,7 @@ async def get_form_field_options(
     field = next((item for item in form.fields if item.name == field_name), None)
     if field is None or field.data_provider_id is None:
         raise HTTPException(status_code=404, detail="Field options unavailable")
-    access_checks.note_power(
-        "workflows.execute",
-        access_checks.launch_target(form.organization_id, ctx.org_id),
-        subject=f"workflow:{field.data_provider_id}",
-    )
+    access_checks.note_launch("workflows.execute", form.organization_id, ctx.org_id, subject=f"workflow:{field.data_provider_id}")
 
     try:
         options = await execute_form_field_provider(

@@ -5,6 +5,7 @@ Provides real-time updates via WebSocket connections.
 Replaces Azure Web PubSub with native FastAPI WebSockets.
 """
 
+import asyncio
 import copy
 import logging
 from dataclasses import dataclass
@@ -828,8 +829,17 @@ async def can_access_execution(user: UserPrincipal, execution_id: str) -> bool:
     """
     # Superusers can access any execution
     if user.is_superuser:
-        # The execution's organization is not loaded on this path.
-        access_checks.note_power("executions.read.all", user.organization_id, subject=f"execution:{execution_id}")
+        try:
+            execution_uuid = UUID(execution_id)
+        except ValueError:
+            # Not an execution id: the channel carries nothing to read.
+            return True
+        # The execution is read when the note is judged, not here.
+        access_checks.note_power(
+            "executions.read.all",
+            access_checks.Owned("execution", execution_uuid, user.user_id),
+            subject=f"execution:{execution_uuid}",
+        )
         return True
 
     # App embeds and trusted HMAC form sessions retain exact-execution scoping
@@ -934,8 +944,17 @@ async def can_access_agent_run(user: UserPrincipal, run_id: str) -> bool:
     everyone else may only see a run they started (``caller_user_id``).
     """
     if has_scope_bypass(is_platform_admin=user.is_superuser, is_provider_org=user.is_provider_org):
-        # The run's organization is not loaded on this path.
-        access_checks.note_power("agentruns.read.all", user.organization_id, subject=f"agent_run:{run_id}")
+        try:
+            run_uuid = UUID(run_id)
+        except ValueError:
+            # Not a run id: the channel carries nothing to read.
+            return True
+        # The run is read when the note is judged, not here.
+        access_checks.note_power(
+            "agentruns.read.all",
+            access_checks.Owned("agent_run", run_uuid, user.user_id),
+            subject=f"agent_run:{run_uuid}",
+        )
         return True
 
     try:
@@ -957,12 +976,26 @@ async def can_access_agent_run(user: UserPrincipal, run_id: str) -> bool:
         return row == str(user.user_id)
 
 
-async def _judge_access_checks(path: str) -> None:
-    """Judge what the last subscriptions on WebSocket ``path`` noted
-    (report-only, never raises) and collect afresh for the next message."""
+# Background judgements in flight, held so they are not collected mid-run.
+_judging: set[asyncio.Task[None]] = set()
+
+
+def _judged(task: asyncio.Task[None]) -> None:
+    _judging.discard(task)
+    if not task.cancelled() and task.exception() is not None:
+        logger.warning("access checks not judged: %s", type(task.exception()).__name__)
+
+
+def _judge_access_checks(path: str) -> None:
+    """Judge what the last subscriptions on WebSocket ``path`` noted, in the
+    background (report-only; never raises into the connection), and collect
+    afresh for the next message."""
     collector = access_checks.renew()
-    if collector is not None:
-        await flush_detached(collector, operation=f"WS {path}", route=("WS", path))
+    if collector is None or not collector.notes:
+        return
+    task = asyncio.create_task(flush_detached(collector, operation=f"WS {path}", route=("WS", path)))
+    _judging.add(task)
+    task.add_done_callback(_judged)
 
 
 router = APIRouter(prefix="/ws", tags=["WebSocket"])
@@ -1144,7 +1177,7 @@ async def websocket_connect(
             "channels": allowed_channels,
             "userId": str(user.user_id)
         })
-        await _judge_access_checks("/ws/connect")
+        _judge_access_checks("/ws/connect")
 
         # Keep connection alive and handle incoming messages
         while True:
@@ -1429,7 +1462,7 @@ async def websocket_connect(
                             "type": "subscribed",
                             "channel": spec.name
                         })
-                await _judge_access_checks("/ws/connect")
+                _judge_access_checks("/ws/connect")
 
             elif data.get("type") == "unsubscribe":
                 channel = data.get("channel")
@@ -1519,7 +1552,7 @@ async def websocket_execution(
     checks = access_checks.collect_person(user.user_id)
     try:
         allowed = await can_access_execution(user, execution_id)
-        await _judge_access_checks("/ws/execution/{execution_id}")
+        _judge_access_checks("/ws/execution/{execution_id}")
     finally:
         access_checks.stop_collecting(checks)
     if not allowed:

@@ -316,11 +316,7 @@ class MCPAgentGatewayService:
         bounded_limit = min(max(limit, 1), MAX_CAPABILITY_RESULTS)
         if agent_id is not None:
             snapshot = await self.get_agent_snapshot(agent_id)
-            access_checks.note_power(
-                "agents.readbasic",
-                access_checks.launch_target(snapshot.agent.organization_id, self._caller_org),
-                subject=f"agent:{snapshot.agent.id}",
-            )
+            access_checks.note_launch("agents.readbasic", snapshot.agent.organization_id, self._caller_org, subject=f"agent:{snapshot.agent.id}")
             return self._search_agent_snapshot(
                 snapshot,
                 query=query,
@@ -336,7 +332,7 @@ class MCPAgentGatewayService:
                 retryable=True,
             )
 
-        access_checks.note_power("agents.readbasic", self._caller_org, subject="agents")
+        access_checks.note_launch("agents.readbasic", None, self._caller_org, subject="agents")
         snapshots: list[AgentToolSnapshot] = []
         for agent in await self._list_discovery_agents(discovery_scope):
             snapshots.append(await self.get_agent_snapshot(str(agent.id)))
@@ -623,11 +619,7 @@ class MCPAgentGatewayService:
         """
         snapshot = await self.get_agent_snapshot(agent_id)
         tool = self.find_tool(snapshot, tool_ref)
-        access_checks.note_power(
-            "agents.execute",
-            access_checks.launch_target(snapshot.agent.organization_id, self._caller_org),
-            subject=f"agent:{snapshot.agent.id}",
-        )
+        access_checks.note_launch("agents.execute", snapshot.agent.organization_id, self._caller_org, subject=f"agent:{snapshot.agent.id}")
         return await self.execute_tool(
             snapshot,
             tool,

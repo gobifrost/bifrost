@@ -374,9 +374,12 @@ async def execute_sdk_workflow(
     access_checks.note("child_run", execution_org_id)
     if request.code:
         access_checks.note_power("repository.readwrite", execution_org_id, subject="inline_code")
-    access_checks.note_power(
+    # The execution organization is already the workflow's, or the caller's
+    # for a Global workflow or inline code.
+    access_checks.note_launch(
         "workflows.execute",
         execution_org_id,
+        caller_org_id,
         subject="inline_code" if workflow is None else f"workflow:{workflow.id}",
     )
 

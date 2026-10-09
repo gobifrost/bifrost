@@ -943,7 +943,7 @@ async def cli_ai_complete(
     from shared.sdk_ai import SdkAIError, complete_sdk_ai
 
     # AI is used in the caller's organization; a scope only attributes usage.
-    access_checks.note_power("ai.execute", current_user.organization_id, subject="ai:complete")
+    access_checks.note_launch("ai.execute", None, current_user.organization_id, subject="ai:complete")
     try:
         result = await complete_sdk_ai(
             db,
@@ -990,7 +990,7 @@ async def cli_ai_stream(
     # yet sent); later failures are SSE error events.
     resolved_org_id = await _resolve_sdk_org_id(current_user, request.org_id, db)
     # AI is used in the caller's organization; a scope only attributes usage.
-    access_checks.note_power("ai.execute", current_user.organization_id, subject="ai:stream")
+    access_checks.note_launch("ai.execute", None, current_user.organization_id, subject="ai:stream")
 
     async def sse():
         # The request session is committed and closed before the response
@@ -1042,7 +1042,7 @@ async def cli_ai_info(
 
     from shared.sdk_ai import SdkAIError, get_sdk_model_info
 
-    access_checks.note_power("ai.read", current_user.organization_id, subject="ai:info")
+    access_checks.note_launch("ai.read", None, current_user.organization_id, subject="ai:info")
     try:
         result = await get_sdk_model_info(db, current_user)
     except SdkAIError as e:

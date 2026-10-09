@@ -15,8 +15,13 @@ against their own roles. Written to the audit log:
 
 Each decision (kind, operation, target, run user, outcome and subject: the
 table, secret, path, user or object it concerns) is written once per run, or
-once per person acting directly (Redis marks it for a day). Without
-Redis nothing is written. Nothing here raises into the request.
+once per person acting directly (Redis marks it for a day). A note already
+judged for that run or person that day is not judged again, so a repeated
+launch costs one judgement a day. Without Redis nothing is written. Nothing
+here raises into the request.
+
+A note on an object the request did not load (``Owned``) is resolved here:
+judged in the object's organization, and dropped when its actor owns it.
 """
 
 from __future__ import annotations
@@ -27,12 +32,14 @@ from functools import cache
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.access_checks import Collector, Note
 from src.core.cache.redis_client import get_shared_redis
 from src.core.database import get_db_context
 from src.models.contracts.access_list import AccessEntry
+from src.models.orm import AgentRun, Artifact, Execution
 from src.repositories.audit_logs import AuditLogRepository
 from src.services.authorization.explain import (
     ALL_ORGS,
@@ -76,14 +83,51 @@ def _target_org(target: Any) -> UUID | None:
     return target if isinstance(target, UUID) else None
 
 
+_OWNED_FACTS = ("owned", "object_id", "actor")
+
+
+async def _resolve_owned(db: AsyncSession, note: Note) -> Note | None:
+    """``note`` in its object's organization, or None when the object is gone
+    or its actor owns it (nothing elevated happened)."""
+    facts = note.facts
+    object_id, actor = UUID(facts["object_id"]), UUID(facts["actor"])
+    if facts["owned"] == "execution":
+        execution = (
+            await db.execute(select(Execution.organization_id, Execution.executed_by).where(Execution.id == object_id))
+        ).one_or_none()
+        if execution is None or execution.executed_by == actor:
+            return None
+        organization_id = execution.organization_id
+    elif facts["owned"] == "agent_run":
+        run = (
+            await db.execute(select(AgentRun.org_id, AgentRun.caller_user_id).where(AgentRun.id == object_id))
+        ).one_or_none()
+        if run is None or run.caller_user_id == str(actor):
+            return None
+        organization_id = run.org_id
+    else:
+        # A workspace is someone else's when another user's artifact is in it.
+        other = (
+            await db.execute(
+                select(Artifact.organization_id)
+                .where(Artifact.workspace_id == object_id, Artifact.created_by_user_id != actor)
+                .limit(1)
+            )
+        ).one_or_none()
+        if other is None:
+            return None
+        organization_id = other.organization_id
+    return Note(note.kind, organization_id, {key: value for key, value in facts.items() if key not in _OWNED_FACTS})
+
+
 def judge(run_user: RunUser, powers: Powers | None, note: Note, entry: AccessEntry | None) -> Trace:
     """Judge one note; ``powers`` is None for a person acting directly."""
     facts = note.facts
     if note.kind == "permission":
         return check_permission(run_user, powers, facts["permission"], note.target)
-    assert powers is not None, "only a run's request notes the other kinds"
     if note.kind in ("scope_switch", "child_run"):
         return check_target(run_user, powers, note.target, entry)
+    assert powers is not None, "only a run's request notes the other kinds"
     if note.kind == "run_as":
         return check_run_as(run_user, powers, UUID(str(facts["run_as_user_id"])))
     if note.kind == "entry":
@@ -93,7 +137,10 @@ def judge(run_user: RunUser, powers: Powers | None, note: Note, entry: AccessEnt
     return check_secret(run_user, powers, _target_org(note.target), kind=facts["kind"], name=facts["name"])
 
 
-def _written(note: Note, trace: Trace, run_user: RunUser) -> bool:
+def _written(note: Note, trace: Trace, run_user: RunUser, *, direct: bool) -> bool:
+    if direct:
+        # A person's own request records would-deny decisions only.
+        return trace.outcome == "failure"
     if trace.outcome == "failure":
         # Only what today allows: a denial today already stops the request.
         return bool(note.facts.get("today", True))
@@ -122,6 +169,15 @@ class _Writer:
             await self.redis.set(f"bifrost:access_check:{self.run_key}:{digest}", "1", nx=True, ex=_DEDUPE_SECONDS)
         )
 
+    def _decision(self, note: Note) -> list[Any]:
+        target = "*" if note.target == ALL_ORGS else _plain(note.target)
+        subject = sorted((key, str(value)) for key, value in note.facts.items() if key not in _PER_CALL_FACTS)
+        return [note.kind, self.operation, target, subject]
+
+    async def first_judgement(self, note: Note) -> bool:
+        """Whether ``note`` has not been judged for this run or person today."""
+        return await self._first_time("judged", *self._decision(note))
+
     async def gap(self, kind: str, reason: str, user_id: UUID | None = None) -> None:
         if not await self._first_time("gap", kind, self.operation, reason):
             return
@@ -141,9 +197,8 @@ class _Writer:
         )
 
     async def check(self, note: Note, trace: Trace, run_user: RunUser) -> None:
-        target = "*" if note.target == ALL_ORGS else _plain(note.target)
-        subject = sorted((key, str(value)) for key, value in note.facts.items() if key not in _PER_CALL_FACTS)
-        if not await self._first_time(note.kind, self.operation, target, run_user.user_id, trace.outcome, subject):
+        kind, operation, target, subject = self._decision(note)
+        if not await self._first_time(kind, operation, target, run_user.user_id, trace.outcome, subject):
             return
         today = note.facts.get("today", True)
         await self.repo.create(
@@ -179,7 +234,10 @@ class _Writer:
 
 async def _write(db: AsyncSession, collector: Collector, *, operation: str, route: tuple[str, str] | None) -> None:
     writer = _Writer(db, await get_shared_redis(), collector, operation)
-    kinds = sorted({note.kind for note in collector.notes})
+    notes = [note for note in collector.notes if "gap" in note.facts or await writer.first_judgement(note)]
+    if not notes:
+        return
+    kinds = sorted({note.kind for note in notes})
     if collector.run_user_id is None:
         for kind in kinds:
             await writer.gap(kind, "missing_lineage")
@@ -191,17 +249,20 @@ async def _write(db: AsyncSession, collector: Collector, *, operation: str, rout
         return
     powers = None if collector.direct else await load_powers(db, collector.workflow_id)
     entry = None if route is None else _entries_by_route().get(route)
-    for note in collector.notes:
-        if "gap" in note.facts:
-            await writer.gap(note.kind, note.facts["gap"], run_user.user_id)
+    for noted in notes:
+        if "gap" in noted.facts:
+            await writer.gap(noted.kind, noted.facts["gap"], run_user.user_id)
             continue
         try:
+            note = await _resolve_owned(db, noted) if "owned" in noted.facts else noted
+            if note is None:
+                continue
             trace = judge(run_user, powers, note, entry)
         except Exception as exc:
-            logger.warning("access check could not be judged (kind=%s): %s", note.kind, type(exc).__name__)
-            await writer.gap(note.kind, f"observer_error:{type(exc).__name__}", run_user.user_id)
+            logger.warning("access check could not be judged (kind=%s): %s", noted.kind, type(exc).__name__)
+            await writer.gap(noted.kind, f"observer_error:{type(exc).__name__}", run_user.user_id)
             continue
-        if _written(note, trace, run_user):
+        if _written(note, trace, run_user, direct=collector.direct):
             await writer.check(note, trace, run_user)
 
 

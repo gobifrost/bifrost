@@ -146,6 +146,33 @@ def enforce_non_admin_update(agent: Agent, agent_data: AgentUpdate) -> None:
         )
 
 
+def needs_admin_to_create(agent_data: AgentCreate, *, caller_org_id: UUID | None) -> bool:
+    """Whether a non-admin would be refused this create by the gates above:
+    what the platform-admin branch unlocks (report-only use)."""
+    try:
+        enforce_non_admin_create(agent_data, caller_org_id=caller_org_id)
+    except HTTPException:
+        return True
+    return False
+
+
+def needs_admin_to_update(agent: Agent, agent_data: AgentUpdate) -> bool:
+    """Whether the owner of a private agent would be refused this update:
+    budget fields, a change of access level, privileged fields or a move
+    (report-only use; the router's owner gates, without raising)."""
+    from src.models.contracts.agents import AgentAccessLevel
+
+    if any(field_name in agent_data.model_fields_set for field_name in BUDGET_FIELDS):
+        return True
+    if agent_data.access_level is not None and agent_data.access_level != AgentAccessLevel.PRIVATE:
+        return True
+    try:
+        enforce_non_admin_update(agent, agent_data)
+    except HTTPException:
+        return True
+    return False
+
+
 async def validate_agent_references(
     db: DbSession,
     *,

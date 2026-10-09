@@ -255,18 +255,21 @@ def _target_step(run_user: RunUser, target: TargetOrg) -> Step:
 
 
 def check_target(
-    run_user: RunUser, powers: Powers, target: TargetOrg, entry: AccessEntry | None
+    run_user: RunUser, powers: Powers | None, target: TargetOrg, entry: AccessEntry | None
 ) -> Trace:
-    """Acting in ``target``: in reach, and the power held there."""
+    """Acting in ``target``: in reach, and the power held there. ``powers``
+    None is a person acting directly."""
     org = target if isinstance(target, UUID) else None
-    return _trace(
-        [
-            _run_user_step(run_user),
-            _powers_step(powers),
-            _target_step(run_user, target),
-            _permission_step(run_user, powers, org, entry),
-        ]
-    )
+    if powers is None:
+        powers_step = _NO_WORKFLOW
+        permission = (
+            Step("permission", "Permission", "not_applicable", "no_access_list_entry")
+            if entry is None
+            else _direct_permission_step(run_user, org, entry)
+        )
+    else:
+        powers_step, permission = _powers_step(powers), _permission_step(run_user, powers, org, entry)
+    return _trace([_run_user_step(run_user), powers_step, _target_step(run_user, target), permission])
 
 
 def _workflow_access_step(run_user: RunUser, workflow_access: bool | None) -> Step:
