@@ -835,7 +835,20 @@ jobs:
             -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
           for d in $DEPLOYMENTS; do
             echo "::group::rollout status $d"
-            kubectl -n bifrost rollout status "deployment/$d" --timeout=5m
+            rollout_timeout="5m"
+            component=$(kubectl -n bifrost get "deployment/$d" \
+              -o jsonpath='{.metadata.labels.app\.kubernetes\.io/component}')
+            if [ "$component" = "worker" ]; then
+              # maxSurge=1 and maxUnavailable=0 serialize worker readiness and
+              # draining. Allow each deployed grace period plus 90s for the
+              # observed 62–75s startup, with one extra minute overall.
+              read -r worker_replicas worker_grace <<< "$(kubectl -n bifrost get "deployment/$d" \
+                -o jsonpath='{.spec.replicas} {.spec.template.spec.terminationGracePeriodSeconds}')"
+              worker_startup_budget_seconds=90
+              worker_rollout_timeout_seconds=$(($worker_replicas * ($worker_grace + $worker_startup_budget_seconds) + 60))
+              rollout_timeout="${worker_rollout_timeout_seconds}s"
+            fi
+            kubectl -n bifrost rollout status "deployment/$d" --timeout="$rollout_timeout"
             echo "::endgroup::"
           done
 
