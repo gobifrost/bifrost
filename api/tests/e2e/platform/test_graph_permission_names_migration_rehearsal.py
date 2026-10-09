@@ -242,9 +242,11 @@ def test_roles_and_grants_move_to_graph_names_and_back() -> None:
         }
 
         _upgrade(database_url, "head")
-        assert asyncio.run(_snapshot(database_url, ids)) == after
+        at_head = asyncio.run(_snapshot(database_url, ids))
+        assert at_head == after
 
         _downgrade(database_url, PREVIOUS_REVISION)
-        assert asyncio.run(_snapshot(database_url, ids)) == before
+        downgraded = asyncio.run(_snapshot(database_url, ids))
+        assert downgraded == before
     finally:
         asyncio.run(_drop_database(database_name))

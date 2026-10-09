@@ -167,7 +167,8 @@ def test_migration_frozen_copies_match_live_constants():
     assert graph.down_revision == "20261007_custom_global_identity"
     assert graph.USER_ROLE_ID == str(USER_ROLE_ID)
     assert graph.PLATFORM_OPERATOR_ROLE_ID == str(PLATFORM_OPERATOR_ROLE_ID)
-    assert _graph_renamed(graph, USER_ROLE_ID, fix.USER_BASE_PERMISSIONS) == USER_BASE_PERMISSIONS
+    user_at_graph = _graph_renamed(graph, USER_ROLE_ID, fix.USER_BASE_PERMISSIONS)
+    assert user_at_graph == USER_BASE_PERMISSIONS
 
     assert r2b.PLATFORM_ADMIN_ROLE_ID == PLATFORM_ADMIN_ROLE_ID
     assert r2b.USER_ROLE_ID == USER_ROLE_ID
@@ -190,10 +191,8 @@ def test_migration_frozen_copies_match_live_constants():
     assert latest.PLATFORM_OPERATOR_ROLE_ID == PLATFORM_OPERATOR_ROLE_ID
     assert latest.DECRYPTION_ROLE_ID == DECRYPTION_ROLE_ID
     assert latest.PROVIDER_ORG_ID == PROVIDER_ORG_ID
-    assert (
-        _graph_renamed(graph, PLATFORM_OPERATOR_ROLE_ID, latest.PLATFORM_OPERATOR_PERMISSIONS)
-        == PLATFORM_OPERATOR_PERMISSIONS
-    )
+    operator_at_graph = _graph_renamed(graph, PLATFORM_OPERATOR_ROLE_ID, latest.PLATFORM_OPERATOR_PERMISSIONS)
+    assert operator_at_graph == PLATFORM_OPERATOR_PERMISSIONS
     assert (
         operator.PLATFORM_OPERATOR_PERMISSIONS | latest.ADDED_OPERATOR_PERMISSIONS
         == latest.PLATFORM_OPERATOR_PERMISSIONS

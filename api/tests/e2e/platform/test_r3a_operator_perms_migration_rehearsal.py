@@ -245,7 +245,8 @@ def test_operator_gains_user_support_and_secrets_reader_is_seeded() -> None:
         # added the launch permissions;
         # everything else this revision wrote holds.
         _upgrade(database_url, "head")
-        assert asyncio.run(_snapshot(database_url, custom_role_id)) == {
+        at_head = asyncio.run(_snapshot(database_url, custom_role_id))
+        assert at_head == {
             **after,
             "permissions": {
                 **after["permissions"],
@@ -258,6 +259,7 @@ def test_operator_gains_user_support_and_secrets_reader_is_seeded() -> None:
         }
 
         _downgrade(database_url, PREVIOUS_REVISION)
-        assert asyncio.run(_snapshot(database_url, custom_role_id)) == before
+        downgraded = asyncio.run(_snapshot(database_url, custom_role_id))
+        assert downgraded == before
     finally:
         asyncio.run(_drop_database(database_name))

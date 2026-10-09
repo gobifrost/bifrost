@@ -285,15 +285,18 @@ def test_operator_and_secrets_reader_go_to_exactly_the_right_people() -> None:
         }
 
         _upgrade(database_url, "head")
-        assert asyncio.run(_state(database_url, OPERATOR_ROLE_ID)) == {
+        operator_at_head = asyncio.run(_state(database_url, OPERATOR_ROLE_ID))
+        assert operator_at_head == {
             **operator,
             "permissions": _readbasic(operator["permissions"]) | {"agents.execute"},
         }
-        assert asyncio.run(_state(database_url, DECRYPTION_ROLE_ID)) == decryption
+        decryption_at_head = asyncio.run(_state(database_url, DECRYPTION_ROLE_ID))
+        assert decryption_at_head == decryption
 
         asyncio.run(_assign_secrets_reader_later(database_url, ids["staff"]))
         _downgrade(database_url, PREVIOUS_REVISION)
-        assert asyncio.run(_state(database_url, OPERATOR_ROLE_ID)) == operator_before
+        operator_after_downgrade = asyncio.run(_state(database_url, OPERATOR_ROLE_ID))
+        assert operator_after_downgrade == operator_before
         after_downgrade = asyncio.run(_state(database_url, DECRYPTION_ROLE_ID))
         assert after_downgrade["role"] == decryption_before["role"]
         assert after_downgrade["permissions"] == decryption_before["permissions"]

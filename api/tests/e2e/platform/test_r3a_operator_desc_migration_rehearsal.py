@@ -94,12 +94,15 @@ def test_operator_description_says_what_the_role_does() -> None:
         assert description == BEFORE
 
         _upgrade(database_url, REVISION)
-        assert asyncio.run(_operator(database_url)) == (AFTER, permissions)
+        after = asyncio.run(_operator(database_url))
+        assert after == (AFTER, permissions)
 
         _upgrade(database_url, "head")
-        assert asyncio.run(_operator(database_url)) == (AT_HEAD, _readbasic(permissions | {"workflows.execute", "agents.execute"}))
+        at_head = asyncio.run(_operator(database_url))
+        assert at_head == (AT_HEAD, _readbasic(permissions | {"workflows.execute", "agents.execute"}))
 
         _downgrade(database_url, PREVIOUS_REVISION)
-        assert asyncio.run(_operator(database_url)) == (BEFORE, permissions)
+        downgraded = asyncio.run(_operator(database_url))
+        assert downgraded == (BEFORE, permissions)
     finally:
         asyncio.run(_drop_database(database_name))
