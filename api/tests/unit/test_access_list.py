@@ -163,22 +163,105 @@ def _local_imports(tree: ast.AST) -> dict[str, tuple[str, str]]:
     return imports
 
 
-def _called_names(tree: ast.AST) -> set[str]:
-    return {
-        node.func.id
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-    }
+def _in_scope(obj: object) -> bool:
+    """A module, class or function that lives in ``shared.``/``src.``."""
+    name = obj.__name__ if inspect.ismodule(obj) else getattr(obj, "__module__", "") or ""
+    return name.startswith("shared") or name.startswith("src.")
 
 
-def _reachable_sources(func: object, depth: int = 1, _visited: set[int] | None = None) -> list[str]:
+def _resolve_name(name: str, local_imports: dict[str, tuple[str, str]], func_globals: dict) -> object | None:
+    """The in-scope object a name in a function's source refers to: a
+    function-local ``from x import y`` first, then the module globals."""
+    if name in local_imports:
+        module_name, orig_name = local_imports[name]
+        if not (module_name.startswith("shared") or module_name.startswith("src.")):
+            return None
+        try:
+            mod = importlib.import_module(module_name)
+            target = getattr(mod, orig_name, None)
+            return target if target is not None else importlib.import_module(f"{module_name}.{orig_name}")
+        except Exception:
+            return None
+    candidate = func_globals.get(name)
+    return candidate if candidate is not None and _in_scope(candidate) else None
+
+
+def _call_targets(func: object, tree: ast.AST) -> list[object]:
+    """The in-scope functions a function calls, by these call shapes:
+    ``f()``; ``module.f()``; ``Cls()`` (its ``__init__``); ``Cls.m()``,
+    ``Cls(...).m()``, ``var.m()`` where ``var = Cls(...)`` in the same
+    function, and ``self.m()``/``cls.m()`` inside a method of ``Cls``. Only
+    the named method is followed, never the rest of a class."""
+    local_imports = _local_imports(tree)
+    func_globals = getattr(func, "__globals__", {})
+
+    def resolve(name: str) -> object | None:
+        return _resolve_name(name, local_imports, func_globals)
+
+    qual_parts = getattr(func, "__qualname__", "").split(".")
+    owner = func_globals.get(qual_parts[0]) if len(qual_parts) == 2 else None
+    instances: dict[str, object] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(node.value, ast.Call):
+            cls = resolve(node.value.func.id) if isinstance(node.value.func, ast.Name) else None
+            if inspect.isclass(cls):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                instances |= {t.id: cls for t in targets if isinstance(t, ast.Name)}
+    found: dict[str, object] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        call = node.func
+        target: object | None = None
+        if isinstance(call, ast.Name):
+            target = resolve(call.id)
+            if inspect.isclass(target):
+                target = target.__init__
+        elif isinstance(call, ast.Attribute):
+            base = call.value
+            holder: object | None = None
+            if isinstance(base, ast.Name) and base.id in ("self", "cls"):
+                holder = owner
+            elif isinstance(base, ast.Name):
+                holder = instances.get(base.id) or resolve(base.id)
+            elif isinstance(base, ast.Call) and isinstance(base.func, ast.Name):
+                holder = resolve(base.func.id)
+            if (inspect.ismodule(holder) or inspect.isclass(holder)) and _in_scope(holder):
+                target = getattr(holder, call.attr, None)
+        target = getattr(target, "__func__", target)
+        if inspect.isfunction(target) and _in_scope(target):
+            found[f"{target.__module__}.{target.__qualname__}"] = target
+    return [found[key] for key in sorted(found)]
+
+
+def _parse_source(source: str) -> ast.Module:
+    """Parse a function's source. ``dedent`` cannot strip a method whose
+    multi-line string runs left of its body, so that one is parsed inside a
+    block instead."""
+    try:
+        return ast.parse(textwrap.dedent(source))
+    except SyntaxError:
+        return ast.parse("if True:\n" + source)
+
+
+def _reachable_sources(func: object, depth: int = 1) -> list[str]:
     """The function's own source, plus up to ``depth`` hops of calls it
-    makes to a locally-imported or module-global function that lives in
-    ``shared.``/``src.`` — the "service it calls one level down" the R2a-1
+    makes to a function that lives in ``shared.``/``src.`` (the call shapes
+    in ``_call_targets``) — the "service it calls one level down" the R2a-1
     spec asks the inline-check scan to cover. Token-minting helpers are
-    excluded (see ``_NOISE_FUNC_NAMES``); classes are not descended into
-    (too coarse — an unrelated method would pollute the scan).
+    excluded (see ``_NOISE_FUNC_NAMES``); a class is never descended into
+    wholesale (too coarse — an unrelated method would pollute the scan),
+    only the method a call names.
     """
+    return [source for _func, source in _reachable_functions(func, depth)]
+
+
+def _reachable_functions(
+    func: object, depth: int | None, _visited: set[int] | None = None
+) -> list[tuple[object, str]]:
+    """``(function, source)`` for the function and every function it reaches
+    by the rules in ``_reachable_sources``, up to ``depth`` hops
+    (``None``: unbounded, each function visited once)."""
     if _visited is None:
         _visited = set()
     key = id(func)
@@ -191,34 +274,12 @@ def _reachable_sources(func: object, depth: int = 1, _visited: set[int] | None =
         source = inspect.getsource(func)
     except (OSError, TypeError):
         return []
-    sources = [source]
-    if depth <= 0:
-        return sources
-    try:
-        tree = ast.parse(textwrap.dedent(source))
-    except SyntaxError:
-        return sources
-    local_imports = _local_imports(tree)
-    called = _called_names(tree)
-    func_globals = getattr(func, "__globals__", {})
-    for name in called:
-        target = None
-        if name in local_imports:
-            module_name, orig_name = local_imports[name]
-            if module_name.startswith("shared") or module_name.startswith("src."):
-                try:
-                    mod = importlib.import_module(module_name)
-                    target = getattr(mod, orig_name, None)
-                except Exception:
-                    target = None
-        elif name in func_globals:
-            candidate = func_globals[name]
-            mod_attr = getattr(candidate, "__module__", "") or ""
-            if mod_attr.startswith("shared") or mod_attr.startswith("src."):
-                target = candidate
-        if target is not None and inspect.isfunction(target):
-            sources.extend(_reachable_sources(target, depth - 1, _visited))
-    return sources
+    found: list[tuple[object, str]] = [(func, source)]
+    if depth is not None and depth <= 0:
+        return found
+    for target in _call_targets(func, _parse_source(source)):
+        found.extend(_reachable_functions(target, None if depth is None else depth - 1, _visited))
+    return found
 
 
 def _inline_checks(route: APIRoute) -> tuple[str, ...]:
@@ -227,6 +288,191 @@ def _inline_checks(route: APIRoute) -> tuple[str, ...]:
         blob_parts.extend(_reachable_sources(dep_func, depth=1))
     blob = "\n".join(blob_parts)
     return tuple(sorted({t for t in INLINE_CHECK_TOKENS if re.search(rf"\b{re.escape(t)}\b", blob)}))
+
+
+# ---------------------------------------------------------------------------
+# Elevated checks: every superuser / platform-admin / provider-org / scope-
+# bypass decision anywhere in a route's call chain needs a named permission.
+# ---------------------------------------------------------------------------
+
+# Attribute reads on a principal/user that decide something about the caller.
+_ELEVATED_ATTRS = {
+    "is_superuser",  # principal.is_superuser / user.is_superuser: the platform-admin bit
+    "is_platform_admin",  # the same bit under its principal/context name
+    "is_provider_org",  # provider-org membership (one half of scope bypass)
+}
+# Names whose use is itself an elevated decision.
+_ELEVATED_NAMES = {
+    "has_scope_bypass",  # platform admin OR provider-org member
+    "mcp_write_scope_bypass",  # the MCP-tool analog of has_scope_bypass
+    "CurrentSuperuser",  # superuser-only dependency (Annotated alias)
+    "RequirePlatformAdmin",  # superuser-only dependency (Depends alias)
+    "get_current_superuser",  # the superuser-only resolver itself
+    "CurrentEngineOrBypassUser",  # engine credentials or scope-bypass human
+    "get_current_engine_or_bypass_user",  # the engine-or-bypass resolver itself
+}
+# Keywords that, passed a literal True, act as superuser regardless of caller.
+_ELEVATED_TRUE_KEYWORDS = {"is_superuser", "is_platform_admin"}
+# Using one of these is the route's dependency gate: the resolver is the
+# check site, and the route's own permission is what replaces it.
+_ELEVATED_DEPENDENCY_NAMES = {
+    "CurrentSuperuser",
+    "RequirePlatformAdmin",
+    "get_current_superuser",
+    "CurrentEngineOrBypassUser",
+    "get_current_engine_or_bypass_user",
+}
+_GATE_RESOLVERS = {
+    CurrentGate.SUPERUSER: auth_mod.get_current_superuser,
+    CurrentGate.ENGINE_OR_BYPASS: auth_mod.get_current_engine_or_bypass_user,
+}
+
+
+def _qualname(func: object) -> str:
+    return f"{getattr(func, '__module__', '?')}.{getattr(func, '__qualname__', '?')}"
+
+
+def _elevated_token_nodes(tree: ast.AST) -> list[tuple[ast.AST, str]]:
+    """``(node, token)`` for every elevated token in a parsed source."""
+    found: list[tuple[ast.AST, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr in _ELEVATED_ATTRS | _ELEVATED_NAMES:
+            # Writing the flag applies a decision made where the value came
+            # from; self.is_superuser is the object's copy of a flag its
+            # constructor was given. Both call sites are scanned instead.
+            is_own_copy = isinstance(node.value, ast.Name) and node.value.id in ("self", "cls")
+            if not (isinstance(node.ctx, ast.Store) or is_own_copy):
+                found.append((node, node.attr))
+        elif isinstance(node, ast.Name) and node.id in _ELEVATED_NAMES:
+            found.append((node, node.id))
+        elif (
+            isinstance(node, ast.keyword)
+            and node.arg in _ELEVATED_TRUE_KEYWORDS
+            and isinstance(node.value, ast.Constant)
+            and node.value.value is True
+        ):
+            found.append((node, f"{node.arg}=True"))
+    return found
+
+
+def _elevated_tokens_in(source: str) -> set[str]:
+    return {token for _node, token in _elevated_token_nodes(_parse_source(source))}
+
+
+def _elevated_site_tokens(source: str) -> set[str]:
+    """The tokens that make a function an elevated-check site: a read used
+    to decide, widen, or hand the decision to a callee. Not a site: a flag
+    copied into a dict literal or f-string (claims, responses, audit and
+    log details), or a use of an elevated dependency (the gate resolver is
+    that site)."""
+    tree = _parse_source(source)
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    tokens: set[str] = set()
+    for node, token in _elevated_token_nodes(tree):
+        if token in _ELEVATED_DEPENDENCY_NAMES:
+            continue
+        ancestor = parents.get(node)
+        while ancestor is not None and not isinstance(ancestor, (ast.stmt, ast.Dict, ast.JoinedStr)):
+            ancestor = parents.get(ancestor)
+        if not isinstance(ancestor, (ast.Dict, ast.JoinedStr)):
+            tokens.add(token)
+    return tokens
+
+
+def _route_functions(route: APIRoute | WebSocketRoute, visited: set[int]) -> list[tuple[object, str]]:
+    """A REST or WebSocket route's handler and non-canonical dependencies,
+    transitively, plus its gate resolver when the dependency gate is
+    elevated (the resolver alone: its own callees are authentication)."""
+    found: list[tuple[object, str]] = []
+    for root in [route.endpoint, *_custom_dependency_callables(route)]:
+        found.extend(_reachable_functions(root, None, visited))
+    resolver = _GATE_RESOLVERS.get(_dependency_gate(route))
+    if resolver is not None:
+        found.extend(_reachable_functions(resolver, 0, visited))
+    return found
+
+
+def _entry_functions(entry: AccessEntry, routes: dict) -> list[tuple[str, str]]:
+    """``(qualified name, source)`` of every function an entry reaches, minus
+    the plumbing in ``_ELEVATED_PLUMBING``. A REST/WebSocket entry scans its
+    route; an MCP tool scans its function and, when bound to a REST route in
+    the operation catalog, that route too (a thin HTTP wrapper reaches the
+    route's checks over HTTP, which the source scan cannot follow)."""
+    from src.services.mcp_server.server import get_system_tool_function
+
+    visited: set[int] = set()
+    found: list[tuple[object, str]] = []
+    if entry.mcp_tool is None:
+        found.extend(_route_functions(routes[entry.key], visited))
+    else:
+        tool = get_system_tool_function(entry.mcp_tool)
+        if tool is not None:
+            found.extend(_reachable_functions(tool, None, visited))
+        op = _catalog_by_mcp().get(entry.mcp_tool)
+        if op is not None and op.rest is not None and (op.rest.method, op.rest.path) in routes:
+            found.extend(_route_functions(routes[(op.rest.method, op.rest.path)], visited))
+    return [(_qualname(func), source) for func, source in found if _qualname(func) not in _ELEVATED_PLUMBING]
+
+
+def _elevated_findings(functions: list[tuple[str, str]]) -> dict[str, set[str]]:
+    """``{token: {qualified function, ...}}`` over an entry's functions."""
+    findings: dict[str, set[str]] = {}
+    for where, source in functions:
+        for token in _elevated_tokens_in(source):
+            findings.setdefault(token, set()).add(where)
+    return findings
+
+
+# Functions that mention an elevated token without deciding anything about
+# the caller. Each must be agreed by a reviewer; never list a function that
+# branches on the flag to allow or widen something (the plumbing test below
+# fails if a listed function uses a token in a condition).
+_ELEVATED_PLUMBING: dict[str, str] = {
+    "src.routers.auth.get_current_user_info": "Copies the caller's own flag into the /auth/me response.",
+    "src.routers.auth.register_user": "Copies the new user's flag into their token claims and response.",
+    "src.routers.profile.get_profile": "Copies the caller's own flag into the profile response.",
+    "src.routers.profile.update_profile": "Copies the caller's own flag into the profile response.",
+    "src.routers.profile.upload_avatar": "Copies the caller's own flag into the profile response.",
+    "src.routers.profile.delete_avatar": "Copies the caller's own flag into the profile response.",
+    "src.services.user_role_assignments.authorization_summary": (
+        "Reports the caller's own flag in their authorization summary."
+    ),
+    "src.services.user_provisioning.ensure_user_provisioned": (
+        "Bootstrap: the first account is created as platform admin; reads no caller's privilege."
+    ),
+}
+
+
+def _resolve_qualname(qualname: str) -> object | None:
+    """The function a ``module.Qual.name`` string names, or None."""
+    parts = qualname.split(".")
+    for split in range(len(parts) - 1, 0, -1):
+        try:
+            obj: object = importlib.import_module(".".join(parts[:split]))
+        except ImportError:
+            continue
+        for attr in parts[split:]:
+            obj = getattr(obj, attr, None)
+            if obj is None:
+                return None
+        return obj
+    return None
+
+
+def _elevated_tokens_in_conditions(source: str) -> set[str]:
+    """Elevated tokens used inside a branch condition (if/while/ternary/
+    assert/boolean expression) — the shape of a decision, not a copy."""
+    tree = _parse_source(source)
+    tokens: set[str] = set()
+    for node in ast.walk(tree):
+        tests: list[ast.AST] = []
+        if isinstance(node, (ast.If, ast.While, ast.IfExp, ast.Assert)):
+            tests.append(node.test)
+        elif isinstance(node, ast.BoolOp):
+            tests.extend(node.values)
+        for test in tests:
+            tokens |= _elevated_tokens_in(ast.unparse(test))
+    return tokens
 
 
 def _mcp_tool_ids() -> set[str]:
@@ -638,6 +884,115 @@ class TestIntendedChangeCoverage:
             if entry.intended_change and not admits_bypass:
                 extra.append(entry.key)
         assert not extra, f"intended_change set without a bypass-admitting gate/check: {extra}"
+
+
+def _entry_target(entry: AccessEntry) -> str:
+    return f"MCP {entry.mcp_tool}" if entry.mcp_tool else f"{entry.method} {entry.path}"
+
+
+@pytest.fixture(scope="module")
+def entry_functions() -> dict:
+    """Every entry's reached functions, scanned once for both rules below."""
+    routes: dict = {(m, p): r for m, p, r in _rest_routes()}
+    routes |= {("WS", _openapi_path(r.path)): r for r in app.routes if isinstance(r, WebSocketRoute)}
+    return {entry.key: _entry_functions(entry, routes) for entry in ACCESS_LIST}
+
+
+# Every elevated-check site, mapped to what replaces the flag at the cutover:
+#   "reach": the flag only widens which organizations or rows the caller
+#            sees; it becomes the run user's reach.
+#   "route": the site is a route's own gate (a superuser/bypass dependency
+#            or the evaluator's admin short-circuit); the entry's named
+#            permission replaces it.
+#   a permission string: the power the flag unlocks.
+# A site with several checks maps to a tuple of these.
+_ELEVATED_SITES: dict[str, str | tuple[str, ...]] = {}
+_SITE_KINDS = {"reach", "route"}
+
+
+class TestEveryElevatedCheckHasAScope:
+    """Every route and MCP tool names the permission that gates it, except
+    public entry points, table/file-policy data, and personal routes with no
+    elevated branch. ``execute`` and ``own_private_agent`` always name one.
+    An elevated check (superuser, platform admin, provider org, scope bypass)
+    anywhere in the call chain requires the permission that replaces it,
+    whatever the class; user-controlled table and file policies are the only
+    exception. Each check site, wherever it sits, also names its
+    replacement in ``_ELEVATED_SITES`` — so a permissioned route whose
+    chain unlocks something extra on a flag cannot pass on its route
+    permission alone."""
+
+    _EXEMPT_UNLESS_ELEVATED = {AccessClass.PUBLIC, AccessClass.PERSONAL}
+    _POLICY_GOVERNED = {AccessClass.TABLE_POLICY}
+
+    def test_entries_name_a_permission_where_the_rule_requires_one(self, entry_functions) -> None:
+        offenders: list[tuple[str, str]] = []
+        for entry in ACCESS_LIST:
+            if entry.permission or entry.access_class in self._POLICY_GOVERNED:
+                continue
+            findings = _elevated_findings(entry_functions[entry.key])
+            if not findings and entry.access_class in self._EXEMPT_UNLESS_ELEVATED:
+                continue
+            tokens = ", ".join(sorted(findings)) or "-"
+            where = ", ".join(sorted(set().union(*findings.values()))) if findings else "-"
+            cls = entry.access_class.value
+            offenders.append((cls, f"{_entry_target(entry)} | {cls} | {tokens} | {where}"))
+        offenders.sort()
+        assert not offenders, (
+            f"{len(offenders)} entries need a permission "
+            "(METHOD path | class | elevated tokens found | where):\n"
+            + "\n".join(line for _cls, line in offenders)
+        )
+
+    def test_every_elevated_check_site_names_its_replacement(self, entry_functions) -> None:
+        sites: dict[str, tuple[set[str], set[str]]] = {}
+        for entry in ACCESS_LIST:
+            for where, source in entry_functions[entry.key]:
+                tokens = _elevated_site_tokens(source)
+                if tokens:
+                    site_tokens, targets = sites.setdefault(where, (set(), set()))
+                    site_tokens |= tokens
+                    targets.add(_entry_target(entry))
+        unregistered = []
+        for where in sorted(set(sites) - set(_ELEVATED_SITES)):
+            tokens, targets = sites[where]
+            examples = "; ".join(sorted(targets)[:3])
+            unregistered.append(f"{where} | {', '.join(sorted(tokens))} | {len(targets)} routes: {examples}")
+        stale = sorted(set(_ELEVATED_SITES) - set(sites))
+        assert not unregistered and not stale, (
+            f"{len(unregistered)} elevated-check sites with no replacement in _ELEVATED_SITES "
+            "(qualified function | tokens | routes that reach it):\n"
+            + "\n".join(unregistered)
+            + (f"\n_ELEVATED_SITES entries that are no longer sites: {stale}" if stale else "")
+        )
+
+    def test_registered_replacements_are_reach_route_or_a_permission(self) -> None:
+        invalid = []
+        for where, replacement in sorted(_ELEVATED_SITES.items()):
+            for item in (replacement,) if isinstance(replacement, str) else replacement:
+                if item in _SITE_KINDS:
+                    continue
+                try:
+                    parse_permission(item)
+                except ValueError as exc:
+                    invalid.append(f"{where}: {exc}")
+        assert not invalid, "_ELEVATED_SITES replacements that are not reach/route/a permission:\n" + "\n".join(
+            invalid
+        )
+
+    def test_plumbing_exclusions_exist_and_never_branch_on_a_flag(self) -> None:
+        problems = []
+        for qualname in sorted(_ELEVATED_PLUMBING):
+            func = _resolve_qualname(qualname)
+            if func is None or not inspect.isfunction(func):
+                problems.append(f"{qualname}: no such function")
+                continue
+            branching = _elevated_tokens_in_conditions(inspect.getsource(func))
+            if branching:
+                problems.append(f"{qualname}: branches on {sorted(branching)}")
+        assert not problems, "_ELEVATED_PLUMBING entries that are stale or decide something:\n" + "\n".join(
+            problems
+        )
 
 
 class TestGeneratedJsonFreshness:
