@@ -31,7 +31,7 @@ class Integration(Base):
     __tablename__ = "integrations"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, default=None)
     list_entities_data_provider_id: Mapped[UUID | None] = mapped_column(
         default=None, nullable=True
@@ -73,6 +73,12 @@ class Integration(Base):
 
     __table_args__ = (
         Index("ix_integrations_name", "name"),
+        Index(
+            "uq_integrations_active_name",
+            "name",
+            unique=True,
+            postgresql_where=text("is_deleted IS FALSE"),
+        ),
     )
 
     @property

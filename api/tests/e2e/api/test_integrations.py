@@ -8,7 +8,7 @@ Tests OAuth configuration and authorization endpoints.
 import pytest
 import pytest_asyncio
 from uuid import uuid4
-from src.models.orm import OAuthProvider
+from src.models.orm import Config, IntegrationMapping, OAuthProvider
 
 
 def _sdk_get(e2e_client, headers, *, name, org_id=None):
@@ -169,6 +169,86 @@ class TestIntegrationsCRUD:
         integrations = response.json().get("items", response.json())
         ids = [i["id"] for i in integrations]
         assert integration["id"] not in ids
+
+    async def test_recreate_soft_deleted_name_has_fresh_configuration_and_mappings(
+        self, e2e_client, platform_admin, org1, db_session
+    ):
+        """A reused name is a new connection, never a credential revival."""
+        name = f"e2e_recreate_deleted_{uuid4().hex[:8]}"
+        create_old = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={
+                "name": name,
+                "config_schema": [
+                    {"key": "old_endpoint", "type": "string", "required": True}
+                ],
+            },
+        )
+        assert create_old.status_code == 201, create_old.text
+        old = create_old.json()
+        old_id = old["id"]
+        assert e2e_client.put(
+            f"/api/integrations/{old_id}/config",
+            headers=platform_admin.headers,
+            json={"config": {"old_endpoint": "https://old.example"}},
+        ).status_code == 200
+        assert e2e_client.post(
+            f"/api/integrations/{old_id}/mappings",
+            headers=platform_admin.headers,
+            json={
+                "organization_id": str(org1["id"]),
+                "entity_id": "old-tenant",
+            },
+        ).status_code == 201
+
+        assert e2e_client.delete(
+            f"/api/integrations/{old_id}", headers=platform_admin.headers
+        ).status_code == 204
+
+        recreate = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={
+                "name": name,
+                "config_schema": [
+                    {"key": "new_endpoint", "type": "string", "required": True}
+                ],
+            },
+        )
+        assert recreate.status_code == 201, recreate.text
+        fresh = recreate.json()
+        assert fresh["id"] != old_id
+        assert {item["key"] for item in fresh["config_schema"]} == {"new_endpoint"}
+
+        old_configs = (
+            await db_session.execute(Config.__table__.select().where(Config.integration_id == old_id))
+        ).all()
+        fresh_configs = (
+            await db_session.execute(Config.__table__.select().where(Config.integration_id == fresh["id"]))
+        ).all()
+        fresh_mappings = (
+            await db_session.execute(
+                IntegrationMapping.__table__.select().where(
+                    IntegrationMapping.integration_id == fresh["id"]
+                )
+            )
+        ).all()
+        assert old_configs
+        assert fresh_configs == []
+        assert fresh_mappings == []
+
+    def test_active_integration_name_remains_unique(self, e2e_client, platform_admin):
+        name = f"e2e_active_name_{uuid4().hex[:8]}"
+        create = e2e_client.post(
+            "/api/integrations", headers=platform_admin.headers, json={"name": name}
+        )
+        assert create.status_code == 201, create.text
+
+        duplicate = e2e_client.post(
+            "/api/integrations", headers=platform_admin.headers, json={"name": name}
+        )
+        assert duplicate.status_code == 409, duplicate.text
 
 
 @pytest.mark.e2e
