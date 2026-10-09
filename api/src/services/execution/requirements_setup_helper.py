@@ -7,6 +7,7 @@ import logging
 import subprocess
 import sys
 
+from shared.subprocess_env import package_tool_env
 from src.services.execution.requirements_setup_result import RequirementsInstallResult
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,7 @@ def _get_installed_packages() -> list[dict[str, str]]:
             capture_output=True,
             text=True,
             timeout=30,
+            env=package_tool_env(),
         )
         if result.returncode == 0:
             return json.loads(result.stdout)

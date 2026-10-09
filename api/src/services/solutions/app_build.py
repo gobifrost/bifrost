@@ -24,6 +24,7 @@ from uuid import UUID
 
 from aiobotocore.session import get_session
 
+from shared.subprocess_env import package_tool_env
 from src.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -198,6 +199,7 @@ class SolutionAppBuilder:
             check=True,
             capture_output=True,
             timeout=_BUILD_STEP_TIMEOUT_S,
+            env=package_tool_env(),
         )
         subprocess.run(  # noqa: S603 - trusted toolchain, fixed argv
             ["npx", "vite", "build", "--base", base],
@@ -205,6 +207,7 @@ class SolutionAppBuilder:
             check=True,
             capture_output=True,
             timeout=_BUILD_STEP_TIMEOUT_S,
+            env=package_tool_env(),
         )
         dist_dir = workdir / "dist"
         out: dict[str, bytes] = {}
