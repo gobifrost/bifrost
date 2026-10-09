@@ -17,8 +17,9 @@ move its files to the new campus prefix — some of them multi-GB drawings.
 
 ## Goal
 
-A `files.move(source, destination)` operation for non-workspace locations
-that behaves exactly like the existing guarded file operations (same scope
+Two operations for non-workspace locations — `files.move(source,
+destination)` for one file and `files.move_many(items)` for a batch with a
+result per item — sharing one per-file implementation that behaves exactly like the existing guarded file operations (same scope
 resolution, Solution location gate, file-policy checks with denial audit,
 advisory locking, `expected_version` guard, metadata maintenance, commit
 before publish), moves bytes server-side with no buffering and no size
@@ -34,10 +35,16 @@ verified.
 - **Cross-location or cross-scope moves.** Source and destination are paths in
   the same location under the same effective scope (one Solution install or
   one org).
-- **Folder (prefix) moves.** One file per call. Callers that move many files
-  loop; RTM's relocation workflow does exactly that.
-- **Background execution.** A move is one server-side copy; it stays a
-  synchronous request (no `PlatformJob`).
+- **Folder (prefix) moves.** Callers name explicit source → destination
+  pairs. RTM's paths cannot express "this building" as a prefix (the path
+  carries campus and document type, not building), so a prefix move would not
+  serve the driving case.
+- **Cross-item atomicity.** Each item in a batch is atomic on its own; a
+  failed item does not roll back or stop the others.
+- **Background execution.** Moves are server-side copies; both operations stay
+  synchronous requests (no `PlatformJob`). Batches are capped (500 items) and
+  callers send large relocations in chunks. Revisit with a `PlatformJob` only
+  if real batches outgrow a request.
 
 ## Behavior
 
@@ -57,7 +64,39 @@ files.move(
 
 HTTP: `POST /api/files/move` with `FileMoveRequest`
 (`source`, `destination`, `location`, `scope`, `mode`, `expected_version`,
-`on_conflict`) returning `FileMoveResponse` (`path`, `renamed`).
+`on_conflict`) returning `FileMoveResponse` (`path`, `renamed`). Failures
+raise with the item's status, as `files.delete` does.
+
+```
+files.move_many(
+    items: list[{"source": str, "destination": str,
+                 "expected_version": str | None}],   # 1..500
+    location: str,
+    mode: "cloud" | "local" = "cloud",
+    on_conflict: "error" | "rename" = "error",
+    scope: str | None = None,
+) -> list[{"source", "destination", "path", "renamed",
+           "status_code", "error"}]
+```
+
+HTTP: `POST /api/files/move-many` with `FileMoveBatchRequest` returning
+`FileMoveBatchResponse(results=[FileMoveBatchResult, ...])`, in request
+order, following the `/signed-urls` precedent: the request succeeds (200)
+and each result carries its own `status_code` (200, 400, 403, 404, 409, 500)
+and `error` detail; `path`/`renamed` are set only on success.
+
+Batch rules:
+- Request-level validation fails the whole call before any item runs: empty
+  list or more than 500 items → 422; workspace location → 400; undeclared
+  Solution location → 404. These are the checks that do not depend on the
+  item.
+- Items run sequentially through the same per-file core as `files.move`, each
+  with its own locks, policy checks, and commit, so a completed item is
+  durable even if the request is later interrupted; a caller can resume by
+  retrying the items that did not report success.
+- Two items in one batch that name the same source or the same destination:
+  the second fails on its own (404 source gone, or 409 destination exists /
+  renamed under `on_conflict="rename"`) — no special casing.
 
 ### Authorization
 
@@ -138,17 +177,17 @@ Mirrors `files.delete` end to end:
 
 | Layer | Change |
 |---|---|
-| Shared service | `sdk_move_file` in `api/shared/sdk_files.py` (exported in `__all__`) |
+| Shared service | `sdk_move_file` (one file; the only move implementation) and `sdk_move_files` (request-level checks once, then `sdk_move_file` per item, mapping each `FileServiceError` to a result) in `api/shared/sdk_files.py`, both exported in `__all__` |
 | Backends | `FileBackend.move`; `LocalBackend.move` (`os.replace`); `S3Backend.move` delegates copy/verify/delete to `FileStorageService` |
 | Storage | `copy_raw_in_s3(src_key, dst_key)` with single/multipart copy + `head_raw_s3` for verification (`api/src/services/file_storage/`) |
 | Metadata | `FilePolicyService.move_metadata(...)` keyed like `upsert_metadata` / `delete_metadata` (solution rows by `solution_id`, org rows by `organization_id`) |
-| HTTP | `FileMoveRequest`, `FileMoveResponse`, `POST /api/files/move` in `api/src/routers/files.py` |
-| Registries | `workspace.files.move` in `operation_catalog.py` (CLI `files move`, MCP binding matching delete); `access_list.py` entry; `/api/files/move` in `FILES_ROUTE_PATHS` (`worker_sdk_http.py`) so workflows reach it over the engine socket |
-| Python SDK | `files.move(...)` in `api/bifrost/files.py` (`location` is required, unlike the other methods, because their `workspace` default is the one value move rejects) |
+| HTTP | `FileMoveRequest`/`FileMoveResponse` + `POST /api/files/move`; `FileMoveBatchRequest`/`FileMoveBatchResponse`/`FileMoveBatchResult` + `POST /api/files/move-many` in `api/src/routers/files.py` |
+| Registries | `workspace.files.move` (CLI `files move`, MCP binding matching delete) and `workspace.files.move_many` (no CLI command: a batch is an SDK primitive, recorded as a catalog exclusion) in `operation_catalog.py`; `access_list.py` entries for both routes; both paths in `FILES_ROUTE_PATHS` (`worker_sdk_http.py`) so workflows reach them over the engine socket |
+| Python SDK | `files.move(...)` and `files.move_many(...)` in `api/bifrost/files.py` (`location` is required on both, unlike the other methods, because their `workspace` default is the one value move rejects) |
 | CLI | `bifrost files move SOURCE DESTINATION --location … [--expected-version …] [--rename]`, prints the final path (`api/bifrost/commands/files.py`) |
-| Web SDK | `files.move(source, destination, options)` → `{ path, renamed }` in `client/src/lib/app-sdk/files.ts` |
+| Web SDK | `files.move(source, destination, options)` → `{ path, renamed }` and `files.moveMany(items, options)` → per-item results in `client/src/lib/app-sdk/files.ts` |
 | Generated | `client/src/lib/v1.d.ts`; CLI contract fingerprint (additive — fingerprint only, no `MIN_CLI_VERSION` bump); skill-truth appendices |
-| Product Updates | One feature entry ("Move files in a location") with a disposition file |
+| Product Updates | One feature entry ("Move files in a location", covering both operations) with a disposition file |
 
 ## Testing
 
@@ -164,11 +203,16 @@ Mirrors `files.delete` end to end:
   `test_files_mutation_commit.py`.
 - **Unit (storage)**: single vs multipart copy selection at the 5 GiB
   threshold (multipart part ranges computed correctly).
-- **E2E (`tests/e2e/platform/`)**: Solution-scoped move in a declared
+- **E2E (`tests/e2e/platform/`)**: Solution-scoped `move_many` in a declared
   location with a path-prefix read policy — a healthcare-style principal loses
   read on the old prefix and gains it on the new one; denial when the caller
   lacks delete on the source; local-mode move.
-- **Client vitest (`files.test.ts`)**: request shape and response parsing.
+- **Unit (batch)**: request-level failures (empty, >500, workspace, undeclared
+  location) reject before any item runs; per-item results keep request order;
+  a 403/404/409 item does not stop later items; completed items are committed
+  independently; duplicate source and duplicate destination within one batch.
+- **Client vitest (`files.test.ts`)**: request shape and response parsing for
+  `move` and `moveMany`.
 - Focused verification only (per CLAUDE.md): the tests above, `test_dto_flags`,
   `test_contract_version`, `test_operation_catalog`, access-list tests,
   `./test.sh quality api`, `npm run tsc` / `npm run lint`.
