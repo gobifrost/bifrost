@@ -1852,6 +1852,19 @@
           "Bounded Sol review verified byte-preserving storage, trusted event envelopes, and exclusion from event responses; focused unit and ingress-to-worker tests passed."
         ]
       }
+    },
+    "pr:947": {
+      "classification": "other",
+      "entry_ids": [],
+      "category": "fix",
+      "summary": "Solution CLI prebuilds now retain the SDK provenance used to compile V2 Apps.",
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/947",
+          "User-directed classification: low-level SDK-provenance correction, recorded as Other rather than a product highlight."
+        ]
+      }
     }
   }
 }
