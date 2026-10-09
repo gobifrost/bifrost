@@ -2284,6 +2284,10 @@ _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
     "src.routers.platform.workers.list_pools": (2, "Worker pool diagnostics."),
     "src.routers.platform.workers.recycle_all_processes": (2, "Checks a pool exists before asking it to recycle."),
     "src.routers.platform.workers.recycle_process": (1, "Checks a pool exists before asking it to recycle."),
+    "src.services.access_check_writer._Writer._write_once": (
+        1,
+        "Audit-write marker: whether a report-only row is committed or still being inserted.",
+    ),
     "src.services.ai_usage_service._notify_missing_pricing": (1, "Notification de-duplication marker."),
     "src.services.ai_usage_service.get_cached_pricing": (1, "Model pricing cache."),
     "src.services.ai_usage_service.get_usage_totals": (1, "AI usage totals cache."),

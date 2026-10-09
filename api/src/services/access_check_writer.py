@@ -169,15 +169,19 @@ def _written(note: Note, trace: Trace, run_user: RunUser, *, direct: bool) -> bo
     return False
 
 
+# A marker's value is the token of the judgement or write holding it, or
+# _DONE once that work is complete for the day.
+_DONE = "done"
+
 # Settle a claim only while it is still ours: a claim that expired and was
 # taken by another judgement is left alone. ARGV: token, then the new TTL in
-# seconds (keep) or nothing (release).
+# seconds (keep as done) or nothing (release).
 _SETTLE_SCRIPT = """
 if redis.call('get', KEYS[1]) ~= ARGV[1] then
     return 0
 end
 if ARGV[2] then
-    return redis.call('expire', KEYS[1], ARGV[2])
+    return redis.call('set', KEYS[1], ARGV[3], 'EX', ARGV[2])
 end
 return redis.call('del', KEYS[1])
 """
@@ -217,16 +221,19 @@ class _Writer:
         """Keep a claim for the day when its work is done, release it when
         not (a later request does the work); only while it is still ours."""
         if done:
-            await self.redis.eval(_SETTLE_SCRIPT, 1, claim.key, claim.token, _DEDUPE_SECONDS)
+            await self.redis.eval(_SETTLE_SCRIPT, 1, claim.key, claim.token, _DEDUPE_SECONDS, _DONE)
         else:
             await self.redis.eval(_SETTLE_SCRIPT, 1, claim.key, claim.token)
 
-    async def _write_once(self, parts: list[Any], **row: Any) -> None:
+    async def _write_once(self, parts: list[Any], **row: Any) -> bool:
         """Insert the audit ``row`` unless it was written for ``parts`` today;
-        the day's marker is kept only once the row is committed."""
-        claim = await self._claim(self._key(*parts))
+        whether the row exists. The day's marker is kept only once the row is
+        committed, so a row another writer is still inserting does not exist
+        yet: that writer may fail, and then a later attempt must write it."""
+        key = self._key(*parts)
+        claim = await self._claim(key)
         if claim is None:
-            return
+            return await self.redis.get(key) == _DONE
         try:
             await self.repo.create(**row)
             await self.db.commit()
@@ -234,6 +241,7 @@ class _Writer:
             await self.settle(claim, done=False)
             raise
         await self.settle(claim, done=True)
+        return True
 
     def _decision(self, note: Note) -> list[Any]:
         target = "*" if note.target == ALL_ORGS else _plain(note.target)
@@ -245,8 +253,8 @@ class _Writer:
         today, or is being judged now."""
         return await self._claim(self._key("judged", *self._decision(note)))
 
-    async def gap(self, kind: str, reason: str, user_id: UUID | None = None) -> None:
-        await self._write_once(
+    async def gap(self, kind: str, reason: str, user_id: UUID | None = None) -> bool:
+        return await self._write_once(
             ["gap", kind, self.operation, reason],
             action="access.check_gap",
             user_id=user_id,
@@ -262,10 +270,10 @@ class _Writer:
             operation_id=self.operation,
         )
 
-    async def check(self, note: Note, trace: Trace, run_user: RunUser) -> None:
+    async def check(self, note: Note, trace: Trace, run_user: RunUser) -> bool:
         kind, operation, target, subject = self._decision(note)
         today = note.facts.get("today", True)
-        await self._write_once(
+        return await self._write_once(
             [kind, operation, target, run_user.user_id, trace.outcome, subject],
             action="access.check",
             user_id=run_user.user_id,
@@ -310,11 +318,12 @@ async def _write(db: AsyncSession, collector: Collector, *, operation: str, rout
     run_user = None if collector.run_user_id is None else await load_run_user(db, collector.run_user_id)
     if run_user is None:
         reason = "missing_lineage" if collector.run_user_id is None else "run_user_missing"
+        written = True
         for kind in kinds:
-            await writer.gap(kind, reason)
+            written = await writer.gap(kind, reason) and written
         for _note, claim in notes:
             if claim is not None:
-                await writer.settle(claim, done=True)
+                await writer.settle(claim, done=written)
         return
     powers = None if collector.direct else await load_powers(db, collector.workflow_id)
     entry = None if route is None else _entries_by_route().get(route)
@@ -340,9 +349,9 @@ async def _judge_and_write(
     direct: bool,
 ) -> bool:
     """Judge one note and write it if it matters; whether the judgement
-    completed. An object that does not exist yet or a check that failed
-    returns False, and a failed write raises, so a later request judges it
-    again."""
+    completed. An object that does not exist yet, a check that failed, or a
+    row another writer is still inserting returns False, and a failed write
+    raises, so a later request judges it again."""
     try:
         resolved = await _resolve_owned(db, noted) if "owned" in noted.facts else noted
         if resolved == "own":
@@ -356,7 +365,7 @@ async def _judge_and_write(
         await writer.gap(noted.kind, f"observer_error:{type(exc).__name__}", run_user.user_id)
         return False
     if _written(resolved, trace, run_user, direct=direct):
-        await writer.check(resolved, trace, run_user)
+        return await writer.check(resolved, trace, run_user)
     return True
 
 

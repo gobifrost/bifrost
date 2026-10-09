@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from unittest.mock import patch
 from uuid import UUID, uuid4
@@ -574,6 +575,51 @@ async def test_a_write_that_failed_is_written_by_a_later_attempt(db_session: Asy
     assert (row.action, row.outcome) == ("access.check", "failure")
 
 
+async def test_a_row_another_writer_is_inserting_is_written_by_a_later_attempt(db_session: AsyncSession) -> None:
+    from src.models.orm import Agent, Workflow
+    from src.repositories.audit_logs import AuditLogRepository
+
+    home = await _org(db_session)
+    person = await _person(db_session, home)
+    agent = Agent(
+        name=f"a-{uuid4().hex[:6]}", system_prompt="Hi", organization_id=home.id, owner_user_id=person.id, created_by="t"
+    )
+    locked = [
+        Workflow(name=f"w_{n}", function_name=f"w_{n}", path=f"workflows/{n}.py", access_level="role_based", type="tool")
+        for n in (uuid4().hex[:6], uuid4().hex[:6])
+    ]
+    db_session.add_all([agent, *locked])
+    await db_session.flush()
+    # Two updates attach different tools, so their judgements differ, but
+    # resolution strips the tools and both would write the same row.
+    first, second = (_owned("agents.readwrite", "agent_tools", agent.id, person.id, tools=[str(w.id)]) for w in locked)
+
+    inserting, fail = asyncio.Event(), asyncio.Event()
+    real = AuditLogRepository.create
+    attempts: list[str] = []
+
+    async def failing_once_while_held(self, **row):
+        attempts.append(row["action"])
+        if len(attempts) == 1:
+            inserting.set()
+            await fail.wait()
+            raise ConnectionError("database unavailable")
+        return await real(self, **row)
+
+    with patch.object(AuditLogRepository, "create", failing_once_while_held):
+        holder = asyncio.create_task(flush(db_session, _person_collector(person.id, first), **ROUTE))
+        await inserting.wait()
+        await flush(db_session, _person_collector(person.id, second), **ROUTE)
+        assert attempts == ["access.check"]
+        fail.set()
+        await holder
+        await flush(db_session, _person_collector(person.id, second), **ROUTE)
+
+    assert attempts == ["access.check", "access.check"]
+    [row] = await _person_rows(db_session, person.id)
+    assert (row.action, row.outcome, row.organization_id) == ("access.check", "failure", home.id)
+
+
 async def _writer(db_session: AsyncSession):
     from src.core.cache.redis_client import get_shared_redis
     from src.services.access_check_writer import _Writer
@@ -619,4 +665,5 @@ async def test_a_held_claim_is_kept_for_the_day_or_released(db_session: AsyncSes
     await writer.settle(released, done=False)
 
     assert await redis.ttl(kept.key) > 300
+    assert await redis.get(kept.key) == "done"
     assert await redis.exists(released.key) == 0
