@@ -71,6 +71,19 @@ def _has_solution_context() -> bool:
     return bool(getattr(ctx, "solution_id", None)) if ctx is not None else False
 
 
+def _resolve_batch_scope(scope: str | None) -> str | None:
+    """Preserve caller-requested batch scopes, but leave inherited Solution scope implicit.
+
+    Solution-owned global tables have no organization ID. Sending a workflow's
+    inherited caller organization as an explicit scope makes the API correctly
+    require an organization-owned table instead. An explicit caller scope keeps
+    the normal SDK validation and server authorization checks.
+    """
+    if scope is None and _has_solution_context():
+        return None
+    return resolve_scope(scope)
+
+
 def _validate_batch_document_limit(documents: list[dict[str, Any]]) -> None:
     if len(documents) > 1000:
         raise ValueError("table batch writes accept at most 1000 documents")
@@ -642,7 +655,7 @@ class tables:
             created_by = str(ctx.user_id)
         if updated_by is None and ctx is not None and getattr(ctx, "user_id", None) is not None:
             updated_by = str(ctx.user_id)
-        effective_scope = resolve_scope(scope)
+        effective_scope = _resolve_batch_scope(scope)
 
         items: list[dict[str, Any]] = []
         for doc in documents:
@@ -702,7 +715,7 @@ class tables:
             created_by = str(ctx.user_id)
         if upsert and updated_by is None and ctx is not None and getattr(ctx, "user_id", None) is not None:
             updated_by = str(ctx.user_id)
-        effective_scope = resolve_scope(scope)
+        effective_scope = _resolve_batch_scope(scope)
 
         items: list[dict[str, Any]] = []
         for doc in documents:
@@ -762,7 +775,7 @@ class tables:
         Example:
             >>> result = await tables.delete_batch("customers", ["acme-001", "beta-001"])
         """
-        effective_scope = resolve_scope(scope)
+        effective_scope = _resolve_batch_scope(scope)
         # The shared BifrostClient carries this over the worker's private
         # Unix socket when the engine injected one, and over the network
         # otherwise (a missing table maps to an empty result). A local

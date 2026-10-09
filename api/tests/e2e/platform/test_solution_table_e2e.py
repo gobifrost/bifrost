@@ -33,8 +33,10 @@ def deployed_solution(e2e_client, platform_admin) -> dict:
     coexist_table_manifest_id = str(uuid.uuid4())
     scoped_table_manifest_id = str(uuid.uuid4())
     app_manifest_id = str(uuid.uuid4())
+    batch_workflow_manifest_id = str(uuid.uuid4())
     coexist_table_name = f"coexist_{slug.replace('-', '_')}"
     scoped_table_name = f"people_{slug}"
+    batch_workflow_name = f"batch_writer_{slug.replace('-', '_')}"
     app_id = str(solution_entity_id(UUID(sid), UUID(app_manifest_id)))
     app_slug = f"dash-{slug}"
     index_html = (
@@ -57,9 +59,41 @@ def deployed_solution(e2e_client, platform_admin) -> dict:
                 "id": scoped_table_manifest_id,
                 "name": scoped_table_name,
                 "schema": {"columns": [{"name": "email"}]},
-                "policies": None,
+                "policies": [
+                    {
+                        "name": "admin_bypass",
+                        "actions": ["read", "create", "update", "delete"],
+                        "when": {"user": "is_platform_admin"},
+                    },
+                    {
+                        "name": "authenticated_batch_write",
+                        "actions": ["create", "update"],
+                        "when": None,
+                    },
+                ],
             },
         ],
+        "python_files": {
+            "workflows/batch_writer.py": (
+                "from bifrost import context, tables, workflow\n\n"
+                f'@workflow(name="{batch_workflow_name}")\n'
+                "async def batch_writer():\n"
+                f"    result = await tables.upsert_batch({scoped_table_name!r}, [{{'id': 'batch-row', 'data': {{'email': 'batch@example.test'}}}}])\n"
+                "    return {\n"
+                "        'count': result.count,\n"
+                "        'org_id': context.org_id,\n"
+                "        'solution_id': context.solution_id,\n"
+                "    }\n"
+            ),
+        },
+        "workflows": [{
+            "id": batch_workflow_manifest_id,
+            "name": batch_workflow_name,
+            "function_name": "batch_writer",
+            "path": "workflows/batch_writer.py",
+            "type": "workflow",
+            "access_level": "authenticated",
+        }],
         "apps": [{
             "id": app_manifest_id,
             "slug": app_slug,
@@ -79,6 +113,10 @@ def deployed_solution(e2e_client, platform_admin) -> dict:
     return {
         "app_id": app_id,
         "app_slug": app_slug,
+        "batch_workflow_id": str(
+            solution_entity_id(UUID(sid), UUID(batch_workflow_manifest_id))
+        ),
+        "batch_workflow_name": batch_workflow_name,
         "coexist_table_id": str(
             solution_entity_id(UUID(sid), UUID(coexist_table_manifest_id))
         ),
@@ -161,6 +199,46 @@ def test_solution_app_and_workflow_resolve_their_table_by_name(
     )
     assert got.status_code == 200, got.text
     assert got.json()["data"]["email"] == "b@x.com"
+
+
+
+def test_solution_global_table_batch_write_uses_engine_org_without_explicit_scope(
+    e2e_client, org1, org1_user, platform_admin, deployed_solution
+):
+    """The worker keeps the caller organization while its SDK batch request resolves own global data."""
+    from tests.e2e.conftest import execute_workflow_sync
+
+    result = execute_workflow_sync(
+        e2e_client,
+        org1_user.headers,
+        deployed_solution["batch_workflow_id"],
+        max_wait=120.0,
+    )
+    assert result["status"] == "Success", result
+    assert result["result"] == {
+        "count": 1,
+        "org_id": org1["id"],
+        "solution_id": deployed_solution["id"],
+    }
+
+    stored = e2e_client.get(
+        f"/api/tables/{deployed_solution['scoped_table_name']}/documents/batch-row?solution={deployed_solution['id']}",
+        headers=platform_admin.headers,
+    )
+    assert stored.status_code == 200, stored.text
+    assert stored.json()["data"] == {"email": "batch@example.test"}
+
+
+def test_solution_global_table_batch_write_rejects_explicit_org_scope(
+    e2e_client, org1, platform_admin, deployed_solution
+):
+    """An explicit organization scope cannot be used to write the global table."""
+    response = e2e_client.post(
+        f"/api/tables/{deployed_solution['scoped_table_name']}/documents/batch?solution={deployed_solution['id']}&scope={org1['id']}",
+        headers=platform_admin.headers,
+        json={"upsert": True, "documents": [{"id": "blocked-row", "data": {"email": "blocked@example.test"}}]},
+    )
+    assert response.status_code == 404, response.text
 
 
 def test_v2_app_deploys_builds_dist_and_reports_model(
