@@ -5,6 +5,18 @@
     "target_ref": "e8295e7bf386d8d2223a639f70ab9c2f2dc2c5b1"
   },
   "items": {
+    "pr:951": {
+      "classification": "omit",
+      "entry_ids": [],
+      "reason": "Internal status-projection repair preserves existing Solution deploy polling and CLI recovery behavior; no new customer-facing workflow.",
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/951",
+          "User-directed classification: preserves existing Solution deployment status and CLI behavior without adding a customer-facing workflow."
+        ]
+      }
+    },
     "pr:708": {
       "classification": "omit",
       "entry_ids": [],

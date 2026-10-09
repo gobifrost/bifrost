@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 import pytest
 
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
+from src.models.orm.platform_jobs import PlatformJob
 
 pytestmark = pytest.mark.e2e
 
@@ -149,27 +150,188 @@ def test_async_deploy_reports_failure(e2e_client, platform_admin):
 
 
 @pytest.mark.asyncio
-async def test_polling_does_not_mutate_deploy_job_state(
-    e2e_client, platform_admin, db_session
+@pytest.mark.parametrize(
+    (
+        "canonical_status, phase, result, error_code, error_message, "
+        "expected_status, expected_result, expected_error"
+    ),
+    [
+        (
+            "failed",
+            "Failed",
+            None,
+            "memory_pressure",
+            "Platform job was stopped before the runner container exceeded its memory limit.",
+            "failed",
+            None,
+            "Platform job was stopped before the runner container exceeded its memory limit.",
+        ),
+        (
+            "cancelled",
+            "Cancelled",
+            None,
+            None,
+            None,
+            "failed",
+            None,
+            "Platform job was cancelled.",
+        ),
+        (
+            "succeeded",
+            "Completed",
+            {"solution_id": "canonical-solution"},
+            None,
+            None,
+            "succeeded",
+            {"solution_id": "canonical-solution"},
+            None,
+        ),
+        (
+            "running",
+            "Building application distribution",
+            None,
+            None,
+            None,
+            "running",
+            {"phase": "Building application distribution"},
+            None,
+        ),
+        (
+            "running",
+            None,
+            None,
+            None,
+            None,
+            "running",
+            {"phase": "stale legacy phase"},
+            None,
+        ),
+    ],
+)
+async def test_deploy_status_projects_canonical_platform_job(
+    e2e_client,
+    platform_admin,
+    db_session,
+    canonical_status,
+    phase,
+    result,
+    error_code,
+    error_message,
+    expected_status,
+    expected_result,
+    expected_error,
 ):
-    """Status reads are projections; central lease recovery owns failure state."""
+    """The legacy status route reads, but never owns, canonical job state."""
     now = datetime.now(timezone.utc)
-    job = SolutionDeployJob(
+    projection = SolutionDeployJob(
+        id=uuid.uuid4(),
         install_id=None,
         status="running",
-        result={"phase": "building app dist"},
+        result={"phase": "stale legacy phase"},
         created_at=now,
         updated_at=now,
     )
-    db_session.add(job)
+    canonical = PlatformJob(
+        id=projection.id,
+        job_type="solution.deploy",
+        payload_version=1,
+        payload={"protected": True},
+        requested_by_user_id=str(uuid.uuid4()),
+        requested_by_email="admin@example.com",
+        requested_by_name="Admin",
+        resource_type="solution_deploy",
+        resource_id=str(projection.id),
+        title="Solution deploy",
+        status=canonical_status,
+        phase=phase,
+        result=result,
+        error_code=error_code,
+        error_message=error_message,
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add_all((projection, canonical))
     await db_session.commit()
 
     response = e2e_client.get(
-        f"/api/solutions/deploy-jobs/{job.id}", headers=platform_admin.headers
+        f"/api/solutions/deploy-jobs/{projection.id}", headers=platform_admin.headers
     )
 
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "running"
-    assert body["result"] == {"phase": "building app dist"}
-    assert body["error"] is None
+    assert body["status"] == expected_status
+    assert body["result"] == expected_result
+    assert body["error"] == expected_error
+
+    await db_session.refresh(projection)
+    assert projection.status == "running"
+    assert projection.result == {"phase": "stale legacy phase"}
+
+
+@pytest.mark.asyncio
+async def test_deploy_status_requires_matching_canonical_job(
+    e2e_client, platform_admin, db_session
+):
+    """Legacy rows only validate the request; canonical status owns its state."""
+    legacy = SolutionDeployJob(status="running")
+    db_session.add(legacy)
+    await db_session.commit()
+
+    response = e2e_client.get(
+        f"/api/solutions/deploy-jobs/{legacy.id}", headers=platform_admin.headers
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Deploy job not found"
+
+
+@pytest.mark.asyncio
+async def test_deploy_status_preserves_inactive_install_reactivation_hint(
+    e2e_client, platform_admin, db_session
+):
+    """A canonical failure retains the CLI's install recovery metadata."""
+    now = datetime.now(timezone.utc)
+    projection = SolutionDeployJob(
+        id=uuid.uuid4(),
+        status="failed",
+        error="An inactive install of 'acme' already exists",
+        result={
+            "reason": "inactive_install_exists",
+            "solution_id": "solution-123",
+            "slug": "acme",
+        },
+        created_at=now,
+        updated_at=now,
+    )
+    canonical = PlatformJob(
+        id=projection.id,
+        job_type="solution.deploy",
+        payload_version=1,
+        payload={"protected": True},
+        requested_by_user_id=str(uuid.uuid4()),
+        requested_by_email="admin@example.com",
+        requested_by_name="Admin",
+        resource_type="solution_deploy",
+        resource_id=str(projection.id),
+        title="Solution deploy",
+        status="failed",
+        phase="Failed",
+        error_message="An inactive install of 'acme' already exists",
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add_all((projection, canonical))
+    await db_session.commit()
+
+    response = e2e_client.get(
+        f"/api/solutions/deploy-jobs/{projection.id}", headers=platform_admin.headers
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert response.json()["error"] == "An inactive install of 'acme' already exists"
+    assert response.json()["result"] == {
+        "reason": "inactive_install_exists",
+        "solution_id": "solution-123",
+        "slug": "acme",
+    }
