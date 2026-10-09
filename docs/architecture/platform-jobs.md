@@ -101,10 +101,11 @@ isolated build process does not occupy scheduler capacity.
 Platform jobs run locally by default. When
 `BIFROST_PLATFORM_BUILD_BACKEND=kubernetes` is configured, build-class jobs for
 independent App deploys and App SDK updates (`application.deploy` and
-`application.sdk_update`) are durably placed on the Kubernetes backend at
-enqueue time. The row stores that placement in `execution_backend` so scheduler
-replicas do not disagree after restart or configuration changes. Broader
-Solution build routing is not implemented by this path.
+`application.sdk_update`), Solution deploys and Git syncs (`solution.deploy`
+and `solution.git_sync`), and Solution backup exports (`solution.export`) are
+durably placed on the Kubernetes backend at enqueue time. The row stores that
+placement in `execution_backend` so scheduler replicas do not disagree after
+restart or configuration changes.
 
 The scheduler still owns the control loop. A separate Kubernetes build
 controller task watches `execution_backend='kubernetes'` rows and creates one

@@ -14,7 +14,7 @@ data:
   BIFROST_KUBERNETES_BUILD_CONFIGMAP: "bifrost-config"
   BIFROST_KUBERNETES_BUILD_SECRET: "bifrost-secrets"
   BIFROST_KUBERNETES_BUILD_SERVICE_ACCOUNT: "bifrost-build-runner"
-  BIFROST_KUBERNETES_BUILD_JOB_TYPES: "application.deploy,application.sdk_update,solution.export"
+  BIFROST_KUBERNETES_BUILD_JOB_TYPES: "application.deploy,application.sdk_update,solution.deploy,solution.export,solution.git_sync"
   BIFROST_KUBERNETES_BUILD_MEMORY_REQUEST_MIB: "512"
   BIFROST_KUBERNETES_BUILD_MEMORY_LIMIT_MIB: "2048"
   BIFROST_KUBERNETES_BUILD_MAX_JOBS: "2"

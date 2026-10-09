@@ -13,6 +13,14 @@ from src.jobs.platform.application_deploy import (
     APPLICATION_DEPLOY_DEFINITION,
     ApplicationDeployPayload,
 )
+from src.jobs.platform.solution_deploy import (
+    SOLUTION_DEPLOY_DEFINITION,
+    SolutionDeployPayload,
+)
+from src.jobs.platform.solution_git_sync import (
+    SOLUTION_GIT_SYNC_DEFINITION,
+    SolutionGitSyncPayload,
+)
 from src.services import kubernetes_execution as kube
 from src.services import platform_jobs as service
 
@@ -25,7 +33,7 @@ def _settings(**overrides):
         kubernetes_build_configmap="cm",
         kubernetes_build_secret="sec",
         kubernetes_build_service_account="sa",
-        kubernetes_build_job_types="application.deploy,application.sdk_update",
+        kubernetes_build_job_types="application.deploy,application.sdk_update,solution.deploy,solution.export,solution.git_sync",
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -52,7 +60,9 @@ async def test_execution_defaults_enable_measured_jobs(
     svc = kube.KubernetesExecutionService(db_session)
     assert await svc.enabled_job_types() == kube.DEFAULT_REMOTE_JOB_TYPES
     assert await svc.is_remote_enabled("application.deploy") is True
+    assert await svc.is_remote_enabled("solution.deploy") is True
     assert await svc.is_remote_enabled("solution.export") is True
+    assert await svc.is_remote_enabled("solution.git_sync") is True
     assert await svc.is_remote_enabled("application.publish") is False
 
 
@@ -101,7 +111,9 @@ async def test_execution_list_reports_both_gates(
     assert set(by_type) == {
         "application.deploy",
         "application.sdk_update",
+        "solution.deploy",
         "solution.export",
+        "solution.git_sync",
     }
     assert by_type["application.deploy"].enabled is True
     assert by_type["application.deploy"].default_enabled is True
@@ -109,8 +121,16 @@ async def test_execution_list_reports_both_gates(
     assert by_type["application.deploy"].title == "App deploys"
     assert by_type["solution.export"].enabled is True
     assert by_type["solution.export"].default_enabled is True
-    assert by_type["solution.export"].allowed_by_deployment is False
+    assert by_type["solution.export"].allowed_by_deployment is True
     assert by_type["solution.export"].title == "Solution backup exports"
+    assert by_type["solution.deploy"].enabled is True
+    assert by_type["solution.deploy"].default_enabled is True
+    assert by_type["solution.deploy"].allowed_by_deployment is True
+    assert by_type["solution.deploy"].title == "Solution deploys"
+    assert by_type["solution.git_sync"].enabled is True
+    assert by_type["solution.git_sync"].default_enabled is True
+    assert by_type["solution.git_sync"].allowed_by_deployment is True
+    assert by_type["solution.git_sync"].title == "Solution Git syncs"
 
 
 @pytest.mark.asyncio
@@ -159,6 +179,58 @@ async def test_placement_requires_all_three_gates(
         "application.deploy", True, updated_by="test"
     )
     await db_session.commit()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("definition", "payload"),
+    [
+        (
+            SOLUTION_DEPLOY_DEFINITION,
+            lambda: SolutionDeployPayload(
+                deploy_job_id=uuid4(),
+                kind="deploy",
+                install_id=uuid4(),
+                input_sha256="a" * 64,
+                options={},
+            ),
+        ),
+        (
+            SOLUTION_GIT_SYNC_DEFINITION,
+            lambda: SolutionGitSyncPayload(solution_id=uuid4()),
+        ),
+    ],
+    ids=["solution-deploy", "solution-git-sync"],
+)
+async def test_solution_build_placement_honors_per_job_setting(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    definition,
+    payload,
+) -> None:
+    monkeypatch.setattr(service, "get_settings", _settings)
+    execution = kube.KubernetesExecutionService(db_session)
+    await execution.set_job_type_enabled(definition.job_type, False, updated_by="test")
+    await db_session.commit()
+
+    body = payload()
+    resource_id = str(body.deploy_job_id if hasattr(body, "deploy_job_id") else body.solution_id)
+    job, _ = await service.enqueue_platform_job(
+        db_session,
+        definition,
+        body,
+        dedupe_key=resource_id,
+        organization_id=None,
+        requested_by_user_id=uuid4(),
+        requested_by_email="dev@example.com",
+        requested_by_name="Dev",
+        resource_type="solution",
+        resource_id=resource_id,
+        title="Solution build",
+        action_url=None,
+    )
+
+    assert job.execution_backend == "local"
 
 
 @pytest.mark.asyncio

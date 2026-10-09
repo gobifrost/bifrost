@@ -22,6 +22,14 @@ from src.jobs.platform.solution_export import (
     SOLUTION_EXPORT_DEFINITION,
     SolutionExportPayload,
 )
+from src.jobs.platform.solution_deploy import (
+    SOLUTION_DEPLOY_DEFINITION,
+    SolutionDeployPayload,
+)
+from src.jobs.platform.solution_git_sync import (
+    SOLUTION_GIT_SYNC_DEFINITION,
+    SolutionGitSyncPayload,
+)
 from src.jobs.platform.base import (
     PlatformJobDefinition,
     PlatformJobFailure,
@@ -117,6 +125,119 @@ async def test_enqueue_routes_full_solution_exports_to_isolated_build_backend(
 
     assert reused is False
     assert job.execution_backend == "kubernetes"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("definition", "payload", "resource_type", "title"),
+    [
+        (
+            SOLUTION_DEPLOY_DEFINITION,
+            lambda: SolutionDeployPayload(
+                deploy_job_id=uuid4(),
+                kind="deploy",
+                install_id=uuid4(),
+                input_sha256="a" * 64,
+                options={},
+            ),
+            "solution_deploy",
+            "Deploying solution",
+        ),
+        (
+            SOLUTION_GIT_SYNC_DEFINITION,
+            lambda: SolutionGitSyncPayload(solution_id=uuid4()),
+            "solution",
+            "Syncing solution from Git",
+        ),
+    ],
+    ids=["solution-deploy", "solution-git-sync"],
+)
+async def test_enqueue_routes_solution_build_jobs_to_configured_backend(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    definition: PlatformJobDefinition,
+    payload,
+    resource_type: str,
+    title: str,
+) -> None:
+    monkeypatch.setattr(
+        service,
+        "get_settings",
+        lambda: SimpleNamespace(platform_build_backend="kubernetes"),
+    )
+    body = payload()
+    resource_id = str(body.deploy_job_id if hasattr(body, "deploy_job_id") else body.solution_id)
+
+    job, reused = await service.enqueue_platform_job(
+        db_session,
+        definition,
+        body,
+        dedupe_key=resource_id,
+        organization_id=None,
+        requested_by_user_id=uuid4(),
+        requested_by_email="dev@example.com",
+        requested_by_name="Dev",
+        resource_type=resource_type,
+        resource_id=resource_id,
+        title=title,
+        action_url=None,
+    )
+
+    assert reused is False
+    assert job.execution_backend == "kubernetes"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("definition", "payload"),
+    [
+        (
+            SOLUTION_DEPLOY_DEFINITION,
+            lambda: SolutionDeployPayload(
+                deploy_job_id=uuid4(),
+                kind="deploy",
+                install_id=uuid4(),
+                input_sha256="a" * 64,
+                options={},
+            ),
+        ),
+        (
+            SOLUTION_GIT_SYNC_DEFINITION,
+            lambda: SolutionGitSyncPayload(solution_id=uuid4()),
+        ),
+    ],
+    ids=["solution-deploy", "solution-git-sync"],
+)
+async def test_enqueue_keeps_solution_build_jobs_local_when_kubernetes_is_disabled(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    definition: PlatformJobDefinition,
+    payload,
+) -> None:
+    monkeypatch.setattr(
+        service,
+        "get_settings",
+        lambda: SimpleNamespace(platform_build_backend="local"),
+    )
+    body = payload()
+    resource_id = str(body.deploy_job_id if hasattr(body, "deploy_job_id") else body.solution_id)
+
+    job, _ = await service.enqueue_platform_job(
+        db_session,
+        definition,
+        body,
+        dedupe_key=resource_id,
+        organization_id=None,
+        requested_by_user_id=uuid4(),
+        requested_by_email="dev@example.com",
+        requested_by_name="Dev",
+        resource_type="solution",
+        resource_id=resource_id,
+        title="Solution build",
+        action_url=None,
+    )
+
+    assert job.execution_backend == "local"
 
 
 @pytest.mark.asyncio

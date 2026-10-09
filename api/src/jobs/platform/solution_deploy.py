@@ -126,6 +126,9 @@ SOLUTION_DEPLOY_DEFINITION = PlatformJobDefinition(
         max_attempts=2,
         max_concurrency=1,
         min_memory_headroom_mb=512,
+        execution_class="build",
     ),
     encrypt_payload=True,
+    display_name="Solution deploys",
+    description="Compiles Solution apps in an isolated job pod.",
 )
