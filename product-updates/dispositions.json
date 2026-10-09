@@ -1967,6 +1967,19 @@
           "Product review: Codex root classified this bounded Solution detail count-projection repair as Other/fix under Jack’s authorized solution verification work on 2026-10-09."
         ]
       }
+    },
+    "pr:960": {
+      "classification": "other",
+      "entry_ids": [],
+      "review": {
+        "status": "draft",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/960",
+          "Product review: awaiting Jack's approval of the summary."
+        ]
+      },
+      "summary": "Package installs and app builds run without platform credentials, and MCP sign-in codes are bound to the server secret.",
+      "category": "hardening"
     }
   }
 }
