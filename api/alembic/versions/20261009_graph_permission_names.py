@@ -22,7 +22,18 @@ Each role keeps exactly the access it had. The User and Platform Operator
 roles hold only plain reads of the basic resources among these, so for them
 the change is the readbasic rename.
 
-The downgrade reverses every rename. It cannot split a merged row back:
+Launching is now a permission too, so the built-in roles gain the launch
+permissions for what they can already start: the User role gains Run
+Workflows, Run Agents, Use AI and reading AI model information, and the
+Platform Operator role gains Run Agents next to the Run Workflows it holds.
+
+Workflow permission grants hold permission strings as well; the four
+dotted sub-resource names there get the same rename. (A Solution workflow
+permission request keeps its strings: an approval is bound to a digest of
+them.)
+
+The downgrade removes the launch permissions and reverses every rename. It
+cannot split a merged row back:
 ``reports.read.all``, ``agents.read.all`` and ``workflows.read.all`` land on
 permissions a role may already have held, so they are not restored. No
 built-in role holds them.
@@ -54,6 +65,15 @@ MERGED_READS: dict[str, tuple[str, ...]] = {
     "workflows.read.all": ("roles.read", "settings.read"),
 }
 
+# The built-in roles' fixed ids (shared/builtin_roles.py), and the launch
+# permissions each gains.
+USER_ROLE_ID = "00000000-0000-0000-0000-000000000006"
+PLATFORM_OPERATOR_ROLE_ID = "00000000-0000-0000-0000-000000000007"
+ADDED_LAUNCH_PERMISSIONS: dict[str, tuple[str, ...]] = {
+    USER_ROLE_ID: ("agents.execute", "ai.execute", "ai.read", "workflows.execute"),
+    PLATFORM_OPERATOR_ROLE_ID: ("agents.execute",),
+}
+
 revision: str = "20261009_graph_permission_names"
 down_revision: Union[str, None] = "20261007_custom_global_identity"
 branch_labels: Union[str, Sequence[str], None] = None
@@ -78,6 +98,15 @@ def _move(old: str, new: tuple[str, ...]) -> None:
     )
 
 
+def _rename_grants(old: str, new: str) -> None:
+    """Rename a permission held by workflow permission grants. The new name
+    was invalid before this revision, so no grant can collide with it."""
+    op.get_bind().execute(
+        sa.text("UPDATE workflow_permission_grants SET permission = :new WHERE permission = :old"),
+        {"old": old, "new": new},
+    )
+
+
 def upgrade() -> None:
     for old, new in sorted(GRAPH_RENAMES.items()):
         _move(old, (new,))
@@ -87,9 +116,32 @@ def upgrade() -> None:
         _move(f"{resource}.read.all", (f"{resource}.read",))
     for old, new in sorted(MERGED_READS.items()):
         _move(old, new)
+    connection = op.get_bind()
+    for role_id, permissions in sorted(ADDED_LAUNCH_PERMISSIONS.items()):
+        for permission in permissions:
+            connection.execute(
+                sa.text(
+                    "INSERT INTO role_permissions (role_id, permission) "
+                    "VALUES (CAST(:role_id AS uuid), :permission) ON CONFLICT DO NOTHING"
+                ),
+                {"role_id": role_id, "permission": permission},
+            )
+    for old, new in sorted(GRAPH_RENAMES.items()):
+        _rename_grants(old, new)
 
 
 def downgrade() -> None:
+    for old, new in sorted(GRAPH_RENAMES.items()):
+        _rename_grants(new, old)
+    connection = op.get_bind()
+    for role_id, permissions in sorted(ADDED_LAUNCH_PERMISSIONS.items()):
+        connection.execute(
+            sa.text(
+                "DELETE FROM role_permissions "
+                "WHERE role_id = CAST(:role_id AS uuid) AND permission = ANY(:permissions)"
+            ),
+            {"role_id": role_id, "permissions": list(permissions)},
+        )
     for resource in DETAIL_READS:
         _move(f"{resource}.read", (f"{resource}.read.all",))
     for resource in BASIC_RESOURCES:

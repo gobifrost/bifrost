@@ -237,10 +237,6 @@ _PRIVILEGED_WITHOUT_AN_ENTRY = frozenset(
         "users.impersonate",
         "privilegedaccess.readwrite",
         "agents.readwrite.all",
-        "executions.read.all",
-        "executions.readwrite.all",
-        "artifacts.read.all",
-        "artifacts.readwrite.all",
         "tableattribution.readwrite",
     }
 )
@@ -250,7 +246,7 @@ def test_every_privileged_permission_gates_some_operation() -> None:
     # A privileged permission no access-list entry uses is almost certainly a
     # typo for one that does.
     used = {entry.permission for entry in ACCESS_LIST if entry.permission}
-    assert PRIVILEGED_PERMISSIONS - used <= _PRIVILEGED_WITHOUT_AN_ENTRY
+    assert PRIVILEGED_PERMISSIONS - used == _PRIVILEGED_WITHOUT_AN_ENTRY
 
 
 def test_secret_decryption_is_excluded_from_the_wildcard_and_privileged() -> None:

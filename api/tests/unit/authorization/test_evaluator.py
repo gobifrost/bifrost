@@ -180,7 +180,7 @@ class TestSecretDecryption:
 class TestNonPermissionClasses:
     @pytest.mark.parametrize(
         "access_class",
-        [AccessClass.PERSONAL, AccessClass.EXECUTE, AccessClass.OWN_PRIVATE_AGENT, AccessClass.TABLE_POLICY],
+        [AccessClass.PERSONAL, AccessClass.OWN_PRIVATE_AGENT, AccessClass.TABLE_POLICY],
     )
     def test_signed_in_user_at_home_only(self, access_class: AccessClass) -> None:
         entry = _entry(access_class)

@@ -74,7 +74,7 @@ async def _operator(database_url: str) -> tuple[str, set[str]]:
 
 
 # The later 20261009_graph_permission_names revision renames the basic
-# resources' everyday read to readbasic.
+# resources' everyday read to readbasic and gives the role Run Agents.
 _READBASIC = {f"{resource}.read": f"{resource}.readbasic" for resource in ("agents", "apps", "executions", "forms")}
 
 
@@ -97,7 +97,7 @@ def test_operator_description_says_what_the_role_does() -> None:
         assert asyncio.run(_operator(database_url)) == (AFTER, permissions)
 
         _upgrade(database_url, "head")
-        assert asyncio.run(_operator(database_url)) == (AT_HEAD, _readbasic(permissions | {"workflows.execute"}))
+        assert asyncio.run(_operator(database_url)) == (AT_HEAD, _readbasic(permissions | {"workflows.execute", "agents.execute"}))
 
         _downgrade(database_url, PREVIOUS_REVISION)
         assert asyncio.run(_operator(database_url)) == (BEFORE, permissions)

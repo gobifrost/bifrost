@@ -706,7 +706,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         cli=CliOperationBinding(path=("platform-jobs", "get")),
         mcp=McpOperationBinding(name="bifrost_platform_job_get"),
         native_builder=True,
-        action_scopes=(),
+        action_scopes=("platformjobs.read.all",),
         authorization_resolver="Platform-job requester identity or platform administrator",
         exclusions={
             "manifest": "Reading job progress does not change manifest state.",

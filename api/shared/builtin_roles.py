@@ -13,7 +13,7 @@ and runtime code agree on identity without a name lookup:
   already reach today. See ``derive_user_base_permissions``.
 - **Platform Operator** (builtin, not base): read visibility into managed
   organizations plus user support, role assignment and running workflows
-  there (see ``PLATFORM_OPERATOR_PERMISSIONS``). Held as an additional role
+  and agents there (see ``PLATFORM_OPERATOR_PERMISSIONS``). Held as an additional role
   by people in the provider organization only.
 - **Secrets Reader** (builtin, not base): holds only ``secrets.read``, the
   one permission the Platform Admin wildcard does not include, so decrypting
@@ -137,7 +137,10 @@ def derive_user_base_permissions(access_list: "list[AccessEntry]") -> frozenset[
 USER_BASE_PERMISSIONS: frozenset[str] = frozenset(
     {
         "agentruns.read",
+        "agents.execute",
         "agents.readbasic",
+        "ai.execute",
+        "ai.read",
         "apps.readbasic",
         "executions.readbasic",
         "forms.readbasic",
@@ -145,6 +148,7 @@ USER_BASE_PERMISSIONS: frozenset[str] = frozenset(
         "mcp.readbasic",
         "metrics.read",
         "settings.readbasic",
+        "workflows.execute",
     }
 )
 
@@ -162,6 +166,7 @@ PLATFORM_OPERATOR_PERMISSIONS: frozenset[str] = frozenset(
         "apps.readbasic",
         "workflows.read",
         "workflows.execute",
+        "agents.execute",
         "executions.readbasic",
         "agentruns.read",
         "configs.read",

@@ -690,8 +690,8 @@
     "reason": "Summarizer backfill/regeneration on agent-run history; platform admins only. The check is the module-local `_is_platform_admin` helper in agent_runs.py, which the one-hop token scan cannot see."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [],
     "inline_effect": null,
@@ -700,12 +700,12 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/agent-runs/enqueue",
-    "permission": null,
-    "reason": "Own or accessible agent-run action."
+    "permission": "agents.execute",
+    "reason": "Starts an agent run."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_provider_org",
@@ -717,8 +717,8 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/agent-runs/execute",
-    "permission": null,
-    "reason": "Own or accessible agent-run action."
+    "permission": "agents.execute",
+    "reason": "Starts an agent run."
   },
   {
     "access_class": "permission",
@@ -771,8 +771,8 @@
     "reason": "Reads shared agent-run history at org scope."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "personal",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "has_scope_bypass",
@@ -785,12 +785,12 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/agent-runs/{run_id}/cancel",
-    "permission": null,
-    "reason": "Own or accessible agent-run action."
+    "permission": "agentruns.readwrite.all",
+    "reason": "Cancels the caller's own agent run; a scope-bypass caller cancels anyone's."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "has_scope_bypass",
@@ -803,8 +803,8 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/agent-runs/{run_id}/dry-run",
-    "permission": null,
-    "reason": "Own or accessible agent-run action."
+    "permission": "agents.execute",
+    "reason": "Starts an agent run."
   },
   {
     "access_class": "permission",
@@ -826,7 +826,7 @@
   },
   {
     "access_class": "own_private_agent",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "has_scope_bypass",
@@ -839,7 +839,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/agent-runs/{run_id}/flag-conversation/message",
-    "permission": null,
+    "permission": "agentruns.readwrite.all",
     "reason": "Tuning action on a run: non-bypass callers are limited to their own run of their own PRIVATE agent (agent_runs.py::_require_own_private_agent_run)."
   },
   {
@@ -857,8 +857,8 @@
     "reason": "Summarizer backfill/regeneration on agent-run history; platform admins only. The check is the module-local `_is_platform_admin` helper in agent_runs.py, which the one-hop token scan cannot see."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "has_scope_bypass",
@@ -872,12 +872,12 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/agent-runs/{run_id}/rerun",
-    "permission": null,
-    "reason": "Own or accessible agent-run action."
+    "permission": "agents.execute",
+    "reason": "Starts an agent run."
   },
   {
     "access_class": "own_private_agent",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "has_scope_bypass",
@@ -890,12 +890,12 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/agent-runs/{run_id}/verdict",
-    "permission": null,
+    "permission": "agentruns.readwrite.all",
     "reason": "Tuning action on a run: non-bypass callers are limited to their own run of their own PRIVATE agent (agent_runs.py::_require_own_private_agent_run)."
   },
   {
     "access_class": "own_private_agent",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "has_scope_bypass",
@@ -908,7 +908,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/agent-runs/{run_id}/verdict",
-    "permission": null,
+    "permission": "agentruns.readwrite.all",
     "reason": "Tuning action on a run: non-bypass callers are limited to their own run of their own PRIVATE agent (agent_runs.py::_require_own_private_agent_run)."
   },
   {
@@ -930,7 +930,7 @@
   },
   {
     "access_class": "own_private_agent",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin"
@@ -941,7 +941,7 @@
     "method": "POST",
     "operation_id": "agents.create",
     "path": "/api/agents",
-    "permission": null,
+    "permission": "agents.readwrite",
     "reason": "Mutation limited to the caller's own private agent."
   },
   {
@@ -984,7 +984,7 @@
   },
   {
     "access_class": "own_private_agent",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin"
@@ -995,7 +995,7 @@
     "method": "DELETE",
     "operation_id": "agents.delete",
     "path": "/api/agents/{agent_id}",
-    "permission": null,
+    "permission": "agents.readwrite",
     "reason": "Mutation limited to the caller's own private agent."
   },
   {
@@ -1019,7 +1019,7 @@
   },
   {
     "access_class": "own_private_agent",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin",
@@ -1031,7 +1031,7 @@
     "method": "PUT",
     "operation_id": "agents.update",
     "path": "/api/agents/{agent_id}",
-    "permission": null,
+    "permission": "agents.readwrite",
     "reason": "Mutation limited to the caller's own private agent."
   },
   {
@@ -1053,7 +1053,7 @@
   },
   {
     "access_class": "own_private_agent",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin",
@@ -1065,7 +1065,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/agents/{agent_id}/logo",
-    "permission": null,
+    "permission": "agents.readwrite",
     "reason": "Mutation limited to the caller's own private agent."
   },
   {
@@ -1087,7 +1087,7 @@
   },
   {
     "access_class": "own_private_agent",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin",
@@ -1099,12 +1099,12 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/agents/{agent_id}/logo",
-    "permission": null,
+    "permission": "agents.readwrite",
     "reason": "Mutation limited to the caller's own private agent."
   },
   {
     "access_class": "own_private_agent",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin"
@@ -1115,7 +1115,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/agents/{agent_id}/promote",
-    "permission": null,
+    "permission": "agents.readwrite",
     "reason": "Mutation limited to the caller's own private agent."
   },
   {
@@ -1153,7 +1153,7 @@
   },
   {
     "access_class": "own_private_agent",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "has_scope_bypass",
@@ -1166,12 +1166,12 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/agents/{agent_id}/tuning-session",
-    "permission": null,
+    "permission": "agents.readwrite",
     "reason": "Tuning session on an accessible agent; non-bypass callers are restricted to their own PRIVATE agent (agent_tuning.py::_load_agent_with_access)."
   },
   {
     "access_class": "own_private_agent",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "has_scope_bypass",
@@ -1184,12 +1184,12 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/agents/{agent_id}/tuning-session/apply",
-    "permission": null,
+    "permission": "agents.readwrite",
     "reason": "Tuning session on an accessible agent; non-bypass callers are restricted to their own PRIVATE agent (agent_tuning.py::_load_agent_with_access)."
   },
   {
     "access_class": "own_private_agent",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "has_scope_bypass",
@@ -1202,7 +1202,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/agents/{agent_id}/tuning-session/dry-run",
-    "permission": null,
+    "permission": "agents.readwrite",
     "reason": "Tuning session on an accessible agent; non-bypass callers are restricted to their own PRIVATE agent (agent_tuning.py::_load_agent_with_access)."
   },
   {
@@ -1308,8 +1308,8 @@
     "reason": "Mutates shared app source/build state."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin",
@@ -1321,8 +1321,8 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/applications/{app_id}/bundle-asset/{filename}",
-    "permission": null,
-    "reason": "Serves the running app to a viewer."
+    "permission": "apps.readbasic",
+    "reason": "Serves the running app: the everyday view of an app shared with the caller; a superuser opens any app."
   },
   {
     "access_class": "permission",
@@ -1392,8 +1392,8 @@
     "reason": "Platform-admin-only operation."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin",
@@ -1405,8 +1405,8 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/applications/{app_id}/dist/{path}",
-    "permission": null,
-    "reason": "Serves the running app to a viewer."
+    "permission": "apps.readbasic",
+    "reason": "Serves the running app: the everyday view of an app shared with the caller; a superuser opens any app."
   },
   {
     "access_class": "permission",
@@ -1644,8 +1644,8 @@
     "reason": "Mutates shared app source/build state."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin",
@@ -1657,8 +1657,8 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/applications/{app_id}/render",
-    "permission": null,
-    "reason": "Serves the running app to a viewer."
+    "permission": "apps.readbasic",
+    "reason": "Serves the running app: the everyday view of an app shared with the caller; a superuser opens any app."
   },
   {
     "access_class": "permission",
@@ -2090,8 +2090,8 @@
     "reason": "User's own chat conversation, message, or artifact."
   },
   {
-    "access_class": "personal",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "has_scope_bypass",
@@ -2105,8 +2105,8 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/chat/conversations/{conversation_id}/messages",
-    "permission": null,
-    "reason": "User's own chat conversation, message, or artifact."
+    "permission": "agents.execute",
+    "reason": "Sends a chat message, which runs the conversation's agent."
   },
   {
     "access_class": "personal",
@@ -2137,8 +2137,8 @@
     "reason": "Reads the org's shared AI model-profile catalog."
   },
   {
-    "access_class": "personal",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_provider_org",
@@ -2150,8 +2150,8 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/chat/runs",
-    "permission": null,
-    "reason": "User's own chat conversation, message, or artifact."
+    "permission": "agents.execute",
+    "reason": "Starts a chat run, which runs the conversation's agent."
   },
   {
     "access_class": "personal",
@@ -2887,18 +2887,20 @@
     "reason": "Reads own-org execution history."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "personal",
+    "boundary": "organization",
     "current_gate": "authenticated",
-    "inline_checks": [],
-    "inline_effect": null,
+    "inline_checks": [
+      "is_superuser"
+    ],
+    "inline_effect": "widens_for_superuser",
     "intended_change": null,
     "mcp_tool": null,
     "method": "POST",
     "operation_id": null,
     "path": "/api/executions/{execution_id}/cancel",
-    "permission": null,
-    "reason": "Cancels an own/accessible execution."
+    "permission": "executions.readwrite.all",
+    "reason": "Cancels the caller's own workflow run; a superuser cancels anyone's."
   },
   {
     "access_class": "permission",
@@ -3542,8 +3544,8 @@
     "reason": "Platform-admin-only operation."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_superuser"
@@ -3554,8 +3556,8 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/forms/{form_id}/captcha/challenge",
-    "permission": null,
-    "reason": "Form runtime/submission path \u2014 running the form."
+    "permission": "forms.readbasic",
+    "reason": "Form runtime: the everyday view of a form shared with the caller; a superuser opens any form."
   },
   {
     "access_class": "permission",
@@ -3614,8 +3616,8 @@
     "reason": "Platform-admin-only operation."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin",
@@ -3627,8 +3629,8 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/forms/{form_id}/fields/{field_name}/options",
-    "permission": null,
-    "reason": "Form runtime/submission path \u2014 running the form."
+    "permission": "workflows.execute",
+    "reason": "Form runtime that runs the form's workflow (startup data, field options or a submission)."
   },
   {
     "access_class": "permission",
@@ -3645,8 +3647,8 @@
     "reason": "Platform-admin-only operation."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_superuser"
@@ -3657,8 +3659,8 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/forms/{form_id}/logo",
-    "permission": null,
-    "reason": "Form runtime/submission path \u2014 running the form."
+    "permission": "forms.readbasic",
+    "reason": "Form runtime: the everyday view of a form shared with the caller; a superuser opens any form."
   },
   {
     "access_class": "permission",
@@ -3745,8 +3747,8 @@
     "reason": "Platform-admin-only operation."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_superuser"
@@ -3757,12 +3759,12 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/forms/{form_id}/runtime",
-    "permission": null,
-    "reason": "Form runtime/submission path \u2014 running the form."
+    "permission": "forms.readbasic",
+    "reason": "Form runtime: the everyday view of a form shared with the caller; a superuser opens any form."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin",
@@ -3774,12 +3776,12 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/forms/{form_id}/startup",
-    "permission": null,
-    "reason": "Form runtime/submission path \u2014 running the form."
+    "permission": "workflows.execute",
+    "reason": "Form runtime that runs the form's workflow (startup data, field options or a submission)."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin",
@@ -3791,12 +3793,12 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/forms/{form_id}/submissions",
-    "permission": null,
-    "reason": "Form runtime/submission path \u2014 running the form."
+    "permission": "workflows.execute",
+    "reason": "Form runtime that runs the form's workflow (startup data, field options or a submission)."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_superuser"
@@ -3807,8 +3809,8 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/forms/{form_id}/upload",
-    "permission": null,
-    "reason": "Form runtime/submission path \u2014 running the form."
+    "permission": "forms.readbasic",
+    "reason": "Form runtime: the everyday view of a form shared with the caller; a superuser opens any form."
   },
   {
     "access_class": "permission",
@@ -4078,59 +4080,65 @@
   },
   {
     "access_class": "personal",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
-    "inline_checks": [],
-    "inline_effect": null,
+    "inline_checks": [
+      "is_platform_admin"
+    ],
+    "inline_effect": "widens_for_superuser",
     "intended_change": null,
     "mcp_tool": null,
     "method": "GET",
     "operation_id": null,
     "path": "/api/home",
-    "permission": null,
-    "reason": "User's own dashboard layout and preferences."
+    "permission": "home.read.all",
+    "reason": "User's own dashboard; a superuser also sees other users' collections."
   },
   {
     "access_class": "personal",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
-    "inline_checks": [],
-    "inline_effect": null,
+    "inline_checks": [
+      "is_platform_admin"
+    ],
+    "inline_effect": "widens_for_superuser",
     "intended_change": null,
     "mcp_tool": null,
     "method": "POST",
     "operation_id": null,
     "path": "/api/home/collections",
-    "permission": null,
-    "reason": "User's own dashboard layout and preferences."
+    "permission": "home.readwrite",
+    "reason": "User's own dashboard collection; creating a shared collection is a superuser's."
   },
   {
     "access_class": "personal",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [],
-    "inline_effect": null,
+    "inline_effect": "widens_for_superuser",
     "intended_change": null,
     "mcp_tool": null,
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/home/collections/{collection_id}",
-    "permission": null,
-    "reason": "User's own dashboard layout and preferences."
+    "permission": "home.readwrite",
+    "reason": "User's own dashboard collection; deleting a shared or another user's collection is a superuser's. The check is shared/home.py::can_edit_collection, which the one-hop token scan cannot see."
   },
   {
     "access_class": "personal",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
-    "inline_checks": [],
-    "inline_effect": null,
+    "inline_checks": [
+      "is_platform_admin"
+    ],
+    "inline_effect": "widens_for_superuser",
     "intended_change": null,
     "mcp_tool": null,
     "method": "PUT",
     "operation_id": null,
     "path": "/api/home/collections/{collection_id}",
-    "permission": null,
-    "reason": "User's own dashboard layout and preferences."
+    "permission": "home.readwrite",
+    "reason": "User's own dashboard collection; editing a shared or another user's collection is a superuser's."
   },
   {
     "access_class": "personal",
@@ -5381,8 +5389,8 @@
     "reason": "Mutates the org's MCP client config."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin",
@@ -5395,12 +5403,12 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}/execute",
-    "permission": null,
-    "reason": "Executes a tool/run through the MCP gateway."
+    "permission": "agents.execute",
+    "reason": "Runs an agent's tool through the MCP gateway."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin",
@@ -5413,8 +5421,8 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/mcp/gateway/capabilities/search",
-    "permission": null,
-    "reason": "Reads MCP gateway state/capabilities."
+    "permission": "agents.readbasic",
+    "reason": "Searches the agents and tools the caller can use through the MCP gateway."
   },
   {
     "access_class": "permission",
@@ -5449,7 +5457,7 @@
     "reason": "Public/unauthenticated entry point (login, OAuth/device flow, health, CLI download, or inbound webhook)."
   },
   {
-    "access_class": "execute",
+    "access_class": "personal",
     "boundary": null,
     "current_gate": "authenticated",
     "inline_checks": [],
@@ -5460,10 +5468,10 @@
     "operation_id": null,
     "path": "/api/mcp/run",
     "permission": null,
-    "reason": "Executes a tool/run through the MCP gateway."
+    "reason": "Serves the caller's own MCP session setup; no elevated branch."
   },
   {
-    "access_class": "execute",
+    "access_class": "personal",
     "boundary": null,
     "current_gate": "authenticated",
     "inline_checks": [],
@@ -5474,7 +5482,7 @@
     "operation_id": null,
     "path": "/api/mcp/run/plugin",
     "permission": null,
-    "reason": "Executes a tool/run through the MCP gateway."
+    "reason": "Serves the caller's own MCP plugin setup; no elevated branch."
   },
   {
     "access_class": "permission",
@@ -5760,7 +5768,7 @@
   },
   {
     "access_class": "personal",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_superuser"
@@ -5771,7 +5779,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/notifications",
-    "permission": null,
+    "permission": "platform.read",
     "reason": "User's own notification."
   },
   {
@@ -5818,7 +5826,7 @@
   },
   {
     "access_class": "personal",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_superuser"
@@ -5829,7 +5837,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/notifications/{notification_id}",
-    "permission": null,
+    "permission": "platform.read",
     "reason": "User's own notification."
   },
   {
@@ -6146,7 +6154,7 @@
   },
   {
     "access_class": "personal",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin"
@@ -6157,36 +6165,36 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/platform-jobs",
-    "permission": null,
+    "permission": "platformjobs.read.all",
     "reason": "Own platform job, or any job for a platform admin (shared/sdk_video.py::can_read_platform_job)."
   },
   {
     "access_class": "personal",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [],
-    "inline_effect": null,
+    "inline_effect": "widens_for_superuser",
     "intended_change": null,
     "mcp_tool": null,
     "method": "GET",
-    "operation_id": null,
+    "operation_id": "platform.jobs.get",
     "path": "/api/platform-jobs/{job_id}",
-    "permission": null,
-    "reason": "Own platform job, or any job for a platform admin (shared/sdk_video.py::can_read_platform_job)."
+    "permission": "platformjobs.read.all",
+    "reason": "Own platform job, or any job for a platform admin. The check is shared/sdk_video.py::can_read_platform_job, which the one-hop token scan cannot see."
   },
   {
     "access_class": "personal",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [],
-    "inline_effect": null,
+    "inline_effect": "widens_for_superuser",
     "intended_change": null,
     "mcp_tool": null,
     "method": "POST",
     "operation_id": null,
     "path": "/api/platform-jobs/{job_id}/cancel",
-    "permission": null,
-    "reason": "Own platform job, or any job for a platform admin (shared/sdk_video.py::can_read_platform_job)."
+    "permission": "platformjobs.readwrite.all",
+    "reason": "Own platform job, or any job for a platform admin. The check is shared/sdk_video.py::can_read_platform_job, which the one-hop token scan cannot see."
   },
   {
     "access_class": "permission",
@@ -7025,8 +7033,8 @@
     "reason": "Platform-admin-only operation."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin",
@@ -7038,12 +7046,12 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/sdk/ai/complete",
-    "permission": null,
-    "reason": "Workflow/agent SDK call made during execution."
+    "permission": "ai.execute",
+    "reason": "Workflow/agent SDK AI call; spends AI credit."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [],
     "inline_effect": null,
@@ -7052,12 +7060,12 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/sdk/ai/info",
-    "permission": null,
-    "reason": "Workflow/agent SDK call made during execution."
+    "permission": "ai.read",
+    "reason": "Lists AI models and profiles for the SDK; returns no secrets."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin",
@@ -7069,12 +7077,12 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/sdk/ai/stream",
-    "permission": null,
-    "reason": "Workflow/agent SDK call made during execution."
+    "permission": "ai.execute",
+    "reason": "Workflow/agent SDK AI call; spends AI credit."
   },
   {
     "access_class": "personal",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "has_scope_bypass",
@@ -7088,12 +7096,12 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/sdk/artifacts",
-    "permission": null,
+    "permission": "artifacts.read.all",
     "reason": "Own execution-workspace artifact, or any artifact in the workspace for a bypass caller (shared/sdk_artifacts.py)."
   },
   {
     "access_class": "personal",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "has_scope_bypass",
@@ -7107,12 +7115,12 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/sdk/artifacts",
-    "permission": null,
+    "permission": "artifacts.readwrite.all",
     "reason": "Own execution-workspace artifact, or any artifact in the workspace for a bypass caller (shared/sdk_artifacts.py)."
   },
   {
     "access_class": "personal",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "has_scope_bypass",
@@ -7126,12 +7134,12 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/sdk/artifacts/document",
-    "permission": null,
+    "permission": "artifacts.readwrite.all",
     "reason": "Own execution-workspace artifact, or any artifact in the workspace for a bypass caller (shared/sdk_artifacts.py)."
   },
   {
-    "access_class": "personal",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "has_scope_bypass",
@@ -7145,12 +7153,12 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/sdk/artifacts/image",
-    "permission": null,
-    "reason": "Own execution-workspace artifact, or any artifact in the workspace for a bypass caller (shared/sdk_artifacts.py)."
+    "permission": "ai.execute",
+    "reason": "Generates an image artifact, which spends AI credit; a scope-bypass caller may write into another user's workspace (shared/sdk_artifacts.py)."
   },
   {
     "access_class": "personal",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "has_scope_bypass",
@@ -7164,12 +7172,12 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/sdk/artifacts/spreadsheet",
-    "permission": null,
+    "permission": "artifacts.readwrite.all",
     "reason": "Own execution-workspace artifact, or any artifact in the workspace for a bypass caller (shared/sdk_artifacts.py)."
   },
   {
     "access_class": "personal",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "has_scope_bypass",
@@ -7183,12 +7191,12 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/sdk/artifacts/text",
-    "permission": null,
+    "permission": "artifacts.readwrite.all",
     "reason": "Own execution-workspace artifact, or any artifact in the workspace for a bypass caller (shared/sdk_artifacts.py)."
   },
   {
-    "access_class": "personal",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [],
     "inline_effect": null,
@@ -7197,12 +7205,12 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/sdk/artifacts/video",
-    "permission": null,
-    "reason": "Own execution-workspace artifact, or any artifact in the workspace for a bypass caller (shared/sdk_artifacts.py)."
+    "permission": "ai.execute",
+    "reason": "Generates a video artifact, which spends AI credit."
   },
   {
     "access_class": "personal",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "has_scope_bypass",
@@ -7216,12 +7224,12 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/sdk/artifacts/{artifact_id}/content",
-    "permission": null,
+    "permission": "artifacts.read.all",
     "reason": "Own execution-workspace artifact, or any artifact in the workspace for a bypass caller (shared/sdk_artifacts.py)."
   },
   {
     "access_class": "personal",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "has_scope_bypass",
@@ -7235,7 +7243,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/sdk/artifacts/{artifact_id}/download-url",
-    "permission": null,
+    "permission": "artifacts.read.all",
     "reason": "Own execution-workspace artifact, or any artifact in the workspace for a bypass caller (shared/sdk_artifacts.py)."
   },
   {
@@ -9027,8 +9035,8 @@
     "reason": "Platform-admin-only operation."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin",
@@ -9040,12 +9048,12 @@
     "method": "POST",
     "operation_id": "workflows.execute",
     "path": "/api/workflows/execute",
-    "permission": null,
-    "reason": "Runs or cancels a workflow execution."
+    "permission": "workflows.execute",
+    "reason": "Starts a workflow; the workflow's own access setting still decides which ones."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "personal",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_superuser"
@@ -9056,8 +9064,8 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/workflows/executions/{execution_id}/cancel",
-    "permission": null,
-    "reason": "Runs or cancels a workflow execution."
+    "permission": "executions.readwrite.all",
+    "reason": "Cancels the caller's own workflow run; a superuser cancels anyone's."
   },
   {
     "access_class": "permission",
@@ -10089,7 +10097,7 @@
   },
   {
     "access_class": "personal",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "has_scope_bypass",
@@ -10101,7 +10109,7 @@
     "method": "WS",
     "operation_id": null,
     "path": "/ws/connect",
-    "permission": null,
+    "permission": "platform.read",
     "reason": "Opens the caller's own event channel; per-channel (table/file/conversation) authorization is enforced on each subscribe message."
   },
   {
@@ -10123,7 +10131,7 @@
   },
   {
     "access_class": "own_private_agent",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin"
@@ -10134,12 +10142,12 @@
     "method": null,
     "operation_id": "agents.create",
     "path": null,
-    "permission": null,
+    "permission": "agents.readwrite",
     "reason": "Thin MCP wrapper over POST /api/agents; inherits that route's entry."
   },
   {
     "access_class": "own_private_agent",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin"
@@ -10150,7 +10158,7 @@
     "method": null,
     "operation_id": "agents.delete",
     "path": null,
-    "permission": null,
+    "permission": "agents.readwrite",
     "reason": "Thin MCP wrapper over DELETE /api/agents/{agent_id}; inherits that route's entry."
   },
   {
@@ -10191,7 +10199,7 @@
   },
   {
     "access_class": "own_private_agent",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin",
@@ -10203,7 +10211,7 @@
     "method": null,
     "operation_id": "agents.update",
     "path": null,
-    "permission": null,
+    "permission": "agents.readwrite",
     "reason": "Thin MCP wrapper over PUT /api/agents/{agent_id}; inherits that route's entry."
   },
   {
@@ -11014,17 +11022,17 @@
   },
   {
     "access_class": "personal",
-    "boundary": null,
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [],
-    "inline_effect": null,
+    "inline_effect": "widens_for_superuser",
     "intended_change": null,
     "mcp_tool": "bifrost_platform_job_get",
     "method": null,
-    "operation_id": null,
+    "operation_id": "platform.jobs.get",
     "path": null,
-    "permission": null,
-    "reason": "Thin MCP wrapper over GET /api/platform-jobs/{job_id}; inherits that route's entry."
+    "permission": "platformjobs.read.all",
+    "reason": "Thin MCP wrapper over GET /api/platform-jobs/{job_id}; inherits that route's entry. The check is shared/sdk_video.py::can_read_platform_job, which the one-hop token scan cannot see."
   },
   {
     "access_class": "permission",
@@ -11275,8 +11283,8 @@
     "reason": "Thin MCP wrapper over DELETE /api/workflows/{workflow_id}; inherits that route's entry."
   },
   {
-    "access_class": "execute",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin",
@@ -11288,7 +11296,7 @@
     "method": null,
     "operation_id": "workflows.execute",
     "path": null,
-    "permission": null,
+    "permission": "workflows.execute",
     "reason": "Thin MCP wrapper over POST /api/workflows/execute; inherits that route's entry. MCP's own workflow-lookup path (mcp_server/server.py::_execute_workflow_tool_impl) passes is_superuser=context.has_scope_bypass to WorkflowRepository, granting provider-org non-admins cross-org name resolution beyond what the inherited REST route's own gate implies."
   },
   {
@@ -11424,7 +11432,7 @@
     "reason": "Reads `_repo/` workspace content; scope-bypass admin only, matching REST files.py editor routes."
   },
   {
-    "access_class": "execute",
+    "access_class": "personal",
     "boundary": null,
     "current_gate": "authenticated",
     "inline_checks": [],

@@ -92,13 +92,13 @@ def test_derived_permissions_read_or_launch_only():
 def test_platform_operator_permissions_are_user_support_reads_and_execution():
     """The Operator role gets read visibility plus user support, role
     assignment (constrained at the cutover to permissionless roles on
-    unprivileged users) and running workflows. Never secret decryption,
+    unprivileged users) and running workflows and agents. Never secret decryption,
     elevated user lifecycle, role authoring, platform-wide permissions, or
     extended management detail."""
     writes = {
         p for p in PLATFORM_OPERATOR_PERMISSIONS if parse_permission(p).action not in {"read", "readbasic"}
     }
-    assert writes == {"users.readwrite", "roleassignments.readwrite", "workflows.execute"}
+    assert writes == {"users.readwrite", "roleassignments.readwrite", "workflows.execute", "agents.execute"}
     for forbidden in ("secrets.read", "userlifecycle.readwrite", "roles.readwrite"):
         assert forbidden not in PLATFORM_OPERATOR_PERMISSIONS
     assert not any(parse_permission(p).domain == "platform" for p in PLATFORM_OPERATOR_PERMISSIONS)
@@ -126,10 +126,11 @@ def _load_migration(filename: str):
     return migration
 
 
-def _graph_renamed(migration, permissions: frozenset[str]) -> frozenset[str]:
-    """What the Graph-names migration leaves of a role holding `permissions`
-    (the built-in roles hold only renames and basic-resource reads)."""
-    renamed = set()
+def _graph_renamed(migration, role_id: UUID, permissions: frozenset[str]) -> frozenset[str]:
+    """What the Graph-names migration leaves of built-in role `role_id`
+    holding `permissions` (the built-in roles hold only renames and
+    basic-resource reads), plus the launch permissions it gains."""
+    renamed = set(migration.ADDED_LAUNCH_PERMISSIONS.get(str(role_id), ()))
     for permission in permissions:
         resource, _, action = permission.partition(".")
         if permission in migration.GRAPH_RENAMES:
@@ -148,7 +149,8 @@ def test_migration_frozen_copies_match_live_constants():
     code). The latest migration that seeds each builtin role must equal the
     live constant: `20261009_graph_permission_names` renames what
     `20260929_user_base_perm_fix` seeded for the User role and what
-    `20261003_r3_operator_secrets` seeded for Platform Operator, and
+    `20261003_r3_operator_secrets` seeded for Platform Operator and adds
+    their launch permissions, and
     `20261001_r3a_operator_perms` seeds Secrets Reader. After a deliberate
     change to the live values, update them through a NEW migration and adjust
     this test to pin the new revision instead. The R2b migration stays pinned
@@ -163,7 +165,9 @@ def test_migration_frozen_copies_match_live_constants():
     assert fix.USER_ROLE_ID == USER_ROLE_ID
     assert (r2b.USER_BASE_PERMISSIONS - fix.REMOVED_PERMISSIONS) | fix.ADDED_PERMISSIONS == fix.USER_BASE_PERMISSIONS
     assert graph.down_revision == "20261007_custom_global_identity"
-    assert _graph_renamed(graph, fix.USER_BASE_PERMISSIONS) == USER_BASE_PERMISSIONS
+    assert graph.USER_ROLE_ID == str(USER_ROLE_ID)
+    assert graph.PLATFORM_OPERATOR_ROLE_ID == str(PLATFORM_OPERATOR_ROLE_ID)
+    assert _graph_renamed(graph, USER_ROLE_ID, fix.USER_BASE_PERMISSIONS) == USER_BASE_PERMISSIONS
 
     assert r2b.PLATFORM_ADMIN_ROLE_ID == PLATFORM_ADMIN_ROLE_ID
     assert r2b.USER_ROLE_ID == USER_ROLE_ID
@@ -186,7 +190,10 @@ def test_migration_frozen_copies_match_live_constants():
     assert latest.PLATFORM_OPERATOR_ROLE_ID == PLATFORM_OPERATOR_ROLE_ID
     assert latest.DECRYPTION_ROLE_ID == DECRYPTION_ROLE_ID
     assert latest.PROVIDER_ORG_ID == PROVIDER_ORG_ID
-    assert _graph_renamed(graph, latest.PLATFORM_OPERATOR_PERMISSIONS) == PLATFORM_OPERATOR_PERMISSIONS
+    assert (
+        _graph_renamed(graph, PLATFORM_OPERATOR_ROLE_ID, latest.PLATFORM_OPERATOR_PERMISSIONS)
+        == PLATFORM_OPERATOR_PERMISSIONS
+    )
     assert (
         operator.PLATFORM_OPERATOR_PERMISSIONS | latest.ADDED_OPERATOR_PERMISSIONS
         == latest.PLATFORM_OPERATOR_PERMISSIONS

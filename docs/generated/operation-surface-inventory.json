@@ -1653,7 +1653,9 @@
         }
       },
       "operation": {
-        "action_scopes": [],
+        "action_scopes": [
+          "platformjobs.read.all"
+        ],
         "async_policy": "synchronous",
         "audit_event": null,
         "authorization_resolver": "Platform-job requester identity or platform administrator",

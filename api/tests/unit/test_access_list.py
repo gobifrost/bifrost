@@ -5,15 +5,15 @@ MCP tool has exactly one entry, and no entry points at a route/tool that no
 longer exists), that each entry's ``current_gate`` matches ONLY what the
 route's dependency tree mechanically enforces today (never narrowed by an
 inline check — that's ``inline_checks``' job), that every ``inline_checks``
-token is actually reachable from the handler's source, that
-permission-class entries are internally consistent and agree with the
-operation catalog, that MCP tools inherit their bound REST route's entry,
+token is actually reachable from the handler's source, that entries naming
+a permission are internally consistent and agree with the operation
+catalog, that MCP tools inherit their bound REST route's entry,
 that every route/tool admitting provider-org non-admins beyond a customer
 member (``engine_or_bypass`` gate, or a ``has_scope_bypass``/
 ``mcp_write_scope_bypass`` inline check) records an ``intended_change``,
 that the generated JSON projection is fresh, and that no write route in the
-personal/execute/own_private_agent classes has snuck onto a
-platform-managed entity outside the reviewed allow-list.
+personal/own_private_agent classes has snuck onto a platform-managed
+entity outside the reviewed allow-list.
 """
 
 from __future__ import annotations
@@ -603,19 +603,22 @@ class TestConsistency:
         # AccessEntry's own validator already enforces this at construction
         # time; re-assert here so a future relaxation of the model doesn't
         # silently drop the guarantee.
+        widening = {InlineEffect.WIDENS_FOR_SUPERUSER, InlineEffect.WIDENS_FOR_BYPASS}
         for entry in ACCESS_LIST:
             if entry.access_class == AccessClass.PERMISSION:
                 assert entry.permission, entry
+            if entry.permission:
                 assert entry.boundary, entry
             else:
-                assert entry.permission is None, entry
                 assert entry.boundary is None, entry
+            if entry.permission and entry.access_class != AccessClass.PERMISSION:
+                assert entry.inline_effect in widening, entry
 
     def test_catalogued_permission_matches_action_scopes(self) -> None:
         catalog_by_id = {op.operation_id: op for op in OPERATION_CATALOG}
         mismatches = []
         for entry in ACCESS_LIST:
-            if entry.operation_id is None or entry.access_class != AccessClass.PERMISSION:
+            if entry.operation_id is None or entry.permission is None:
                 continue
             op = catalog_by_id.get(entry.operation_id)
             if op is None:
@@ -856,6 +859,45 @@ class TestInlineEffect:
         assert not mismatches, f"MCP tool effect differs from its bound REST route: {mismatches}"
 
 
+class TestPermissionOnOtherClasses:
+    """A permission on a class other than ``permission`` gates only the
+    elevated branch, so it needs a boundary and a widening effect."""
+
+    def _personal(self, **kwargs) -> AccessEntry:
+        return AccessEntry(
+            method="GET",
+            path="/x",
+            access_class=AccessClass.PERSONAL,
+            current_gate=CurrentGate.AUTHENTICATED,
+            reason="test",
+            **kwargs,
+        )
+
+    def test_accepted_with_a_boundary_and_a_widening_effect(self) -> None:
+        entry = self._personal(
+            inline_effect=InlineEffect.WIDENS_FOR_SUPERUSER,
+            permission="platformjobs.read.all",
+            boundary="organization",
+        )
+        assert entry.permission == "platformjobs.read.all"
+
+    def test_rejected_without_a_widening_effect(self) -> None:
+        with pytest.raises(ValueError, match="gates only the elevated branch"):
+            self._personal(
+                inline_effect=InlineEffect.NO_CALLER_EFFECT,
+                permission="platformjobs.read.all",
+                boundary="organization",
+            )
+
+    def test_rejected_without_a_boundary(self) -> None:
+        with pytest.raises(ValueError, match="boundary is required when permission is set"):
+            self._personal(inline_effect=InlineEffect.WIDENS_FOR_SUPERUSER, permission="platformjobs.read.all")
+
+    def test_boundary_without_a_permission_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="boundary must be unset"):
+            self._personal(boundary="organization")
+
+
 class TestIntendedChangeCoverage:
     """Any entry that admits a provider-org non-admin beyond a customer
     member — engine_or_bypass gate, an inline has_scope_bypass /
@@ -913,7 +955,7 @@ _SITE_KINDS = {"reach", "route"}
 class TestEveryElevatedCheckHasAScope:
     """Every route and MCP tool names the permission that gates it, except
     public entry points, table/file-policy data, and personal routes with no
-    elevated branch. ``execute`` and ``own_private_agent`` always name one.
+    elevated branch. ``own_private_agent`` always names one.
     An elevated check (superuser, platform admin, provider org, scope bypass)
     anywhere in the call chain requires the permission that replaces it,
     whatever the class; user-controlled table and file policies are the only
@@ -1009,7 +1051,7 @@ class TestGeneratedJsonFreshness:
 
 
 # ---------------------------------------------------------------------------
-# User-base-role rule: no personal/execute/own_private_agent write route on a
+# User-base-role rule: no personal/own_private_agent write route on a
 # platform-managed entity, except this reviewed allow-list.
 # ---------------------------------------------------------------------------
 _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
@@ -1031,21 +1073,11 @@ _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/auth/passkeys/register/verify"): "Own passkey.",
     ("DELETE", "/auth/passkeys/{passkey_id}"): "Own passkey.",
     ("POST", "/api/executions/{execution_id}/cancel"): "Cancel an own/accessible execution.",
-    ("POST", "/api/workflows/execute"): "Run a workflow the caller can already reach.",
     ("POST", "/api/workflows/executions/{execution_id}/cancel"): "Cancel an own/accessible execution.",
-    ("POST", "/api/forms/{form_id}/captcha/challenge"): "Form runtime — submitting the form.",
-    ("POST", "/api/forms/{form_id}/submissions"): "Form runtime — submitting the form.",
-    ("POST", "/api/forms/{form_id}/startup"): "Form runtime — loading the form.",
-    ("POST", "/api/forms/{form_id}/fields/{field_name}/options"): "Form runtime — loading field options.",
-    ("POST", "/api/forms/{form_id}/upload"): "Form runtime — uploading a submission attachment.",
-    ("POST", "/api/sdk/ai/complete"): "Workflow SDK call made during execution.",
-    ("POST", "/api/sdk/ai/stream"): "Workflow SDK call made during execution.",
     ("POST", "/api/sdk/artifacts"): "Own execution-workspace artifact.",
     ("POST", "/api/sdk/artifacts/document"): "Own execution-workspace artifact.",
     ("POST", "/api/sdk/artifacts/spreadsheet"): "Own execution-workspace artifact.",
     ("POST", "/api/sdk/artifacts/text"): "Own execution-workspace artifact.",
-    ("POST", "/api/sdk/artifacts/image"): "Own execution-workspace artifact.",
-    ("POST", "/api/sdk/artifacts/video"): "Own execution-workspace artifact.",
     ("DELETE", "/api/notifications/{notification_id}"): "Own notification.",
     ("PATCH", "/api/profile"): "Own profile.",
     ("POST", "/api/profile/avatar"): "Own profile.",
@@ -1067,34 +1099,22 @@ _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/api/agent-runs/{run_id}/verdict"): "Own private agent's run (tuning).",
     ("DELETE", "/api/agent-runs/{run_id}/verdict"): "Own private agent's run (tuning).",
     ("POST", "/api/agent-runs/{run_id}/flag-conversation/message"): "Own private agent's run (tuning).",
-    ("POST", "/api/agent-runs/{run_id}/rerun"): "Own/accessible agent run.",
-    ("POST", "/api/agent-runs/{run_id}/cancel"): "Own/accessible agent run.",
-    ("POST", "/api/agent-runs/{run_id}/dry-run"): "Own/accessible agent run.",
-    ("POST", "/api/agent-runs/enqueue"): "Own agent run.",
-    ("POST", "/api/agent-runs/execute"): "Own agent run.",
+    ("POST", "/api/agent-runs/{run_id}/cancel"): "Own agent run (or any, for a scope-bypass caller).",
     ("POST", "/api/chat/conversations"): "Own chat conversation.",
     ("DELETE", "/api/chat/conversations/{conversation_id}"): "Own chat conversation.",
-    ("POST", "/api/chat/runs"): "Own chat conversation.",
     ("POST", "/api/chat/runs/{run_id}/cancel"): "Own chat conversation.",
     ("PATCH", "/api/chat/artifacts/{attachment_id}"): "Own chat artifact.",
     ("DELETE", "/api/chat/artifacts/{attachment_id}"): "Own chat artifact.",
     ("POST", "/api/chat/conversations/{conversation_id}/attachments"): "Own chat conversation.",
     ("DELETE", "/api/chat/conversations/{conversation_id}/attachments/{attachment_id}"): "Own chat conversation.",
-    ("POST", "/api/chat/conversations/{conversation_id}/messages"): "Own chat conversation.",
-    ("POST", "/api/mcp/gateway/capabilities/search"): "Discovers tools through the MCP gateway.",
-    ("POST", "/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}/execute"): "Executes a tool through the MCP gateway.",
     ("DELETE", "/api/me/mcp-connections/{connection_id}"): "Own MCP tool connection.",
     ("POST", "/api/platform-jobs/{job_id}/cancel"): "Own platform job (or any, for a platform admin).",
 }
 
 
-def test_personal_execute_own_agent_writes_are_all_on_the_reviewed_allowlist() -> None:
+def test_personal_and_own_agent_writes_are_all_on_the_reviewed_allowlist() -> None:
     write_methods = {"POST", "PUT", "PATCH", "DELETE"}
-    narrow_classes = {
-        AccessClass.PERSONAL,
-        AccessClass.EXECUTE,
-        AccessClass.OWN_PRIVATE_AGENT,
-    }
+    narrow_classes = {AccessClass.PERSONAL, AccessClass.OWN_PRIVATE_AGENT}
     offenders = [
         (entry.method, entry.path)
         for entry in ACCESS_LIST
@@ -1103,7 +1123,7 @@ def test_personal_execute_own_agent_writes_are_all_on_the_reviewed_allowlist() -
         and (entry.method, entry.path) not in _REVIEWED_WRITE_ALLOWLIST
     ]
     assert not offenders, (
-        "personal/execute/own_private_agent write route not on the reviewed "
+        "personal/own_private_agent write route not on the reviewed "
         f"allow-list — narrow the class or add it with a reason: {offenders}"
     )
 
@@ -1113,7 +1133,7 @@ def test_allowlist_has_no_unused_entries() -> None:
         (entry.method, entry.path)
         for entry in ACCESS_LIST
         if entry.access_class
-        in {AccessClass.PERSONAL, AccessClass.EXECUTE, AccessClass.OWN_PRIVATE_AGENT}
+        in {AccessClass.PERSONAL, AccessClass.OWN_PRIVATE_AGENT}
         and entry.method in {"POST", "PUT", "PATCH", "DELETE"}
     }
     unused = set(_REVIEWED_WRITE_ALLOWLIST) - actual

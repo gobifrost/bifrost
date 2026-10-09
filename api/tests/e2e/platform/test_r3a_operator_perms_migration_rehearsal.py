@@ -74,10 +74,14 @@ USER_PERMISSIONS = {
 }
 CUSTOM_PERMISSIONS = {"forms.readwrite", "users.read"}
 # Left by the later 20261009_graph_permission_names revision, which renames
-# the basic resources' everyday read to readbasic.
+# the basic resources' everyday read to readbasic and adds the launch
+# permissions.
 USER_PERMISSIONS_AT_HEAD = {
     "agentruns.read",
+    "agents.execute",
     "agents.readbasic",
+    "ai.execute",
+    "ai.read",
     "apps.readbasic",
     "executions.readbasic",
     "forms.readbasic",
@@ -85,9 +89,11 @@ USER_PERMISSIONS_AT_HEAD = {
     "mcp.readbasic",
     "metrics.read",
     "settings.readbasic",
+    "workflows.execute",
 }
 OPERATOR_PERMISSIONS_AT_HEAD = {
     "agentruns.read",
+    "agents.execute",
     "agents.readbasic",
     "apps.readbasic",
     "configs.read",
@@ -235,7 +241,8 @@ def test_operator_gains_user_support_and_secrets_reader_is_seeded() -> None:
         # wildcard, 20261003_r3_operator_secrets has given Platform Operator
         # workflows.execute, rewritten its description and dropped "Not yet
         # assignable" from Secrets Reader's description, and
-        # 20261009_graph_permission_names has renamed the basic reads;
+        # 20261009_graph_permission_names has renamed the basic reads and
+        # added the launch permissions;
         # everything else this revision wrote holds.
         _upgrade(database_url, "head")
         assert asyncio.run(_snapshot(database_url, custom_role_id)) == {
