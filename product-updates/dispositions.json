@@ -1839,6 +1839,19 @@
           "User requested that the Bifrost website destination use Bifrost branding rather than the Covi installation logo."
         ]
       }
+    },
+    "pr:945": {
+      "classification": "other",
+      "entry_ids": [],
+      "category": "fix",
+      "summary": "Webhook subscribers can verify provider signatures using the original request bytes, including queued deliveries and retries.",
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/945",
+          "Bounded Sol review verified byte-preserving storage, trusted event envelopes, and exclusion from event responses; focused unit and ingress-to-worker tests passed."
+        ]
+      }
     }
   }
 }
