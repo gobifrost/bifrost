@@ -91,3 +91,13 @@ async def test_solution_list_includes_entity_counts(e2e_client, platform_admin, 
         "claims": 1,
         "files": 1,
     }
+
+    detail = e2e_client.get(f"/api/solutions/{solution_id}", headers=platform_admin.headers)
+    assert detail.status_code == 200, detail.text
+
+    entities = e2e_client.get(
+        f"/api/solutions/{solution_id}/entities", headers=platform_admin.headers
+    )
+    assert entities.status_code == 200, entities.text
+    assert detail.json()["entity_counts"] == solution["entity_counts"]
+    assert entities.json()["solution"]["entity_counts"] == solution["entity_counts"]
