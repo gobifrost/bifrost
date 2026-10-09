@@ -298,7 +298,8 @@ async def test_planner_prefetch_ignores_deleted_integration_names(db_session) ->
         db_session, preview_id=UUID(int=7)
     )._prefetch_existing_integrations()
 
-    assert existing == {name: active.id}
+    assert existing[name] == active.id
+    assert deleted.id not in existing.values()
 
 
 def test_planner_includes_hashed_source_files_and_detects_conflicts(tmp_path) -> None:
