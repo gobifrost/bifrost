@@ -103,6 +103,9 @@ python3 scripts/product_updates.py validate \
 python3 -m scripts.prepare_product_updates_image --target "$CONTENT_REF"
 ```
 
+`--dispositions` names the ledger header; each PR's disposition lives in its own
+`product-updates/dispositions/pr-<number>.json`, and the tools assemble them.
+
 Only approved entries enter the bundle. Draft previews use an explicit
 `--allow-draft` command from the authoring guide and never run in a dev image
 or release build.

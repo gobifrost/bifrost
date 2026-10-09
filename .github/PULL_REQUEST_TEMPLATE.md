@@ -1,8 +1,9 @@
 ## Product Updates
 
 Choose one classification for this pull request. This is the proposal that
-reviewers use to update the canonical `product-updates/dispositions.json`;
-checking a box alone does not satisfy the Product Updates check.
+reviewers use to write the canonical
+`product-updates/dispositions/pr-<number>.json`; checking a box alone does not
+satisfy the Product Updates check.
 
 - [ ] Highlight — list the entry UUID(s), or say that the entry is being drafted before this PR receives a number.
 - [ ] Other — give the concise user-visible change that belongs in the durable disposition.

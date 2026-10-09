@@ -5,10 +5,19 @@ const path = require('node:path');
 const { recordDependabotDisposition } = require('./dependabot_product_updates.cjs');
 function fixture() {
   const pr = { state: 'open', user: { login: 'dependabot[bot]', type: 'Bot' }, html_url: 'https://github.com/gobifrost/bifrost/pull/920', base: { ref: 'main', sha: 'a'.repeat(40), repo: { full_name: 'gobifrost/bifrost' } }, head: { ref: 'dependabot/npm/source-map-js', sha: 'b'.repeat(40), repo: { full_name: 'gobifrost/bifrost' } } };
-  const ledger = { schema_version: 1, inventory: {}, items: { 'pr:1': { classification: 'highlight' } } };
+  // Repository files at the PR head: the ledger header, whose items are migrating
+  // into per-item files, plus one file per disposition.
+  const contents = {
+    'product-updates/dispositions.json': { schema_version: 1, inventory: {}, items: { 'pr:2': { classification: 'other' } } },
+    'product-updates/dispositions/pr-1.json': { key: 'pr:1', classification: 'highlight' },
+  };
   const writes = [];
   const files = [{ filename: 'api/src/services/app_compiler/package-lock.json', status: 'modified' }];
-  const github = { paginate: async () => files, rest: { pulls: { get: async () => ({ data: pr }), listFiles() {} }, repos: { getContent: async (args) => { assert.equal(args.ref, pr.head.sha); return { data: { type: 'file', encoding: 'base64', content: Buffer.from(JSON.stringify(ledger)).toString('base64') } }; } }, git: {
+  const github = { paginate: async () => files, rest: { pulls: { get: async () => ({ data: pr }), listFiles() {} }, repos: { getContent: async (args) => {
+    assert.equal(args.ref, pr.head.sha);
+    if (!Object.hasOwn(contents, args.path)) throw Object.assign(new Error('Not Found'), { status: 404 });
+    return { data: { type: 'file', encoding: 'base64', content: Buffer.from(JSON.stringify(contents[args.path])).toString('base64') } };
+  } }, git: {
     getCommit: async () => ({ data: { tree: { sha: 'original-tree' } } }),
     createBlob: async args => { writes.push(args); return { data: { sha: 'blob' } }; },
     createTree: async args => { writes.push(args); return { data: { sha: 'tree' } }; },
@@ -16,27 +25,66 @@ function fixture() {
     updateRef: async args => { writes.push(args); },
   } } };
   const run = alertState => recordDependabotDisposition({ github, repository: { owner: 'gobifrost', repo: 'bifrost' }, number: 920, alertState });
-  return { pr, ledger, writes, files, github, run };
+  return { pr, contents, writes, files, github, run };
 }
-test('persists routine omission without modifying other dispositions or files', async () => {
+test('persists routine omission in its own file without modifying other dispositions or files', async () => {
   const f = fixture();
   assert.deepEqual(await f.run(''), { changed: true, sha: 'new-commit' });
   const result = JSON.parse(f.writes[0].content);
-  assert.deepEqual(result.items['pr:1'], f.ledger.items['pr:1']);
-  assert.equal(result.items['pr:920'].classification, 'omit');
-  assert.equal(result.items['pr:920'].security_review, undefined);
-  assert.deepEqual(f.writes[1].tree.map(x => x.path), ['product-updates/dispositions.json']);
+  assert.equal(f.writes[0].content, `${JSON.stringify(result, null, 2)}\n`);
+  assert.equal(result.key, 'pr:920');
+  assert.equal(result.classification, 'omit');
+  assert.equal(result.security_review, undefined);
+  assert.deepEqual(f.writes[1].tree.map(x => x.path), ['product-updates/dispositions/pr-920.json']);
   assert.deepEqual(f.writes[2].parents, [f.pr.head.sha]);
   assert.equal(f.writes[3].force, false);
 });
 test('preserves required security review for advisory updates', async () => {
   const f = fixture(); await f.run('OPEN');
-  const item = JSON.parse(f.writes[0].content).items['pr:920'];
+  const item = JSON.parse(f.writes[0].content);
   assert.deepEqual(item.security_review, { status: 'required', review_ref: f.pr.html_url });
 });
 test('never replaces a human disposition and is idempotent', async () => {
-  const f = fixture(); f.ledger.items['pr:920'] = { classification: 'highlight', review: { status: 'draft' } };
-  assert.deepEqual(await f.run('OPEN'), { changed: false }); assert.deepEqual(f.writes, []);
+  for (const record of [
+    f => { f.contents['product-updates/dispositions/pr-920.json'] = { key: 'pr:920', classification: 'highlight', review: { status: 'draft' } }; },
+    f => { f.contents['product-updates/dispositions.json'].items['pr:920'] = { classification: 'highlight', review: { status: 'draft' } }; },
+  ]) {
+    const f = fixture(); record(f);
+    assert.deepEqual(await f.run('OPEN'), { changed: false }); assert.deepEqual(f.writes, []);
+  }
+});
+test('a rerun after recording accepts the PR\'s own disposition file', async () => {
+  const f = fixture(); await f.run('');
+  const rerun = fixture();
+  rerun.files.push({ filename: 'product-updates/dispositions/pr-920.json', status: 'added' });
+  rerun.contents['product-updates/dispositions/pr-920.json'] = JSON.parse(f.writes[0].content);
+  assert.deepEqual(await rerun.run(''), { changed: false }); assert.deepEqual(rerun.writes, []);
+});
+test('a ledger without header items records the file', async () => {
+  const f = fixture(); delete f.contents['product-updates/dispositions.json'].items;
+  assert.deepEqual(await f.run(''), { changed: true, sha: 'new-commit' });
+  assert.deepEqual(f.writes[1].tree.map(x => x.path), ['product-updates/dispositions/pr-920.json']);
+});
+test('two PRs record two different files', async () => {
+  const paths = [];
+  for (const number of [920, 921]) {
+    const f = fixture(); f.pr.html_url = `https://github.com/gobifrost/bifrost/pull/${number}`;
+    await recordDependabotDisposition({ github: f.github, repository: { owner: 'gobifrost', repo: 'bifrost' }, number, alertState: '' });
+    paths.push(...f.writes[1].tree.map(x => x.path));
+  }
+  assert.deepEqual(paths, ['product-updates/dispositions/pr-920.json', 'product-updates/dispositions/pr-921.json']);
+});
+test('a malformed ledger, a mismatched file, or another PR\'s file fails closed', async () => {
+  for (const mutate of [
+    f => { f.contents['product-updates/dispositions.json'].items = []; },
+    f => { f.contents['product-updates/dispositions.json'].items = null; },
+    f => { f.contents['product-updates/dispositions.json'].schema_version = 2; },
+    f => { f.contents['product-updates/dispositions/pr-920.json'] = { key: 'pr:921', classification: 'omit' }; },
+    f => f.files.push({ filename: 'product-updates/dispositions/pr-921.json', status: 'added' }),
+    f => f.files.push({ filename: 'product-updates/dispositions.json', status: 'modified' }),
+  ]) {
+    const f = fixture(); mutate(f); await assert.rejects(f.run('')); assert.deepEqual(f.writes, []);
+  }
 });
 test('rejects human authors, forks, wrong branches, and unrelated changes before any write', async () => {
   for (const mutate of [f => f.pr.user.login = 'human', f => f.pr.user.type = 'User', f => f.pr.head.repo.full_name = 'other/fork', f => f.pr.head.ref = 'feature', f => f.pr.base.ref = 'release', f => f.files.push({ filename: 'api/src/main.py', status: 'modified' }), f => f.files[0].status = 'renamed', f => f.files.splice(0)]) {
@@ -65,7 +113,7 @@ test('workflow changes must only update the same fully pinned action', async () 
 test('fixed and dismissed advisory metadata are recognized states', async () => {
   for (const state of ['FIXED', 'DISMISSED']) {
     const f = fixture(); await f.run(state);
-    assert.equal(JSON.parse(f.writes[0].content).items['pr:920'].security_review, undefined);
+    assert.equal(JSON.parse(f.writes[0].content).security_review, undefined);
   }
 });
 

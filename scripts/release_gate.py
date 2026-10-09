@@ -18,6 +18,7 @@ from typing import Any
 from scripts.product_updates import (
     _entry_eligible,
     _in_interval,
+    load_dispositions,
     read_entry,
     schema_errors,
 )
@@ -106,7 +107,11 @@ def validate(content_dir: Path, target: str, base: str | None = None) -> GateRes
     """Validate frozen-release review material and return deterministic sections."""
     errors: list[str] = []
     inventory = _load_json(content_dir / "inventory.json", errors)
-    dispositions = _load_json(content_dir / "dispositions.json", errors)
+    try:
+        items = load_dispositions(content_dir / "dispositions.json")["items"]
+    except ValueError as error:
+        errors.append(str(error))
+        items = {}
     release_review = _load_json(content_dir / "release-review.json", errors)
 
     # A release cannot proceed without a durable human review record.  Stop
@@ -141,8 +146,6 @@ def validate(content_dir: Path, target: str, base: str | None = None) -> GateRes
             if isinstance(entry_id, str):
                 entries[entry_id] = entry
 
-    item_values = dispositions.get("items")
-    items = item_values if isinstance(item_values, dict) else {}
     covered_prs = sorted(
         {
             pr
