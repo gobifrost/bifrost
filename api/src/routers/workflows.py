@@ -67,6 +67,14 @@ from src.core.log_safety import log_safe
 from src.services.audit import emit_audit
 from src.services.operation_catalog import operation_route
 from shared.identities import validate_run_identity
+from shared.run_lineage import identity_lineage
+from src.models.contracts.identities import IdentityPublic
+from src.models.contracts.recommended_access import RecommendedAccess
+from src.models.contracts.workflow_permissions import WorkflowPermissionMode
+from src.services.authorization.enforce import load_caller
+from src.services.identities import list_run_identities, require_delegation
+from src.services.recommended_access import recommended_access
+from src.services.workflow_permissions import get_default_workflow_permission_mode
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +88,7 @@ router = APIRouter(prefix="/api/workflows", tags=["Workflows"])
 
 def _convert_workflow_orm_to_schema(
     workflow: WorkflowORM,
+    default_permission_mode: WorkflowPermissionMode,
     used_by_count: int = 0,
     role_ids: list[UUID] | None = None,
 ) -> WorkflowMetadata:
@@ -91,8 +100,18 @@ def _convert_workflow_orm_to_schema(
     from shared.sdk_execution_reads import convert_workflow_orm_to_schema
 
     return convert_workflow_orm_to_schema(
-        workflow, used_by_count=used_by_count, role_ids=role_ids
+        workflow, default_permission_mode, used_by_count=used_by_count, role_ids=role_ids
     )
+
+
+async def _get_workflow_or_404(db: DbSession, workflow_id: UUID) -> WorkflowORM:
+    workflow = await db.get(WorkflowORM, workflow_id)
+    if workflow is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workflow with ID '{workflow_id}' not found",
+        )
+    return workflow
 
 
 def _extract_workflows_from_props(obj: Any, workflow_ids: set[str]) -> None:
@@ -894,6 +913,7 @@ async def update_workflow(
 
         # The identity must suit the workflow's organization, whichever of
         # the two changed.
+        previous_identity_id = workflow.run_identity_id
         if "run_identity_id" in request.model_fields_set:
             workflow.run_identity_id = request.run_identity_id
         if workflow.run_identity_id is not None and (
@@ -910,6 +930,15 @@ async def update_workflow(
                     status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail={"run_identity_id": str(e)},
                 ) from None
+        # Running as the organization's default identity is what naming none
+        # already does, so only another identity's powers need handing out.
+        if (
+            workflow.run_identity_id is not None
+            and workflow.run_identity_id != previous_identity_id
+            and workflow.run_identity_id
+            != (await identity_lineage(db, workflow.organization_id)).run_user_id
+        ):
+            await require_delegation(db, await load_caller(db, user), workflow.run_identity_id)
 
         # Update access_level if provided
         if request.access_level is not None:
@@ -1108,7 +1137,9 @@ async def update_workflow(
             },
         )
         role_ids = (await _get_workflow_role_ids(db, [workflow.id])).get(workflow.id, [])
-        return _convert_workflow_orm_to_schema(workflow, role_ids=role_ids)
+        return _convert_workflow_orm_to_schema(
+            workflow, await get_default_workflow_permission_mode(db), role_ids=role_ids
+        )
 
     except HTTPException:
         raise
@@ -1672,9 +1703,60 @@ async def get_workflow(
     role_ids = (await _get_workflow_role_ids(db, [workflow.id])).get(workflow.id, [])
     return _convert_workflow_orm_to_schema(
         workflow,
+        await get_default_workflow_permission_mode(db),
         used_by_count=used_by_counts.get(workflow.id, 0),
         role_ids=role_ids,
     )
+
+
+@router.get(
+    "/{workflow_id}/run-identities",
+    response_model=list[IdentityPublic],
+    summary="List the identities a workflow may run as",
+    description=(
+        "The identities this workflow may run as when no person starts it: its organization's identities "
+        "(a global or provider-organization workflow: the global and provider-organization ones), including "
+        "the default (Platform admin only)"
+    ),
+)
+async def list_workflow_run_identities(
+    workflow_id: UUID,
+    user: CurrentSuperuser,
+    db: DbSession,
+) -> list[IdentityPublic]:
+    workflow = await _get_workflow_or_404(db, workflow_id)
+    return await list_run_identities(db, workflow.organization_id)
+
+
+@router.get(
+    "/{workflow_id}/recommended-access",
+    response_model=RecommendedAccess,
+    summary="Recommended Access for a workflow's identity",
+    description=(
+        "What the identity the workflow runs as would also need, based on the access checks its runs recorded "
+        "in the audit log's hot window: reach into other organizations, roles its policies look for, and the "
+        "workflow's own roles. Computed for identity_id, else the identity it runs as now. Empty until runs are "
+        "observed (Platform admin only)"
+    ),
+)
+async def get_workflow_recommended_access(
+    workflow_id: UUID,
+    user: CurrentSuperuser,
+    db: DbSession,
+    identity_id: UUID | None = Query(None, description="Compute for this identity instead of the current one"),
+) -> RecommendedAccess:
+    workflow = await _get_workflow_or_404(db, workflow_id)
+    if identity_id is None:
+        identity_id = workflow.run_identity_id or (await identity_lineage(db, workflow.organization_id)).run_user_id
+    else:
+        try:
+            await validate_run_identity(db, workflow_organization_id=workflow.organization_id, identity_id=identity_id)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail={"identity_id": str(e)},
+            ) from None
+    return await recommended_access(db, workflow, identity_id)
 
 
 @router.delete(

@@ -38,6 +38,32 @@ test.describe("User Listing", () => {
 		});
 	});
 
+	test("people are on the Users tab, identities on their own", async ({
+		page,
+	}) => {
+		await page.goto("/users");
+
+		const views = page.getByRole("navigation", { name: "User views" });
+		await expect(
+			views.getByRole("link", { name: "Users" }),
+		).toHaveAttribute("aria-current", "page");
+		await page
+			.getByPlaceholder("Search users by email or name...")
+			.fill("Default Identity");
+		await expect(
+			page.getByText("No users match your search"),
+		).toBeVisible();
+
+		await views.getByRole("link", { name: "Identities" }).click();
+		await expect(page).toHaveURL(/\/users\/identities$/);
+		await expect(
+			page
+				.getByRole("row")
+				.filter({ hasText: "Default Identity" })
+				.first(),
+		).toBeVisible();
+	});
+
 	test("should show create user button", async ({ page }) => {
 		await page.goto("/users");
 

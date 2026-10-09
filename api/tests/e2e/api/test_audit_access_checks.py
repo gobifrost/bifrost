@@ -84,9 +84,131 @@ def world(e2e_client, platform_admin, async_session_factory):
             ],
         )
     )
-    yield {"customer": customer, "operator": operator, "run": str(run), "workflow": workflow}
+    # Would-deny checks the Access Checks drill-in filters by workflow and organization.
+    drill = uuid.uuid4()
+    first, second = str(uuid.uuid4()), str(uuid.uuid4())
+    denied = {**check, "outcome": "failure", "execution_id": drill}
+    asyncio.run(
+        _seed(
+            async_session_factory,
+            [
+                {**denied, "organization_id": uuid.UUID(customer["id"]), "details": {"workflow_id": first}},
+                {**denied, "organization_id": uuid.UUID(customer["id"]), "details": {"workflow_id": second}},
+                {**denied, "organization_id": None, "details": {"inputs": {}}},
+            ],
+        )
+    )
+    yield {
+        "customer": customer,
+        "operator": operator,
+        "run": str(run),
+        "workflow": workflow,
+        "drill": {"run": str(drill), "first": first, "second": second},
+    }
     e2e_client.delete(f"/api/users/{created['id']}", headers=platform_admin.headers)
     e2e_client.delete(f"/api/organizations/{customer['id']}", headers=platform_admin.headers)
+
+
+async def _seed_workflow(session_factory, name: str, display_name: str) -> uuid.UUID:
+    from src.core.database import close_db
+    from src.models.orm.workflows import Workflow
+
+    try:
+        async with session_factory() as session:
+            workflow = Workflow(name=name, function_name=name, display_name=display_name, path=f"workflows/{name}.py")
+            session.add(workflow)
+            await session.commit()
+            return workflow.id
+    finally:
+        await close_db()
+
+
+async def _delete_workflow(session_factory, workflow_id: uuid.UUID) -> None:
+    from sqlalchemy import delete
+
+    from src.core.database import close_db
+    from src.models.orm.workflows import Workflow
+
+    try:
+        async with session_factory() as session:
+            await session.execute(delete(Workflow).where(Workflow.id == workflow_id))
+            await session.commit()
+    finally:
+        await close_db()
+
+
+@pytest.fixture(scope="module")
+def named(e2e_client, platform_admin, async_session_factory, world):
+    """A Fabrikam person's run whose access check targets the customer org, naming a real workflow."""
+    tag = uuid.uuid4().hex[:8]
+    admin = platform_admin.headers
+    fabrikam = _ok(e2e_client.post("/api/organizations", headers=admin, json={"name": f"Fabrikam-{tag}"}), 201)
+    person = _ok(
+        e2e_client.post(
+            "/api/users",
+            headers=admin,
+            json={"email": f"named-{tag}@fabrikam.example", "name": f"Named Person {tag}", "organization_id": fabrikam["id"]},
+        ),
+        201,
+    )
+    workflow_id = asyncio.run(_seed_workflow(async_session_factory, f"nightly_{tag}", f"Nightly Report {tag}"))
+    run = uuid.uuid4()
+    asyncio.run(
+        _seed(
+            async_session_factory,
+            [
+                {
+                    "action": "access.check",
+                    "resource_type": "scope_switch",
+                    "outcome": "failure",
+                    "execution_id": run,
+                    "user_id": uuid.UUID(person["id"]),
+                    "organization_id": uuid.UUID(world["customer"]["id"]),
+                    "details": {"workflow_id": str(workflow_id)},
+                }
+            ],
+        )
+    )
+    yield {"fabrikam": fabrikam, "run": str(run), "workflow_name": f"Nightly Report {tag}"}
+    asyncio.run(_delete_workflow(async_session_factory, workflow_id))
+    e2e_client.delete(f"/api/users/{person['id']}", headers=admin)
+    e2e_client.delete(f"/api/organizations/{fabrikam['id']}", headers=admin)
+
+
+def test_operators_see_the_workflow_and_the_run_user_s_own_organization(e2e_client, world, named) -> None:
+    """Named server-side: Operators cannot list workflows, and the row's organization is the target."""
+    params = {"action": "access.check", "execution_id": named["run"]}
+    operator = world["operator"].headers
+
+    [entry] = _ok(e2e_client.get("/api/audit", headers=operator, params=params))["entries"]
+    [group] = _ok(e2e_client.get("/api/audit", headers=operator, params={**params, "group_by": "workflow"}))["groups"]
+
+    for shown in (entry, group["sample"]):
+        assert shown["workflow_name"] == named["workflow_name"]
+        assert (shown["actor"]["home_organization_id"], shown["actor"]["home_organization_name"]) == (
+            named["fabrikam"]["id"],
+            named["fabrikam"]["name"],
+        )
+        assert shown["actor"]["organization_name"] == world["customer"]["name"]
+
+
+def test_a_blank_display_name_names_the_workflow_by_its_name(e2e_client, platform_admin, async_session_factory) -> None:
+    name = f"blank_{uuid.uuid4().hex[:8]}"
+    workflow_id = asyncio.run(_seed_workflow(async_session_factory, name, ""))
+    run = uuid.uuid4()
+    try:
+        asyncio.run(
+            _seed(
+                async_session_factory,
+                [{"action": "access.check", "outcome": "failure", "execution_id": run, "details": {"workflow_id": str(workflow_id)}}],
+            )
+        )
+        params = {"action": "access.check", "execution_id": str(run)}
+        [entry] = _ok(e2e_client.get("/api/audit", headers=platform_admin.headers, params=params))["entries"]
+    finally:
+        asyncio.run(_delete_workflow(async_session_factory, workflow_id))
+
+    assert entry["workflow_name"] == name
 
 
 def test_admins_group_access_checks_by_workflow(e2e_client, platform_admin, world) -> None:
@@ -102,6 +224,51 @@ def test_admins_group_access_checks_by_workflow(e2e_client, platform_admin, worl
     [group] = body["groups"]
     assert (group["key"], group["count"]) == (world["workflow"], 4)
     assert group["sample"]["action"] == "access.check"
+    assert group["sample"]["workflow_name"] is None
+
+
+def _drill_in(e2e_client, headers: dict, world, **filters: str) -> list[dict]:
+    params = {"action": "access.check", "outcome": "failure", "execution_id": world["drill"]["run"], **filters}
+    return _ok(e2e_client.get("/api/audit", headers=headers, params=params))["entries"]
+
+
+def test_access_checks_filter_by_workflow(e2e_client, platform_admin, world) -> None:
+    admin, drill = platform_admin.headers, world["drill"]
+
+    [entry] = _drill_in(e2e_client, admin, world, workflow_id=drill["first"])
+    assert entry["details"]["workflow_id"] == drill["first"]
+    [entry] = _drill_in(e2e_client, admin, world, workflow_id="none")
+    assert "workflow_id" not in entry["details"]
+    bad = e2e_client.get("/api/audit", headers=admin, params={"action": "access.check", "workflow_id": "nowhere"})
+    assert bad.status_code == 422
+
+    body = _ok(
+        e2e_client.get(
+            "/api/audit",
+            headers=admin,
+            params={"action": "access.check", "execution_id": drill["run"], "workflow_id": drill["second"], "group_by": "workflow"},
+        )
+    )
+    assert [(group["key"], group["count"]) for group in body["groups"]] == [(drill["second"], 1)]
+
+
+def test_access_checks_filter_by_organization(e2e_client, platform_admin, world) -> None:
+    admin, customer = platform_admin.headers, world["customer"]["id"]
+
+    in_customer = _drill_in(e2e_client, admin, world, organization_id=customer)
+    assert sorted(entry["details"]["workflow_id"] for entry in in_customer) == sorted(
+        (world["drill"]["first"], world["drill"]["second"])
+    )
+    [entry] = _drill_in(e2e_client, admin, world, organization_id="none")
+    assert entry["actor"]["organization_id"] is None
+
+
+def test_operators_filter_inside_their_reach(e2e_client, world) -> None:
+    operator = world["operator"].headers
+
+    [entry] = _drill_in(e2e_client, operator, world, workflow_id=world["drill"]["first"])
+    assert entry["actor"]["organization_id"] == world["customer"]["id"]
+    assert _drill_in(e2e_client, operator, world, organization_id="none") == []
 
 
 def test_operators_see_access_checks_in_their_reach_only(e2e_client, world) -> None:

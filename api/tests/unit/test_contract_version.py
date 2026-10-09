@@ -48,6 +48,7 @@ from src.models.contracts.access_checks import (  # noqa: E402
 )
 from src.models.contracts.audit import AuditLogListResponse  # noqa: E402
 from src.models.contracts.audit_retention import AuditRetentionStatus  # noqa: E402
+from src.models.contracts.identities import IdentityCreate, IdentityPublic  # noqa: E402
 from src.models.contracts.permissions import PermissionCatalogEntry  # noqa: E402
 from src.models.contracts.role_assignments import (  # noqa: E402
     UserRoleAssignmentsResponse,
@@ -84,6 +85,7 @@ from src.models.contracts.solutions import (  # noqa: E402
 from src.models.contracts.policy_rule import PolicyRuleCreate, PolicyRuleUpdate  # noqa: E402
 from src.models.contracts.services import ServicePolicyUpdate  # noqa: E402
 from src.models.contracts.tables import TableCreate, TableUpdate  # noqa: E402
+from src.models.contracts.recommended_access import RecommendedAccess  # noqa: E402
 from src.models.contracts.users import RoleCreate, RoleUpdate  # noqa: E402
 from src.models.contracts.workflows import WorkflowUpdateRequest  # noqa: E402
 
@@ -141,6 +143,9 @@ _COMMAND_DTOS: list[type] = [
     AuditLogListResponse,
     RunRetentionStatus,
     AuditRetentionStatus,
+    IdentityCreate,
+    IdentityPublic,
+    RecommendedAccess,
 ]
 
 #: Every request/response DTO the in-workflow SDK sends/parses against
@@ -322,7 +327,34 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # (2026-10-06, Graph-style permission display names). Same unreleased
     # commands as above, so no released CLI parses the older shape.
     # Fingerprint refreshed only.
-    "9cacb5b441195dd167c6fde2f4a2c040ca92f16db80d518aa712bd39b3b16c39"
+    #
+    # Identity shapes newly fingerprinted (2026-10-06): `bifrost users create
+    # --identity` sends IdentityCreate and parses IdentityPublic, and
+    # `bifrost workflows requirements/grant` parse WorkflowRequirements. The
+    # commands ship with these DTOs (greenfield coverage). Fingerprint
+    # refreshed only.
+    #
+    # WorkflowRequirement gained `organization_id` (2026-10-06): the
+    # organization a reach item targets or a policy role's grant is placed at.
+    # ADDITIVE: the same unreleased commands, and the CLI reads items by key.
+    # Fingerprint refreshed only.
+    #
+    # Requirements became Recommended Access (2026-10-06): WorkflowRequirements
+    # is now RecommendedAccess (items RecommendedAccessItem, grant
+    # RecommendedGrant), served at /recommended-access and parsed by `bifrost
+    # workflows recommendations/grant`. Same shape, renamed; the route and the
+    # commands are unreleased. Fingerprint refreshed only.
+    #
+    # AccessExplanation.then became nullable and NowUnavailable gained
+    # `inputs_not_stored` (2026-10-07): older and worker-written access checks
+    # stored no trace, or no inputs either. `bifrost audit explain` is
+    # unreleased and ships handling both. Fingerprint refreshed only.
+    #
+    # AuditLogEntry gained `workflow_name`, AuditLogActor `home_organization_id`
+    # and `home_organization_name`, and RoleUserSummary `identity_kind`
+    # (2026-10-07): optional additive fields the CLI ignores. Fingerprint
+    # refreshed only.
+    "063684feb78cf33f46fe3419c03752adbc1d1836c98d7e43509b9e184da44b03"
 )
 
 

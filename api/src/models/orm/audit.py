@@ -7,7 +7,7 @@ Represents audit logs for tracking user actions.
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, text
+from sqlalchemy import ColumnElement, DateTime, ForeignKey, Index, String, Text, literal_column, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -52,4 +52,18 @@ class AuditLog(Base):
         Index("ix_audit_logs_action_created", "action", "created_at"),
         Index("ix_audit_logs_execution_id", "execution_id"),
         Index("ix_audit_logs_created_id", "created_at", "id"),
+        # Recommended Access reads a workflow's recorded checks.
+        Index(
+            "ix_audit_logs_access_check_workflow",
+            text("(details ->> 'workflow_id')"),
+            "created_at",
+            postgresql_where=text("action = 'access.check'"),
+        ),
     )
+
+
+def named_workflow_id() -> ColumnElement[str]:
+    """The workflow an entry names in its details, as text (None when it names
+    none). The key is a literal, not a bound parameter, so the expression is
+    the one ix_audit_logs_access_check_workflow indexes."""
+    return AuditLog.details[literal_column("'workflow_id'")].astext

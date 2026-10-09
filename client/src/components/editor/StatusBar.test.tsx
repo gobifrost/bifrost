@@ -41,6 +41,7 @@ describe("StatusBar metadata recovery", () => {
 					relative_file_path: path,
 					is_solution_managed: false,
 					access_level: "authenticated",
+					permission_mode: "full",
 					category: "General",
 					execution_mode: "sync",
 					timeout_seconds: 1800,

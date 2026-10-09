@@ -185,6 +185,55 @@ describe("Sidebar structure", () => {
 		).not.toBeInTheDocument();
 	});
 
+	it("shows Access Checks only to holders of roleassignments.read", () => {
+		state.isPlatformAdmin = false;
+		state.authorization = summary(false, ["users.read"]);
+		const { unmount } = renderWithProviders(
+			<Sidebar
+				isMobileMenuOpen={false}
+				setIsMobileMenuOpen={vi.fn()}
+				isCollapsed={false}
+			/>,
+		);
+		expect(
+			screen.queryByRole("link", { name: "Access Checks" }),
+		).not.toBeInTheDocument();
+		unmount();
+
+		state.authorization = summary(false, ["roleassignments.read"]);
+		renderWithProviders(
+			<Sidebar
+				isMobileMenuOpen={false}
+				setIsMobileMenuOpen={vi.fn()}
+				isCollapsed={false}
+			/>,
+		);
+		expect(
+			screen.getByRole("link", { name: "Access Checks" }),
+		).toHaveAttribute("href", "/audit/access-checks");
+		expect(
+			screen.queryByRole("link", { name: "Audit Log" }),
+		).not.toBeInTheDocument();
+	});
+
+	it("marks only Access Checks current on its page, not the Audit Log", () => {
+		renderWithProviders(
+			<Sidebar
+				isMobileMenuOpen={false}
+				setIsMobileMenuOpen={vi.fn()}
+				isCollapsed={false}
+			/>,
+			{ initialEntries: ["/audit/access-checks"] },
+		);
+
+		expect(
+			screen.getByRole("link", { name: "Access Checks" }),
+		).toHaveAttribute("aria-current", "page");
+		expect(
+			screen.getByRole("link", { name: "Audit Log" }),
+		).not.toHaveAttribute("aria-current");
+	});
+
 	it("shows a platform admin the whole Platform section", () => {
 		renderWithProviders(
 			<Sidebar

@@ -64,6 +64,9 @@ const SolutionDetail = lazyWithReload(() =>
 const Users = lazyWithReload(() =>
 	import("@/pages/Users").then((m) => ({ default: m.Users })),
 );
+const Identities = lazyWithReload(() =>
+	import("@/pages/Identities").then((m) => ({ default: m.Identities })),
+);
 const UserAccessPage = lazyWithReload(() =>
 	import("@/pages/UserAccessPage").then((m) => ({
 		default: m.UserAccessPage,
@@ -155,6 +158,11 @@ const DiagnosticsPage = lazyWithReload(() =>
 const AuditLogPage = lazyWithReload(() =>
 	import("@/pages/audit/AuditLogPage").then((m) => ({
 		default: m.AuditLogPage,
+	})),
+);
+const AccessChecksPage = lazyWithReload(() =>
+	import("@/pages/audit/AccessChecksPage").then((m) => ({
+		default: m.AccessChecksPage,
 	})),
 );
 const Login = lazyWithReload(() =>
@@ -502,6 +510,16 @@ const routeElements = (
 				}
 			/>
 			<Route
+				path="users/identities"
+				element={
+					<ProtectedRoute
+						requirePermission={{ permission: "users.read" }}
+					>
+						<Identities />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
 				path="users/:userId"
 				element={
 					<ProtectedRoute
@@ -820,6 +838,20 @@ const routeElements = (
 				element={
 					<ProtectedRoute requirePlatformAdmin>
 						<AuditLogPage />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* Access Checks - roleassignments.read anywhere; the API filters to reach */}
+			<Route
+				path="audit/access-checks"
+				element={
+					<ProtectedRoute
+						requirePermission={{
+							permission: "roleassignments.read",
+						}}
+					>
+						<AccessChecksPage />
 					</ProtectedRoute>
 				}
 			/>

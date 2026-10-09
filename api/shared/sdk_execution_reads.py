@@ -33,6 +33,7 @@ import json
 import logging
 from datetime import datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import and_, desc, func, or_, select, union_all
@@ -42,6 +43,9 @@ from sqlalchemy.orm import defer, selectinload
 from src.core.log_safety import log_safe
 from src.core.org_filter import OrgFilterType, resolve_org_filter
 from src.core.principal import UserPrincipal
+
+if TYPE_CHECKING:
+    from src.models.contracts.workflow_permissions import WorkflowPermissionMode
 
 logger = logging.getLogger(__name__)
 
@@ -104,14 +108,20 @@ def decode_history_cursor(token: str) -> tuple[datetime | None, UUID] | None:
 
 def convert_workflow_orm_to_schema(
     workflow,
+    default_permission_mode: WorkflowPermissionMode,
     used_by_count: int = 0,
     role_ids: list[UUID] | None = None,
 ):
-    """Convert ORM model to Pydantic schema for API response."""
+    """Convert ORM model to Pydantic schema for API response.
+
+    ``default_permission_mode`` is the platform default a workflow with no
+    mode of its own takes (``get_default_workflow_permission_mode``).
+    """
     from typing import Literal
 
     from src.models import WorkflowMetadata, WorkflowParameter
     from src.models.contracts.workflows import ExecutableType
+    from src.services.workflow_permissions import resolve_workflow_permission_mode
     from src.services.workflow_validation import _extract_relative_path
 
     parameters = []
@@ -137,6 +147,7 @@ def convert_workflow_orm_to_schema(
         is_solution_managed=workflow.solution_id is not None,
         solution_id=workflow.solution_id,
         run_identity_id=workflow.run_identity_id,
+        permission_mode=resolve_workflow_permission_mode(workflow, default_permission_mode),
         access_level=workflow.access_level or "role_based",
         role_ids=[str(role_id) for role_id in (role_ids or [])],
         parameters=parameters,
@@ -344,6 +355,7 @@ async def list_sdk_workflows(
     """
     from src.models import Workflow as WorkflowORM
     from src.models.orm.agents import AgentTool
+    from src.services.workflow_permissions import get_default_workflow_permission_mode
 
     if not principal.is_superuser:
         raise SdkExecutionReadError(403, "Superuser privileges required")
@@ -405,12 +417,14 @@ async def list_sdk_workflows(
         used_by_counts = await compute_used_by_counts(session, workflow_ids)
         role_ids_by_workflow = await get_workflow_role_ids(session, workflow_ids)
 
+    default_permission_mode = await get_default_workflow_permission_mode(session)
     workflow_list = []
     for w in workflows:
         try:
             workflow_list.append(
                 convert_workflow_orm_to_schema(
                     w,
+                    default_permission_mode,
                     used_by_count=used_by_counts.get(w.id, 0),
                     role_ids=role_ids_by_workflow.get(w.id, []),
                 )

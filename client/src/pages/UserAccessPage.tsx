@@ -5,6 +5,7 @@ import {
 	ArrowLeft,
 	Building2,
 	ChevronLeft,
+	FlaskConical,
 	KeyRound,
 	RefreshCw,
 	ShieldAlert,
@@ -12,6 +13,10 @@ import {
 } from "lucide-react";
 
 import { AccessMap } from "@/components/access/AccessMap";
+import { TestAccessPanel } from "@/components/access/TestAccessPanel";
+import { IdentityActions } from "@/components/identities/IdentityActions";
+import { IdentityGlyph } from "@/components/identities/IdentityGlyph";
+import { IdentityOrganizationChip } from "@/components/identities/IdentityName";
 import { ReachChip } from "@/components/access/ReachChip";
 import { ListLoadError } from "@/components/layout/ListLoadError";
 import {
@@ -22,6 +27,14 @@ import { RouteUnavailableState } from "@/components/layout/RouteUnavailableState
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+	Sheet,
+	SheetContent,
+	SheetDescription,
+	SheetHeader,
+	SheetTitle,
+	SheetTrigger,
+} from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { UserActionsMenu } from "@/components/users/UserActionsMenu";
@@ -37,6 +50,7 @@ import { orgTarget } from "@/lib/authorization";
 import { motionSeconds } from "@/lib/motion";
 import { permissionDisplayName, permissionParts } from "@/lib/permission-words";
 import type { components } from "@/lib/v1";
+import { identityLabel, type IdentityKind } from "@/services/identities";
 import {
 	usePermissionCatalog,
 	useUserAccessMap,
@@ -163,36 +177,51 @@ function UserUnavailable({
 
 function PersonHeader({
 	user,
+	identityKind,
 	homeOrganization,
 	map,
 	catalog,
 	actions,
 }: {
 	user: User;
+	/** Set for an identity, which shows a glyph and its organization chip instead of an email. */
+	identityKind: IdentityKind | null;
 	homeOrganization: string | undefined;
 	map: UserAccessMap | undefined;
 	catalog: PermissionCatalogEntry[] | undefined;
 	actions: ReactNode;
 }) {
+	// An identity's organization chip: null for Global, unknown until loaded.
+	const identityOrganization = user.organization_id ? homeOrganization : null;
 	return (
 		<header className="min-w-0 space-y-3">
 			<Link
-				to="/users"
+				to={identityKind ? "/users/identities" : "/users"}
 				className="inline-flex min-h-11 items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
 			>
 				<ChevronLeft className="size-4" aria-hidden="true" />
-				Users
+				{identityKind ? "Identities" : "Users"}
 			</Link>
 			<div className="flex min-w-0 items-start gap-4">
-				<Avatar className="h-12 w-12 sm:h-14 sm:w-14">
-					<AvatarFallback className="font-display text-base font-semibold text-foreground sm:text-lg">
-						{initials(user)}
-					</AvatarFallback>
-				</Avatar>
+				{identityKind ? (
+					<IdentityGlyph />
+				) : (
+					<Avatar className="h-12 w-12 sm:h-14 sm:w-14">
+						<AvatarFallback className="font-display text-base font-semibold text-foreground sm:text-lg">
+							{initials(user)}
+						</AvatarFallback>
+					</Avatar>
+				)}
 				<div className="min-w-0 flex-1 space-y-3">
 					<div className="space-y-1">
 						<h1 className="flex flex-wrap items-center gap-2 font-display text-2xl font-semibold tracking-tight [overflow-wrap:anywhere] sm:text-3xl">
 							{user.name || user.email}
+							{identityKind &&
+								identityOrganization !== undefined && (
+									<IdentityOrganizationChip
+										organizationName={identityOrganization}
+									/>
+								)}
 							{!user.is_active && (
 								<Badge variant="outline">Disabled</Badge>
 							)}
@@ -203,20 +232,22 @@ function PersonHeader({
 									/>
 								)}
 						</h1>
-						<p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-							<span className="[overflow-wrap:anywhere]">
-								{user.email}
-							</span>
-							{homeOrganization && (
-								<span className="inline-flex items-center gap-1.5">
-									<Building2
-										aria-hidden="true"
-										className="size-3.5"
-									/>
-									{homeOrganization}
+						{!identityKind && (
+							<p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+								<span className="[overflow-wrap:anywhere]">
+									{user.email}
 								</span>
-							)}
-						</p>
+								{homeOrganization && (
+									<span className="inline-flex items-center gap-1.5">
+										<Building2
+											aria-hidden="true"
+											className="size-3.5"
+										/>
+										{homeOrganization}
+									</span>
+								)}
+							</p>
+						)}
 					</div>
 					{map && (
 						<div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
@@ -261,24 +292,72 @@ function SectionHeading({
 	id,
 	title,
 	description,
+	action,
 }: {
 	id: string;
 	title: string;
 	description: string;
+	action?: ReactNode;
 }) {
 	return (
-		<div className="space-y-1">
-			<h2 id={id} className="text-base font-semibold">
-				{title}
-			</h2>
-			<p className="text-sm text-muted-foreground">{description}</p>
+		<div className="flex flex-wrap items-start justify-between gap-3">
+			<div className="min-w-0 flex-1 basis-64 space-y-1">
+				<h2 id={id} className="text-base font-semibold">
+					{title}
+				</h2>
+				<p className="text-sm text-muted-foreground">{description}</p>
+			</div>
+			{action}
 		</div>
+	);
+}
+
+/** "Test Access": what the access model would decide for this person, in a sheet. */
+function TestAccessSheet({
+	person,
+	subjectLabel,
+}: {
+	person: User;
+	/** The person's name or email; an identity's name with its organization. */
+	subjectLabel: string;
+}) {
+	return (
+		<Sheet>
+			<SheetTrigger asChild>
+				<Button
+					type="button"
+					variant="outline"
+					className="min-h-11 sm:min-h-9"
+				>
+					<FlaskConical aria-hidden="true" className="size-4" />
+					Test Access
+				</Button>
+			</SheetTrigger>
+			<SheetContent className="sm:max-w-xl">
+				<SheetHeader className="border-b border-border/70">
+					<SheetTitle>Test Access</SheetTitle>
+					<SheetDescription>
+						What the access model would decide for {subjectLabel}.
+						Report-only: nothing is recorded or enforced.
+					</SheetDescription>
+				</SheetHeader>
+				<div className="min-h-0 overflow-auto p-6">
+					<TestAccessPanel
+						subjectId={person.id}
+						defaultOrganizationId={
+							person.organization_id ?? "global"
+						}
+					/>
+				</div>
+			</SheetContent>
+		</Sheet>
 	);
 }
 
 /**
  * One person: who they are, where their access reaches, and what they can
- * do there (`access`), with their profile one tab over (`profile`).
+ * do there (`access`), with their profile one tab over (`profile`). An
+ * identity has no profile, so its page is the access content alone.
  */
 export function UserAccessPage() {
 	const { userId, tab } = useParams<{ userId: string; tab?: string }>();
@@ -325,12 +404,29 @@ export function UserAccessPage() {
 			/>
 		);
 
-	// Without roleassignments.read the profile is the only tab, so its address
-	// is the only one that shows it.
-	if (!canViewAccess && tab !== "profile")
+	// The server's IdentityKind enum; null for people.
+	const identityKind = (person.identity_kind ?? null) as IdentityKind | null;
+	// An identity has no profile, so its page has no tabs and one address.
+	if (identityKind && tab)
+		return <Navigate to={`/users/${person.id}`} replace />;
+	// Without roleassignments.read the profile is a person's only tab, so its
+	// address is the only one that shows it.
+	if (!identityKind && !canViewAccess && tab !== "profile")
 		return <Navigate to={`/users/${person.id}/profile`} replace />;
 
 	const map = accessQuery.data;
+	const sectionCopy = identityKind
+		? {
+				access: "What this identity can do, in each organization its roles reach. Hover a permission to see which role grants it.",
+				roles:
+					identityKind === "custom"
+						? "The base role applies in its home organization; additional roles apply where they're placed."
+						: "A default identity's base role is fixed; additional roles apply where they're placed.",
+			}
+		: {
+				access: "What this person can do, in each organization their roles reach. Hover a permission to see which role grants it.",
+				roles: "The base role applies in their home organization; additional roles apply where they're placed.",
+			};
 	const currentTab: Tab = tab === "profile" ? "profile" : "access";
 	const homeOrganization = person.organization_id
 		? (map?.home_organization?.name ??
@@ -338,130 +434,164 @@ export function UserAccessPage() {
 				(org) => org.id === person.organization_id,
 			)?.name)
 		: "Global (No Organization)";
+	// An identity's organization goes with its name: null is Global,
+	// undefined until loaded.
+	const identityOrganization = person.organization_id
+		? homeOrganization
+		: null;
+	const subjectLabel =
+		identityKind && identityOrganization !== undefined
+			? identityLabel({
+					name: person.name || person.email,
+					organization_name: identityOrganization,
+				})
+			: person.name || person.email;
+
+	const accessContent = (
+		<Disclosure>
+			<section aria-labelledby="access-map-heading" className="space-y-3">
+				<SectionHeading
+					id="access-map-heading"
+					title="Effective Access"
+					description={sectionCopy.access}
+					action={
+						<TestAccessSheet
+							person={person}
+							subjectLabel={subjectLabel}
+						/>
+					}
+				/>
+				{map && catalogQuery.data ? (
+					<AccessMap rows={map.rows} catalog={catalogQuery.data} />
+				) : accessQuery.isError || catalogQuery.isError ? (
+					<ListLoadError
+						resource="their access"
+						hasCachedData={false}
+						isRetrying={
+							accessQuery.isFetching || catalogQuery.isFetching
+						}
+						onRetry={() => {
+							if (accessQuery.isError) void accessQuery.refetch();
+							if (catalogQuery.isError)
+								void catalogQuery.refetch();
+						}}
+					/>
+				) : (
+					<Skeleton
+						role="status"
+						aria-label="Loading access"
+						className="h-40 w-full"
+					/>
+				)}
+			</section>
+			<section
+				aria-labelledby="role-assignments-heading"
+				className="space-y-3"
+			>
+				<SectionHeading
+					id="role-assignments-heading"
+					title="Role Assignments"
+					description={sectionCopy.roles}
+				/>
+				<div className="flex flex-col overflow-hidden rounded-[var(--bf-radius-surface)] border bg-card">
+					<UserRoleAssignmentsPanel
+						user={person}
+						isSelf={currentUser?.id === person.id}
+					/>
+				</div>
+			</section>
+		</Disclosure>
+	);
 
 	return (
 		<PageWorkspace className="mx-auto w-full max-w-7xl gap-5">
 			<PersonHeader
 				user={person}
+				identityKind={identityKind}
 				homeOrganization={homeOrganization}
 				map={map}
 				catalog={catalogQuery.data}
 				actions={
-					// The Profile tab is the profile editor, so no Edit Profile.
-					<UserActionsMenu
-						label={`${person.name || person.email} actions`}
-						triggerRef={actionsButtonRef}
-						{...accountActions.menuPropsFor(person)}
-					/>
+					identityKind ? (
+						<IdentityActions
+							identity={{
+								...person,
+								name: person.name || person.email,
+							}}
+							onDeleted={() => navigate("/users/identities")}
+						/>
+					) : (
+						// The Profile tab is the profile editor, so no Edit Profile.
+						<UserActionsMenu
+							label={`${person.name || person.email} actions`}
+							triggerRef={actionsButtonRef}
+							{...accountActions.menuPropsFor(person)}
+						/>
+					)
 				}
 			/>
-			<Tabs
-				value={currentTab}
-				onValueChange={(next) =>
-					navigate(`/users/${person.id}/${next}`)
-				}
-				className="flex min-h-0 flex-1 flex-col gap-4"
-			>
-				<TabsList variant="line" className="w-full justify-start">
-					{canViewAccess && (
+			{identityKind ? (
+				canViewAccess ? (
+					<PageScrollArea className="lg:overflow-auto">
+						{accessContent}
+					</PageScrollArea>
+				) : (
+					<p className="text-sm text-muted-foreground">
+						Your roles don't let you see this identity's access.
+					</p>
+				)
+			) : (
+				<Tabs
+					value={currentTab}
+					onValueChange={(next) =>
+						navigate(`/users/${person.id}/${next}`)
+					}
+					className="flex min-h-0 flex-1 flex-col gap-4"
+				>
+					<TabsList variant="line" className="w-full justify-start">
+						{canViewAccess && (
+							<TabsTrigger
+								value="access"
+								className="min-h-11 flex-none px-3"
+							>
+								<KeyRound aria-hidden="true" />
+								Access
+							</TabsTrigger>
+						)}
 						<TabsTrigger
-							value="access"
+							value="profile"
 							className="min-h-11 flex-none px-3"
 						>
-							<KeyRound aria-hidden="true" />
-							Access
+							<UserRound aria-hidden="true" />
+							Profile
 						</TabsTrigger>
+					</TabsList>
+					{canViewAccess && (
+						<TabsContent
+							value="access"
+							className="flex min-h-0 flex-1 flex-col"
+						>
+							<PageScrollArea className="lg:overflow-auto">
+								{accessContent}
+							</PageScrollArea>
+						</TabsContent>
 					)}
-					<TabsTrigger
-						value="profile"
-						className="min-h-11 flex-none px-3"
-					>
-						<UserRound aria-hidden="true" />
-						Profile
-					</TabsTrigger>
-				</TabsList>
-				{canViewAccess && (
 					<TabsContent
-						value="access"
+						value="profile"
 						className="flex min-h-0 flex-1 flex-col"
 					>
 						<PageScrollArea className="lg:overflow-auto">
 							<Disclosure>
-								<section
-									aria-labelledby="access-map-heading"
-									className="space-y-3"
-								>
-									<SectionHeading
-										id="access-map-heading"
-										title="Effective Access"
-										description="What this person can do, in each organization their roles reach. Hover a permission to see which role grants it."
-									/>
-									{map && catalogQuery.data ? (
-										<AccessMap
-											rows={map.rows}
-											catalog={catalogQuery.data}
-										/>
-									) : accessQuery.isError ||
-									  catalogQuery.isError ? (
-										<ListLoadError
-											resource="their access"
-											hasCachedData={false}
-											isRetrying={
-												accessQuery.isFetching ||
-												catalogQuery.isFetching
-											}
-											onRetry={() => {
-												if (accessQuery.isError)
-													void accessQuery.refetch();
-												if (catalogQuery.isError)
-													void catalogQuery.refetch();
-											}}
-										/>
-									) : (
-										<Skeleton
-											role="status"
-											aria-label="Loading access"
-											className="h-40 w-full"
-										/>
-									)}
-								</section>
-								<section
-									aria-labelledby="role-assignments-heading"
-									className="space-y-3"
-								>
-									<SectionHeading
-										id="role-assignments-heading"
-										title="Role Assignments"
-										description="The base role applies in their home organization; additional roles apply where they're placed."
-									/>
-									<div className="flex flex-col overflow-hidden rounded-[var(--bf-radius-surface)] border bg-card">
-										<UserRoleAssignmentsPanel
-											user={person}
-											isSelf={
-												currentUser?.id === person.id
-											}
-										/>
-									</div>
-								</section>
+								<UserProfileForm
+									key={person.id}
+									user={person}
+									variant="page"
+								/>
 							</Disclosure>
 						</PageScrollArea>
 					</TabsContent>
-				)}
-				<TabsContent
-					value="profile"
-					className="flex min-h-0 flex-1 flex-col"
-				>
-					<PageScrollArea className="lg:overflow-auto">
-						<Disclosure>
-							<UserProfileForm
-								key={person.id}
-								user={person}
-								variant="page"
-							/>
-						</Disclosure>
-					</PageScrollArea>
-				</TabsContent>
-			</Tabs>
+				</Tabs>
+			)}
 			{accountActions.dialogs}
 		</PageWorkspace>
 	);

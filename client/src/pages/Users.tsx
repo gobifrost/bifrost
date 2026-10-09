@@ -12,7 +12,6 @@ import {
 } from "lucide-react";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
 	DataTable,
 	DataTableBody,
@@ -48,8 +47,19 @@ import {
 import { useUserAccountActions } from "@/components/users/useUserAccountActions";
 import { UserStatusBadge } from "@/components/users/UserStatusBadge";
 import { Badge } from "@/components/ui/badge";
-import { BulkActionBar } from "@/components/users/BulkActionBar";
+import { UserBulkActionBar } from "@/components/users/BulkActionBar";
+import {
+	ActionsCell,
+	ActionsHead,
+	RecordListBar,
+	RecordSelectAll,
+	RecordSelectTarget,
+	RowSelectCheckbox,
+	SelectionCell,
+	SelectionHead,
+} from "@/components/users/SelectableTable";
 import { UserEmailCell } from "@/components/users/UserEmailCell";
+import { UsersViewTabs } from "@/components/users/UsersViewTabs";
 import { ListPageHeader } from "@/components/layout/ListPageHeader";
 import { ListToolbar } from "@/components/layout/ListToolbar";
 import {
@@ -61,6 +71,7 @@ import {
 	BulkReplaceRolesDialog,
 	BulkResultDialog,
 	BulkSetActiveDialog,
+	type BulkTarget,
 } from "@/components/users/BulkUserDialogs";
 import { orgTarget } from "@/lib/authorization";
 import { useAuthorization } from "@/services/authorization";
@@ -201,7 +212,7 @@ export function Users() {
 	const [bulkResult, setBulkResult] = useState<
 		v1["schemas"]["BulkUserResponse"] | null
 	>(null);
-	const [bulkResultUsers, setBulkResultUsers] = useState<User[]>([]);
+	const [bulkResultUsers, setBulkResultUsers] = useState<BulkTarget[]>([]);
 
 	const activeMix: "all_active" | "all_inactive" | "mixed" = useMemo(() => {
 		const selected = selection.selectedItems;
@@ -214,7 +225,7 @@ export function Users() {
 
 	const handlePartialFailure = (
 		result: v1["schemas"]["BulkUserResponse"],
-		opUsers: User[],
+		opUsers: BulkTarget[],
 	) => {
 		setBulkResult(result);
 		setBulkResultUsers(opUsers);
@@ -237,6 +248,13 @@ export function Users() {
 
 	const isSelf = (user: User) =>
 		!!(currentUser && user.id === currentUser.id);
+	const unselectable = (user: User) =>
+		isSelf(user)
+			? {
+					label: "Cannot select yourself",
+					reason: "You can't include yourself in a bulk action",
+				}
+			: undefined;
 
 	const renderUserActions = (user: User) => (
 		<UserActionsMenu
@@ -254,6 +272,7 @@ export function Users() {
 		<PageWorkspace className="max-w-7xl mx-auto">
 			<ListPageHeader
 				title="Users"
+				titleSlot={<UsersViewTabs />}
 				description={
 					scope.type !== "global"
 						? `Users for ${scope.orgName}`
@@ -373,24 +392,14 @@ export function Users() {
 				  !usersQuery.data ? null : users.length > 0 ? (
 					isNarrow ? (
 						<div className="rounded-[var(--bf-radius-surface)] border bg-card">
-							<div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-2">
+							<RecordListBar>
 								{showSelection && (
-									<label className="flex min-h-11 items-center gap-3 text-sm">
-										<Checkbox
-											aria-label="Select all visible users"
-											checked={
-												selection.allVisibleSelected
-													? true
-													: selection.someVisibleSelected
-														? "indeterminate"
-														: false
-											}
-											onCheckedChange={() =>
-												selection.toggleAllVisible()
-											}
-										/>
+									<RecordSelectAll
+										selection={selection}
+										label="Select all visible users"
+									>
 										Select Page
-									</label>
+									</RecordSelectAll>
 								)}
 								<label className="flex min-w-0 items-center gap-2 text-sm">
 									Sort
@@ -433,38 +442,22 @@ export function Users() {
 										)}
 									</select>
 								</label>
-							</div>
+							</RecordListBar>
 							<ul aria-label="Users" className="divide-y">
 								{users.map((user) => (
 									<li key={user.id} className="min-w-0 p-4">
 										<div className="flex items-start gap-2">
 											{showSelection && (
-												<label className="flex h-11 w-11 shrink-0 items-center justify-center">
-													<Checkbox
-														aria-label={
-															isSelf(user)
-																? "Cannot select yourself"
-																: `Select ${user.name || user.email}`
-														}
-														disabled={isSelf(user)}
-														checked={
-															!isSelf(user) &&
-															selection.isSelected(
-																user.id,
-															)
-														}
-														onClick={(event) => {
-															selection.toggle(
-																user.id,
-																{
-																	shiftKey:
-																		event.shiftKey,
-																},
-															);
-															event.preventDefault();
-														}}
+												<RecordSelectTarget>
+													<RowSelectCheckbox
+														selection={selection}
+														id={user.id}
+														label={`Select ${user.name || user.email}`}
+														unselectable={unselectable(
+															user,
+														)}
 													/>
-												</label>
+												</RecordSelectTarget>
 											)}
 											<div className="min-w-0 flex-1">
 												<button
@@ -573,21 +566,10 @@ export function Users() {
 							<DataTableHeader>
 								<DataTableRow>
 									{showSelection && (
-										<DataTableHead className="w-0 whitespace-nowrap">
-											<Checkbox
-												aria-label="Select all visible users"
-												checked={
-													selection.allVisibleSelected
-														? true
-														: selection.someVisibleSelected
-															? "indeterminate"
-															: false
-												}
-												onCheckedChange={() =>
-													selection.toggleAllVisible()
-												}
-											/>
-										</DataTableHead>
+										<SelectionHead
+											selection={selection}
+											label="Select all visible users"
+										/>
 									)}
 									<DataTableHead className="w-0 whitespace-nowrap">
 										Organization
@@ -711,9 +693,7 @@ export function Users() {
 											/>
 										</button>
 									</DataTableHead>
-									<DataTableHead className="sticky right-0 w-px whitespace-nowrap bg-muted text-right">
-										Actions
-									</DataTableHead>
+									<ActionsHead />
 								</DataTableRow>
 							</DataTableHeader>
 							<DataTableBody>
@@ -729,52 +709,14 @@ export function Users() {
 											className={"group/row"}
 										>
 											{showSelection && (
-												<DataTableCell
-													className="w-0 whitespace-nowrap"
-													onClick={(e) =>
-														e.stopPropagation()
-													}
-												>
-													{isSelf(user) ? (
-														<Tooltip>
-															<TooltipTrigger
-																asChild
-															>
-																<span>
-																	<Checkbox
-																		checked={
-																			false
-																		}
-																		disabled
-																		aria-label="Cannot select yourself"
-																	/>
-																</span>
-															</TooltipTrigger>
-															<TooltipContent>
-																You can't
-																include yourself
-																in a bulk action
-															</TooltipContent>
-														</Tooltip>
-													) : (
-														<Checkbox
-															aria-label={`Select ${user.name || user.email}`}
-															checked={selection.isSelected(
-																user.id,
-															)}
-															onClick={(e) => {
-																selection.toggle(
-																	user.id,
-																	{
-																		shiftKey:
-																			e.shiftKey,
-																	},
-																);
-																e.preventDefault();
-															}}
-														/>
+												<SelectionCell
+													selection={selection}
+													id={user.id}
+													label={`Select ${user.name || user.email}`}
+													unselectable={unselectable(
+														user,
 													)}
-												</DataTableCell>
+												/>
 											)}
 											<DataTableCell className="min-w-0 w-0 whitespace-nowrap text-sm">
 												<span className="inline-flex min-w-0 items-center gap-1">
@@ -866,14 +808,9 @@ export function Users() {
 														).toLocaleDateString()
 													: "Never"}
 											</DataTableCell>
-											<DataTableCell
-												className="sticky right-0 w-px whitespace-nowrap bg-card text-right group-hover/row:bg-[color-mix(in_oklch,var(--card),var(--muted)_50%)]"
-												onClick={(e) =>
-													e.stopPropagation()
-												}
-											>
+											<ActionsCell>
 												{renderUserActions(user)}
-											</DataTableCell>
+											</ActionsCell>
 										</DataTableRow>
 									);
 								})}
@@ -913,7 +850,7 @@ export function Users() {
 				)}
 			</PageScrollArea>
 
-			<BulkActionBar
+			<UserBulkActionBar
 				count={selection.count}
 				activeMix={activeMix}
 				{...bulkAbilities}

@@ -10075,10 +10075,10 @@
     }
   ],
   "counts": {
-    "cli": 167,
+    "cli": 171,
     "manifest": 16,
     "mcp": 94,
-    "rest": 671,
+    "rest": 677,
     "sdk": 21
   },
   "schema_version": 1,
@@ -10875,6 +10875,24 @@
         "kind": "operation",
         "path": [
           "users",
+          "create"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "kind": "operation",
+        "path": [
+          "users",
+          "list"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "kind": "operation",
+        "path": [
+          "users",
           "roles",
           "get"
         ],
@@ -10903,7 +10921,25 @@
         "kind": "operation",
         "path": [
           "workflows",
+          "grant"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "kind": "operation",
+        "path": [
+          "workflows",
           "list-orphaned"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "kind": "operation",
+        "path": [
+          "workflows",
+          "recommendations"
         ],
         "reason": "CLI operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -12550,6 +12586,34 @@
       {
         "method": "GET",
         "operation_id": "",
+        "path": "/api/identities",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/identities",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "DELETE",
+        "operation_id": "",
+        "path": "/api/identities/{identity_id}",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "PATCH",
+        "operation_id": "",
+        "path": "/api/identities/{identity_id}",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
         "path": "/api/integrations/by-name/{name}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -14137,6 +14201,13 @@
         "status": "missing_surface"
       },
       {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/workflows/{workflow_id}/recommended-access",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
         "method": "POST",
         "operation_id": "",
         "path": "/api/workflows/{workflow_id}/recreate",
@@ -14161,6 +14232,13 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/workflows/{workflow_id}/roles",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/workflows/{workflow_id}/run-identities",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

@@ -277,6 +277,10 @@
 | PUT | `/api/home/collections/{collection_id}` |
 | PUT | `/api/home/preferences/{resource_key}` |
 | GET | `/api/hooks/health` |
+| GET | `/api/identities` |
+| POST | `/api/identities` |
+| DELETE | `/api/identities/{identity_id}` |
+| PATCH | `/api/identities/{identity_id}` |
 | GET | `/api/integrations` |
 | POST | `/api/integrations` |
 | GET | `/api/integrations/by-name/{name}` |
@@ -603,12 +607,14 @@
 | PATCH | `/api/workflows/{workflow_id}` |
 | GET | `/api/workflows/{workflow_id}/compatible-replacements` |
 | POST | `/api/workflows/{workflow_id}/deactivate` |
+| GET | `/api/workflows/{workflow_id}/recommended-access` |
 | POST | `/api/workflows/{workflow_id}/recreate` |
 | POST | `/api/workflows/{workflow_id}/remap` |
 | POST | `/api/workflows/{workflow_id}/replace` |
 | GET | `/api/workflows/{workflow_id}/roles` |
 | POST | `/api/workflows/{workflow_id}/roles` |
 | DELETE | `/api/workflows/{workflow_id}/roles/{role_id}` |
+| GET | `/api/workflows/{workflow_id}/run-identities` |
 | POST | `/auth/admin/revoke-user` |
 | GET | `/auth/authorization` |
 | POST | `/auth/device/authorize` |

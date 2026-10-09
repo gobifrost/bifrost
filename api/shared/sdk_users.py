@@ -229,6 +229,8 @@ async def list_users(
     invite status. Defaults match the historical handler (legacy email
     order, unbounded when ``limit`` is None).
 
+    People only: identities are listed by ``GET /api/identities``.
+
     ``scope``: omitted for every user the caller reaches, ``"global"`` for
     Global users only, or an organization id for exactly that organization.
     An explicit scope is decided at that target first (403 when denied).
@@ -247,7 +249,10 @@ async def list_users(
     from src.services.user_invite_service import UserInviteService
 
     reach = operation_reach(caller, "users.list")
-    query = select(UserORM).where(UserORM.is_system.is_(False), UserORM.identity_kind.is_(None))
+    query = select(UserORM).where(
+        UserORM.is_system.is_(False),
+        UserORM.identity_kind.is_(None),
+    )
     if scope == "global":
         require_operation(caller, "users.list", GLOBAL)
         query = query.where(UserORM.organization_id.is_(None))
@@ -797,7 +802,9 @@ async def bulk_update_users(
         if u.is_system:
             fail(uid, "System user cannot be modified")
             continue
-        if u.identity_kind is not None:
+        # Identities take roles like anyone (built-in base roles stay put below);
+        # moving or deactivating one is not a person's lifecycle.
+        if u.identity_kind is not None and request.operation != "replace_roles":
             fail(uid, IDENTITY_MANAGEMENT_MESSAGE)
             continue
         if request.operation in ("replace_roles", "set_active") and uid == actor_id:

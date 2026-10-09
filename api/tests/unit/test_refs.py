@@ -15,6 +15,7 @@ import pytest
 from bifrost.refs import (
     AmbiguousRefError,
     RefNotFoundError,
+    identity_label,
     resolve_ref,
 )
 
@@ -474,10 +475,43 @@ async def test_resolve_user_by_email_matches_exactly_ignoring_case() -> None:
 @pytest.mark.asyncio
 async def test_resolve_user_not_found() -> None:
     client = FakeClient(
-        {"/api/users": [{"id": str(uuid4()), "email": "other@contoso.test", "organization_id": None}]}
+        {
+            "/api/users": [{"id": str(uuid4()), "email": "other@contoso.test", "organization_id": None}],
+            "/api/identities": [_identity(uuid4(), "Default Identity", "org_default")],
+        }
     )
     with pytest.raises(RefNotFoundError):
         await resolve_ref(client, "user", "ada@contoso.test")
+
+
+@pytest.mark.asyncio
+async def test_a_user_matched_by_email_looks_up_no_identity() -> None:
+    uid = uuid4()
+    client = FakeClient({"/api/users": [{"id": str(uid), "email": "ada@contoso.test", "organization_id": None}]})
+
+    assert await resolve_ref(client, "user", "ada@contoso.test") == str(uid)
+    assert client.calls == ["/api/users"]
+
+
+@pytest.mark.asyncio
+async def test_a_user_ref_no_person_matches_resolves_an_identity() -> None:
+    """``users access`` and ``users roles`` take an identity the way ``--run-as`` does."""
+    contoso, nightly = uuid4(), uuid4()
+    client = FakeClient(
+        {
+            "/api/users": [],
+            "/api/identities": [
+                _identity(contoso, "Default Identity", "org_default"),
+                _identity(uuid4(), "Default Identity", "org_default", organization="Fabrikam"),
+                _identity(nightly, "Contoso Nightly"),
+            ],
+        }
+    )
+
+    assert await resolve_ref(client, "user", "Default Identity (Contoso)") == str(contoso)
+    assert await resolve_ref(client, "user", "contoso nightly") == str(nightly)
+    with pytest.raises(AmbiguousRefError):
+        await resolve_ref(client, "user", "Default Identity")
 
 
 @pytest.mark.asyncio
@@ -494,6 +528,121 @@ async def test_resolve_user_ambiguous_surfaces_candidates() -> None:
     with pytest.raises(AmbiguousRefError) as exc_info:
         await resolve_ref(client, "user", "ada@contoso.test")
     assert {c["uuid"] for c in exc_info.value.candidates} == {str(first), str(second)}
+
+
+# ---------------------------------------------------------------------------
+# Identity refs (name)
+# ---------------------------------------------------------------------------
+
+
+def _identity(identity_id: Any, name: str, kind: str = "custom", organization: str | None = "Contoso") -> dict:
+    """An identity as ``GET /api/identities`` returns it, as far as the resolver reads it."""
+    return {
+        "id": str(identity_id),
+        "name": name,
+        "identity_kind": kind,
+        "organization_id": str(uuid4()) if organization else None,
+        "organization_name": organization,
+    }
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_by_name_matches_exactly_ignoring_case() -> None:
+    uid = uuid4()
+    client = FakeClient(
+        {
+            "/api/identities": [
+                _identity(uid, "Contoso Nightly"),
+                _identity(uuid4(), "Contoso Nightly Backup", organization=None),
+            ]
+        }
+    )
+    assert await resolve_ref(client, "identity", "contoso nightly") == str(uid)
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_uuid_passes_through_without_a_lookup() -> None:
+    uid = uuid4()
+    client = FakeClient({})
+    assert await resolve_ref(client, "identity", str(uid)) == str(uid)
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_not_found() -> None:
+    client = FakeClient({"/api/identities": [_identity(uuid4(), "Other", organization=None)]})
+    with pytest.raises(RefNotFoundError):
+        await resolve_ref(client, "identity", "Contoso Nightly")
+
+
+@pytest.mark.asyncio
+async def test_a_custom_name_repeated_across_organizations_is_ambiguous() -> None:
+    first, second = uuid4(), uuid4()
+    client = FakeClient(
+        {
+            "/api/identities": [
+                _identity(first, "Nightly"),
+                _identity(second, "NIGHTLY", organization=None),
+            ]
+        }
+    )
+    with pytest.raises(AmbiguousRefError) as exc_info:
+        await resolve_ref(client, "identity", "nightly")
+    assert {(c["name"], c["uuid"]) for c in exc_info.value.candidates} == {
+        ("Nightly (Contoso)", str(first)),
+        ("NIGHTLY (Global)", str(second)),
+    }
+
+
+@pytest.mark.asyncio
+async def test_default_identity_by_name_is_ambiguous_and_candidates_carry_their_place() -> None:
+    contoso, fabrikam, shared = uuid4(), uuid4(), uuid4()
+    client = FakeClient(
+        {
+            "/api/identities": [
+                _identity(shared, "Default Identity", "global_default", organization=None),
+                _identity(contoso, "Default Identity", "org_default"),
+                _identity(fabrikam, "Default Identity", "org_default", organization="Fabrikam"),
+            ]
+        }
+    )
+    with pytest.raises(AmbiguousRefError) as exc_info:
+        await resolve_ref(client, "identity", "Default Identity")
+    assert {(c["name"], c["uuid"]) for c in exc_info.value.candidates} == {
+        ("Default Identity (Global)", str(shared)),
+        ("Default Identity (Contoso)", str(contoso)),
+        ("Default Identity (Fabrikam)", str(fabrikam)),
+    }
+
+
+@pytest.mark.asyncio
+async def test_an_identity_is_named_by_its_label_too() -> None:
+    """The label the CLI prints names one identity: ``Default Identity (Contoso)``."""
+    contoso, shared = uuid4(), uuid4()
+    client = FakeClient(
+        {
+            "/api/identities": [
+                _identity(shared, "Default Identity", "global_default", organization=None),
+                _identity(contoso, "Default Identity", "org_default"),
+                _identity(uuid4(), "Default Identity", "org_default", organization="Fabrikam"),
+            ]
+        }
+    )
+
+    assert await resolve_ref(client, "identity", "default identity (contoso)") == str(contoso)
+    assert await resolve_ref(client, "identity", "Default Identity (Global)") == str(shared)
+
+
+@pytest.mark.parametrize(
+    ("identity", "label"),
+    [
+        (_identity(uuid4(), "Default Identity", "org_default"), "Default Identity (Contoso)"),
+        (_identity(uuid4(), "Default Identity", "global_default", organization=None), "Default Identity (Global)"),
+        (_identity(uuid4(), "Contoso Nightly"), "Contoso Nightly (Contoso)"),
+    ],
+)
+def test_identity_label_gives_every_identity_its_place(identity: dict, label: str) -> None:
+    assert identity_label(identity) == label
 
 
 # ---------------------------------------------------------------------------

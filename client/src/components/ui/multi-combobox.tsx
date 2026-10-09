@@ -35,6 +35,8 @@ export interface MultiComboboxProps {
 	isLoading?: boolean;
 	className?: string;
 	maxDisplayedItems?: number;
+	/** Chips for the selected options above the trigger; off where the page lists the selection itself. */
+	showSelected?: boolean;
 }
 
 export function MultiCombobox({
@@ -48,6 +50,7 @@ export function MultiCombobox({
 	isLoading = false,
 	className,
 	maxDisplayedItems,
+	showSelected = true,
 }: MultiComboboxProps) {
 	const triggerRef = React.useRef<HTMLButtonElement>(null);
 	const unavailable = disabled || isLoading;
@@ -86,7 +89,7 @@ export function MultiCombobox({
 
 	return (
 		<div className="min-w-0 space-y-2">
-			{displayedItems.length > 0 && (
+			{showSelected && displayedItems.length > 0 && (
 				<ul
 					aria-label="Selected options"
 					className="flex min-w-0 flex-wrap gap-2"
@@ -133,10 +136,7 @@ export function MultiCombobox({
 						<ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
 					</Button>
 				</PopoverTrigger>
-				<PopoverContent variant="picker"
-					className="p-0"
-					align="start"
-				>
+				<PopoverContent variant="picker" className="p-0" align="start">
 					<Command>
 						<CommandInput placeholder={searchPlaceholder} />
 						<CommandList className="max-h-60 overflow-y-auto">

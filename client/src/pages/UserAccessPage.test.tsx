@@ -91,8 +91,35 @@ vi.mock("@/components/users/UserProfileForm", () => ({
 	),
 }));
 
+const identityMutations = vi.hoisted(() => ({
+	rename: vi.fn(),
+	remove: vi.fn(),
+}));
+vi.mock("@/services/identities", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/services/identities")>()),
+	useRenameIdentity: () => ({
+		mutateAsync: identityMutations.rename,
+		isPending: false,
+	}),
+	useDeleteIdentity: () => ({
+		mutateAsync: identityMutations.remove,
+		isPending: false,
+	}),
+}));
+
 vi.mock("@/components/users/UserRoleAssignmentsPanel", () => ({
 	UserRoleAssignmentsPanel: () => <p>Role assignments editor</p>,
+}));
+
+vi.mock("@/components/access/TestAccessPanel", () => ({
+	TestAccessPanel: (props: {
+		subjectId: string;
+		defaultOrganizationId?: string;
+	}) => (
+		<p>
+			Test access for {props.subjectId} in {props.defaultOrganizationId}
+		</p>
+	),
 }));
 
 import { UserAccessPage } from "./UserAccessPage";
@@ -235,6 +262,8 @@ function renderPage(path = "/users/user-1") {
 }
 
 beforeEach(() => {
+	identityMutations.rename.mockReset().mockResolvedValue(undefined);
+	identityMutations.remove.mockReset().mockResolvedValue(undefined);
 	mutations.deleteUser.mockReset().mockResolvedValue(undefined);
 	mutations.resetMfa.mockReset();
 	authz.summary = adminSummary();
@@ -356,6 +385,36 @@ describe("UserAccessPage", () => {
 		expect(
 			screen.getByRole("heading", { level: 2, name: "Role Assignments" }),
 		).toBeInTheDocument();
+	});
+
+	it("tests this person's access from Effective Access, starting in their home organization", async () => {
+		const { user } = renderPage();
+
+		await user.click(screen.getByRole("button", { name: "Test Access" }));
+
+		const sheet = await screen.findByRole("dialog", {
+			name: "Test Access",
+		});
+		expect(sheet).toHaveTextContent("Test access for user-1 in org-1");
+		expect(sheet).toHaveTextContent(
+			"What the access model would decide for Avery Example.",
+		);
+	});
+
+	it("returns focus to Test Access when the sheet closes", async () => {
+		const { user } = renderPage();
+		const button = screen.getByRole("button", { name: "Test Access" });
+
+		await user.click(button);
+		await screen.findByRole("dialog", { name: "Test Access" });
+		await user.keyboard("{Escape}");
+
+		await waitFor(() =>
+			expect(
+				screen.queryByRole("dialog", { name: "Test Access" }),
+			).not.toBeInTheDocument(),
+		);
+		expect(button).toHaveFocus();
 	});
 
 	it("opens on the access map above the role assignments", () => {
@@ -563,5 +622,289 @@ describe("UserAccessPage", () => {
 		).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Try Again" }));
 		expect(refetch).toHaveBeenCalledOnce();
+	});
+});
+
+const identity = {
+	...person,
+	id: "identity-1",
+	email: "identity-1@identities.bifrost.internal",
+	name: "Default Identity",
+	identity_kind: "org_default",
+};
+
+function showIdentity(
+	overrides: Partial<Omit<typeof identity, "organization_id">> & {
+		organization_id?: string | null;
+	} = {},
+) {
+	mockUseUser.mockReturnValue({
+		data: { ...identity, ...overrides },
+		isLoading: false,
+		isError: false,
+	});
+}
+
+describe("UserAccessPage for an identity", () => {
+	it("places the global identity in Global", () => {
+		showIdentity({
+			identity_kind: "global_default",
+			organization_id: null,
+		});
+		renderPage("/users/identity-1");
+
+		expect(
+			within(screen.getByRole("heading", { level: 1 })).getByLabelText(
+				"Organization",
+			),
+		).toHaveTextContent("Global");
+	});
+
+	it("introduces the identity by glyph, name and organization, without an email", () => {
+		showIdentity();
+		renderPage("/users/identity-1");
+
+		const heading = screen.getByRole("heading", { level: 1 });
+		expect(heading).toHaveTextContent(/^Default Identity/);
+		expect(
+			within(heading).getByLabelText("Organization"),
+		).toHaveTextContent("Contoso");
+		expect(
+			screen.getByRole("img", { name: "Identity" }),
+		).toBeInTheDocument();
+		expect(screen.queryByText(identity.email)).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("link", { name: "Identities" }),
+		).toHaveAttribute("href", "/users/identities");
+	});
+
+	it("names the identity with its organization when testing its access", async () => {
+		showIdentity();
+		const { user } = renderPage("/users/identity-1");
+
+		await user.click(screen.getByRole("button", { name: "Test Access" }));
+
+		expect(
+			await screen.findByRole("dialog", { name: "Test Access" }),
+		).toHaveTextContent(
+			"What the access model would decide for Default Identity · Contoso.",
+		);
+	});
+
+	it("names the global identity as Global when testing its access", async () => {
+		showIdentity({
+			identity_kind: "global_default",
+			organization_id: null,
+		});
+		const { user } = renderPage("/users/identity-1");
+
+		await user.click(screen.getByRole("button", { name: "Test Access" }));
+
+		expect(
+			await screen.findByRole("dialog", { name: "Test Access" }),
+		).toHaveTextContent(
+			"What the access model would decide for Default Identity · Global.",
+		);
+	});
+
+	it("describes access and roles as the identity's", () => {
+		showIdentity();
+		renderPage("/users/identity-1");
+
+		expect(
+			screen.getByText(
+				"What this identity can do, in each organization its roles reach. Hover a permission to see which role grants it.",
+			),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				"A default identity's base role is fixed; additional roles apply where they're placed.",
+			),
+		).toBeInTheDocument();
+	});
+
+	it("offers no account actions on a default identity", () => {
+		showIdentity();
+		renderPage("/users/identity-1");
+
+		expect(
+			screen.queryByRole("button", { name: "Default Identity actions" }),
+		).not.toBeInTheDocument();
+	});
+
+	it("shows an identity's access without tabs", () => {
+		showIdentity({ name: "Backup Runner", identity_kind: "custom" });
+		renderPage("/users/identity-1");
+
+		expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("heading", { name: "Effective Access" }),
+		).toBeInTheDocument();
+		expect(screen.getByText("Role assignments editor")).toBeInTheDocument();
+	});
+
+	it("moves an identity's old Profile address to its page", () => {
+		showIdentity({ name: "Backup Runner", identity_kind: "custom" });
+		renderPage("/users/identity-1/profile");
+
+		expect(
+			screen.getByRole("status", { name: "location" }),
+		).toHaveTextContent(/^\/users\/identity-1$/);
+		expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+	});
+
+	it("says why an identity's access isn't shown to someone who can't see role assignments", () => {
+		authz.summary = {
+			...adminSummary(),
+			is_platform_admin: false,
+			grants: [
+				{
+					permission: "users.read",
+					boundary: {
+						kind: "managed_organizations",
+						organization_id: null,
+					},
+				},
+			],
+		};
+		showIdentity({ name: "Backup Runner", identity_kind: "custom" });
+		renderPage("/users/identity-1");
+
+		expect(
+			screen.getByText(
+				"Your roles don't let you see this identity's access.",
+			),
+		).toBeInTheDocument();
+		expect(mockUseUserAccessMap).toHaveBeenLastCalledWith(undefined);
+	});
+
+	it("offers Rename and Delete on a custom identity, and returns to Identities after deleting", async () => {
+		showIdentity({ name: "Backup Runner", identity_kind: "custom" });
+		const { user } = renderPage("/users/identity-1");
+
+		await user.click(
+			screen.getByRole("button", { name: "Backup Runner actions" }),
+		);
+		expect(
+			screen.getAllByRole("menuitem").map((item) => item.textContent),
+		).toEqual(["Rename", "Delete"]);
+		await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+		await user.click(
+			within(await screen.findByRole("alertdialog")).getByRole("button", {
+				name: "Delete Identity",
+			}),
+		);
+
+		await waitFor(() =>
+			expect(
+				screen.getByRole("status", { name: "location" }),
+			).toHaveTextContent(/^\/users\/identities$/),
+		);
+		expect(identityMutations.remove).toHaveBeenCalledWith({
+			params: { path: { identity_id: "identity-1" } },
+		});
+	});
+
+	it("shows which workflows keep a custom identity from being deleted", async () => {
+		identityMutations.remove.mockRejectedValue({
+			detail: "Can't delete Backup Runner: these workflows run as it: Nightly Sync",
+		});
+		showIdentity({ name: "Backup Runner", identity_kind: "custom" });
+		const { user } = renderPage("/users/identity-1");
+
+		await user.click(
+			screen.getByRole("button", { name: "Backup Runner actions" }),
+		);
+		await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+		const dialog = await screen.findByRole("alertdialog");
+		await user.click(
+			within(dialog).getByRole("button", { name: "Delete Identity" }),
+		);
+
+		expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+			"Can't delete Backup Runner: these workflows run as it: Nightly Sync",
+		);
+		// The confirmation is modal, so the rest of the page is hidden behind it.
+		expect(
+			screen.getByRole("status", { name: "location", hidden: true }),
+		).toHaveTextContent("/users/identity-1");
+	});
+
+	it("renames a custom identity from its actions menu", async () => {
+		showIdentity({ name: "Backup Runner", identity_kind: "custom" });
+		const { user } = renderPage("/users/identity-1");
+
+		await user.click(
+			screen.getByRole("button", { name: "Backup Runner actions" }),
+		);
+		await user.click(screen.getByRole("menuitem", { name: "Rename" }));
+		const dialog = await screen.findByRole("dialog", {
+			name: "Rename Identity",
+		});
+		const name = within(dialog).getByRole("textbox", { name: "Name" });
+		expect(name).toHaveValue("Backup Runner");
+		await user.clear(name);
+		await user.type(name, "Contoso Automation");
+		await user.click(
+			within(dialog).getByRole("button", { name: "Rename" }),
+		);
+
+		expect(identityMutations.rename).toHaveBeenCalledWith({
+			params: { path: { identity_id: "identity-1" } },
+			body: { name: "Contoso Automation" },
+		});
+		await waitFor(() =>
+			expect(
+				screen.queryByRole("dialog", { name: "Rename Identity" }),
+			).not.toBeInTheDocument(),
+		);
+	});
+
+	it("shows why a custom identity can't take a name its organization already has", async () => {
+		identityMutations.rename.mockRejectedValue({
+			detail: 'An identity named "Nightly Sync" already exists in Contoso',
+		});
+		showIdentity({ name: "Backup Runner", identity_kind: "custom" });
+		const { user } = renderPage("/users/identity-1");
+
+		await user.click(
+			screen.getByRole("button", { name: "Backup Runner actions" }),
+		);
+		await user.click(screen.getByRole("menuitem", { name: "Rename" }));
+		const dialog = await screen.findByRole("dialog", {
+			name: "Rename Identity",
+		});
+		const name = within(dialog).getByRole("textbox", { name: "Name" });
+		await user.clear(name);
+		await user.type(name, "Nightly Sync");
+		await user.click(
+			within(dialog).getByRole("button", { name: "Rename" }),
+		);
+
+		expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+			'An identity named "Nightly Sync" already exists in Contoso',
+		);
+	});
+
+	it("offers no actions on a custom identity to someone who can't rename or delete it", () => {
+		authz.summary = {
+			...adminSummary(),
+			is_platform_admin: false,
+			grants: [
+				{
+					permission: "roleassignments.read",
+					boundary: {
+						kind: "managed_organizations",
+						organization_id: null,
+					},
+				},
+			],
+		};
+		showIdentity({ name: "Backup Runner", identity_kind: "custom" });
+		renderPage("/users/identity-1");
+
+		expect(
+			screen.queryByRole("button", { name: "Backup Runner actions" }),
+		).not.toBeInTheDocument();
 	});
 });

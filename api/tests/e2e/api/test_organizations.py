@@ -134,7 +134,7 @@ class TestOrganizationCRUD:
             )
         ).all()
         assert [(i.identity_kind, i.email, i.name) for i in identities] == [
-            (IdentityKind.ORG_DEFAULT, f"identity-{org_id}@{IDENTITY_EMAIL_DOMAIN}", "Identity Org identity")
+            (IdentityKind.ORG_DEFAULT, f"identity-{org_id}@{IDENTITY_EMAIL_DOMAIN}", "Default Identity")
         ]
 
 

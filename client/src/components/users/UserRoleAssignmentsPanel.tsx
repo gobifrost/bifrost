@@ -7,7 +7,6 @@ import {
 	Building2,
 	Globe,
 	Loader2,
-	Plus,
 	Shield,
 	SlidersHorizontal,
 	X,
@@ -21,14 +20,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
-import {
-	Command,
-	CommandEmpty,
-	CommandGroup,
-	CommandInput,
-	CommandItem,
-	CommandList,
-} from "@/components/ui/command";
+import { MultiCombobox } from "@/components/ui/multi-combobox";
 import {
 	Popover,
 	PopoverContent,
@@ -248,16 +240,8 @@ function GrantChips({
 	);
 }
 
-/** A place a role applies, in the reach colours, optionally removable. */
-function PlaceChip({
-	place,
-	removeLabel,
-	onRemove,
-}: {
-	place: MapPlace;
-	removeLabel?: string;
-	onRemove?: () => void;
-}) {
+/** A place a role applies, in the reach colours. */
+function PlaceChip({ place }: { place: MapPlace }) {
 	return (
 		<Badge
 			variant="secondary"
@@ -265,16 +249,6 @@ function PlaceChip({
 			className="h-auto min-h-8 gap-1 whitespace-normal bg-[var(--bf-reach-soft)] py-1 text-sm text-[var(--bf-reach)]"
 		>
 			<PlaceLabel place={place} />
-			{onRemove && (
-				<button
-					type="button"
-					className="-mr-1 flex size-6 items-center justify-center rounded-[var(--bf-radius-control)] hover:bg-[color-mix(in_srgb,var(--bf-reach)_14%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-					aria-label={removeLabel}
-					onClick={onRemove}
-				>
-					<X className="h-3 w-3" />
-				</button>
-			)}
 		</Badge>
 	);
 }
@@ -359,129 +333,6 @@ function PlatformWideWarning({
 	);
 }
 
-/** Searchable organization picker that stays open to add several. */
-function OrganizationPicker({
-	roleName,
-	options,
-	onAdd,
-}: {
-	roleName: string;
-	options: { id: string; label: string }[];
-	onAdd: (organizationId: string) => void;
-}) {
-	const [open, setOpen] = useState(false);
-	if (options.length === 0) return null;
-	return (
-		<Popover open={open} onOpenChange={setOpen}>
-			<PopoverTrigger asChild>
-				<Button
-					type="button"
-					variant="ghost"
-					size="sm"
-					className="min-h-11 sm:min-h-8"
-					aria-label={`Add where ${roleName} applies`}
-				>
-					<Plus aria-hidden="true" className="size-4" />
-					Add Organization
-				</Button>
-			</PopoverTrigger>
-			<PopoverContent variant="picker" className="p-0" align="start">
-				<Command>
-					<CommandInput
-						placeholder="Search organizations..."
-						aria-label="Search organizations"
-					/>
-					<CommandList className="max-h-60 overflow-y-auto">
-						<CommandEmpty>No organizations found.</CommandEmpty>
-						<CommandGroup>
-							{options.map((option) => (
-								<CommandItem
-									key={option.id}
-									value={option.id}
-									keywords={[option.label]}
-									onSelect={() => onAdd(option.id)}
-								>
-									<Building2
-										aria-hidden="true"
-										className="size-3.5"
-									/>
-									<span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
-										{option.label}
-									</span>
-								</CommandItem>
-							))}
-						</CommandGroup>
-					</CommandList>
-				</Command>
-			</PopoverContent>
-		</Popover>
-	);
-}
-
-function AddRolePicker({
-	roles,
-	onAdd,
-}: {
-	roles: AssignableRole[];
-	onAdd: (role: AssignableRole) => void;
-}) {
-	const [open, setOpen] = useState(false);
-	return (
-		<Popover open={open} onOpenChange={setOpen}>
-			<PopoverTrigger asChild>
-				<Button
-					type="button"
-					variant="outline"
-					className="min-h-11 sm:min-h-9"
-				>
-					<Plus aria-hidden="true" className="size-4" />
-					Add Role
-				</Button>
-			</PopoverTrigger>
-			<PopoverContent variant="picker" className="p-0" align="start">
-				<Command>
-					<CommandInput
-						placeholder="Search roles..."
-						aria-label="Search roles"
-					/>
-					<CommandList className="max-h-60 overflow-y-auto">
-						<CommandEmpty>No roles found.</CommandEmpty>
-						<CommandGroup>
-							{roles.map((role) => (
-								<CommandItem
-									key={role.id}
-									value={role.id}
-									keywords={[role.name]}
-									onSelect={() => {
-										onAdd(role);
-										setOpen(false);
-									}}
-								>
-									<div className="flex min-w-0 flex-1 flex-col">
-										<span className="font-medium">
-											{role.name}
-											{role.is_builtin && (
-												<span className="ml-2 text-xs font-normal text-muted-foreground">
-													Built-in
-												</span>
-											)}
-										</span>
-										{role.description && (
-											<span className="text-xs text-muted-foreground">
-												{role.description}
-											</span>
-										)}
-									</div>
-								</CommandItem>
-							))}
-						</CommandGroup>
-					</CommandList>
-				</Command>
-			</PopoverContent>
-		</Popover>
-	);
-}
-
 interface AdditionalRoleCardProps {
 	role: DraftRole;
 	/** Where the role applies in saved state; undefined for a newly added role. */
@@ -495,10 +346,10 @@ interface AdditionalRoleCardProps {
 	providerOrgId: string;
 	userOrganizationId: string | null | undefined;
 	orgName: (id: string) => string;
-	organizationOptions: (
+	organizationChoices: (
 		role: AssignableRole,
-		taken: RolePlace[],
-	) => { id: string; label: string }[];
+		places: RolePlace[],
+	) => { value: string; label: string }[];
 	homeIfAllowed: (role: AssignableRole) => string[];
 	onRemove: () => void;
 	onPlacesChange: (places: RolePlace[]) => void;
@@ -524,15 +375,15 @@ function AdditionalRoleCard({
 	providerOrgId,
 	userOrganizationId,
 	orgName,
-	organizationOptions,
+	organizationChoices,
 	homeIfAllowed,
 	onRemove,
 	onPlacesChange,
 }: AdditionalRoleCardProps) {
 	const name = info?.name ?? "Unknown Role";
-	// Listed but not grantable: the user holds a role they could no longer be
-	// given (e.g. Platform Operator outside the provider org). It can only be
-	// removed.
+	// Grantable but not as an additional role: the user holds a role they
+	// could no longer be given (e.g. Platform Operator outside the provider
+	// org). It can only be removed.
 	const removable = canEdit && !!grantable;
 	const editable = removable && !!grantable?.can_be_additional;
 	// The server fixes where some roles apply; nobody picks.
@@ -638,63 +489,39 @@ function AdditionalRoleCard({
 								}
 							/>
 						)}
-						<Reveal
-							key={preset}
-							animate={preset !== savedPreset}
-							className="flex flex-wrap items-center gap-1.5"
-						>
-							<ul
-								className="contents"
-								aria-label={`Where ${name} applies`}
-							>
-								{role.places.map((place) => {
-									const shown = mapPlace(place, orgName);
-									const removePlace =
-										picksOrganizations &&
-										role.places.length > 1;
-									return (
-										<li key={placeKey(place)}>
-											<PlaceChip
-												place={shown}
-												removeLabel={`Remove ${shown.label} from ${name}`}
-												onRemove={
-													removePlace
-														? () =>
-																onPlacesChange(
-																	role.places.filter(
-																		(p) =>
-																			placeKey(
-																				p,
-																			) !==
-																			placeKey(
-																				place,
-																			),
-																	),
-																)
-														: undefined
-												}
-											/>
-										</li>
-									);
-								})}
-							</ul>
-							{picksOrganizations && grantable && (
-								<OrganizationPicker
-									roleName={name}
-									options={organizationOptions(
+						<Reveal key={preset} animate={preset !== savedPreset}>
+							{picksOrganizations && grantable ? (
+								<MultiCombobox
+									options={organizationChoices(
 										grantable,
 										role.places,
 									)}
-									onAdd={(id) =>
-										onPlacesChange([
-											...role.places,
-											{
+									value={organizationIds(role.places)}
+									onValueChange={(ids) =>
+										onPlacesChange(
+											ids.map((id) => ({
 												kind: "organization",
 												organization_id: id,
-											},
-										])
+											})),
+										)
 									}
+									placeholder={`Select organizations for ${name}...`}
+									searchPlaceholder="Search organizations..."
+									emptyText="No organizations found."
 								/>
+							) : (
+								<ul
+									className="flex flex-wrap items-center gap-1.5"
+									aria-label={`Where ${name} applies`}
+								>
+									{role.places.map((place) => (
+										<li key={placeKey(place)}>
+											<PlaceChip
+												place={mapPlace(place, orgName)}
+											/>
+										</li>
+									))}
+								</ul>
 							)}
 						</Reveal>
 					</>
@@ -710,7 +537,7 @@ function AdditionalRoleCard({
 						!userOrganizationId
 							? "Move this person into an organization before removing Platform Admin."
 							: removable
-								? "This person can't be given this role any more. You can remove it, but not change where it applies."
+								? "This person can't be given this role any more. You can remove it in Additional Roles, but not change where it applies."
 								: "You can't change this role. Saving keeps it as it is."}
 					</p>
 				)}
@@ -821,21 +648,23 @@ export function UserRoleAssignmentsPanel({
 				id: orgId,
 			}));
 
-	/** Organizations this role could still be placed at. */
-	const organizationOptions = (role: AssignableRole, taken: RolePlace[]) => {
+	/**
+	 * Organizations this role can be placed at, and the ones it already is
+	 * (which may only be removed), for the Selected Organizations picker.
+	 */
+	const organizationChoices = (role: AssignableRole, places: RolePlace[]) => {
 		if (!role.boundary_kinds.includes("organization")) return [];
-		const takenKeys = new Set(taken.map(placeKey));
 		const ids = new Set((organizations ?? []).map((org) => org.id));
 		if (user.organization_id) ids.add(user.organization_id);
-		return [...ids]
-			.filter(
-				(id) =>
-					orgAllowed(role, id) &&
-					!takenKeys.has(
-						placeKey({ kind: "organization", organization_id: id }),
-					),
-			)
-			.map((id) => ({ id, label: orgName(id) }));
+		const placed = organizationIds(places);
+		return [
+			...[...ids].filter(
+				(id) => orgAllowed(role, id) && !placed.includes(id),
+			),
+			...placed,
+		]
+			.map((id) => ({ value: id, label: orgName(id) }))
+			.sort((a, b) => a.label.localeCompare(b.label));
 	};
 
 	const homeIfAllowed = (role: AssignableRole): string[] => {
@@ -864,9 +693,9 @@ export function UserRoleAssignmentsPanel({
 		if (role.boundary_kinds.includes("platform")) {
 			return [{ kind: "platform", organization_id: null }];
 		}
-		const first = organizationOptions(role, [])[0];
+		const first = organizationChoices(role, [])[0];
 		return first
-			? [{ kind: "organization", organization_id: first.id }]
+			? [{ kind: "organization", organization_id: first.value }]
 			: [];
 	};
 
@@ -940,9 +769,30 @@ export function UserRoleAssignmentsPanel({
 			(role) => role.id === PLATFORM_ADMIN_ROLE_ID,
 		);
 	const takenRoleIds = new Set(draft.additional.map((r) => r.roleId));
-	const addableRoles = data.assignable_roles.filter(
-		(r) => r.can_be_additional && !takenRoleIds.has(r.id),
-	);
+	// The roles picker: what can be added, and what's held and may be
+	// removed. A held role the caller can't grant isn't offered, so it stays.
+	const roleOptions = data.assignable_roles
+		.filter((r) => r.can_be_additional || takenRoleIds.has(r.id))
+		.map((r) => ({
+			value: r.id,
+			label: r.name,
+			description: r.description ?? undefined,
+		}));
+	const chooseRoles = (roleIds: string[]) => {
+		const chosen = new Set(roleIds);
+		setDraft({
+			...draft,
+			additional: [
+				...draft.additional.filter((r) => chosen.has(r.roleId)),
+				...roleIds.flatMap((id) => {
+					const role = assignable.get(id);
+					return role && !takenRoleIds.has(id)
+						? [{ roleId: id, places: defaultPlaces(role) }]
+						: [];
+				}),
+			],
+		});
+	};
 	const holdsAdmin = (roles: { roleId: string }[]) =>
 		roles.some((role) => role.roleId === PLATFORM_ADMIN_ROLE_ID);
 	const promoting =
@@ -1045,9 +895,9 @@ export function UserRoleAssignmentsPanel({
 						id="base-role-help"
 						className="text-xs leading-5 text-muted-foreground"
 					>
-						What this person can do in their own organization.
-						Everyone has exactly one. A custom base role replaces
-						the User role's defaults.
+						What the account can do in its home organization.
+						Every account has exactly one. A custom base role
+						replaces the User role's defaults.
 					</p>
 					<div className="space-y-3 rounded-[var(--bf-radius-surface)] border border-border/60 bg-muted/30 p-3 sm:p-4">
 						{canChangeBase ? (
@@ -1057,7 +907,6 @@ export function UserRoleAssignmentsPanel({
 								aria-describedby="base-role-help"
 								value={draft.baseRoleId}
 								onValueChange={(value) =>
-									value &&
 									setDraft({ ...draft, baseRoleId: value })
 								}
 								options={baseOptions.map((role) => ({
@@ -1111,6 +960,18 @@ export function UserRoleAssignmentsPanel({
 							applies only where you choose.
 						</p>
 					</div>
+					{canEdit && roleOptions.length > 0 && (
+						<MultiCombobox
+							options={roleOptions}
+							value={draft.additional.map((r) => r.roleId)}
+							onValueChange={chooseRoles}
+							// Each chosen role is listed below with its places.
+							showSelected={false}
+							placeholder="Select additional roles..."
+							searchPlaceholder="Search roles..."
+							emptyText="No roles found."
+						/>
+					)}
 					{draft.additional.length === 0 ? (
 						<p className="rounded-[var(--bf-radius-surface)] border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
 							No additional roles.
@@ -1141,20 +1002,19 @@ export function UserRoleAssignmentsPanel({
 											user.organization_id
 										}
 										orgName={orgName}
-										organizationOptions={
-											organizationOptions
+										organizationChoices={
+											organizationChoices
 										}
 										homeIfAllowed={homeIfAllowed}
 										onRemove={() =>
-											setDraft({
-												...draft,
-												additional:
-													draft.additional.filter(
-														(r) =>
-															r.roleId !==
-															role.roleId,
+											chooseRoles(
+												draft.additional
+													.map((r) => r.roleId)
+													.filter(
+														(id) =>
+															id !== role.roleId,
 													),
-											})
+											)
 										}
 										onPlacesChange={(places) =>
 											updateRole(role.roleId, places)
@@ -1188,23 +1048,6 @@ export function UserRoleAssignmentsPanel({
 								organizations and platform settings.
 							</AlertDescription>
 						</Alert>
-					)}
-					{canEdit && addableRoles.length > 0 && (
-						<AddRolePicker
-							roles={addableRoles}
-							onAdd={(role) =>
-								setDraft({
-									...draft,
-									additional: [
-										...draft.additional,
-										{
-											roleId: role.id,
-											places: defaultPlaces(role),
-										},
-									],
-								})
-							}
-						/>
 					)}
 				</section>
 			</div>

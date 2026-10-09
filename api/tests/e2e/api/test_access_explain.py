@@ -290,6 +290,15 @@ def test_admin_explains_then_and_now(e2e_client, platform_admin, world) -> None:
     assert body["now_unavailable"] is None
 
 
+def test_event_names_the_run_user_s_own_organization(e2e_client, platform_admin, world) -> None:
+    actor = _ok(_explain(e2e_client, platform_admin.headers, world["events"]["fabrikam"]))["event"]["actor"]
+
+    assert (actor["home_organization_name"], actor["organization_name"]) == (
+        world["contoso"]["name"],
+        world["fabrikam"]["name"],
+    )
+
+
 def test_role_change_flips_now(e2e_client, platform_admin, world) -> None:
     """A role placed on Fabrikam brings it into the run user's reach; Full powers hold the permission."""
     admin = platform_admin.headers
@@ -338,6 +347,31 @@ def test_run_user_deleted_now_unavailable(e2e_client, platform_admin, world) -> 
 
     assert (body["now"], body["now_unavailable"], body["changed"]) == (None, "run_user_missing", None)
     assert body["then"]["outcome"] == "failure"
+
+
+def test_check_without_a_stored_trace_is_judged_now(e2e_client, platform_admin, async_session_factory, world) -> None:
+    """Older and worker-written checks keep their inputs but no trace: then is unknown, now is not."""
+    row = _scope_switch(uuid.UUID(world["person"]["id"]), world["contoso"]["id"], world["fabrikam"]["id"])
+    row["details"].pop("trace")
+    (event_id,) = asyncio.run(_seed(async_session_factory, [row]))
+    try:
+        body = _ok(_explain(e2e_client, platform_admin.headers, str(event_id)))
+    finally:
+        asyncio.run(_delete(async_session_factory, [event_id]))
+
+    assert (body["then"], body["now"]["outcome"], body["now_unavailable"], body["changed"]) == (None, "failure", None, None)
+
+
+def test_check_without_stored_inputs_now_unavailable(e2e_client, platform_admin, async_session_factory, world) -> None:
+    row = _scope_switch(uuid.UUID(world["person"]["id"]), world["contoso"]["id"], world["fabrikam"]["id"])
+    row["details"] = {"workflow_id": None}
+    (event_id,) = asyncio.run(_seed(async_session_factory, [row]))
+    try:
+        body = _ok(_explain(e2e_client, platform_admin.headers, str(event_id)))
+    finally:
+        asyncio.run(_delete(async_session_factory, [event_id]))
+
+    assert (body["then"], body["now"], body["now_unavailable"], body["changed"]) == (None, None, "inputs_not_stored", None)
 
 
 def test_access_check_what_if(e2e_client, platform_admin, world) -> None:

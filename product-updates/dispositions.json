@@ -1891,6 +1891,19 @@
         ]
       }
     },
+    "pr:942": {
+      "classification": "highlight",
+      "entry_ids": [
+        "293d312e-a4b4-42b0-a7ee-85b4e8ab4ad8"
+      ],
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/942",
+          "Product review: Jack approved the copy on 2026-10-09."
+        ]
+      }
+    },
     "pr:941": {
       "classification": "omit",
       "entry_ids": [],

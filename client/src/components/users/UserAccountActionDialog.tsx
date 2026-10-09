@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { getErrorMessage } from "@/lib/api-error";
 import { useDialogReturnFocus } from "@/hooks/useDialogReturnFocus";
 
-type Mode = "disable" | "delete" | "reset-mfa" | "sign-out";
+type Mode = "disable" | "delete" | "delete-identity" | "reset-mfa" | "sign-out";
 
 const COPY: Record<
 	Mode,
@@ -54,6 +54,20 @@ const COPY: Record<
 		),
 		errorTitle: "User could not be deleted",
 		action: "Permanently Delete",
+		pending: "Deleting…",
+		destructive: true,
+	},
+	"delete-identity": {
+		title: "Delete Identity",
+		description: (name) => (
+			<>
+				Permanently delete “{name}”? This cannot be undone. An identity
+				that workflows run as can't be deleted until they run as
+				another.
+			</>
+		),
+		errorTitle: "Identity could not be deleted",
+		action: "Delete Identity",
 		pending: "Deleting…",
 		destructive: true,
 	},

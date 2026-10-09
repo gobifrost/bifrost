@@ -2471,6 +2471,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workflows/{workflow_id}/run-identities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the identities a workflow may run as
+         * @description The identities this workflow may run as when no person starts it: its organization's identities (a global or provider-organization workflow: the global and provider-organization ones), including the default (Platform admin only)
+         */
+        get: operations["list_workflow_run_identities_api_workflows__workflow_id__run_identities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflows/{workflow_id}/recommended-access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recommended Access for a workflow's identity
+         * @description What the identity the workflow runs as would also need, based on the access checks its runs recorded in the audit log's hot window: reach into other organizations, roles its policies look for, and the workflow's own roles. Computed for identity_id, else the identity it runs as now. Empty until runs are observed (Platform admin only)
+         */
+        get: operations["get_workflow_recommended_access_api_workflows__workflow_id__recommended_access_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/forms": {
         parameters: {
             query?: never;
@@ -7553,6 +7593,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/identities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List identities
+         * @description The identities in the organizations the caller may read users in, with their roles and the number of workflows that run as each. The global identity comes first.
+         */
+        get: operations["list_identities_api_identities_get"];
+        put?: never;
+        /**
+         * Create a custom identity
+         * @description A custom identity with the User base role, in an organization or (organization_id null) Global.
+         */
+        post: operations["create_identity_api_identities_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/identities/{identity_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a custom identity
+         * @description Only a custom identity no workflow runs as can be deleted; the 409 names the workflows.
+         */
+        delete: operations["delete_identity_api_identities__identity_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename a custom identity
+         * @description Rename a custom identity; default identities are all named Default Identity and can't be renamed.
+         */
+        patch: operations["rename_identity_api_identities__identity_id__patch"];
+        trace?: never;
+    };
     "/api/admin/roi/settings": {
         parameters: {
             query?: never;
@@ -11976,10 +12064,10 @@ export interface components {
          */
         AccessExplanation: {
             event: components["schemas"]["AuditLogEntry"];
-            then: components["schemas"]["AccessTrace"];
+            then: components["schemas"]["AccessTrace"] | null;
             now: components["schemas"]["AccessTrace"] | null;
             /** Now Unavailable */
-            now_unavailable: ("rows_not_stored" | "run_user_missing" | "workflow_missing" | "solution_not_recorded") | null;
+            now_unavailable: ("rows_not_stored" | "run_user_missing" | "workflow_missing" | "solution_not_recorded" | "inputs_not_stored") | null;
             /** Changed */
             changed: boolean | null;
         };
@@ -13662,14 +13750,24 @@ export interface components {
             user_name?: string | null;
             /**
              * Organization Id
-             * @description Acting user's organization
+             * @description Organization the event happened in (an access check's target organization)
              */
             organization_id?: string | null;
             /**
              * Organization Name
-             * @description Acting user's organization name
+             * @description Name of the organization the event happened in
              */
             organization_name?: string | null;
+            /**
+             * Home Organization Id
+             * @description The organization the acting user belongs to (null for Global or a deleted user)
+             */
+            home_organization_id?: string | null;
+            /**
+             * Home Organization Name
+             * @description Name of the acting user's own organization
+             */
+            home_organization_name?: string | null;
         };
         /**
          * AuditLogEntry
@@ -13739,6 +13837,11 @@ export interface components {
             details?: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Workflow Name
+             * @description Name of the workflow the event names (details.workflow_id), when it still exists
+             */
+            workflow_name?: string | null;
         };
         /**
          * AuditLogGroup
@@ -19816,6 +19919,79 @@ export interface components {
             /** Collections */
             collections: components["schemas"]["HomeCollectionPublic"][];
         };
+        /** IdentityBaseRole */
+        IdentityBaseRole: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /**
+         * IdentityCreate
+         * @description A new custom identity (base role User, no additional roles).
+         */
+        IdentityCreate: {
+            /** Name */
+            name: string;
+            /**
+             * Organization Id
+             * @description The identity's organization; null for a Global identity.
+             */
+            organization_id: string | null;
+        };
+        /** IdentityPublic */
+        IdentityPublic: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Identity Kind
+             * @enum {string}
+             */
+            identity_kind: "org_default" | "global_default" | "custom";
+            /**
+             * Organization Id
+             * @description Null for Global identities.
+             */
+            organization_id: string | null;
+            /** Organization Name */
+            organization_name: string | null;
+            base_role: components["schemas"]["IdentityBaseRole"];
+            /** Additional Roles */
+            additional_roles: components["schemas"]["IdentityRole"][];
+            /**
+             * Workflows Using
+             * @description Workflows that run unattended as this identity. A default identity also runs the workflows of its organization (Global: of no organization) that name no identity.
+             */
+            workflows_using: number;
+        };
+        /**
+         * IdentityRole
+         * @description An additional role the identity holds, and where it applies.
+         */
+        IdentityRole: {
+            /**
+             * Role Id
+             * Format: uuid
+             */
+            role_id: string;
+            /** Name */
+            name: string;
+            /** Boundaries */
+            boundaries: components["schemas"]["RoleBoundaryPublic"][];
+        };
+        /** IdentityUpdate */
+        IdentityUpdate: {
+            /** Name */
+            name: string;
+        };
         /**
          * ImageArtifactSpec
          * @description Prompt for a provider-generated image saved as a Chat artifact.
@@ -24392,6 +24568,63 @@ export interface components {
             started_at: string | null;
         };
         /**
+         * RecommendedAccess
+         * @description What the identity a workflow runs as would also need, based on its recorded runs.
+         */
+        RecommendedAccess: {
+            /**
+             * Identity Id
+             * Format: uuid
+             * @description The identity the recommendations are computed for.
+             */
+            identity_id: string;
+            /**
+             * Observed Runs
+             * @description Runs in the window that recorded access checks for this workflow.
+             */
+            observed_runs: number;
+            /**
+             * Window Days
+             * @description How far back the recorded checks reach: the audit log's hot window.
+             */
+            window_days: number;
+            /** Items */
+            items: components["schemas"]["RecommendedAccessItem"][];
+        };
+        /** RecommendedAccessItem */
+        RecommendedAccessItem: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "reach" | "policy_role" | "workflow_role";
+            /** Label */
+            label: string;
+            /** Detail */
+            detail: string;
+            /**
+             * Organization Id
+             * @description The organization a reach recommendation targets, or where a policy role's grant would be placed; null for everything, for Global, and for a workflow role.
+             */
+            organization_id: string | null;
+            /** @description Null when no single role assignment meets it (a role to choose, or information only). */
+            grant: components["schemas"]["RecommendedGrant"] | null;
+        };
+        /**
+         * RecommendedGrant
+         * @description The role assignment a recommendation asks for: ``role_id`` applied at
+         *     ``boundaries``, merged into the identity's existing assignment of that role.
+         */
+        RecommendedGrant: {
+            /**
+             * Role Id
+             * Format: uuid
+             */
+            role_id: string;
+            /** Boundaries */
+            boundaries: components["schemas"]["RoleBoundaryInput"][];
+        };
+        /**
          * RecoveryCodesCountResponse
          * @description Recovery codes count response.
          */
@@ -25169,6 +25402,11 @@ export interface components {
              * @default false
              */
             organization_is_provider: boolean;
+            /**
+             * Identity Kind
+             * @description org_default, global_default or custom for an identity; null for a person.
+             */
+            identity_kind?: string | null;
             /**
              * Boundaries
              * @description Where the role applies for this user.
@@ -28829,6 +29067,11 @@ export interface components {
             /** Updated At */
             updated_at: string | null;
             /**
+             * Identity Kind
+             * @description org_default, global_default or custom for an identity; null for a person.
+             */
+            identity_kind?: string | null;
+            /**
              * Invite Status
              * @default active
              */
@@ -29707,6 +29950,8 @@ export interface components {
              * @description Identity this workflow runs as when no person starts it. Null = its organization's default identity.
              */
             run_identity_id?: string | null;
+            /** @description Effective workflow permission mode: 'full' or 'restricted' */
+            permission_mode: components["schemas"]["WorkflowPermissionMode"];
             /**
              * Access Level
              * @description Access level: 'authenticated' (any signed-in user except externals), 'everyone' (any signed-in user incl. externals), or 'role_based' (specific roles required)
@@ -29896,6 +30141,11 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /**
+         * WorkflowPermissionMode
+         * @enum {string}
+         */
+        WorkflowPermissionMode: "full" | "restricted";
         /**
          * WorkflowROIEntry
          * @description ROI data for a single workflow.
@@ -34538,6 +34788,71 @@ export interface operations {
             };
         };
     };
+    list_workflow_run_identities_api_workflows__workflow_id__run_identities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityPublic"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_workflow_recommended_access_api_workflows__workflow_id__recommended_access_get: {
+        parameters: {
+            query?: {
+                /** @description Compute for this identity instead of the current one */
+                identity_id?: string | null;
+            };
+            header?: never;
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecommendedAccess"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "forms.list": {
         parameters: {
             query?: {
@@ -36537,6 +36852,10 @@ export interface operations {
                 user_id?: string | null;
                 /** @description Filter by workflow execution ID */
                 execution_id?: string | null;
+                /** @description Filter by the workflow an entry names, or 'none' for entries naming no workflow */
+                workflow_id?: string | "none" | null;
+                /** @description Filter by organization ID, or 'none' for Global entries */
+                organization_id?: string | "none" | null;
                 /** @description Start of time range (inclusive) */
                 start_date?: string | null;
                 /** @description End of time range (inclusive) */
@@ -43915,6 +44234,135 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunRetentionPublic"];
+                };
+            };
+        };
+    };
+    list_identities_api_identities_get: {
+        parameters: {
+            query?: {
+                /** @description Only this organization's identities */
+                organization_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityPublic"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_identity_api_identities_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdentityCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_identity_api_identities__identity_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                identity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_identity_api_identities__identity_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                identity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdentityUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

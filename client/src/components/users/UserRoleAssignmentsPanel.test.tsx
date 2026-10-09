@@ -258,6 +258,22 @@ function render(user = makeUser(), isSelf = false) {
 	);
 }
 
+/** Picks a role in the additional-roles multi-select, then closes it. */
+async function chooseRole(
+	user: ReturnType<typeof render>["user"],
+	name: RegExp,
+) {
+	await user.click(
+		screen.getByRole("combobox", { name: "Select additional roles..." }),
+	);
+	await user.click(
+		within(await screen.findByRole("listbox")).getByRole("option", {
+			name,
+		}),
+	);
+	await user.keyboard("{Escape}");
+}
+
 beforeEach(() => {
 	state.summary = summary(true);
 	state.assignments = adminView();
@@ -273,10 +289,7 @@ describe("UserRoleAssignmentsPanel", () => {
 		expect(save).toBeDisabled();
 		expect(screen.getByText("No additional roles.")).toBeInTheDocument();
 
-		await user.click(screen.getByRole("button", { name: "Add Role" }));
-		await user.click(
-			await screen.findByRole("option", { name: /Platform Operator/ }),
-		);
+		await chooseRole(user, /Platform Operator/);
 
 		const places = screen.getByRole("list", {
 			name: "Where Platform Operator applies",
@@ -311,10 +324,7 @@ describe("UserRoleAssignmentsPanel", () => {
 
 	it("assigns Secrets Reader with its fixed places and no picker", async () => {
 		const { user } = render();
-		await user.click(screen.getByRole("button", { name: "Add Role" }));
-		await user.click(
-			await screen.findByRole("option", { name: /Secrets Reader/ }),
-		);
+		await chooseRole(user, /Secrets Reader/);
 
 		expect(screen.getByText("Applies everywhere.")).toBeInTheDocument();
 		expect(
@@ -323,8 +333,8 @@ describe("UserRoleAssignmentsPanel", () => {
 			}),
 		).not.toBeInTheDocument();
 		expect(
-			screen.queryByRole("button", {
-				name: "Add where Secrets Reader applies",
+			screen.queryByRole("combobox", {
+				name: "Select organizations for Secrets Reader...",
 			}),
 		).not.toBeInTheDocument();
 
@@ -344,16 +354,13 @@ describe("UserRoleAssignmentsPanel", () => {
 
 	it("offers Operator only its allowed places, never the provider org", async () => {
 		const { user } = render();
-		await user.click(screen.getByRole("button", { name: "Add Role" }));
-		await user.click(
-			await screen.findByRole("option", { name: /Platform Operator/ }),
-		);
+		await chooseRole(user, /Platform Operator/);
 		await user.click(
 			screen.getByRole("radio", { name: "Selected Organizations" }),
 		);
 		await user.click(
-			screen.getByRole("button", {
-				name: "Add where Platform Operator applies",
+			screen.getByRole("combobox", {
+				name: "Select organizations for Platform Operator...",
 			}),
 		);
 
@@ -389,10 +396,7 @@ describe("UserRoleAssignmentsPanel", () => {
 
 	it("warns before adding Platform Admin, which applies platform-wide with no choice", async () => {
 		const { user } = render();
-		await user.click(screen.getByRole("button", { name: "Add Role" }));
-		await user.click(
-			await screen.findByRole("option", { name: /Platform Admin/ }),
-		);
+		await chooseRole(user, /Platform Admin/);
 
 		expect(
 			screen.getByText(/unrestricted access to every organization/i),
@@ -405,8 +409,8 @@ describe("UserRoleAssignmentsPanel", () => {
 			).getByText("Global"),
 		).toBeInTheDocument();
 		expect(
-			screen.queryByRole("button", {
-				name: "Add where Platform Admin applies",
+			screen.queryByRole("combobox", {
+				name: "Select organizations for Platform Admin...",
 			}),
 		).not.toBeInTheDocument();
 
@@ -526,23 +530,20 @@ describe("UserRoleAssignmentsPanel", () => {
 			screen.queryByRole("button", { name: "Remove Platform Operator" }),
 		).not.toBeInTheDocument();
 
-		await user.click(screen.getByRole("button", { name: "Add Role" }));
-		await user.click(
-			await screen.findByRole("option", { name: /Help desk/ }),
-		);
+		await chooseRole(user, /Help desk/);
 		expect(
-			within(
-				screen.getByRole("list", { name: "Where Help desk applies" }),
-			).getByText("Contoso"),
+			screen.getByRole("button", { name: "Remove Contoso" }),
 		).toBeInTheDocument();
 
 		await user.click(
-			screen.getByRole("button", { name: "Add where Help desk applies" }),
+			screen.getByRole("combobox", {
+				name: "Select organizations for Help desk...",
+			}),
 		);
 		const options = within(await screen.findByRole("listbox"))
 			.getAllByRole("option")
 			.map((option) => option.textContent);
-		expect(options).toEqual(["Fabrikam"]);
+		expect(options).toEqual(["Contoso", "Fabrikam"]);
 	});
 
 	it("lets an admin remove an Operator role the user can no longer be given", async () => {
@@ -574,19 +575,23 @@ describe("UserRoleAssignmentsPanel", () => {
 			screen.getByText(/can't be given this role any more/),
 		).toBeInTheDocument();
 		expect(
-			screen.queryByRole("button", {
-				name: "Add where Platform Operator applies",
+			screen.queryByRole("combobox", {
+				name: "Select organizations for Platform Operator...",
 			}),
 		).not.toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: "Add Role" }));
+		await user.click(
+			screen.getByRole("button", { name: "Remove Platform Operator" }),
+		);
+		// Once removed it isn't offered again: it can't be given any more.
+		await user.click(
+			screen.getByRole("combobox", {
+				name: "Select additional roles...",
+			}),
+		);
 		expect(
 			screen.queryByRole("option", { name: /Platform Operator/ }),
 		).not.toBeInTheDocument();
 		await user.keyboard("{Escape}");
-
-		await user.click(
-			screen.getByRole("button", { name: "Remove Platform Operator" }),
-		);
 		await user.click(screen.getByRole("button", { name: "Save Roles" }));
 		await waitFor(() => expect(state.mutateAsync).toHaveBeenCalled());
 		expect(state.mutateAsync.mock.calls[0][0].body.additional).toEqual([]);
@@ -608,7 +613,9 @@ describe("UserRoleAssignmentsPanel", () => {
 			screen.getByText("You can view these roles but not change them."),
 		).toBeInTheDocument();
 		expect(
-			screen.queryByRole("button", { name: "Add Role" }),
+			screen.queryByRole("combobox", {
+				name: "Select additional roles...",
+			}),
 		).not.toBeInTheDocument();
 		expect(
 			screen.queryByRole("button", { name: "Save Roles" }),
@@ -634,10 +641,7 @@ describe("UserRoleAssignmentsPanel", () => {
 			detail: "Platform Operator applies only at managed organizations or at customer organizations",
 		});
 		const { user } = render();
-		await user.click(screen.getByRole("button", { name: "Add Role" }));
-		await user.click(
-			await screen.findByRole("option", { name: /Platform Operator/ }),
-		);
+		await chooseRole(user, /Platform Operator/);
 		await user.click(screen.getByRole("button", { name: "Save Roles" }));
 
 		expect(
@@ -652,10 +656,7 @@ describe("UserRoleAssignmentsPanel", () => {
 
 	it("discards unsaved changes", async () => {
 		const { user } = render();
-		await user.click(screen.getByRole("button", { name: "Add Role" }));
-		await user.click(
-			await screen.findByRole("option", { name: /Help desk/ }),
-		);
+		await chooseRole(user, /Help desk/);
 		await user.click(
 			screen.getByRole("button", { name: "Discard Changes" }),
 		);
@@ -752,6 +753,81 @@ describe("UserRoleAssignmentsPanel", () => {
 			organization_id: null,
 		};
 
+		it("adds and removes additional roles from one multi-select, keeping each role's places", async () => {
+			state.assignments = holding(supportRole, [
+				contoso,
+				{ kind: "organization", organization_id: "org-b" },
+			]);
+			const { user } = render(makeUser({ organization_id: "org-a" }));
+			const picker = screen.getByRole("combobox", {
+				name: "Select additional roles...",
+			});
+			expect(picker).toHaveTextContent("1 selected");
+
+			await chooseRole(user, /Platform Operator/);
+			await chooseRole(user, /Billing Forms/);
+			// Deselecting in the picker removes the role again.
+			await chooseRole(user, /Billing Forms/);
+
+			expect(picker).toHaveTextContent("2 selected");
+			// Help desk keeps Contoso and Fabrikam; Platform Operator starts
+			// at the person's home organization, Contoso.
+			expect(
+				screen.getAllByRole("button", { name: "Remove Contoso" }),
+			).toHaveLength(2);
+			expect(
+				screen.getByRole("button", { name: "Remove Fabrikam" }),
+			).toBeInTheDocument();
+			await user.click(
+				screen.getByRole("button", { name: "Save Roles" }),
+			);
+			await waitFor(() => expect(state.mutateAsync).toHaveBeenCalled());
+			expect(state.mutateAsync.mock.calls[0][0].body.additional).toEqual([
+				{
+					role_id: SUPPORT_ROLE,
+					boundaries: [
+						contoso,
+						{ kind: "organization", organization_id: "org-b" },
+					],
+				},
+				{
+					role_id: OPERATOR_ROLE,
+					boundaries: [contoso],
+				},
+			]);
+		});
+
+		it("places a role at the organizations chosen in its multi-select", async () => {
+			state.assignments = holding(supportRole, [contoso]);
+			const { user } = render(makeUser({ organization_id: "org-a" }));
+
+			await user.click(
+				screen.getByRole("combobox", {
+					name: "Select organizations for Help desk...",
+				}),
+			);
+			await user.click(
+				await screen.findByRole("option", { name: "Fabrikam" }),
+			);
+			await user.click(
+				await screen.findByRole("option", { name: "Contoso" }),
+			);
+			await user.keyboard("{Escape}");
+			await user.click(
+				screen.getByRole("button", { name: "Save Roles" }),
+			);
+
+			await waitFor(() => expect(state.mutateAsync).toHaveBeenCalled());
+			expect(state.mutateAsync.mock.calls[0][0].body.additional).toEqual([
+				{
+					role_id: SUPPORT_ROLE,
+					boundaries: [
+						{ kind: "organization", organization_id: "org-b" },
+					],
+				},
+			]);
+		});
+
 		it("shows a placement as its preset and saves the places a preset stands for", async () => {
 			state.assignments = holding(supportRole, [contoso]);
 			const { user } = render(makeUser({ organization_id: "org-a" }));
@@ -812,14 +888,14 @@ describe("UserRoleAssignmentsPanel", () => {
 			);
 
 			expect(
-				within(
-					screen.getByRole("list", {
-						name: "Where Help desk applies",
-					}),
-				)
-					.getAllByRole("listitem")
-					.map((item) => item.textContent),
-			).toEqual(["Contoso", "Fabrikam"]);
+				screen
+					.getAllByRole("button", { name: /^Remove / })
+					.map((chip) => chip.getAttribute("aria-label")),
+			).toEqual([
+				"Remove Help desk",
+				"Remove Contoso",
+				"Remove Fabrikam",
+			]);
 			expect(
 				screen.getByRole("button", { name: "Save Roles" }),
 			).toBeDisabled();
@@ -827,12 +903,7 @@ describe("UserRoleAssignmentsPanel", () => {
 
 		it("offers All organizations only when the role can apply everywhere, provider org included", async () => {
 			const { user } = render();
-			await user.click(screen.getByRole("button", { name: "Add Role" }));
-			await user.click(
-				await screen.findByRole("option", {
-					name: /Platform Operator/,
-				}),
-			);
+			await chooseRole(user, /Platform Operator/);
 
 			expect(
 				within(
@@ -854,15 +925,12 @@ describe("UserRoleAssignmentsPanel", () => {
 				assignable_roles: [supportRole],
 			};
 			const { user } = render(makeUser({ organization_id: "org-a" }));
-			await user.click(screen.getByRole("button", { name: "Add Role" }));
-			await user.click(
-				await screen.findByRole("option", { name: /Help desk/ }),
-			);
+			await chooseRole(user, /Help desk/);
 
 			expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
 			expect(
-				screen.getByRole("button", {
-					name: "Add where Help desk applies",
+				screen.getByRole("combobox", {
+					name: "Select organizations for Help desk...",
 				}),
 			).toBeInTheDocument();
 		});
@@ -883,12 +951,12 @@ describe("UserRoleAssignmentsPanel", () => {
 			).toEqual(["Contoso", "All Customer Organizations"]);
 			expect(
 				screen.queryByRole("button", {
-					name: "Remove Contoso from Help desk",
+					name: "Remove Contoso",
 				}),
 			).not.toBeInTheDocument();
 			expect(
-				screen.queryByRole("button", {
-					name: "Add where Help desk applies",
+				screen.queryByRole("combobox", {
+					name: "Select organizations for Help desk...",
 				}),
 			).not.toBeInTheDocument();
 
@@ -917,14 +985,10 @@ describe("UserRoleAssignmentsPanel", () => {
 				screen.queryByRole("radio", { name: "Custom" }),
 			).not.toBeInTheDocument();
 			expect(
-				within(
-					screen.getByRole("list", {
-						name: "Where Help desk applies",
-					}),
-				)
-					.getAllByRole("listitem")
-					.map((item) => item.textContent),
-			).toEqual(["Contoso"]);
+				screen
+					.getAllByRole("button", { name: /^Remove / })
+					.map((chip) => chip.getAttribute("aria-label")),
+			).toEqual(["Remove Help desk", "Remove Contoso"]);
 		});
 
 		it("warns, on tap, when a platform-wide permission is placed on selected organizations", async () => {

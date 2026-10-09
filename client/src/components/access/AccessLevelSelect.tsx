@@ -82,15 +82,7 @@ export function AccessLevelSelect({
 		<Combobox
 			id={id}
 			value={value}
-			onValueChange={(next) => {
-				if (next) {
-					onValueChange(next);
-				} else if (includeNoChange) {
-					onValueChange(noChangeValue);
-				} else {
-					onValueChange(value);
-				}
-			}}
+			onValueChange={onValueChange}
 			options={accessLevelOptions({
 				includeNoChange,
 				noChangeValue,

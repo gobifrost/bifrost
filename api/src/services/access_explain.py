@@ -18,7 +18,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.access_checks import ALL_ORGS, Note, NoteKind, NoteTarget
-from src.models.contracts.access_checks import NowUnavailable
+from src.models.contracts.access_checks import AccessTrace, NowUnavailable
 from src.models.contracts.access_list import AccessEntry
 from src.models.orm.audit import AuditLog
 from src.models.orm.workflows import Workflow
@@ -70,14 +70,23 @@ def stored_note(row: AuditLog) -> Note:
     return Note(cast(NoteKind, row.resource_type), target, facts)
 
 
+def stored_trace(row: AuditLog) -> AccessTrace | None:
+    """The trace an ``access.check`` event was decided with, or None for
+    events stored without one (older and worker-written checks)."""
+    trace = cast("dict[str, Any]", row.details).get("trace")
+    return None if trace is None else AccessTrace.model_validate(trace)
+
+
 async def rerun(db: AsyncSession, row: AuditLog) -> tuple[Trace | None, NowUnavailable | None]:
     """The stored event judged now, or why it cannot be."""
+    details = cast("dict[str, Any]", row.details)
+    if "inputs" not in details:
+        return None, "inputs_not_stored"
     if row.user_id is None:
         return None, "run_user_missing"
     run_user = await load_run_user(db, row.user_id)
     if run_user is None:
         return None, "run_user_missing"
-    details = cast("dict[str, Any]", row.details)
     workflow_id = _uuid(details.get("workflow_id"))
     if workflow_id is not None and await db.get(Workflow, workflow_id) is None:
         return None, "workflow_missing"

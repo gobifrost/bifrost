@@ -12,7 +12,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from shared.identities import IDENTITY_EMAIL_DOMAIN
+from shared.identities import DEFAULT_IDENTITY_NAME, IDENTITY_EMAIL_DOMAIN
 from src.models.enums import IdentityKind
 from src.models.orm.audit import AuditLog
 from src.models.orm.users import User
@@ -66,7 +66,7 @@ async def test_identity_cannot_be_registered(private_client, org1, db_session) -
 
     await db_session.refresh(identity)
     assert identity.hashed_password is None
-    assert identity.name == f"{org1['name']} identity"
+    assert identity.name == DEFAULT_IDENTITY_NAME
 
 
 def test_identity_email_domain_is_reserved(e2e_client, platform_admin, org1) -> None:
@@ -115,7 +115,7 @@ async def test_identity_is_not_edited_or_deleted_as_a_person(e2e_client, platfor
     ]
 
     await db_session.refresh(identity)
-    assert (identity.name, identity.is_active) == (f"{org1['name']} identity", True)
+    assert (identity.name, identity.is_active) == (DEFAULT_IDENTITY_NAME, True)
 
 
 @pytest.mark.asyncio
@@ -137,6 +137,36 @@ async def test_identity_takes_roles_like_anyone(e2e_client, platform_admin, org1
         view = e2e_client.get(f"/api/users/{identity.id}/role-assignments", headers=platform_admin.headers)
         assert view.status_code == 200, view.text
         assert role_id in {item["role_id"] for item in view.json()["additional"]}
+    finally:
+        e2e_client.put(
+            f"/api/users/{identity.id}/role-assignments",
+            headers=platform_admin.headers,
+            json={"base_role_id": USER_ROLE_ID, "additional": []},
+        )
+        e2e_client.delete(f"/api/roles/{role_id}", headers=platform_admin.headers)
+
+
+@pytest.mark.asyncio
+async def test_bulk_replace_roles_reaches_identities(e2e_client, platform_admin, org1, db_session) -> None:
+    identity = await _org_identity(db_session, org1["id"])
+    role = e2e_client.post(
+        "/api/roles", headers=platform_admin.headers, json={"name": f"identity-bulk-{uuid.uuid4().hex[:8]}"}
+    )
+    assert role.status_code == 201, role.text
+    role_id = role.json()["id"]
+
+    try:
+        bulk = e2e_client.patch(
+            "/api/users/bulk",
+            headers=platform_admin.headers,
+            json={"user_ids": [str(identity.id)], "operation": "replace_roles", "role_ids": [role_id]},
+        )
+        assert bulk.status_code == 200, bulk.text
+        assert bulk.json()["failed"] == []
+        view = e2e_client.get(f"/api/users/{identity.id}/role-assignments", headers=platform_admin.headers)
+        assert view.status_code == 200, view.text
+        assert view.json()["base_role"]["id"] == USER_ROLE_ID
+        assert [item["role_id"] for item in view.json()["additional"]] == [role_id]
     finally:
         e2e_client.put(
             f"/api/users/{identity.id}/role-assignments",

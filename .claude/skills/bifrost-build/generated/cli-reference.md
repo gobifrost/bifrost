@@ -560,8 +560,12 @@ Options:
                                   'access.check'.
   --outcome [success|failure]     Only successes or failures.
   --resource-type TEXT            Only events on this resource type.
-  --user TEXT                     Acting user: UUID or email.
+  --user TEXT                     Acting user: UUID, email, or identity name.
   --execution TEXT                Workflow execution ID.
+  --workflow TEXT                 Only events naming this workflow: UUID,
+                                  name, or path::function.
+  --org TEXT                      Only events in this organization: UUID or
+                                  name, or 'global'.
   --since TEXT                    Start of the time range (ISO 8601,
                                   inclusive).
   --until TEXT                    End of the time range (ISO 8601, inclusive).
@@ -3049,6 +3053,8 @@ Options:
 
 Commands:
   access  Show a user's access, or check what it would allow.
+  create  Create a custom identity in --org, or Global.
+  list    List the people you may read, or with --identities the identities.
   roles   Show and replace a user's roles.
 ```
 
@@ -3075,7 +3081,7 @@ Usage: users access check [OPTIONS] USER
 
   Show how the access model decides USER performing --operation in --org.
 
-  USER is a UUID or an email.
+  USER is a UUID, email, or identity name.
 
   Examples:
 
@@ -3098,9 +3104,10 @@ Usage: users access show [OPTIONS] USER
 
   Show what USER can do, and where.
 
-  Lists every place the user reaches and the permissions held there. USER is a
-  UUID or an email. `bifrost users access USER` is the same as `bifrost users
-  access show USER`.
+  Lists every place the user reaches and the permissions held there. `bifrost
+  users access USER` is the same as `bifrost users access show USER`.
+
+  USER is a UUID, email, or identity name.
 
   Example:
 
@@ -3109,6 +3116,45 @@ Usage: users access show [OPTIONS] USER
 Options:
   --json  Emit JSON instead of human-readable output.
   --help  Show this message and exit.
+```
+
+### `users create`
+
+```
+Usage: users create [OPTIONS]
+
+  Create a custom identity in --org, or Global.
+
+  The identity starts with the User base role and no additional roles; give it
+  roles with `bifrost users roles set`, then point a workflow at it with
+  `bifrost workflows update --run-as`.
+
+  Example:
+
+    bifrost users create --identity --org Contoso --name "Contoso Nightly"
+
+Options:
+  --identity   Create an identity (the only thing created here).  [required]
+  --org TEXT   Organization UUID or name, or 'global'.  [required]
+  --name TEXT  The identity's name.  [required]
+  --json       Emit JSON instead of human-readable output.
+  --help       Show this message and exit.
+```
+
+### `users list`
+
+```
+Usage: users list [OPTIONS]
+
+  List the people you may read, or with --identities the identities.
+
+  Identities are the accounts that run work no person started: each
+  organization's default, the global default, and custom ones.
+
+Options:
+  --identities  List identities instead of people.
+  --json        Emit JSON instead of human-readable output.
+  --help        Show this message and exit.
 ```
 
 ### `users roles`
@@ -3134,7 +3180,7 @@ Usage: users roles get [OPTIONS] USER
 
   Show USER's base role and additional roles, with the places each applies.
 
-  USER is a UUID or an email.
+  USER is a UUID, email, or identity name.
 
 Options:
   --json  Emit JSON instead of human-readable output.
@@ -3147,6 +3193,8 @@ Options:
 Usage: users roles set [OPTIONS] USER
 
   Replace USER's additional roles, and optionally their base role.
+
+  USER is a UUID, email, or identity name.
 
   The --role options replace the additional roles; --no-roles removes them
   all. With only --base, the additional roles stay as they are.
@@ -3180,17 +3228,19 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  delete         Delete a workflow by removing its function from the...
-  execute        Execute a registered workflow remotely and stream logs...
-  get            Get a single workflow by UUID, name, or ``path::func`` ref.
-  grant-role     Grant a role access to a workflow.
-  list           List all workflows visible to the caller.
-  list-orphaned  List all orphaned workflows (backing file deleted or...
-  register       Register a decorated function from an existing workspace...
-  remap          Move references from one workflow ID to another active...
-  replace        Repoint an orphaned workflow to a new file location.
-  revoke-role    Revoke a role's access from a workflow.
-  update         Update a workflow's editable properties.
+  delete           Delete a workflow by removing its function from the...
+  execute          Execute a registered workflow remotely and stream logs...
+  get              Get a single workflow by UUID, name, or ``path::func``...
+  grant            Grant the identity a workflow runs as what Recommended...
+  grant-role       Grant a role access to a workflow.
+  list             List all workflows visible to the caller.
+  list-orphaned    List all orphaned workflows (backing file deleted or...
+  recommendations  Show what the identity a workflow runs as would also...
+  register         Register a decorated function from an existing...
+  remap            Move references from one workflow ID to another active...
+  replace          Repoint an orphaned workflow to a new file location.
+  revoke-role      Revoke a role's access from a workflow.
+  update           Update a workflow's editable properties.
 ```
 
 ### `workflows delete`
@@ -3256,6 +3306,34 @@ Options:
   --help  Show this message and exit.
 ```
 
+### `workflows grant`
+
+```
+Usage: workflows grant [OPTIONS] REF
+
+  Grant the identity a workflow runs as what Recommended Access recommends.
+
+  Each grant is merged into the identity's existing assignment of that role. A
+  recommendation without a grant needs a role chosen: use `bifrost users roles
+  set`. A default identity is shared by every workflow that runs as it, so
+  granting to one needs --yes.
+
+  Examples:
+
+    bifrost workflows grant "Sync Invoices" --recommendation 1
+    bifrost workflows grant "Sync Invoices" --all
+    bifrost workflows grant "Sync Invoices" --recommendation 1 --yes
+
+Options:
+  --recommendation N  Number of a recommendation from `workflows
+                      recommendations`, repeatable.
+  --all               Apply every recommendation that has a grant.
+  --yes               Confirm granting to a default identity, which other
+                      workflows share.
+  --json              Emit JSON instead of human-readable output.
+  --help              Show this message and exit.
+```
+
 ### `workflows grant-role`
 
 ```
@@ -3294,6 +3372,25 @@ Usage: workflows list-orphaned [OPTIONS]
   Orphaned workflows are workflows whose source file no longer exists or no
   longer contains the decorated function. They can be repointed with ``bifrost
   workflows replace``.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `workflows recommendations`
+
+```
+Usage: workflows recommendations [OPTIONS] REF
+
+  Show what the identity a workflow runs as would also need.
+
+  Recommended Access, based on the access checks the workflow's recent runs
+  recorded: reach into other organizations, roles its policies look for, and
+  the workflow's own roles. Empty until runs are observed. Apply the grants
+  with `bifrost workflows grant`.
+
+  ``REF`` is a UUID, workflow name, or ``path::func`` locator.
 
 Options:
   --json  Emit JSON instead of human-readable output.
@@ -3407,6 +3504,11 @@ Usage: workflows update [OPTIONS] REF
   :mod:`bifrost.refs` for resolution rules.
 
 Options:
+  --run-as TEXT                   Identity the workflow runs as when no person
+                                  starts it: UUID, name, or name with its
+                                  place, e.g. 'Default Identity (Contoso)'.
+  --run-as-default                Run as the organization's default identity
+                                  again.
   --organization-id TEXT          organization_id
   --access-level TEXT             access_level
   --clear-roles / --no-clear-roles
@@ -3425,7 +3527,6 @@ Options:
   --public-endpoint / --no-public-endpoint
                                   public_endpoint (tri-state; omit to leave
                                   unchanged).
-  --run-identity-id TEXT          run_identity_id (UUID).
   --json                          Emit JSON instead of human-readable output.
   --help                          Show this message and exit.
 ```

@@ -16,13 +16,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.builtin_roles import USER_ROLE_ID
 from shared.identities import (
+    DEFAULT_IDENTITY_NAME,
     IDENTITY_EMAIL_DOMAIN,
     IdentityKind,
     ensure_default_identity,
+    identity_label,
     is_identity,
     is_identity_email,
     refuse_identity_sign_in,
     run_identity_allowed,
+    validate_run_identity,
 )
 from src.core.constants import PROVIDER_ORG_ID
 from src.models.orm.organizations import Organization
@@ -63,7 +66,7 @@ async def test_ensure_default_identity_creates_one_ordinary_account(db_session: 
     identity = await ensure_default_identity(db_session, org)
 
     assert identity.email == f"identity-{org.id}@{IDENTITY_EMAIL_DOMAIN}"
-    assert identity.name == "Identity Test Org identity"
+    assert identity.name == DEFAULT_IDENTITY_NAME == "Default Identity"
     assert identity.identity_kind == IdentityKind.ORG_DEFAULT
     assert identity.organization_id == org.id
     assert identity.base_role_id == USER_ROLE_ID
@@ -117,6 +120,25 @@ def test_run_identity_allowed() -> None:
         assert (
             run_identity_allowed(workflow_organization_id=workflow_org, identity=identity) is expected
         ), (workflow_org, identity.organization_id, identity.identity_kind)
+
+
+def test_identity_label_gives_every_identity_its_place() -> None:
+    default = User(name=DEFAULT_IDENTITY_NAME, identity_kind=IdentityKind.ORG_DEFAULT)
+    custom = User(name="Contoso Nightly", identity_kind=IdentityKind.CUSTOM)
+
+    assert identity_label(default, "Contoso") == "Default Identity (Contoso)"
+    assert identity_label(default, None) == "Default Identity (Global)"
+    assert identity_label(custom, "Contoso") == "Contoso Nightly (Contoso)"
+
+
+@pytest.mark.asyncio
+async def test_a_refused_run_identity_is_named_with_its_place(db_session: AsyncSession) -> None:
+    contoso, fabrikam = await _org(db_session, f"Contoso-{uuid4().hex[:6]}"), await _org(db_session, f"Fabrikam-{uuid4().hex[:6]}")
+    identity = await ensure_default_identity(db_session, contoso)
+
+    with pytest.raises(ValueError) as refused:
+        await validate_run_identity(db_session, workflow_organization_id=fabrikam.id, identity_id=identity.id)
+    assert str(refused.value) == f"Default Identity ({contoso.name}) can't run workflows of this organization"
 
 
 def test_identity_facts() -> None:

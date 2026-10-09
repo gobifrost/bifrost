@@ -40,14 +40,17 @@ class AccessCheckRequest(BaseModel):
     )
 
 
-NowUnavailable = Literal["rows_not_stored", "run_user_missing", "workflow_missing", "solution_not_recorded"]
+NowUnavailable = Literal[
+    "rows_not_stored", "run_user_missing", "workflow_missing", "solution_not_recorded", "inputs_not_stored"
+]
 
 
 class AccessExplanation(BaseModel):
     """A stored access check, as decided then and judged again now."""
 
     event: AuditLogEntry
-    then: AccessTrace
+    # None for checks stored without their trace (older and worker-written ones).
+    then: AccessTrace | None
     now: AccessTrace | None
     now_unavailable: NowUnavailable | None
     changed: bool | None

@@ -11,12 +11,11 @@ organizations that permission reaches (decision R3b P2).
 import logging
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
-from typing import Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import get_settings
@@ -32,8 +31,9 @@ from src.models.contracts.audit_retention import AuditExportRequest
 from src.models.contracts.platform_jobs import PlatformJobAccepted
 from src.models.orm.audit import AuditLog
 from src.models.orm.platform_jobs import PlatformJob
-from src.repositories.audit_logs import AuditLogRepository, GroupBy
-from src.services.access_explain import rerun
+from src.models.orm.workflows import Workflow as WorkflowORM
+from src.repositories.audit_logs import AuditLogRepository, GroupBy, IdOrNone
+from src.services.access_explain import rerun, stored_trace
 from src.services.audit_retention.archiver import audit_retention_info
 from src.services.audit_retention.export import (
     ACCESS_CHECK_ACTIONS,
@@ -70,6 +70,12 @@ async def list_audit_logs(
     execution_id: UUID | None = Query(
         None, description="Filter by workflow execution ID"
     ),
+    workflow_id: IdOrNone | None = Query(
+        None, description="Filter by the workflow an entry names, or 'none' for entries naming no workflow"
+    ),
+    organization_id: IdOrNone | None = Query(
+        None, description="Filter by organization ID, or 'none' for Global entries"
+    ),
     start_date: datetime | None = Query(None, description="Start of time range (inclusive)"),
     end_date: datetime | None = Query(None, description="End of time range (inclusive)"),
     search: str | None = Query(
@@ -94,6 +100,8 @@ async def list_audit_logs(
         "outcome": outcome,
         "user_id": user_id,
         "execution_id": execution_id,
+        "workflow_id": workflow_id,
+        "organization_id": organization_id,
         "start_date": start_date,
         "end_date": end_date,
         "search": search,
@@ -226,14 +234,14 @@ async def explain_access_check(event_id: UUID, user: CurrentActiveUser, db: DbSe
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Only access checks can be explained"
         )
-    then = AccessTrace.model_validate(cast(dict[str, Any], row.details)["trace"])
+    then = stored_trace(row)
     now, now_unavailable = await rerun(db, row)
     return AccessExplanation(
         event=(await _entries(db, [row]))[0],
         then=then,
         now=None if now is None else AccessTrace.model_validate(now.as_dict()),
         now_unavailable=now_unavailable,
-        changed=None if now is None else now.outcome != then.outcome,
+        changed=None if now is None or then is None else now.outcome != then.outcome,
     )
 
 
@@ -246,26 +254,53 @@ def _require_readable(reach: OrgReach, action: str | None) -> None:
         )
 
 
+def _named_workflow(row: AuditLog) -> UUID | None:
+    """The workflow ``row`` names in ``details.workflow_id``, when that is an id."""
+    value = (row.details or {}).get("workflow_id")
+    if not isinstance(value, str):
+        return None
+    try:
+        return UUID(value)
+    except ValueError:
+        return None
+
+
 async def _entries(db: AsyncSession, rows: list[AuditLog]) -> list[AuditLogEntry]:
-    """Entries for ``rows``, with actor user and organization names."""
-    # Look up actor user + org names in batch for display.
+    """Entries for ``rows``, with actor user and organization names, the
+    acting user's own organization, and the workflow each names."""
+    # Look up actor users, organizations and workflow names in batch for display.
     user_ids = {r.user_id for r in rows if r.user_id}
-    org_ids = {r.organization_id for r in rows if r.organization_id}
+    workflow_ids = {workflow_id for r in rows if (workflow_id := _named_workflow(r))}
 
     users_by_id: dict[UUID, UserORM] = {}
     if user_ids:
         result = await db.execute(select(UserORM).where(UserORM.id.in_(user_ids)))
         users_by_id = {u.id: u for u in result.scalars().all()}
 
+    org_ids = {r.organization_id for r in rows if r.organization_id} | {
+        u.organization_id for u in users_by_id.values() if u.organization_id
+    }
     orgs_by_id: dict[UUID, OrganizationORM] = {}
     if org_ids:
         result = await db.execute(select(OrganizationORM).where(OrganizationORM.id.in_(org_ids)))
         orgs_by_id = {o.id: o for o in result.scalars().all()}
 
+    workflow_names: dict[UUID, str] = {}
+    if workflow_ids:
+        result = await db.execute(
+            select(WorkflowORM.id, func.coalesce(func.nullif(WorkflowORM.display_name, ""), WorkflowORM.name)).where(
+                WorkflowORM.id.in_(workflow_ids)
+            )
+        )
+        workflow_names = {workflow_id: name for workflow_id, name in result.all()}
+
     entries: list[AuditLogEntry] = []
     for row in rows:
         actor_user = users_by_id.get(row.user_id) if row.user_id else None
         actor_org = orgs_by_id.get(row.organization_id) if row.organization_id else None
+        home_id = actor_user.organization_id if actor_user else None
+        home_org = orgs_by_id.get(home_id) if home_id else None
+        workflow_id = _named_workflow(row)
         entries.append(
             AuditLogEntry(
                 id=row.id,
@@ -284,10 +319,13 @@ async def _entries(db: AsyncSession, rows: list[AuditLog]) -> list[AuditLogEntry
                     user_name=actor_user.name if actor_user else None,
                     organization_id=row.organization_id,
                     organization_name=actor_org.name if actor_org else None,
+                    home_organization_id=home_id,
+                    home_organization_name=home_org.name if home_org else None,
                 ),
                 ip_address=row.ip_address,
                 user_agent=row.user_agent,
                 details=row.details,
+                workflow_name=workflow_names.get(workflow_id) if workflow_id else None,
             )
         )
     return entries

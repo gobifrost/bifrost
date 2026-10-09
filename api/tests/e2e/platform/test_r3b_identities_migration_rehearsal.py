@@ -111,6 +111,49 @@ async def _rerun_data_step(database_url: str) -> None:
     await _run_in_database(database_url, rerun)
 
 
+async def _use_custom_global_identity(database_url: str, workflow_id: str) -> None:
+    """A custom identity with no organization, which a workflow runs as: what head allows and the downgrade removes."""
+
+    async def use(connection: AsyncConnection) -> None:
+        await connection.execute(
+            sa.text(
+                "INSERT INTO users (id, email, name, is_active, is_superuser, is_verified, is_registered, "
+                "is_system, is_external, organization_id, base_role_id, identity_kind) "
+                "VALUES (gen_random_uuid(), :email, 'Custom Global', true, false, true, true, false, false, "
+                "NULL, CAST(:user_role AS uuid), 'custom')"
+            ),
+            {"email": f"identity-custom@{DOMAIN}", "user_role": str(USER_ROLE_ID)},
+        )
+        await connection.execute(
+            sa.text(
+                "UPDATE workflows SET run_identity_id = (SELECT id FROM users WHERE name = 'Custom Global') "
+                "WHERE id = CAST(:workflow AS uuid)"
+            ),
+            {"workflow": workflow_id},
+        )
+
+    await _run_in_database(database_url, use)
+
+
+async def _edit_default_identity_name(database_url: str, organization_id: str, name: str) -> None:
+    async def edit(connection: AsyncConnection) -> None:
+        await connection.execute(
+            sa.text(
+                "UPDATE users SET name = :name "
+                "WHERE organization_id = CAST(:org AS uuid) AND identity_kind = 'org_default'"
+            ),
+            {"name": name, "org": organization_id},
+        )
+
+    await _run_in_database(database_url, edit)
+
+
+def _named(state: dict, names: dict[str, str]) -> dict:
+    """``state`` with the identities named as ``names`` says (by current name)."""
+    identities = {(row[0], row[1], names.get(row[2], row[2]), *row[3:]) for row in state["identities"]}
+    return {**state, "identities": identities}
+
+
 async def _state(database_url: str) -> dict:
     async def read(connection: AsyncConnection) -> dict:
         constraint = (
@@ -121,6 +164,16 @@ async def _state(database_url: str) -> dict:
                 )
             )
         ).scalar_one()
+        name_index = (
+            await connection.execute(
+                sa.text("SELECT indexdef FROM pg_indexes WHERE indexname = 'uq_users_identity_name_per_org'")
+            )
+        ).scalar_one_or_none()
+        workflow_index = (
+            await connection.execute(
+                sa.text("SELECT indexdef FROM pg_indexes WHERE indexname = 'ix_audit_logs_access_check_workflow'")
+            )
+        ).scalar_one_or_none()
         users_org_on_update = (
             await connection.execute(
                 sa.text("SELECT confupdtype::text FROM pg_constraint WHERE conname = 'users_organization_id_fkey'")
@@ -183,6 +236,8 @@ async def _state(database_url: str) -> dict:
         }
         return {
             "constraint": constraint,
+            "name_index": name_index,
+            "workflow_index": workflow_index,
             "users_org_on_update": users_org_on_update,
             "columns": columns,
             "identities": identities,
@@ -209,6 +264,8 @@ def test_identities_are_created_and_unattended_global_workflows_point_at_the_pro
         assert before["constraint"] == "CHECK (((organization_id IS NOT NULL) OR (is_superuser = true)))"
         assert before["columns"] == set()
         assert before["users_org_on_update"] == "a"
+        assert before["name_index"] is None
+        assert before["workflow_index"] is None
 
         _upgrade(database_url, REVISION)
         after = asyncio.run(_state(database_url))
@@ -254,11 +311,43 @@ def test_identities_are_created_and_unattended_global_workflows_point_at_the_pro
             ids["a_sched"]: None,
         }
 
+        # Head widens the constraint (custom identities may have no
+        # organization), names every default identity "Default Identity", an
+        # edited name too (defaults have no editable name), and makes names
+        # unique per organization.
+        asyncio.run(_edit_default_identity_name(database_url, ids["org_b"], "Billing Robot"))
+        edited = asyncio.run(_state(database_url))
+        assert {row[2] for row in edited["identities"]} >= {"Billing Robot", "Global identity", "Rehearsal A identity"}
         _upgrade(database_url, "head")
-        assert asyncio.run(_state(database_url)) == after
+        at_head = asyncio.run(_state(database_url))
+        assert at_head["constraint"] == (
+            "CHECK (((organization_id IS NOT NULL) OR (is_superuser = true) OR (identity_kind IS NOT NULL)))"
+        )
+        assert at_head["name_index"] == (
+            "CREATE UNIQUE INDEX uq_users_identity_name_per_org ON public.users USING btree "
+            "(COALESCE(organization_id, '00000000-0000-0000-0000-000000000000'::uuid), lower((name)::text)) "
+            "WHERE (identity_kind IS NOT NULL)"
+        )
+        # Recommended Access reads a workflow's recorded checks through this index.
+        assert at_head["workflow_index"] == (
+            "CREATE INDEX ix_audit_logs_access_check_workflow ON public.audit_logs USING btree "
+            "(((details ->> 'workflow_id'::text)), created_at) WHERE ((action)::text = 'access.check'::text)"
+        )
+        every_default = {row[2]: "Default Identity" for row in edited["identities"]}
+        unchanged = {"constraint": after["constraint"], "name_index": None, "workflow_index": None}
+        assert _named({**at_head, **unchanged}, {}) == _named(
+            edited, every_default
+        )
         asyncio.run(_rerun_data_step(database_url))
-        assert asyncio.run(_state(database_url)) == after
+        assert asyncio.run(_state(database_url)) == at_head
 
+        # The downgrade of head restores the generated names.
+        _downgrade(database_url, REVISION)
+        assert asyncio.run(_state(database_url)) == after
+        _upgrade(database_url, "head")
+        assert asyncio.run(_state(database_url)) == at_head
+
+        asyncio.run(_use_custom_global_identity(database_url, ids["g_plain"]))
         _downgrade(database_url, PREVIOUS_REVISION)
         assert asyncio.run(_state(database_url)) == before
     finally:

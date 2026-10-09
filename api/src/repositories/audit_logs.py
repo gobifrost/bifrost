@@ -16,7 +16,7 @@ from uuid import UUID
 from sqlalchemy import ColumnElement, Select, String, Text, and_, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.orm.audit import AuditLog
+from src.models.orm.audit import AuditLog, named_workflow_id
 from src.models.orm.organizations import Organization
 from src.models.orm.users import User
 
@@ -35,6 +35,8 @@ def _decode_cursor(token: str) -> tuple[datetime, UUID]:
 
 
 GroupBy = Literal["workflow", "action", "resource_type", "outcome", "user", "organization"]
+# An id to match, or "none" for entries without one.
+IdOrNone = UUID | Literal["none"]
 _MAX_GROUPS = 500
 
 
@@ -49,7 +51,7 @@ class AuditLogGroupRow:
 def _group_key(group_by: GroupBy) -> ColumnElement[Any]:
     """The grouping key, as text (None when the entry has no value)."""
     if group_by == "workflow":
-        return AuditLog.details["workflow_id"].astext
+        return named_workflow_id()
     column = {
         "action": AuditLog.action,
         "resource_type": AuditLog.resource_type,
@@ -68,6 +70,8 @@ def _filtered(
     outcome: str | None,
     user_id: UUID | None,
     execution_id: UUID | None,
+    workflow_id: IdOrNone | None,
+    organization_id: IdOrNone | None,
     start_date: datetime | None,
     end_date: datetime | None,
     search: str | None,
@@ -83,6 +87,14 @@ def _filtered(
         query = query.where(AuditLog.user_id == user_id)
     if execution_id:
         query = query.where(AuditLog.execution_id == execution_id)
+    if workflow_id == "none":
+        query = query.where(named_workflow_id().is_(None))
+    elif workflow_id:
+        query = query.where(named_workflow_id() == str(workflow_id))
+    if organization_id == "none":
+        query = query.where(AuditLog.organization_id.is_(None))
+    elif organization_id:
+        query = query.where(AuditLog.organization_id == organization_id)
     if start_date:
         query = query.where(AuditLog.created_at >= start_date)
     if end_date:
@@ -160,6 +172,8 @@ class AuditLogRepository:
         outcome: str | None = None,
         user_id: UUID | None = None,
         execution_id: UUID | None = None,
+        workflow_id: IdOrNone | None = None,
+        organization_id: IdOrNone | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
         search: str | None = None,
@@ -185,6 +199,8 @@ class AuditLogRepository:
             outcome=outcome,
             user_id=user_id,
             execution_id=execution_id,
+            workflow_id=workflow_id,
+            organization_id=organization_id,
             start_date=start_date,
             end_date=end_date,
             search=search,
@@ -226,6 +242,8 @@ class AuditLogRepository:
         outcome: str | None = None,
         user_id: UUID | None = None,
         execution_id: UUID | None = None,
+        workflow_id: IdOrNone | None = None,
+        organization_id: IdOrNone | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
         search: str | None = None,
@@ -240,6 +258,8 @@ class AuditLogRepository:
             "outcome": outcome,
             "user_id": user_id,
             "execution_id": execution_id,
+            "workflow_id": workflow_id,
+            "organization_id": organization_id,
             "start_date": start_date,
             "end_date": end_date,
             "search": search,

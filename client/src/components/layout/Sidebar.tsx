@@ -13,6 +13,7 @@ import {
 	X,
 	Stethoscope,
 	ShieldCheck,
+	ShieldAlert,
 	MessageSquare,
 	Bot,
 	Plug,
@@ -46,6 +47,8 @@ interface NavItem {
 	requiresPlatformAdmin?: boolean;
 	requiresPermission?: PermissionRequirement;
 	dividerBefore?: boolean;
+	/** Active only on this exact path, not on the pages below it. */
+	end?: boolean;
 }
 
 interface NavSection {
@@ -208,6 +211,13 @@ const navSections: NavSection[] = [
 				href: "/audit",
 				icon: ShieldCheck,
 				requiresPlatformAdmin: true,
+				end: true,
+			},
+			{
+				title: "Access Checks",
+				href: "/audit/access-checks",
+				icon: ShieldAlert,
+				requiresPermission: { permission: "roleassignments.read" },
 			},
 		],
 	},
@@ -350,6 +360,7 @@ export function Sidebar({
 												label={itemTitle}
 												icon={item.icon}
 												isCollapsed={isCollapsed}
+												end={item.end}
 												isActive={
 													item.href === "/"
 														? (location.pathname ===
@@ -427,6 +438,7 @@ export function Sidebar({
 													to={item.href}
 													label={itemTitle}
 													icon={item.icon}
+													end={item.end}
 													onClick={() =>
 														setIsMobileMenuOpen(
 															false,

@@ -167,3 +167,36 @@ class TestManifestImportPolicyValidationContract:
         assert mtable.policies is not None
         # No exception parsing the manifest. The gate must run at write time.
         assert mtable.policies[0].when == {"has_role": "support"}
+
+
+class TestWorkflowRunIdentity:
+    """A workflow the manifest moves away from the identity it runs as is refused by name and place."""
+
+    def test_refusal_names_the_identity_and_its_place(self):
+        from uuid import uuid4
+
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        from bifrost.manifest import ManifestWorkflow
+        from src.models.enums import IdentityKind
+        from src.models.orm.users import User
+        from src.services.manifest_import import ManifestResolver
+
+        contoso, fabrikam, workflow_id = uuid4(), uuid4(), uuid4()
+        identity = User(name="Default Identity", organization_id=contoso, identity_kind=IdentityKind.ORG_DEFAULT)
+        mwf = ManifestWorkflow(
+            id=str(workflow_id), path="workflows/sync.py", function_name="sync", organization_id=str(fabrikam)
+        )
+        cache = {
+            "wf_by_natural": {},
+            "wf_run_identity": {workflow_id: identity},
+            "org_name_by_id": {contoso: "Contoso", fabrikam: "Fabrikam"},
+        }
+
+        with pytest.raises(ValueError) as refused:
+            ManifestResolver(AsyncSession())._resolve_workflow("sync", mwf, cache)
+        assert str(refused.value) == (
+            "Workflow workflows/sync.py::sync runs unattended as Default Identity (Contoso) "
+            f"(run_identity_id), which can't run workflows of organization {fabrikam}; "
+            "change its run_identity_id first"
+        )

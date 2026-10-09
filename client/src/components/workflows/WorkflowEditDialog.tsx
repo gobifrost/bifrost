@@ -73,6 +73,7 @@ import {
 import { useWorkflowKeys, useCreateWorkflowKey, useRevokeWorkflowKey } from "@/hooks/useWorkflowKeys";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { AccessLevelSelect } from "@/components/access/AccessLevelSelect";
+import { WorkflowAccessPanel } from "@/components/workflows/WorkflowAccessPanel";
 import type { components } from "@/lib/v1";
 
 type Workflow = components["schemas"]["WorkflowMetadata"];
@@ -782,6 +783,10 @@ export function WorkflowEditDialog({
 										</p>
 									)}
 								</div>
+							)}
+
+							{workflow && (
+								<WorkflowAccessPanel key={workflow.id} workflow={workflow} />
 							)}
 						</TabsContent>
 
