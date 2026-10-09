@@ -29,6 +29,7 @@ from src.models.contracts.executions import (
 )
 
 from bifrost._logging import read_logs_from_stream
+from shared import access_checks
 from shared.sdk_execution_reads import decode_history_cursor
 from src.core.auth import Context, RequirePlatformAdmin
 from src.core.principal import UserPrincipal
@@ -121,6 +122,7 @@ class ExecutionRepository:
                 ExecutionModel.result,
                 ExecutionModel.result_type,
                 ExecutionModel.executed_by,
+                ExecutionModel.organization_id,
             ).where(ExecutionModel.id == execution_id)
         )
         row = result.one_or_none()
@@ -128,8 +130,10 @@ class ExecutionRepository:
         if not row:
             return None, "NotFound"
 
-        if not user.is_superuser and row.executed_by != user.user_id:
-            return None, "Forbidden"
+        if row.executed_by != user.user_id:
+            if not user.is_superuser:
+                return None, "Forbidden"
+            access_checks.note_power("executions.read.all", row.organization_id, subject=f"execution:{execution_id}")
 
         return {"result": row.result, "result_type": row.result_type}, None
 
@@ -141,7 +145,7 @@ class ExecutionRepository:
         """Get execution logs — dual-read from Redis Stream when in-progress, DB when complete."""
         # Check if execution exists, user has access, and get status
         result = await self.db.execute(
-            select(ExecutionModel.executed_by, ExecutionModel.status)
+            select(ExecutionModel.executed_by, ExecutionModel.status, ExecutionModel.organization_id)
             .where(ExecutionModel.id == execution_id)
         )
         row = result.one_or_none()
@@ -149,8 +153,13 @@ class ExecutionRepository:
         if not row:
             return None, "NotFound"
 
-        if not user.is_superuser and row.executed_by != user.user_id:
-            return None, "Forbidden"
+        if row.executed_by != user.user_id:
+            if not user.is_superuser:
+                return None, "Forbidden"
+            access_checks.note_power("executions.read.all", row.organization_id, subject=f"execution:{execution_id}")
+        if user.is_superuser:
+            # Debug and traceback lines are diagnostics.
+            access_checks.note_power("executions.read", row.organization_id, subject=f"execution:{execution_id}")
 
         is_in_progress = row.status in (
             ExecutionStatus.PENDING, ExecutionStatus.RUNNING,
@@ -215,16 +224,16 @@ class ExecutionRepository:
 
         # Select id and variables to distinguish "not found" from "null variables"
         result = await self.db.execute(
-            select(ExecutionModel.id, ExecutionModel.variables)
+            select(ExecutionModel.id, ExecutionModel.variables, ExecutionModel.organization_id)
             .where(ExecutionModel.id == execution_id)
         )
         row = result.one_or_none()
 
         if row is None:
             return None, "NotFound"
+        access_checks.note_power("executions.read", row.organization_id, subject=f"execution:{execution_id}")
 
-        # row is a tuple of (id, variables)
-        return row[1] or {}, None
+        return row.variables or {}, None
 
     async def cancel_execution(
         self,
@@ -242,8 +251,12 @@ class ExecutionRepository:
         if not execution:
             return None, "NotFound"
 
-        if not user.is_superuser and execution.executed_by != user.user_id:
-            return None, "Forbidden"
+        if execution.executed_by != user.user_id:
+            if not user.is_superuser:
+                return None, "Forbidden"
+            access_checks.note_power(
+                "executions.readwrite.all", execution.organization_id, subject=f"execution:{execution_id}"
+            )
 
         # Already cancelled or cancelling - idempotent success
         if execution.status in [ExecutionStatus.CANCELLING.value, ExecutionStatus.CANCELLED.value]:
@@ -305,6 +318,8 @@ class ExecutionRepository:
                   fields (variables) are gated based on is_superuser.
         """
         is_admin = user.is_superuser if user else False
+        if is_admin:
+            access_checks.note_power("executions.read", execution.organization_id, subject=f"execution:{execution.id}")
 
         return WorkflowExecution(
             execution_id=str(execution.id),

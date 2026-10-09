@@ -12,6 +12,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import select
 
+from shared import access_checks
 from src.config import get_settings
 from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
@@ -134,6 +135,8 @@ async def create_user(
     """Create a new user."""
     from shared.sdk_users import UserServiceError, create_user as create_user_service
 
+    if request.is_superuser:
+        access_checks.note_power("privilegedaccess.readwrite", request.organization_id, subject="user:new")
     try:
         return await create_user_service(
             db,
@@ -390,6 +393,9 @@ async def update_user(
     """Update a user."""
     from shared.sdk_users import UserServiceError, update_user as update_user_service
 
+    if request.is_superuser is not None:
+        # The user's organization is resolved by the service; noted at the caller's.
+        access_checks.note_power("privilegedaccess.readwrite", user.organization_id, subject=f"user:{user_id}")
     try:
         return await update_user_service(
             db,
@@ -491,6 +497,7 @@ async def get_user_forms(
 
     # Platform admins have access to all forms
     if db_user.is_superuser:
+        access_checks.note_power("forms.read", db_user.organization_id, subject=f"user:{db_user.id}")
         return UserFormsResponse(
             is_superuser=True,
             has_access_to_all_forms=True,

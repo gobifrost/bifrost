@@ -23,6 +23,7 @@ from uuid import UUID
 
 from fastmcp.tools import ToolResult
 
+from shared import access_checks
 from shared.scope_resolver import has_scope_bypass
 
 if TYPE_CHECKING:
@@ -633,6 +634,10 @@ if HAS_FASTMCP:
                                     return error_result(
                                         "ArtifactRef output was not found or is outside this MCP scope.",
                                         result,
+                                    )
+                                if artifact.created_by_user_id != UUID(str(context.user_id)):
+                                    access_checks.note_power(
+                                        "artifacts.read.all", artifact.organization_id, subject=f"artifact:{artifact.id}"
                                     )
                                 if ref.content_type.startswith("image/"):
                                     data = await artifact_service.read(artifact)

@@ -45,6 +45,7 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from typing import TYPE_CHECKING
 
+from shared import access_checks
 from src.core.cache.keys import agent_run_steps_stream_key
 from src.core.cache.redis_client import get_redis
 from src.core.log_safety import log_safe
@@ -142,6 +143,11 @@ async def resolve_executable_agent(
                 f"Agent '{agent.name}' belongs to an inactive solution. "
                 "Reinstall the solution to execute this agent.",
             )
+    access_checks.note_power(
+        "agents.execute",
+        access_checks.launch_target(agent.organization_id, principal.organization_id),
+        subject=f"agent:{agent.id}",
+    )
 
     return agent
 

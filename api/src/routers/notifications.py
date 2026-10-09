@@ -9,6 +9,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, status
 
+from shared import access_checks
 from src.core.auth import CurrentUser, CurrentSuperuser
 from src.core.locks import (
     UPLOAD_LOCK_NAME,
@@ -44,6 +45,8 @@ async def list_notifications(
         List of active notifications
     """
     service = get_notification_service()
+    if user.is_superuser:
+        access_checks.note_power("platform.read", None, subject="notifications:admin")
     notifications = await service.get_user_notifications(
         user_id=str(user.user_id),
         include_admin=user.is_superuser,
@@ -85,6 +88,7 @@ async def get_notification(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Notification not found",
             )
+        access_checks.note_power("platform.read", None, subject=f"notification:{notification_id}")
 
     return notification
 
@@ -134,6 +138,8 @@ async def dismiss_notification(
         # will let the user see the final state in the UI before it disappears.
         return
 
+    if user.is_superuser and notification is not None and notification.user_id != str(user.user_id):
+        access_checks.note_power("platform.readwrite", None, subject=f"notification:{notification_id}")
     dismissed = await service.dismiss_notification(
         notification_id=notification_id,
         user_id=str(user.user_id),

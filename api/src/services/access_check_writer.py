@@ -2,19 +2,20 @@
 
 Called by the request middleware after the response, with its own session.
 Every note is judged against the run's user by the decision core
-(``src.services.authorization.explain``). Written to the audit log:
+(``src.services.authorization.explain``); a person's own request is judged
+against their own roles. Written to the audit log:
 
 - ``access.check`` with outcome ``failure``: whenever the model would block
   what today allows.
-- ``access.check`` with outcome ``success``: when it crosses into another
+- ``access.check`` with outcome ``success``: when a run crosses into another
   organization, acts as another user (``run_as``), or is a policy or secret
-  decision.
+  decision. A person's request writes failures only.
 - ``access.check_gap``: when the request carries no run user, the run user no
   longer exists, or a check could not be judged.
 
 Each decision (kind, operation, target, run user, outcome and subject: the
-table, secret, path or user it concerns) is written once per run (Redis marks
-it for a day). Without
+table, secret, path, user or object it concerns) is written once per run, or
+once per person acting directly (Redis marks it for a day). Without
 Redis nothing is written. Nothing here raises into the request.
 """
 
@@ -30,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.access_checks import Collector, Note
 from src.core.cache.redis_client import get_shared_redis
+from src.core.database import get_db_context
 from src.models.contracts.access_list import AccessEntry
 from src.repositories.audit_logs import AuditLogRepository
 from src.services.authorization.explain import (
@@ -38,6 +40,7 @@ from src.services.authorization.explain import (
     RunUser,
     Trace,
     check_entry,
+    check_permission,
     check_policy,
     check_run_as,
     check_secret,
@@ -73,8 +76,12 @@ def _target_org(target: Any) -> UUID | None:
     return target if isinstance(target, UUID) else None
 
 
-def judge(run_user: RunUser, powers: Powers, note: Note, entry: AccessEntry | None) -> Trace:
+def judge(run_user: RunUser, powers: Powers | None, note: Note, entry: AccessEntry | None) -> Trace:
+    """Judge one note; ``powers`` is None for a person acting directly."""
     facts = note.facts
+    if note.kind == "permission":
+        return check_permission(run_user, powers, facts["permission"], note.target)
+    assert powers is not None, "only a run's request notes the other kinds"
     if note.kind in ("scope_switch", "child_run"):
         return check_target(run_user, powers, note.target, entry)
     if note.kind == "run_as":
@@ -103,7 +110,11 @@ class _Writer:
         self.redis = redis
         self.collector = collector
         self.operation = operation
-        self.run_key = str(collector.execution_id or f"run-user:{collector.run_user_id}")
+        self.run_key = (
+            f"person:{collector.run_user_id}"
+            if collector.direct
+            else str(collector.execution_id or f"run-user:{collector.run_user_id}")
+        )
 
     async def _first_time(self, *parts: Any) -> bool:
         digest = hashlib.sha256("|".join(str(part) for part in parts).encode()).hexdigest()[:16]
@@ -147,6 +158,7 @@ class _Writer:
             user_agent=None,
             details={
                 "enforced": False,
+                "direct": self.collector.direct,
                 "workflow_id": _plain(self.collector.workflow_id),
                 "trace": trace.as_dict(),
                 "inputs": {
@@ -177,7 +189,7 @@ async def _write(db: AsyncSession, collector: Collector, *, operation: str, rout
         for kind in kinds:
             await writer.gap(kind, "run_user_missing")
         return
-    powers = await load_powers(db, collector.workflow_id)
+    powers = None if collector.direct else await load_powers(db, collector.workflow_id)
     entry = None if route is None else _entries_by_route().get(route)
     for note in collector.notes:
         if "gap" in note.facts:
@@ -206,5 +218,19 @@ async def flush(
         return
     try:
         await _write(db, collector, operation=operation, route=route)
+    except Exception as exc:
+        logger.warning("access checks not written (operation=%s): %s", operation, type(exc).__name__)
+
+
+async def flush_detached(collector: Collector, *, operation: str, route: tuple[str, str] | None) -> None:
+    """``flush`` in a session of its own, after a response or between a
+    connection's messages; never raises. Nothing noted (most requests) opens
+    no session."""
+    if not collector.notes:
+        collector.closed = True
+        return
+    try:
+        async with get_db_context() as db:
+            await flush(db, collector, operation=operation, route=route)
     except Exception as exc:
         logger.warning("access checks not written (operation=%s): %s", operation, type(exc).__name__)

@@ -21,6 +21,7 @@ from uuid import UUID
 
 from sqlalchemy import select, text
 
+from shared import access_checks
 from src.services.access_check_policies import check_file
 from src.services.audit import emit_file_policy_deny
 
@@ -160,7 +161,15 @@ async def authorize_file_policy(
     user = caller_or_ctx.user
     db = caller_or_ctx.db
     if location == "workspace":
-        return bool(user.is_superuser)
+        if not user.is_superuser:
+            return False
+        # The workspace repository is Global.
+        access_checks.note_power(
+            "repository.read" if action in ("read", "exists", "signed_get", "list") else "repository.readwrite",
+            None,
+            subject="repository",
+        )
+        return True
 
     policy_organization_id: UUID | None = None
     resolved_solution_id = solution_id

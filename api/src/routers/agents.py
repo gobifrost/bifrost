@@ -20,11 +20,12 @@ from fastapi.responses import Response
 from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 
+from shared import access_checks
 from shared.scope_resolver import has_scope_bypass
 from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
-from src.core.org_filter import resolve_org_filter
+from src.core.org_filter import filter_target, resolve_org_filter
 from src.models.contracts.agent_stats import AgentStatsResponse, FleetStatsResponse
 from src.models.contracts.agents import (
     AgentAccessLevel,
@@ -159,6 +160,11 @@ async def _user_has_permission(
     return await role_has_permission(db, role_ids=role_ids, permission=permission)
 
 
+def _others_private(agent: Agent, user_id: UUID) -> bool:
+    """Someone else's private agent: what ``agents.*.all`` reaches."""
+    return agent.access_level == AgentAccessLevel.PRIVATE and agent.owner_user_id != user_id
+
+
 def _logo_data_url(data: bytes | None, content_type: str | None) -> str | None:
     """Encode a binary logo as a data URL, or None if no logo is set."""
     if not data:
@@ -289,6 +295,10 @@ async def list_agents(
     if is_admin:
         # Admins use list_all_in_scope with filter_type for flexibility
         agents = await repo.list_all_in_scope(filter_type, active_only=active_only)
+        target = filter_target(filter_type, filter_org_id)
+        access_checks.note_power("agents.read", target, subject="agents")
+        if any(_others_private(agent, user.user_id) for agent in agents):
+            access_checks.note_power("agents.read.all", target, subject="agents")
     else:
         # Regular users use list_agents with built-in cascade + role-based access
         agents = await repo.list_agents(active_only=active_only)
@@ -371,6 +381,11 @@ async def create_agent(
         await _validate_user_tool_access(
             db, user.user_id, agent_data.tool_ids, is_external=user.is_external
         )
+    elif (
+        agent_data.access_level != AgentAccessLevel.PRIVATE
+        or agent_data.organization_id != user.organization_id
+    ):
+        access_checks.note_power("agents.readwrite", agent_data.organization_id, subject="agents")
 
     # Validate references before creating the agent (every caller, admins
     # included).
@@ -603,6 +618,12 @@ async def get_agent(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Agent {agent_id} not found",
             )
+    if is_admin and agent.owner_user_id != user.user_id:
+        access_checks.note_power(
+            "agents.read.all" if _others_private(agent, user.user_id) else "agents.read",
+            agent.organization_id,
+            subject=f"agent:{agent.id}",
+        )
 
     return _agent_to_public(agent)
 
@@ -671,6 +692,12 @@ async def update_agent(
         # see agent_write_policy for the full gate (includes clear_roles and
         # the organization_id rescope gate below).
         enforce_non_admin_update(agent, agent_data)
+    elif agent.owner_user_id != user.user_id:
+        access_checks.note_power(
+            "agents.readwrite.all" if _others_private(agent, user.user_id) else "agents.readwrite",
+            agent.organization_id,
+            subject=f"agent:{agent.id}",
+        )
 
     final_access_level = agent_data.access_level or agent.access_level
 
@@ -877,6 +904,12 @@ async def delete_agent(
     if not is_admin:
         if agent.owner_user_id != user.user_id:
             raise HTTPException(403, "You can only delete your own private agents")
+    elif agent.owner_user_id != user.user_id:
+        access_checks.note_power(
+            "agents.readwrite.all" if _others_private(agent, user.user_id) else "agents.readwrite",
+            agent.organization_id,
+            subject=f"agent:{agent.id}",
+        )
 
     # Use a SQL DELETE so database-level cascades remove run history and agent
     # memberships while SET NULL references (such as conversations) are preserved.
@@ -918,6 +951,10 @@ async def promote_agent(
             raise HTTPException(403, "You can only promote your own agents")
         if not await _user_has_permission(db, user.user_id, "agents.readwrite"):
             raise HTTPException(403, "You do not have permission to promote agents")
+    else:
+        access_checks.note_power("agents.readwrite", agent.organization_id, subject=f"agent:{agent.id}")
+        if agent.owner_user_id != user.user_id:
+            access_checks.note_power("agents.readwrite.all", agent.organization_id, subject=f"agent:{agent.id}")
 
     # Promote: change access_level, clear owner
     agent.access_level = request.access_level
@@ -1000,6 +1037,13 @@ async def get_agent_stats_endpoint(
             detail=f"Agent {agent_id} not found",
         )
 
+    if is_admin and agent.owner_user_id != user.user_id:
+        access_checks.note_power(
+            "agents.read.all" if _others_private(agent, user.user_id) else "agents.read",
+            agent.organization_id,
+            subject=f"agent:{agent.id}",
+        )
+
     return await get_agent_stats(
         agent_id,
         db,
@@ -1032,6 +1076,12 @@ async def get_agent_tools(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Agent {agent_id} not found",
+        )
+    if is_admin and agent.owner_user_id != user.user_id:
+        access_checks.note_power(
+            "agents.read.all" if _others_private(agent, user.user_id) else "agents.read",
+            agent.organization_id,
+            subject=f"agent:{agent.id}",
         )
 
     return [
@@ -1074,6 +1124,13 @@ async def get_agent_delegations(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Agent {agent_id} not found",
+        )
+
+    if is_admin and agent.owner_user_id != user.user_id:
+        access_checks.note_power(
+            "agents.read.all" if _others_private(agent, user.user_id) else "agents.read",
+            agent.organization_id,
+            subject=f"agent:{agent.id}",
         )
 
     # The parent agent being accessible doesn't make every delegate
@@ -1121,6 +1178,12 @@ async def upload_agent_logo(
             detail=f"Agent {agent_id} not found",
         )
     assert_not_solution_managed(agent)
+    if is_admin and agent.owner_user_id != user.user_id:
+        access_checks.note_power(
+            "agents.readwrite.all" if _others_private(agent, user.user_id) else "agents.readwrite",
+            agent.organization_id,
+            subject=f"agent:{agent.id}",
+        )
 
     content = await file.read()
     try:
@@ -1173,6 +1236,12 @@ async def get_agent_logo(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Logo not set",
         )
+    if is_admin and agent.owner_user_id != user.user_id:
+        access_checks.note_power(
+            "agents.read.all" if _others_private(agent, user.user_id) else "agents.read",
+            agent.organization_id,
+            subject=f"agent:{agent.id}",
+        )
     thumbnail_ready = bool(agent.logo_thumbnail_data and agent.logo_thumbnail_version)
     headers = (
         {
@@ -1214,6 +1283,12 @@ async def delete_agent_logo(
             detail=f"Agent {agent_id} not found",
         )
     assert_not_solution_managed(agent)
+    if is_admin and agent.owner_user_id != user.user_id:
+        access_checks.note_power(
+            "agents.readwrite.all" if _others_private(agent, user.user_id) else "agents.readwrite",
+            agent.organization_id,
+            subject=f"agent:{agent.id}",
+        )
     agent.logo_data = None
     agent.logo_content_type = None
     agent.logo_thumbnail_data = None

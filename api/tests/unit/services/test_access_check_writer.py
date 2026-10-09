@@ -18,7 +18,7 @@ from src.models.enums import IdentityKind
 from src.models.orm.audit import AuditLog
 from src.models.orm.organizations import Organization
 from src.models.orm.users import User
-from src.services.access_check_writer import flush
+from src.services.access_check_writer import flush, flush_detached
 
 ROUTE = {"operation": "POST /api/tables/{name}/documents", "route": ("POST", "/api/tables/{name}/documents")}
 
@@ -253,3 +253,80 @@ async def test_each_table_and_secret_is_written_once_per_run(db_session: AsyncSe
         ("secret", "one"),
         ("secret", "two"),
     ]
+
+
+def _person_collector(person_id: UUID, *notes: Note) -> Collector:
+    return Collector(execution_id=None, run_user_id=person_id, workflow_id=None, notes=list(notes), direct=True)
+
+
+def _power(permission: str, target: UUID | None, subject: str = "agent:1") -> Note:
+    return Note("permission", target, {"permission": permission, "subject": subject})
+
+
+async def _person_rows(session: AsyncSession, person_id: UUID) -> list[AuditLog]:
+    return list((await session.execute(select(AuditLog).where(AuditLog.user_id == person_id))).scalars())
+
+
+async def test_a_persons_elevated_branch_without_the_permission_is_a_would_deny(db_session: AsyncSession) -> None:
+    home, other = await _org(db_session), await _org(db_session)
+    person = await _person(db_session, home)
+    collector = _person_collector(person.id, _power("agents.read", other.id))
+
+    await flush(db_session, collector, **ROUTE)
+
+    [row] = await _person_rows(db_session, person.id)
+    assert (row.action, row.outcome, row.resource_type) == ("access.check", "failure", "permission")
+    assert row.organization_id == other.id and row.execution_id is None
+    assert row.details is not None
+    assert (row.details["enforced"], row.details["direct"]) == (False, True)
+    assert row.details["inputs"]["permission"] == "agents.read"
+    assert row.details["trace"]["steps"][-1]["facts"] == {
+        "permission": "agents.read",
+        "permission_display_name": "Read Agents",
+    }
+
+
+async def test_a_permission_the_person_holds_writes_nothing(db_session: AsyncSession) -> None:
+    home = await _org(db_session)
+    person = await _person(db_session, home)
+    collector = _person_collector(person.id, _power("workflows.execute", home.id, "workflow:1"))
+
+    await flush(db_session, collector, **ROUTE)
+
+    assert await _person_rows(db_session, person.id) == []
+
+
+async def test_a_persons_decision_is_written_once_a_day(db_session: AsyncSession) -> None:
+    home = await _org(db_session)
+    person = await _person(db_session, home)
+
+    for _ in range(2):
+        await flush(db_session, _person_collector(person.id, _power("agents.read", home.id)), **ROUTE)
+    await flush(db_session, _person_collector(person.id, _power("agents.read", home.id, "agent:2")), **ROUTE)
+
+    assert sorted(row.details["inputs"]["subject"] for row in await _person_rows(db_session, person.id)) == [
+        "agent:1",
+        "agent:2",
+    ]
+
+
+async def test_a_full_runs_permission_is_held(db_session: AsyncSession) -> None:
+    home = await _org(db_session)
+    person = await _person(db_session, home)
+    collector = _collector(person.id, _power("agents.read", home.id))
+
+    await flush(db_session, collector, **ROUTE)
+
+    assert await _rows(db_session, collector) == []
+
+
+async def test_nothing_noted_opens_no_session() -> None:
+    collector = _person_collector(uuid4())
+
+    def no_session():
+        raise AssertionError("a session was opened")
+
+    with patch("src.services.access_check_writer.get_db_context", no_session):
+        await flush_detached(collector, operation="GET /api/agents", route=("GET", "/api/agents"))
+
+    assert collector.closed is True

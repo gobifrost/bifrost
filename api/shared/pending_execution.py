@@ -6,6 +6,7 @@ from uuid import UUID
 
 from sqlalchemy import select
 
+from shared import access_checks
 from src.core.log_safety import log_safe
 from src.core.principal import UserPrincipal
 from src.core.redis_client import get_redis_client
@@ -38,9 +39,20 @@ async def get_pending_execution_fallback(
     if pending is None:
         return None, "NotFound"
 
+    org_id = pending.get("org_id")
+    if isinstance(org_id, str) and org_id.startswith("ORG:"):
+        org_id = org_id.removeprefix("ORG:")
+
     pending_user_id = pending.get("user_id")
-    if not user.is_superuser and pending_user_id != str(user.user_id):
-        return None, "Forbidden"
+    if pending_user_id != str(user.user_id):
+        if not user.is_superuser:
+            return None, "Forbidden"
+        try:
+            target = UUID(org_id) if org_id else None
+        except ValueError as exc:
+            access_checks.note_failure("permission", None, exc)
+        else:
+            access_checks.note_power("executions.read.all", target, subject=f"execution:{execution_id}")
 
     workflow_id = pending.get("workflow_id")
     workflow_name = pending.get("script_name")
@@ -49,10 +61,6 @@ async def get_pending_execution_fallback(
             select(Workflow.name).where(Workflow.id == UUID(workflow_id))
         )
         workflow_name = workflow_result.scalar_one_or_none()
-
-    org_id = pending.get("org_id")
-    if isinstance(org_id, str) and org_id.startswith("ORG:"):
-        org_id = org_id.removeprefix("ORG:")
 
     return (
         WorkflowExecution(

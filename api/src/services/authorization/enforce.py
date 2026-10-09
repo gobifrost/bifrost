@@ -39,6 +39,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared import access_checks
 from src.core.principal import UserPrincipal
 from src.models.contracts.access_list import AccessEntry, CurrentGate
 from src.models.contracts.permissions import WILDCARD_EXCLUDED_PERMISSIONS
@@ -236,8 +237,14 @@ def org_target(organization_id: UUID | None) -> Target:
 
 
 def require_unprotected(caller: Caller, target_is_privileged: bool) -> None:
-    if target_is_privileged and not caller.is_platform_admin:
+    if not target_is_privileged:
+        return
+    if not caller.is_platform_admin:
         raise HTTPException(status.HTTP_403_FORBIDDEN, PROTECTED_TARGET_MESSAGE)
+    # The target user's organization is not known here; noted at the caller's.
+    access_checks.note_power(
+        "privilegedaccess.readwrite", caller.principal.organization_id, subject="user:privileged"
+    )
 
 
 def permitted_organizations(caller: Caller, permission: str) -> OrgReach:

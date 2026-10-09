@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from uuid import UUID
 
+from shared import access_checks
 from shared.builtin_roles import WILDCARD_PERMISSION, is_builtin_role_id
 from src.models.contracts.permissions import PRIVILEGED_PERMISSIONS
 
@@ -71,10 +72,13 @@ def may_change_role_assignment(
     privileged user. Until a reviewed design for delegating "manage
     unprivileged roles" exists, no delegate can hand out a permission.
     """
-    if actor_is_platform_admin:
-        return True
-    return operator_assignable_role(
+    assignable = operator_assignable_role(
         role_id=role_id,
         role_permissions=role_permissions,
         target_permissions=target_permissions,
     )
+    if actor_is_platform_admin and not assignable:
+        # No organization is known here: the assignment is noted at Global.
+        access_checks.note_power("privilegedaccess.readwrite", None, subject=f"role:{role_id}")
+        return True
+    return actor_is_platform_admin or assignable

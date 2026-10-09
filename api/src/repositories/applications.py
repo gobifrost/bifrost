@@ -15,6 +15,7 @@ from uuid import UUID
 from sqlalchemy import select, text
 from sqlalchemy.orm import defer
 
+from shared import access_checks
 from src.core.log_safety import log_safe
 from src.core.org_filter import OrgFilterType
 from src.models.contracts.applications import (
@@ -251,6 +252,7 @@ class ApplicationRepository(OrgScopedRepository[Application]):
                     application.organization_id = UUID(data.scope)
                 except ValueError:
                     pass  # Invalid UUID, ignore
+            access_checks.note_power("apps.readwrite", application.organization_id, subject=f"application:{app_id}")
 
         # Update role associations if provided
         if data.role_ids is not None:

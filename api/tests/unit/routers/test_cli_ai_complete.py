@@ -32,7 +32,7 @@ async def test_ai_complete_resolves_requested_profile_name(monkeypatch):
             messages=[{"role": "user", "content": "Hello"}],
             profile="Reasoning",
         ),
-        SimpleNamespace(user_id=None),
+        SimpleNamespace(user_id=None, organization_id=None),
         db,
     )
 

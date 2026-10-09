@@ -13,6 +13,8 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import desc, func, literal_column, or_, select, update
 
+from shared import access_checks
+from shared.access_checks import ALL_ORGS
 from shared.run_lineage import principal_lineage
 from shared.scope_resolver import has_scope_bypass
 from src.core.auth import CurrentActiveUser
@@ -110,6 +112,8 @@ async def _require_own_private_agent_run(
         is_platform_admin=user.is_platform_admin,
         is_provider_org=user.is_provider_org,
     ):
+        if run.caller_user_id != str(user.user_id):
+            access_checks.note_power("agentruns.readwrite.all", run.org_id, subject=f"agent_run:{run.id}")
         return
 
     agent = (
@@ -554,6 +558,7 @@ async def rerun_agent_run(
             detail=f"Agent run {run_id} not found",
         )
     await _require_own_private_agent_run(db, user, original)
+    access_checks.note_power("agents.execute", original.org_id, subject=f"agent:{original.agent_id}")
 
     new_run_id = await enqueue_agent_run(
         agent_id=str(original.agent_id),
@@ -900,6 +905,7 @@ async def dry_run_agent_run(
             detail=f"Agent run {run_id} not found",
         )
     await _require_own_private_agent_run(db, user, run)
+    access_checks.note_power("agents.execute", run.org_id, subject=f"agent:{run.agent_id}")
     if run.status != "completed":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1005,7 +1011,11 @@ _BACKFILL_FALLBACK_PER_RUN_COST = Decimal("0.002")
 
 
 def _is_platform_admin(user) -> bool:  # type: ignore[no-untyped-def]
-    return user.has_platform_admin_grant()
+    """Gate for summary maintenance across every organization's runs."""
+    if not user.has_platform_admin_grant():
+        return False
+    access_checks.note_power("agentruns.readwrite.all", ALL_ORGS, subject="agent_runs:summaries")
+    return True
 
 
 async def _estimate_per_run_cost(db) -> tuple[Decimal, str]:  # type: ignore[no-untyped-def]

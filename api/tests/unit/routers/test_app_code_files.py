@@ -1,5 +1,7 @@
 """Unit tests for app code files router."""
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 
@@ -227,11 +229,10 @@ class TestGetV2DistAsset:
 
     @staticmethod
     def _setup(monkeypatch, read_dist_exc: Exception):
-        from types import SimpleNamespace
         from uuid import uuid4
 
         app_id = uuid4()
-        fake_app = SimpleNamespace(id=app_id, active_deployment_id=None)
+        fake_app = SimpleNamespace(id=app_id, active_deployment_id=None, organization_id=None)
 
         async def _fake_get_app(ctx, _app_id):
             return fake_app
@@ -263,7 +264,7 @@ class TestGetV2DistAsset:
         app_id = self._setup(monkeypatch, not_found)
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_v2_dist_asset(app_id=app_id, path="index.html", ctx=None, _user=None)
+            await get_v2_dist_asset(app_id=app_id, path="index.html", ctx=SimpleNamespace(org_id=None), _user=None)
         assert exc_info.value.status_code == 404
         assert exc_info.value.detail == "dist asset not found: index.html"
 
@@ -276,7 +277,7 @@ class TestGetV2DistAsset:
 
         with caplog.at_level("ERROR", logger="src.routers.app_code_files"):
             with pytest.raises(RuntimeError, match="s3 exploded"):
-                await get_v2_dist_asset(app_id=app_id, path="index.html", ctx=None, _user=None)
+                await get_v2_dist_asset(app_id=app_id, path="index.html", ctx=SimpleNamespace(org_id=None), _user=None)
         assert any("dist asset read failed" in r.message for r in caplog.records)
 
     async def test_non_notfound_client_error_is_logged_and_reraised(self, monkeypatch, caplog):
@@ -293,5 +294,5 @@ class TestGetV2DistAsset:
 
         with caplog.at_level("ERROR", logger="src.routers.app_code_files"):
             with pytest.raises(ClientError):
-                await get_v2_dist_asset(app_id=app_id, path="main.js", ctx=None, _user=None)
+                await get_v2_dist_asset(app_id=app_id, path="main.js", ctx=SimpleNamespace(org_id=None), _user=None)
         assert any("dist asset read failed" in r.message for r in caplog.records)

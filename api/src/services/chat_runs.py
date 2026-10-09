@@ -9,6 +9,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
+from shared import access_checks
 from shared.run_lineage import principal_lineage
 from shared.scope_resolver import has_scope_bypass
 from src.core.cache.redis_client import get_redis
@@ -95,6 +96,11 @@ async def _load_authorized_agent(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have access to this agent",
         )
+    access_checks.note_power(
+        "agents.execute",
+        access_checks.launch_target(agent.organization_id, user.organization_id),
+        subject=f"agent:{agent.id}",
+    )
     return agent
 
 

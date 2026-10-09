@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from shared import access_checks
 from shared.claims.preresolve import preresolve_for_policies
 from shared.policies.probe import is_subscribe_authorized
 from shared.policy_rules import PolicyRuleDomainMismatch, PolicyRuleNotFound, resolve_policy_refs
@@ -37,6 +38,7 @@ from src.models.orm import Agent
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.tables import Table as TableOrm
 from src.repositories.applications import ApplicationRepository
+from src.services.access_check_writer import flush_detached
 from src.services.audit import emit_file_policy_deny, emit_table_policy_deny
 from src.services.audit_context import ActorContext
 
@@ -826,6 +828,8 @@ async def can_access_execution(user: UserPrincipal, execution_id: str) -> bool:
     """
     # Superusers can access any execution
     if user.is_superuser:
+        # The execution's organization is not loaded on this path.
+        access_checks.note_power("executions.read.all", user.organization_id, subject=f"execution:{execution_id}")
         return True
 
     # App embeds and trusted HMAC form sessions retain exact-execution scoping
@@ -881,6 +885,7 @@ async def can_access_service(user: UserPrincipal, service_id: str) -> bool:
         UUID(service_id)
     except ValueError:
         return False
+    access_checks.note_power("platform.read", None, subject=f"service:{service_id}")
     return True
 
 
@@ -914,10 +919,12 @@ async def can_access_app(user: UserPrincipal, app_id: str) -> bool:
             is_external=user.is_external,
         )
         try:
-            await repo.can_access(id=app_uuid)
-            return True
+            app = await repo.can_access(id=app_uuid)
         except AccessDeniedError:
             return False
+        if user.is_superuser:
+            access_checks.note_power("apps.read", app.organization_id, subject=f"application:{app_id}")
+        return True
 
 
 async def can_access_agent_run(user: UserPrincipal, run_id: str) -> bool:
@@ -927,6 +934,8 @@ async def can_access_agent_run(user: UserPrincipal, run_id: str) -> bool:
     everyone else may only see a run they started (``caller_user_id``).
     """
     if has_scope_bypass(is_platform_admin=user.is_superuser, is_provider_org=user.is_provider_org):
+        # The run's organization is not loaded on this path.
+        access_checks.note_power("agentruns.read.all", user.organization_id, subject=f"agent_run:{run_id}")
         return True
 
     try:
@@ -946,6 +955,14 @@ async def can_access_agent_run(user: UserPrincipal, run_id: str) -> bool:
             return True
 
         return row == str(user.user_id)
+
+
+async def _judge_access_checks(path: str) -> None:
+    """Judge what the last subscriptions on WebSocket ``path`` noted
+    (report-only, never raises) and collect afresh for the next message."""
+    collector = access_checks.renew()
+    if collector is not None:
+        await flush_detached(collector, operation=f"WS {path}", route=("WS", path))
 
 
 router = APIRouter(prefix="/ws", tags=["WebSocket"])
@@ -991,6 +1008,8 @@ async def websocket_connect(
         await websocket.close(code=4003, reason="Form sessions cannot use WebSockets")
         return
 
+    checks = access_checks.collect_person(user.user_id)
+
     # Filter channels - users can only subscribe to their own user channel
     # and execution channels (we'll validate execution access separately)
     allowed_channels = []
@@ -1014,11 +1033,13 @@ async def websocket_connect(
         elif channel == "package:install":
             # Package installation channel - shared, superusers only
             if user.is_superuser:
+                access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                 allowed_channels.append(channel)
         elif channel.startswith("git:"):
             # Git job channels have no owning-user record to check against;
             # gate to platform admins until they carry real job ownership.
             if user.is_superuser:
+                access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                 allowed_channels.append(channel)
         elif channel.startswith("notification:"):
             # Notification channels - users can subscribe to their own
@@ -1026,6 +1047,7 @@ async def websocket_connect(
                 allowed_channels.append(channel)
             # Platform admins can subscribe to admin notifications
             elif channel == "notification:admins" and user.is_superuser:
+                access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                 allowed_channels.append(channel)
         elif channel.startswith("chat:"):
             # Chat conversation channels - validate user owns the conversation
@@ -1040,19 +1062,23 @@ async def websocket_connect(
             if channel == f"history:user:{user.user_id}":
                 allowed_channels.append(channel)
             elif channel == "history:GLOBAL" and user.is_superuser:
+                access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                 allowed_channels.append(channel)
         elif channel.startswith("event-source:"):
             # Event source channels for real-time event updates - bypass-only,
             # matching the REST events router (list/get sources are admin-only).
             if has_scope_bypass(is_platform_admin=user.is_superuser, is_provider_org=user.is_provider_org):
+                access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                 allowed_channels.append(channel)
         elif channel.startswith("reindex:"):
             # Reindex job progress channels - platform admins only
             if user.is_superuser:
+                access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                 allowed_channels.append(channel)
         elif channel.startswith("app:draft:"):
             # App Builder draft channels are an authoring surface - bypass-only.
             if has_scope_bypass(is_platform_admin=user.is_superuser, is_provider_org=user.is_provider_org):
+                access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                 allowed_channels.append(channel)
         elif channel.startswith("app:live:"):
             # App Builder live channels - same access check as the REST app read.
@@ -1062,6 +1088,7 @@ async def websocket_connect(
         elif channel == "file-activity":
             # File activity channel - platform admins only
             if user.is_superuser:
+                access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                 allowed_channels.append(channel)
         elif channel.startswith("files:"):
             # File channels need runtime subscribe metadata (scope) and
@@ -1084,14 +1111,17 @@ async def websocket_connect(
             # Shared agent-run list channel - bypass-only. Non-bypass UIs get
             # live updates through their own agent-run:{id} channels instead.
             if has_scope_bypass(is_platform_admin=user.is_superuser, is_provider_org=user.is_provider_org):
+                access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                 allowed_channels.append(channel)
         elif channel.startswith("summary-backfill:"):
             # Summary backfill job progress — platform admins only
             if user.is_superuser:
+                access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                 allowed_channels.append(channel)
         elif channel == "platform_workers":
             # Platform workers channel - diagnostics, platform admins only
             if user.is_superuser:
+                access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                 allowed_channels.append(channel)
 
     # Always subscribe to user's own channel
@@ -1114,6 +1144,7 @@ async def websocket_connect(
             "channels": allowed_channels,
             "userId": str(user.user_id)
         })
+        await _judge_access_checks("/ws/connect")
 
         # Keep connection alive and handle incoming messages
         while True:
@@ -1171,6 +1202,7 @@ async def websocket_connect(
                         # Event source channels - bypass-only, matching the
                         # REST events router.
                         if has_scope_bypass(is_platform_admin=user.is_superuser, is_provider_org=user.is_provider_org):
+                            access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                             if channel not in manager.connections:
                                 manager.connections[channel] = set()
                             manager.connections[channel].add(websocket)
@@ -1189,6 +1221,8 @@ async def websocket_connect(
                         # history:user:{user_id} - Allow only for the user's own channel
                         # history:GLOBAL - Allow only for platform admins
                         if channel == f"history:user:{user.user_id}" or (channel == "history:GLOBAL" and user.is_superuser):
+                            if channel == "history:GLOBAL":
+                                access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                             if channel not in manager.connections:
                                 manager.connections[channel] = set()
                             manager.connections[channel].add(websocket)
@@ -1205,6 +1239,7 @@ async def websocket_connect(
                     elif channel.startswith("app:draft:"):
                         # App Builder draft channels are an authoring surface - bypass-only.
                         if has_scope_bypass(is_platform_admin=user.is_superuser, is_provider_org=user.is_provider_org):
+                            access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                             if channel not in manager.connections:
                                 manager.connections[channel] = set()
                             manager.connections[channel].add(websocket)
@@ -1238,6 +1273,7 @@ async def websocket_connect(
                     elif channel == "package:install":
                         # Package installation channel - shared, superusers only
                         if user.is_superuser:
+                            access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                             if channel not in manager.connections:
                                 manager.connections[channel] = set()
                             manager.connections[channel].add(websocket)
@@ -1256,6 +1292,7 @@ async def websocket_connect(
                         # against; gate to platform admins until they carry
                         # real job ownership.
                         if user.is_superuser:
+                            access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                             if channel not in manager.connections:
                                 manager.connections[channel] = set()
                             manager.connections[channel].add(websocket)
@@ -1289,6 +1326,7 @@ async def websocket_connect(
                     elif channel == "agent-runs":
                         # Shared agent-run list channel - bypass-only.
                         if has_scope_bypass(is_platform_admin=user.is_superuser, is_provider_org=user.is_provider_org):
+                            access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                             if channel not in manager.connections:
                                 manager.connections[channel] = set()
                             manager.connections[channel].add(websocket)
@@ -1326,6 +1364,7 @@ async def websocket_connect(
                         # silently no-op and no broadcast ever reaches the client
                         # (that's why cancel didn't dismiss and counters didn't tick).
                         if user.is_superuser:
+                            access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                             if channel not in manager.connections:
                                 manager.connections[channel] = set()
                             manager.connections[channel].add(websocket)
@@ -1342,6 +1381,7 @@ async def websocket_connect(
                     elif channel == "platform_workers":
                         # Platform workers channel - diagnostics, platform admins only
                         if user.is_superuser:
+                            access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                             if channel not in manager.connections:
                                 manager.connections[channel] = set()
                             manager.connections[channel].add(websocket)
@@ -1389,6 +1429,7 @@ async def websocket_connect(
                             "type": "subscribed",
                             "channel": spec.name
                         })
+                await _judge_access_checks("/ws/connect")
 
             elif data.get("type") == "unsubscribe":
                 channel = data.get("channel")
@@ -1451,6 +1492,8 @@ async def websocket_connect(
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         manager.disconnect(websocket)
+    finally:
+        access_checks.stop_collecting(checks)
 
 
 @router.websocket("/execution/{execution_id}")
@@ -1473,7 +1516,13 @@ async def websocket_execution(
         return
 
     # Validate user has access to this execution
-    if not await can_access_execution(user, execution_id):
+    checks = access_checks.collect_person(user.user_id)
+    try:
+        allowed = await can_access_execution(user, execution_id)
+        await _judge_access_checks("/ws/execution/{execution_id}")
+    finally:
+        access_checks.stop_collecting(checks)
+    if not allowed:
         await websocket.close(code=4003, reason="Access denied")
         return
 

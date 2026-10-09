@@ -32,6 +32,7 @@ from typing import Any
 
 from fastmcp.tools import ToolResult
 
+from shared import access_checks
 from src.services.mcp_server.tool_result import error_result, success_result
 from src.services.mcp_server.tools._http_bridge import call_rest, rest_client
 from src.services.mcp_server.tools.db import get_tool_db
@@ -660,6 +661,8 @@ async def push_files(
                     "You don't have permission to write one or more of these paths.",
                     {"denied_paths": sorted(set(files.keys()) | delete_prefix_paths)},
                 )
+            # The workspace repository is Global.
+            access_checks.note_power("repository.readwrite", None, subject="repository")
 
             file_storage = FileStorageService(db)
             created = 0

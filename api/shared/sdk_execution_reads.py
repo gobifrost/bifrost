@@ -40,8 +40,9 @@ from sqlalchemy import and_, desc, func, or_, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, selectinload
 
+from shared import access_checks
 from src.core.log_safety import log_safe
-from src.core.org_filter import OrgFilterType, resolve_org_filter
+from src.core.org_filter import OrgFilterType, filter_target, resolve_org_filter
 from src.core.principal import UserPrincipal
 
 if TYPE_CHECKING:
@@ -541,6 +542,8 @@ async def list_sdk_executions(
 
     if not principal.is_superuser:
         query = query.where(ExecutionModel.executed_by == principal.user_id)
+    else:
+        access_checks.note_power("executions.read.all", filter_target(filter_type, filter_org), subject="executions")
 
     if workflow_id:
         query = query.where(ExecutionModel.workflow_id == workflow_id)
@@ -680,10 +683,17 @@ async def get_sdk_execution(
             )
         return pending
 
-    if not principal.is_superuser and execution.executed_by != principal.user_id:
-        raise SdkExecutionReadError(
-            403, "You do not have permission to view this execution"
+    if execution.executed_by != principal.user_id:
+        if not principal.is_superuser:
+            raise SdkExecutionReadError(
+                403, "You do not have permission to view this execution"
+            )
+        access_checks.note_power(
+            "executions.read.all", execution.organization_id, subject=f"execution:{execution_id}"
         )
+    if principal.is_superuser:
+        # Debug and traceback lines, variables, context and resource use are diagnostics.
+        access_checks.note_power("executions.read", execution.organization_id, subject=f"execution:{execution_id}")
 
     is_in_progress = execution.status in (
         ExecutionStatus.PENDING, ExecutionStatus.RUNNING, ExecutionStatus.CANCELLING,

@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared import access_checks
 from src.models.contracts.artifacts import ArtifactRef
 from src.models.orm import Artifact
 from src.services.file_storage.service import get_file_storage_service
@@ -89,7 +90,7 @@ class ArtifactService:
             raise ValueError("Artifact filename is required.")
         if not content:
             raise ValueError(f"{filename} is empty.")
-        if workspace_id is not None and not bypass:
+        if workspace_id is not None:
             existing_owner = (
                 await self.db.execute(
                     select(Artifact.created_by_user_id)
@@ -98,7 +99,11 @@ class ArtifactService:
                 )
             ).scalar_one_or_none()
             if existing_owner is not None and existing_owner != created_by_user_id:
-                raise ArtifactAccessError("Artifact workspace is not accessible.")
+                if not bypass:
+                    raise ArtifactAccessError("Artifact workspace is not accessible.")
+                access_checks.note_power(
+                    "artifacts.readwrite.all", organization_id, subject=f"artifact_workspace:{workspace_id}"
+                )
         artifact_id = uuid4()
         safe_name = filename.replace("/", "_").replace("\\", "_")
         resolved_path = (
@@ -163,6 +168,11 @@ class ArtifactService:
         if not bypass:
             statement = statement.where(Artifact.created_by_user_id == user_id)
         artifacts = list((await self.db.execute(statement)).scalars().all())
+        others = next((artifact for artifact in artifacts if artifact.created_by_user_id != user_id), None)
+        if others is not None:
+            access_checks.note_power(
+                "artifacts.read.all", others.organization_id, subject=f"artifact_workspace:{workspace_id}"
+            )
         latest: dict[str, Artifact] = {}
         for artifact in artifacts:
             path = artifact.logical_path or artifact.filename
@@ -195,6 +205,8 @@ class ArtifactService:
         artifact = (await self.db.execute(statement)).scalar_one_or_none()
         if artifact is None:
             raise ArtifactAccessError(f"Artifact workspace path {normalized} was not found.")
+        if artifact.created_by_user_id != user_id:
+            access_checks.note_power("artifacts.read.all", artifact.organization_id, subject=f"artifact:{artifact.id}")
         return artifact
 
     async def get_authorized(
@@ -215,6 +227,8 @@ class ArtifactService:
         artifact = (await self.db.execute(statement)).scalar_one_or_none()
         if artifact is None:
             raise ArtifactAccessError("Artifact not found.")
+        if artifact.created_by_user_id != user_id:
+            access_checks.note_power("artifacts.read.all", artifact.organization_id, subject=f"artifact:{artifact.id}")
         return artifact
 
     async def read(self, artifact: Artifact) -> bytes:

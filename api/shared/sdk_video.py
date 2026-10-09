@@ -41,6 +41,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared import access_checks
 from src.core.principal import UserPrincipal
 from src.models.contracts.artifacts import VideoArtifactSpec
 from src.models.contracts.platform_jobs import (
@@ -149,17 +150,27 @@ def sdk_video_job_accepted(
     )
 
 
-def can_read_platform_job(job: PlatformJob, user: UserPrincipal) -> bool:
-    """Requester-visibility rule shared by HTTP and local status reads."""
-    return user.is_platform_admin or job.requested_by_user_id == str(
-        user.user_id
+def can_read_platform_job(job: PlatformJob, user: UserPrincipal, *, cancel: bool = False) -> bool:
+    """Requester-visibility rule shared by HTTP and local status reads, and
+    by cancellation (``cancel``)."""
+    if job.requested_by_user_id == str(user.user_id):
+        return True
+    if not user.is_platform_admin:
+        return False
+    access_checks.note_power(
+        "platformjobs.readwrite.all" if cancel else "platformjobs.read.all",
+        job.organization_id,
+        subject=f"platform_job:{job.id}",
     )
+    return True
 
 
 async def get_visible_platform_job(
     db: AsyncSession,
     user: UserPrincipal,
     job_id: UUID,
+    *,
+    cancel: bool = False,
 ) -> PlatformJob:
     """Load a platform job visible to ``user`` or raise transport-neutral 404.
 
@@ -168,7 +179,7 @@ async def get_visible_platform_job(
     handler exactly.
     """
     job = await db.get(PlatformJob, job_id)
-    if job is None or not can_read_platform_job(job, user):
+    if job is None or not can_read_platform_job(job, user, cancel=cancel):
         raise SdkVideoJobError(404, "Platform job not found")
     return job
 

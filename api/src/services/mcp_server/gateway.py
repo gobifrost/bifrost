@@ -14,6 +14,7 @@ import pydantic_core
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from shared import access_checks
 from shared.run_lineage import RunLineage
 from shared.scope_resolver import has_scope_bypass
 from src.core.org_filter import OrgFilterType
@@ -248,6 +249,11 @@ class MCPAgentGatewayService:
             is_provider_org=self.context.is_provider_org,
         )
 
+    @property
+    def _caller_org(self) -> UUID | None:
+        org_id = self.context.org_id
+        return None if org_id is None else UUID(str(org_id))
+
     def _agent_repo(self, session: Any) -> AgentRepository:
         return AgentRepository(
             session,
@@ -310,6 +316,11 @@ class MCPAgentGatewayService:
         bounded_limit = min(max(limit, 1), MAX_CAPABILITY_RESULTS)
         if agent_id is not None:
             snapshot = await self.get_agent_snapshot(agent_id)
+            access_checks.note_power(
+                "agents.readbasic",
+                access_checks.launch_target(snapshot.agent.organization_id, self._caller_org),
+                subject=f"agent:{snapshot.agent.id}",
+            )
             return self._search_agent_snapshot(
                 snapshot,
                 query=query,
@@ -325,6 +336,7 @@ class MCPAgentGatewayService:
                 retryable=True,
             )
 
+        access_checks.note_power("agents.readbasic", self._caller_org, subject="agents")
         snapshots: list[AgentToolSnapshot] = []
         for agent in await self._list_discovery_agents(discovery_scope):
             snapshots.append(await self.get_agent_snapshot(str(agent.id)))
@@ -611,6 +623,11 @@ class MCPAgentGatewayService:
         """
         snapshot = await self.get_agent_snapshot(agent_id)
         tool = self.find_tool(snapshot, tool_ref)
+        access_checks.note_power(
+            "agents.execute",
+            access_checks.launch_target(snapshot.agent.organization_id, self._caller_org),
+            subject=f"agent:{snapshot.agent.id}",
+        )
         return await self.execute_tool(
             snapshot,
             tool,
@@ -652,13 +669,14 @@ class MCPAgentGatewayService:
                 agent_run = agent_result.scalar_one_or_none()
 
         if execution is not None:
-            if (
-                not self.context.is_platform_admin
-                and execution.executed_by != UUID(str(self.context.user_id))
-            ):
-                raise GatewayError(
-                    "EXECUTION_NOT_FOUND_OR_FORBIDDEN",
-                    "Execution not found or you do not have access.",
+            if execution.executed_by != UUID(str(self.context.user_id)):
+                if not self.context.is_platform_admin:
+                    raise GatewayError(
+                        "EXECUTION_NOT_FOUND_OR_FORBIDDEN",
+                        "Execution not found or you do not have access.",
+                    )
+                access_checks.note_power(
+                    "executions.read.all", execution.organization_id, subject=f"execution:{execution.id}"
                 )
             result_available = execution.result is not None
             result_value = None
@@ -691,14 +709,13 @@ class MCPAgentGatewayService:
             }
 
         if agent_run is not None:
-            if (
-                not self.context.is_platform_admin
-                and agent_run.caller_user_id != str(self.context.user_id)
-            ):
-                raise GatewayError(
-                    "EXECUTION_NOT_FOUND_OR_FORBIDDEN",
-                    "Execution not found or you do not have access.",
-                )
+            if agent_run.caller_user_id != str(self.context.user_id):
+                if not self.context.is_platform_admin:
+                    raise GatewayError(
+                        "EXECUTION_NOT_FOUND_OR_FORBIDDEN",
+                        "Execution not found or you do not have access.",
+                    )
+                access_checks.note_power("agentruns.read.all", agent_run.org_id, subject=f"agent_run:{agent_run.id}")
             result_available = agent_run.output is not None
             result_value = None
             result_page = None
@@ -729,14 +746,19 @@ class MCPAgentGatewayService:
 
         pending = await get_redis_client().get_pending_execution(execution_id)
         if pending is not None:
-            if (
-                not self.context.is_platform_admin
-                and pending.get("user_id") != str(self.context.user_id)
-            ):
-                raise GatewayError(
-                    "EXECUTION_NOT_FOUND_OR_FORBIDDEN",
-                    "Execution not found or you do not have access.",
-                )
+            if pending.get("user_id") != str(self.context.user_id):
+                if not self.context.is_platform_admin:
+                    raise GatewayError(
+                        "EXECUTION_NOT_FOUND_OR_FORBIDDEN",
+                        "Execution not found or you do not have access.",
+                    )
+                pending_org = pending.get("org_id")
+                try:
+                    target = UUID(pending_org) if pending_org else None
+                except ValueError as exc:
+                    access_checks.note_failure("permission", None, exc)
+                else:
+                    access_checks.note_power("executions.read.all", target, subject=f"execution:{execution_id}")
             created_at = pending.get("created_at")
             return {
                 "execution_id": execution_id,

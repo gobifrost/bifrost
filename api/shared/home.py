@@ -8,6 +8,8 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared import access_checks
+from shared.access_checks import ALL_ORGS
 from src.core.principal import UserPrincipal
 from src.models.contracts.home import (
     HomeCollectionPublic,
@@ -39,21 +41,29 @@ def _logo_version(entity) -> str | None:
 
 
 def can_edit_collection(collection: HomeCollection, user: UserPrincipal) -> bool:
-    return (
-        user.is_platform_admin
-        if collection.shared
-        else collection.owner_id == user.user_id
+    if not collection.shared:
+        return collection.owner_id == user.user_id
+    if not user.is_platform_admin:
+        return False
+    access_checks.note_power(
+        "home.readwrite" if collection.owner_id == user.user_id else "home.readwrite.all",
+        collection.organization_id,
+        subject=f"home_collection:{collection.id}",
     )
+    return True
 
 
 def can_read_collection(collection: HomeCollection, user: UserPrincipal) -> bool:
     if not collection.shared:
         return collection.owner_id == user.user_id
-    return (
-        user.is_platform_admin
-        or collection.organization_id == user.organization_id
-        or (collection.organization_id is None and not user.is_external)
-    )
+    if collection.organization_id == user.organization_id or (
+        collection.organization_id is None and not user.is_external
+    ):
+        return True
+    if not user.is_platform_admin:
+        return False
+    access_checks.note_power("home.read.all", collection.organization_id, subject=f"home_collection:{collection.id}")
+    return True
 
 
 def collection_audience(
@@ -222,6 +232,8 @@ async def get_home(db: AsyncSession, user: UserPrincipal) -> HomeResponse:
         .order_by(HomeCollection.name, HomeCollection.id)
     )
     rows = (await db.scalars(query)).all()
+    if user.is_platform_admin:
+        access_checks.note_power("home.readwrite", ALL_ORGS, subject="home_collections")
     allowed = {resource.key for resource in resources}
     return HomeResponse(
         resources=resources,
@@ -255,10 +267,12 @@ async def save_collection(
         if collection_id
         else None
     )
-    if data.shared and not user.is_platform_admin:
-        raise HTTPException(
-            403, "Only platform administrators can publish shared collections"
-        )
+    if data.shared:
+        if not user.is_platform_admin:
+            raise HTTPException(
+                403, "Only platform administrators can publish shared collections"
+            )
+        access_checks.note_power("home.readwrite", data.organization_id, subject="home_collections")
     if not data.shared and data.organization_id is not None:
         raise HTTPException(
             422, "Personal collections do not have an organization scope"

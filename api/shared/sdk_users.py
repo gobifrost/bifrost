@@ -49,6 +49,7 @@ from uuid import UUID
 from sqlalchemy import case, delete, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared import access_checks
 from src.core.constants import PROVIDER_ORG_ID
 from src.core.log_safety import log_safe
 
@@ -382,6 +383,8 @@ async def create_user(
         require_unprotected(caller, is_superuser)
     else:
         require_operation(caller, "users.create", cross_org(organization_id))
+    if is_superuser:
+        access_checks.note_power("privilegedaccess.readwrite", organization_id, subject="user:new")
 
     now = datetime.now(timezone.utc)
 
@@ -519,6 +522,9 @@ def _authorize_update(
                 raise UserServiceError(
                     403, "Only a Platform Admin can change whether a user is a Platform Admin"
                 )
+            access_checks.note_power(
+                "privilegedaccess.readwrite", db_user.organization_id, subject=f"user:{db_user.id}"
+            )
             continue
         require_operation(caller, "users.update", source, permission=permission)
         if field == "organization_id" and organization_id is not None:
@@ -604,6 +610,9 @@ async def update_user(
     if is_active is not None:
         db_user.is_active = is_active
     if is_superuser is not None:
+        access_checks.note_power(
+            "privilegedaccess.readwrite", db_user.organization_id, subject=f"user:{db_user.id}"
+        )
         await set_platform_admin(
             session, db_user, is_superuser, assigned_by=caller.principal.email
         )
@@ -824,18 +833,22 @@ async def bulk_update_users(
             fail(uid, denial_message(permission))
             continue
         user_held = held.get(uid, frozenset())
-        if is_privileged_principal(user_held) and not caller.is_platform_admin:
-            fail(uid, PROTECTED_TARGET_MESSAGE)
-            continue
+        if is_privileged_principal(user_held):
+            if not caller.is_platform_admin:
+                fail(uid, PROTECTED_TARGET_MESSAGE)
+                continue
+            access_checks.note_power("privilegedaccess.readwrite", u.organization_id, subject=f"user:{uid}")
 
         if request.operation == "move_org":
             target = request.organization_id  # may be None (= Global)
             if not allows_operation(caller, operation, org_target(target), permission=permission):
                 fail(uid, denial_message(permission))
                 continue
-            if u.is_superuser and target is not None and target != PROVIDER_ORG_ID:
-                fail(uid, "Platform admin must be demoted before moving to a non-provider org")
-                continue
+            if u.is_superuser:
+                if target is not None and target != PROVIDER_ORG_ID:
+                    fail(uid, "Platform admin must be demoted before moving to a non-provider org")
+                    continue
+                access_checks.note_power("userlifecycle.readwrite", target, subject=f"user:{uid}")
             if uid in operators and target != PROVIDER_ORG_ID:
                 fail(uid, OPERATOR_MOVE_MESSAGE)
                 continue

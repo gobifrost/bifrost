@@ -56,6 +56,7 @@ from src.models.contracts.forms import (
     FormSubmissionRequest,
     FormSubmissionResponse,
 )
+from shared import access_checks
 from shared.form_publication import build_publication_review
 from shared.form_captcha import (
     FormCaptchaError,
@@ -706,6 +707,8 @@ async def get_form_runtime(
     form = await repo.get_form(form_id)
     if form is None or not form.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form not found")
+    if ctx.user.is_superuser:
+        access_checks.note_power("forms.read", form.organization_id, subject=f"form:{form.id}")
 
     publication = await _authorize_form_runtime(db, ctx, form)
     await _limit_embed_action(http_request, ctx, "runtime")
@@ -1025,6 +1028,12 @@ async def get_form_logo(
         is_external=ctx.user.is_external,
     ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Logo not set")
+    else:
+        if ctx.user.is_superuser:
+            access_checks.note_power("forms.read", form.organization_id, subject=f"form:{form.id}")
+        access_checks.note_power(
+            "forms.readbasic", access_checks.launch_target(form.organization_id, ctx.org_id), subject=f"form:{form.id}"
+        )
 
     thumbnail_ready = bool(form.logo_thumbnail_data and form.logo_thumbnail_version)
     headers = (
@@ -1214,6 +1223,11 @@ async def _authorize_form_runtime(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied to form",
         )
+    if ctx.user.is_superuser:
+        access_checks.note_power("forms.read", form.organization_id, subject=f"form:{form.id}")
+    access_checks.note_power(
+        "forms.readbasic", access_checks.launch_target(form.organization_id, ctx.org_id), subject=f"form:{form.id}"
+    )
     return None
 
 
@@ -1383,6 +1397,7 @@ async def submit_form(
             detail=f"Workflow not found: {form.workflow_id}",
         )
     resolved_workflow_id = str(_resolved_wf.id)
+    access_checks.note_power("workflows.execute", anchor_org_id, subject=f"workflow:{resolved_workflow_id}")
 
     # Keep signed embed context out of top-level workflow parameters. Validated
     # form inputs remain top-level for workflow signature compatibility and are
@@ -1679,6 +1694,9 @@ async def execute_startup_workflow(
             detail=f"Launch workflow not found: {form.launch_workflow_id}",
         )
     resolved_launch_workflow_id = str(_resolved_launch.id)
+    access_checks.note_power(
+        "workflows.execute", launch_anchor_org_id, subject=f"workflow:{resolved_launch_workflow_id}"
+    )
 
     # Signed HMAC values stay in context.embed and are never flattened into
     # browser-editable workflow parameters.
@@ -1785,6 +1803,11 @@ async def get_form_field_options(
     field = next((item for item in form.fields if item.name == field_name), None)
     if field is None or field.data_provider_id is None:
         raise HTTPException(status_code=404, detail="Field options unavailable")
+    access_checks.note_power(
+        "workflows.execute",
+        access_checks.launch_target(form.organization_id, ctx.org_id),
+        subject=f"workflow:{field.data_provider_id}",
+    )
 
     try:
         options = await execute_form_field_provider(
@@ -1796,14 +1819,11 @@ async def get_form_field_options(
             browser_inputs=request.inputs,
         )
     except FormProviderError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                str(exc)
-                if ctx.user.is_superuser and not ctx.user.embed
-                else "Unable to load field options"
-            ),
-        ) from exc
+        detail = "Unable to load field options"
+        if ctx.user.is_superuser and not ctx.user.embed:
+            access_checks.note_power("forms.read", form.organization_id, subject=f"form:{form.id}")
+            detail = str(exc)
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail) from exc
     except Exception as exc:
         logger.warning(
             "Form provider failed for form %s field %s",

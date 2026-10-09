@@ -348,6 +348,9 @@ async def execute_sdk_workflow(
         logger.info(f"Impersonating user: {exec_user_id} ({exec_user_email})")
         if run_as_user.id != principal.run_user_id:
             access_checks.note("run_as", None, run_as_user_id=run_as_user.id)
+        access_checks.note_power(
+            "users.impersonate", run_as_user.organization_id, subject=f"user:{run_as_user.id}"
+        )
 
     # Who the run is for: the authenticated caller, never the run_as user.
     lineage = await principal_lineage(session, principal)
@@ -369,6 +372,13 @@ async def execute_sdk_workflow(
     else:
         execution_org_id = caller_org_id
     access_checks.note("child_run", execution_org_id)
+    if request.code:
+        access_checks.note_power("repository.readwrite", execution_org_id, subject="inline_code")
+    access_checks.note_power(
+        "workflows.execute",
+        execution_org_id,
+        subject="inline_code" if workflow is None else f"workflow:{workflow.id}",
+    )
 
     # Scheduled execution: normalize delay_seconds -> scheduled_at and insert row.
     # The deferred_execution_promoter job will publish this row when it matures.
@@ -624,9 +634,13 @@ async def cancel_scheduled_sdk_execution(
         raise SdkWorkflowExecutionError(403, "Access denied")
 
     # Non-admin can only cancel their own scheduled rows.
-    if not principal.is_superuser and row.executed_by != principal.user_id:
-        raise SdkWorkflowExecutionError(
-            403, "Only the submitter or an admin may cancel"
+    if row.executed_by != principal.user_id:
+        if not principal.is_superuser:
+            raise SdkWorkflowExecutionError(
+                403, "Only the submitter or an admin may cancel"
+            )
+        access_checks.note_power(
+            "executions.readwrite.all", row.organization_id, subject=f"execution:{execution_id}"
         )
 
     # Status-guarded UPDATE (wins or loses atomically vs. the promoter).

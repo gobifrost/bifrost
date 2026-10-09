@@ -2418,6 +2418,137 @@ class TestEveryElevatedCheckHasAScope:
         )
 
 
+# Entries that launch or open something shared (a workflow, an agent, an AI
+# call, an app or a form): the permission they name is held by the User role
+# for ordinary use, and their call chain notes it where the launched or
+# opened object's organization is known.
+_LAUNCH_ENTRIES: frozenset[tuple[str, str] | str] = frozenset(
+    {
+        ("GET", "/api/applications/{app_id}/bundle-asset/{filename}"),
+        ("GET", "/api/applications/{app_id}/dist/{path}"),
+        ("GET", "/api/applications/{app_id}/render"),
+        ("GET", "/api/forms/{form_id}/logo"),
+        ("GET", "/api/forms/{form_id}/runtime"),
+        ("GET", "/api/sdk/ai/info"),
+        ("POST", "/api/agent-runs/enqueue"),
+        ("POST", "/api/agent-runs/execute"),
+        ("POST", "/api/agent-runs/{run_id}/dry-run"),
+        ("POST", "/api/agent-runs/{run_id}/rerun"),
+        ("POST", "/api/chat/conversations/{conversation_id}/messages"),
+        ("POST", "/api/chat/runs"),
+        ("POST", "/api/forms/{form_id}/captcha/challenge"),
+        ("POST", "/api/forms/{form_id}/fields/{field_name}/options"),
+        ("POST", "/api/forms/{form_id}/startup"),
+        ("POST", "/api/forms/{form_id}/submissions"),
+        ("POST", "/api/forms/{form_id}/upload"),
+        ("POST", "/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}/execute"),
+        ("POST", "/api/mcp/gateway/capabilities/search"),
+        ("POST", "/api/sdk/ai/complete"),
+        ("POST", "/api/sdk/ai/stream"),
+        ("POST", "/api/sdk/artifacts/image"),
+        ("POST", "/api/workflows/execute"),
+        "bifrost_workflow_execute",
+    }
+)
+
+
+# Power sites that only compute the flag and hand it to a registered callee,
+# where the branch is decided and the permission noted: the site cannot see
+# what decides it (whose artifact workspace it writes into; whether the role
+# is one an operator could assign).
+_FLAG_HANDOFFS: dict[str, str] = {
+    "shared.sdk_artifact_generation.sdk_generate_image_artifact": "src.services.artifacts.ArtifactService.store",
+    "shared.sdk_artifact_generation.sdk_render_document_artifact": "src.services.artifacts.ArtifactService.store",
+    "shared.sdk_artifact_generation.sdk_render_spreadsheet_artifact": "src.services.artifacts.ArtifactService.store",
+    "shared.sdk_artifact_generation.sdk_render_text_artifact": "src.services.artifacts.ArtifactService.store",
+    "shared.sdk_artifacts.sdk_store_artifact": "src.services.artifacts.ArtifactService.store",
+    "src.services.user_role_assignments.check_role_change": (
+        "src.services.authorization.privilege.may_change_role_assignment"
+    ),
+}
+
+
+def _noted_permissions(node: ast.expr) -> set[str]:
+    """The permission strings a ``note_power`` call's first argument names:
+    a literal, or a ternary choosing between literals."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return {node.value}
+    if isinstance(node, ast.IfExp):
+        return _noted_permissions(node.body) | _noted_permissions(node.orelse)
+    return {"<computed>"}
+
+
+def _noted_powers(source: str) -> set[str]:
+    """Every permission a function's own source notes with ``note_power``."""
+    return {
+        permission
+        for node in ast.walk(_parse_source(source))
+        if isinstance(node, ast.Call) and _terminal_name(node.func) == "note_power" and node.args
+        for permission in _noted_permissions(node.args[0])
+    }
+
+
+def _site_permissions(replacement: str | tuple[str, ...]) -> set[str]:
+    items = (replacement,) if isinstance(replacement, str) else replacement
+    return {item for item in items if item not in _SITE_KINDS}
+
+
+class TestEveryPowerIsNoted:
+    """Report-only recording: every elevated branch that a named permission
+    replaces notes that permission (``shared.access_checks.note_power``), or
+    hands the flag to the registered site that does (``_FLAG_HANDOFFS``),
+    and every launch entry's chain notes the permission it names, so the
+    registry and the code cannot drift apart."""
+
+    def test_every_power_site_notes_exactly_its_permissions(self) -> None:
+        """A site that is also where a launch entry's object becomes known
+        notes that launch permission too; nothing else beyond its own."""
+        launch = {entry.permission for entry in ACCESS_LIST if entry.key in _LAUNCH_ENTRIES}
+        problems = []
+        for qualname, replacement in sorted(_ELEVATED_SITES.items()):
+            func = _resolve_qualname(qualname)
+            assert func is not None, f"{qualname}: no such function"
+            if isinstance(func, property):
+                func = func.fget
+            source = inspect.getsource(_unbound(func))
+            noted = _noted_powers(source) - launch
+            expected = _site_permissions(replacement)
+            if qualname in _FLAG_HANDOFFS:
+                callee = _FLAG_HANDOFFS[qualname]
+                calls = {_terminal_name(node.func) for node in ast.walk(_parse_source(source)) if isinstance(node, ast.Call)}
+                if noted or callee.rsplit(".", 1)[-1] not in calls or not expected <= _site_permissions(
+                    _ELEVATED_SITES.get(callee, ())
+                ):
+                    problems.append(f"{qualname}: hands off to {callee}, which must note {sorted(expected)}")
+                continue
+            if noted != expected:
+                problems.append(f"{qualname}: registered {sorted(expected)}, notes {sorted(noted)}")
+        assert not problems, "power sites whose note_power calls differ from _ELEVATED_SITES:\n" + "\n".join(
+            problems
+        )
+
+    def test_launch_entries_are_permission_entries(self) -> None:
+        by_key = {entry.key: entry for entry in ACCESS_LIST}
+        problems = sorted(
+            str(key)
+            for key in _LAUNCH_ENTRIES
+            if key not in by_key or by_key[key].access_class is not AccessClass.PERMISSION
+        )
+        assert not problems, f"_LAUNCH_ENTRIES that are not permission-class entries: {problems}"
+
+    def test_every_launch_entry_notes_its_permission(self, entry_functions) -> None:
+        missing = []
+        for entry in ACCESS_LIST:
+            if entry.key not in _LAUNCH_ENTRIES:
+                continue
+            noted = set().union(*(_noted_powers(source) for _where, source in entry_functions[entry.key]))
+            if entry.permission not in noted:
+                missing.append(f"{_entry_target(entry)}: {entry.permission}")
+        assert not missing, "launch entries whose call chain never notes their permission:\n" + "\n".join(
+            sorted(missing)
+        )
+
+
 def _redis_registry_problems(
     found: dict[str, list[str]],
     authority: dict[str, tuple[int, str]],

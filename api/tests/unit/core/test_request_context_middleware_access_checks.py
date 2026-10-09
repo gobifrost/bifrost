@@ -1,4 +1,4 @@
-"""The request middleware judges a run's access checks after the response."""
+"""The request middleware judges a request's access checks after the response."""
 
 from __future__ import annotations
 
@@ -21,6 +21,12 @@ def _app() -> FastAPI:
     @app.get("/__test__/checked/{name}")
     async def _checked(name: str):
         access_checks.note("scope_switch", None, name=name)
+        return {"ok": True}
+
+    @app.get("/__test__/power")
+    async def _power():
+        access_checks.note("scope_switch", None)
+        access_checks.note_power("agents.read", None, subject="agent:1")
         return {"ok": True}
 
     @app.get("/__test__/refused")
@@ -74,14 +80,29 @@ async def test_a_refused_request_keeps_its_response_and_is_still_judged() -> Non
     assert len(flushed) == 1
 
 
-async def test_a_persons_request_is_not_judged() -> None:
-    flushed: list = []
-    token = create_access_token({"sub": str(uuid4()), "email": "p@x.example", "org_id": str(uuid4())})
+def _person_token(person: str) -> str:
+    return create_access_token({"sub": person, "email": "p@x.example", "org_id": str(uuid4())})
 
-    response = await _get("/__test__/checked/a", token, flushed)
+
+async def test_a_persons_request_without_a_named_permission_is_not_judged() -> None:
+    flushed: list = []
+
+    response = await _get("/__test__/checked/a", _person_token(str(uuid4())), flushed)
 
     assert response.status_code == 200
     assert flushed == []
+
+
+async def test_a_persons_named_permission_is_judged_as_theirs() -> None:
+    flushed: list = []
+    person = str(uuid4())
+
+    response = await _get("/__test__/power", _person_token(person), flushed)
+
+    assert response.status_code == 200
+    [(collector, _route, _operation)] = flushed
+    assert (collector.direct, str(collector.run_user_id)) == (True, person)
+    assert [note.kind for note in collector.notes] == ["permission"]
 
 
 async def test_a_failing_writer_never_changes_the_response() -> None:

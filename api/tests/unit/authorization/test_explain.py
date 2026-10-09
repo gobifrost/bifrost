@@ -25,6 +25,7 @@ from src.services.authorization.explain import (
     RunUser,
     check_entry,
     check_operation,
+    check_permission,
     check_policy,
     check_run_as,
     check_secret,
@@ -255,3 +256,52 @@ def test_global_target_is_in_everyones_reach() -> None:
     trace = check_operation(_user(), None, None, WRITE_TABLES, workflow_access=None)
 
     assert trace.steps[2].status == "passed" and trace.steps[2].reason == "global"
+
+
+def test_a_person_uses_a_permission_their_roles_hold_at_home() -> None:
+    trace = check_permission(_user(), None, "workflows.execute", CONTOSO)
+
+    assert trace.outcome == "success"
+    assert [step.status for step in trace.steps] == ["passed", "not_applicable", "passed", "passed"]
+
+
+def test_a_persons_permission_outside_their_reach_stops_at_target() -> None:
+    trace = check_permission(_user(), None, "agents.read", FABRIKAM)
+
+    assert _stopped_at(trace) == "target"
+    assert trace.steps[-1].status == "not_reached"
+    assert trace.steps[-1].facts["permission"] == "agents.read"
+
+
+def test_a_person_without_the_permission_stops_at_permission() -> None:
+    trace = check_permission(_user(), None, "agents.read", CONTOSO)
+
+    assert _stopped_at(trace) == "permission"
+    assert trace.steps[-1].reason == "denied:missing:agents.read"
+
+
+def test_the_permission_step_names_the_permission() -> None:
+    step = check_permission(_user(), None, "agents.read.all", CONTOSO).steps[-1]
+
+    assert step.facts == {"permission": "agents.read.all", "permission_display_name": "Read All Agents"}
+
+
+def test_a_platform_admin_holds_every_permission_but_secrets() -> None:
+    admin = _user(platform_admin_grant(), home=PROVIDER_ORG_ID)
+
+    assert check_permission(admin, None, "agents.read.all", FABRIKAM).outcome == "success"
+    assert check_permission(admin, None, "platformjobs.read.all", ALL_ORGS).outcome == "success"
+    assert _stopped_at(check_permission(admin, None, "secrets.read", FABRIKAM)) == "permission"
+
+
+def test_an_operator_holds_no_elevated_permission_in_managed_orgs() -> None:
+    assert _stopped_at(check_permission(_operator(), None, "agents.read", CONTOSO)) == "permission"
+
+
+def test_a_run_adds_the_workflows_powers() -> None:
+    grant = WorkflowGrant(permission="agents.read")
+
+    assert check_permission(_user(), FULL, "agents.read", CONTOSO).outcome == "success"
+    assert _stopped_at(check_permission(_user(), RESTRICTED, "agents.read", CONTOSO)) == "permission"
+    granted = Powers(WorkflowPermissionMode.RESTRICTED, (grant,))
+    assert check_permission(_user(), granted, "agents.read", CONTOSO).outcome == "success"
