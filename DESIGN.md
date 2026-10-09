@@ -37,6 +37,7 @@ Every coverage-ledger item requires an individual source review and applicable r
 
 Organization is always the first column when a table has one, and the first labeled value in its phone record summary.
 
+
 ## Mobile data presentation
 
 Mobile acceptance means an easy-to-use, readable composition, beyond preventing page overflow. Review the user's task at the narrow viewport: show record identity and the highest-priority value together, retain the remaining labeled values, and make sorting and actions directly usable. Prefer record summaries for dense report/list tables where sideways reading separates labels from values. Keep desktop comparison tables when useful; both representations must share data, ordering, permissions and actions. Test the intermediate widths where the sidebar reduces available content width. A horizontal scroller alone is not evidence that a dense data page is mobile-friendly.

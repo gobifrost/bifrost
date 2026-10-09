@@ -86,17 +86,6 @@ export function EventSourceCard({
 						)}
 					</div>
 					<div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-						<span className="whitespace-nowrap">
-							{formatDistanceToNow(new Date(source.created_at), {
-								addSuffix: true,
-							})}
-						</span>
-						<span>·</span>
-						<span className="inline-flex items-center gap-1">
-							{getSourceTypeIcon(source)}
-							{getSourceTypeLabel(source)}
-						</span>
-						<span>·</span>
 						{source.organization_id ? (
 							<span className="inline-flex items-center gap-1">
 								<Building2 className="h-3 w-3" />
@@ -108,6 +97,17 @@ export function EventSourceCard({
 								Global
 							</span>
 						)}
+						<span>·</span>
+						<span className="whitespace-nowrap">
+							{formatDistanceToNow(new Date(source.created_at), {
+								addSuffix: true,
+							})}
+						</span>
+						<span>·</span>
+						<span className="inline-flex items-center gap-1">
+							{getSourceTypeIcon(source)}
+							{getSourceTypeLabel(source)}
+						</span>
 					</div>
 				</div>
 

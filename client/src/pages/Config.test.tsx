@@ -160,6 +160,20 @@ describe("Config — list", () => {
 		).not.toBeInTheDocument();
 	});
 
+	it("leads the mobile config summary with the organization", async () => {
+		mockUseMediaQuery.mockReturnValue(true);
+		mockUseAuth.mockReturnValue({ isPlatformAdmin: true });
+		mockUseConfigs.mockReturnValue({
+			data: [{ ...regularConfig, scope: "org", org_id: "org-1" }],
+			isFetching: false,
+			refetch: vi.fn(),
+		});
+		await renderPage();
+		const terms = screen.getAllByRole("term");
+		expect(terms[0]).toHaveTextContent("Organization");
+		expect(terms[1]).toHaveTextContent("Value");
+	});
+
 	it("exports independent UUID selections for matching keys in different organizations", async () => {
 		mockUseMediaQuery.mockReturnValue(true);
 		mockUseAuth.mockReturnValue({ isPlatformAdmin: true });
