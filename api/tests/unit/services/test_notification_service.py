@@ -482,6 +482,82 @@ class TestNotificationService:
 
         assert result is False
 
+    @staticmethod
+    def _notification_owned_by(owner_id: str) -> str:
+        from src.models.contracts.notifications import (
+            NotificationCategory,
+            NotificationStatus,
+        )
+
+        return json.dumps({
+            "id": "notif-admin",
+            "category": NotificationCategory.SYSTEM.value,
+            "title": "Requirements install failed",
+            "description": None,
+            "status": NotificationStatus.FAILED.value,
+            "percent": None,
+            "error": None,
+            "result": None,
+            "metadata": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "user_id": owner_id,
+        })
+
+    async def test_dismiss_admin_notification_requires_admin(
+        self, notification_service, mock_redis
+    ):
+        """A non-admin cannot dismiss an admin notification they cannot read."""
+        service, mock_pubsub = notification_service
+        mock_redis.get.return_value = self._notification_owned_by("system")
+        mock_redis.sismember.return_value = True
+
+        with patch("src.services.notification_service.pubsub_manager", mock_pubsub):
+            result = await service.dismiss_notification(
+                notification_id="notif-admin",
+                user_id="user-123",
+                is_admin=False,
+            )
+
+        assert result is False
+        mock_redis.delete.assert_not_called()
+
+    async def test_admin_dismisses_admin_notification(
+        self, notification_service, mock_redis
+    ):
+        """An admin can dismiss an admin notification owned by someone else."""
+        service, mock_pubsub = notification_service
+        mock_redis.get.return_value = self._notification_owned_by("system")
+        mock_redis.sismember.return_value = True
+
+        with patch("src.services.notification_service.pubsub_manager", mock_pubsub):
+            result = await service.dismiss_notification(
+                notification_id="notif-admin",
+                user_id="admin-123",
+                is_admin=True,
+            )
+
+        assert result is True
+        mock_redis.delete.assert_called_once()
+
+    async def test_admin_cannot_dismiss_another_users_notification(
+        self, notification_service, mock_redis
+    ):
+        """Admin status does not extend to other users' own notifications."""
+        service, mock_pubsub = notification_service
+        mock_redis.get.return_value = self._notification_owned_by("other-user")
+        mock_redis.sismember.return_value = False
+
+        with patch("src.services.notification_service.pubsub_manager", mock_pubsub):
+            result = await service.dismiss_notification(
+                notification_id="notif-admin",
+                user_id="admin-123",
+                is_admin=True,
+            )
+
+        assert result is False
+        mock_redis.delete.assert_not_called()
+
     async def test_get_user_notifications(self, notification_service, mock_redis):
         """Test getting all notifications for a user."""
         from src.models.contracts.notifications import (

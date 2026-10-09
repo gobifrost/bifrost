@@ -8,7 +8,32 @@ Tests the notifications REST endpoints:
 - Authorization (users can only see their own notifications)
 """
 
+import asyncio
+from uuid import uuid4
+
 import pytest
+
+from src.models.contracts.notifications import NotificationCategory, NotificationCreate
+from src.services.notification_service import NotificationService
+
+
+def _create_admin_notification() -> str:
+    async def create() -> str:
+        service = NotificationService()
+        try:
+            notification = await service.create_notification(
+                user_id="system",
+                request=NotificationCreate(
+                    category=NotificationCategory.SYSTEM,
+                    title=f"Admin notification {uuid4()}",
+                ),
+                for_admins=True,
+            )
+            return notification.id
+        finally:
+            await service.close()
+
+    return asyncio.run(create())
 
 
 @pytest.mark.e2e
@@ -104,6 +129,18 @@ class TestNotificationAuthorization:
         )
         # Should be forbidden for non-platform users
         assert response.status_code in [403, 404]
+
+    def test_only_admins_dismiss_admin_notifications(self, e2e_client, platform_admin, org1_user):
+        """Dismissing an admin notification follows the same rule as reading it."""
+        notification_id = _create_admin_notification()
+        path = f"/api/notifications/{notification_id}"
+
+        assert e2e_client.get(path, headers=org1_user.headers).status_code == 404
+        assert e2e_client.delete(path, headers=org1_user.headers).status_code == 404
+        assert e2e_client.get(path, headers=platform_admin.headers).status_code == 200
+
+        assert e2e_client.delete(path, headers=platform_admin.headers).status_code == 204
+        assert e2e_client.get(path, headers=platform_admin.headers).status_code == 404
 
     def test_unauthenticated_cannot_access_notifications(self, e2e_client):
         """Test that unauthenticated requests are rejected."""

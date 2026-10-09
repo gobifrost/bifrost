@@ -97,7 +97,8 @@ async def dismiss_notification(
     """
     Dismiss (delete) a notification.
 
-    Only the owner can dismiss their notification.
+    Only the owner can dismiss their notification. Platform admins can also
+    dismiss admin-scoped notifications, which they can read.
 
     For embedding-reindex notifications that are still running, this also sets
     the Redis cancellation flag the scheduler polls between batches — so the
@@ -136,6 +137,7 @@ async def dismiss_notification(
     dismissed = await service.dismiss_notification(
         notification_id=notification_id,
         user_id=str(user.user_id),
+        is_admin=user.is_superuser,
     )
 
     if not dismissed:
