@@ -292,6 +292,15 @@ class ProductUpdatesTests(unittest.TestCase):
                     f"{name}: only <key>.json disposition files belong", errors[0]
                 )
 
+    def test_malformed_item_file_fails(self) -> None:
+        directory = self.write_item_files({"pr:11": self.other_item()})
+        (directory / "pr-11.json").write_text('{"key": "pr:11",\n')
+        errors = product_updates.validate_content(
+            self.content, self.inventory, self.dispositions, TARGET
+        )
+        self.assertEqual(1, len(errors))
+        self.assertIn("pr-11.json: invalid JSON", errors[0])
+
     def test_disposition_directory_must_be_a_directory(self) -> None:
         (self.content / "dispositions").write_text("{}\n")
         errors = product_updates.validate_content(

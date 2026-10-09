@@ -48,7 +48,7 @@ async function recordDependabotDisposition({ github, repository, number, alertSt
   if (!files.some(file => DEPENDENCY_FILES.has(file.filename) || /^\.github\/workflows\/[^/]+\.ya?ml$/.test(file.filename)) ||
       files.some(file => file.status === "renamed" ||
         (/^\.github\/workflows\/[^/]+\.ya?ml$/.test(file.filename) && !isActionPinUpdate(file)) ||
-        (file.filename !== itemPath && !DEPENDENCY_FILES.has(file.filename) &&
+        (file.filename !== LEDGER && file.filename !== itemPath && !DEPENDENCY_FILES.has(file.filename) &&
           !/^\.github\/workflows\/[^/]+\.ya?ml$/.test(file.filename)))) {
     throw new Error("Dependabot PR changes files outside dependency maintenance");
   }
