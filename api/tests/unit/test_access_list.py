@@ -766,8 +766,9 @@ _REDIS_GENERIC_READS = {"get", "getdel", "mget", "exists", "lrange"}
 
 def _is_redis_type(annotation: ast.AST | None) -> bool:
     """An annotation naming a Redis client: ``Redis``, ``redis.Redis``,
-    ``"Redis"``, ``Redis | None``, ``Optional[Redis]``, ``Annotated[Redis, ...]``.
-    A container of clients (``dict[str, Redis]``, ``list[Redis]``) is not one."""
+    ``"Redis"``, ``Redis | None``, ``Optional[Redis]``, ``Annotated[Redis, ...]``,
+    ``Final[Redis]``, ``ClassVar[Redis]`` (``typing.``-qualified too). A
+    container of clients (``dict[str, Redis]``, ``list[Redis]``) is not one."""
     if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
         try:
             annotation = ast.parse(annotation.value, mode="eval").body
@@ -776,7 +777,7 @@ def _is_redis_type(annotation: ast.AST | None) -> bool:
     if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
         return _is_redis_type(annotation.left) or _is_redis_type(annotation.right)
     if isinstance(annotation, ast.Subscript):
-        if _terminal_name(annotation.value) not in ("Optional", "Union", "Annotated"):
+        if _terminal_name(annotation.value) not in ("Optional", "Union", "Annotated", "Final", "ClassVar"):
             return False
         inner = annotation.slice
         members = inner.elts if isinstance(inner, ast.Tuple) else [inner]
@@ -2768,13 +2769,20 @@ class TestScannerReviewFindings:
             async def read(conn: "Redis", key):
                 client: Redis = await connect()
                 await client.get(key)
+                pinned: Final[Redis] = connect()
+                pinned.get(key)
                 await conn.exists(key)
                 cache = make_cache_client()
                 cache.get(key)
                 settings.get(key)
         """
         nodes = list(ast.walk(ast.parse(textwrap.dedent(source))))
-        assert sorted(_redis_reads(nodes, frozenset({"make_cache_client"}))) == ["cache.get", "client.get", "conn.exists"]
+        assert sorted(_redis_reads(nodes, frozenset({"make_cache_client"}))) == [
+            "cache.get",
+            "client.get",
+            "conn.exists",
+            "pinned.get",
+        ]
 
     def test_a_sentinel_comparison_inside_a_dict_value_or_f_string_is_a_site(self) -> None:
         source = """
@@ -2812,9 +2820,21 @@ class TestScannerReviewFindings:
         def annotation(text: str) -> ast.AST:
             return ast.parse(text, mode="eval").body
 
-        for text in ("Redis", "redis.Redis", "'Redis'", "Redis | None", "Optional[Redis]", "Annotated[Redis, 1]"):
+        for text in (
+            "Redis",
+            "redis.Redis",
+            "'Redis'",
+            "Redis | None",
+            "Optional[Redis]",
+            "Annotated[Redis, 1]",
+            "typing.Annotated[Redis, 1]",
+            "Final[Redis]",
+            "typing.Final[Redis]",
+            "ClassVar[Redis]",
+            "Final[Optional[Redis]]",
+        ):
             assert _is_redis_type(annotation(text)), text
-        for text in ("dict[str, Redis]", "list[Redis]", "Optional[list[Redis]]", "RedisSettings"):
+        for text in ("dict[str, Redis]", "list[Redis]", "Optional[list[Redis]]", "Final[list[Redis]]", "RedisSettings"):
             assert not _is_redis_type(annotation(text)), text
 
     def test_lock_owner_reads_are_authority(self) -> None:
