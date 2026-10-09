@@ -1,5 +1,5 @@
 """``shared.workflow_access.user_can_access_workflow`` — the one predicate
-shared by save-time tool validation (``_validate_user_tool_access``) and the
+shared by save-time tool validation (``validate_user_tool_access``) and the
 ``/api/tools`` list filter (``WorkflowRepository.list_tools_for_filter``).
 """
 

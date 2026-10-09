@@ -2,7 +2,7 @@
 
 Regression coverage for the ``list_tools_for_filter`` access-level filter
 (``shared.workflow_access.user_can_access_workflow``): the agent editor's
-tool picker must never offer a tool that ``_validate_user_tool_access``
+tool picker must never offer a tool that ``validate_user_tool_access``
 would then reject at save time.
 
 - Platform admin: unchanged, sees every in-scope tool workflow regardless of

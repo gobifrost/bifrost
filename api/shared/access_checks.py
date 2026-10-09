@@ -40,7 +40,7 @@ NoteTarget = UUID | None | Literal["*"]
 _DIRECT_KINDS = frozenset({"permission", "scope_switch"})
 # Objects whose organization and owner are read when the note is judged,
 # after the response, instead of in the request.
-OwnedKind = Literal["execution", "agent_run", "artifact_workspace"]
+OwnedKind = Literal["execution", "agent_run", "artifact_workspace", "agent_tools"]
 
 
 @dataclass(frozen=True)
@@ -51,6 +51,8 @@ class Owned:
     kind: OwnedKind
     id: UUID
     actor: UUID
+    # agent_tools: the tools attached; elevated when the actor could not use them.
+    tools: tuple[str, ...] = ()
 
 
 @dataclass
@@ -163,15 +165,10 @@ def note_power(permission: str, target: NoteTarget | Owned, *, subject: str) -> 
     ``target``, the object's organization (None is Global), or on an
     ``Owned`` object resolved when judged."""
     if isinstance(target, Owned):
-        note(
-            "permission",
-            None,
-            permission=permission,
-            subject=subject,
-            owned=target.kind,
-            object_id=str(target.id),
-            actor=str(target.actor),
-        )
+        owned: dict[str, Any] = {"owned": target.kind, "object_id": str(target.id), "actor": str(target.actor)}
+        if target.tools:
+            owned["tools"] = list(target.tools)
+        note("permission", None, permission=permission, subject=subject, **owned)
         return
     note("permission", target, permission=permission, subject=subject)
 

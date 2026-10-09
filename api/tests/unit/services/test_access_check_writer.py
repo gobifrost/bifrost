@@ -399,3 +399,153 @@ async def test_a_persons_scope_switch_writes_would_denies_only(db_session: Async
     assert (row.resource_type, row.outcome, row.organization_id) == ("scope_switch", "failure", other.id)
     assert row.details is not None
     assert row.details["trace"]["steps"][1]["reason"] == "no_workflow"
+
+
+def _owned(permission: str, kind: str, object_id: UUID, actor: UUID, **extra) -> Note:
+    return Note(
+        "permission",
+        None,
+        {
+            "permission": permission,
+            "subject": f"{kind}:{object_id}",
+            "owned": kind,
+            "object_id": str(object_id),
+            "actor": str(actor),
+            **extra,
+        },
+    )
+
+
+async def test_an_agent_run_noted_unloaded_is_judged_in_its_own_org(db_session: AsyncSession) -> None:
+    from src.models.orm import AgentRun
+
+    home, other = await _org(db_session), await _org(db_session)
+    person, someone = await _person(db_session, home), await _person(db_session, other)
+    theirs = AgentRun(trigger_type="api", org_id=other.id, caller_user_id=str(someone.id))
+    own = AgentRun(trigger_type="api", org_id=other.id, caller_user_id=str(person.id))
+    db_session.add_all([theirs, own])
+    await db_session.flush()
+
+    collector = _person_collector(
+        person.id,
+        _owned("agentruns.read.all", "agent_run", theirs.id, person.id),
+        _owned("agentruns.read.all", "agent_run", own.id, person.id),
+    )
+    await flush(db_session, collector, **ROUTE)
+
+    [row] = await _person_rows(db_session, person.id)
+    assert row.organization_id == other.id
+    assert row.details is not None and row.details["inputs"]["subject"] == f"agent_run:{theirs.id}"
+
+
+async def test_writing_into_someone_elses_workspace_is_judged_where_their_artifacts_are(
+    db_session: AsyncSession,
+) -> None:
+    from src.models.orm import Artifact
+
+    home, other = await _org(db_session), await _org(db_session)
+    person, someone = await _person(db_session, home), await _person(db_session, other)
+    shared, mine = uuid4(), uuid4()
+    for workspace, owner, org in ((shared, someone, other), (mine, person, home)):
+        db_session.add(
+            Artifact(
+                organization_id=org.id,
+                created_by_user_id=owner.id,
+                workspace_id=workspace,
+                s3_key=f"_artifact_workspaces/{workspace}/{uuid4()}/a.txt",
+                filename="a.txt",
+                content_type="text/plain",
+                size_bytes=1,
+            )
+        )
+    await db_session.flush()
+
+    collector = _person_collector(
+        person.id,
+        _owned("artifacts.readwrite.all", "artifact_workspace", shared, person.id),
+        _owned("artifacts.readwrite.all", "artifact_workspace", mine, person.id),
+    )
+    await flush(db_session, collector, **ROUTE)
+
+    [row] = await _person_rows(db_session, person.id)
+    assert row.organization_id == other.id
+    assert row.details is not None and row.details["inputs"]["subject"] == f"artifact_workspace:{shared}"
+
+
+async def test_tools_the_actor_could_not_attach_are_judged_at_the_agent(db_session: AsyncSession) -> None:
+    from src.models.orm import Agent, Workflow
+
+    home = await _org(db_session)
+    person = await _person(db_session, home)
+    agent = Agent(
+        name=f"a-{uuid4().hex[:6]}", system_prompt="Hi", organization_id=home.id, owner_user_id=person.id, created_by="t"
+    )
+    locked = Workflow(
+        name=f"w_{uuid4().hex[:6]}", function_name="w", path="workflows/w.py", access_level="role_based", type="tool"
+    )
+    db_session.add_all([agent, locked])
+    await db_session.flush()
+
+    collector = _person_collector(
+        person.id, _owned("agents.readwrite", "agent_tools", agent.id, person.id, tools=[str(locked.id)])
+    )
+    await flush(db_session, collector, **ROUTE)
+
+    [row] = await _person_rows(db_session, person.id)
+    assert (row.outcome, row.organization_id) == ("failure", home.id)
+    assert row.details is not None and row.details["inputs"]["permission"] == "agents.readwrite"
+
+
+async def test_an_object_that_does_not_exist_yet_is_judged_by_a_later_request(db_session: AsyncSession) -> None:
+    from src.models.enums import ExecutionStatus
+    from src.models.orm import Execution
+
+    home, other = await _org(db_session), await _org(db_session)
+    person, someone = await _person(db_session, home), await _person(db_session, other)
+    execution_id = uuid4()
+    note = _owned("executions.read.all", "execution", execution_id, person.id)
+
+    await flush(db_session, _person_collector(person.id, note), **ROUTE)
+    assert await _person_rows(db_session, person.id) == []
+
+    db_session.add(
+        Execution(
+            id=execution_id,
+            workflow_name="w",
+            status=ExecutionStatus.SUCCESS,
+            organization_id=other.id,
+            executed_by=someone.id,
+            executed_by_name="S",
+        )
+    )
+    await db_session.flush()
+    await flush(db_session, _person_collector(person.id, note), **ROUTE)
+
+    [row] = await _person_rows(db_session, person.id)
+    assert row.organization_id == other.id
+
+
+async def test_a_judgement_that_failed_is_judged_again(db_session: AsyncSession) -> None:
+    from src.services import access_check_writer
+
+    home, other = await _org(db_session), await _org(db_session)
+    person = await _person(db_session, home)
+    calls: list[str] = []
+    real = access_check_writer.judge
+
+    def flaky(run_user, powers, note, entry):
+        calls.append(note.kind)
+        if len(calls) == 1:
+            raise TimeoutError("transient")
+        return real(run_user, powers, note, entry)
+
+    with patch.object(access_check_writer, "judge", flaky):
+        for _ in range(3):
+            await flush(db_session, _person_collector(person.id, _power("agents.read", other.id)), **ROUTE)
+
+    assert len(calls) == 2
+    rows = await _person_rows(db_session, person.id)
+    assert sorted((row.action, row.outcome) for row in rows) == [
+        ("access.check", "failure"),
+        ("access.check_gap", "failure"),
+    ]

@@ -29,7 +29,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from functools import cache
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import select
@@ -39,7 +39,8 @@ from shared.access_checks import Collector, Note
 from src.core.cache.redis_client import get_shared_redis
 from src.core.database import get_db_context
 from src.models.contracts.access_list import AccessEntry
-from src.models.orm import AgentRun, Artifact, Execution
+from src.models.orm import Agent, AgentRun, Artifact, Execution
+from src.services.agent_write_policy import may_use_tools
 from src.repositories.audit_logs import AuditLogRepository
 from src.services.authorization.explain import (
     ALL_ORGS,
@@ -59,6 +60,9 @@ from src.services.authorization.explain import (
 logger = logging.getLogger(__name__)
 
 _DEDUPE_SECONDS = 86_400
+# A judgement in progress holds its marker this long at most; a judgement
+# that completes keeps it for the day.
+_IN_FLIGHT_SECONDS = 300
 _ALWAYS_WRITTEN = frozenset({"run_as", "policy", "secret"})
 # Facts that vary between calls of the same decision (a query's row counts).
 _PER_CALL_FACTS = frozenset({"hidden", "returned"})
@@ -83,28 +87,41 @@ def _target_org(target: Any) -> UUID | None:
     return target if isinstance(target, UUID) else None
 
 
-_OWNED_FACTS = ("owned", "object_id", "actor")
+_OWNED_FACTS = ("owned", "object_id", "actor", "tools")
+# What resolving an unloaded object found besides a note to judge: the actor
+# owns it (a completed decision), or it does not exist (yet).
+Unresolved = Literal["own", "absent"]
 
 
-async def _resolve_owned(db: AsyncSession, note: Note) -> Note | None:
-    """``note`` in its object's organization, or None when the object is gone
-    or its actor owns it (nothing elevated happened)."""
+async def _resolve_owned(db: AsyncSession, note: Note) -> Note | Unresolved:
+    """``note`` in its object's organization, or why there is nothing to judge."""
     facts = note.facts
     object_id, actor = UUID(facts["object_id"]), UUID(facts["actor"])
     if facts["owned"] == "execution":
         execution = (
             await db.execute(select(Execution.organization_id, Execution.executed_by).where(Execution.id == object_id))
         ).one_or_none()
-        if execution is None or execution.executed_by == actor:
-            return None
+        if execution is None:
+            return "absent"
+        if execution.executed_by == actor:
+            return "own"
         organization_id = execution.organization_id
     elif facts["owned"] == "agent_run":
         run = (
             await db.execute(select(AgentRun.org_id, AgentRun.caller_user_id).where(AgentRun.id == object_id))
         ).one_or_none()
-        if run is None or run.caller_user_id == str(actor):
-            return None
+        if run is None:
+            return "absent"
+        if run.caller_user_id == str(actor):
+            return "own"
         organization_id = run.org_id
+    elif facts["owned"] == "agent_tools":
+        agent = (await db.execute(select(Agent.organization_id).where(Agent.id == object_id))).one_or_none()
+        if agent is None:
+            return "absent"
+        if await may_use_tools(db, actor, list(facts["tools"])):
+            return "own"
+        organization_id = agent.organization_id
     else:
         # A workspace is someone else's when another user's artifact is in it.
         other = (
@@ -115,7 +132,7 @@ async def _resolve_owned(db: AsyncSession, note: Note) -> Note | None:
             )
         ).one_or_none()
         if other is None:
-            return None
+            return "own"
         organization_id = other.organization_id
     return Note(note.kind, organization_id, {key: value for key, value in facts.items() if key not in _OWNED_FACTS})
 
@@ -163,20 +180,31 @@ class _Writer:
             else str(collector.execution_id or f"run-user:{collector.run_user_id}")
         )
 
-    async def _first_time(self, *parts: Any) -> bool:
+    def _key(self, *parts: Any) -> str:
         digest = hashlib.sha256("|".join(str(part) for part in parts).encode()).hexdigest()[:16]
-        return bool(
-            await self.redis.set(f"bifrost:access_check:{self.run_key}:{digest}", "1", nx=True, ex=_DEDUPE_SECONDS)
-        )
+        return f"bifrost:access_check:{self.run_key}:{digest}"
+
+    async def _first_time(self, *parts: Any) -> bool:
+        return bool(await self.redis.set(self._key(*parts), "1", nx=True, ex=_DEDUPE_SECONDS))
 
     def _decision(self, note: Note) -> list[Any]:
         target = "*" if note.target == ALL_ORGS else _plain(note.target)
         subject = sorted((key, str(value)) for key, value in note.facts.items() if key not in _PER_CALL_FACTS)
         return [note.kind, self.operation, target, subject]
 
-    async def first_judgement(self, note: Note) -> bool:
-        """Whether ``note`` has not been judged for this run or person today."""
-        return await self._first_time("judged", *self._decision(note))
+    async def reserve(self, note: Note) -> str | None:
+        """Reserve judging ``note``, briefly, unless it was judged for this run
+        or person today (or is being judged now); the marker's key."""
+        key = self._key("judged", *self._decision(note))
+        return key if await self.redis.set(key, "1", nx=True, ex=_IN_FLIGHT_SECONDS) else None
+
+    async def settle(self, key: str, *, judged: bool) -> None:
+        """Keep a completed judgement for the day; release one that did not
+        complete, so a later request judges it."""
+        if judged:
+            await self.redis.expire(key, _DEDUPE_SECONDS)
+        else:
+            await self.redis.delete(key)
 
     async def gap(self, kind: str, reason: str, user_id: UUID | None = None) -> None:
         if not await self._first_time("gap", kind, self.operation, reason):
@@ -234,36 +262,64 @@ class _Writer:
 
 async def _write(db: AsyncSession, collector: Collector, *, operation: str, route: tuple[str, str] | None) -> None:
     writer = _Writer(db, await get_shared_redis(), collector, operation)
-    notes = [note for note in collector.notes if "gap" in note.facts or await writer.first_judgement(note)]
+    notes: list[tuple[Note, str | None]] = []
+    for note in collector.notes:
+        key = None if "gap" in note.facts else await writer.reserve(note)
+        if "gap" in note.facts or key is not None:
+            notes.append((note, key))
     if not notes:
         return
-    kinds = sorted({note.kind for note in notes})
-    if collector.run_user_id is None:
-        for kind in kinds:
-            await writer.gap(kind, "missing_lineage")
-        return
-    run_user = await load_run_user(db, collector.run_user_id)
+    kinds = sorted({note.kind for note, _key in notes})
+    run_user = None if collector.run_user_id is None else await load_run_user(db, collector.run_user_id)
     if run_user is None:
+        reason = "missing_lineage" if collector.run_user_id is None else "run_user_missing"
         for kind in kinds:
-            await writer.gap(kind, "run_user_missing")
+            await writer.gap(kind, reason)
+        for _note, key in notes:
+            if key is not None:
+                await writer.settle(key, judged=True)
         return
     powers = None if collector.direct else await load_powers(db, collector.workflow_id)
     entry = None if route is None else _entries_by_route().get(route)
-    for noted in notes:
-        if "gap" in noted.facts:
+    for noted, key in notes:
+        if key is None:
             await writer.gap(noted.kind, noted.facts["gap"], run_user.user_id)
             continue
+        judged = False
         try:
-            note = await _resolve_owned(db, noted) if "owned" in noted.facts else noted
-            if note is None:
-                continue
-            trace = judge(run_user, powers, note, entry)
-        except Exception as exc:
-            logger.warning("access check could not be judged (kind=%s): %s", noted.kind, type(exc).__name__)
-            await writer.gap(noted.kind, f"observer_error:{type(exc).__name__}", run_user.user_id)
-            continue
-        if _written(note, trace, run_user, direct=collector.direct):
-            await writer.check(note, trace, run_user)
+            judged = await _judge_and_write(db, writer, run_user, powers, noted, entry, direct=collector.direct)
+        finally:
+            await writer.settle(key, judged=judged)
+
+
+async def _judge_and_write(
+    db: AsyncSession,
+    writer: _Writer,
+    run_user: RunUser,
+    powers: Powers | None,
+    noted: Note,
+    entry: AccessEntry | None,
+    *,
+    direct: bool,
+) -> bool:
+    """Judge one note and write it if it matters; whether the judgement
+    completed (an object that does not exist yet, or a check that failed,
+    is judged again by a later request)."""
+    try:
+        resolved = await _resolve_owned(db, noted) if "owned" in noted.facts else noted
+        if resolved == "own":
+            return True
+        if resolved == "absent":
+            return False
+        assert isinstance(resolved, Note)
+        trace = judge(run_user, powers, resolved, entry)
+    except Exception as exc:
+        logger.warning("access check could not be judged (kind=%s): %s", noted.kind, type(exc).__name__)
+        await writer.gap(noted.kind, f"observer_error:{type(exc).__name__}", run_user.user_id)
+        return False
+    if _written(resolved, trace, run_user, direct=direct):
+        await writer.check(resolved, trace, run_user)
+    return True
 
 
 async def flush(

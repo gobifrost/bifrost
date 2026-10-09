@@ -26,6 +26,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.db_deps import DbSession
 from src.models.contracts.agents import AgentCreate, AgentUpdate
@@ -144,6 +145,73 @@ def enforce_non_admin_update(agent: Agent, agent_data: AgentUpdate) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Non-admin users cannot move an agent to another organization",
         )
+
+
+async def validate_user_tool_access(
+    db: DbSession,
+    user_id: UUID,
+    tool_ids: list[str],
+    is_external: bool = False,
+) -> None:
+    """Validate user can access all specified tools via their roles.
+
+    External users get no authenticated-tier entitlement (EXT-1 rule 2):
+    a workflow with access_level='authenticated' still requires a role
+    intersection for them.
+    """
+    if not tool_ids:
+        return
+
+    from src.models.orm.users import UserRole
+    from src.models.orm.workflow_roles import WorkflowRole
+    from shared.workflow_access import user_can_access_workflow
+
+    # Get user's role IDs
+    result = await db.execute(
+        select(UserRole.role_id).where(UserRole.user_id == user_id)
+    )
+    user_role_ids = set(result.scalars().all())
+
+    for tool_id in tool_ids:
+        try:
+            workflow_uuid = UUID(tool_id)
+        except ValueError:
+            raise HTTPException(422, f"Invalid tool ID: {tool_id}")
+
+        result = await db.execute(
+            select(Workflow).where(Workflow.id == workflow_uuid)
+        )
+        workflow = result.scalar_one_or_none()
+        if not workflow:
+            raise HTTPException(422, f"Tool '{tool_id}' not found")
+        if not workflow.is_active:
+            raise HTTPException(422, f"Tool '{workflow.name}' is inactive")
+
+        result = await db.execute(
+            select(WorkflowRole.role_id).where(WorkflowRole.workflow_id == workflow_uuid)
+        )
+        workflow_role_ids = set(result.scalars().all())
+
+        if not user_can_access_workflow(
+            access_level=workflow.access_level,
+            is_external=is_external,
+            user_role_ids=user_role_ids,
+            workflow_role_ids=workflow_role_ids,
+        ):
+            raise HTTPException(403, f"You do not have role access to tool '{workflow.name}'")
+
+
+async def may_use_tools(db: AsyncSession, user_id: UUID, tool_ids: list[str]) -> bool:
+    """Whether ``user_id`` could attach ``tool_ids`` without platform admin
+    (report-only use, after the request)."""
+    from src.models.orm.users import User
+
+    is_external = (await db.execute(select(User.is_external).where(User.id == user_id))).scalar_one_or_none()
+    try:
+        await validate_user_tool_access(db, user_id, tool_ids, is_external=bool(is_external))
+    except HTTPException:
+        return False
+    return True
 
 
 def needs_admin_to_create(agent_data: AgentCreate, *, caller_org_id: UUID | None) -> bool:

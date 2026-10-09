@@ -58,6 +58,7 @@ from src.services.agent_write_policy import (
     needs_admin_to_create,
     needs_admin_to_update,
     validate_agent_references,
+    validate_user_tool_access,
 )
 from src.services.solutions.guard import assert_not_solution_managed
 from src.routers.tools import get_system_tool_ids
@@ -68,60 +69,6 @@ from src.services.operation_catalog import operation_route
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agents", tags=["Agents"])
-
-
-async def _validate_user_tool_access(
-    db: DbSession,
-    user_id: UUID,
-    tool_ids: list[str],
-    is_external: bool = False,
-) -> None:
-    """Validate user can access all specified tools via their roles.
-
-    External users get no authenticated-tier entitlement (EXT-1 rule 2):
-    a workflow with access_level='authenticated' still requires a role
-    intersection for them.
-    """
-    if not tool_ids:
-        return
-
-    from src.models.orm.users import UserRole
-    from src.models.orm.workflow_roles import WorkflowRole
-    from shared.workflow_access import user_can_access_workflow
-
-    # Get user's role IDs
-    result = await db.execute(
-        select(UserRole.role_id).where(UserRole.user_id == user_id)
-    )
-    user_role_ids = set(result.scalars().all())
-
-    for tool_id in tool_ids:
-        try:
-            workflow_uuid = UUID(tool_id)
-        except ValueError:
-            raise HTTPException(422, f"Invalid tool ID: {tool_id}")
-
-        result = await db.execute(
-            select(Workflow).where(Workflow.id == workflow_uuid)
-        )
-        workflow = result.scalar_one_or_none()
-        if not workflow:
-            raise HTTPException(422, f"Tool '{tool_id}' not found")
-        if not workflow.is_active:
-            raise HTTPException(422, f"Tool '{workflow.name}' is inactive")
-
-        result = await db.execute(
-            select(WorkflowRole.role_id).where(WorkflowRole.workflow_id == workflow_uuid)
-        )
-        workflow_role_ids = set(result.scalars().all())
-
-        if not user_can_access_workflow(
-            access_level=workflow.access_level,
-            is_external=is_external,
-            user_role_ids=user_role_ids,
-            workflow_role_ids=workflow_role_ids,
-        ):
-            raise HTTPException(403, f"You do not have role access to tool '{workflow.name}'")
 
 
 async def _validate_llm_profile_id(
@@ -374,17 +321,25 @@ async def create_agent(
     if is_admin and "organization_id" not in agent_data.model_fields_set:
         agent_data.organization_id = user.organization_id
 
+    agent_id = uuid4()
     if not is_admin:
         # A privileged/budget field is applied or refused, never silently
         # dropped/overridden — see agent_write_policy for the full gate
         # order (access_level, privileged fields, budget fields, org).
         enforce_non_admin_create(agent_data, caller_org_id=user.organization_id)
         agent_data.organization_id = user.organization_id
-        await _validate_user_tool_access(
+        await validate_user_tool_access(
             db, user.user_id, agent_data.tool_ids, is_external=user.is_external
         )
     elif needs_admin_to_create(agent_data, caller_org_id=user.organization_id):
         access_checks.note_power("agents.readwrite", agent_data.organization_id, subject="agents")
+    elif agent_data.tool_ids:
+        # Whether the creator could attach these tools is read when the note is judged.
+        access_checks.note_power(
+            "agents.readwrite",
+            access_checks.Owned("agent_tools", agent_id, user.user_id, tuple(agent_data.tool_ids)),
+            subject=f"agent:{agent_id}",
+        )
 
     # Validate references before creating the agent (every caller, admins
     # included).
@@ -399,7 +354,6 @@ async def create_agent(
     )
     await _validate_llm_profile_id(db, agent_data.llm_profile_id)
 
-    agent_id = uuid4()
     now = datetime.now(timezone.utc)
 
     # Set owner for private agents
@@ -684,7 +638,7 @@ async def update_agent(
         if agent_data.access_level is not None and agent_data.access_level != AgentAccessLevel.PRIVATE:
             raise HTTPException(403, "Use the promote endpoint to change access level")
         if agent_data.tool_ids is not None:
-            await _validate_user_tool_access(
+            await validate_user_tool_access(
                 db, user.user_id, agent_data.tool_ids, is_external=user.is_external
             )
         # A privileged field is applied or refused, never silently dropped —
@@ -696,6 +650,13 @@ async def update_agent(
             access_checks.note_power("agents.readwrite.all", agent.organization_id, subject=f"agent:{agent.id}")
         if agent.access_level != AgentAccessLevel.PRIVATE or needs_admin_to_update(agent, agent_data):
             access_checks.note_power("agents.readwrite", agent.organization_id, subject=f"agent:{agent.id}")
+        elif agent_data.tool_ids:
+            # Whether the owner could attach these tools is read when the note is judged.
+            access_checks.note_power(
+                "agents.readwrite",
+                access_checks.Owned("agent_tools", agent.id, user.user_id, tuple(agent_data.tool_ids)),
+                subject=f"agent:{agent.id}",
+            )
 
     final_access_level = agent_data.access_level or agent.access_level
 
