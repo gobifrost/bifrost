@@ -28,9 +28,10 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from dataclasses import dataclass
 from functools import cache
 from typing import Any, Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -168,8 +169,31 @@ def _written(note: Note, trace: Trace, run_user: RunUser, *, direct: bool) -> bo
     return False
 
 
+# Settle a claim only while it is still ours: a claim that expired and was
+# taken by another judgement is left alone. ARGV: token, then the new TTL in
+# seconds (keep) or nothing (release).
+_SETTLE_SCRIPT = """
+if redis.call('get', KEYS[1]) ~= ARGV[1] then
+    return 0
+end
+if ARGV[2] then
+    return redis.call('expire', KEYS[1], ARGV[2])
+end
+return redis.call('del', KEYS[1])
+"""
+
+
+@dataclass(frozen=True)
+class Claim:
+    """A marker this judgement holds: its key and the token proving it."""
+
+    key: str
+    token: str
+
+
 class _Writer:
     def __init__(self, db: AsyncSession, redis: Any, collector: Collector, operation: str) -> None:
+        self.db = db
         self.repo = AuditLogRepository(db)
         self.redis = redis
         self.collector = collector
@@ -184,32 +208,46 @@ class _Writer:
         digest = hashlib.sha256("|".join(str(part) for part in parts).encode()).hexdigest()[:16]
         return f"bifrost:access_check:{self.run_key}:{digest}"
 
-    async def _first_time(self, *parts: Any) -> bool:
-        return bool(await self.redis.set(self._key(*parts), "1", nx=True, ex=_DEDUPE_SECONDS))
+    async def _claim(self, key: str) -> Claim | None:
+        """Hold ``key`` briefly, unless someone holds it or it was kept for the day."""
+        token = uuid4().hex
+        return Claim(key, token) if await self.redis.set(key, token, nx=True, ex=_IN_FLIGHT_SECONDS) else None
+
+    async def settle(self, claim: Claim, *, done: bool) -> None:
+        """Keep a claim for the day when its work is done, release it when
+        not (a later request does the work); only while it is still ours."""
+        if done:
+            await self.redis.eval(_SETTLE_SCRIPT, 1, claim.key, claim.token, _DEDUPE_SECONDS)
+        else:
+            await self.redis.eval(_SETTLE_SCRIPT, 1, claim.key, claim.token)
+
+    async def _write_once(self, parts: list[Any], **row: Any) -> None:
+        """Insert the audit ``row`` unless it was written for ``parts`` today;
+        the day's marker is kept only once the row is committed."""
+        claim = await self._claim(self._key(*parts))
+        if claim is None:
+            return
+        try:
+            await self.repo.create(**row)
+            await self.db.commit()
+        except Exception:
+            await self.settle(claim, done=False)
+            raise
+        await self.settle(claim, done=True)
 
     def _decision(self, note: Note) -> list[Any]:
         target = "*" if note.target == ALL_ORGS else _plain(note.target)
         subject = sorted((key, str(value)) for key, value in note.facts.items() if key not in _PER_CALL_FACTS)
         return [note.kind, self.operation, target, subject]
 
-    async def reserve(self, note: Note) -> str | None:
-        """Reserve judging ``note``, briefly, unless it was judged for this run
-        or person today (or is being judged now); the marker's key."""
-        key = self._key("judged", *self._decision(note))
-        return key if await self.redis.set(key, "1", nx=True, ex=_IN_FLIGHT_SECONDS) else None
-
-    async def settle(self, key: str, *, judged: bool) -> None:
-        """Keep a completed judgement for the day; release one that did not
-        complete, so a later request judges it."""
-        if judged:
-            await self.redis.expire(key, _DEDUPE_SECONDS)
-        else:
-            await self.redis.delete(key)
+    async def reserve(self, note: Note) -> Claim | None:
+        """Claim judging ``note`` unless it was judged for this run or person
+        today, or is being judged now."""
+        return await self._claim(self._key("judged", *self._decision(note)))
 
     async def gap(self, kind: str, reason: str, user_id: UUID | None = None) -> None:
-        if not await self._first_time("gap", kind, self.operation, reason):
-            return
-        await self.repo.create(
+        await self._write_once(
+            ["gap", kind, self.operation, reason],
             action="access.check_gap",
             user_id=user_id,
             organization_id=None,
@@ -226,10 +264,9 @@ class _Writer:
 
     async def check(self, note: Note, trace: Trace, run_user: RunUser) -> None:
         kind, operation, target, subject = self._decision(note)
-        if not await self._first_time(kind, operation, target, run_user.user_id, trace.outcome, subject):
-            return
         today = note.facts.get("today", True)
-        await self.repo.create(
+        await self._write_once(
+            [kind, operation, target, run_user.user_id, trace.outcome, subject],
             action="access.check",
             user_id=run_user.user_id,
             organization_id=_target_org(note.target),
@@ -262,34 +299,34 @@ class _Writer:
 
 async def _write(db: AsyncSession, collector: Collector, *, operation: str, route: tuple[str, str] | None) -> None:
     writer = _Writer(db, await get_shared_redis(), collector, operation)
-    notes: list[tuple[Note, str | None]] = []
+    notes: list[tuple[Note, Claim | None]] = []
     for note in collector.notes:
-        key = None if "gap" in note.facts else await writer.reserve(note)
-        if "gap" in note.facts or key is not None:
-            notes.append((note, key))
+        claim = None if "gap" in note.facts else await writer.reserve(note)
+        if "gap" in note.facts or claim is not None:
+            notes.append((note, claim))
     if not notes:
         return
-    kinds = sorted({note.kind for note, _key in notes})
+    kinds = sorted({note.kind for note, _claim in notes})
     run_user = None if collector.run_user_id is None else await load_run_user(db, collector.run_user_id)
     if run_user is None:
         reason = "missing_lineage" if collector.run_user_id is None else "run_user_missing"
         for kind in kinds:
             await writer.gap(kind, reason)
-        for _note, key in notes:
-            if key is not None:
-                await writer.settle(key, judged=True)
+        for _note, claim in notes:
+            if claim is not None:
+                await writer.settle(claim, done=True)
         return
     powers = None if collector.direct else await load_powers(db, collector.workflow_id)
     entry = None if route is None else _entries_by_route().get(route)
-    for noted, key in notes:
-        if key is None:
+    for noted, claim in notes:
+        if claim is None:
             await writer.gap(noted.kind, noted.facts["gap"], run_user.user_id)
             continue
         judged = False
         try:
             judged = await _judge_and_write(db, writer, run_user, powers, noted, entry, direct=collector.direct)
         finally:
-            await writer.settle(key, judged=judged)
+            await writer.settle(claim, done=judged)
 
 
 async def _judge_and_write(
@@ -303,8 +340,9 @@ async def _judge_and_write(
     direct: bool,
 ) -> bool:
     """Judge one note and write it if it matters; whether the judgement
-    completed (an object that does not exist yet, or a check that failed,
-    is judged again by a later request)."""
+    completed. An object that does not exist yet or a check that failed
+    returns False, and a failed write raises, so a later request judges it
+    again."""
     try:
         resolved = await _resolve_owned(db, noted) if "owned" in noted.facts else noted
         if resolved == "own":

@@ -549,3 +549,74 @@ async def test_a_judgement_that_failed_is_judged_again(db_session: AsyncSession)
         ("access.check", "failure"),
         ("access.check_gap", "failure"),
     ]
+
+
+async def test_a_write_that_failed_is_written_by_a_later_attempt(db_session: AsyncSession) -> None:
+    from src.repositories.audit_logs import AuditLogRepository
+
+    home, other = await _org(db_session), await _org(db_session)
+    person = await _person(db_session, home)
+    real = AuditLogRepository.create
+    attempts: list[str] = []
+
+    async def failing_once(self, **row):
+        attempts.append(row["action"])
+        if len(attempts) == 1:
+            raise ConnectionError("database unavailable")
+        return await real(self, **row)
+
+    with patch.object(AuditLogRepository, "create", failing_once):
+        for _ in range(3):
+            await flush(db_session, _person_collector(person.id, _power("agents.read", other.id)), **ROUTE)
+
+    assert attempts == ["access.check", "access.check"]
+    [row] = await _person_rows(db_session, person.id)
+    assert (row.action, row.outcome) == ("access.check", "failure")
+
+
+async def _writer(db_session: AsyncSession):
+    from src.core.cache.redis_client import get_shared_redis
+    from src.services.access_check_writer import _Writer
+
+    redis = await get_shared_redis()
+    return redis, _Writer(db_session, redis, _person_collector(uuid4()), ROUTE["operation"])
+
+
+async def test_a_stale_claim_never_releases_its_successors(db_session: AsyncSession) -> None:
+    redis, writer = await _writer(db_session)
+    note = _power("agents.read", uuid4())
+    stale = await writer.reserve(note)
+    assert stale is not None
+    # The claim expired and another judgement took the decision.
+    await redis.set(stale.key, "successor", ex=300)
+
+    await writer.settle(stale, done=False)
+
+    assert await redis.get(stale.key) == "successor"
+
+
+async def test_a_stale_claim_cannot_keep_the_decision_for_the_day(db_session: AsyncSession) -> None:
+    redis, writer = await _writer(db_session)
+    note = _power("agents.read", uuid4())
+    stale = await writer.reserve(note)
+    assert stale is not None
+    await redis.set(stale.key, "successor", ex=300)
+
+    await writer.settle(stale, done=True)
+
+    assert await redis.ttl(stale.key) <= 300
+    assert await writer.reserve(note) is None
+
+
+async def test_a_held_claim_is_kept_for_the_day_or_released(db_session: AsyncSession) -> None:
+    redis, writer = await _writer(db_session)
+    kept, released = await writer.reserve(_power("agents.read", uuid4())), await writer.reserve(
+        _power("agents.read", uuid4())
+    )
+    assert kept is not None and released is not None
+
+    await writer.settle(kept, done=True)
+    await writer.settle(released, done=False)
+
+    assert await redis.ttl(kept.key) > 300
+    assert await redis.exists(released.key) == 0
