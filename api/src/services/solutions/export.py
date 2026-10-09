@@ -49,6 +49,9 @@ _APP_TRANSPORT_FIELDS = (
     "bin_files",
     "dist_files",
     "bin_dist_files",
+    # CLI-local build provenance is deployment transport, not portable source
+    # metadata. It identifies the exact target-instance SDK used for one dist.
+    "prebuilt_sdk_metadata",
     "logo_b64",
     "logo_content_type",
 )

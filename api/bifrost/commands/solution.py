@@ -1599,6 +1599,10 @@ def _collect_apps(workspace: pathlib.Path) -> list[dict]:
             # UTF-8-encoding the base64 text (which would corrupt the asset).
             "dist_files": body.get("dist_files"),
             "bin_dist_files": body.get("bin_dist_files"),
+            # Set only on the deployment ZIP overlay after a local build reads
+            # the exact SDK package npm installed. It is not portable manifest
+            # content and is stripped from later exports.
+            "prebuilt_sdk_metadata": body.get("prebuilt_sdk_metadata"),
         })
     return entries
 
@@ -1692,6 +1696,33 @@ def _run_local_vite_build(
     )
 
 
+def _installed_sdk_build_metadata(app_dir: pathlib.Path) -> dict[str, str | int] | None:
+    """Return the complete SDK stamp from the package the local build installed."""
+    pkg_file = app_dir / "node_modules" / "bifrost" / "package.json"
+    try:
+        package = json.loads(pkg_file.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+    stamp = package.get("bifrost")
+    package_version = package.get("version")
+    fingerprint = stamp.get("fingerprint") if isinstance(stamp, dict) else None
+    contract_version = stamp.get("contract") if isinstance(stamp, dict) else None
+    if (
+        not isinstance(package_version, str)
+        or not package_version
+        or not isinstance(fingerprint, str)
+        or not fingerprint
+        or not isinstance(contract_version, int)
+        or isinstance(contract_version, bool)
+    ):
+        return None
+    return {
+        "package_version": package_version,
+        "fingerprint": fingerprint,
+        "contract_version": contract_version,
+    }
+
+
 def _prebuild_apps(
     workspace: pathlib.Path,
     apps: list[dict],
@@ -1752,6 +1783,7 @@ def _prebuild_apps(
                     npx=npx,
                     base=f"/api/applications/{deployed_id}/dist/",
                 )
+                sdk_metadata = _installed_sdk_build_metadata(workdir)
                 dist_dir = workdir / "dist"
                 dist_paths = [p for p in dist_dir.rglob("*") if p.is_file()]
                 if not dist_paths:
@@ -1783,6 +1815,8 @@ def _prebuild_apps(
             "dist_files": dist_files,
             "bin_dist_files": bin_dist_files,
         }
+        if sdk_metadata is not None:
+            built[app_id_text]["prebuilt_sdk_metadata"] = sdk_metadata
     return built
 
 
@@ -1809,6 +1843,8 @@ def _apps_manifest_with_prebuilt_dist(
             continue
         body["dist_files"] = dist["dist_files"]
         body["bin_dist_files"] = dist["bin_dist_files"]
+        if "prebuilt_sdk_metadata" in dist:
+            body["prebuilt_sdk_metadata"] = dist["prebuilt_sdk_metadata"]
         remaining.discard(app_id)
     if remaining:
         raise click.ClickException(

@@ -15,6 +15,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     text,
@@ -340,6 +341,8 @@ class Event(Base):
     # Payload
     headers: Mapped[dict | None] = mapped_column(JSONB, default=None)
     data: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    # Original accepted webhook bytes. This is not included in event API or WebSocket payloads.
+    raw_body: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, default=None)
 
     # Source metadata
     source_ip: Mapped[str | None] = mapped_column(String(45), default=None)  # IPv6 max
