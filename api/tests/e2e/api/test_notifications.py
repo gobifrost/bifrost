@@ -135,12 +135,19 @@ class TestNotificationAuthorization:
         notification_id = _create_admin_notification()
         path = f"/api/notifications/{notification_id}"
 
-        assert e2e_client.get(path, headers=org1_user.headers).status_code == 404
-        assert e2e_client.delete(path, headers=org1_user.headers).status_code == 404
-        assert e2e_client.get(path, headers=platform_admin.headers).status_code == 200
+        user_read = e2e_client.get(path, headers=org1_user.headers)
+        user_dismiss = e2e_client.delete(path, headers=org1_user.headers)
+        admin_read = e2e_client.get(path, headers=platform_admin.headers)
 
-        assert e2e_client.delete(path, headers=platform_admin.headers).status_code == 204
-        assert e2e_client.get(path, headers=platform_admin.headers).status_code == 404
+        assert user_read.status_code == 404
+        assert user_dismiss.status_code == 404
+        assert admin_read.status_code == 200
+
+        admin_dismiss = e2e_client.delete(path, headers=platform_admin.headers)
+        admin_read_after = e2e_client.get(path, headers=platform_admin.headers)
+
+        assert admin_dismiss.status_code == 204
+        assert admin_read_after.status_code == 404
 
     def test_unauthenticated_cannot_access_notifications(self, e2e_client):
         """Test that unauthenticated requests are rejected."""

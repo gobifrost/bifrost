@@ -139,14 +139,19 @@ async def test_code_round_trip_mints_tokens_for_the_signed_in_user(
     provider = BifrostAuthProvider(base_url="http://test")
     code = await _issue_code(provider, redis, user)
 
-    assert list(redis.values) == [_mcp_auth_code_key(code)]
-    assert code not in _mcp_auth_code_key(code)
+    key = _mcp_auth_code_key(code)
+    stored_keys = list(redis.values)
+
+    assert stored_keys == [key]
+    assert code not in key
 
     status, body = await _exchange(provider, code)
+    minted_for = [token["sub"] for token in minted]
+    user_id = str(user.id)
 
     assert status == 200
     assert body["access_token"] == "minted.jwt"
-    assert [token["sub"] for token in minted] == [str(user.id)]
+    assert minted_for == [user_id]
 
 
 async def test_code_is_single_use(
@@ -157,11 +162,12 @@ async def test_code_is_single_use(
 
     first_status, _ = await _exchange(provider, code)
     second_status, second = await _exchange(provider, code)
+    minted_count = len(minted)
 
     assert first_status == 200
     assert second_status == 400
     assert second["error"] == "invalid_grant"
-    assert len(minted) == 1
+    assert minted_count == 1
 
 
 async def test_record_under_a_key_not_derived_with_the_secret_is_rejected(
@@ -204,6 +210,30 @@ async def test_record_with_altered_user_id_is_rejected(
     assert key not in redis.values
 
 
+@pytest.mark.parametrize(
+    "stored",
+    [
+        "not json {",
+        json.dumps({"record": {"user_id": "someone"}, "tag": "\u00e9t\u00e9-not-a-hex-tag"}),
+    ],
+    ids=["invalid-json", "non-ascii-tag"],
+)
+async def test_malformed_record_at_the_derived_key_is_rejected(
+    stored: str, redis: _FakeRedis, minted: list[dict[str, Any]]
+) -> None:
+    provider = BifrostAuthProvider(base_url="http://test")
+    code = "issued-code"
+    key = _mcp_auth_code_key(code)
+    redis.values[key] = stored
+
+    status, body = await _exchange(provider, code)
+
+    assert status == 400
+    assert body == {"error": "invalid_grant", "error_description": "Invalid or expired authorization code"}
+    assert minted == []
+    assert key not in redis.values
+
+
 async def test_unknown_code_is_rejected_as_before(
     redis: _FakeRedis, minted: list[dict[str, Any]]
 ) -> None:
@@ -221,5 +251,8 @@ def test_auth_code_key_depends_on_the_secret(monkeypatch: pytest.MonkeyPatch) ->
     first = _mcp_auth_code_key("code")
     monkeypatch.setattr(get_settings(), "secret_key", "another-secret-value-of-at-least-32-chars")
 
-    assert _mcp_auth_code_key("code") != first
-    assert _mcp_auth_code_key("code").startswith("bifrost:mcp:auth_code:")
+    second = _mcp_auth_code_key("code")
+    prefixed = second.startswith("bifrost:mcp:auth_code:")
+
+    assert second != first
+    assert prefixed

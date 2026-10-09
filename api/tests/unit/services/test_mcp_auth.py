@@ -233,9 +233,11 @@ class TestRedisKeys:
     def test_mcp_auth_code_key(self):
         """Should derive the auth code key from the code with the server secret."""
         key = _mcp_auth_code_key("test-code-123")
-        assert key.startswith("bifrost:mcp:auth_code:")
+        again = _mcp_auth_code_key("test-code-123")
+        prefixed = key.startswith("bifrost:mcp:auth_code:")
+        assert prefixed
         assert "test-code-123" not in key
-        assert key == _mcp_auth_code_key("test-code-123")
+        assert key == again
 
     def test_mcp_client_key(self):
         """Should generate correct client key."""

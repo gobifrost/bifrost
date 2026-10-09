@@ -94,7 +94,9 @@ def test_helper_keeps_tool_settings_and_drops_credentials(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(os, "environ", {**_TOOL_ENV, **{name: "value" for name in credentials}})
 
-    assert package_tool_env() == _TOOL_ENV
+    env = package_tool_env()
+
+    assert env == _TOOL_ENV
 
 
 # --- every call site passes the helper's environment --------------------------
@@ -271,12 +273,12 @@ async def test_call_site_passes_package_tool_env(
     call, expected_calls = _CALL_SITES[site]
     await call(tmp_path, monkeypatch)
 
-    assert len(recorded) == expected_calls
     expected_env = package_tool_env()
+    envs = [kwargs.get("env") for kwargs in recorded]
+
     assert "BIFROST_SECRET_KEY" not in expected_env
     assert expected_env["PIP_INDEX_URL"] == "https://index.example/simple"
-    for kwargs in recorded:
-        assert kwargs.get("env") == expected_env
+    assert envs == [expected_env] * expected_calls
 
 
 # --- guard: new pip / npm / npx / uv subprocesses must use the helper ---------
@@ -287,7 +289,8 @@ _SUBPROCESS_FUNCS = {"run", "Popen", "call", "check_call", "check_output"}
 
 def _argv_literals(node: ast.Call) -> list[str]:
     func = node.func
-    assert isinstance(func, ast.Attribute)
+    if not isinstance(func, ast.Attribute):
+        return []
     if func.attr == "create_subprocess_exec":
         parts: list[ast.expr] = list(node.args)
     elif node.args and isinstance(node.args[0], (ast.List, ast.Tuple)):

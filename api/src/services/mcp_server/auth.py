@@ -68,16 +68,20 @@ def _seal_auth_code_record(code: str, record: dict[str, Any]) -> str:
     return json.dumps({"record": record, "tag": _auth_code_tag(code, record)})
 
 
-def _open_auth_code_record(code: str, stored_json: str | bytes) -> dict[str, Any] | None:
+def _open_auth_code_record(code: str, stored_json: str) -> dict[str, Any] | None:
     """Return the stored record for ``code`` if its tag verifies, else None."""
-    stored = json.loads(stored_json)
+    try:
+        stored = json.loads(stored_json)
+    except json.JSONDecodeError:
+        return None
     if not isinstance(stored, dict):
         return None
     record = stored.get("record")
     tag = stored.get("tag")
     if not isinstance(record, dict) or not isinstance(tag, str):
         return None
-    if not hmac.compare_digest(_auth_code_tag(code, record), tag):
+    # Compare bytes: compare_digest rejects non-ASCII str arguments.
+    if not hmac.compare_digest(_auth_code_tag(code, record).encode(), tag.encode()):
         return None
     return record
 
