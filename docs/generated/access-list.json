@@ -672,7 +672,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/agent-runs/backfill-jobs/{job_id}/cancel",
-    "permission": "agentruns.readwrite",
+    "permission": "agentruns.readwrite.all",
     "reason": "Summarizer backfill/regeneration on agent-run history; platform admins only. The check is the module-local `_is_platform_admin` helper in agent_runs.py, which the one-hop token scan cannot see."
   },
   {
@@ -686,7 +686,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/agent-runs/backfill-summaries",
-    "permission": "agentruns.readwrite",
+    "permission": "agentruns.readwrite.all",
     "reason": "Summarizer backfill/regeneration on agent-run history; platform admins only. The check is the module-local `_is_platform_admin` helper in agent_runs.py, which the one-hop token scan cannot see."
   },
   {
@@ -853,7 +853,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/agent-runs/{run_id}/regenerate-summary",
-    "permission": "agentruns.readwrite",
+    "permission": "agentruns.readwrite.all",
     "reason": "Summarizer backfill/regeneration on agent-run history; platform admins only. The check is the module-local `_is_platform_admin` helper in agent_runs.py, which the one-hop token scan cannot see."
   },
   {
