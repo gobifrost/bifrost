@@ -1973,10 +1973,10 @@
       "entry_ids": [],
       "reason": "Local test-harness fix only; no product change.",
       "review": {
-        "status": "draft",
+        "status": "approved",
         "evidence": [
           "https://github.com/gobifrost/bifrost/pull/961",
-          "Product review: awaiting Jack's approval (no release note)."
+          "Product review: Jack approved on 2026-10-09 with no release note (test harness only)."
         ]
       }
     }
