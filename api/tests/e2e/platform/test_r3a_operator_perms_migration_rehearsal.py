@@ -73,6 +73,36 @@ USER_PERMISSIONS = {
     "settings.read",
 }
 CUSTOM_PERMISSIONS = {"forms.readwrite", "users.read"}
+# Left by the later 20261009_graph_permission_names revision, which renames
+# the basic resources' everyday read to readbasic.
+USER_PERMISSIONS_AT_HEAD = {
+    "agentruns.read",
+    "agents.readbasic",
+    "apps.readbasic",
+    "executions.readbasic",
+    "forms.readbasic",
+    "knowledge.read",
+    "mcp.readbasic",
+    "metrics.read",
+    "settings.readbasic",
+}
+OPERATOR_PERMISSIONS_AT_HEAD = {
+    "agentruns.read",
+    "agents.readbasic",
+    "apps.readbasic",
+    "configs.read",
+    "executions.readbasic",
+    "forms.readbasic",
+    "integrations.read",
+    "metrics.read",
+    "organizations.read",
+    "roleassignments.read",
+    "roleassignments.readwrite",
+    "users.read",
+    "users.readwrite",
+    "workflows.execute",
+    "workflows.read",
+}
 # Set by the later 20261003_r3_operator_secrets revision.
 DECRYPTION_DESCRIPTION_AT_HEAD = (
     "Decrypts secret values through the SDK secret paths, for local "
@@ -202,17 +232,19 @@ def test_operator_gains_user_support_and_secrets_reader_is_seeded() -> None:
         assert after["reader_assignments"] == 0
 
         # At head 20261002_r3a_admin_additional has stored Platform Admin's
-        # wildcard and 20261003_r3_operator_secrets has given Platform
-        # Operator workflows.execute, rewritten its description and dropped
-        # "Not yet assignable" from Secrets Reader's description; everything
-        # else this revision wrote holds.
+        # wildcard, 20261003_r3_operator_secrets has given Platform Operator
+        # workflows.execute, rewritten its description and dropped "Not yet
+        # assignable" from Secrets Reader's description, and
+        # 20261009_graph_permission_names has renamed the basic reads;
+        # everything else this revision wrote holds.
         _upgrade(database_url, "head")
         assert asyncio.run(_snapshot(database_url, custom_role_id)) == {
             **after,
             "permissions": {
                 **after["permissions"],
                 "admin": {"*"},
-                "operator": after["permissions"]["operator"] | {"workflows.execute"},
+                "user": USER_PERMISSIONS_AT_HEAD,
+                "operator": OPERATOR_PERMISSIONS_AT_HEAD,
             },
             "operator_description": OPERATOR_DESCRIPTION_AT_HEAD,
             "reader": {**after["reader"], "description": DECRYPTION_DESCRIPTION_AT_HEAD},

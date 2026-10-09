@@ -348,7 +348,7 @@ def _assignable_roles(
         return []
     current_base = roles[target.user.base_role_id]
     may_change_base = allows_operation(
-        caller, PUT_OPERATION, org, permission="users.lifecycle.readwrite"
+        caller, PUT_OPERATION, org, permission="userlifecycle.readwrite"
     ) and _may_change(caller, current_base, target.held)
     out: list[AssignableRole] = []
     for role in sorted(roles.values(), key=lambda r: (not r.is_builtin, r.name.lower())):
@@ -643,7 +643,7 @@ async def replace_role_assignments(
 
 def _check_base_change(caller: Caller, target: AssignmentTarget, old: RoleInfo, new: RoleInfo) -> None:
     org = org_target(target.user.organization_id)
-    require_operation(caller, PUT_OPERATION, org, permission="users.lifecycle.readwrite")
+    require_operation(caller, PUT_OPERATION, org, permission="userlifecycle.readwrite")
     if new.is_builtin and new.id not in BASE_ROLE_IDS:
         raise RoleAssignmentError(422, f"'{new.name}' can't be a base role")
     check_role_change(caller, old, target.held)

@@ -951,7 +951,7 @@ async def get_role_permissions(
     response_model=RolePermissionsResponse,
     summary="Set a role's identity permissions",
     description=(
-        "Replace the role's identity permissions (users, users.lifecycle, organizations, "
+        "Replace the role's identity permissions (users, userlifecycle, organizations, "
         "roleassignments, roles); its other permissions are kept. Builtin roles can't be changed."
     ),
 )

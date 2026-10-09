@@ -13,12 +13,12 @@ def test_platform_admin_reads_every_domain(e2e_client, platform_admin):
     assert response.status_code == 200, response.text
     entries = response.json()
     assert {entry["domain"] for entry in entries} == set(PERMISSION_DOMAINS)
-    lifecycle = next(entry for entry in entries if entry["domain"] == "users.lifecycle")
+    lifecycle = next(entry for entry in entries if entry["domain"] == "userlifecycle")
     assert lifecycle["title"] == "User Lifecycle"
-    assert lifecycle["privileged"] == ["users.lifecycle.readwrite"]
+    assert lifecycle["privileged"] == ["userlifecycle.readwrite"]
     assert (
-        lifecycle["names"]["users.lifecycle.readwrite"]
-        == "Manage User Lifecycle (move, delete, change base role)"
+        lifecycle["names"]["userlifecycle.readwrite"]
+        == "Read and Write User Lifecycle"
     )
 
 

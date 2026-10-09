@@ -38,7 +38,7 @@ export function profileAbilities(
 		!blockedByProtection && authorization.canAt("users.readwrite", target);
 	const canLifecycle =
 		!blockedByProtection &&
-		authorization.canAt("users.lifecycle.readwrite", target);
+		authorization.canAt("userlifecycle.readwrite", target);
 	const canEditName = isEditingSelf || canSupport;
 	const canEditStatus = !isEditingSelf && canSupport;
 	const canEditLifecycle = !isEditingSelf && canLifecycle;
@@ -127,7 +127,7 @@ export function UserProfileForm({
 	const destinationOrganizations = (organizations ?? []).filter(
 		(org: Organization) =>
 			org.id === user.organization_id ||
-			authorization.canAt("users.lifecycle.readwrite", {
+			authorization.canAt("userlifecycle.readwrite", {
 				kind: "org",
 				id: org.id,
 			}),

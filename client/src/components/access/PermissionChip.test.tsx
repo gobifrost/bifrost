@@ -27,10 +27,9 @@ const entry: PermissionCatalogEntry = {
 	area: "Data & Content",
 	description: "Structured data.",
 	who_should_hold: "Anyone who works with data.",
-	actions: ["read", "read.all", "readwrite"],
+	actions: ["read", "readwrite"],
 	names: {
 		"tables.read": "Read Tables",
-		"tables.read.all": "Read All Tables",
 		"tables.readwrite": "Read and Write Tables",
 	},
 	privileged: [],
@@ -148,15 +147,15 @@ describe("PermissionChip", () => {
 			<PermissionChip
 				grant={{
 					...grant,
-					permission: "tables.read.all",
-					action: "read.all",
+					permission: "tables.readwrite",
+					action: "readwrite",
 				}}
 				catalogEntry={entry}
 			/>,
 		);
 
-		expect(screen.getByText("Read All Tables")).toBeInTheDocument();
-		expect(screen.queryByText("tables.read.all")).not.toBeInTheDocument();
+		expect(screen.getByText("Read and Write Tables")).toBeInTheDocument();
+		expect(screen.queryByText("tables.readwrite")).not.toBeInTheDocument();
 	});
 
 	it("uses the warning tone for a privileged permission", () => {

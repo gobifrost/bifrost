@@ -556,7 +556,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/admin/required-instructions/organizations/{organization_id}",
-    "permission": "settings.read.all",
+    "permission": "settings.read",
     "reason": "Platform-admin-only operation. (Per-org variant: this route takes an explicit organization_id path param, unlike the platform-wide GET above.)"
   },
   {
@@ -584,7 +584,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/admin/roi/settings",
-    "permission": "reports.read.all",
+    "permission": "reports.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -925,7 +925,7 @@
     "method": "GET",
     "operation_id": "agents.list",
     "path": "/api/agents",
-    "permission": "agents.read",
+    "permission": "agents.readbasic",
     "reason": "Reads shared/role-filtered agent catalog at org scope."
   },
   {
@@ -960,7 +960,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/agents/accessible-tools",
-    "permission": "agents.read",
+    "permission": "agents.readbasic",
     "reason": "Reads shared/role-filtered agent catalog at org scope."
   },
   {
@@ -979,7 +979,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/agents/stats/fleet",
-    "permission": "agents.read",
+    "permission": "agents.readbasic",
     "reason": "Reads shared/role-filtered agent catalog at org scope."
   },
   {
@@ -1014,7 +1014,7 @@
     "method": "GET",
     "operation_id": "agents.get",
     "path": "/api/agents/{agent_id}",
-    "permission": "agents.read",
+    "permission": "agents.readbasic",
     "reason": "Reads shared/role-filtered agent catalog at org scope."
   },
   {
@@ -1048,7 +1048,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/agents/{agent_id}/delegations",
-    "permission": "agents.read",
+    "permission": "agents.readbasic",
     "reason": "Reads shared/role-filtered agent catalog at org scope."
   },
   {
@@ -1082,7 +1082,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/agents/{agent_id}/logo",
-    "permission": "agents.read",
+    "permission": "agents.readbasic",
     "reason": "Reads shared/role-filtered agent catalog at org scope."
   },
   {
@@ -1131,7 +1131,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/agents/{agent_id}/stats",
-    "permission": "agents.read",
+    "permission": "agents.readbasic",
     "reason": "Reads shared/role-filtered agent catalog at org scope."
   },
   {
@@ -1148,7 +1148,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/agents/{agent_id}/tools",
-    "permission": "agents.read",
+    "permission": "agents.readbasic",
     "reason": "Reads shared/role-filtered agent catalog at org scope."
   },
   {
@@ -1219,7 +1219,7 @@
     "method": "GET",
     "operation_id": "apps.list",
     "path": "/api/applications",
-    "permission": "apps.read",
+    "permission": "apps.readbasic",
     "reason": "Reads shared app source/build state."
   },
   {
@@ -1338,7 +1338,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/applications/{app_id}/bundle-manifest",
-    "permission": "apps.read",
+    "permission": "apps.readbasic",
     "reason": "Reads shared app source/build state."
   },
   {
@@ -1355,7 +1355,7 @@
     "method": "GET",
     "operation_id": "apps.dependencies.get",
     "path": "/api/applications/{app_id}/dependencies",
-    "permission": "apps.read",
+    "permission": "apps.readbasic",
     "reason": "Reads shared app source/build state."
   },
   {
@@ -1422,7 +1422,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/applications/{app_id}/draft",
-    "permission": "apps.read",
+    "permission": "apps.readbasic",
     "reason": "Reads shared app source/build state."
   },
   {
@@ -1453,7 +1453,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/applications/{app_id}/embed-secrets",
-    "permission": "apps.read.all",
+    "permission": "secrets.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -1512,7 +1512,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/applications/{app_id}/export",
-    "permission": "apps.read",
+    "permission": "apps.readbasic",
     "reason": "Reads shared app source/build state."
   },
   {
@@ -1529,7 +1529,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/applications/{app_id}/files",
-    "permission": "apps.read",
+    "permission": "apps.readbasic",
     "reason": "Reads shared app source/build state."
   },
   {
@@ -1562,7 +1562,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/applications/{app_id}/files/{file_path}",
-    "permission": "apps.read",
+    "permission": "apps.readbasic",
     "reason": "Reads shared app source/build state."
   },
   {
@@ -1608,7 +1608,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/applications/{app_id}/logo",
-    "permission": "apps.read",
+    "permission": "apps.readbasic",
     "reason": "Reads shared app source/build state."
   },
   {
@@ -1640,7 +1640,7 @@
     "method": "POST",
     "operation_id": "apps.publish",
     "path": "/api/applications/{app_id}/publish",
-    "permission": "apps.deploy.execute",
+    "permission": "apps.publish",
     "reason": "Mutates shared app source/build state."
   },
   {
@@ -1725,7 +1725,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/applications/{app_id}/source",
-    "permission": "apps.read.all",
+    "permission": "apps.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -1742,7 +1742,7 @@
     "method": "POST",
     "operation_id": "apps.validate",
     "path": "/api/applications/{app_id}/validate",
-    "permission": "apps.read",
+    "permission": "apps.readbasic",
     "reason": "Mutates shared app source/build state."
   },
   {
@@ -1759,7 +1759,7 @@
     "method": "GET",
     "operation_id": "apps.get",
     "path": "/api/applications/{slug}",
-    "permission": "apps.read",
+    "permission": "apps.readbasic",
     "reason": "Reads shared app source/build state."
   },
   {
@@ -2133,7 +2133,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/chat/model-profiles",
-    "permission": "settings.read",
+    "permission": "settings.readbasic",
     "reason": "Reads the org's shared AI model-profile catalog."
   },
   {
@@ -2372,7 +2372,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/decorator-properties",
-    "permission": "settings.read.all",
+    "permission": "settings.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -2811,7 +2811,7 @@
     "method": "GET",
     "operation_id": "executions.list",
     "path": "/api/executions",
-    "permission": "executions.read",
+    "permission": "executions.readbasic",
     "reason": "Reads own-org execution history."
   },
   {
@@ -2839,7 +2839,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/executions/cleanup/stuck",
-    "permission": "executions.read",
+    "permission": "executions.read.all",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -2867,7 +2867,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/executions/logs",
-    "permission": "executions.read",
+    "permission": "executions.read.all",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -2883,7 +2883,7 @@
     "method": "GET",
     "operation_id": "executions.get",
     "path": "/api/executions/{execution_id}",
-    "permission": "executions.read",
+    "permission": "executions.readbasic",
     "reason": "Reads own-org execution history."
   },
   {
@@ -2911,7 +2911,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/executions/{execution_id}/logs",
-    "permission": "executions.read",
+    "permission": "executions.readbasic",
     "reason": "Reads own-org execution history."
   },
   {
@@ -2925,7 +2925,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/executions/{execution_id}/result",
-    "permission": "executions.read",
+    "permission": "executions.readbasic",
     "reason": "Reads own-org execution history."
   },
   {
@@ -2939,7 +2939,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/executions/{execution_id}/variables",
-    "permission": "executions.read",
+    "permission": "executions.readbasic",
     "reason": "Reads own-org execution history."
   },
   {
@@ -3466,7 +3466,7 @@
     "method": "GET",
     "operation_id": "forms.list",
     "path": "/api/forms",
-    "permission": "forms.read",
+    "permission": "forms.readbasic",
     "reason": "Reads shared form catalog."
   },
   {
@@ -3510,7 +3510,7 @@
     "method": "GET",
     "operation_id": "forms.get",
     "path": "/api/forms/{form_id}",
-    "permission": "forms.read",
+    "permission": "forms.readbasic",
     "reason": "Reads shared form catalog."
   },
   {
@@ -3568,7 +3568,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/forms/{form_id}/embed-secrets",
-    "permission": "forms.read.all",
+    "permission": "secrets.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3699,7 +3699,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/forms/{form_id}/publication",
-    "permission": "forms.read.all",
+    "permission": "forms.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3727,7 +3727,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/forms/{form_id}/publication-review",
-    "permission": "forms.read.all",
+    "permission": "forms.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -4255,7 +4255,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/identities",
-    "permission": "users.lifecycle.readwrite",
+    "permission": "userlifecycle.readwrite",
     "reason": "Creates a custom identity (User base role, no other roles) in an organization, or Global. Decided by the evaluator (src.services.authorization.enforce) at that organization (Global for a Global identity)."
   },
   {
@@ -4269,7 +4269,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/identities/{identity_id}",
-    "permission": "users.lifecycle.readwrite",
+    "permission": "userlifecycle.readwrite",
     "reason": "Deletes a custom identity no workflow runs as; default identities are never deleted. Decided by the evaluator (src.services.authorization.enforce) at the identity's organization; privileged identities only for a Platform Admin."
   },
   {
@@ -4283,7 +4283,7 @@
     "method": "PATCH",
     "operation_id": null,
     "path": "/api/identities/{identity_id}",
-    "permission": "users.lifecycle.readwrite",
+    "permission": "userlifecycle.readwrite",
     "reason": "Renames a custom identity; default identities are never renamed. Decided by the evaluator (src.services.authorization.enforce) at the identity's organization; privileged identities only for a Platform Admin."
   },
   {
@@ -5102,7 +5102,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/mcp-connections",
-    "permission": "mcp.read",
+    "permission": "mcp.readbasic",
     "reason": "Org-scoped shared MCP connection (not the caller's own credential)."
   },
   {
@@ -5157,7 +5157,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/mcp-connections/{connection_id}",
-    "permission": "mcp.read",
+    "permission": "mcp.readbasic",
     "reason": "Org-scoped shared MCP connection (not the caller's own credential)."
   },
   {
@@ -5250,7 +5250,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/mcp-servers",
-    "permission": "mcp.read",
+    "permission": "mcp.readbasic",
     "reason": "Reads the org's registered MCP server catalog."
   },
   {
@@ -5313,7 +5313,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/mcp-servers/{server_id}",
-    "permission": "mcp.read",
+    "permission": "mcp.readbasic",
     "reason": "Reads the org's registered MCP server catalog."
   },
   {
@@ -5361,7 +5361,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/mcp/config",
-    "permission": "mcp.read.all",
+    "permission": "mcp.read",
     "reason": "Reads the org's MCP client config."
   },
   {
@@ -5431,7 +5431,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/mcp/gateway/executions/{execution_id}",
-    "permission": "mcp.read",
+    "permission": "mcp.readbasic",
     "reason": "Reads MCP gateway state/capabilities."
   },
   {
@@ -5491,7 +5491,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/mcp/status",
-    "permission": "mcp.read",
+    "permission": "mcp.readbasic",
     "reason": "Reads MCP gateway state/capabilities."
   },
   {
@@ -5507,7 +5507,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/mcp/tools",
-    "permission": "mcp.read",
+    "permission": "mcp.readbasic",
     "reason": "Reads MCP gateway state/capabilities."
   },
   {
@@ -5755,7 +5755,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/model-catalog/names",
-    "permission": "settings.read",
+    "permission": "settings.readbasic",
     "reason": "Reads public catalog display names for model ids already visible to the caller."
   },
   {
@@ -6545,7 +6545,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/reports/roi/by-organization",
-    "permission": "reports.read.all",
+    "permission": "reports.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -6559,7 +6559,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/reports/roi/by-workflow",
-    "permission": "reports.read.all",
+    "permission": "reports.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -6573,7 +6573,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/reports/roi/summary",
-    "permission": "reports.read.all",
+    "permission": "reports.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -6587,7 +6587,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/reports/roi/trends",
-    "permission": "reports.read.all",
+    "permission": "reports.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -6629,7 +6629,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/required-instructions",
-    "permission": "settings.read",
+    "permission": "settings.readbasic",
     "reason": "Reads the caller's applicable required-instructions content."
   },
   {
@@ -6732,7 +6732,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "organization",
+    "boundary": "platform",
     "current_gate": "superuser",
     "inline_checks": [],
     "inline_effect": null,
@@ -6741,8 +6741,8 @@
     "method": "GET",
     "operation_id": "roles.agents.list",
     "path": "/api/roles/{role_id}/agents",
-    "permission": "agents.read.all",
-    "reason": "Reads which agents a role shares: management detail on agents the caller can already reach (`.all`), so the User base role's plain read does not reach it."
+    "permission": "roles.read",
+    "reason": "Reads which agents a role shares: role sharing, read through the role (`roles.read`)."
   },
   {
     "access_class": "permission",
@@ -6788,7 +6788,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "organization",
+    "boundary": "platform",
     "current_gate": "superuser",
     "inline_checks": [],
     "inline_effect": null,
@@ -6797,8 +6797,8 @@
     "method": "GET",
     "operation_id": "roles.apps.list",
     "path": "/api/roles/{role_id}/apps",
-    "permission": "apps.read.all",
-    "reason": "Reads which apps a role shares: management detail on apps the caller can already reach (`.all`), so the User base role's plain read does not reach it."
+    "permission": "roles.read",
+    "reason": "Reads which apps a role shares: role sharing, read through the role (`roles.read`)."
   },
   {
     "access_class": "permission",
@@ -6830,7 +6830,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "organization",
+    "boundary": "platform",
     "current_gate": "superuser",
     "inline_checks": [],
     "inline_effect": null,
@@ -6839,8 +6839,8 @@
     "method": "GET",
     "operation_id": "roles.forms.list",
     "path": "/api/roles/{role_id}/forms",
-    "permission": "forms.read.all",
-    "reason": "Reads which forms a role shares: management detail on forms the caller can already reach (`.all`), so the User base role's plain read does not reach it."
+    "permission": "roles.read",
+    "reason": "Reads which forms a role shares: role sharing, read through the role (`roles.read`)."
   },
   {
     "access_class": "permission",
@@ -6970,7 +6970,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "organization",
+    "boundary": "platform",
     "current_gate": "superuser",
     "inline_checks": [],
     "inline_effect": null,
@@ -6979,8 +6979,8 @@
     "method": "GET",
     "operation_id": "roles.workflows.list",
     "path": "/api/roles/{role_id}/workflows",
-    "permission": "workflows.read.all",
-    "reason": "Reads which workflows a role shares: management detail on workflows the caller can already reach (`.all`), so the User base role's plain read does not reach it."
+    "permission": "roles.read",
+    "reason": "Reads which workflows a role shares: role sharing, read through the role (`roles.read`)."
   },
   {
     "access_class": "permission",
@@ -7857,7 +7857,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/settings/oauth",
-    "permission": "settings.read.all",
+    "permission": "settings.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -7941,7 +7941,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/settings/oauth/{provider}",
-    "permission": "settings.read.all",
+    "permission": "settings.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -8095,7 +8095,7 @@
     "method": "POST",
     "operation_id": "solutions.install",
     "path": "/api/solutions/install",
-    "permission": "solutions.deploy.execute",
+    "permission": "solutions.deploy",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -8699,7 +8699,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/tools",
-    "permission": "settings.read",
+    "permission": "settings.readbasic",
     "reason": "Reads the shared platform tool catalog."
   },
   {
@@ -8713,7 +8713,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/tools/system",
-    "permission": "settings.read",
+    "permission": "settings.readbasic",
     "reason": "Reads the shared platform tool catalog."
   },
   {
@@ -8742,7 +8742,7 @@
     "operation_id": "users.create",
     "path": "/api/users",
     "permission": "users.readwrite",
-    "reason": "Invites an ordinary user (User base role, no other roles) into an organization: user support at that organization. Creating a Global user or a Platform Admin needs users.lifecycle.readwrite at Global, and a Platform Admin for a Platform Admin. Decided by the evaluator (src.services.authorization.enforce)."
+    "reason": "Invites an ordinary user (User base role, no other roles) into an organization: user support at that organization. Creating a Global user or a Platform Admin needs userlifecycle.readwrite at Global, and a Platform Admin for a Platform Admin. Decided by the evaluator (src.services.authorization.enforce)."
   },
   {
     "access_class": "permission",
@@ -8755,7 +8755,7 @@
     "method": "PATCH",
     "operation_id": "users.bulk_update",
     "path": "/api/users/bulk",
-    "permission": "users.lifecycle.readwrite",
+    "permission": "userlifecycle.readwrite",
     "reason": "Bulk user operation, classified by its most privileged operation (move_org, at the source and destination; Global for a move into Global). Decided per user: set_active is users.readwrite and replace_roles is roleassignments.readwrite with the grant ceiling; protected users only for a Platform Admin. Decided by the evaluator (src.services.authorization.enforce)."
   },
   {
@@ -8769,7 +8769,7 @@
     "method": "DELETE",
     "operation_id": "users.delete",
     "path": "/api/users/{user_id}",
-    "permission": "users.lifecycle.readwrite",
+    "permission": "userlifecycle.readwrite",
     "reason": "Permanently deletes a user. Decided by the evaluator (src.services.authorization.enforce) at the user's organization; protected users only for a Platform Admin."
   },
   {
@@ -8797,7 +8797,7 @@
     "method": "PATCH",
     "operation_id": "users.update",
     "path": "/api/users/{user_id}",
-    "permission": "users.lifecycle.readwrite",
+    "permission": "userlifecycle.readwrite",
     "reason": "Updates a user. Classified by its most privileged fields (organization_id moves the user, at the source and destination; email/is_verified/is_external change identity); name, password, mfa_enabled and is_active are users.readwrite support changes, and is_superuser takes a Platform Admin. Every supplied field is decided. Decided by the evaluator (src.services.authorization.enforce) at the user's organization; protected users only for a Platform Admin."
   },
   {
@@ -8938,7 +8938,7 @@
     "operation_id": null,
     "path": "/api/users/{user_id}/role-assignments",
     "permission": "roleassignments.readwrite",
-    "reason": "Replaces a user's role assignments; a base-role change is users.lifecycle.readwrite (to or from Platform Admin takes a Platform Admin), and every changed role is held to the grant ceiling. Decided by the evaluator (src.services.authorization.enforce) at the user's organization; protected users only for a Platform Admin."
+    "reason": "Replaces a user's role assignments; a base-role change is userlifecycle.readwrite (to or from Platform Admin takes a Platform Admin), and every changed role is held to the grant ceiling. Decided by the evaluator (src.services.authorization.enforce) at the user's organization; protected users only for a Platform Admin."
   },
   {
     "access_class": "permission",
@@ -8979,7 +8979,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/workflow-keys",
-    "permission": "workflows.read.all",
+    "permission": "settings.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -10118,7 +10118,7 @@
     "method": "WS",
     "operation_id": null,
     "path": "/ws/execution/{execution_id}",
-    "permission": "executions.read",
+    "permission": "executions.readbasic",
     "reason": "Streams status for one execution the caller can access."
   },
   {
@@ -10169,7 +10169,7 @@
     "method": null,
     "operation_id": "agents.get",
     "path": null,
-    "permission": "agents.read",
+    "permission": "agents.readbasic",
     "reason": "Thin MCP wrapper over GET /api/agents/{agent_id}; inherits that route's entry."
   },
   {
@@ -10186,7 +10186,7 @@
     "method": null,
     "operation_id": "agents.list",
     "path": null,
-    "permission": "agents.read",
+    "permission": "agents.readbasic",
     "reason": "Thin MCP wrapper over GET /api/agents; inherits that route's entry."
   },
   {
@@ -10254,7 +10254,7 @@
     "method": null,
     "operation_id": "apps.dependencies.get",
     "path": null,
-    "permission": "apps.read",
+    "permission": "apps.readbasic",
     "reason": "Thin MCP wrapper over GET /api/applications/{app_id}/dependencies; inherits that route's entry."
   },
   {
@@ -10287,7 +10287,7 @@
     "method": null,
     "operation_id": "apps.get",
     "path": null,
-    "permission": "apps.read",
+    "permission": "apps.readbasic",
     "reason": "Thin MCP wrapper over GET /api/applications/{slug}; inherits that route's entry."
   },
   {
@@ -10304,7 +10304,7 @@
     "method": null,
     "operation_id": "apps.list",
     "path": null,
-    "permission": "apps.read",
+    "permission": "apps.readbasic",
     "reason": "Thin MCP wrapper over GET /api/applications; inherits that route's entry."
   },
   {
@@ -10320,7 +10320,7 @@
     "method": null,
     "operation_id": "apps.publish",
     "path": null,
-    "permission": "apps.deploy.execute",
+    "permission": "apps.publish",
     "reason": "Thin MCP wrapper over POST /api/applications/{app_id}/publish; inherits that route's entry."
   },
   {
@@ -10371,7 +10371,7 @@
     "method": null,
     "operation_id": "apps.validate",
     "path": null,
-    "permission": "apps.read",
+    "permission": "apps.readbasic",
     "reason": "Thin MCP wrapper over POST /api/applications/{app_id}/validate; inherits that route's entry."
   },
   {
@@ -10693,7 +10693,7 @@
     "method": null,
     "operation_id": "executions.get",
     "path": null,
-    "permission": "executions.read",
+    "permission": "executions.readbasic",
     "reason": "Thin MCP wrapper over GET /api/executions/{execution_id}; inherits that route's entry."
   },
   {
@@ -10709,7 +10709,7 @@
     "method": null,
     "operation_id": "executions.list",
     "path": null,
-    "permission": "executions.read",
+    "permission": "executions.readbasic",
     "reason": "Thin MCP wrapper over GET /api/executions; inherits that route's entry."
   },
   {
@@ -10825,7 +10825,7 @@
     "method": null,
     "operation_id": "forms.get",
     "path": null,
-    "permission": "forms.read",
+    "permission": "forms.readbasic",
     "reason": "Thin MCP wrapper over GET /api/forms/{form_id}; inherits that route's entry."
   },
   {
@@ -10841,7 +10841,7 @@
     "method": null,
     "operation_id": "forms.list",
     "path": null,
-    "permission": "forms.read",
+    "permission": "forms.readbasic",
     "reason": "Thin MCP wrapper over GET /api/forms; inherits that route's entry."
   },
   {

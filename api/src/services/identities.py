@@ -3,7 +3,7 @@
 Every organization has a default identity, there is one global default, and
 admins add custom ones (see ``shared.identities``); only custom ones are
 renamed or deleted. Reading is ``users.read`` at the identity's organization;
-creating, renaming and deleting are ``users.lifecycle.readwrite`` there
+creating, renaming and deleting are ``userlifecycle.readwrite`` there
 (Global for a Global identity), decided by the evaluator. Roles are assigned
 through the user role-assignment routes.
 """

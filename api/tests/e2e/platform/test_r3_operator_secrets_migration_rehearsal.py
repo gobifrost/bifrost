@@ -220,6 +220,15 @@ async def _assign_secrets_reader_later(database_url: str, user_id: str) -> None:
     await _run_in_database(database_url, assign)
 
 
+# The later 20261009_graph_permission_names revision renames the basic
+# resources' everyday read to readbasic.
+_READBASIC = {f"{resource}.read": f"{resource}.readbasic" for resource in ("agents", "apps", "executions", "forms")}
+
+
+def _readbasic(permissions: set[str]) -> set[str]:
+    return {_READBASIC.get(permission, permission) for permission in permissions}
+
+
 def test_operator_and_secrets_reader_go_to_exactly_the_right_people() -> None:
     database_name = f"bifrost_r2b_rehearsal_{uuid4().hex[:12]}"
     _assert_safe_database_name(database_name)
@@ -276,7 +285,10 @@ def test_operator_and_secrets_reader_go_to_exactly_the_right_people() -> None:
         }
 
         _upgrade(database_url, "head")
-        assert asyncio.run(_state(database_url, OPERATOR_ROLE_ID)) == operator
+        assert asyncio.run(_state(database_url, OPERATOR_ROLE_ID)) == {
+            **operator,
+            "permissions": _readbasic(operator["permissions"]),
+        }
         assert asyncio.run(_state(database_url, DECRYPTION_ROLE_ID)) == decryption
 
         asyncio.run(_assign_secrets_reader_later(database_url, ids["staff"]))

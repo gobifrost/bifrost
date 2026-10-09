@@ -12,13 +12,13 @@ const IDENTITY = [
 	"roleassignments.readwrite",
 	"roles.read",
 	"roles.readwrite",
-	"users.lifecycle.readwrite",
+	"userlifecycle.readwrite",
 	"users.read",
 	"users.readwrite",
 ];
 const PRIVILEGED = new Set([
 	"users.readwrite",
-	"users.lifecycle.readwrite",
+	"userlifecycle.readwrite",
 	"roles.readwrite",
 	"roleassignments.readwrite",
 	"organizations.readwrite",
@@ -60,10 +60,10 @@ function entry(
 const CATALOG: PermissionCatalogEntry[] = [
 	entry("agents", "Agents", "Automation"),
 	entry("tables", "Tables", "Data & Content"),
-	entry("users.lifecycle", "User Lifecycle", "Identity & Access", {
+	entry("userlifecycle", "User Lifecycle", "Identity & Access", {
 		names: {
-			"users.lifecycle.readwrite":
-				"Manage User Lifecycle (move, delete, change base role)",
+			"userlifecycle.readwrite":
+				"Read and Write User Lifecycle",
 		},
 	}),
 	entry("organizations", "Organizations", "Identity & Access", {

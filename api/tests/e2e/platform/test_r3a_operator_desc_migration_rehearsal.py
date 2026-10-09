@@ -73,6 +73,15 @@ async def _operator(database_url: str) -> tuple[str, set[str]]:
     return await _run_in_database(database_url, read)
 
 
+# The later 20261009_graph_permission_names revision renames the basic
+# resources' everyday read to readbasic.
+_READBASIC = {f"{resource}.read": f"{resource}.readbasic" for resource in ("agents", "apps", "executions", "forms")}
+
+
+def _readbasic(permissions: set[str]) -> set[str]:
+    return {_READBASIC.get(permission, permission) for permission in permissions}
+
+
 def test_operator_description_says_what_the_role_does() -> None:
     database_name = f"bifrost_r2b_rehearsal_{uuid4().hex[:12]}"
     _assert_safe_database_name(database_name)
@@ -88,7 +97,7 @@ def test_operator_description_says_what_the_role_does() -> None:
         assert asyncio.run(_operator(database_url)) == (AFTER, permissions)
 
         _upgrade(database_url, "head")
-        assert asyncio.run(_operator(database_url)) == (AT_HEAD, permissions | {"workflows.execute"})
+        assert asyncio.run(_operator(database_url)) == (AT_HEAD, _readbasic(permissions | {"workflows.execute"}))
 
         _downgrade(database_url, PREVIOUS_REVISION)
         assert asyncio.run(_operator(database_url)) == (BEFORE, permissions)

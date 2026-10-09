@@ -79,6 +79,11 @@ def is_builtin_role_id(role_id: UUID) -> bool:
     return role_id in BUILTIN_ROLE_IDS
 
 
+# The actions the User base role may hold: reading and launching, never
+# writing.
+_USER_BASE_ACTIONS = frozenset({"read", "readbasic", "execute"})
+
+
 def derive_user_base_permissions(access_list: "list[AccessEntry]") -> frozenset[str]:
     """The User base role's permission set, derived from the access list.
 
@@ -91,14 +96,16 @@ def derive_user_base_permissions(access_list: "list[AccessEntry]") -> frozenset[
       (``inline_effect`` is not ``deny_unless_superuser``/``deny_unless_bypass``)
     - ``intended_change is None`` (a permanent, not a transitional, grant)
     - ``boundary == "organization"``
-    - action ``read`` (permission string ends in ``.read``; an extended
-      ``.read.all`` management read is never derived)
+    - action ``read``, ``readbasic`` or ``execute`` (never a write, and
+      never ``.all``: other people's private items)
 
-    These are exactly the reads any authenticated user can already make
-    today with no admin/provider-org bypass involved, so granting them via
-    the User base role changes nothing about who can do what.
+    These are exactly the reads and launches any authenticated user can
+    already make today with no admin/provider-org bypass involved, so
+    granting them via the User base role changes nothing about who can do
+    what.
     """
     from src.models.contracts.access_list import AccessClass, CurrentGate, InlineEffect
+    from src.models.contracts.permissions import parse_permission
     from src.services.access_list import effective_entries
 
     narrowed = {InlineEffect.DENY_UNLESS_SUPERUSER, InlineEffect.DENY_UNLESS_BYPASS}
@@ -115,33 +122,34 @@ def derive_user_base_permissions(access_list: "list[AccessEntry]") -> frozenset[
         if entry.boundary != "organization":
             continue
         assert entry.permission is not None
-        if not entry.permission.endswith(".read"):
+        parsed = parse_permission(entry.permission)
+        if parsed.extended or parsed.action not in _USER_BASE_ACTIONS:
             continue
         permissions.add(entry.permission)
     return frozenset(permissions)
 
 
 # Frozen literal copy of what `derive_user_base_permissions(ACCESS_LIST)`
-# produces as of the latest migration that seeds it
-# (20260929_user_base_perm_fix). See the module docstring for why this is
-# not computed live. `tests/unit/test_builtin_roles.py` asserts the two
+# produces as of the latest migration that changes it
+# (20261009_graph_permission_names). See the module docstring for why this
+# is not computed live. `tests/unit/test_builtin_roles.py` asserts the two
 # stay identical.
 USER_BASE_PERMISSIONS: frozenset[str] = frozenset(
     {
         "agentruns.read",
-        "agents.read",
-        "apps.read",
-        "executions.read",
-        "forms.read",
+        "agents.readbasic",
+        "apps.readbasic",
+        "executions.readbasic",
+        "forms.readbasic",
         "knowledge.read",
-        "mcp.read",
+        "mcp.readbasic",
         "metrics.read",
-        "settings.read",
+        "settings.readbasic",
     }
 )
 
-# Frozen copy of what the latest migration that seeds it
-# (20261003_r3_operator_secrets) writes; see
+# Frozen copy of what the latest migration that changes it
+# (20261009_graph_permission_names) leaves; see
 # `tests/unit/test_builtin_roles.py`. `configs.read` and `integrations.read`
 # are metadata only: decrypting a secret is `secrets.read`, which this role
 # never holds. `roleassignments.readwrite` is limited at the cutover to roles
@@ -149,12 +157,12 @@ USER_BASE_PERMISSIONS: frozenset[str] = frozenset(
 # (`src.services.authorization.privilege.operator_assignable_role`).
 PLATFORM_OPERATOR_PERMISSIONS: frozenset[str] = frozenset(
     {
-        "agents.read",
-        "forms.read",
-        "apps.read",
+        "agents.readbasic",
+        "forms.readbasic",
+        "apps.readbasic",
         "workflows.read",
         "workflows.execute",
-        "executions.read",
+        "executions.readbasic",
         "agentruns.read",
         "configs.read",
         "integrations.read",

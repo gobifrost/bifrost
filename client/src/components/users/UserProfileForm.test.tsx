@@ -279,7 +279,7 @@ describe("UserProfileForm", () => {
 		authz.summary = summary(false, [
 			...managed("users.read", "organizations.read"),
 			{
-				permission: "users.lifecycle.readwrite",
+				permission: "userlifecycle.readwrite",
 				boundary: { kind: "organization", organization_id: "org-1" },
 			},
 		]);

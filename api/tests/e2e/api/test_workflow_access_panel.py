@@ -124,7 +124,7 @@ def world(e2e_client, platform_admin, async_session_factory):
     writer_role = _ok(e2e_client.post("/api/roles", headers=admin, json={"name": f"Writer {tag}"}), 201)
     _ok(
         e2e_client.put(
-            f"/api/roles/{writer_role['id']}/permissions", headers=admin, json={"permissions": ["users.lifecycle.readwrite"]}
+            f"/api/roles/{writer_role['id']}/permissions", headers=admin, json={"permissions": ["userlifecycle.readwrite"]}
         )
     )
     custom = _create_identity(e2e_client, admin, f"Nightly {tag}", contoso["id"])

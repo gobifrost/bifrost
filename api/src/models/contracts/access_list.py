@@ -136,7 +136,7 @@ class AccessEntry(BaseModel):
     inline_effect: InlineEffect | None = None
 
     # Required iff access_class is PERMISSION. Format:
-    # "<domain>.<read|readwrite|execute>[.all]" (see parse_permission).
+    # "<resource>.<action>[.all]" (see parse_permission).
     permission: str | None = None
     # Required iff access_class is PERMISSION.
     boundary: str | None = None

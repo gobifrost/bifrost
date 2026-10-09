@@ -58,20 +58,20 @@ logger = logging.getLogger(__name__)
 # request needs). ``require_operation(..., permission=...)`` accepts only
 # these, so a handler cannot decide an operation by an arbitrary permission.
 NARROWER_PERMISSIONS: dict[str, frozenset[str]] = {
-    # Global or Platform Admin users (users.lifecycle.readwrite at Global).
-    "users.create": frozenset({"users.lifecycle.readwrite"}),
+    # Global or Platform Admin users (userlifecycle.readwrite at Global).
+    "users.create": frozenset({"userlifecycle.readwrite"}),
     # Per supplied field: support fields are users.readwrite.
     "users.update": frozenset({"users.readwrite"}),
     # Per operation: set_active and replace_roles.
     "users.bulk_update": frozenset({"users.readwrite", "roleassignments.readwrite"}),
     # A base-role change.
-    "PUT /api/users/{user_id}/role-assignments": frozenset({"users.lifecycle.readwrite"}),
+    "PUT /api/users/{user_id}/role-assignments": frozenset({"userlifecycle.readwrite"}),
 }
 
 _ACTION_PHRASES: dict[str, str] = {
     "users.read": "view users",
     "users.readwrite": "manage users",
-    "users.lifecycle.readwrite": "create, move, or delete users or change their base role",
+    "userlifecycle.readwrite": "create, move, or delete users or change their base role",
     "roleassignments.read": "view role assignments",
     "roleassignments.readwrite": "assign roles",
     "roles.read": "view roles",

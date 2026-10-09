@@ -10,19 +10,14 @@ from __future__ import annotations
 
 from src.models.contracts.access_list import AccessClass, AccessEntry, CurrentGate
 from src.models.contracts.permissions import (
-    PERMISSION_ACTIONS,
     PERMISSION_DOMAINS,
     PRIVILEGED_PERMISSIONS,
     PermissionCatalogEntry,
+    domain_actions,
     domain_display_names,
     parse_permission,
 )
 from src.services.access_list import ACCESS_LIST
-
-
-def _action_sort_key(action: str) -> tuple[int, bool]:
-    base, _, suffix = action.partition(".")
-    return PERMISSION_ACTIONS.index(base), bool(suffix)
 
 
 def _action_of(permission: str) -> str:
@@ -61,7 +56,7 @@ def build_catalog(access_list: list[AccessEntry] = ACCESS_LIST) -> list[Permissi
                 area=info.area,
                 description=info.description,
                 who_should_hold=info.who_should_hold,
-                actions=sorted(actions, key=_action_sort_key),
+                actions=sorted(actions, key=domain_actions(domain).index),
                 names=domain_display_names(domain),
                 privileged=privileged,
                 scope=scope,

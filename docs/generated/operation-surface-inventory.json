@@ -136,7 +136,7 @@
       },
       "operation": {
         "action_scopes": [
-          "agents.read"
+          "agents.readbasic"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
@@ -196,7 +196,7 @@
       },
       "operation": {
         "action_scopes": [
-          "agents.read"
+          "agents.readbasic"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
@@ -453,7 +453,7 @@
       },
       "operation": {
         "action_scopes": [
-          "forms.read"
+          "forms.readbasic"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
@@ -513,7 +513,7 @@
       },
       "operation": {
         "action_scopes": [
-          "forms.read"
+          "forms.readbasic"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
@@ -1089,7 +1089,7 @@
       },
       "operation": {
         "action_scopes": [
-          "apps.read"
+          "apps.readbasic"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
@@ -1149,7 +1149,7 @@
       },
       "operation": {
         "action_scopes": [
-          "apps.read"
+          "apps.readbasic"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
@@ -1406,7 +1406,7 @@
       },
       "operation": {
         "action_scopes": [
-          "apps.read"
+          "apps.readbasic"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
@@ -1532,7 +1532,7 @@
       },
       "operation": {
         "action_scopes": [
-          "apps.read"
+          "apps.readbasic"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
@@ -1592,7 +1592,7 @@
       },
       "operation": {
         "action_scopes": [
-          "apps.deploy.execute"
+          "apps.publish"
         ],
         "async_policy": "platform_job",
         "audit_event": "app.publish",
@@ -1997,7 +1997,7 @@
       "operation": {
         "action_scopes": [
           "solutions.readwrite",
-          "solutions.deploy.execute"
+          "solutions.deploy"
         ],
         "async_policy": "synchronous",
         "audit_event": "solution.delete",
@@ -2053,7 +2053,7 @@
       "operation": {
         "action_scopes": [
           "solutions.readwrite",
-          "solutions.deploy.execute"
+          "solutions.deploy"
         ],
         "async_policy": "synchronous",
         "audit_event": "solution.sync",
@@ -2112,7 +2112,7 @@
       "operation": {
         "action_scopes": [
           "solutions.read",
-          "solutions.build.execute"
+          "solutions.build"
         ],
         "async_policy": "synchronous",
         "audit_event": "solution.export",
@@ -2175,7 +2175,7 @@
       "operation": {
         "action_scopes": [
           "solutions.readwrite",
-          "solutions.deploy.execute"
+          "solutions.deploy"
         ],
         "async_policy": "platform_job",
         "audit_event": "solution.deploy",
@@ -2237,7 +2237,7 @@
       },
       "operation": {
         "action_scopes": [
-          "solutions.deploy.execute"
+          "solutions.deploy"
         ],
         "async_policy": "platform_job",
         "audit_event": "solution.install",
@@ -2300,7 +2300,7 @@
       "operation": {
         "action_scopes": [
           "solutions.readwrite",
-          "solutions.build.execute"
+          "solutions.build"
         ],
         "async_policy": "synchronous",
         "audit_event": "solution.capture",
@@ -4225,7 +4225,7 @@
       },
       "operation": {
         "action_scopes": [
-          "executions.read"
+          "executions.readbasic"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
@@ -4285,7 +4285,7 @@
       },
       "operation": {
         "action_scopes": [
-          "executions.read"
+          "executions.readbasic"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
@@ -5252,11 +5252,11 @@
       },
       "operation": {
         "action_scopes": [
-          "forms.read.all"
+          "roles.read"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "forms.read.all in the selected boundary and form organization filtering",
+        "authorization_resolver": "roles.read in the selected boundary and form organization filtering",
         "cli": null,
         "exclusions": {
           "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
@@ -5474,11 +5474,11 @@
       },
       "operation": {
         "action_scopes": [
-          "agents.read.all"
+          "roles.read"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "agents.read.all in the selected boundary and Agent organization filtering",
+        "authorization_resolver": "roles.read in the selected boundary and Agent organization filtering",
         "cli": null,
         "exclusions": {
           "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
@@ -5696,11 +5696,11 @@
       },
       "operation": {
         "action_scopes": [
-          "apps.read.all"
+          "roles.read"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "apps.read.all in the selected boundary and Application organization filtering",
+        "authorization_resolver": "roles.read in the selected boundary and Application organization filtering",
         "cli": null,
         "exclusions": {
           "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
@@ -5862,11 +5862,11 @@
       },
       "operation": {
         "action_scopes": [
-          "workflows.read.all"
+          "roles.read"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "workflows.read.all in the selected boundary and Workflow organization filtering",
+        "authorization_resolver": "roles.read in the selected boundary and Workflow organization filtering",
         "cli": null,
         "exclusions": {
           "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
@@ -6135,11 +6135,11 @@
       "operation": {
         "action_scopes": [
           "users.readwrite",
-          "users.lifecycle.readwrite"
+          "userlifecycle.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": "user.create",
-        "authorization_resolver": "users.readwrite at the target organization for an ordinary invite; users.lifecycle.readwrite at Global for a Global or Platform Admin user",
+        "authorization_resolver": "users.readwrite at the target organization for an ordinary invite; userlifecycle.readwrite at Global for a Global or Platform Admin user",
         "cli": null,
         "exclusions": {
           "cli": "User lifecycle administration is available through the administrative UI and REST API, not the coding CLI.",
@@ -6192,7 +6192,7 @@
       },
       "operation": {
         "action_scopes": [
-          "users.lifecycle.readwrite"
+          "userlifecycle.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": "user.update",
@@ -6248,7 +6248,7 @@
       },
       "operation": {
         "action_scopes": [
-          "users.lifecycle.readwrite"
+          "userlifecycle.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": "user.delete",
@@ -6304,7 +6304,7 @@
       },
       "operation": {
         "action_scopes": [
-          "users.lifecycle.readwrite"
+          "userlifecycle.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": "user.bulk_update",
