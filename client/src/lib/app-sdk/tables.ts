@@ -124,6 +124,12 @@ async function http<T>(
       },
     });
   };
+  // Capture the v1 bridge token before the request. A delayed 401 can arrive
+  // after another request already renewed the cookie session; in that case the
+  // changed token proves this request should retry once without renewing again.
+  const attemptedToken = usingProvider
+    ? null
+    : (getPlatformAuth()?.getAccessToken() ?? null);
   let r = await send();
   // v1 apps run on the host's 30-minute session cookie, and nothing else in
   // the app renews it. Renew through the host's single-flight refresh and
@@ -131,7 +137,12 @@ async function http<T>(
   if (r.status === 401 && !usingProvider) {
     const auth = getPlatformAuth();
     if (auth?.canRefreshAccessToken()) {
-      if (await auth.refreshAccessToken()) r = await send();
+      const freshToken = auth.getAccessToken();
+      if (freshToken && freshToken !== attemptedToken) {
+        r = await send();
+      } else if (await auth.refreshAccessToken()) {
+        r = await send();
+      }
       if (r.status === 401) auth.handleAuthenticationFailure();
     }
   }

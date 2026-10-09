@@ -680,11 +680,19 @@ describe("session renewal on 401 (same-origin v1 transport)", () => {
 		// Mirror the host's single-flight lock.
 		let inflight: Promise<boolean> | null = null;
 		let renewed = false;
+		let actualRenewals = 0;
 		const refresh = vi.fn(() => {
-			inflight ??= Promise.resolve().then(() => {
-				renewed = true;
-				return true;
-			});
+			if (!inflight) {
+				inflight = Promise.resolve()
+					.then(() => {
+						actualRenewals += 1;
+						renewed = true;
+						return true;
+					})
+					.finally(() => {
+						inflight = null;
+					});
+			}
 			return inflight;
 		});
 		installBridge({ refreshAccessToken: refresh });
@@ -696,7 +704,55 @@ describe("session renewal on 401 (same-origin v1 transport)", () => {
 		const results = await Promise.all(Array.from({ length: 8 }, (_, i) => tables.query(`t${i}`)));
 		expect(results).toHaveLength(8);
 		expect(results.every((r) => r.table_id === "tbl")).toBe(true);
-		// Every caller asks; the host lock collapses them into one renewal.
-		expect(await inflight).toBe(true);
+		expect(actualRenewals).toBe(1);
+	});
+
+	it("retries staggered stale 401s after a completed renewal without renewing again", async () => {
+		let token = "expired";
+		let inflight: Promise<boolean> | null = null;
+		let actualRenewals = 0;
+		const refresh = vi.fn(() => {
+			if (!inflight) {
+				inflight = Promise.resolve()
+					.then(() => {
+						actualRenewals += 1;
+						token = "fresh";
+						return true;
+					})
+					.finally(() => {
+						inflight = null;
+					});
+			}
+			return inflight;
+		});
+		const bridge = installBridge({
+			getAccessToken: () => token,
+			refreshAccessToken: refresh,
+		});
+		const pendingInitialResponses: Array<(response: Response) => void> = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockImplementation(
+				() =>
+					new Promise<Response>((resolve) => {
+						if (token === "expired") pendingInitialResponses.push(resolve);
+						else resolve(page());
+					}),
+			),
+		);
+
+		const requests = Array.from({ length: 11 }, (_, i) => tables.query(`t${i}`));
+		expect(pendingInitialResponses).toHaveLength(11);
+
+		pendingInitialResponses.shift()!(unauth());
+		await expect(requests[0]).resolves.toMatchObject({ table_id: "tbl" });
+
+		for (let i = 1; i < requests.length; i += 1) {
+			pendingInitialResponses.shift()!(unauth());
+			await expect(requests[i]).resolves.toMatchObject({ table_id: "tbl" });
+		}
+
+		expect(actualRenewals).toBe(1);
+		expect(bridge.handleAuthenticationFailure).not.toHaveBeenCalled();
 	});
 });
