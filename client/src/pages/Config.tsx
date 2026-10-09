@@ -400,17 +400,6 @@ export function Config() {
 												{getTypeBadge(config.type)}
 											</div>
 											<dl className="grid gap-3 text-sm sm:grid-cols-2">
-												<div>
-													<dt className="text-xs text-muted-foreground">
-														Value
-													</dt>
-													<dd className="mt-1 line-clamp-2 font-mono text-xs leading-5 [overflow-wrap:anywhere]">
-														{maskValue(
-															config.value,
-															config.type,
-														)}
-													</dd>
-												</div>
 												{isPlatformAdmin && (
 													<div>
 														<dt className="text-xs text-muted-foreground">
@@ -423,6 +412,17 @@ export function Config() {
 														</dd>
 													</div>
 												)}
+												<div>
+													<dt className="text-xs text-muted-foreground">
+														Value
+													</dt>
+													<dd className="mt-1 line-clamp-2 font-mono text-xs leading-5 [overflow-wrap:anywhere]">
+														{maskValue(
+															config.value,
+															config.type,
+														)}
+													</dd>
+												</div>
 												{config.integration_name && (
 													<div>
 														<dt className="text-xs text-muted-foreground">

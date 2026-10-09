@@ -1890,6 +1890,18 @@
           "Routes existing durable Solution compilation through the configured Kubernetes build executor."
         ]
       }
+    },
+    "pr:941": {
+      "classification": "omit",
+      "entry_ids": [],
+      "reason": "Table column order follows the design rule (Organization first); no new functionality or customer action.",
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/941",
+          "Product review: Jack approved on 2026-10-09 with no release note (not a feature)."
+        ]
+      }
     }
   }
 }

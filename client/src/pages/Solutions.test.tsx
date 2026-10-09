@@ -357,6 +357,31 @@ describe("Solutions — list", () => {
 		expect(within(rows[0]).getByText("Alpha")).toBeInTheDocument();
 	});
 
+	it("shows Organization as the first table column", async () => {
+		mockListSolutions.mockResolvedValue({
+			solutions: [
+				makeSolution({
+					id: "a",
+					name: "Alpha",
+					slug: "alpha",
+					organization_id: "org-1",
+				}),
+			],
+		});
+		const { user } = await renderPage();
+		await screen.findAllByTestId("install-card");
+
+		await user.click(screen.getByRole("radio", { name: /table view/i }));
+
+		const [row] = await screen.findAllByTestId("install-row");
+		expect(screen.getAllByRole("columnheader")[0]).toHaveTextContent(
+			"Organization",
+		);
+		expect(within(row).getAllByRole("cell")[0]).toHaveTextContent(
+			"Acme Corp",
+		);
+	});
+
 	it("filters by search term", async () => {
 		mockListSolutions.mockResolvedValue({
 			solutions: [
