@@ -21,6 +21,7 @@ from __future__ import annotations
 import ast
 import functools
 import importlib
+import importlib.util
 import inspect
 import pkgutil
 import re
@@ -281,11 +282,18 @@ def _returned_class(func: object) -> type | None:
 
 
 def _called_class(call: ast.expr, resolve) -> type | None:
-    """The class of the object a call expression produces: ``Cls(...)``, or
-    ``f(...)`` for a function ``f`` that returns an in-scope class (B5)."""
-    if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)):
+    """The class of the object a call expression produces: ``Cls(...)`` or
+    ``mod.Cls(...)``, or ``f(...)``/``mod.f(...)`` for a function ``f`` that
+    returns an in-scope class (B5)."""
+    if not isinstance(call, ast.Call):
         return None
-    target = resolve(call.func.id)
+    if isinstance(call.func, ast.Name):
+        target = resolve(call.func.id)
+    elif isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Name):
+        module = resolve(call.func.value.id)
+        target = getattr(module, call.func.attr, None) if inspect.ismodule(module) else None
+    else:
+        return None
     if inspect.isclass(target):
         return target
     return _returned_class(target) if inspect.isfunction(target) else None
@@ -756,26 +764,57 @@ _REDIS_ONLY_READS = {"hget", "hgetall", "hmget", "xrange", "xrevrange", "xread",
 _REDIS_GENERIC_READS = {"get", "getdel", "mget", "exists", "lrange"}
 
 
-def _redis_reads(nodes: list[ast.AST]) -> list[str]:
+def _is_redis_type(annotation: ast.AST | None) -> bool:
+    """An annotation naming a Redis client (``Redis``, ``redis.Redis``, ``Redis | None``, ...)."""
+    if annotation is None:
+        return False
+    text = annotation.value if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str) else ""
+    return bool(re.search(r"\bRedis\b", text or ast.unparse(annotation)))
+
+
+@functools.cache
+def _redis_factories() -> frozenset[str]:
+    """Names of the functions whose return annotation is a Redis client."""
+    return frozenset(
+        node.name
+        for _module, tree in _source_modules()
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _is_redis_type(node.returns)
+    )
+
+
+def _redis_reads(nodes: list[ast.AST], factories: frozenset[str] | None = None) -> list[str]:
     """Blind spot B10: Redis reads in one owner's nodes. A receiver is a
     Redis client when its expression names redis (``self._redis``,
-    ``redis_client``) or it is a local bound from a function named for
-    redis or the redis module (``r = await get_shared_redis()``,
-    ``async with get_redis() as r``, ``client = redis.from_url(...)``)."""
+    ``redis_client``), or it is a local or parameter annotated as one
+    (``client: Redis``), or a local bound from a function named for redis,
+    the redis module or a function returning one (``r = await
+    get_shared_redis()``, ``async with get_redis() as r``, ``client =
+    redis.from_url(...)``, ``c = make_cache_client()`` when that returns
+    ``Redis``)."""
+    factories = _redis_factories() if factories is None else factories
 
-    def opens_redis(expr: ast.expr) -> bool:
+    def opens_redis(expr: ast.AST | None) -> bool:
+        expr = expr.value if isinstance(expr, ast.Await) else expr
         if not isinstance(expr, ast.Call):
             return False
+        name = _terminal_name(expr.func) or ""
         module = expr.func.value if isinstance(expr.func, ast.Attribute) else None
-        return "redis" in (_terminal_name(expr.func) or "").lower() or (
-            isinstance(module, ast.Name) and module.id in ("redis", "aioredis")
+        return (
+            "redis" in name.lower()
+            or name in factories
+            or (isinstance(module, ast.Name) and module.id in ("redis", "aioredis"))
         )
 
     bound: set[str] = set()
     for node in nodes:
-        if isinstance(node, ast.Assign):
-            if opens_redis(node.value.value if isinstance(node.value, ast.Await) else node.value):
-                bound |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+        if isinstance(node, ast.Assign) and opens_redis(node.value):
+            bound |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if _is_redis_type(node.annotation) or opens_redis(node.value):
+                bound.add(node.target.id)
+        elif isinstance(node, ast.arg) and _is_redis_type(node.annotation):
+            bound.add(node.arg)
         elif isinstance(node, ast.withitem) and isinstance(node.optional_vars, ast.Name):
             if opens_redis(node.context_expr):
                 bound.add(node.optional_vars.id)
@@ -792,36 +831,100 @@ def _redis_reads(nodes: list[ast.AST]) -> list[str]:
     return reads
 
 
+_SUBPROCESS_MODULES = {"subprocess", "asyncio"}
 _SUBPROCESS_CALLS = {"run", "Popen", "check_call", "check_output", "call", "create_subprocess_exec"}
 # Package tools run code the package author wrote (setup.py, npm scripts).
 _PACKAGE_TOOL = re.compile(r"pip|pip3|npm|npx|yarn|pnpm|uv")
 
 
-def _unscrubbed_package_subprocess(node: ast.AST) -> str | None:
-    """Blind spot B12: a subprocess that runs a package tool (its argv names
-    ``pip``, ``npm``, ``npx``, ``yarn``, ``pnpm`` or ``uv``) and passes no
-    ``env=``, so the tool's install and build scripts inherit every
-    credential in the platform's environment."""
-    if not (isinstance(node, ast.Call) and _terminal_name(node.func) in _SUBPROCESS_CALLS):
-        return None
-    receiver = node.func.value if isinstance(node.func, ast.Attribute) else None
-    if not (isinstance(receiver, ast.Name) and receiver.id in ("subprocess", "asyncio")):
-        return None
-    if any(kw.arg == "env" for kw in node.keywords):
-        return None
-    tools = [
-        const.value
-        for arg in node.args
-        for const in ast.walk(arg)
-        if isinstance(const, ast.Constant) and isinstance(const.value, str) and _PACKAGE_TOOL.fullmatch(const.value)
-    ]
-    return f"{_terminal_name(node.func)}({tools[0]})" if tools else None
+def _subprocess_names(tree: ast.Module) -> tuple[set[str], set[str]]:
+    """How a module refers to subprocess spawning: the names it binds to
+    ``subprocess``/``asyncio`` (``import subprocess as sp``), and the names
+    it binds to their spawning functions (``from subprocess import run as go``)."""
+    modules: set[str] = set()
+    functions: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules |= {a.asname or a.name for a in node.names if a.name in _SUBPROCESS_MODULES}
+        elif isinstance(node, ast.ImportFrom) and node.module in _SUBPROCESS_MODULES:
+            functions |= {a.asname or a.name for a in node.names if a.name in _SUBPROCESS_CALLS}
+    return modules, functions
 
 
-def _redis_inventory() -> dict[str, set[str]]:
+def _unscrubbed_package_subprocesses(nodes: list[ast.AST], tree: ast.Module) -> list[str]:
+    """Blind spot B12: subprocesses in one owner that run a package tool
+    (its argv names ``pip``, ``npm``, ``npx``, ``yarn``, ``pnpm`` or ``uv``)
+    and pass no ``env=``, so the tool's install and build scripts inherit
+    every credential in the platform's environment. The argv is read
+    through local variables built up before the call (``cmd = [...]``,
+    ``cmd.append(...)``, ``cmd += [...]``), and the spawning function
+    through the module's import aliases."""
+    modules, functions = _subprocess_names(tree)
+    strings: dict[str, set[str]] = {}
+
+    def add(name: str, value: ast.AST) -> None:
+        strings.setdefault(name, set()).update(
+            c.value for c in ast.walk(value) if isinstance(c, ast.Constant) and isinstance(c.value, str)
+        )
+
+    for node in nodes:
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)) and node.value is not None:
+            for target in node.targets if isinstance(node, ast.Assign) else [node.target]:
+                if isinstance(target, ast.Name):
+                    add(target.id, node.value)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in ("append", "extend", "insert")
+            and isinstance(node.func.value, ast.Name)
+        ):
+            for arg in node.args:
+                add(node.func.value.id, arg)
+    found: list[str] = []
+    for node in nodes:
+        if not isinstance(node, ast.Call) or any(kw.arg == "env" for kw in node.keywords):
+            continue
+        func = node.func
+        spawns = (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id in modules
+            and func.attr in _SUBPROCESS_CALLS
+        ) or (isinstance(func, ast.Name) and func.id in functions)
+        if not spawns:
+            continue
+        argv: set[str] = set()
+        for arg in node.args:
+            for part in ast.walk(arg):
+                if isinstance(part, ast.Constant) and isinstance(part.value, str):
+                    argv.add(part.value)
+                elif isinstance(part, ast.Name):
+                    argv |= strings.get(part.id, set())
+        tools = sorted(t for t in argv if _PACKAGE_TOOL.fullmatch(t))
+        if tools:
+            found.append(f"{_terminal_name(func)}({tools[0]})")
+    return found
+
+
+def _subprocess_inventory(
+    modules: tuple[tuple[str, ast.Module], ...] | None = None, roots: tuple[str, ...] = ("src", "shared")
+) -> dict[str, list[str]]:
+    """Owner → unscrubbed package-tool subprocesses (B12) in the server
+    packages (the ``bifrost`` CLI runs on the developer's own machine)."""
+    found: dict[str, list[str]] = {}
+    for module, tree in _source_modules() if modules is None else modules:
+        if not module.startswith(tuple(f"{root}." for root in roots)):
+            continue
+        for owner, nodes in _owned_nodes(module, tree).items():
+            if spawned := _unscrubbed_package_subprocesses(nodes, tree):
+                found[owner] = spawned
+    return found
+
+
+def _redis_inventory() -> dict[str, list[str]]:
     """Owner → Redis reads (B10) across ``src`` and ``shared`` (the server)
     and ``bifrost`` (the workflow runtime and the write-buffer flush)."""
-    return {owner: set(reads) for owner, nodes in _nodes_by_owner().items() if (reads := _redis_reads(nodes))}
+    return {owner: reads for owner, nodes in _nodes_by_owner().items() if (reads := _redis_reads(nodes))}
 
 
 def _own_flag_classes(classes: list[tuple[str, ast.ClassDef]]) -> set[str]:
@@ -850,14 +953,37 @@ def _own_flag_classes(classes: list[tuple[str, ast.ClassDef]]) -> set[str]:
         names |= grown
 
 
-def _constructor_sites(class_names: set[str]) -> dict[str, set[str]]:
-    """Class name → owners that construct it (``Cls(...)``/``mod.Cls(...)``)."""
+def _constructor_sites(
+    class_names: set[str], modules: tuple[tuple[str, ast.Module], ...] | None = None
+) -> dict[str, set[str]]:
+    """Class name → owners that construct it: ``Cls(...)``, ``mod.Cls(...)``
+    and ``Alias(...)`` after ``from x import Cls as Alias``."""
     sites: dict[str, set[str]] = {}
-    for owner, nodes in _nodes_by_owner().items():
-        for node in nodes:
-            if isinstance(node, ast.Call) and _terminal_name(node.func) in class_names:
-                sites.setdefault(_terminal_name(node.func), set()).add(owner)
+    for module, tree in _source_modules() if modules is None else modules:
+        aliases = {name: name for name in class_names}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                aliases |= {a.asname: a.name for a in node.names if a.asname and a.name in class_names}
+        for owner, nodes in _owned_nodes(module, tree).items():
+            for node in nodes:
+                if isinstance(node, ast.Call) and _terminal_name(node.func) in aliases:
+                    sites.setdefault(aliases[_terminal_name(node.func)], set()).add(owner)
     return sites
+
+
+def _unscanned_constructor_sites(
+    scanned: set[str], modules: tuple[tuple[str, ast.Module], ...] | None = None
+) -> list[str]:
+    """Blind spot B11: ``class: owner`` for every construction of a class
+    whose own flag copy the scan trusts, by an owner no entry reaches."""
+    modules = _source_modules() if modules is None else modules
+    classes = [c for module, tree in modules for c in _class_defs(module, tree.body)]
+    return sorted(
+        f"{cls}: {owner}"
+        for cls, owners in _constructor_sites(_own_flag_classes(classes), modules).items()
+        for owner in owners
+        if owner not in scanned
+    )
 
 
 def _inventory(rule, roots: tuple[str, ...] = _SOURCE_ROOTS) -> dict[str, set[str]]:
@@ -875,22 +1001,26 @@ def _inventory(rule, roots: tuple[str, ...] = _SOURCE_ROOTS) -> dict[str, set[st
 
 def _elevated_site_tokens(source: str) -> set[str]:
     """The tokens that make a function an elevated-check site: a read used
-    to decide, widen, or hand the decision to a callee. Not a site: a flag
-    copied into a dict literal or f-string (claims, responses, audit and
-    log details), or a use of an elevated dependency (the gate resolver is
-    that site)."""
+    to decide, widen, or hand the decision to a callee. Not a site: a pure
+    echo, where the token is itself a dict entry's value or an f-string
+    interpolation (claims, responses, audit and log details), or a use of
+    an elevated dependency (the gate resolver is that site). A token inside
+    a ternary, boolean, comparison or call within a dict or f-string still
+    decides something and counts."""
     tree = _parse_source(source)
     parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
-    tokens: set[str] = set()
-    for node, token in _elevated_token_nodes(tree):
-        if token in _ELEVATED_DEPENDENCY_NAMES:
-            continue
-        ancestor = parents.get(node)
-        while ancestor is not None and not isinstance(ancestor, (ast.stmt, ast.Dict, ast.JoinedStr)):
-            ancestor = parents.get(ancestor)
-        if not isinstance(ancestor, (ast.Dict, ast.JoinedStr)):
-            tokens.add(token)
-    return tokens
+    return {
+        token
+        for node, token in _elevated_token_nodes(tree)
+        if token not in _ELEVATED_DEPENDENCY_NAMES and not _is_pure_echo(node, parents.get(node))
+    }
+
+
+def _is_pure_echo(node: ast.AST, parent: ast.AST | None) -> bool:
+    """A token that is a dict entry's value or an f-string interpolation as is."""
+    if isinstance(parent, ast.Dict):
+        return any(value is node for value in parent.values)
+    return isinstance(parent, ast.FormattedValue) and parent.value is node
 
 
 def _route_functions(route: APIRoute | WebSocketRoute, visited: set[int]) -> list[tuple[object, str]]:
@@ -1033,23 +1163,35 @@ def _consumer_classes() -> list[type]:
 
 
 def _scheduler_job_functions() -> list[object]:
-    """The functions the scheduler hands to ``add_job`` (positionally or in
-    ``args=[...]``)."""
+    """The functions the scheduler hands to ``add_job``."""
     module = importlib.import_module("src.scheduler.main")
-    tree = ast.parse(Path(inspect.getfile(module)).read_text())
+    return _add_job_functions(ast.parse(Path(inspect.getfile(module)).read_text()), vars(module))
+
+
+def _add_job_functions(tree: ast.Module, module_globals: dict) -> list[object]:
+    """Every in-scope function an ``add_job`` call is given, however it is
+    passed: positionally, as ``func=``, inside ``args=[...]`` or any other
+    keyword, wrapped in ``partial(...)``, by name or as ``mod.func``."""
     local_imports = _local_imports(tree)
     found: dict[str, object] = {}
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and _terminal_name(node.func) == "add_job"):
             continue
-        candidates = list(node.args)
-        for kw in node.keywords:
-            if kw.arg == "args" and isinstance(kw.value, (ast.List, ast.Tuple)):
-                candidates.extend(kw.value.elts)
-        for candidate in candidates:
-            if isinstance(candidate, ast.Name):
-                func = _resolve_name(candidate.id, local_imports, vars(module))
+        pending = [*node.args, *(kw.value for kw in node.keywords)]
+        while pending:
+            candidate = pending.pop()
+            if isinstance(candidate, (ast.List, ast.Tuple)):
+                pending.extend(candidate.elts)
+            elif isinstance(candidate, ast.Call) and _terminal_name(candidate.func) == "partial":
+                pending.extend(candidate.args)
+            elif isinstance(candidate, ast.Name):
+                func = _resolve_name(candidate.id, local_imports, module_globals)
                 if inspect.isfunction(func):
+                    found[_qualname(func)] = func
+            elif isinstance(candidate, ast.Attribute) and isinstance(candidate.value, ast.Name):
+                module = _resolve_name(candidate.value.id, local_imports, module_globals)
+                func = getattr(module, candidate.attr, None) if inspect.ismodule(module) else None
+                if inspect.isfunction(func) and _in_scope(func):
                     found[_qualname(func)] = func
     return [found[key] for key in sorted(found)]
 
@@ -1118,12 +1260,7 @@ def _extra_entry_functions() -> dict[str, list[tuple[str, str]]]:
 # branches on the flag to allow or widen something (the plumbing test below
 # fails if a listed function uses a token in a condition, or computes an
 # elevation anywhere: see ``_plumbing_disqualifiers``).
-_ELEVATED_PLUMBING: dict[str, str] = {
-    "shared.sdk_users.list_users": "Filters the listed users by their own flag (?type=platform); not the caller's.",
-    "src.routers.files.test_file_policy_access": (
-        "Reports whether the tested principal passes workspace access; the caller is gated by the route."
-    ),
-}
+_ELEVATED_PLUMBING: dict[str, str] = {}
 
 
 def _resolve_qualname(qualname: str) -> object | None:
@@ -1148,13 +1285,52 @@ def _plumbing_disqualifiers(tree: ast.AST) -> set[str]:
     boolean expression/comprehension filter), or anywhere an elevating
     keyword (B4), a string-keyed flag read (B1) or a sentinel identity
     check (B7) — computed elevation decides as much as a branch does."""
+    token_nodes = _elevated_token_nodes(tree)
+    aliases = _flag_aliases(tree, {id(node) for node, _token in token_nodes})
     in_a_test = {id(node) for test in _condition_tests(tree) for node in ast.walk(test)}
-    found = {token for node, token in _elevated_token_nodes(tree) if id(node) in in_a_test}
+    found = {token for node, token in token_nodes if id(node) in in_a_test}
+    found |= {
+        f"alias {node.id}"
+        for test in _condition_tests(tree)
+        for node in ast.walk(test)
+        if isinstance(node, ast.Name) and node.id in aliases
+    }
     for node in ast.walk(tree):
         token = _elevating_keyword(node) or _string_keyed_flag_read(node) or _sentinel_identity_check(node)
         if token:
             found.add(token)
     return found
+
+
+def _flag_aliases(tree: ast.AST, token_ids: set[int]) -> set[str]:
+    """Local names that hold a flag: assigned (``=``, ``:=``, ``+=``, a
+    ``for`` target) from an expression holding a token or another such
+    name. Conservative: once a name holds a flag it keeps holding one."""
+    bindings: list[tuple[list[ast.AST], ast.AST]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            bindings.append((node.targets, node.value))
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)) and node.value is not None:
+            bindings.append(([node.target], node.value))
+        elif isinstance(node, ast.NamedExpr):
+            bindings.append(([node.target], node.value))
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            bindings.append(([node.target], node.iter))
+    aliases: set[str] = set()
+    while True:
+        grown = {
+            name.id
+            for targets, value in bindings
+            if any(
+                id(n) in token_ids or (isinstance(n, ast.Name) and n.id in aliases) for n in ast.walk(value)
+            )
+            for target in targets
+            for name in ast.walk(target)
+            if isinstance(name, ast.Name)
+        } - aliases
+        if not grown:
+            return aliases
+        aliases |= grown
 
 
 def _mcp_tool_ids() -> set[str]:
@@ -1695,6 +1871,7 @@ _ELEVATED_SITES: dict[str, str | tuple[str, ...]] = {
     "shared.sdk_users._authorize_update": "privilegedaccess.readwrite",
     "shared.sdk_users.bulk_update_users": ("privilegedaccess.readwrite", "userlifecycle.readwrite"),
     "shared.sdk_users.create_user": "privilegedaccess.readwrite",
+    "shared.sdk_users.list_users": "cutover",
     "shared.sdk_users.update_user": "privilegedaccess.readwrite",
     "shared.sdk_video.can_read_platform_job": ("platformjobs.read.all", "platformjobs.readwrite.all"),
     "shared.sdk_workflow_execution.cancel_scheduled_sdk_execution": "executions.readwrite.all",
@@ -1782,6 +1959,7 @@ _ELEVATED_SITES: dict[str, str | tuple[str, ...]] = {
     "src.routers.executions.ExecutionRepository.get_execution_variables": "executions.read",
     "src.routers.files._test_principal": "filepolicies.read",
     "src.routers.files.set_file_policy": "reach",
+    "src.routers.files.test_file_policy_access": "filepolicies.read",
     "src.routers.forms._authorize_form_runtime": ("reach", "forms.read"),
     "src.routers.forms.execute_startup_workflow": "reach",
     "src.routers.forms.get_form_field_options": "forms.read",
@@ -1981,107 +2159,125 @@ _FLAG_POLICY_SEEDS: dict[str, str] = {
     "src.services.policy_rule_service._BUILTINS": "delete",
 }
 
-# Every Redis read (blind spot B10, ``_redis_reads``) is classified. An
-# authority read feeds identity, authorization or code (who a run is for,
-# a role, a sign-in code, a module's source, an embed's grant, a result a
-# waiting caller trusts); workflow code can write Redis today, so each one
-# closes at the cutover.
-_REDIS_AUTHORITY_READS: dict[str, str] = {
-    "bifrost._logging.read_logs_from_stream": "cutover",
-    "bifrost._sync.flush_pending_changes": "cutover",
-    "shared.form_runtime.load_startup_result": "cutover",
-    "shared.form_runtime.validate_embed_upload_references": "cutover",
-    "shared.role_cache.get_user_roles": "cutover",
-    "shared.sdk_agent_runs.get_sdk_agent_run": "cutover",
-    "src.core.embed_middleware.EmbedScopeMiddleware.dispatch": "cutover",
-    "src.core.module_cache.get_module": "cutover",
-    "src.core.module_cache.get_module_resolution_cache": "cutover",
-    "src.core.module_cache_sync._get_cached_module_resolution": "cutover",
-    "src.core.module_cache_sync._get_exact_scoped_module": "cutover",
-    "src.core.module_cache_sync.get_module_sync": "cutover",
-    "src.core.redis_client.RedisClient.get_endpoint_workflow_cache": "cutover",
-    "src.core.redis_client.RedisClient.get_pending_execution": "cutover",
-    "src.core.redis_client.RedisClient.get_workflow_metadata_cache": "cutover",
-    "src.core.redis_client.RedisClient.wait_for_result": "cutover",
-    "src.core.requirements_cache.get_requirements": "cutover",
-    "src.core.requirements_cache.get_requirements_sync": "cutover",
-    "src.jobs.consumers.agent_run.AgentRunConsumer.process_message": "cutover",
-    "src.repositories.organizations.OrganizationRepository._get_from_cache": "cutover",
-    "src.routers.auth.authorize_device": "cutover",
-    "src.routers.auth.exchange_device_token": "cutover",
-    "src.routers.oauth_sso.oauth_callback": "cutover",
-    "src.routers.websocket.can_access_execution": "cutover",
-    "src.services.app_storage.AppStorageService.get_render_cache": "cutover",
-    "src.services.execution.agent_run_service.wait_for_agent_run_result": "cutover",
-    "src.services.execution.engine._service_supervisor": "cutover",
-    "src.services.github_sync.GitHubSyncService.load_connect_preview": "cutover",
-    "src.services.mcp_server.auth.BifrostAuthProvider._callback": "cutover",
-    "src.services.mcp_server.auth.BifrostAuthProvider._token": "cutover",
-    "src.services.notification_service.NotificationService._is_admin_notification": "cutover",
-    "src.services.notification_service.NotificationService.dismiss_notification": "cutover",
-    "src.services.notification_service.NotificationService.get_notification": "cutover",
-    "src.services.notification_service.NotificationService.get_user_notifications": "cutover",
-    "src.services.passkey_service.PasskeyService.verify_authentication": "cutover",
-    "src.services.passkey_service.PasskeyService.verify_registration": "cutover",
-    "src.services.passkey_service.PasskeyService.verify_setup_registration": "cutover",
+# Every Redis read (blind spot B10, ``_redis_reads``) is classified, with
+# the number of reads the function makes (a new read in a classified
+# function fails until it is counted). An authority read feeds identity,
+# authorization or code (who a run is for, a role, a sign-in code, a lock's
+# owner, a module's source, an embed's grant, a result a waiting caller
+# trusts); workflow code can write Redis today, so each one closes at the
+# cutover.
+_REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
+    "bifrost._logging.read_logs_from_stream": (1, "cutover"),
+    "bifrost._sync.flush_pending_changes": (1, "cutover"),
+    "shared.form_runtime.load_startup_result": (1, "cutover"),
+    "shared.form_runtime.validate_embed_upload_references": (1, "cutover"),
+    "shared.role_cache.get_user_roles": (1, "cutover"),
+    "shared.sdk_agent_runs.get_sdk_agent_run": (1, "cutover"),
+    "src.core.embed_middleware.EmbedScopeMiddleware.dispatch": (1, "cutover"),
+    "src.core.locks.DistributedLockService.extend_lock": (1, "cutover"),
+    "src.core.locks.DistributedLockService.release_lock": (1, "cutover"),
+    "src.core.module_cache.get_module": (1, "cutover"),
+    "src.core.module_cache.get_module_resolution_cache": (1, "cutover"),
+    "src.core.module_cache_sync._get_cached_module_resolution": (2, "cutover"),
+    "src.core.module_cache_sync._get_exact_scoped_module": (1, "cutover"),
+    "src.core.module_cache_sync.get_module_sync": (1, "cutover"),
+    "src.core.redis_client.RedisClient.get_endpoint_workflow_cache": (1, "cutover"),
+    "src.core.redis_client.RedisClient.get_pending_execution": (1, "cutover"),
+    "src.core.redis_client.RedisClient.get_workflow_metadata_cache": (1, "cutover"),
+    "src.core.redis_client.RedisClient.wait_for_result": (1, "cutover"),
+    "src.core.requirements_cache.get_requirements": (2, "cutover"),
+    "src.core.requirements_cache.get_requirements_sync": (1, "cutover"),
+    "src.jobs.consumers.agent_run.AgentRunConsumer.process_message": (1, "cutover"),
+    "src.repositories.organizations.OrganizationRepository._get_from_cache": (1, "cutover"),
+    "src.routers.auth.authorize_device": (2, "cutover"),
+    "src.routers.auth.exchange_device_token": (1, "cutover"),
+    "src.routers.oauth_sso.oauth_callback": (1, "cutover"),
+    "src.routers.websocket.can_access_execution": (1, "cutover"),
+    "src.services.app_storage.AppStorageService.get_render_cache": (1, "cutover"),
+    "src.services.execution.agent_run_service.wait_for_agent_run_result": (1, "cutover"),
+    "src.services.execution.engine._service_supervisor": (2, "cutover"),
+    "src.services.github_sync.GitHubSyncService.load_connect_preview": (1, "cutover"),
+    "src.services.mcp_server.auth.BifrostAuthProvider._callback": (1, "cutover"),
+    "src.services.mcp_server.auth.BifrostAuthProvider._token": (1, "cutover"),
+    "src.services.notification_service.NotificationService._is_admin_notification": (1, "cutover"),
+    "src.services.notification_service.NotificationService.dismiss_notification": (1, "cutover"),
+    "src.services.notification_service.NotificationService.get_notification": (1, "cutover"),
+    "src.services.notification_service.NotificationService.get_user_notifications": (3, "cutover"),
+    "src.services.passkey_service.PasskeyService.verify_authentication": (1, "cutover"),
+    "src.services.passkey_service.PasskeyService.verify_registration": (1, "cutover"),
+    "src.services.passkey_service.PasskeyService.verify_setup_registration": (1, "cutover"),
 }
 # Redis reads whose value never reaches a principal, a token, an
-# authorization decision or code loading.
-_REDIS_PLAIN_READS: dict[str, str] = {
-    "bifrost._logging.flush_logs_to_postgres": "Moves a finished run's log lines into the database.",
-    "shared.role_cache.invalidate_role": "Scans role-cache entries to delete them.",
-    "src.core.cache.data_provider_cache.get_cached_result": "Cached data-provider options for a form field.",
-    "src.core.cache.keys._current_global_version": "Cache version counter.",
-    "src.core.locks.DistributedLockService.extend_lock": "Lock owner token compared before extending.",
-    "src.core.locks.DistributedLockService.get_lock_info": "Lock diagnostics.",
-    "src.core.locks.DistributedLockService.release_lock": "Lock owner token compared before releasing.",
-    "src.core.module_cache.clear_module_cache": "Lists cached module keys to delete them.",
-    "src.core.pubsub.replay_chat_run_events": "Replays a chat run's events to a subscriber authorized for the run.",
-    "src.core.rate_limit.RateLimiter.get_remaining": "Rate-limit counter.",
-    "src.core.redis_client.RedisClient.check_agent_run_cancel_flag": "Cancel flag; only stops a run.",
-    "src.core.redis_client.RedisClient.get": "Generic accessor; each caller reads through a redis-named receiver and is classified itself.",
-    "src.core.redis_client.RedisClient.get_active_execution": "Which worker holds a running execution (timeouts, cancel).",
-    "src.core.redis_client.RedisClient.set_pending_cancelled": "Marks a queued run cancelled.",
+# authorization decision or code loading: (count, reason).
+_REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
+    "bifrost._logging.flush_logs_to_postgres": (1, "Moves a finished run's log lines into the database."),
+    "shared.role_cache.invalidate_role": (1, "Scans role-cache entries to delete them."),
+    "src.core.cache.data_provider_cache.get_cached_result": (1, "Cached data-provider options for a form field."),
+    "src.core.cache.keys._current_global_version": (1, "Cache version counter."),
+    "src.core.locks.DistributedLockService.get_lock_info": (1, "Lock diagnostics."),
+    "src.core.module_cache.clear_module_cache": (1, "Lists cached module keys to delete them."),
+    "src.core.pubsub.replay_chat_run_events": (
+        1,
+        "Replays a chat run's events to a subscriber authorized for the run.",
+    ),
+    "src.core.rate_limit.RateLimiter.get_remaining": (1, "Rate-limit counter."),
+    "src.core.redis_client.RedisClient.check_agent_run_cancel_flag": (1, "Cancel flag; only stops a run."),
+    "src.core.redis_client.RedisClient.get": (
+        1,
+        "Generic accessor; each caller reads through a redis-named receiver and is classified itself.",
+    ),
+    "src.core.redis_client.RedisClient.get_active_execution": (
+        1,
+        "Which worker holds a running execution (timeouts, cancel).",
+    ),
+    "src.core.redis_client.RedisClient.set_pending_cancelled": (1, "Marks a queued run cancelled."),
     "src.core.redis_client.RedisClient.update_pending_execution": (
-        "Read-modify-write of a queued run's record; its identity is trusted only where the run reads it."
+        1,
+        "Read-modify-write of a queued run's record; its identity is trusted only where the run reads it.",
     ),
-    "src.core.repo_dirty.get_repo_dirty_since": "Workspace dirty timestamp.",
-    "src.jobs.consumers.agent_run.AgentRunConsumer._cancel_watcher": "Cancel flag; only stops a run.",
-    "src.jobs.schedulers.worker_metrics_sampling.sample_worker_metrics": "Worker metrics.",
-    "src.jobs.schedulers.workflow_operation_usage_flush._drain_day_key": "Operation usage counters.",
-    "src.repositories.config.ConfigRepository.merged_for_sdk": "Cached org config values, written from the database.",
-    "src.routers.agent_runs.cancel_agent_run": "Marks a queued agent run cancelled.",
-    "src.routers.events._get_rate_limited_count": "Rate-limit counter.",
-    "src.routers.files.list_active_watchers": "Active file watchers (diagnostics).",
-    "src.routers.health.check_redis": "Health probe.",
-    "src.routers.jobs.get_job_status": "Status of a job the caller started.",
-    "src.routers.packages.get_packages_from_workers": "Installed packages reported by workers.",
-    "src.routers.platform.workers.get_pool": "Worker pool diagnostics.",
-    "src.routers.platform.workers.get_pool_stats": "Worker pool diagnostics.",
-    "src.routers.platform.workers.list_pools": "Worker pool diagnostics.",
-    "src.routers.platform.workers.recycle_all_processes": "Checks a pool exists before asking it to recycle.",
-    "src.routers.platform.workers.recycle_process": "Checks a pool exists before asking it to recycle.",
-    "src.services.ai_usage_service._notify_missing_pricing": "Notification de-duplication marker.",
-    "src.services.ai_usage_service.get_cached_pricing": "Model pricing cache.",
-    "src.services.ai_usage_service.get_usage_totals": "AI usage totals cache.",
-    "src.services.ai_usage_service.get_used_models": "Models seen in usage.",
-    "src.services.embeddings.reindex.is_cancelled": "Cancel flag; only stops a reindex.",
+    "src.core.repo_dirty.get_repo_dirty_since": (1, "Workspace dirty timestamp."),
+    "src.jobs.consumers.agent_run.AgentRunConsumer._cancel_watcher": (1, "Cancel flag; only stops a run."),
+    "src.jobs.schedulers.worker_metrics_sampling.sample_worker_metrics": (1, "Worker metrics."),
+    "src.jobs.schedulers.workflow_operation_usage_flush._drain_day_key": (1, "Operation usage counters."),
+    "src.repositories.config.ConfigRepository.merged_for_sdk": (
+        1,
+        "Cached org config values, written from the database.",
+    ),
+    "src.routers.agent_runs.cancel_agent_run": (1, "Marks a queued agent run cancelled."),
+    "src.routers.events._get_rate_limited_count": (1, "Rate-limit counter."),
+    "src.routers.files.list_active_watchers": (1, "Active file watchers (diagnostics)."),
+    "src.routers.health.check_redis": (1, "Health probe."),
+    "src.routers.jobs.get_job_status": (2, "Status of a job the caller started."),
+    "src.routers.packages.get_packages_from_workers": (1, "Installed packages reported by workers."),
+    "src.routers.platform.workers.get_pool": (3, "Worker pool diagnostics."),
+    "src.routers.platform.workers.get_pool_stats": (1, "Worker pool diagnostics."),
+    "src.routers.platform.workers.list_pools": (2, "Worker pool diagnostics."),
+    "src.routers.platform.workers.recycle_all_processes": (2, "Checks a pool exists before asking it to recycle."),
+    "src.routers.platform.workers.recycle_process": (1, "Checks a pool exists before asking it to recycle."),
+    "src.services.ai_usage_service._notify_missing_pricing": (1, "Notification de-duplication marker."),
+    "src.services.ai_usage_service.get_cached_pricing": (1, "Model pricing cache."),
+    "src.services.ai_usage_service.get_usage_totals": (1, "AI usage totals cache."),
+    "src.services.ai_usage_service.get_used_models": (1, "Models seen in usage."),
+    "src.services.embeddings.reindex.is_cancelled": (1, "Cancel flag; only stops a reindex."),
     "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor._check_cancelled": (
-        "Cancel flag; only stops a run."
+        1,
+        "Cancel flag; only stops a run.",
     ),
-    "src.services.execution.install_progress.report_phase": "Package install progress.",
-    "src.services.execution.queue_tracker.get_all_pending_executions": "Queue positions for display.",
+    "src.services.execution.install_progress.report_phase": (1, "Package install progress."),
+    "src.services.execution.queue_tracker.get_all_pending_executions": (1, "Queue positions for display."),
     "src.services.notification_service.NotificationService.find_admin_notification_by_title": (
-        "De-duplicates an admin notification before creating one."
+        2,
+        "De-duplicates an admin notification before creating one.",
     ),
     "src.services.notification_service.NotificationService.update_notification": (
-        "Rewrites a notification's status for its writer."
+        1,
+        "Rewrites a notification's status for its writer.",
     ),
-    "src.services.service_claim.ServiceClaimLoop._clear_reported_memory": "Service memory report.",
-    "src.services.service_claim.ServiceClaimLoop._drain_ready": "Service ready flag.",
-    "src.services.service_claim.ServiceClaimLoop._report_memory": "Service memory report.",
-    "src.services.service_log_flush.flush_attempt_logs": "Moves a service attempt's log lines into the database.",
-    "src.services.service_memory.read_service_memory": "Service memory report.",
+    "src.services.service_claim.ServiceClaimLoop._clear_reported_memory": (1, "Service memory report."),
+    "src.services.service_claim.ServiceClaimLoop._drain_ready": (1, "Service ready flag."),
+    "src.services.service_claim.ServiceClaimLoop._report_memory": (1, "Service memory report."),
+    "src.services.service_log_flush.flush_attempt_logs": (2, "Moves a service attempt's log lines into the database."),
+    "src.services.service_memory.read_service_memory": (1, "Service memory report."),
 }
 
 # Package-tool subprocesses that pass no ``env=`` (blind spot B12), mapped
@@ -2192,6 +2388,25 @@ class TestEveryElevatedCheckHasAScope:
         )
 
 
+def _redis_registry_problems(
+    found: dict[str, list[str]],
+    authority: dict[str, tuple[int, str]],
+    plain: dict[str, tuple[int, str]],
+) -> list[str]:
+    """Unclassified, stale, double-classified, non-cutover authority and
+    miscounted owners: a registered function with a new read fails, named."""
+    registered = {**authority, **plain}
+    problems = _registry_drift(set(found), set(registered))
+    problems += [f"in both: {name}" for name in sorted(set(authority) & set(plain))]
+    problems += [f"not cutover: {name}" for name, (_count, kind) in sorted(authority.items()) if kind != "cutover"]
+    problems += [
+        f"{owner}: registered {registered[owner][0]} read(s), found {len(reads)} ({', '.join(reads)})"
+        for owner, reads in sorted(found.items())
+        if owner in registered and registered[owner][0] != len(reads)
+    ]
+    return problems
+
+
 def _registry_drift(found: set[str], registered: set[str]) -> list[str]:
     """``unregistered: x`` / ``stale: y`` lines for an inventory against its registry."""
     return [f"unregistered: {name}" for name in sorted(found - registered)] + [
@@ -2240,16 +2455,14 @@ class TestElevatedInventories:
         )
 
     def test_every_redis_read_is_classified(self) -> None:
-        drift = _registry_drift(set(_redis_inventory()), set(_REDIS_AUTHORITY_READS) | set(_REDIS_PLAIN_READS))
-        both = sorted(set(_REDIS_AUTHORITY_READS) & set(_REDIS_PLAIN_READS))
-        invalid = sorted(k for k, v in _REDIS_AUTHORITY_READS.items() if v != "cutover")
-        assert not drift and not both and not invalid, (
-            "Redis reads vs _REDIS_AUTHORITY_READS (cutover) + _REDIS_PLAIN_READS (reason):\n"
-            + "\n".join(drift + [f"in both: {n}" for n in both] + [f"not cutover: {n}" for n in invalid])
+        problems = _redis_registry_problems(_redis_inventory(), _REDIS_AUTHORITY_READS, _REDIS_PLAIN_READS)
+        assert not problems, (
+            "Redis reads vs _REDIS_AUTHORITY_READS ((count, cutover)) + _REDIS_PLAIN_READS ((count, reason)):\n"
+            + "\n".join(problems)
         )
 
     def test_package_tool_subprocesses_pass_an_environment(self) -> None:
-        drift = _registry_drift(set(_inventory(_unscrubbed_package_subprocess, ("src", "shared"))), set(_UNSCRUBBED_SUBPROCESS))
+        drift = _registry_drift(set(_subprocess_inventory()), set(_UNSCRUBBED_SUBPROCESS))
         invalid = sorted(k for k, v in _UNSCRUBBED_SUBPROCESS.items() if v != "hardening")
         assert not drift and not invalid, (
             "package-tool subprocesses with no env= vs _UNSCRUBBED_SUBPROCESS (hardening):\n"
@@ -2258,14 +2471,7 @@ class TestElevatedInventories:
 
     def test_own_flag_copies_are_built_only_where_the_scan_looks(self, scanned_functions) -> None:
         scanned = {where for functions in scanned_functions.values() for where, _source in functions}
-        scanned |= set(_ELEVATED_PLUMBING)
-        classes = [c for module, tree in _source_modules() for c in _class_defs(module, tree.body)]
-        outside = sorted(
-            f"{cls}: {owner}"
-            for cls, owners in _constructor_sites(_own_flag_classes(classes)).items()
-            for owner in owners
-            if owner not in scanned
-        )
+        outside = _unscanned_constructor_sites(scanned | set(_ELEVATED_PLUMBING))
         assert not outside, (
             "classes whose self.<flag> reads the scan trusts are constructed outside every scanned entry "
             "(add the entry point, or the flag copy goes unchecked):\n" + "\n".join(outside)
@@ -2396,15 +2602,177 @@ class TestScannerBlindSpots:
         assert _own_flag_classes(_class_defs("m", tree.body)) == {"Base", "Child"}
 
     def test_b12_package_tools_without_an_environment_are_found(self) -> None:
-        def found(source: str) -> set[str]:
-            return {t for n in self._nodes(source) if (t := _unscrubbed_package_subprocess(n))}
+        tree = ast.parse(textwrap.dedent("""
+            import asyncio
+            import subprocess
+            import subprocess as sp
+            from subprocess import run as go
 
-        assert found("subprocess.run(['npm', 'install'])") == {"run(npm)"}
-        assert found("asyncio.create_subprocess_exec(sys.executable, '-m', 'pip', 'install', 'x')") == {
-            "create_subprocess_exec(pip)"
+            def literal():
+                subprocess.run(["npm", "install"])
+
+            def interpreter():
+                asyncio.create_subprocess_exec(sys.executable, "-m", "pip", "install", "x")
+
+            def built_up():
+                cmd = ["npm"]
+                cmd.append("install")
+                sp.run(cmd)
+
+            def imported():
+                go(["pip", "install", "x"])
+
+            def scrubbed():
+                sp.run(["npm", "install"], env=package_tool_env())
+
+            def other_tool():
+                subprocess.run(["git", "status"])
+        """))
+        assert _subprocess_inventory((("src.synthetic", tree),)) == {
+            "src.synthetic.literal": ["run(npm)"],
+            "src.synthetic.interpreter": ["create_subprocess_exec(pip)"],
+            "src.synthetic.built_up": ["run(npm)"],
+            "src.synthetic.imported": ["go(pip)"],
         }
-        assert not found("subprocess.run(['npm', 'install'], env=package_tool_env())")
-        assert not found("subprocess.run(['git', 'status'])")
+
+
+class TestScannerReviewFindings:
+    """Shapes the first version of the extended scan let through."""
+
+    @pytest.fixture
+    def synthetic_module(self, tmp_path, monkeypatch):
+        """Imports a source string as an in-scope module (``src.<name>``)."""
+
+        def make(name: str, source: str) -> types.ModuleType:
+            path = tmp_path / f"{name}.py"
+            path.write_text(textwrap.dedent(source))
+            spec = importlib.util.spec_from_file_location(f"src.{name}", path)
+            assert spec is not None and spec.loader is not None
+            module = importlib.util.module_from_spec(spec)
+            monkeypatch.setitem(sys.modules, f"src.{name}", module)
+            spec.loader.exec_module(module)
+            return module
+
+        return make
+
+    def test_a_decision_inside_a_dict_value_or_f_string_is_a_site(self) -> None:
+        source = """
+            def listing(claims, user, own, every):
+                return {
+                    "items": every if claims.get("is_superuser") else own,
+                    "label": f"{'admin' if user.is_provider_org else 'member'}",
+                    "admin": user.is_platform_admin,
+                    "text": f"{user.is_superuser}",
+                }
+        """
+        assert _elevated_site_tokens(textwrap.dedent(source)) == {"'is_superuser'", "is_provider_org"}
+
+    def test_the_plumbing_guard_follows_a_local_flag_alias(self) -> None:
+        source = """
+            def report(user, rows):
+                admin = user.is_superuser
+                widened = admin
+                if widened:
+                    return rows
+        """
+        assert "alias widened" in _plumbing_disqualifiers(ast.parse(textwrap.dedent(source)))
+
+    def test_a_module_qualified_factory_is_followed_to_the_method_it_returns(self, synthetic_module) -> None:
+        synthetic_module(
+            "synthetic_factories",
+            """
+            class Gate:
+                def authorize(self, user):
+                    return user.is_superuser
+
+            def make_gate():
+                return Gate()
+            """,
+        )
+        entry = synthetic_module(
+            "synthetic_entry",
+            """
+            import src.synthetic_factories as factories
+
+            def handler(user):
+                return factories.make_gate().authorize(user)
+            """,
+        )
+        reached = {_qualname(func) for func, _source in _reachable_functions(entry.handler, None)}
+        assert "src.synthetic_factories.Gate.authorize" in reached
+
+    def test_add_job_callables_count_however_they_are_passed(self, synthetic_module) -> None:
+        synthetic_module("synthetic_more_jobs", "def tuck():\n    pass\n")
+        source = """
+            from functools import partial
+
+            import src.synthetic_more_jobs as more
+
+            def tick():
+                pass
+
+            def tock():
+                pass
+
+            def tack(n):
+                pass
+
+            def install(scheduler):
+                scheduler.add_job(func=tick)
+                scheduler.add_job(scheduler.run, args=["tock", tock])
+                scheduler.add_job(partial(tack, 1))
+                scheduler.add_job(more.tuck)
+        """
+        module = synthetic_module("synthetic_jobs", source)
+        found = _add_job_functions(ast.parse(textwrap.dedent(source)), vars(module))
+        assert {func.__name__ for func in found} == {"tick", "tock", "tack", "tuck"}
+
+    def test_a_new_redis_read_in_a_classified_function_fails(self) -> None:
+        found = {"src.synthetic.read": ["r.get", "r.hget"], "src.synthetic.lock": ["r.get"]}
+        problems = _redis_registry_problems(
+            found, {"src.synthetic.lock": (1, "cutover")}, {"src.synthetic.read": (1, "Cache.")}
+        )
+        assert problems == ["src.synthetic.read: registered 1 read(s), found 2 (r.get, r.hget)"]
+
+    def test_redis_clients_are_recognised_by_annotation_and_factory(self) -> None:
+        source = """
+            async def read(conn: "Redis", key):
+                client: Redis = await connect()
+                await client.get(key)
+                await conn.exists(key)
+                cache = make_cache_client()
+                cache.get(key)
+                settings.get(key)
+        """
+        nodes = list(ast.walk(ast.parse(textwrap.dedent(source))))
+        assert sorted(_redis_reads(nodes, frozenset({"make_cache_client"}))) == ["cache.get", "client.get", "conn.exists"]
+
+    def test_lock_owner_reads_are_authority(self) -> None:
+        # The stored owner is compared with the requester before the lock is
+        # extended or released: a write to it hands the lock to someone else.
+        for qualname in ("extend_lock", "release_lock"):
+            assert f"src.core.locks.DistributedLockService.{qualname}" in _REDIS_AUTHORITY_READS
+
+    def test_constructions_through_an_import_alias_or_module_are_found(self) -> None:
+        principal = next(entry for entry in _source_modules() if entry[0] == "src.core.principal")
+        tree = ast.parse(textwrap.dedent("""
+            import src.core.principal as principal
+            from src.core.principal import UserPrincipal as Principal
+
+            def build_aliased():
+                return Principal(user_id=1)
+
+            def build_qualified():
+                return principal.UserPrincipal(user_id=1)
+
+            def build_scanned():
+                return Principal(user_id=2)
+        """))
+        outside = _unscanned_constructor_sites({"src.synthetic.build_scanned"}, (principal, ("src.synthetic", tree)))
+        assert [site for site in outside if "src.synthetic." in site] == [
+            "UserPrincipal: src.synthetic.build_aliased",
+            "UserPrincipal: src.synthetic.build_qualified",
+        ]
 
 
 class TestGeneratedJsonFreshness:
