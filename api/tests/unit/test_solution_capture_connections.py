@@ -105,6 +105,37 @@ async def test_capture_declares_referenced_integration(db_session) -> None:
     assert "client_id" not in (rows[0].template.get("oauth") or {})
 
 
+async def test_capture_uses_active_integration_when_name_was_reused(db_session) -> None:
+    db = db_session
+    sol = await _make_solution(db)
+    name = f"capture-reused-{uuid.uuid4().hex[:8]}"
+    db.add(
+        Workflow(
+            id=uuid.uuid4(),
+            name=f"wf-{uuid.uuid4().hex[:8]}",
+            function_name="main",
+            path="workflows/sync.py",
+            type="workflow",
+            is_active=True,
+            solution_id=sol.id,
+        )
+    )
+    db.add_all([
+        Integration(name=name, is_deleted=True, default_entity_id="retired"),
+        Integration(name=name, default_entity_id="active"),
+    ])
+    await db.flush()
+
+    entries = await SolutionCaptureService(
+        db, repo=_FakeRepo({"workflows/sync.py": f'integrations.get("{name}")'.encode()})
+    )._connection_entries(sol.id)
+
+    assert len(entries) == 1
+    assert entries[0]["integration_name"] == name
+    assert entries[0]["position"] == 0
+    assert entries[0]["template"]["default_entity_id"] == "active"
+
+
 async def test_connection_entries_prefers_persisted_rows(db_session) -> None:
     """Drive F4: export/DR of an installed solution must read the persisted
     SolutionConnectionSchema rows, NOT re-scan workflow source.

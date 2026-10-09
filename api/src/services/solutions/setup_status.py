@@ -80,7 +80,10 @@ async def compute_setup_status(db: AsyncSession, solution: Solution) -> Solution
         existing = set(
             (
                 await db.execute(
-                    select(Integration.name).where(Integration.name.in_(names))
+                    select(Integration.name).where(
+                        Integration.name.in_(names),
+                        Integration.is_deleted.is_(False),
+                    )
                 )
             ).scalars().all()
         )

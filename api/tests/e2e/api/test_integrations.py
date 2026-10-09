@@ -188,23 +188,26 @@ class TestIntegrationsCRUD:
         assert create_old.status_code == 201, create_old.text
         old = create_old.json()
         old_id = old["id"]
-        assert e2e_client.put(
+        update_old = e2e_client.put(
             f"/api/integrations/{old_id}/config",
             headers=platform_admin.headers,
             json={"config": {"old_endpoint": "https://old.example"}},
-        ).status_code == 200
-        assert e2e_client.post(
+        )
+        assert update_old.status_code == 200, update_old.text
+        create_old_mapping = e2e_client.post(
             f"/api/integrations/{old_id}/mappings",
             headers=platform_admin.headers,
             json={
                 "organization_id": str(org1["id"]),
                 "entity_id": "old-tenant",
             },
-        ).status_code == 201
+        )
+        assert create_old_mapping.status_code == 201, create_old_mapping.text
 
-        assert e2e_client.delete(
+        delete_old = e2e_client.delete(
             f"/api/integrations/{old_id}", headers=platform_admin.headers
-        ).status_code == 204
+        )
+        assert delete_old.status_code == 204, delete_old.text
 
         recreate = e2e_client.post(
             "/api/integrations",

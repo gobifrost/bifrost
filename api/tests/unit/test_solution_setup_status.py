@@ -96,6 +96,29 @@ async def test_connection_item_unmet_when_integration_absent(db_session: AsyncSe
     assert status.setup_complete is False
 
 
+async def test_connection_item_unmet_when_only_deleted_integration_exists(
+    db_session: AsyncSession,
+):
+    name = f"retired-{uuid4().hex[:8]}"
+    sol = Solution(id=uuid4(), slug="s3", name="S3", organization_id=None)
+    db_session.add_all([sol, Integration(name=name, is_deleted=True)])
+    await db_session.flush()
+    db_session.add(
+        SolutionConnectionSchema(
+            solution_id=sol.id,
+            integration_name=name,
+            position=0,
+            template={"name": name, "config_schema": [], "oauth": None},
+        )
+    )
+    await db_session.flush()
+
+    status = await compute_setup_status(db_session, sol)
+    conn = [item for item in status.items if item.kind == "connection"][0]
+    assert conn.is_set is False
+    assert status.setup_complete is False
+
+
 async def test_non_public_endpoint_workflow_requires_active_key(db_session: AsyncSession):
     sol = Solution(id=uuid4(), slug="endpoint", name="Endpoint", organization_id=None)
     db_session.add(sol)

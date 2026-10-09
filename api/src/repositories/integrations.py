@@ -61,7 +61,10 @@ class IntegrationMappingRepository(OrgScopedRepository[IntegrationMapping]):
         """
         # First get integration by name
         integration_result = await self.session.execute(
-            select(Integration).where(Integration.name == name)
+            select(Integration).where(
+                Integration.name == name,
+                Integration.is_deleted.is_(False),
+            )
         )
         integration = integration_result.scalar_one_or_none()
         if not integration:
@@ -157,7 +160,10 @@ class IntegrationsRepository(BaseRepository[Integration]):
         """
         result = await self.session.execute(
             select(Integration)
-            .where(Integration.name == name)
+            .where(
+                Integration.name == name,
+                Integration.is_deleted.is_(False),
+            )
             .options(
                 joinedload(Integration.oauth_provider),
                 selectinload(Integration.mappings),
