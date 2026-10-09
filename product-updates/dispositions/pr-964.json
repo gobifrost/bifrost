@@ -1,0 +1,14 @@
+{
+  "key": "pr:964",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Inline apps no longer lose table data or saves when the sign-in session lapses; they renew the session and retry.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/964",
+      "v1 web data SDK renews via the host session bridge and retries once on 401; verified live before/after on a debug stack."
+    ]
+  }
+}
