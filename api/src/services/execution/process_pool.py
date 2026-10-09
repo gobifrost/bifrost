@@ -49,6 +49,7 @@ import psutil
 import redis.asyncio as redis
 
 from shared.execution_context import validate_execution_context
+from shared.subprocess_env import package_tool_env
 from src.config import get_settings
 from src.core.cache.keys import TTL_ACTIVE_EXECUTION, active_execution_key
 from src.core.redis_client import ActiveExecution
@@ -179,6 +180,7 @@ def _get_installed_packages() -> list[dict[str, str]]:
             capture_output=True,
             text=True,
             timeout=30,
+            env=package_tool_env(),
         )
         if result.returncode == 0:
             return json.loads(result.stdout)

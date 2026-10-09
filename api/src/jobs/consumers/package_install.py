@@ -21,6 +21,7 @@ import os
 import sys
 from typing import Any
 
+from shared.subprocess_env import package_tool_env
 from src.jobs.rabbitmq import BroadcastConsumer
 from src.services.execution.install_progress import report_phase
 
@@ -65,6 +66,7 @@ class PackageInstallConsumer(BroadcastConsumer):
                 sys.executable, "-m", "pip", "uninstall", "-y", package, "--quiet",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=package_tool_env(),
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
             if proc.returncode == 0:
@@ -101,6 +103,7 @@ class PackageInstallConsumer(BroadcastConsumer):
                 sys.executable, "-m", "pip", "install", package_spec, "--quiet",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=package_tool_env(),
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
 
@@ -147,6 +150,7 @@ class PackageInstallConsumer(BroadcastConsumer):
                 sys.executable, "-m", "pip", "install", "-r", temp_path, "--quiet",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=package_tool_env(),
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
 
