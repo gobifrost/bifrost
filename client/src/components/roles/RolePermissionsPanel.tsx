@@ -90,19 +90,6 @@ function PrivilegedMark() {
 	);
 }
 
-/** Whether holding `a` already gives `b`: managing covers viewing, `.all` covers the plain action. */
-function covers(a: string, b: string) {
-	const held = permissionParts(a);
-	const other = permissionParts(b);
-	return (
-		a !== b &&
-		held.domain === other.domain &&
-		(held.all || !other.all) &&
-		(held.action === other.action ||
-			(held.action === "readwrite" && other.action === "read"))
-	);
-}
-
 /** Muted note for domains the evaluator does not enforce yet. */
 function TakesEffectLater() {
 	return (
@@ -385,11 +372,10 @@ export function RolePermissionsPanel({
 		);
 	};
 
+	// Every held permission is listed: none implies another (Read and Write
+	// does not include Read, Read All does not include Read).
 	const heldControl = (entry: PermissionCatalogEntry) => {
-		const all = heldByDomain.get(entry.domain) ?? [];
-		const held = all.filter(
-			(p) => !all.some((other) => covers(other.permission, p.permission)),
-		);
+		const held = heldByDomain.get(entry.domain) ?? [];
 		return (
 			<HeldValue
 				label={
@@ -401,7 +387,7 @@ export function RolePermissionsPanel({
 								.join(", ")
 						: NO_ACCESS
 				}
-				privileged={all.some((p) => p.privileged)}
+				privileged={held.some((p) => p.privileged)}
 			/>
 		);
 	};

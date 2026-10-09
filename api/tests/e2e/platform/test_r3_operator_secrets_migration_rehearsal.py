@@ -221,7 +221,13 @@ async def _assign_secrets_reader_later(database_url: str, user_id: str) -> None:
 
 
 # The later 20261009_graph_permission_names revision renames the basic
-# resources' everyday read to readbasic and gives the role Run Agents.
+# resources' everyday read to readbasic, gives the role Run Agents and says so
+# in its description.
+OPERATOR_DESCRIPTION_AT_HEAD = (
+    "Support for customer organizations: view organizations and users, invite users, "
+    "reset MFA, deactivate ordinary users, assign roles that carry no permissions, "
+    "and run workflows and agents in customer organizations. Additional role only."
+)
 _READBASIC = {f"{resource}.read": f"{resource}.readbasic" for resource in ("agents", "apps", "executions", "forms")}
 
 
@@ -288,6 +294,7 @@ def test_operator_and_secrets_reader_go_to_exactly_the_right_people() -> None:
         operator_at_head = asyncio.run(_state(database_url, OPERATOR_ROLE_ID))
         assert operator_at_head == {
             **operator,
+            "role": ("Platform Operator", OPERATOR_DESCRIPTION_AT_HEAD, False, True),
             "permissions": _readbasic(operator["permissions"]) | {"agents.execute"},
         }
         decryption_at_head = asyncio.run(_state(database_url, DECRYPTION_ROLE_ID))

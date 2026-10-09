@@ -4,8 +4,9 @@ Builds a disposable database at the migration's ``down_revision``, seeds a
 custom role holding renamed, split and unchanged permissions and a restricted
 workflow's permission grants, upgrades, and checks every role and grant: the
 built-in roles end exactly at their new sets (the readbasic rename plus the
-launch permissions), the custom role's strings move to their Graph names, and
-the grants' dotted sub-resource names are renamed. The downgrade restores the
+launch permissions), Platform Operator's description says it runs agents, the
+custom role's strings move to their Graph names, and the grants' dotted
+sub-resource names are renamed. The downgrade restores the
 previous rows exactly. The custom role holds only strings the downgrade can
 restore (the merged reads cannot be split back; the migration says so).
 
@@ -107,6 +108,16 @@ OPERATOR_AFTER = {
     "workflows.execute",
     "workflows.read",
 }
+OPERATOR_DESCRIPTION_BEFORE = (
+    "Support for customer organizations: view organizations and users, invite users, "
+    "reset MFA, deactivate ordinary users, assign roles that carry no permissions, "
+    "and run workflows in customer organizations. Additional role only."
+)
+OPERATOR_DESCRIPTION_AFTER = (
+    "Support for customer organizations: view organizations and users, invite users, "
+    "reset MFA, deactivate ordinary users, assign roles that carry no permissions, "
+    "and run workflows and agents in customer organizations. Additional role only."
+)
 CUSTOM_BEFORE = {
     "agents.readwrite",
     "apps.deploy.execute",
@@ -201,7 +212,11 @@ async def _snapshot(database_url: str, ids: dict[str, str]) -> dict[str, Any]:
             )
             for key in GRANTS_BEFORE
         }
-        return {"permissions": permissions, "grants": grants}
+        operator_description = await connection.scalar(
+            sa.text("SELECT description FROM roles WHERE id = CAST(:id AS uuid)"),
+            {"id": _ROLES["operator"]},
+        )
+        return {"permissions": permissions, "grants": grants, "operator_description": operator_description}
 
     return await _run_in_database(database_url, snapshot)
 
@@ -226,6 +241,7 @@ def test_roles_and_grants_move_to_graph_names_and_back() -> None:
                 "custom": CUSTOM_BEFORE,
             },
             "grants": GRANTS_BEFORE,
+            "operator_description": OPERATOR_DESCRIPTION_BEFORE,
         }
 
         _upgrade(database_url, REVISION)
@@ -239,6 +255,7 @@ def test_roles_and_grants_move_to_graph_names_and_back() -> None:
                 "custom": CUSTOM_AFTER,
             },
             "grants": GRANTS_AFTER,
+            "operator_description": OPERATOR_DESCRIPTION_AFTER,
         }
 
         _upgrade(database_url, "head")

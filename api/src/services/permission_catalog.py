@@ -8,7 +8,7 @@ the catalog cannot drift from it.
 
 from __future__ import annotations
 
-from src.models.contracts.access_list import AccessClass, AccessEntry, CurrentGate
+from src.models.contracts.access_list import AccessEntry, CurrentGate
 from src.models.contracts.permissions import (
     PERMISSION_DOMAINS,
     PRIVILEGED_PERMISSIONS,
@@ -26,10 +26,14 @@ def _action_of(permission: str) -> str:
 
 
 def build_catalog(access_list: list[AccessEntry] = ACCESS_LIST) -> list[PermissionCatalogEntry]:
-    """One entry per permission domain, sorted by area then title."""
+    """One entry per permission domain, sorted by area then title.
+
+    Every permission an entry names counts, including one that only widens a
+    personal or own-agent entry to other people's items: a role can hold it.
+    """
     entries_by_domain: dict[str, list[AccessEntry]] = {}
     for entry in access_list:
-        if entry.access_class != AccessClass.PERMISSION or entry.permission is None:
+        if entry.permission is None:
             continue
         domain = parse_permission(entry.permission).domain
         entries_by_domain.setdefault(domain, []).append(entry)

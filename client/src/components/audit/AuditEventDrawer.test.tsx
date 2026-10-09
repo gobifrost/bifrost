@@ -157,6 +157,40 @@ describe("AuditEventDrawer", () => {
 		expect(explain.calls.every(([, enabled]) => !enabled)).toBe(true);
 	});
 
+	it("names the permission a permission check needed, even where the trace stopped first", () => {
+		const stoppedAtTarget: AccessTrace = {
+			outcome: "failure",
+			enforced: false,
+			steps: [
+				then.steps[0],
+				now.steps[1],
+				{
+					key: "permission",
+					label: "Permission",
+					status: "not_reached",
+					reason: "",
+					facts: {
+						permission: "agents.read",
+						permission_display_name: "Read Agents",
+					},
+				},
+			],
+		};
+		renderDrawer({
+			...accessCheck,
+			resource_type: "permission",
+			outcome: "failure",
+			details: { direct: true, trace: stoppedAtTarget },
+		});
+
+		expect(field("Resource")).toHaveTextContent("Permission: Read Agents");
+		expect(
+			within(screen.getByRole("dialog")).getByRole("list", {
+				name: "Then",
+			}),
+		).toHaveTextContent("Needs Read Agents.");
+	});
+
 	it("shows an identity run user with its glyph and organization", () => {
 		renderDrawer(accessCheck);
 

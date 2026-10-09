@@ -20,7 +20,7 @@ import { useTraceNames } from "@/hooks/useTraceNames";
 import {
 	changeSentence,
 	changedStepKeys,
-	checkKindTitle,
+	checkResourceTitle,
 	nowUnavailableSentence,
 	stepTitle,
 	storedTrace,
@@ -52,7 +52,7 @@ function Summary({ entry }: { entry: AuditLogEntry }) {
 	const workflowId = isCheck ? entry.details?.workflow_id : undefined;
 	const resource = entry.resource_type
 		? isCheck
-			? checkKindTitle(entry.resource_type)
+			? checkResourceTitle(entry.resource_type, entry.details)
 			: `${entry.resource_type}${entry.resource_id ? ` / ${entry.resource_id}` : ""}`
 		: "—";
 

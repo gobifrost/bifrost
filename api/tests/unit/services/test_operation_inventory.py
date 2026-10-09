@@ -97,3 +97,28 @@ def test_generated_operation_files_are_fresh() -> None:
     assert (
         module.OPERATIONS_PATH.read_text(encoding="utf-8") == module.render_operations()
     )
+
+
+def test_operation_reference_marks_scopes_that_only_widen() -> None:
+    import importlib.util
+
+    generator_path = API_ROOT / "scripts" / "operation_catalog" / "generate.py"
+    spec = importlib.util.spec_from_file_location(
+        "operation_catalog_generate", generator_path
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    rows = {
+        line.split(" | ")[0].strip("| `"): line
+        for line in module.render_operations().splitlines()
+        if line.startswith("| `")
+    }
+    assert rows["platform.jobs.get"].endswith(
+        "| `platformjobs.read.all` (only for other people's items) |"
+    )
+    assert rows["agents.create"].endswith(
+        "| `agents.readwrite` (not for your own private agents) |"
+    )
+    assert rows["tables.list"].endswith("| `tables.read` |")

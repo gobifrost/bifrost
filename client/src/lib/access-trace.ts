@@ -146,20 +146,32 @@ function permissionSentence(
 	}[reason];
 }
 
+/** The Graph-style name the server stored on a permission step ("Read Agents"). */
+function storedPermissionName(step: AccessStep): string | undefined {
+	const name = step.facts.permission_display_name;
+	return step.key === "permission" && typeof name === "string"
+		? name
+		: undefined;
+}
+
 /**
  * What a step decided, as a sentence: roles and organizations by name where
  * `names` knows them ("a role placed there" where it doesn't), permissions by
  * their Graph-style names. `runUserId` recognizes a Restricted workflow's
  * grants, which the server judges as a role named by the run user's id. A
- * step that wasn't reached says nothing; a reason this doesn't know shows as
- * written.
+ * step that wasn't reached says nothing, except a named permission check's
+ * permission step, which says what it needs; a reason this doesn't know shows
+ * as written.
  */
 export function stepSentence(
 	step: AccessStep,
 	names: TraceNames,
 	runUserId: string | undefined,
 ): string {
-	if (step.status === "not_reached") return "";
+	if (step.status === "not_reached") {
+		const needed = storedPermissionName(step);
+		return needed ? `Needs ${needed}.` : "";
+	}
 	const sentences: Record<string, (() => string | undefined) | undefined> = {
 		workflow_access: () => workflowAccessSentence(step.reason),
 		run_user: () => runUserSentence(step),
@@ -252,11 +264,30 @@ const CHECK_KINDS: Record<string, string> = {
 	entry: "Workflow or Agent Access",
 	policy: "Data Policy",
 	secret: "Secret",
+	permission: "Permission",
 };
 
 /** An access check's kind (its resource type) in Title Case. */
 export function checkKindTitle(kind: string): string {
 	return CHECK_KINDS[kind] ?? stepTitle(kind.replaceAll("_", " "));
+}
+
+/**
+ * What an access check checked: its kind, and for a named permission the
+ * permission's Graph-style name from the stored trace ("Permission: Read
+ * Agents").
+ */
+export function checkResourceTitle(
+	kind: string,
+	details: Record<string, unknown> | null | undefined,
+): string {
+	const title = checkKindTitle(kind);
+	if (kind !== "permission") return title;
+	const step = storedTrace(details)?.steps.find(
+		(candidate) => candidate.key === "permission",
+	);
+	const name = step && storedPermissionName(step);
+	return name ? `${title}: ${name}` : title;
 }
 
 function isTrace(value: unknown): value is AccessTrace {

@@ -42,12 +42,13 @@ AFTER = (
     "reset MFA, deactivate ordinary users, and assign roles that carry no permissions. "
     "Additional role only."
 )
-# Set by the later 20261003_r3_operator_secrets revision, which also
-# gives the role workflows.execute.
+# Set by the later 20261009_graph_permission_names revision, which also
+# gives the role agents.execute (20261003_r3_operator_secrets gave it
+# workflows.execute).
 AT_HEAD = (
     "Support for customer organizations: view organizations and users, invite users, "
     "reset MFA, deactivate ordinary users, assign roles that carry no permissions, "
-    "and run workflows in customer organizations. Additional role only."
+    "and run workflows and agents in customer organizations. Additional role only."
 )
 
 

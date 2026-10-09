@@ -26,13 +26,15 @@ Launching is now a permission too, so the built-in roles gain the launch
 permissions for what they can already start: the User role gains Run
 Workflows, Run Agents, Use AI and reading AI model information, and the
 Platform Operator role gains Run Agents next to the Run Workflows it holds.
+Its description now says it runs agents as well as workflows.
 
 Workflow permission grants hold permission strings as well; the four
 dotted sub-resource names there get the same rename. (A Solution workflow
 permission request keeps its strings: an approval is bound to a digest of
 them.)
 
-The downgrade removes the launch permissions and reverses every rename. It
+The downgrade removes the launch permissions, restores the previous
+description and reverses every rename. It
 cannot split a merged row back:
 ``reports.read.all``, ``agents.read.all`` and ``workflows.read.all`` land on
 permissions a role may already have held, so they are not restored. No
@@ -74,6 +76,17 @@ ADDED_LAUNCH_PERMISSIONS: dict[str, tuple[str, ...]] = {
     PLATFORM_OPERATOR_ROLE_ID: ("agents.execute",),
 }
 
+PREVIOUS_OPERATOR_DESCRIPTION = (
+    "Support for customer organizations: view organizations and users, invite users, "
+    "reset MFA, deactivate ordinary users, assign roles that carry no permissions, "
+    "and run workflows in customer organizations. Additional role only."
+)
+OPERATOR_DESCRIPTION = (
+    "Support for customer organizations: view organizations and users, invite users, "
+    "reset MFA, deactivate ordinary users, assign roles that carry no permissions, "
+    "and run workflows and agents in customer organizations. Additional role only."
+)
+
 revision: str = "20261009_graph_permission_names"
 down_revision: Union[str, None] = "20261009_merge_integ_identity"
 branch_labels: Union[str, Sequence[str], None] = None
@@ -107,6 +120,13 @@ def _rename_grants(old: str, new: str) -> None:
     )
 
 
+def _set_operator_description(description: str) -> None:
+    op.get_bind().execute(
+        sa.text("UPDATE roles SET description = :description WHERE id = CAST(:role_id AS uuid)"),
+        {"description": description, "role_id": PLATFORM_OPERATOR_ROLE_ID},
+    )
+
+
 def upgrade() -> None:
     for old, new in sorted(GRAPH_RENAMES.items()):
         _move(old, (new,))
@@ -126,6 +146,7 @@ def upgrade() -> None:
                 ),
                 {"role_id": role_id, "permission": permission},
             )
+    _set_operator_description(OPERATOR_DESCRIPTION)
     for old, new in sorted(GRAPH_RENAMES.items()):
         _rename_grants(old, new)
 
@@ -133,6 +154,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     for old, new in sorted(GRAPH_RENAMES.items()):
         _rename_grants(new, old)
+    _set_operator_description(PREVIOUS_OPERATOR_DESCRIPTION)
     connection = op.get_bind()
     for role_id, permissions in sorted(ADDED_LAUNCH_PERMISSIONS.items()):
         connection.execute(

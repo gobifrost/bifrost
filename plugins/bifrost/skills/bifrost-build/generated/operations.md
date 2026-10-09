@@ -2,7 +2,8 @@
 
 Generated from the canonical operation catalog. Use the stable intent
 ID when reasoning; select the CLI or MCP binding available in the current
-harness.
+harness. A scope with a note in parentheses is needed only beyond the
+caller's own items.
 
 | Intent | CLI | MCP | Scope |
 |---|---|---|---|
@@ -10,9 +11,9 @@ harness.
 | `productupdates.receipts.create` | — | — | `settings.readwrite` |
 | `agents.list` | `bifrost agents list` | `bifrost_agent_list` | `agents.readbasic` |
 | `agents.get` | `bifrost agents get` | `bifrost_agent_get` | `agents.readbasic` |
-| `agents.create` | `bifrost agents create` | `bifrost_agent_create` | `agents.readwrite` |
-| `agents.update` | `bifrost agents update` | `bifrost_agent_update` | `agents.readwrite` |
-| `agents.delete` | `bifrost agents delete` | `bifrost_agent_delete` | `agents.readwrite` |
+| `agents.create` | `bifrost agents create` | `bifrost_agent_create` | `agents.readwrite` (not for your own private agents) |
+| `agents.update` | `bifrost agents update` | `bifrost_agent_update` | `agents.readwrite` (not for your own private agents) |
+| `agents.delete` | `bifrost agents delete` | `bifrost_agent_delete` | `agents.readwrite` (not for your own private agents) |
 | `forms.list` | `bifrost forms list` | `bifrost_form_list` | `forms.readbasic` |
 | `forms.get` | `bifrost forms get` | `bifrost_form_get` | `forms.readbasic` |
 | `forms.create` | `bifrost forms create` | `bifrost_form_create` | `forms.readwrite` |
@@ -32,7 +33,7 @@ harness.
 | `apps.dependencies.update` | `bifrost apps update-dependencies` | `bifrost_app_dependencies_update` | `apps.readwrite` |
 | `apps.validate` | `bifrost apps validate` | `bifrost_app_validate` | `apps.readbasic` |
 | `apps.publish` | `bifrost apps publish` | `bifrost_app_publish` | `apps.publish` |
-| `platform.jobs.get` | `bifrost platform-jobs get` | `bifrost_platform_job_get` | `platformjobs.read.all` |
+| `platform.jobs.get` | `bifrost platform-jobs get` | `bifrost_platform_job_get` | `platformjobs.read.all` (only for other people's items) |
 | `apps.replace` | `bifrost apps replace` | `bifrost_app_replace` | `apps.readwrite` |
 | `solutions.list` | — | `bifrost_solution_list` | `solutions.read` |
 | `solutions.get` | — | `bifrost_solution_get` | `solutions.read` |

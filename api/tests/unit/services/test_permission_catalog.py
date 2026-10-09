@@ -2,7 +2,12 @@
 domain vocabulary; these tests pin each derivation rule against a hand-built
 access list, plus the vocabulary's own completeness."""
 
-from src.models.contracts.access_list import AccessClass, AccessEntry, CurrentGate
+from src.models.contracts.access_list import (
+    AccessClass,
+    AccessEntry,
+    CurrentGate,
+    InlineEffect,
+)
 from shared.builtin_roles import (
     DECRYPTION_ROLE_PERMISSIONS,
     PLATFORM_OPERATOR_PERMISSIONS,
@@ -14,6 +19,7 @@ from src.models.contracts.permissions import (
     parse_permission,
     permission_display_name,
 )
+from src.services.access_list import ACCESS_LIST
 from src.services.operation_catalog import OPERATION_CATALOG
 from src.services.permission_catalog import build_catalog
 
@@ -90,6 +96,29 @@ def test_actions_union_entries_and_privileged_only_actions() -> None:
     assert catalog["agents"].actions == ["read", "readbasic", "execute", "read.all", "readwrite.all"]
     # platform.readwrite is privileged but no route checks it.
     assert catalog["platform"].actions == ["read", "readwrite"]
+
+
+def test_a_widening_permission_on_a_personal_entry_is_listed() -> None:
+    widening = AccessEntry(
+        method="GET",
+        path="/api/home",
+        access_class=AccessClass.PERSONAL,
+        current_gate=CurrentGate.AUTHENTICATED,
+        inline_checks=("is_platform_admin",),
+        inline_effect=InlineEffect.WIDENS_FOR_SUPERUSER,
+        permission="home.read.all",
+        boundary="organization",
+        reason="test",
+    )
+    catalog = _by_domain([widening])
+    assert catalog["home"].actions == ["read.all"]
+    assert catalog["home"].scope == "per_organization"
+
+
+def test_the_checked_in_catalog_lists_widening_permissions() -> None:
+    catalog = _by_domain(ACCESS_LIST)
+    assert "read.all" in catalog["home"].actions
+    assert {"read.all", "readwrite.all"} <= set(catalog["platformjobs"].actions)
 
 
 def test_privileged_lists_the_domains_privileged_permissions() -> None:

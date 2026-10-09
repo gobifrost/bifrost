@@ -58,12 +58,17 @@ function entry(
 
 // Sorted by area then title, as the server sends it.
 const CATALOG: PermissionCatalogEntry[] = [
-	entry("agents", "Agents", "Automation"),
+	entry("agents", "Agents", "Automation", {
+		names: {
+			"agents.read": "Read Agents",
+			"agents.readwrite": "Read and Write Agents",
+			"agents.read.all": "Read All Agents",
+		},
+	}),
 	entry("tables", "Tables", "Data & Content"),
 	entry("userlifecycle", "User Lifecycle", "Identity & Access", {
 		names: {
-			"userlifecycle.readwrite":
-				"Read and Write User Lifecycle",
+			"userlifecycle.readwrite": "Read and Write User Lifecycle",
 		},
 	}),
 	entry("organizations", "Organizations", "Identity & Access", {
@@ -322,16 +327,21 @@ describe("RolePermissionsPanel", () => {
 		expect(within(domain("Roles")).getByText("No Access")).toBeVisible();
 	});
 
-	it("shows only the highest level held in a read-only domain", () => {
-		state.data = permissionsOf(["agents.read", "agents.readwrite"]);
+	it("lists every permission held in a read-only domain, since none implies another", () => {
+		state.data = permissionsOf([
+			"agents.read",
+			"agents.readwrite",
+			"agents.read.all",
+		]);
 		renderWithProviders(
 			<RolePermissionsPanel roleId="role-1" isBuiltin={false} />,
 		);
 
 		expect(
-			within(domain("Agents")).getByText("Read and Write Agents"),
+			within(domain("Agents")).getByText(
+				"Read Agents, Read and Write Agents, Read All Agents",
+			),
 		).toBeVisible();
-		expect(within(domain("Agents")).queryByText("Read Agents")).toBeNull();
 	});
 
 	it("marks privileged choices and explains what that means", () => {

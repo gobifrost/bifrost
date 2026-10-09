@@ -114,10 +114,11 @@ DECRYPTION_DESCRIPTION_AT_HEAD = (
     "Decrypts secret values through the SDK secret paths, for local "
     "development. Not included in the Platform Admin wildcard."
 )
+# Set by the later 20261009_graph_permission_names revision.
 OPERATOR_DESCRIPTION_AT_HEAD = (
     "Support for customer organizations: view organizations and users, invite users, "
     "reset MFA, deactivate ordinary users, assign roles that carry no permissions, "
-    "and run workflows in customer organizations. Additional role only."
+    "and run workflows and agents in customer organizations. Additional role only."
 )
 
 
@@ -241,8 +242,8 @@ def test_operator_gains_user_support_and_secrets_reader_is_seeded() -> None:
         # wildcard, 20261003_r3_operator_secrets has given Platform Operator
         # workflows.execute, rewritten its description and dropped "Not yet
         # assignable" from Secrets Reader's description, and
-        # 20261009_graph_permission_names has renamed the basic reads and
-        # added the launch permissions;
+        # 20261009_graph_permission_names has renamed the basic reads, added
+        # the launch permissions and rewritten Platform Operator's description;
         # everything else this revision wrote holds.
         _upgrade(database_url, "head")
         at_head = asyncio.run(_snapshot(database_url, custom_role_id))

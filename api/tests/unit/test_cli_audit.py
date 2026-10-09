@@ -310,6 +310,30 @@ class TestAuditExplain:
         ]
         assert output.rstrip().splitlines()[-1] == "Changed: yes"
 
+    def test_a_named_permission_check_names_its_permission(self, fake_client: _FakeClient) -> None:
+        event_id = str(uuid4())
+        then = _trace(
+            "failure",
+            [
+                ("run_user", "Run user", "passed", "person"),
+                ("target", "Target in reach", "stopped", "outside"),
+                ("permission", "Permission", "not_reached", ""),
+            ],
+        )
+        then["steps"][2]["facts"] = {"permission": "agents.read", "permission_display_name": "Read Agents"}
+        fake_client.respond(
+            f"/api/audit/{event_id}/explain",
+            _explanation(
+                event=_entry(resource_type="permission"),
+                then=then,
+                now=None,
+                now_unavailable="run_user_missing",
+                changed=None,
+            ),
+        )
+        output = _invoke(["explain", event_id]).output
+        assert _header(output)["Permission"] == "Read Agents (agents.read)"
+
     def test_unchanged_explanation_says_no(self, fake_client: _FakeClient) -> None:
         event_id = str(uuid4())
         fake_client.respond(f"/api/audit/{event_id}/explain", _explanation(changed=False))

@@ -145,6 +145,20 @@ def _cell(step: dict[str, Any]) -> str:
     return f"{step['status']} ({step['reason']})" if step["reason"] else step["status"]
 
 
+def _checked_permission(explanation: dict[str, Any]) -> str | None:
+    """A named permission check's permission, as "Read Agents (agents.read)".
+
+    The server names it on the trace's permission step, even where an
+    earlier step stopped the trace.
+    """
+    for trace in (explanation["then"], explanation["now"]):
+        for step in [] if trace is None else trace["steps"]:
+            facts = step["facts"]
+            if step["key"] == "permission" and "permission_display_name" in facts:
+                return f"{facts['permission_display_name']} ({facts['permission']})"
+    return None
+
+
 def _print_explanation(explanation: dict[str, Any]) -> None:
     event = explanation["event"]
     header = [
@@ -154,6 +168,9 @@ def _print_explanation(explanation: dict[str, Any]) -> None:
         ("Run user", event["actor"]["user_email"] or "-"),
         ("Organization", event["actor"]["organization_name"] or "-"),
     ]
+    permission = _checked_permission(explanation) if event["resource_type"] == "permission" else None
+    if permission is not None:
+        header.append(("Permission", permission))
     for label, value in header:
         click.echo(f"{label + ':':<14}{value}")
     click.echo()

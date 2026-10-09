@@ -200,6 +200,7 @@ def test_migration_frozen_copies_match_live_constants():
     assert not operator.PLATFORM_OPERATOR_PERMISSIONS & latest.ADDED_OPERATOR_PERMISSIONS
     desc = _load_migration("20261001_r3a_operator_desc.py")
     assert latest.PREVIOUS_OPERATOR_DESCRIPTION == desc.DESCRIPTION
+    assert graph.PREVIOUS_OPERATOR_DESCRIPTION == latest.OPERATOR_DESCRIPTION
     assert latest.PREVIOUS_DECRYPTION_DESCRIPTION == operator.DECRYPTION_ROLE_DESCRIPTION
 
     identities = _load_migration("20261003_r3b_identities.py")
