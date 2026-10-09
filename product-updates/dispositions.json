@@ -1865,6 +1865,19 @@
           "User-directed classification: low-level SDK-provenance correction, recorded as Other rather than a product highlight."
         ]
       }
+    },
+    "pr:950": {
+      "classification": "other",
+      "entry_ids": [],
+      "category": "fix",
+      "summary": "Solution deploys and Git updates use isolated build capacity when it is enabled.",
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/950",
+          "Routes existing durable Solution compilation through the configured Kubernetes build executor."
+        ]
+      }
     }
   }
 }
