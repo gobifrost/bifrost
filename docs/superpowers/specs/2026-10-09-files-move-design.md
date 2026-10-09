@@ -1,218 +1,297 @@
-# `files.move` for Solution and org file locations
+# `files.move` / `files.move_many` for Solution and org file locations
 
 ## Problem
 
 The file SDK can read, write, list, stat, sign, and delete files in custom
 locations (for example a Solution's `docs` location), but it cannot move one.
-The only way to relocate a file today is read → write → delete, which buffers
-the whole object in the API process and fails for large objects. The editor's
-`/api/files/editor/rename` already does a server-side S3 copy + delete, but it
-is superuser-only and hard-wired to the `_repo/` workspace.
+Relocating a file today means read → write → delete, which buffers the whole
+object in the API process and fails for large objects. The editor's
+`/api/files/editor/rename` does a server-side S3 copy + delete, but it is
+superuser-only and hard-wired to the `_repo/` workspace.
 
-Driving case: the RTM DMS Solution stores document files under
+Driving case: the RTM DMS Solution stores document files at
 `documents/campuses/{facility}/types/{doctype}/{pdf|download}/{doc_id}/{file}`
-in its `docs` location, and file policies authorize healthcare users by that
-path prefix. Moving a document or a whole building to another campus must
-move its files to the new campus prefix — some of them multi-GB drawings.
+in its `docs` location, and file policies grant healthcare users read by path
+prefix. Moving a document or a whole building (hundreds of files, some
+multi-GB) to another campus must move the files to the new campus prefix so
+access follows them.
 
 ## Goal
 
-Two operations for non-workspace locations — `files.move(source,
-destination)` for one file and `files.move_many(items)` for a batch with a
-result per item — sharing one per-file implementation that behaves exactly like the existing guarded file operations (same scope
-resolution, Solution location gate, file-policy checks with denial audit,
-advisory locking, `expected_version` guard, metadata maintenance, commit
-before publish), moves bytes server-side with no buffering and no size
-ceiling, and never deletes the source until the destination is written and
-verified.
+Two operations for non-workspace, cloud-mode locations:
+
+- `files.move(source, destination)` — one file.
+- `files.move_many(items)` — a batch, with a result per item.
+
+Both run as one durable `PlatformJob` type, so no copy is bound by an HTTP or
+SDK timeout. Authorization happens at enqueue with the caller's principal, as
+`docs/architecture/platform-jobs.md` requires. Bytes move server-side (no
+buffering, no size ceiling), and a source is never deleted until its
+destination is written and verified.
 
 ## Non-goals
 
-- **Workspace (`_repo/`) moves.** Workspace files carry entity, module-cache,
-  and file-index side effects that `FileStorageService.move_file` (editor
-  rename) already owns. `files.move` rejects `location="workspace"` with 400
-  rather than duplicate that logic.
+- **Workspace (`_repo/`) moves.** `FileStorageService.move_file` (editor
+  rename) owns workspace entity, module-cache, and file-index side effects.
+  `location="workspace"` → 400.
+- **Local mode.** Moves run in a scheduler child process where the API
+  process's local filesystem is meaningless. `mode="local"` → 400.
 - **Cross-location or cross-scope moves.** Source and destination are paths in
-  the same location under the same effective scope (one Solution install or
-  one org).
-- **Folder (prefix) moves.** Callers name explicit source → destination
-  pairs. RTM's paths cannot express "this building" as a prefix (the path
-  carries campus and document type, not building), so a prefix move would not
-  serve the driving case.
-- **Cross-item atomicity.** Each item in a batch is atomic on its own; a
-  failed item does not roll back or stop the others.
-- **Background execution.** Moves are server-side copies; both operations stay
-  synchronous requests (no `PlatformJob`). Batches are capped (500 items) and
-  callers send large relocations in chunks. Revisit with a `PlatformJob` only
-  if real batches outgrow a request.
+  one location under one effective scope (one Solution install or one org).
+- **Prefix (folder) moves.** Callers name explicit pairs; RTM's paths carry
+  campus and document type but not building, so a prefix cannot express "this
+  building".
+- **Version guards.** No `expected_version`: the existing content version is a
+  sha256 of the full object (`shared/file_access.py` `get_file_stat`), which
+  would reintroduce full-object reads.
+- **Cross-item atomicity.** Each item is atomic on its own; one failed item
+  does not undo or stop the others.
+- **Web SDK methods.** The browser must not poll platform jobs; App callers
+  invoke a workflow, which uses the Python SDK. Adding `moveMany` to the web
+  SDK (with WebSocket completion) is a follow-up if an App needs it directly.
 
-## Behavior
+## Caller surface
 
-### Signature
-
-```
-files.move(
-    source: str,
-    destination: str,
-    location: str,                 # required; any non-workspace location
-    mode: "cloud" | "local" = "cloud",
-    expected_version: str | None = None,   # guards the source, as files.delete
-    on_conflict: "error" | "rename" = "error",
-    scope: str | None = None,
-) -> str   # the final destination path
-```
-
-HTTP: `POST /api/files/move` with `FileMoveRequest`
-(`source`, `destination`, `location`, `scope`, `mode`, `expected_version`,
-`on_conflict`) returning `FileMoveResponse` (`path`, `renamed`). Failures
-raise with the item's status, as `files.delete` does.
+### Python SDK (`api/bifrost/files.py`)
 
 ```
 files.move_many(
-    items: list[{"source": str, "destination": str,
-                 "expected_version": str | None}],   # 1..500
-    location: str,
-    mode: "cloud" | "local" = "cloud",
+    items: list[{"source": str, "destination": str}],   # 1..500
+    location: str,                                       # required
     on_conflict: "error" | "rename" = "error",
     scope: str | None = None,
-) -> list[{"source", "destination", "path", "renamed",
-           "status_code", "error"}]
+    timeout_seconds: float = 1800,
+) -> list[{"source", "destination", "path", "renamed", "status_code", "error"}]
+
+files.move(
+    source: str,
+    destination: str,
+    location: str,                                       # required
+    on_conflict: "error" | "rename" = "error",
+    scope: str | None = None,
+    timeout_seconds: float = 1800,
+) -> str   # final destination path; raises on failure
 ```
 
-HTTP: `POST /api/files/move-many` with `FileMoveBatchRequest` returning
-`FileMoveBatchResponse(results=[FileMoveBatchResult, ...])`, in request
-order, following the `/signed-urls` precedent: the request succeeds (200)
-and each result carries its own `status_code` (200, 400, 403, 404, 409, 500)
-and `error` detail; `path`/`renamed` are set only on success.
+Both enqueue through `engine_request` and then poll
+`GET /api/platform-jobs/{job_id}` with short requests until the job is
+terminal — the `artifacts.create_video` pattern (`api/bifrost/artifacts.py`).
+Each request is short, so the SDK's 30s client timeout never bounds a copy.
+`/api/platform-jobs/{job_id}` is already on the worker engine-socket allowlist
+(`worker_sdk_http.py`); the two new enqueue paths are added to
+`FILES_ROUTE_PATHS`. On deadline the SDK raises `TimeoutError` naming the job
+id ("the move may still be running").
 
-Batch rules:
-- Request-level validation fails the whole call before any item runs: empty
-  list or more than 500 items → 422; workspace location → 400; undeclared
-  Solution location → 404. These are the checks that do not depend on the
-  item.
-- Items run sequentially through the same per-file core as `files.move`, each
-  with its own locks, policy checks, and commit, so a completed item is
-  durable even if the request is later interrupted; a caller can resume by
-  retrying the items that did not report success.
-- Two items in one batch that name the same source or the same destination:
-  the second fails on its own (404 source gone, or 409 destination exists /
-  renamed under `on_conflict="rename"`) — no special casing.
+`files.move` enqueues a one-item job through `POST /api/files/move` (a thin
+route with a single-item request model over the same enqueue service) and
+raises the item's error with its status code. `location` is required on both,
+unlike the other file methods, because their `workspace` default is the one
+value move rejects.
 
-### Authorization
+### HTTP
 
-All checks use the caller's effective scope and Solution context, exactly as
-`sdk_delete_file` does:
+- `POST /api/files/move-many` — `FileMoveBatchRequest`
+  (`items`, `location`, `scope`, `on_conflict`) → `202 PlatformJobAccepted`
+  with `Location: /api/platform-jobs/{job_id}`.
+- `POST /api/files/move` — `FileMoveRequest`
+  (`source`, `destination`, `location`, `scope`, `on_conflict`) → same 202,
+  enqueuing a one-item job.
 
-1. Resolve effective scope (Solution context wins). `location == "workspace"`
-   → 400 `"files.move does not support the workspace location"`.
-2. `source == destination` → 400.
-3. `require_declared_solution_file_location` (404 when the Solution does not
-   declare the location).
-4. File policy, each denial audited through `deny_file_policy`:
-   - `read` on the source — without it, a caller holding delete + write could
-     move an unreadable file into a path they can read.
-   - `delete` on the source.
-   - `write` on the destination (the final destination, re-checked if
-     `on_conflict="rename"` picks a different path).
+Request-level failures reject the whole call before enqueue: empty or > 500
+items → 422; `location="workspace"` → 400; the Solution does not declare the
+location → 404. The request models carry no `mode` field; moves are always
+cloud mode.
 
-### Conflicts
+The job result (in `PlatformJobPublic.result`) is
+`{"results": [FileMoveResult, ...], "moved": n, "failed": m}`, in request
+order, including the items rejected at enqueue. `FileMoveResult` = `source`,
+`destination` (requested), `path` (final; set on success), `renamed`,
+`status_code` (200, 400, 403, 404, 409, 500), `error`. A 403 result's `error`
+is the literal `"forbidden"`, matching the `/signed-urls` precedent.
 
-- Source missing → 404 `File not found: {source}`.
-- `expected_version` set and the source's current version differs → 409
-  `version_conflict` (same payload shape as delete).
-- Destination exists and `on_conflict="error"` → 409
-  `{"reason": "file_exists", "path": destination, ...}` (same shape as
-  `create_only` on write). Nothing is overwritten, ever.
-- Destination exists and `on_conflict="rename"` → pick the first free name
-  using the Windows download convention: `report.pdf` → `report (1).pdf` →
-  `report (2).pdf` …; the suffix goes before the last extension, or at the end
-  of a name with no extension. Give up after 1000 candidates with 409
-  `{"reason": "no_available_name"}`. The response returns the chosen path and
-  `renamed: true`.
+### CLI (`api/bifrost/commands/files.py`)
 
-### Locking
+`bifrost files move SOURCE DESTINATION --location L [--rename]` enqueues and
+follows the job with the shared `poll_platform_job` helper
+(`api/bifrost/platform_jobs.py`), then prints the final path. No CLI command
+for `move-many`; a batch is an SDK primitive.
 
-`lock_file_mutation` on the source and the requested destination, acquired in
-sorted order so two opposite moves cannot deadlock. With
-`on_conflict="rename"`, the chosen candidate is locked too before its
-existence is re-checked; any competing move that targets the same requested
-destination already serializes on the shared lock.
+## Authorization (at enqueue)
 
-### Order of operations (cloud mode)
+Enqueue runs in the request with the caller's `UserPrincipal`, in the same
+order `sdk_delete_file` uses:
 
-1. Authorization, locks, source existence, `expected_version`, destination
-   resolution (above).
-2. **Copy** source → destination server-side, preserving content type and
-   object metadata. Objects ≤ 5 GiB use `CopyObject`; larger objects use a
-   multipart upload with `UploadPartCopy` ranges. No bytes pass through the
-   API.
-3. **Verify** the destination: `HeadObject` content length equals the
-   source's; for single-request copies the ETag must also match. Mismatch →
-   delete the destination copy, 500 `copy_verification_failed`.
-4. **Move metadata** in place: the source's `FileMetadata` row gets the new
-   `path` and `s3_key` (keeping `id`, `created_by`, `created_at`, size, hash,
-   content type). If the source has no metadata row, insert one for the
-   destination from the verified `HeadObject` values. Flushed, not committed.
-5. **Delete** the source object — only now, after the destination is written
-   and verified.
-6. **Commit**, then publish `file_change` `delete` for the source and `write`
-   for the destination (existing consumers need no change).
+1. Resolve effective scope (Solution context wins) — `resolve_effective_scope`.
+2. `require_declared_solution_file_location`.
+3. Per item, before any existence probe: path validation (`source ==
+   destination`, or a path `resolve_s3_key` rejects → a 400 result), then
+   file policy with denial audit via `require_file_policy` /
+   `deny_file_policy`:
+   - `read` on the source (without it, delete + write would let a caller move
+     an unreadable file into a path they can read),
+   - `delete` on the source,
+   - `write` on the requested destination.
+4. Items that fail step 3 are recorded as results and left out of the job's
+   work list. If no item passes, nothing is enqueued and the endpoint returns
+   the status shared by every item when they agree (403 or 400), otherwise
+   400 with the per-item results in the error detail.
 
-Failure handling: any failure in steps 2–5 rolls back the transaction and
-deletes the destination copy if this call created it, so the caller sees the
-pre-move state and can retry. The only unrecoverable window is a commit
-failure after step 5 (source object gone, metadata still at the old path);
-it is logged with both paths.
+The payload stores, per authorized item, the source, the requested
+destination, and the resolved S3 keys; plus the location, effective scope,
+`solution_id`, install `organization_id`, `on_conflict`, the requester, and the
+pre-recorded results of rejected items — enough to run after the request
+context is gone. It holds no credentials.
 
-### Local mode
+Rename mode: candidates differ from the requested destination only in the file
+name (same directory) and are authorized by the requested destination's
+`write` grant. A file-level policy written for one exact candidate name is the
+only case where a candidate's effective policy could differ; the operation
+docs state this.
 
-Same scope, location, and policy checks as cloud mode (as `sdk_delete_file`
-does, the checks run before the mode branch); then `os.replace` after the
-same conflict/rename resolution. No metadata, commit, or publish side
-effects, matching local `write`/`delete`.
+Policy and claims are evaluated once, at enqueue. A grant revoked while a job
+is queued does not stop its authorized items — the same semantics every other
+platform job has.
+
+## Job: `files.move` (`api/src/jobs/platform/file_move.py`)
+
+### Policy
+
+```
+PlatformJobPolicy(
+    timeout_seconds=4 * 60 * 60,
+    max_attempts=1,
+    retry_on_runner_loss=False,      # a half-done item is not safely repeatable
+    allow_running_cancellation=True, # honored between items only
+    min_memory_headroom_mb=128,      # copies are server-side; no bytes in memory
+)
+```
+
+Dedupe key: sha256 of (requester, location, effective scope, `on_conflict`,
+ordered items). Retrying an identical enqueue while the job is active reuses
+it; the requester can always read the reused job.
+
+### Per-item execution
+
+The handler runs items sequentially. Each item gets its own transaction in the
+job's DB session, and every item ends with `commit` (success) or `rollback`
+(anything else) before the next item starts, so one failure cannot leave the
+session in a failed state for later items.
+
+1. **Lock.** `lock_file_mutation` (`pg_advisory_xact_lock`) on the source and
+   destination paths in sorted order. These are transaction-scoped locks,
+   compatible with transaction-mode PgBouncer. The transaction stays open
+   through the copy, holding one connection in the job's own process (not the
+   API pool); concurrent `files.write` / `files.delete` on those two paths
+   wait for this item.
+2. **Source.** `HeadObject` the source: missing → 404. Record its size, ETag,
+   content type, and user metadata.
+3. **Destination.** `HeadObject` the destination.
+   - `error` mode: exists → 409 `{"reason": "file_exists", "path": ...}`
+     (no version fields, so no read of the destination).
+   - `rename` mode: one `ListObjectsV2` on the destination directory with
+     prefix `"{stem} ("` picks the lowest free `n` for `{stem} ({n}){ext}`
+     (`os.path.splitext`, so `report.pdf` → `report (1).pdf`, `.env` →
+     `.env (1)`, `a.tar.gz` → `a.tar (1).gz`); lock the chosen candidate and
+     `HeadObject` it to confirm. More than 1000 taken → 409
+     `{"reason": "no_available_name"}`.
+4. **Copy** server-side with `CopySourceIfMatch=<source ETag>`, so the bytes
+   copied are the bytes inspected in step 2 (a concurrent overwrite fails the
+   copy instead of moving different content).
+   - ≤ 5 GiB: `CopyObject` (default `MetadataDirective=COPY` keeps content
+     type and metadata).
+   - > 5 GiB: multipart upload created with the source's `ContentType` and
+     `Metadata`; `UploadPartCopy` with part size
+     `max(256 MiB, ceil(size / 10000))` (within S3's 5 MiB–5 GiB part limits
+     and 10,000-part cap) and `CopySourceIfMatch` on every part;
+     `AbortMultipartUpload` on any failure.
+5. **Verify** with `HeadObject` on the destination: content length equals the
+   source size. ETags are not compared — a copy of a multipart-uploaded object
+   legitimately gets a different ETag. Mismatch → cleanup (below), 500
+   `copy_verification_failed`.
+6. **Metadata.** Delete any existing `FileMetadata` row at the destination
+   path (a stale row whose object is gone would otherwise violate the unique
+   index), then update the source row in place: new `path` and `s3_key`,
+   `updated_by` = requester, `updated_at` = now; `id`, `created_by`,
+   `created_at`, size, sha256, and content type are kept. Rows are located
+   with exactly the keying `record_file_write_metadata` uses — `solution_id`
+   rows by `(solution_id, location, path)`, others by
+   `_scope_to_org_id(location, scope)` — not the caller-org keying of the
+   delete path. If the source has no row, insert one for the destination from
+   step 2's values (`sha256` NULL, `created_by` = requester). Flushed, not yet
+   committed.
+7. **Delete source** with a delete that raises on failure (the existing
+   `delete_raw_from_s3` swallows all errors and cannot be used), then
+   `HeadObject` to confirm the source is gone. Failure → cleanup, 500
+   `source_delete_failed`. Only reached after steps 4–5 succeed.
+8. **Commit**, then publish `file_change` `delete` (source) and `write`
+   (final destination). Save a job checkpoint with the results so far and
+   report progress (`current` = items done, `total` = items).
+
+**Cleanup** (failure in steps 4–7): roll back, then delete the destination
+copy with the raising delete — only if this item created it. If cleanup
+itself fails, the item's result is 500 `cleanup_failed` with both S3 keys, and
+the job publishes an operator log entry (`context.log`) naming them, because
+an orphaned copy under a new prefix can be readable there.
+
+**Runner loss mid-item** (the job is not retried): the source object and its
+metadata are untouched until step 8's commit, so at worst an untracked copy
+exists at the destination. The checkpoint lists every completed item; the job
+fails with `runner_lost`, and the interrupted item's destination key is
+recorded in the checkpoint before its copy starts so the caller can resolve
+it. A retry of that item reports 409 `file_exists` for the orphan rather than
+overwriting it.
 
 ## Surfaces
 
-Mirrors `files.delete` end to end:
-
 | Layer | Change |
 |---|---|
-| Shared service | `sdk_move_file` (one file; the only move implementation) and `sdk_move_files` (request-level checks once, then `sdk_move_file` per item, mapping each `FileServiceError` to a result) in `api/shared/sdk_files.py`, both exported in `__all__` |
-| Backends | `FileBackend.move`; `LocalBackend.move` (`os.replace`); `S3Backend.move` delegates copy/verify/delete to `FileStorageService` |
-| Storage | `copy_raw_in_s3(src_key, dst_key)` with single/multipart copy + `head_raw_s3` for verification (`api/src/services/file_storage/`) |
-| Metadata | `FilePolicyService.move_metadata(...)` keyed like `upsert_metadata` / `delete_metadata` (solution rows by `solution_id`, org rows by `organization_id`) |
-| HTTP | `FileMoveRequest`/`FileMoveResponse` + `POST /api/files/move`; `FileMoveBatchRequest`/`FileMoveBatchResponse`/`FileMoveBatchResult` + `POST /api/files/move-many` in `api/src/routers/files.py` |
-| Registries | `workspace.files.move` (CLI `files move`, MCP binding matching delete) and `workspace.files.move_many` (no CLI command: a batch is an SDK primitive, recorded as a catalog exclusion) in `operation_catalog.py`; `access_list.py` entries for both routes; both paths in `FILES_ROUTE_PATHS` (`worker_sdk_http.py`) so workflows reach them over the engine socket |
-| Python SDK | `files.move(...)` and `files.move_many(...)` in `api/bifrost/files.py` (`location` is required on both, unlike the other methods, because their `workspace` default is the one value move rejects) |
-| CLI | `bifrost files move SOURCE DESTINATION --location … [--expected-version …] [--rename]`, prints the final path (`api/bifrost/commands/files.py`) |
-| Web SDK | `files.move(source, destination, options)` → `{ path, renamed }` and `files.moveMany(items, options)` → per-item results in `client/src/lib/app-sdk/files.ts` |
-| Generated | `client/src/lib/v1.d.ts`; CLI contract fingerprint (additive — fingerprint only, no `MIN_CLI_VERSION` bump); skill-truth appendices |
-| Product Updates | One feature entry ("Move files in a location", covering both operations) with a disposition file |
+| Job | `api/src/jobs/platform/file_move.py` (payload model v1, handler, policy, definition); registered in `api/src/jobs/platform/registry.py` |
+| Enqueue service | `sdk_enqueue_file_moves` in `api/shared/sdk_files.py`, reusing `resolve_effective_scope`, `require_declared_solution_file_location`, `authorize_file_policy`/`deny_file_policy`, `install_org_id`; calls `enqueue_platform_job` with dedupe key, requester, resource metadata, title, and notification per the platform-job contract |
+| Per-item move | `api/src/services/file_storage/` (lock, head, rename, copy, verify, metadata, strict delete, cleanup) |
+| Storage | `S3StorageClient`: `head_object`, `copy_object_if_match` (single + multipart part-copy), `delete_object_strict`, `list_keys_with_prefix` |
+| Metadata | `FilePolicyService.move_metadata(...)` with write-path keying |
+| HTTP | `FileMoveRequest`, `FileMoveBatchRequest`, `FileMoveResult` (job result model); `POST /api/files/move` and `POST /api/files/move-many` in `api/src/routers/files.py`, each returning `202 PlatformJobAccepted` + `Location` |
+| Registries | `operation_catalog.py`: `workspace.files.move` (CLI `files move`) and `workspace.files.move_many` (CLI excluded). Both carry explicit `mcp` exclusions (`move` is not in `_MCP_VERBS`, and no file-content MCP tools exist — the `bifrost_file_delete` binding is dangling and is not copied), plus `native_builder` and `manifest` dispositions. `access_list.py` entries for both routes. Both enqueue paths added to `FILES_ROUTE_PATHS` (and its "All eight" comment updated). `test_operation_inventory.py` counts updated. |
+| Python SDK | `files.move`, `files.move_many` (enqueue + poll) |
+| CLI | `bifrost files move` (enqueue + `poll_platform_job`) |
+| Generated | `client/src/lib/v1.d.ts`; skill-truth appendices (`python api/scripts/skill-truth/generate.py`). Router-local request DTOs are not CLI-contract fingerprinted (`test_contract_version.py`), so no fingerprint change is expected; confirmed by running that test. |
+| Product Updates | One feature entry ("Move files in a location") with its disposition file under `product-updates/dispositions/` |
 
 ## Testing
 
-- **Unit (`tests/unit/sdk/test_sdk_files.py`)**: policy checks for read,
-  delete, and write each deny independently and audit; workspace rejected;
-  same-path rejected; 404 missing source; 409 `version_conflict`; 409
-  `file_exists`; rename picks `name (1).ext`, skips taken candidates, handles
-  extensionless names, stops at the cap; lock order is sorted; the source is
-  deleted only after copy + verify succeed; verification failure removes the
-  destination copy and keeps the source; source-delete failure rolls back and
-  removes the destination copy; commit happens before publish.
-- **Unit (router)**: commit-before-response contract alongside
-  `test_files_mutation_commit.py`.
-- **Unit (storage)**: single vs multipart copy selection at the 5 GiB
-  threshold (multipart part ranges computed correctly).
-- **E2E (`tests/e2e/platform/`)**: Solution-scoped `move_many` in a declared
-  location with a path-prefix read policy — a healthcare-style principal loses
-  read on the old prefix and gains it on the new one; denial when the caller
-  lacks delete on the source; local-mode move.
-- **Unit (batch)**: request-level failures (empty, >500, workspace, undeclared
-  location) reject before any item runs; per-item results keep request order;
-  a 403/404/409 item does not stop later items; completed items are committed
-  independently; duplicate source and duplicate destination within one batch.
-- **Client vitest (`files.test.ts`)**: request shape and response parsing for
-  `move` and `moveMany`.
-- Focused verification only (per CLAUDE.md): the tests above, `test_dto_flags`,
-  `test_contract_version`, `test_operation_catalog`, access-list tests,
-  `./test.sh quality api`, `npm run tsc` / `npm run lint`.
+- **Job handler (unit)**: per-item order — lock, head, conflict, copy with
+  `CopySourceIfMatch`, size verify, metadata, strict source delete, commit,
+  publish; the source is never deleted before verify; verify mismatch,
+  source-delete failure, and copy failure each roll back and remove the
+  destination copy; cleanup failure reports `cleanup_failed` and logs; each
+  item ends in commit or rollback (a 409 on item 2 does not break item 3);
+  checkpoint after each item, with the in-flight destination recorded before
+  its copy; cancellation honored between items, never mid-item.
+- **Rename (unit)**: `report (1).pdf`, skips taken numbers, extensionless and
+  dotfile names, `a.tar (1).gz`, cap → `no_available_name`.
+- **Storage (unit)**: single vs multipart selection at 5 GiB; part size keeps
+  parts ≤ 10,000 and ≥ 5 MiB; content type + metadata passed to
+  `create_multipart_upload`; `CopySourceIfMatch` on single and part copies;
+  abort on failure; strict delete raises.
+- **Metadata (unit)**: solution-row and org-row keying (including a superuser
+  `scope="global"` move); stale destination row removed; missing source row
+  inserts.
+- **Enqueue (unit + e2e)**: request-level 400/404/422; per-item 400/403
+  recorded (403 audited) and excluded from the work list; all-rejected →
+  nothing enqueued; 202 + `Location`; dedupe reuse; caller can read the job.
+- **E2E (`tests/e2e/platform/`)**: Solution-scoped `move_many` through the
+  real scheduler job in a declared location with a path-prefix read policy —
+  a principal with read on the old prefix loses access and one with read on
+  the new prefix gains it; metadata row moved; events published. The > 5 GiB
+  multipart path has no live coverage (fixture size) and is covered only by
+  the storage unit tests — stated deliberately.
+- **SDK/CLI (unit)**: enqueue + poll to terminal, per-item results, `move`
+  raising the item's error, `TimeoutError` wording with the job id; CLI uses
+  `poll_platform_job`.
+- **Registry tripwires**: `test_operation_catalog.py`,
+  `test_operation_inventory.py`, access-list tests, `test_contract_version.py`,
+  skill-truth freshness, `./test.sh quality api`.
+- **Platform-job contract** items from `docs/architecture/platform-jobs.md`
+  that this policy affects: payload validation and registry dispatch,
+  structured failure, duplicate enqueue, runner loss without retry,
+  cancellation, notification projection, and caller visibility.
