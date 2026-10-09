@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 
 // Capture the latest subscribe callback so tests can drive events.
@@ -26,6 +26,9 @@ vi.mock("./ws-client", () => ({
 }));
 
 import { useTable } from "./use-table";
+import type { PlatformAuthBridge } from "./transport";
+
+type AuthGlobal = typeof globalThis & { __BIFROST_PLATFORM_AUTH_V1__?: PlatformAuthBridge };
 
 function makePage(ids: string[], total: number, table_id = "tbl-uuid") {
   return new Response(
@@ -55,6 +58,33 @@ describe("useTable", () => {
     subscribeMock.mockClear();
     lastOnEvent = null;
     lastOnReconnect = null;
+  });
+
+  afterEach(() => {
+    delete (globalThis as AuthGlobal).__BIFROST_PLATFORM_AUTH_V1__;
+  });
+
+  it("recovers the snapshot after the session cookie lapses (v1 renewal)", async () => {
+    const refreshAccessToken = vi.fn(async () => true);
+    (globalThis as AuthGlobal).__BIFROST_PLATFORM_AUTH_V1__ = {
+      getAccessToken: () => null,
+      canRefreshAccessToken: () => true,
+      refreshAccessToken,
+      handleAuthenticationFailure: vi.fn(),
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(new Response('{"detail":"Not authenticated"}', { status: 401 }))
+        .mockResolvedValueOnce(makePage(["p1", "p2"], 2)),
+    );
+
+    const { result } = renderHook(() => useTable("crm-providers-local"));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error).toBeNull();
+    expect(result.current.rows.map((r) => r.id)).toEqual(["p1", "p2"]);
+    expect(refreshAccessToken).toHaveBeenCalledTimes(1);
   });
 
   it("returns initial snapshot flattened to match the ws event shape", async () => {
