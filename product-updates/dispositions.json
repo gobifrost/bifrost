@@ -1841,16 +1841,16 @@
       }
     },
     "pr:941": {
-      "classification": "other",
+      "classification": "omit",
       "entry_ids": [],
+      "reason": "Table column order follows the design rule (Organization first); no new functionality or customer action.",
       "review": {
-        "status": "draft",
+        "status": "approved",
         "evidence": [
-          "https://github.com/gobifrost/bifrost/pull/941"
+          "https://github.com/gobifrost/bifrost/pull/941",
+          "Product review: Jack approved on 2026-10-09 with no release note (not a feature)."
         ]
-      },
-      "summary": "Show the organization first in the Solutions table and in phone summaries.",
-      "category": "fix"
+      }
     }
   }
 }
