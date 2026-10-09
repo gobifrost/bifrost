@@ -17,6 +17,18 @@
         ]
       }
     },
+    "pr:956": {
+      "classification": "omit",
+      "entry_ids": [],
+      "reason": "Internal operational rollout-monitor budget; no customer-facing feature or action.",
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/956",
+          "Root review: approved omission. Six serialized worker readiness gates (62–75s) and 330s graceful drains require a bounded CI monitoring budget; the fake kubectl contract verifies labeled workers receive 2580s while API and client deployments retain 5m."
+        ]
+      }
+    },
     "pr:708": {
       "classification": "omit",
       "entry_ids": [],
