@@ -727,7 +727,10 @@ class SolutionCaptureService:
         for pos, name in enumerate(sorted(names)):
             integ = (
                 await self.db.execute(
-                    select(Integration).where(Integration.name == name)
+                    select(Integration).where(
+                        Integration.name == name,
+                        Integration.is_deleted.is_(False),
+                    )
                 )
             ).scalar_one_or_none()
             if integ is None:

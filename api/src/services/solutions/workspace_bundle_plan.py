@@ -647,7 +647,9 @@ class WorkspaceBundlePlanner:
         from src.models.orm.integrations import Integration
 
         rows = (
-            await self.db.execute(select(Integration.id, Integration.name))
+            await self.db.execute(
+                select(Integration.id, Integration.name).where(Integration.is_deleted.is_(False))
+            )
         ).all()
         return {str(name): row_id for row_id, name in rows}
 

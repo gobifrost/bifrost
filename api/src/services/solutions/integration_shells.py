@@ -28,7 +28,10 @@ async def upsert_integration_shells(
         template = decl.get("template") or {}
         exists = (
             await db.execute(
-                select(Integration).where(Integration.name == name)
+                select(Integration).where(
+                    Integration.name == name,
+                    Integration.is_deleted.is_(False),
+                )
             )
         ).scalar_one_or_none()
         if exists is not None:

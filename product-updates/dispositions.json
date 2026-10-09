@@ -1941,6 +1941,19 @@
           "Product review: Jack approved on 2026-10-09 with no release note (not a feature)."
         ]
       }
+    },
+    "pr:957": {
+      "classification": "other",
+      "entry_ids": [],
+      "category": "fix",
+      "summary": "Deleted integration names can be reused as clean new connections without reviving their previous settings.",
+      "review": {
+        "status": "approved",
+        "evidence": [
+          "https://github.com/gobifrost/bifrost/pull/957",
+          "Product review: Jack approved this bounded integration-reuse repair as Other/fix on 2026-10-09."
+        ]
+      }
     }
   }
 }

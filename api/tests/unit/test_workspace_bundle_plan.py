@@ -6,6 +6,8 @@ from uuid import UUID
 
 import pytest
 
+from src.models.orm.integrations import Integration
+
 
 def test_solution_config_declaration_fields_have_workspace_projection_review() -> None:
     """A new declaration field must prompt review of the manual workspace mapping."""
@@ -281,6 +283,23 @@ def test_planner_lists_integration_shells() -> None:
     shell_known = next(item for item in planned_known.preview.items if item.kind == "integration")
     assert shell_known.classification == "unchanged"
     assert shell_known.target_id == _UUID(int=9)
+
+
+async def test_planner_prefetch_ignores_deleted_integration_names(db_session) -> None:
+    from src.services.solutions.workspace_bundle_plan import WorkspaceBundlePlanner
+
+    name = f"retired-{UUID(int=8)}"
+    deleted = Integration(name=name, is_deleted=True)
+    active = Integration(name=name)
+    db_session.add_all([deleted, active])
+    await db_session.flush()
+
+    existing = await WorkspaceBundlePlanner(
+        db_session, preview_id=UUID(int=7)
+    )._prefetch_existing_integrations()
+
+    assert existing[name] == active.id
+    assert deleted.id not in existing.values()
 
 
 def test_planner_includes_hashed_source_files_and_detects_conflicts(tmp_path) -> None:

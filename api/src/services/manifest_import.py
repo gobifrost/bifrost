@@ -568,7 +568,9 @@ class ManifestResolver:
         cache["wf_run_identity"] = {row[0]: row[1] for row in identity_result.all()}
 
         # Integrations: {name: id} + {id} set
-        integ_result = await self.db.execute(select(Integration.id, Integration.name))
+        integ_result = await self.db.execute(
+            select(Integration.id, Integration.name).where(Integration.is_deleted.is_(False))
+        )
         cache["integ_ids"] = set()
         cache["integ_by_name"] = {}
         for row in integ_result.all():
@@ -1995,7 +1997,10 @@ class ManifestResolver:
             existing_by_name = cache["integ_by_name"].get(integ_name)
         else:
             by_name = await self.db.execute(
-                select(Integration.id).where(Integration.name == integ_name)
+                select(Integration.id).where(
+                    Integration.name == integ_name,
+                    Integration.is_deleted.is_(False),
+                )
             )
             existing_by_name = by_name.scalar_one_or_none()
 
