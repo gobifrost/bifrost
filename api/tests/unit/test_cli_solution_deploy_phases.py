@@ -220,6 +220,11 @@ def test_deploy_embeds_local_prebuild_without_mutating_workspace(tmp_path) -> No
         app_id: {
             "dist_files": {"index.html": "<html>built locally</html>"},
             "bin_dist_files": {"asset.bin": "_wA="},
+            "prebuilt_sdk_metadata": {
+                "package_version": "9.9.9",
+                "fingerprint": "sdk-built-by-cli",
+                "contract_version": 42,
+            },
         }
     }
     with (
@@ -252,4 +257,5 @@ def test_deploy_embeds_local_prebuild_without_mutating_workspace(tmp_path) -> No
         assert zf.read("apps/dash/index.html") == b"<div id='root'></div>"
     assert uploaded["apps"][app_id]["dist_files"] == prebuilt[app_id]["dist_files"]
     assert uploaded["apps"][app_id]["bin_dist_files"] == prebuilt[app_id]["bin_dist_files"]
+    assert uploaded["apps"][app_id]["prebuilt_sdk_metadata"] == prebuilt[app_id]["prebuilt_sdk_metadata"]
     assert "dist_files" not in yaml.safe_load(apps_manifest.read_text())["apps"][app_id]

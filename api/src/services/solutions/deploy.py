@@ -233,6 +233,36 @@ class CompiledSolutionAppDeployment:
     source_built: bool = False
 
 
+def _prebuilt_sdk_metadata(value: object) -> "CurrentApplicationSdkMetadata | None":
+    """Accept the complete stamp emitted after a CLI-installed SDK build.
+
+    Generic prebuilt bundles have no trusted build provenance and intentionally
+    remain unknown. The CLI records this only after reading the exact SDK package
+    npm installed for its local Vite build.
+    """
+    if not isinstance(value, dict):
+        return None
+    package_version = value.get("package_version")
+    fingerprint = value.get("fingerprint")
+    contract_version = value.get("contract_version")
+    if (
+        not isinstance(package_version, str)
+        or not package_version
+        or not isinstance(fingerprint, str)
+        or not fingerprint
+        or not isinstance(contract_version, int)
+        or isinstance(contract_version, bool)
+    ):
+        return None
+    from src.services.application_sdk_status import CurrentApplicationSdkMetadata
+
+    return CurrentApplicationSdkMetadata(
+        package_version=package_version,
+        fingerprint=fingerprint,
+        contract_version=contract_version,
+    )
+
+
 @dataclass
 class DeployResult:
     """Counts from one full-replace deploy.
@@ -1256,6 +1286,10 @@ class SolutionDeployer:
                 # UTF-8-encoded (which would corrupt them).
                 "dist": mapp.get("dist_files"),
                 "bin_dist": mapp.get("bin_dist_files"),
+                # The CLI adds this transport-only value only after reading the
+                # SDK package npm installed for its local Vite build. A generic
+                # prebuilt bundle lacks it and therefore remains SDK-unknown.
+                "prebuilt_sdk_metadata": mapp.get("prebuilt_sdk_metadata"),
                 "dependencies": mapp.get("dependencies") or {},
             })
         return builds
@@ -1303,6 +1337,7 @@ class SolutionDeployer:
             for rel, b64 in (b.get("bin") or {}).items():
                 src_bytes[rel] = _b64.b64decode(b64)
             source_built = prebuilt_bytes is None
+            sdk_metadata = None
             # compile_dist is subprocess-bound (npm/vite) → run off the loop.
             dist = await asyncio.to_thread(
                 builder.compile_dist,
@@ -1315,6 +1350,10 @@ class SolutionDeployer:
             expected_old = b["expected_old_deployment_id"]
             if source_built and current_metadata is None:
                 current_metadata = await asyncio.to_thread(current_sdk_metadata)
+            if source_built:
+                sdk_metadata = current_metadata
+            else:
+                sdk_metadata = _prebuilt_sdk_metadata(b.get("prebuilt_sdk_metadata"))
             out.append(
                 CompiledSolutionAppDeployment(
                     app_id=b["app_id"],
@@ -1323,7 +1362,7 @@ class SolutionDeployer:
                     expected_old_deployment_id=expected_old,
                     superseded_deployment_id=expected_old,
                     dist=dist,
-                    sdk_metadata=current_metadata if source_built else None,
+                    sdk_metadata=sdk_metadata,
                     source_built=source_built,
                 )
             )

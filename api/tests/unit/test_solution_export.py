@@ -156,7 +156,13 @@ def test_export_round_trips_through_preview() -> None:
 
 
 def test_export_apps_round_trip_source_and_logo() -> None:
-    data = build_workspace_zip(_bundle())
+    bundle = _bundle()
+    bundle.apps[0]["prebuilt_sdk_metadata"] = {
+        "package_version": "9.9.9",
+        "fingerprint": "sdk-built-by-cli",
+        "contract_version": 42,
+    }
+    data = build_workspace_zip(bundle)
     result = preview_zip(data)
 
     assert [a["id"] for a in result.apps] == [APP_ID]
@@ -172,6 +178,9 @@ def test_export_apps_round_trip_source_and_logo() -> None:
     # The app logo came back as a real file referenced by the manifest.
     assert app["logo_b64"] == _PNG
     assert app["logo_content_type"] == "image/png"
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        manifest = archive.read(".bifrost/apps.yaml").decode()
+    assert "prebuilt_sdk_metadata" not in manifest
 
 
 def test_export_python_source_verbatim() -> None:
