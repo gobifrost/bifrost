@@ -14,6 +14,7 @@ access token for MCP requests.
 """
 
 import hashlib
+import hmac
 import json
 import logging
 import secrets
@@ -41,9 +42,44 @@ TTL_MCP_AUTH_CODE = 300  # 5 minutes for authorization code
 TTL_MCP_CLIENT = 86400 * 30  # 30 days for registered clients
 
 
+def _secret_hmac(message: str) -> str:
+    """Hex HMAC-SHA256 of ``message`` under the platform secret key."""
+    from src.config import get_settings
+
+    return hmac.new(
+        get_settings().secret_key.encode(), message.encode(), hashlib.sha256
+    ).hexdigest()
+
+
 def _mcp_auth_code_key(code: str) -> str:
-    """Key for MCP authorization code storage."""
-    return f"bifrost:mcp:auth_code:{code}"
+    """Key for MCP authorization code storage, derived from the code with the server secret."""
+    return f"bifrost:mcp:auth_code:{_secret_hmac(code)}"
+
+
+def _auth_code_tag(code: str, record: dict[str, Any]) -> str:
+    canonical = json.dumps(
+        {"code": code, "record": record}, sort_keys=True, separators=(",", ":")
+    )
+    return _secret_hmac(canonical)
+
+
+def _seal_auth_code_record(code: str, record: dict[str, Any]) -> str:
+    """Serialize an authorization code record with its server-secret tag."""
+    return json.dumps({"record": record, "tag": _auth_code_tag(code, record)})
+
+
+def _open_auth_code_record(code: str, stored_json: str | bytes) -> dict[str, Any] | None:
+    """Return the stored record for ``code`` if its tag verifies, else None."""
+    stored = json.loads(stored_json)
+    if not isinstance(stored, dict):
+        return None
+    record = stored.get("record")
+    tag = stored.get("tag")
+    if not isinstance(record, dict) or not isinstance(tag, str):
+        return None
+    if not hmac.compare_digest(_auth_code_tag(code, record), tag):
+        return None
+    return record
 
 
 def _mcp_client_key(client_id: str) -> str:
@@ -327,7 +363,7 @@ class BifrostAuthProvider:
         await r.setex(
             _mcp_auth_code_key(auth_code),
             TTL_MCP_AUTH_CODE,
-            json.dumps(auth_code_data)
+            _seal_auth_code_record(auth_code, auth_code_data),
         )
 
         # Redirect to client with authorization code
@@ -376,7 +412,8 @@ class BifrostAuthProvider:
 
             # Get auth code data from Redis
             r = await get_shared_redis()
-            auth_code_data_json = await r.get(_mcp_auth_code_key(code))
+            code_key = _mcp_auth_code_key(code)
+            auth_code_data_json = await r.get(code_key)
 
             if not auth_code_data_json:
                 return JSONResponse(
@@ -384,10 +421,15 @@ class BifrostAuthProvider:
                     status_code=400
                 )
 
-            auth_code_data = json.loads(auth_code_data_json)
-
             # Delete auth code (one-time use)
-            await r.delete(_mcp_auth_code_key(code))
+            await r.delete(code_key)
+
+            auth_code_data = _open_auth_code_record(code, auth_code_data_json)
+            if auth_code_data is None:
+                return JSONResponse(
+                    {"error": "invalid_grant", "error_description": "Invalid or expired authorization code"},
+                    status_code=400
+                )
 
             # Validate redirect_uri matches
             if redirect_uri != auth_code_data["redirect_uri"]:
