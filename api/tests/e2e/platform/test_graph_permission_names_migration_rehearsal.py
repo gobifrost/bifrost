@@ -37,7 +37,7 @@ from tests.e2e.platform.test_r2b_roles_migration_rehearsal import (
 
 pytestmark = pytest.mark.e2e
 
-PREVIOUS_REVISION = "20261007_custom_global_identity"
+PREVIOUS_REVISION = "20261009_merge_integ_identity"
 REVISION = "20261009_graph_permission_names"
 
 PLATFORM_ADMIN_ROLE_ID = UUID("00000000-0000-0000-0000-000000000005")

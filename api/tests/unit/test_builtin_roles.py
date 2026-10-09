@@ -164,7 +164,7 @@ def test_migration_frozen_copies_match_live_constants():
     assert fix.down_revision == "20260929_r2b_wf_permissions"
     assert fix.USER_ROLE_ID == USER_ROLE_ID
     assert (r2b.USER_BASE_PERMISSIONS - fix.REMOVED_PERMISSIONS) | fix.ADDED_PERMISSIONS == fix.USER_BASE_PERMISSIONS
-    assert graph.down_revision == "20261007_custom_global_identity"
+    assert graph.down_revision == "20261009_merge_integ_identity"
     assert graph.USER_ROLE_ID == str(USER_ROLE_ID)
     assert graph.PLATFORM_OPERATOR_ROLE_ID == str(PLATFORM_OPERATOR_ROLE_ID)
     user_at_graph = _graph_renamed(graph, USER_ROLE_ID, fix.USER_BASE_PERMISSIONS)

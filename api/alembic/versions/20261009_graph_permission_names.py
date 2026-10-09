@@ -1,7 +1,7 @@
 """Rename permissions to the Graph grammar and split the everyday views
 
 Revision ID: 20261009_graph_permission_names
-Revises: 20261007_custom_global_identity
+Revises: 20261009_merge_integ_identity
 Create Date: 2026-10-09
 
 A permission is now ``<resource>.<action>[.all]``, and the resource never
@@ -75,7 +75,7 @@ ADDED_LAUNCH_PERMISSIONS: dict[str, tuple[str, ...]] = {
 }
 
 revision: str = "20261009_graph_permission_names"
-down_revision: Union[str, None] = "20261007_custom_global_identity"
+down_revision: Union[str, None] = "20261009_merge_integ_identity"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
