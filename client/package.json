@@ -28,7 +28,7 @@
 		"playwright:install": "playwright install chromium"
 	},
 	"dependencies": {
-		"@atlaskit/pragmatic-drag-and-drop": "^3.1.0",
+		"@atlaskit/pragmatic-drag-and-drop": "^4.0.0",
 		"@atlaskit/pragmatic-drag-and-drop-auto-scroll": "^3.2.1",
 		"@atlaskit/pragmatic-drag-and-drop-hitbox": "^2.2.2",
 		"@babel/standalone": "^8.0.6",
