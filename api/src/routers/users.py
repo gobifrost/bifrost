@@ -135,8 +135,6 @@ async def create_user(
     """Create a new user."""
     from shared.sdk_users import UserServiceError, create_user as create_user_service
 
-    if request.is_superuser:
-        access_checks.note_power("privilegedaccess.readwrite", request.organization_id, subject="user:new")
     try:
         return await create_user_service(
             db,
@@ -393,9 +391,6 @@ async def update_user(
     """Update a user."""
     from shared.sdk_users import UserServiceError, update_user as update_user_service
 
-    if request.is_superuser is not None:
-        # The user's organization is resolved by the service; noted at the caller's.
-        access_checks.note_power("privilegedaccess.readwrite", user.organization_id, subject=f"user:{user_id}")
     try:
         return await update_user_service(
             db,

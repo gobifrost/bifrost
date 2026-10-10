@@ -16,11 +16,23 @@ contains a dot. Every role's rows change as follows:
 - ``.all`` now means other people's private items. The old ``.all`` reads
   meant extended management detail, so each moves to the permission that
   now names that detail: the full view (``x.read``), or ``roles.read`` for
-  which roles share an entity, plus ``settings.read`` for workflow keys.
+  which roles share an entity.
 
-Each role keeps exactly the access it had. The User and Platform Operator
-roles hold only plain reads of the basic resources among these, so for them
-the change is the readbasic rename.
+Each built-in role keeps exactly the access it had. The User and Platform
+Operator roles hold only plain reads of the basic resources among these, so
+for them the change is the readbasic rename. Two merges can change what a
+custom role reaches:
+
+- ``workflows.read.all`` moves to ``roles.read`` only. The workflow keys
+  view it also covered now needs ``settings.read``, which names every admin
+  settings view (AI and sign-in settings, required instructions and more),
+  so it is granted deliberately instead of carried over.
+- The role routes that ``roles.read`` names are checked at the platform
+  boundary, so a custom role holding a merged ``roles.read`` (from
+  ``agents.read.all`` or ``workflows.read.all``) at an organization boundary
+  will not satisfy them once they are enforced.
+
+No built-in role holds either old read.
 
 Launching is now a permission too, so the built-in roles gain the launch
 permissions for what they can already start: the User role gains Run
@@ -64,7 +76,7 @@ DETAIL_READS: tuple[str, ...] = ("apps", "forms", "mcp", "settings")
 MERGED_READS: dict[str, tuple[str, ...]] = {
     "reports.read.all": ("reports.read",),
     "agents.read.all": ("roles.read",),
-    "workflows.read.all": ("roles.read", "settings.read"),
+    "workflows.read.all": ("roles.read",),
 }
 
 # The built-in roles' fixed ids (shared/builtin_roles.py), and the launch

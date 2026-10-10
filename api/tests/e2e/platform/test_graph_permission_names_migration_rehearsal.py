@@ -8,7 +8,9 @@ launch permissions), Platform Operator's description says it runs agents, the
 custom role's strings move to their Graph names, and the grants' dotted
 sub-resource names are renamed. The downgrade restores the
 previous rows exactly. The custom role holds only strings the downgrade can
-restore (the merged reads cannot be split back; the migration says so).
+restore; a second custom role holds an old workflow read that merges into
+``roles.read`` alone (no ``settings.read``) and stays merged on the downgrade
+(the merged reads cannot be split back; the migration says so).
 
 The expected sets are frozen here, like the migration's own, so a later edit to
 the live constants cannot silently change what this revision is checked to do.
@@ -136,6 +138,8 @@ CUSTOM_AFTER = {
     "settings.read",
     "userlifecycle.readwrite",
 }
+MERGED_BEFORE = {"workflows.read.all"}
+MERGED_AFTER = {"roles.read"}
 GRANTS_BEFORE = {
     "publish": "apps.deploy.execute",
     "build": "solutions.build.execute",
@@ -162,20 +166,24 @@ def _downgrade(database_url: str, revision: str) -> None:
 
 async def _seed(database_url: str, ids: dict[str, str]) -> None:
     async def seed(connection: AsyncConnection) -> None:
-        await connection.execute(
-            sa.text(
-                "INSERT INTO roles (id, name, description, is_base, is_builtin, created_by) "
-                "VALUES (CAST(:id AS uuid), 'Rehearsal Custom', 'custom', FALSE, FALSE, :actor)"
-            ),
-            {"id": ids["custom"], "actor": ACTOR},
-        )
-        for permission in sorted(CUSTOM_BEFORE):
+        for key, name, permissions in (
+            ("custom", "Rehearsal Custom", CUSTOM_BEFORE),
+            ("merged", "Rehearsal Merged", MERGED_BEFORE),
+        ):
             await connection.execute(
                 sa.text(
-                    "INSERT INTO role_permissions (role_id, permission) VALUES (CAST(:id AS uuid), :permission)"
+                    "INSERT INTO roles (id, name, description, is_base, is_builtin, created_by) "
+                    "VALUES (CAST(:id AS uuid), :name, 'custom', FALSE, FALSE, :actor)"
                 ),
-                {"id": ids["custom"], "permission": permission},
+                {"id": ids[key], "name": name, "actor": ACTOR},
             )
+            for permission in sorted(permissions):
+                await connection.execute(
+                    sa.text(
+                        "INSERT INTO role_permissions (role_id, permission) VALUES (CAST(:id AS uuid), :permission)"
+                    ),
+                    {"id": ids[key], "permission": permission},
+                )
         await connection.execute(
             sa.text(
                 "INSERT INTO workflows (id, name, function_name, path, organization_id, endpoint_enabled) "
@@ -197,7 +205,7 @@ async def _seed(database_url: str, ids: dict[str, str]) -> None:
 
 async def _snapshot(database_url: str, ids: dict[str, str]) -> dict[str, Any]:
     async def snapshot(connection: AsyncConnection) -> dict[str, Any]:
-        roles = {**_ROLES, "custom": ids["custom"]}
+        roles = {**_ROLES, "custom": ids["custom"], "merged": ids["merged"]}
         permissions: dict[str, set[str]] = {}
         for name, role_id in roles.items():
             rows = await connection.execute(
@@ -225,7 +233,7 @@ def test_roles_and_grants_move_to_graph_names_and_back() -> None:
     database_name = f"bifrost_r2b_rehearsal_{uuid4().hex[:12]}"
     _assert_safe_database_name(database_name)
     database_url = _direct_database_url(database_name)
-    ids = {key: str(uuid4()) for key in ("custom", "workflow", *GRANTS_BEFORE)}
+    ids = {key: str(uuid4()) for key in ("custom", "merged", "workflow", *GRANTS_BEFORE)}
 
     try:
         asyncio.run(_create_database(database_name))
@@ -239,6 +247,7 @@ def test_roles_and_grants_move_to_graph_names_and_back() -> None:
                 "operator": OPERATOR_BEFORE,
                 "reader": {"secrets.read"},
                 "custom": CUSTOM_BEFORE,
+                "merged": MERGED_BEFORE,
             },
             "grants": GRANTS_BEFORE,
             "operator_description": OPERATOR_DESCRIPTION_BEFORE,
@@ -253,6 +262,7 @@ def test_roles_and_grants_move_to_graph_names_and_back() -> None:
                 "operator": OPERATOR_AFTER,
                 "reader": {"secrets.read"},
                 "custom": CUSTOM_AFTER,
+                "merged": MERGED_AFTER,
             },
             "grants": GRANTS_AFTER,
             "operator_description": OPERATOR_DESCRIPTION_AFTER,
@@ -264,6 +274,9 @@ def test_roles_and_grants_move_to_graph_names_and_back() -> None:
 
         _downgrade(database_url, PREVIOUS_REVISION)
         downgraded = asyncio.run(_snapshot(database_url, ids))
-        assert downgraded == before
+        assert downgraded == {
+            **before,
+            "permissions": {**before["permissions"], "merged": MERGED_AFTER},
+        }
     finally:
         asyncio.run(_drop_database(database_name))

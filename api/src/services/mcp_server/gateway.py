@@ -747,7 +747,9 @@ class MCPAgentGatewayService:
                 pending_org = pending.get("org_id")
                 try:
                     target = UUID(pending_org) if pending_org else None
-                except ValueError as exc:
+                except (AttributeError, TypeError, ValueError) as exc:
+                    # A malformed org id (not a string, or not a UUID) is
+                    # recorded as a gap; it never fails the request.
                     access_checks.note_failure("permission", None, exc)
                 else:
                     access_checks.note_power("executions.read.all", target, subject=f"execution:{execution_id}")
