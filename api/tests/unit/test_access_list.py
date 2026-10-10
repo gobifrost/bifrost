@@ -2078,7 +2078,7 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.services.authorization.explain.RunUser.is_platform_admin": (1, "reach"),
     "src.services.authorization.explain.in_reach": (1, "reach"),
     "src.services.authorization.explain.load_run_as_target": (3, "cutover"),
-    "src.services.authorization.impersonation._authorize_for_run": (1, "cutover"),
+    "src.services.authorization.impersonation.authorize_run_as": (1, "cutover"),
     "src.services.authorization.privilege.may_change_role_assignment": (3, "privilegedaccess.readwrite"),
     "src.services.chat_artifacts.execute_artifact_tool": (4, "artifacts.read.all"),
     "src.services.chat_runs._load_authorized_agent": (5, "reach"),

@@ -78,19 +78,19 @@ async def authorize_run_as(
     if principal.embed:
         raise RunAsError(403, DENIED_MESSAGE)
     execution_credential = bool(principal.engine_execution_id or principal.service_id)
+    # The staged execution-credential rule comes first, so a service token is
+    # refused even when it names its own run user.
+    if execution_credential and not principal.is_superuser:
+        raise RunAsError(403, DENIED_MESSAGE)
     run_user_id = principal.run_user_id if execution_credential else principal.user_id
     if run_as_user_id == run_user_id:
         return None
     if execution_credential:
-        return await _authorize_for_run(db, principal, run_as_user_id)
+        return await _authorize_for_run(db, run_as_user_id)
     return await _authorize_for_person(db, await load_caller(db, principal), run_as_user_id)
 
 
-async def _authorize_for_run(
-    db: AsyncSession, principal: UserPrincipal, run_as_user_id: UUID
-) -> RunAsTarget:
-    if not principal.is_superuser:
-        raise RunAsError(403, DENIED_MESSAGE)
+async def _authorize_for_run(db: AsyncSession, run_as_user_id: UUID) -> RunAsTarget:
     target = await _load(db, run_as_user_id)
     step = run_as_user_step(target)
     if step.status == "stopped":

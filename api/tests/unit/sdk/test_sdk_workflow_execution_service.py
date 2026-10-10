@@ -107,7 +107,7 @@ async def _seed_org(db_session):
     return row
 
 
-async def _seed_user(db_session, *, org_id=None, is_superuser=False):
+async def _seed_user(db_session, *, org_id=None, is_superuser=False, identity_kind=None):
     from src.models import User as UserORM
 
     row = UserORM(
@@ -115,6 +115,7 @@ async def _seed_user(db_session, *, org_id=None, is_superuser=False):
         name="SDK WfExec",
         is_superuser=is_superuser,
         organization_id=org_id,
+        identity_kind=identity_kind,
     )
     db_session.add(row)
     await db_session.flush()
@@ -421,11 +422,12 @@ class TestExecuteRunAs:
         assert dispatched["lineage"] == expected_lineage
         assert calls == [(principal, target.id)]
 
-    async def test_a_workflow_naming_its_run_user_acts_as_the_run_user(self, db_session):
+    @pytest.mark.parametrize("identity_kind", [None, "custom"], ids=["person", "managed_identity"])
+    async def test_a_workflow_naming_its_run_user_acts_as_the_run_user(self, db_session, identity_kind):
         from src.core.constants import SYSTEM_USER_ID
 
         org = await _seed_org(db_session)
-        person = await _seed_user(db_session, org_id=org.id)
+        person = await _seed_user(db_session, org_id=org.id, identity_kind=identity_kind)
         parent = await _seed_execution(db_session, "parent", user_id=person.id, org_id=org.id)
         parent.run_user_id = person.id
         parent.started_by_user_id = person.id

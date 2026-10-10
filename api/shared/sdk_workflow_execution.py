@@ -341,7 +341,9 @@ async def execute_sdk_workflow(
             raise SdkWorkflowExecutionError(exc.status_code, exc.detail) from None
         if target is None:
             # Naming the run user is not impersonation, but the run still acts
-            # as that user: a workflow's engine token is not the run user.
+            # as that user: a workflow's engine token is not the run user. Only
+            # existence is checked: a run whose user is a managed identity
+            # passes run_as=context.user_id and must keep acting as it.
             target = await load_run_as_target(session, run_as_user_id)
             if target is None:
                 raise SdkWorkflowExecutionError(404, f"Run As user '{run_as_user_id}' not found")

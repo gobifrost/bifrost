@@ -280,6 +280,22 @@ async def test_a_workflow_runs_as_a_user_report_only(db_session: AsyncSession) -
     assert run_as == [(contoso.id, {"run_as_user_id": colleague.id})]
 
 
+async def test_a_service_token_naming_its_own_run_user_is_refused(db_session: AsyncSession) -> None:
+    contoso = await _org(db_session, "Contoso")
+    run_user = await _user(db_session, contoso)
+    service = UserPrincipal(
+        user_id=SYSTEM_USER_UUID,
+        email="system@internal.gobifrost.com",
+        organization_id=None,
+        service_id=str(uuid4()),
+        run_user_id=run_user.id,
+    )
+
+    status = await _status(db_session, service, run_user.id)
+
+    assert status == 403
+
+
 async def test_service_tokens_and_embedded_sessions_are_refused(db_session: AsyncSession) -> None:
     contoso = await _org(db_session, "Contoso")
     colleague = await _user(db_session, contoso)
