@@ -53,17 +53,33 @@ class agents:
         input: dict[str, Any] | None = None,
         *,
         output_schema: dict[str, Any] | None = None,
+        run_as: str | None = None,
     ) -> AgentRunHandle:
-        """Queue an agent and return as soon as the run is accepted."""
+        """Queue an agent and return as soon as the run is accepted.
+
+        Args:
+            agent_name: Name of the agent to run.
+            input: Structured input data for the agent.
+            output_schema: JSON Schema for the expected output.
+            run_as: User ID the run acts as. Requires Impersonate Users in
+                that user's organization. Tools run as that user; the run is
+                still yours.
+
+        Raises:
+            AgentPausedError: If the target agent is paused (is_active=False).
+            RuntimeError: If ``run_as`` was given and the server does not
+                support Run As for agents.
+        """
         client = get_client()
+        body: dict[str, Any] = {
+            "agent_name": agent_name,
+            "input": input or {},
+            "output_schema": output_schema,
+        }
+        if run_as is not None:
+            body["run_as"] = run_as
         response = await client.engine_request(
-            "POST",
-            "/api/agent-runs/enqueue",
-            json={
-                "agent_name": agent_name,
-                "input": input or {},
-                "output_schema": output_schema,
-            },
+            "POST", "/api/agent-runs/enqueue", json=body,
         )
         raise_for_status_with_detail(response)
         data = response.json()
@@ -73,6 +89,11 @@ class agents:
                 data.get("message") or f"Agent '{agent_name}' is paused.",
                 agent_id=data.get("agent_id"),
             )
+
+        # A server without Run As ignores the unknown field and the run would
+        # act as the caller; a supporting server always returns the key.
+        if run_as is not None and "run_as_user_id" not in data:
+            raise RuntimeError("This Bifrost server does not support Run As for agents")
 
         return AgentRunHandle.model_validate(data)
 
@@ -95,6 +116,7 @@ class agents:
         *,
         output_schema: dict[str, Any] | None = None,
         timeout: float | None = None,
+        run_as: str | None = None,
     ) -> dict[str, Any] | str | AgentRunPending:
         """Run an agent and wait for the result.
 
@@ -105,19 +127,23 @@ class agents:
             timeout: Optional maximum seconds to wait. The agent keeps running
                 if this wait expires. Inside a workflow, the wait also ends
                 shortly before the workflow's execution deadline.
+            run_as: User ID the run acts as. Requires Impersonate Users in
+                that user's organization. Tools run as that user; the run is
+                still yours.
 
         Returns:
             Agent output, or AgentRunPending with the run ID if the wait ends.
 
         Raises:
-            RuntimeError: If the agent run fails.
+            RuntimeError: If the agent run fails, or if ``run_as`` was given
+                and the server does not support Run As for agents.
             ValueError: If the agent is not found.
             AgentPausedError: If the target agent is paused (is_active=False).
         """
         if timeout is not None and timeout < 0:
             raise ValueError("timeout must be non-negative")
         handle = await agents.enqueue(
-            agent_name, input, output_schema=output_schema,
+            agent_name, input, output_schema=output_schema, run_as=run_as,
         )
         return await agents.wait(handle.run_id, output_schema=output_schema, timeout=timeout)
 

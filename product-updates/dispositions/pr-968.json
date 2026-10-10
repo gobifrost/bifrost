@@ -1,0 +1,14 @@
+{
+  "key": "pr:968",
+  "classification": "highlight",
+  "entry_ids": [
+    "de613145-5d41-4f02-87dc-6e5c0fdee054"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/968",
+      "Product review: controller's ruling (CLAUDE.md Product Updates)."
+    ]
+  }
+}

@@ -36,6 +36,10 @@ class AgentRun(Base):
     run_user_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), default=None
     )
+    # Whose identity tools use when it isn't the caller's; see run_as.
+    run_as_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
     iterations_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tokens_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     budget_max_iterations: Mapped[int | None] = mapped_column(Integer, default=None)
@@ -114,6 +118,7 @@ class AgentRun(Base):
         foreign_keys="AIUsage.agent_run_id",
     )
     conversation = relationship("Conversation", lazy="select")
+    run_as_user = relationship("User", foreign_keys=[run_as_user_id], lazy="select")
     child_runs: Mapped[list["AgentRun"]] = relationship(
         back_populates="parent_run",
         foreign_keys="AgentRun.parent_run_id",

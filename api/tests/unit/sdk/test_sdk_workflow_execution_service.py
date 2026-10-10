@@ -4,8 +4,9 @@ Covers ``shared.sdk_workflow_execution`` — the single implementation behind
 ``workflows.execute()`` (``POST /api/workflows/execute``) and
 ``workflows.cancel()`` (``POST /api/workflows/executions/{id}/cancel``):
 
-- auth decisions: inline-code admin gate, org_id/run_as admin gates,
-  run_as resolution, Solution inbound denial, cross-org and role denials,
+- auth decisions: inline-code admin gate, org_id admin gate, run_as
+  decided by ``authorize_run_as``, Solution inbound denial, cross-org and
+  role denials,
 - execution-org priority (explicit override > workflow org > caller org),
 - scheduled insert (DB row, no queue dispatch),
 - dispatch forms: inline code, data-provider cache hit, data-provider
@@ -44,6 +45,8 @@ from shared.sdk_workflow_execution import (
 )
 from src.core.principal import UserPrincipal
 from src.models.enums import ExecutionStatus
+from src.services.authorization.explain import RunAsTarget
+from src.services.authorization.impersonation import DENIED_MESSAGE, RunAsError
 
 
 @pytest_asyncio.fixture
@@ -104,7 +107,7 @@ async def _seed_org(db_session):
     return row
 
 
-async def _seed_user(db_session, *, org_id=None, is_superuser=False):
+async def _seed_user(db_session, *, org_id=None, is_superuser=False, identity_kind=None):
     from src.models import User as UserORM
 
     row = UserORM(
@@ -112,6 +115,7 @@ async def _seed_user(db_session, *, org_id=None, is_superuser=False):
         name="SDK WfExec",
         is_superuser=is_superuser,
         organization_id=org_id,
+        identity_kind=identity_kind,
     )
     db_session.add(row)
     await db_session.flush()
@@ -200,6 +204,37 @@ def _stop_patches(patches):
         p.stop()
 
 
+def _run_as_target(user) -> RunAsTarget:
+    return RunAsTarget(
+        user_id=user.id,
+        organization_id=user.organization_id,
+        is_active=True,
+        is_system=False,
+        identity_kind=None,
+        is_superuser=user.is_superuser,
+        is_external=False,
+        is_provider_org=False,
+        email=user.email,
+        name=user.name,
+        privileged=False,
+    )
+
+
+def _patch_authorize_run_as(*, returns: RunAsTarget | None = None, raises: RunAsError | None = None):
+    """Stand in for ``authorize_run_as`` with its real signature, recording each call."""
+    calls: list[tuple[UserPrincipal, UUID]] = []
+
+    async def authorize_run_as(
+        db: AsyncSession, principal: UserPrincipal, run_as_user_id: UUID
+    ) -> RunAsTarget | None:
+        calls.append((principal, run_as_user_id))
+        if raises is not None:
+            raise raises
+        return returns
+
+    return patch("src.services.authorization.impersonation.authorize_run_as", authorize_run_as), calls
+
+
 @pytest.mark.asyncio
 class TestExecuteAuthDecisions:
     async def test_inline_code_requires_admin(self, db_session):
@@ -237,33 +272,6 @@ class TestExecuteAuthDecisions:
             )
         assert exc_info.value.status_code == 403
         assert "org_id and run_as" in exc_info.value.detail
-
-    async def test_run_as_requires_admin(self, db_session):
-        org = await _seed_org(db_session)
-        other = await _seed_user(db_session, org_id=org.id)
-        wf = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
-        principal = _user(org.id)
-        req = _request(
-            workflow_id=str(wf.id), input_data={}, run_as=str(other.id)
-        )
-        with pytest.raises(SdkWorkflowExecutionError) as exc_info:
-            await execute_sdk_workflow(
-                db_session, principal, req, caller_org_id=org.id
-            )
-        assert exc_info.value.status_code == 403
-
-    async def test_run_as_unknown_user_is_404(self, db_session):
-        org = await _seed_org(db_session)
-        wf = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
-        principal = _admin(org.id)
-        req = _request(
-            workflow_id=str(wf.id), input_data={}, run_as=str(uuid4())
-        )
-        with pytest.raises(SdkWorkflowExecutionError) as exc_info:
-            await execute_sdk_workflow(
-                db_session, principal, req, caller_org_id=org.id
-            )
-        assert exc_info.value.status_code == 404
 
     async def test_unknown_workflow_is_404_with_scope_detail(self, db_session):
         org = await _seed_org(db_session)
@@ -354,6 +362,124 @@ class TestExecuteAuthDecisions:
 
 
 @pytest.mark.asyncio
+class TestExecuteRunAs:
+    async def _dispatched_context(self, db_session, principal, **request):
+        patches = _patch_dispatch()
+        mocks = _start_patches(patches)
+        try:
+            await execute_sdk_workflow(
+                db_session, principal, _request(input_data={}, **request), caller_org_id=principal.organization_id
+            )
+        finally:
+            _stop_patches(patches)
+        return mocks[0].call_args[1]
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            RunAsError(403, DENIED_MESSAGE),
+            RunAsError(404, "Run As user 'someone' not found"),
+            RunAsError(400, "Run As user 'someone' is inactive"),
+        ],
+        ids=["refused", "unknown", "inactive"],
+    )
+    async def test_a_refused_run_as_keeps_the_status_and_message(self, db_session, error):
+        org = await _seed_org(db_session)
+        other = await _seed_user(db_session, org_id=org.id)
+        wf = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
+        principal = _user(org.id)
+        authorize, calls = _patch_authorize_run_as(raises=error)
+
+        with authorize, pytest.raises(SdkWorkflowExecutionError) as exc_info:
+            await execute_sdk_workflow(
+                db_session,
+                principal,
+                _request(workflow_id=str(wf.id), input_data={}, run_as=str(other.id)),
+                caller_org_id=org.id,
+            )
+
+        assert (exc_info.value.status_code, exc_info.value.detail) == (error.status_code, error.detail)
+        assert calls == [(principal, other.id)]
+
+    async def test_an_allowed_run_as_acts_as_the_user_and_keeps_the_caller_as_run_user(self, db_session):
+        from shared.run_lineage import person_lineage
+
+        org = await _seed_org(db_session)
+        target = await _seed_user(db_session, org_id=org.id)
+        wf = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
+        principal = _user(org.id)
+        authorize, calls = _patch_authorize_run_as(returns=_run_as_target(target))
+
+        with authorize:
+            dispatched = await self._dispatched_context(
+                db_session, principal, workflow_id=str(wf.id), run_as=str(target.id)
+            )
+
+        acting = dispatched["context"]
+        expected_lineage = person_lineage(principal.user_id)
+        expected = (str(target.id), target.email, target.name, False)
+        assert (acting.user_id, acting.email, acting.name, acting.is_platform_admin) == expected
+        assert dispatched["lineage"] == expected_lineage
+        assert calls == [(principal, target.id)]
+
+    @pytest.mark.parametrize("identity_kind", [None, "custom"], ids=["person", "managed_identity"])
+    async def test_a_workflow_naming_its_run_user_acts_as_the_run_user(self, db_session, identity_kind):
+        from src.core.constants import SYSTEM_USER_ID
+
+        org = await _seed_org(db_session)
+        person = await _seed_user(db_session, org_id=org.id, identity_kind=identity_kind)
+        parent = await _seed_execution(db_session, "parent", user_id=person.id, org_id=org.id)
+        parent.run_user_id = person.id
+        parent.started_by_user_id = person.id
+        await db_session.flush()
+        wf = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
+        engine = UserPrincipal(
+            user_id=UUID(SYSTEM_USER_ID),
+            email="engine@internal",
+            organization_id=org.id,
+            is_superuser=True,
+            engine_execution_id=str(parent.id),
+            run_user_id=person.id,
+        )
+
+        dispatched = await self._dispatched_context(
+            db_session, engine, workflow_id=str(wf.id), run_as=str(person.id)
+        )
+
+        acting = dispatched["context"]
+        expected = (str(person.id), person.email, False)
+        assert (acting.user_id, acting.email, acting.is_platform_admin) == expected
+
+    async def test_a_person_naming_themselves_runs_exactly_as_without_run_as(self, db_session):
+        org = await _seed_org(db_session)
+        wf = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
+        principal = _user(org.id)
+
+        plain = await self._dispatched_context(db_session, principal, workflow_id=str(wf.id))
+        named = await self._dispatched_context(
+            db_session, principal, workflow_id=str(wf.id), run_as=str(principal.user_id)
+        )
+
+        acting = [(c.user_id, c.email, c.name, c.is_platform_admin) for c in (plain["context"], named["context"])]
+        assert acting[0] == acting[1]
+        assert named["lineage"] == plain["lineage"]
+
+    async def test_without_run_as_the_caller_acts_and_nothing_is_authorized(self, db_session):
+        org = await _seed_org(db_session)
+        wf = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
+        principal = _user(org.id)
+        authorize, calls = _patch_authorize_run_as()
+
+        with authorize:
+            dispatched = await self._dispatched_context(db_session, principal, workflow_id=str(wf.id))
+
+        acting = dispatched["context"]
+        expected = (str(principal.user_id), principal.email, False)
+        assert (acting.user_id, acting.email, acting.is_platform_admin) == expected
+        assert calls == []
+
+
+@pytest.mark.asyncio
 class TestExecuteScheduling:
     async def test_delay_seconds_inserts_scheduled_row_without_dispatch(
         self, db_session
@@ -399,6 +525,8 @@ class TestExecuteScheduling:
             admin_row.id,
             row.id,
         )
+        # Without run_as the row keeps nothing to decide again when it fires.
+        assert row.execution_context == {"is_platform_admin": True}
 
         await db_session.execute(
             delete(ExecutionModel).where(ExecutionModel.id == row.id)
@@ -419,9 +547,11 @@ class TestExecuteScheduling:
             delay_seconds=300,
             run_as=str(target.id),
         )
-        result = await execute_sdk_workflow(
-            db_session, principal, req, caller_org_id=org.id
-        )
+        authorize, _calls = _patch_authorize_run_as(returns=_run_as_target(target))
+        with authorize:
+            result = await execute_sdk_workflow(
+                db_session, principal, req, caller_org_id=org.id
+            )
         assert result.status == ExecutionStatus.SCHEDULED
         row = (
             await db_session.execute(
@@ -437,6 +567,9 @@ class TestExecuteScheduling:
             admin_row.id,
             row.id,
         )
+        # A person decided it, so the promoter judges it again on their roles.
+        run_as = {"user_id": str(target.id), "authorized_by": str(admin_row.id), "enforced": True}
+        assert row.execution_context == {"is_platform_admin": False, "run_as": run_as}
 
         await db_session.execute(
             delete(ExecutionModel).where(ExecutionModel.id == row.id)
@@ -467,20 +600,6 @@ class TestExecuteLineage:
         principal = _admin(org.id)
 
         lineage = await self._dispatched_lineage(db_session, principal, workflow_id=str(wf.id))
-
-        assert lineage == person_lineage(principal.user_id)
-
-    async def test_run_as_keeps_the_caller_as_run_user(self, db_session):
-        from shared.run_lineage import person_lineage
-
-        org = await _seed_org(db_session)
-        target = await _seed_user(db_session, org_id=org.id)
-        wf = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
-        principal = _admin(org.id)
-
-        lineage = await self._dispatched_lineage(
-            db_session, principal, workflow_id=str(wf.id), run_as=str(target.id)
-        )
 
         assert lineage == person_lineage(principal.user_id)
 
@@ -905,6 +1024,62 @@ class TestCancelScheduled:
             await db_session.execute(
                 delete(ExecutionModel).where(ExecutionModel.id == row.id)
             )
+            await db_session.commit()
+
+    async def _run_as_row(self, db_session, *, root_of_its_own: bool):
+        """A scheduled row acting as a Contoso colleague, started by a Contoso initiator."""
+        org = await _seed_org(db_session)
+        initiator = await _seed_user(db_session, org_id=org.id)
+        colleague = await _seed_user(db_session, org_id=org.id)
+        unrelated = await _seed_user(db_session, org_id=org.id)
+        row = await _seed_execution(db_session, "wf", user_id=colleague.id, org_id=org.id)
+        row.run_user_id = initiator.id
+        row.started_by_user_id = initiator.id
+        row.root_execution_id = row.id if root_of_its_own else uuid4()
+        await db_session.commit()
+        return org, row, {"initiator": initiator, "colleague": colleague, "unrelated": unrelated}
+
+    async def test_the_initiator_may_cancel_a_run_they_started_as_someone_else(self, db_session):
+        from src.models.orm.executions import Execution as ExecutionModel
+
+        org, row, people = await self._run_as_row(db_session, root_of_its_own=True)
+        try:
+            principal = _user(org.id, user_id=people["initiator"].id)
+            result = await cancel_scheduled_sdk_execution(db_session, principal, row.id, caller_org_id=org.id)
+            assert result["status"] == ExecutionStatus.CANCELLED.value
+        finally:
+            await db_session.execute(delete(ExecutionModel).where(ExecutionModel.id == row.id))
+            await db_session.commit()
+
+    @pytest.mark.parametrize(
+        ("caller", "root_of_its_own"),
+        [("initiator", False), ("unrelated", True)],
+        ids=["initiator_of_a_child_run", "unrelated_caller"],
+    )
+    async def test_a_run_as_row_is_not_cancellable_by_anyone_else(self, db_session, caller, root_of_its_own):
+        from src.models.orm.executions import Execution as ExecutionModel
+
+        org, row, people = await self._run_as_row(db_session, root_of_its_own=root_of_its_own)
+        try:
+            principal = _user(org.id, user_id=people[caller].id)
+            with pytest.raises(SdkWorkflowExecutionError) as exc_info:
+                await cancel_scheduled_sdk_execution(db_session, principal, row.id, caller_org_id=org.id)
+            refusal = (exc_info.value.status_code, exc_info.value.detail)
+            assert refusal == (403, "Only the submitter or an admin may cancel")
+        finally:
+            await db_session.execute(delete(ExecutionModel).where(ExecutionModel.id == row.id))
+            await db_session.commit()
+
+    async def test_the_acting_user_still_cancels_a_run_as_row(self, db_session):
+        from src.models.orm.executions import Execution as ExecutionModel
+
+        org, row, people = await self._run_as_row(db_session, root_of_its_own=True)
+        try:
+            principal = _user(org.id, user_id=people["colleague"].id)
+            result = await cancel_scheduled_sdk_execution(db_session, principal, row.id, caller_org_id=org.id)
+            assert result["status"] == ExecutionStatus.CANCELLED.value
+        finally:
+            await db_session.execute(delete(ExecutionModel).where(ExecutionModel.id == row.id))
             await db_session.commit()
 
 

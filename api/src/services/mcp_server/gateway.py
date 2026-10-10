@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from shared import access_checks
+from shared.execution_visibility import is_own_execution, is_own_pending_execution
 from shared.run_lineage import RunLineage
 from shared.scope_resolver import has_scope_bypass
 from src.core.org_filter import OrgFilterType
@@ -661,7 +662,13 @@ class MCPAgentGatewayService:
                 agent_run = agent_result.scalar_one_or_none()
 
         if execution is not None:
-            if execution.executed_by != UUID(str(self.context.user_id)):
+            if not is_own_execution(
+                self.context.user_id,
+                execution_id=execution.id,
+                executed_by=execution.executed_by,
+                started_by_user_id=execution.started_by_user_id,
+                root_execution_id=execution.root_execution_id,
+            ):
                 if not self.context.is_platform_admin:
                     raise GatewayError(
                         "EXECUTION_NOT_FOUND_OR_FORBIDDEN",
@@ -738,7 +745,7 @@ class MCPAgentGatewayService:
 
         pending = await get_redis_client().get_pending_execution(execution_id)
         if pending is not None:
-            if pending.get("user_id") != str(self.context.user_id):
+            if not is_own_pending_execution(self.context.user_id, execution_id, pending):
                 if not self.context.is_platform_admin:
                     raise GatewayError(
                         "EXECUTION_NOT_FOUND_OR_FORBIDDEN",

@@ -546,7 +546,9 @@ async def cancel_scheduled_execution(
 
     Authorization:
     - Row must be in the caller's org (unless platform admin).
-    - Only the original submitter or a platform admin may cancel.
+    - Only a caller whose own execution it is (the acting user, or the
+      initiator of a root run started with Run As) or a platform admin may
+      cancel.
 
     Race handling: the UPDATE is guarded on ``status = SCHEDULED``. If another
     caller (promoter, concurrent cancel) has already moved the row, we refetch

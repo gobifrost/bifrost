@@ -12,6 +12,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import desc, func, literal_column, or_, select, update
+from sqlalchemy.orm import selectinload
 
 from shared import access_checks
 from shared.access_checks import ALL_ORGS
@@ -51,7 +52,9 @@ from shared.sdk_agent_runs import (
     SdkAgentRunError,
     enqueue_sdk_agent_run,
     get_sdk_agent_run,
+    resolve_agent_run_actor,
     resolve_executable_agent,
+    resolve_rerun_actor,
 )
 from src.models.enums import AgentAccessLevel
 from src.models.orm.agent_run_verdict_history import AgentRunVerdictHistory
@@ -151,6 +154,9 @@ def _run_to_response(
         caller_user_id=run.caller_user_id,
         caller_email=run.caller_email,
         caller_name=run.caller_name,
+        run_as_user_id=run.run_as_user_id,
+        run_as_user_name=run.run_as_user.name if run.run_as_user else None,
+        run_as_user_email=run.run_as_user.email if run.run_as_user else None,
         iterations_used=run.iterations_used,
         tokens_used=run.tokens_used,
         budget_max_iterations=run.budget_max_iterations,
@@ -324,7 +330,12 @@ async def list_agent_runs(
     total = total_result.scalar_one()
 
     # Fetch paginated results
-    query = query.order_by(desc(AgentRun.created_at)).limit(limit + 1).offset(page_offset)
+    query = (
+        query.options(selectinload(AgentRun.run_as_user))
+        .order_by(desc(AgentRun.created_at))
+        .limit(limit + 1)
+        .offset(page_offset)
+    )
     result = await db.execute(query)
     runs = list(result.scalars().all())
     has_more = len(runs) > limit
@@ -560,18 +571,24 @@ async def rerun_agent_run(
     await _require_own_private_agent_run(db, user, original)
     access_checks.note_launch("agents.execute", original.org_id, user.organization_id, subject=f"agent:{original.agent_id}")
 
+    try:
+        actor = await resolve_rerun_actor(db, user, original)
+    except SdkAgentRunError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
+
     new_run_id = await enqueue_agent_run(
         agent_id=str(original.agent_id),
         trigger_type="rerun",
         input_data=original.input,
         trigger_source=str(run_id),
         output_schema=original.output_schema,
-        org_id=str(original.org_id) if original.org_id else None,
+        org_id=str(actor.org_id) if actor.org_id else None,
         caller_user_id=str(user.user_id),
         caller_email=user.email,
         caller_name=getattr(user, "name", None),
         sync=False,
         lineage=await principal_lineage(db, user),
+        run_as_user_id=actor.run_as_user_id,
     )
 
     return AgentRunRerunResponse(run_id=UUID(new_run_id))
@@ -950,6 +967,7 @@ async def enqueue_agent_run_request(
             agent_name=request.agent_name,
             input_data=request.input,
             output_schema=request.output_schema,
+            run_as=request.run_as,
         )
     except SdkAgentRunError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
@@ -977,18 +995,24 @@ async def execute_agent_run(
             "agent_id": str(agent.id),
         }
 
+    try:
+        actor = await resolve_agent_run_actor(db, user, agent, request.run_as)
+    except SdkAgentRunError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
+
     # Enqueue the agent run for sync execution
     run_id = await enqueue_agent_run(
         agent_id=str(agent.id),
         trigger_type="api",
         input_data=request.input,
         output_schema=request.output_schema,
-        org_id=str(user.organization_id) if user.organization_id else None,
+        org_id=str(actor.org_id) if actor.org_id else None,
         caller_user_id=str(user.user_id),
         caller_email=user.email,
         caller_name=getattr(user, "name", None),
         sync=True,
         lineage=await principal_lineage(db, user),
+        run_as_user_id=actor.run_as_user_id,
     )
 
     # Wait for the result
@@ -1000,6 +1024,8 @@ async def execute_agent_run(
             detail="Agent run timed out",
         )
 
+    if actor.run_as_user_id is not None:
+        return {**result_data, "run_as_user_id": str(actor.run_as_user_id)}
     return result_data
 
 

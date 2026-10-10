@@ -7,6 +7,7 @@ from uuid import UUID
 from sqlalchemy import select
 
 from shared import access_checks
+from shared.execution_visibility import is_own_pending_execution
 from src.core.log_safety import log_safe
 from src.core.principal import UserPrincipal
 from src.core.redis_client import get_redis_client
@@ -44,7 +45,7 @@ async def get_pending_execution_fallback(
         org_id = org_id.removeprefix("ORG:")
 
     pending_user_id = pending.get("user_id")
-    if pending_user_id != str(user.user_id):
+    if not is_own_pending_execution(user.user_id, execution_id, pending):
         if not user.is_superuser:
             return None, "Forbidden"
         try:

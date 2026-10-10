@@ -30,6 +30,7 @@ from src.models.contracts.executions import (
 
 from bifrost._logging import read_logs_from_stream
 from shared import access_checks
+from shared.execution_visibility import is_own_execution
 from shared.sdk_execution_reads import decode_history_cursor
 from src.core.auth import Context, RequirePlatformAdmin
 from src.core.principal import UserPrincipal
@@ -122,6 +123,8 @@ class ExecutionRepository:
                 ExecutionModel.result,
                 ExecutionModel.result_type,
                 ExecutionModel.executed_by,
+                ExecutionModel.started_by_user_id,
+                ExecutionModel.root_execution_id,
                 ExecutionModel.organization_id,
             ).where(ExecutionModel.id == execution_id)
         )
@@ -130,7 +133,13 @@ class ExecutionRepository:
         if not row:
             return None, "NotFound"
 
-        if row.executed_by != user.user_id:
+        if not is_own_execution(
+            user.user_id,
+            execution_id=execution_id,
+            executed_by=row.executed_by,
+            started_by_user_id=row.started_by_user_id,
+            root_execution_id=row.root_execution_id,
+        ):
             if not user.is_superuser:
                 return None, "Forbidden"
             access_checks.note_power("executions.read.all", row.organization_id, subject=f"execution:{execution_id}")
@@ -145,7 +154,13 @@ class ExecutionRepository:
         """Get execution logs — dual-read from Redis Stream when in-progress, DB when complete."""
         # Check if execution exists, user has access, and get status
         result = await self.db.execute(
-            select(ExecutionModel.executed_by, ExecutionModel.status, ExecutionModel.organization_id)
+            select(
+                ExecutionModel.executed_by,
+                ExecutionModel.started_by_user_id,
+                ExecutionModel.root_execution_id,
+                ExecutionModel.status,
+                ExecutionModel.organization_id,
+            )
             .where(ExecutionModel.id == execution_id)
         )
         row = result.one_or_none()
@@ -153,7 +168,13 @@ class ExecutionRepository:
         if not row:
             return None, "NotFound"
 
-        if row.executed_by != user.user_id:
+        if not is_own_execution(
+            user.user_id,
+            execution_id=execution_id,
+            executed_by=row.executed_by,
+            started_by_user_id=row.started_by_user_id,
+            root_execution_id=row.root_execution_id,
+        ):
             if not user.is_superuser:
                 return None, "Forbidden"
             access_checks.note_power("executions.read.all", row.organization_id, subject=f"execution:{execution_id}")

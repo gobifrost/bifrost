@@ -136,7 +136,7 @@ class WorkflowExecutionRequest(BaseModel):
     code: str | None = Field(default=None, description="Optional: Python code to execute as script (base64 encoded). If provided, executes code instead of looking up workflow by ID.")
     script_name: str | None = Field(default=None, description="Optional: Name/identifier for the script (used for logging when code is provided)")
     org_id: str | None = Field(default=None, description="Override execution org context. Requires platform admin.")
-    run_as: str | None = Field(default=None, description="Execute as this user UUID (impersonation). Requires platform admin.")
+    run_as: str | None = Field(default=None, description="Execute as this user UUID. Requires Impersonate Users in that user's organization.")
     scheduled_at: datetime | None = Field(
         default=None,
         description=(

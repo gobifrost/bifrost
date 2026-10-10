@@ -127,7 +127,7 @@ class TestNoSessionDuringLLMCall:
             new_callable=AsyncMock,
         ):
             executor = AutonomousAgentExecutor(factory, redis_client=mock_redis)
-            result = await executor.run(agent=agent, input_data={"task": "say hello"}, run_user_id=None)
+            result = await executor.run(agent=agent, input_data={"task": "say hello"}, run_user_id=None, run_as=None)
 
         assert result["status"] == "completed"
         # The LLM was called at least once
@@ -168,7 +168,7 @@ class TestStepsBufferedToRedis:
             new_callable=AsyncMock,
         ):
             executor = AutonomousAgentExecutor(factory, redis_client=mock_redis)
-            result = await executor.run(agent=agent, input_data={"task": "say hello"}, run_user_id=None)
+            result = await executor.run(agent=agent, input_data={"task": "say hello"}, run_user_id=None, run_as=None)
 
         assert result["status"] == "completed"
 
@@ -213,7 +213,7 @@ class TestFlushToDb:
             new_callable=AsyncMock,
         ):
             executor = AutonomousAgentExecutor(factory, redis_client=mock_redis)
-            await executor.run(agent=agent, input_data={"task": "say hello"}, run_user_id=None)
+            await executor.run(agent=agent, input_data={"task": "say hello"}, run_user_id=None, run_as=None)
 
         # Now flush to a fresh mock session
         flush_session = AsyncMock()

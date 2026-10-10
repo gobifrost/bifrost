@@ -5,17 +5,21 @@ import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 import time
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import select
 
-from src.jobs.consumers.agent_run import AgentRunConsumer
+from src.jobs.consumers.agent_run import RUN_AS_INACTIVE_ERROR, AgentRunConsumer
 from src.models.contracts.agents import ChatStreamChunk
 from src.models.enums import MessageRole
 from src.models.orm.agents import Conversation
 from src.models.orm.agent_runs import AgentRun
+from src.models.orm.organizations import Organization
+from src.models.orm.users import User
+from src.services.execution.autonomous_agent_executor import ActingUser
 
 
 class FakeRedisCtx:
@@ -691,3 +695,191 @@ async def test_chat_outer_failure_publishes_terminal_error_envelope(
     assert terminal_payload.type == "error"
     assert terminal_payload.run_status == "failed"
     assert publish_run.await_args.args[0].status == "failed"
+
+
+def _recording_executor(runs: list[dict[str, Any]]):
+    """An executor stand-in that records how the consumer starts the run."""
+
+    class RecordingExecutor:
+        subtree_tokens = 0
+
+        def __init__(
+            self,
+            session_factory,
+            redis_client=None,
+            *,
+            _delegation_depth=0,
+            _ancestor_run_ids=(),
+        ):
+            self._session_factory = session_factory
+
+        async def run(
+            self,
+            agent,
+            *,
+            input_data=None,
+            output_schema=None,
+            run_id=None,
+            _caller=None,
+            _shared_usage=None,
+            _shared_budget=None,
+            run_user_id,
+            run_as,
+        ):
+            runs.append(
+                {"_caller": _caller, "run_user_id": run_user_id, "run_as": run_as}
+            )
+            return {
+                "output": {"text": "done"},
+                "iterations_used": 1,
+                "tokens_used": 2,
+                "status": "completed",
+                "llm_model": "test-model",
+            }
+
+        async def flush_to_db(self, session):
+            return None
+
+    return RecordingExecutor
+
+
+async def _run_as_fixture(db_session, seed_agent, *, target_active=True, with_run_as=True):
+    """A Contoso run started by a Contoso lead, acting as a Contoso portal user."""
+    contoso = Organization(name=f"Contoso {uuid4().hex[:8]}", created_by="run-as-test")
+    db_session.add(contoso)
+    await db_session.flush()
+    lead = User(
+        email=f"lead-{uuid4().hex[:8]}@contoso.example",
+        name="Contoso Helpdesk Lead",
+        organization_id=contoso.id,
+    )
+    target = User(
+        email=f"portal-{uuid4().hex[:8]}@contoso.example",
+        name="Contoso Portal User",
+        organization_id=contoso.id,
+        is_external=True,
+        is_active=target_active,
+    )
+    db_session.add_all([lead, target])
+    await db_session.flush()
+    run = AgentRun(
+        id=uuid4(),
+        agent_id=seed_agent.id,
+        trigger_type="api",
+        status="queued",
+        org_id=contoso.id,
+        caller_user_id=str(lead.id),
+        caller_email=lead.email,
+        caller_name=lead.name,
+        run_user_id=lead.id,
+        run_as_user_id=target.id if with_run_as else None,
+        iterations_used=0,
+        tokens_used=0,
+        created_at=datetime.now(timezone.utc),
+    )
+    db_session.add(run)
+    await db_session.commit()
+    return contoso, lead, target, run
+
+
+async def _consume(consumer, run, context, runs):
+    redis_mock = AsyncMock()
+    context_key = f"bifrost:agent_run:{run.id}:context"
+
+    async def _redis_get(key):
+        return json.dumps(context) if key == context_key else None
+
+    redis_mock.get.side_effect = _redis_get
+    with (
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
+        patch(
+            "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor",
+            _recording_executor(runs),
+        ),
+        patch("src.jobs.consumers.agent_run.publish_agent_run_update", AsyncMock()),
+        patch("src.jobs.consumers.agent_run._publish_sync_result", AsyncMock()) as sync_mock,
+        patch(
+            "src.services.execution.run_summarizer.enqueue_summarize",
+            AsyncMock(),
+        ),
+    ):
+        await consumer.process_message(
+            {
+                "run_id": str(run.id),
+                "agent_id": str(run.agent_id),
+                "trigger_type": "api",
+                "sync": True,
+            }
+        )
+    return sync_mock
+
+
+@pytest.mark.asyncio
+async def test_run_as_user_comes_from_the_database_not_the_redis_context(
+    consumer, db_session, async_session_factory, seed_agent
+):
+    contoso, lead, target, run = await _run_as_fixture(db_session, seed_agent)
+    # The Redis context names someone else; only the rows decide who acts.
+    redis_caller = {
+        "user_id": str(uuid4()),
+        "email": "admin@fabrikam.example",
+        "name": "Fabrikam Admin",
+        "organization_id": str(uuid4()),
+        "is_platform_admin": True,
+    }
+    consumer._session_factory = async_session_factory
+    runs: list[dict[str, Any]] = []
+
+    await _consume(consumer, run, {"input": "hello", "caller": redis_caller}, runs)
+
+    expected_run_as = ActingUser(
+        user_id=str(target.id),
+        email=target.email,
+        name="Contoso Portal User",
+        organization_id=contoso.id,
+        is_platform_admin=False,
+        is_external=True,
+        is_provider_org=False,
+    )
+    assert runs == [
+        {"_caller": redis_caller, "run_user_id": lead.id, "run_as": expected_run_as}
+    ]
+    refreshed = await _load_run(async_session_factory, run.id)
+    assert refreshed.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_inactive_run_as_user_fails_the_run_without_executing(
+    consumer, db_session, async_session_factory, seed_agent
+):
+    _, lead, _, run = await _run_as_fixture(db_session, seed_agent, target_active=False)
+    consumer._session_factory = async_session_factory
+    runs: list[dict[str, Any]] = []
+
+    sync_mock = await _consume(
+        consumer, run, {"input": "hello", "caller": {"user_id": str(lead.id)}}, runs
+    )
+
+    assert runs == []
+    refreshed = await _load_run(async_session_factory, run.id)
+    assert refreshed.status == "failed"
+    assert refreshed.error == RUN_AS_INACTIVE_ERROR
+    assert refreshed.completed_at is not None
+    sync_mock.assert_awaited_once_with(
+        str(run.id),
+        {"output": None, "status": "failed", "error": RUN_AS_INACTIVE_ERROR},
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_without_run_as_passes_no_acting_user(
+    consumer, db_session, async_session_factory, seed_agent
+):
+    _, lead, _, run = await _run_as_fixture(db_session, seed_agent, with_run_as=False)
+    caller = {"user_id": str(lead.id), "email": lead.email, "name": lead.name}
+    consumer._session_factory = async_session_factory
+    runs: list[dict[str, Any]] = []
+
+    await _consume(consumer, run, {"input": "hello", "caller": caller}, runs)
+
+    assert runs == [{"_caller": caller, "run_user_id": lead.id, "run_as": None}]

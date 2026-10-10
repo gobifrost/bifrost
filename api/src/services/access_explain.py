@@ -27,9 +27,15 @@ from src.repositories.org_scoped import OrgScopedRepository
 from src.repositories.workflows import WorkflowRepository
 from src.services.access_check_entry import run_user_may_open
 from src.services.access_check_policies import load_policy_principal
-from src.services.access_check_writer import judge
+from src.services.access_check_writer import judge, names_a_user_to_load
 from src.services.authorization.enforce import operation_key
-from src.services.authorization.explain import Trace, check_operation, load_powers, load_run_user
+from src.services.authorization.explain import (
+    Trace,
+    check_operation,
+    load_powers,
+    load_run_as_target,
+    load_run_user,
+)
 from src.services.file_policy_service import FilePolicyService
 
 _ENTRY_REPOSITORIES: dict[str, type[OrgScopedRepository[Any]]] = {
@@ -93,7 +99,12 @@ async def rerun(db: AsyncSession, row: AuditLog) -> tuple[Trace | None, NowUnava
 
     note = stored_note(row)
     facts = note.facts
-    if note.kind == "policy":
+    run_as = None
+    if names_a_user_to_load(note):
+        run_as = await load_run_as_target(db, UUID(str(facts["run_as_user_id"])))
+        if run_as is None:
+            return None, "run_as_user_missing"
+    elif note.kind == "policy":
         if "table" in facts:
             return None, "rows_not_stored"
         if "solution_id" not in facts:
@@ -116,7 +127,7 @@ async def rerun(db: AsyncSession, row: AuditLog) -> tuple[Trace | None, NowUnava
 
     powers = None if details.get("direct") else await load_powers(db, workflow_id)
     operation = cast("dict[str, Any]", details["inputs"])["operation"]
-    return judge(run_user, powers, note, entry_for_key(operation)), None
+    return judge(run_user, powers, note, entry_for_key(operation), run_as), None
 
 
 async def test_access(

@@ -7,7 +7,9 @@ from uuid import uuid4
 
 import pytest
 
+from src.models.enums import ExecutionStatus
 from src.models.orm.agents import Agent
+from src.models.orm.executions import Execution
 from src.services.llm import ToolDefinition
 from src.services.mcp_server.config_service import MCPConfig
 from src.services.mcp_server.gateway import (
@@ -450,6 +452,105 @@ async def test_get_execution_hides_another_users_redis_only_receipt():
             await service.get_execution(execution_id)
 
     assert exc_info.value.code == "EXECUTION_NOT_FOUND_OR_FORBIDDEN"
+
+
+def _workflow_row_db(execution: Execution | None) -> MagicMock:
+    db = AsyncMock()
+    db_result = MagicMock()
+    db_result.scalar_one_or_none.return_value = execution
+    db.execute.return_value = db_result
+    db_context = MagicMock()
+    db_context.__aenter__ = AsyncMock(return_value=db)
+    db_context.__aexit__ = AsyncMock(return_value=None)
+    return db_context
+
+
+def _execution_row(*, executed_by, started_by_user_id, root_is_self: bool) -> Execution:
+    execution_id = uuid4()
+    return Execution(
+        id=execution_id,
+        workflow_name="Contoso Report",
+        status=ExecutionStatus.SUCCESS,
+        result={"total": 3},
+        executed_by=executed_by,
+        executed_by_name="Contoso User",
+        started_by_user_id=started_by_user_id,
+        root_execution_id=execution_id if root_is_self else uuid4(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_execution_returns_a_root_run_the_caller_started_as_someone_else():
+    context = _context()
+    service = MCPAgentGatewayService(context)
+    execution = _execution_row(executed_by=uuid4(), started_by_user_id=context.user_id, root_is_self=True)
+
+    with patch("src.core.database.get_db_context", return_value=_workflow_row_db(execution)):
+        result = await service.get_execution(str(execution.id))
+
+    assert result["execution_id"] == str(execution.id)
+    assert result["result"] == {"total": 3}
+
+
+@pytest.mark.asyncio
+async def test_get_execution_returns_the_acting_users_own_row():
+    context = _context()
+    service = MCPAgentGatewayService(context)
+    execution = _execution_row(executed_by=context.user_id, started_by_user_id=uuid4(), root_is_self=False)
+
+    with patch("src.core.database.get_db_context", return_value=_workflow_row_db(execution)):
+        result = await service.get_execution(str(execution.id))
+
+    assert result["execution_id"] == str(execution.id)
+
+
+@pytest.mark.parametrize("started_by_caller", [True, False], ids=["child_of_callers_run", "unrelated"])
+@pytest.mark.asyncio
+async def test_get_execution_hides_executions_not_the_callers(started_by_caller: bool):
+    context = _context()
+    service = MCPAgentGatewayService(context)
+    execution = _execution_row(
+        executed_by=uuid4(),
+        started_by_user_id=context.user_id if started_by_caller else uuid4(),
+        root_is_self=not started_by_caller,
+    )
+
+    with patch("src.core.database.get_db_context", return_value=_workflow_row_db(execution)):
+        with pytest.raises(GatewayError) as exc_info:
+            await service.get_execution(str(execution.id))
+
+    assert exc_info.value.code == "EXECUTION_NOT_FOUND_OR_FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_get_execution_authorizes_the_initiator_of_a_pending_root_run():
+    context = _context()
+    service = MCPAgentGatewayService(context)
+    execution_id = str(uuid4())
+    redis = MagicMock()
+    redis.get_pending_execution = AsyncMock(
+        return_value={
+            "execution_id": execution_id,
+            "workflow_id": str(uuid4()),
+            "script_name": None,
+            "user_id": str(uuid4()),
+            "created_at": "2026-08-13T12:00:00+00:00",
+            "lineage": {
+                "run_user_id": str(context.user_id),
+                "started_by_user_id": str(context.user_id),
+                "root_execution_id": execution_id,
+            },
+        }
+    )
+
+    with (
+        patch("src.core.database.get_db_context", return_value=_workflow_row_db(None)),
+        patch("src.core.redis_client.get_redis_client", return_value=redis),
+    ):
+        result = await service.get_execution(execution_id)
+
+    assert result["execution_id"] == execution_id
+    assert result["status"] == "Pending"
 
 
 @pytest.mark.asyncio

@@ -13,8 +13,9 @@ a request does.
 Every elevated branch (a superuser, platform-admin or provider-org check that
 unlocks more) and every launch of a workflow, agent or AI also notes the named
 permission that gates it (``note_power``, ``note_launch``). A person's own
-request is collected too, for those notes and the organizations it acts in:
-their own roles decide, and only would-deny decisions are written.
+request is collected too, for those notes, the organizations it acts in and
+``run_as``: their own roles decide, and only would-deny decisions are written,
+except ``run_as``, which is enforced and written in both outcomes.
 
 FastAPI-free: imported by shared resolvers that worker closures load.
 """
@@ -37,7 +38,7 @@ ALL_ORGS: Literal["*"] = "*"
 # A target organization; None is Global.
 NoteTarget = UUID | None | Literal["*"]
 # What a person's own request notes; every kind is noted for a run.
-_DIRECT_KINDS = frozenset({"permission", "scope_switch"})
+_DIRECT_KINDS = frozenset({"permission", "scope_switch", "run_as"})
 # Objects whose organization and owner are read when the note is judged,
 # after the response, instead of in the request.
 OwnedKind = Literal["execution", "agent_run", "artifact_workspace", "agent_tools"]
@@ -93,8 +94,8 @@ def start_collecting(payload: dict[str, Any] | None) -> Token[Collector | None] 
     Every note kind is collected, judged against the run user.
 
     A person's request (their own token, or the bridge for an agent they
-    started): collected with the person as run user, for named permissions
-    only (``direct``). The system subject (supervised services, embedded
+    started): collected with the person as run user, for named permissions,
+    organization switches and ``run_as`` only (``direct``). The system subject (supervised services, embedded
     sessions, the legacy engine credential) is not a person and is not
     collected.
     """
@@ -104,14 +105,20 @@ def start_collecting(payload: dict[str, Any] | None) -> Token[Collector | None] 
     run_user = payload.get("engine_run_user_id")
     subject = payload.get("sub")
     if engine or (run_user and run_user != subject):
-        return _current.set(
-            Collector(
-                execution_id=_uuid(payload.get("engine_execution_id")) if engine else None,
-                run_user_id=_uuid(run_user),
-                workflow_id=_uuid(payload.get("engine_workflow_id")),
-            )
+        return collect_run(
+            _uuid(payload.get("engine_execution_id")) if engine else None,
+            _uuid(run_user),
+            _uuid(payload.get("engine_workflow_id")),
         )
     return collect_person(_uuid(subject))
+
+
+def collect_run(
+    execution_id: UUID | None, run_user_id: UUID | None, workflow_id: UUID | None
+) -> Token[Collector | None]:
+    """Start a collector for a run's request: every note kind, judged
+    against ``run_user_id`` with ``workflow_id``'s powers."""
+    return _current.set(Collector(execution_id=execution_id, run_user_id=run_user_id, workflow_id=workflow_id))
 
 
 def collect_person(user_id: UUID | None) -> Token[Collector | None] | None:
@@ -150,7 +157,10 @@ def renew() -> Collector | None:
 
 
 def note(kind: NoteKind, target: NoteTarget, /, **facts: Any) -> None:
-    """Note one decision-relevant input for the current request."""
+    """Note one decision-relevant input for the current request.
+
+    ``enforced=True`` marks a decision the request also enforces (a person's
+    ``run_as``); its row is written as enforced."""
     collector = _current.get()
     if collector is None or (collector.direct and kind not in _DIRECT_KINDS):
         return

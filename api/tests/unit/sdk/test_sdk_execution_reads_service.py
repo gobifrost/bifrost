@@ -9,7 +9,8 @@ Covers ``shared.sdk_execution_reads`` — the single implementation behind
   non-superuser; executions: 422 scope),
 - workflow type/entity filters, used-by counts, and role IDs,
 - execution keyset pagination, legacy offset, status match-any,
-  workflow_id-wins, and owner-only visibility,
+  workflow_id-wins, and owner-only visibility (plus root runs the
+  caller started as someone else),
 - execution detail shape, admin-only fields, and 403/404 precedence,
 - cursor encode/decode round-trip,
 - router thin-boundary delegation for the three handlers.
@@ -120,6 +121,7 @@ async def _seed_execution(
         started_at=kwargs.get("started_at"),
         completed_at=kwargs.get("completed_at"),
         created_at=kwargs.get("created_at"),
+        started_by_user_id=kwargs.get("started_by_user_id"),
     )
     db_session.add(row)
     await db_session.flush()
@@ -397,6 +399,68 @@ class TestGetSdkExecution:
         with pytest.raises(SdkExecutionReadError) as exc_info:
             await get_sdk_execution(db_session, _admin(), uuid4())
         assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+class TestInitiatorVisibility:
+    """A root run started with Run As belongs to its initiator as well."""
+
+    async def _seed_run_as_tree(self, db_session):
+        org = await _seed_org(db_session)
+        initiator = await _seed_user(db_session, org_id=org.id)
+        colleague = await _seed_user(db_session, org_id=org.id)
+        root = await _seed_execution(
+            db_session,
+            "contoso-run-as-root",
+            user_id=colleague.id,
+            org_id=org.id,
+            started_by_user_id=initiator.id,
+        )
+        root.root_execution_id = root.id
+        child = await _seed_execution(
+            db_session,
+            "contoso-run-as-child",
+            user_id=colleague.id,
+            org_id=org.id,
+            started_by_user_id=initiator.id,
+        )
+        child.root_execution_id = root.id
+        await db_session.flush()
+        return org, initiator, root, child
+
+    async def test_root_run_as_another_user_is_visible_to_its_initiator(self, db_session):
+        org, initiator, root, _ = await self._seed_run_as_tree(db_session)
+        caller = _user(org.id, user_id=initiator.id)
+
+        listed, _ = await list_sdk_executions(db_session, caller, limit=25)
+        detail = await get_sdk_execution(db_session, caller, root.id)
+
+        assert [e.execution_id for e in listed] == [str(root.id)]
+        assert detail.execution_id == str(root.id)
+        assert detail.variables is None
+
+    async def test_child_of_the_initiators_run_stays_invisible(self, db_session):
+        org, initiator, _, child = await self._seed_run_as_tree(db_session)
+        caller = _user(org.id, user_id=initiator.id)
+
+        listed, _ = await list_sdk_executions(db_session, caller, limit=25)
+        with pytest.raises(SdkExecutionReadError) as exc_info:
+            await get_sdk_execution(db_session, caller, child.id)
+
+        assert str(child.id) not in [e.execution_id for e in listed]
+        assert exc_info.value.status_code == 403
+
+    async def test_another_users_run_stays_invisible(self, db_session):
+        org, _, root, _ = await self._seed_run_as_tree(db_session)
+        stranger = await _seed_user(db_session, org_id=org.id)
+        caller = _user(org.id, user_id=stranger.id)
+
+        listed, _ = await list_sdk_executions(db_session, caller, limit=25)
+        with pytest.raises(SdkExecutionReadError) as exc_info:
+            await get_sdk_execution(db_session, caller, root.id)
+
+        assert listed == []
+        assert exc_info.value.status_code == 403
 
 
 class TestHistoryCursor:

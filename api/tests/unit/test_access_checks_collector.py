@@ -64,20 +64,23 @@ def test_anonymous_and_system_subject_tokens_are_not_collected() -> None:
     assert access_checks.start_collecting(embed) is None
 
 
-def test_a_persons_request_collects_permissions_and_scope_switches_only() -> None:
-    person, org = uuid4(), uuid4()
+def test_a_persons_request_collects_permissions_scope_switches_and_run_as_only() -> None:
+    person, org, colleague = uuid4(), uuid4(), uuid4()
     token = access_checks.start_collecting({"sub": str(person), "org_id": str(uuid4())})
     try:
         access_checks.note("scope_switch", org)
         access_checks.note("secret", org, kind="config", name="k")
         access_checks.note_power("agents.read", org, subject="agent:1")
+        access_checks.note("run_as", org, run_as_user_id=str(colleague), enforced=True)
         collector = access_checks.current()
-        assert collector is not None
-        assert (collector.direct, collector.run_user_id, collector.execution_id) == (True, person, None)
-        assert collector.notes == [
+        expected = [
             access_checks.Note("scope_switch", org, {}),
             access_checks.Note("permission", org, {"permission": "agents.read", "subject": "agent:1"}),
+            access_checks.Note("run_as", org, {"run_as_user_id": str(colleague), "enforced": True}),
         ]
+        assert collector is not None
+        assert (collector.direct, collector.run_user_id, collector.execution_id) == (True, person, None)
+        assert collector.notes == expected
     finally:
         access_checks.stop_collecting(token)
 

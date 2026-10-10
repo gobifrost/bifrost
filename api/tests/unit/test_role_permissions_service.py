@@ -167,3 +167,17 @@ async def test_role_has_permission_checks_across_multiple_roles(db_session):
 @pytest.mark.asyncio
 async def test_role_has_permission_false_for_empty_role_list(db_session):
     assert not await role_has_permission(db_session, role_ids=[], permission="agents.read")
+
+
+@pytest.mark.asyncio
+async def test_impersonate_users_is_editable_on_a_custom_role_and_flagged_privileged(db_session):
+    role = await _seed_role(db_session)
+
+    described = await replace_identity_permissions(
+        db_session, role_id=role.id, permissions=["users.impersonate"]
+    )
+
+    held = {item.permission: item for item in described.permissions}
+    offered = {item.permission: item for item in described.identity_permissions}
+    assert (held["users.impersonate"].editable, held["users.impersonate"].privileged) == (True, True)
+    assert (offered["users.impersonate"].editable, offered["users.impersonate"].privileged) == (True, True)

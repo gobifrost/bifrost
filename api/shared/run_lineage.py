@@ -15,7 +15,9 @@ run tree, and the tree's first execution. One rule per way a run starts:
 | bridge, which carries it as a token claim)         |                                                        |                 |
 
 A child whose parent recorded no lineage (started before lineage was
-recorded) records none. Nothing decides on lineage yet; it is attribution.
+recorded) records none. Execution reads use the starter and root to show
+an initiator the root runs they started (shared.execution_visibility);
+nothing else decides on lineage yet.
 """
 
 from __future__ import annotations

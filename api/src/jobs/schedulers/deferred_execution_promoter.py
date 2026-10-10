@@ -20,21 +20,39 @@ Design notes:
   the User record keyed by ``executed_by``. ``startup=None`` for the same
   reason — startup results are per-session context and would be stale by
   the time a scheduled row matures.
+- A row that acts as another user (``execution_context.run_as``) is decided
+  again before it is promoted (``impersonation.recheck_run_as``). A row that
+  is no longer permitted is marked Failed and never published. A refusal is
+  written to the audit log as a live one is (a person's enforced, a
+  workflow's report-only), judged in a collector of its own.
+- ``execution_context.run_as`` lives only until the row runs: the worker
+  overwrites ``execution_context`` on completion. ``executed_by`` (the
+  acting user) and ``started_by_user_id`` (the initiator) keep the record
+  of who acted as whom.
 """
 import logging
 from datetime import datetime, timezone
+from typing import Any
+from uuid import UUID
 
 from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared import access_checks
 from shared.run_lineage import RunLineage
 from src.core.database import get_db_context
+from src.core.log_safety import log_safe
 from src.models.enums import ExecutionStatus
 from src.models.orm.executions import Execution
+from src.services.access_check_writer import flush_detached
+from src.services.authorization.impersonation import recheck_run_as
 from src.services.execution.async_executor import _publish_pending
 
 logger = logging.getLogger(__name__)
 
 BATCH_LIMIT = 500
+# The operation a refused Run As re-check is audited under.
+RECHECK_OPERATION = "scheduler.deferred_execution_promoter"
 
 
 async def promote_due_executions() -> tuple[int, int]:
@@ -58,6 +76,11 @@ async def promote_due_executions() -> tuple[int, int]:
         rows = list(result.scalars().all())
 
         if not rows:
+            return 0, 0
+
+        rows = await _fail_rows_no_longer_permitted(db, rows)
+        if not rows:
+            await db.commit()
             return 0, 0
 
         ids = [r.id for r in rows]
@@ -117,3 +140,55 @@ async def promote_due_executions() -> tuple[int, int]:
             extra={"promoted": promoted, "failures": failures},
         )
         return promoted, failures
+
+
+async def _fail_rows_no_longer_permitted(db: AsyncSession, rows: list[Execution]) -> list[Execution]:
+    """Mark Failed each row whose Run As is no longer permitted; return the others."""
+    permitted: list[Execution] = []
+    for row in rows:
+        run_as = (row.execution_context or {}).get("run_as")
+        reason = None if run_as is None else await _recheck(db, run_as)
+        if reason is None:
+            permitted.append(row)
+            continue
+        await db.execute(
+            update(Execution)
+            .where(Execution.id == row.id)
+            .values(
+                status=ExecutionStatus.FAILED,
+                error_message=f"Run As is no longer permitted: {reason}",
+                completed_at=datetime.now(timezone.utc),
+            )
+        )
+        logger.warning(
+            "deferred_execution_promoter: Run As no longer permitted, row failed",
+            extra={"execution_id": log_safe(row.id), "reason": log_safe(reason)},
+        )
+    return permitted
+
+
+async def _recheck(db: AsyncSession, run_as: dict[str, Any]) -> str | None:
+    """``recheck_run_as``, with a refusal collected as the decision was when
+    the row was scheduled (a person's for its initiator, a workflow's for
+    the run that asked) and written in a session of its own: the row locks
+    this promoter holds stay held until its batch commits."""
+    if run_as["enforced"]:
+        token = access_checks.collect_person(UUID(run_as["authorized_by"]))
+    else:
+        token = access_checks.collect_run(
+            _optional_uuid(run_as["execution_id"]),
+            _optional_uuid(run_as["run_user_id"]),
+            _optional_uuid(run_as["workflow_id"]),
+        )
+    collector = access_checks.current() if token is not None else None
+    try:
+        reason = await recheck_run_as(db, run_as)
+    finally:
+        access_checks.stop_collecting(token)
+    if collector is not None:
+        await flush_detached(collector, operation=RECHECK_OPERATION, route=None)
+    return reason
+
+
+def _optional_uuid(value: str | None) -> UUID | None:
+    return None if value is None else UUID(value)

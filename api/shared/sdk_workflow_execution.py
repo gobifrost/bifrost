@@ -35,10 +35,11 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared import access_checks
+from shared.execution_visibility import is_own_execution
 from shared.run_lineage import RunLineage, lineage_columns, principal_lineage
 from src.core.org_filter import resolve_target_org
 from src.core.principal import UserPrincipal
@@ -93,16 +94,22 @@ async def insert_scheduled_execution(
     api_key_id: UUID | None,
     is_platform_admin: bool,
     lineage: RunLineage | None,
+    run_as: dict[str, Any] | None,
 ) -> UUID:
     """Insert a SCHEDULED execution row.
 
     Skips Redis/RabbitMQ — the deferred_execution_promoter job will publish
     the row when scheduled_at matures. Shared with the form execute path.
+    ``run_as`` (from ``impersonation.scheduled_run_as``) is kept when the row
+    acts as another user, so the promoter decides it again when it fires.
     """
     from src.models.enums import ExecutionStatus
     from src.models.orm.executions import Execution
 
     exec_id = uuid4()
+    execution_context: dict[str, Any] = {"is_platform_admin": is_platform_admin}
+    if run_as is not None:
+        execution_context["run_as"] = run_as
     db.add(
         Execution(
             id=exec_id,
@@ -116,7 +123,7 @@ async def insert_scheduled_execution(
             executed_by_name=executed_by_name,
             form_id=form_id,
             api_key_id=api_key_id,
-            execution_context={"is_platform_admin": is_platform_admin},
+            execution_context=execution_context,
             **lineage_columns(lineage.bound(exec_id) if lineage else None),
         )
     )
@@ -181,9 +188,10 @@ async def execute_sdk_workflow(
     Preserves the historical ``POST /api/workflows/execute`` behavior
     exactly: org-scoped lookup, Solution own-install scope with inbound
     denial (404 without shared fallback), UUID vs portable-ref role checks,
-    admin-only inline code and ``org_id`` / ``run_as`` overrides, ``run_as``
-    identity resolution, execution-org priority (explicit override >
-    workflow org > caller org), ``delay_seconds`` normalization, scheduled
+    admin-only inline code and ``org_id`` override, ``run_as`` decided by
+    ``impersonation.acting_target`` (it changes the acting user only), execution-org
+    priority (explicit override > workflow org > caller org),
+    ``delay_seconds`` normalization, scheduled
     insert, inline-code / data-provider (cache-hit, transient/sync) /
     normal dispatch forms, terminal-transient marking, and request-side
     non-terminal WebSocket fan-out ordering.
@@ -316,41 +324,35 @@ async def execute_sdk_workflow(
     if workflow is not None:
         await _note_entry(session, principal, workflow)
 
-    # Validate admin-only overrides (org_id, run_as)
-    if (request.org_id or request.run_as) and not principal.is_superuser:
+    # The org_id override stays platform-admin only.
+    if request.org_id and not principal.is_superuser:
         raise SdkWorkflowExecutionError(
             403,
             "org_id and run_as overrides require platform admin",
         )
 
-    # Resolve run_as user if provided
+    # The acting user: the caller, or the run_as user when the caller may act as them.
     exec_user_id = str(principal.user_id)
     exec_user_name = principal.name or principal.email or "Unknown"
     exec_user_email = principal.email or ""
     exec_is_admin = principal.is_superuser
+    scheduled_run_as: dict[str, Any] | None = None
 
     if request.run_as:
-        from src.models.orm.users import User
+        from src.services.authorization import impersonation
 
-        run_as_result = await session.execute(
-            select(User).where(User.id == UUID(request.run_as))
-        )
-        run_as_user = run_as_result.scalar_one_or_none()
-        if not run_as_user:
-            raise SdkWorkflowExecutionError(
-                404,
-                f"run_as user '{request.run_as}' not found",
-            )
-        exec_user_id = str(run_as_user.id)
-        exec_user_name = run_as_user.name or run_as_user.email or "Unknown"
-        exec_user_email = run_as_user.email or ""
-        exec_is_admin = run_as_user.is_superuser
-        logger.info(f"Impersonating user: {exec_user_id} ({exec_user_email})")
-        if run_as_user.id != principal.run_user_id:
-            access_checks.note("run_as", None, run_as_user_id=run_as_user.id)
-        access_checks.note_power(
-            "users.impersonate", run_as_user.organization_id, subject=f"user:{run_as_user.id}"
-        )
+        try:
+            target = await impersonation.acting_target(session, principal, UUID(request.run_as))
+        except impersonation.RunAsError as exc:
+            raise SdkWorkflowExecutionError(exc.status_code, exc.detail) from None
+        if target is not None:
+            scheduled_run_as = impersonation.scheduled_run_as(principal, target)
+            if scheduled_run_as is not None:
+                logger.info(f"Impersonating user: {target.user_id} ({target.email})")
+            exec_user_id = str(target.user_id)
+            exec_user_name = target.name or target.email or "Unknown"
+            exec_user_email = target.email
+            exec_is_admin = target.is_superuser
 
     # Who the run is for: the authenticated caller, never the run_as user.
     lineage = await principal_lineage(session, principal)
@@ -408,6 +410,7 @@ async def execute_sdk_workflow(
             api_key_id=None,  # API-key-triggered scheduling not supported in v1
             is_platform_admin=exec_is_admin,
             lineage=lineage,
+            run_as=scheduled_run_as,
         )
         return WorkflowExecutionResponse(
             execution_id=str(exec_id),
@@ -611,8 +614,9 @@ async def cancel_scheduled_sdk_execution(
     exactly, including the 404/403/409 precedence:
 
     - 404 when the row is missing,
-    - 403 when a non-admin reaches across orgs or cancels another
-      submitter's row,
+    - 403 when a non-admin reaches across orgs or cancels a row that is
+      not their own (``execution_visibility.is_own_execution``: they act in
+      it, or started it as its root, as with Run As),
     - 409 with the current status when the row is no longer SCHEDULED
       (the promoter or a concurrent cancel won the race).
 
@@ -637,7 +641,13 @@ async def cancel_scheduled_sdk_execution(
         raise SdkWorkflowExecutionError(403, "Access denied")
 
     # Non-admin can only cancel their own scheduled rows.
-    if row.executed_by != principal.user_id:
+    if not is_own_execution(
+        principal.user_id,
+        execution_id=row.id,
+        executed_by=row.executed_by,
+        started_by_user_id=row.started_by_user_id,
+        root_execution_id=row.root_execution_id,
+    ):
         if not principal.is_superuser:
             raise SdkWorkflowExecutionError(
                 403, "Only the submitter or an admin may cancel"

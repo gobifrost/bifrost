@@ -46,11 +46,15 @@ async def enqueue_agent_run(
     run_id: str | None = None,
     before_queue_publish: Callable[[str], Awaitable[None]] | None = None,
     lineage: RunLineage | None,
+    run_as_user_id: UUID | None = None,
 ) -> str:
     """Persist and enqueue an agent run for worker processing.
 
     ``lineage`` says who the run is for (shared.run_lineage); the row records
     its run user. None when it can't be known.
+
+    ``run_as_user_id`` is the authorized user the run acts as when it isn't
+    the caller. Only the row records it; the queued context stays the same.
 
     The database row is committed before the queue message is published so a
     returned run ID is immediately queryable. If Redis or RabbitMQ rejects the
@@ -81,6 +85,7 @@ async def enqueue_agent_run(
                 caller_email=caller_email,
                 caller_name=caller_name,
                 run_user_id=lineage.run_user_id if lineage else None,
+                run_as_user_id=run_as_user_id,
             )
         )
         await db.commit()

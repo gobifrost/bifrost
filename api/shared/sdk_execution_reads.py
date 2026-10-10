@@ -41,6 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, selectinload
 
 from shared import access_checks
+from shared.execution_visibility import is_own_execution, own_executions
 from src.core.log_safety import log_safe
 from src.core.org_filter import OrgFilterType, filter_target, resolve_org_filter
 from src.core.principal import UserPrincipal
@@ -501,7 +502,8 @@ async def list_sdk_executions(
     Preserves the historical ``GET /api/executions`` behavior exactly:
     org scope via ``resolve_org_filter`` (org users pinned to their org,
     superusers unfiltered unless scoped), non-superusers restricted to
-    their own rows, ``workflow_id`` winning over ``workflow_name``,
+    their own rows (``shared.execution_visibility``),
+    ``workflow_id`` winning over ``workflow_name``,
     comma-separated status match-any, silently-ignored malformed
     start/end dates, the
     ``started_at/scheduled_at/completed_at/created_at`` timeline anchor,
@@ -541,7 +543,7 @@ async def list_sdk_executions(
         query = query.where(ExecutionModel.organization_id == org_filter)
 
     if not principal.is_superuser:
-        query = query.where(ExecutionModel.executed_by == principal.user_id)
+        query = query.where(own_executions(principal.user_id))
     else:
         access_checks.note_power("executions.read.all", filter_target(filter_type, filter_org), subject="executions")
 
@@ -639,7 +641,8 @@ async def get_sdk_execution(
 
     Preserves the historical ``GET /api/executions/{id}`` behavior
     exactly: 404 when the row is missing (including a Redis-pending
-    fallback miss), 403 when a non-superuser views another user's row,
+    fallback miss), 403 when a non-superuser views a row not their own
+    (``shared.execution_visibility``),
     dual-read logs (Redis Stream when in-progress, Postgres when
     complete, DEBUG/TRACEBACK filtered for non-admins), AI usage rows
     plus totals, admin-only variables/context/resource fields, and the
@@ -683,7 +686,13 @@ async def get_sdk_execution(
             )
         return pending
 
-    if execution.executed_by != principal.user_id:
+    if not is_own_execution(
+        principal.user_id,
+        execution_id=execution.id,
+        executed_by=execution.executed_by,
+        started_by_user_id=execution.started_by_user_id,
+        root_execution_id=execution.root_execution_id,
+    ):
         if not principal.is_superuser:
             raise SdkExecutionReadError(
                 403, "You do not have permission to view this execution"

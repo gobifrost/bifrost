@@ -7,7 +7,7 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from sqlalchemy import select
@@ -25,12 +25,18 @@ from src.models.enums import MessageRole
 from src.models.orm.agents import Agent, Conversation
 from src.models.orm.agent_runs import AgentRun
 
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from src.services.execution.autonomous_agent_executor import ActingUser
+
 logger = logging.getLogger(__name__)
 
 QUEUE_NAME = "agent-runs"
 REDIS_PREFIX = "bifrost:agent_run"
 DEFAULT_RUN_TIMEOUT = 1800  # 30 minutes
 CANCEL_CHECK_INTERVAL = 2  # seconds between cancel flag checks
+RUN_AS_INACTIVE_ERROR = "The user this run acts as is no longer active"
 
 
 async def _publish_sync_result(run_id: str, result: dict) -> None:
@@ -84,6 +90,33 @@ def _caller_to_principal(caller: dict[str, Any]) -> UserPrincipal:
         is_external=bool(caller.get("is_external", False)),
         is_provider_org=bool(caller.get("is_provider_org", False)),
         roles=list(caller.get("roles") or []),
+    )
+
+
+async def _load_run_as(
+    db: AsyncSession,
+    run_as_user_id: UUID,
+    run_org_id: UUID | None,
+) -> ActingUser | None:
+    """The run's Run As user from the database; None when it can no longer act.
+
+    The identity comes from the ``agent_runs`` and ``users`` rows only, never
+    from the Redis run context. Its organization is the run's.
+    """
+    from src.services.authorization.explain import load_run_as_target
+    from src.services.execution.autonomous_agent_executor import ActingUser
+
+    target = await load_run_as_target(db, run_as_user_id)
+    if target is None or not target.is_active or target.is_system:
+        return None
+    return ActingUser(
+        user_id=str(target.user_id),
+        email=target.email,
+        name=target.name or target.email,
+        organization_id=run_org_id,
+        is_platform_admin=target.is_superuser,
+        is_external=target.is_external,
+        is_provider_org=target.is_provider_org,
     )
 
 
@@ -284,6 +317,31 @@ class AgentRunConsumer(BaseConsumer):
                         )
                     return
 
+                run_as: ActingUser | None = None
+                if agent_run.run_as_user_id is not None:
+                    run_as = await _load_run_as(
+                        db, agent_run.run_as_user_id, agent_run.org_id
+                    )
+                    if run_as is None:
+                        logger.info(
+                            "Agent run %s: its Run As user can no longer act",
+                            run_id,
+                        )
+                        agent_run.status = "failed"
+                        agent_run.error = RUN_AS_INACTIVE_ERROR
+                        agent_run.completed_at = datetime.now(timezone.utc)
+                        await db.commit()
+                        if sync:
+                            await _publish_sync_result(
+                                run_id,
+                                {
+                                    "output": None,
+                                    "status": "failed",
+                                    "error": RUN_AS_INACTIVE_ERROR,
+                                },
+                            )
+                        return
+
                 agent_run.status = "running"
                 agent_run.budget_max_iterations = agent.max_iterations
                 agent_run.budget_max_tokens = agent.max_token_budget
@@ -327,6 +385,7 @@ class AgentRunConsumer(BaseConsumer):
                     run_id=run_id,
                     _caller=context.get("caller"),
                     run_user_id=agent_run.run_user_id,
+                    run_as=run_as,
                 ))
 
                 # Cancel watcher: polls Redis flag, force-cancels task if stuck

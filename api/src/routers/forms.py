@@ -1427,6 +1427,7 @@ async def submit_form(
             api_key_id=None,
             is_platform_admin=ctx.user.is_superuser,
             lineage=await principal_lineage(db, ctx.user),
+            run_as=None,
         )
         logger.info(
             f"Form {log_safe(form_id)} scheduled by user {ctx.user.email}, "

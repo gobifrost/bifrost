@@ -9,16 +9,19 @@ the thinned HTTP handlers (which delegate to
 - scheduled enqueue + cancel + second-cancel 409,
 - Solution inbound denial (unknown install UUID -> 404),
 - cross-org execute denial (org2 user on an org1 workflow -> 404),
-- run_as denials (non-admin 403, unknown user 404),
+- run_as: refused without Impersonate Users (403), unknown user (404), and
+  an Impersonate Users grant at Contoso allowing a Contoso user but not a
+  Fabrikam one, each audited as an enforced ``run_as`` check,
 - inline-code non-admin 403 and unknown-workflow 404 detail,
 - cancel 404/403 precedence.
 """
 from __future__ import annotations
 
+import asyncio
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import pytest_asyncio
@@ -26,9 +29,11 @@ import pytest_asyncio
 from src.models.enums import ExecutionStatus
 from src.models.orm.executions import Execution
 from tests.e2e.conftest import write_and_register
+from tests.e2e.fixtures.run_as import RUN_AS_DENIED, create_person, ok, recorded_run_as
 
 
 pytestmark = pytest.mark.e2e
+
 
 WORKFLOW_CONTENT = '''"""E2E Workflow Mutations Service Workflow"""
 from bifrost import workflow
@@ -187,10 +192,10 @@ def test_cross_org_execute_is_404(
     assert resp.status_code == 404, resp.text
 
 
-def test_run_as_non_admin_is_403(
-    e2e_client, platform_admin, org1_user, mutation_workflow
+def test_run_as_without_impersonate_users_is_403(
+    e2e_client, platform_admin, org1_user, non_admin_user, mutation_workflow
 ):
-    # The override gate sits after workflow resolution, so open the fixture
+    # The run_as check sits after workflow resolution, so open the fixture
     # workflow to authenticated callers first (admin paths are unaffected).
     patch_resp = e2e_client.patch(
         f"/api/workflows/{mutation_workflow['id']}",
@@ -205,13 +210,15 @@ def test_run_as_non_admin_is_403(
         json={
             "workflow_id": mutation_workflow["id"],
             "input_data": {},
-            "run_as": str(org1_user.user_id),
+            "run_as": str(non_admin_user.user_id),
         },
     )
     assert resp.status_code == 403, resp.text
+    detail = resp.json()["detail"]
+    assert detail == RUN_AS_DENIED
 
 
-def test_run_as_unknown_user_is_404(
+def test_run_as_unknown_user_is_refused_like_one_out_of_reach(
     e2e_client, platform_admin, mutation_workflow
 ):
     resp = e2e_client.post(
@@ -223,7 +230,150 @@ def test_run_as_unknown_user_is_404(
             "run_as": str(uuid4()),
         },
     )
-    assert resp.status_code == 404, resp.text
+    assert resp.status_code == 403, resp.text
+    detail = resp.json()["detail"]
+    assert detail == RUN_AS_DENIED
+
+
+@pytest.fixture(scope="module")
+def impersonation_world(e2e_client, platform_admin):
+    """A Contoso person holding Impersonate Users at Contoso, a Contoso
+    colleague, a Fabrikam person, and a Contoso workflow they can all run."""
+    tag = uuid4().hex[:8]
+    admin = platform_admin.headers
+    contoso = ok(e2e_client.post("/api/organizations", headers=admin, json={"name": f"Contoso-{tag}"}), 201)
+    fabrikam = ok(e2e_client.post("/api/organizations", headers=admin, json={"name": f"Fabrikam-{tag}"}), 201)
+    role = ok(e2e_client.post("/api/roles", headers=admin, json={"name": f"Contoso Impersonation {tag}"}), 201)
+    ok(
+        e2e_client.put(
+            f"/api/roles/{role['id']}/permissions",
+            headers=admin,
+            json={"permissions": ["users.impersonate"]},
+        )
+    )
+    initiator = create_person(
+        e2e_client,
+        admin,
+        contoso,
+        tag,
+        "initiator",
+        additional=[{"role_id": role["id"], "boundaries": [{"kind": "organization", "organization_id": contoso["id"]}]}],
+    )
+    colleague = create_person(e2e_client, admin, contoso, tag, "colleague", additional=[])
+    outsider = create_person(e2e_client, admin, fabrikam, tag, "outsider", additional=[])
+    func = f"e2e_wf_run_as_{tag}"
+    path = f"{func}.py"
+    workflow = write_and_register(
+        e2e_client,
+        admin,
+        path,
+        WORKFLOW_CONTENT.format(name=func, func=func),
+        func,
+        organization_id=contoso["id"],
+    )
+    ok(e2e_client.patch(f"/api/workflows/{workflow['id']}", headers=admin, json={"access_level": "authenticated"}))
+
+    yield {
+        "initiator": initiator,
+        "colleague": colleague,
+        "outsider": outsider,
+        "workflow": workflow,
+        "contoso": contoso,
+    }
+
+    e2e_client.delete(f"/api/files/editor?path={path}", headers=admin)
+    for person in (initiator, colleague, outsider):
+        e2e_client.delete(f"/api/users/{person.user_id}", headers=admin)
+    e2e_client.delete(f"/api/roles/{role['id']}", headers=admin)
+    e2e_client.delete(f"/api/organizations/{contoso['id']}", headers=admin)
+    e2e_client.delete(f"/api/organizations/{fabrikam['id']}", headers=admin)
+
+
+def test_impersonate_users_runs_as_a_user_in_its_organization(
+    e2e_client, impersonation_world, cleanup_execution_rows, async_session_factory
+):
+    world = impersonation_world
+    initiator, colleague = world["initiator"], world["colleague"]
+    exec_id = _schedule(
+        e2e_client,
+        initiator.headers,
+        world["workflow"]["id"],
+        cleanup_execution_rows,
+        run_as=str(colleague.user_id),
+    )
+
+    async def identities():
+        from src.core.database import close_db
+
+        try:
+            async with async_session_factory() as session:
+                return (
+                    await session.execute(
+                        select(Execution.executed_by, Execution.run_user_id, Execution.started_by_user_id).where(
+                            Execution.id == exec_id
+                        )
+                    )
+                ).one()
+        finally:
+            await close_db()
+
+    acting, run_user, started_by = asyncio.run(identities())
+    assert (acting, run_user, started_by) == (colleague.user_id, initiator.user_id, initiator.user_id)
+
+    checks = recorded_run_as(async_session_factory, initiator.user_id, colleague.user_id)
+    summary = [(c["outcome"], str(c["organization_id"]), c["details"]["enforced"]) for c in checks]
+    assert summary == [("success", world["contoso"]["id"], True)]
+
+
+def test_impersonate_users_is_refused_outside_its_organization(
+    e2e_client, impersonation_world, async_session_factory
+):
+    world = impersonation_world
+    initiator, outsider = world["initiator"], world["outsider"]
+
+    resp = e2e_client.post(
+        "/api/workflows/execute",
+        headers=initiator.headers,
+        json={"workflow_id": world["workflow"]["id"], "input_data": {}, "run_as": str(outsider.user_id)},
+    )
+    assert resp.status_code == 403, resp.text
+    detail = resp.json()["detail"]
+    assert detail == RUN_AS_DENIED
+
+    # The initiator's organization records the request alone; the outsider's
+    # organization records the full decision.
+    checks = recorded_run_as(async_session_factory, initiator.user_id, outsider.user_id, count=2)
+    summary = sorted(
+        (
+            c["outcome"],
+            c["details"]["enforced"],
+            next(step["reason"] for step in c["details"]["trace"]["steps"] if step["status"] == "stopped"),
+        )
+        for c in checks
+    )
+    assert summary == [("failure", True, "outside"), ("failure", True, "outside_reach")]
+    organizations = {c["organization_id"] for c in checks}
+    assert len(organizations) == 2
+
+
+def test_the_initiator_cancels_a_run_scheduled_as_a_colleague(
+    e2e_client, impersonation_world, cleanup_execution_rows
+):
+    world = impersonation_world
+    exec_id = _schedule(
+        e2e_client,
+        world["initiator"].headers,
+        world["workflow"]["id"],
+        cleanup_execution_rows,
+        run_as=str(world["colleague"].user_id),
+    )
+
+    by_outsider = e2e_client.post(f"/api/workflows/executions/{exec_id}/cancel", headers=world["outsider"].headers)
+    by_initiator = e2e_client.post(f"/api/workflows/executions/{exec_id}/cancel", headers=world["initiator"].headers)
+
+    assert by_outsider.status_code == 403, by_outsider.text
+    cancelled = ok(by_initiator)
+    assert cancelled == {"execution_id": str(exec_id), "status": ExecutionStatus.CANCELLED.value}
 
 
 def test_inline_code_non_admin_is_403(e2e_client, org1_user):
