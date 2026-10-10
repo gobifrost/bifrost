@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
+import pytest_asyncio
 
 from src.models.enums import ExecutionStatus
 from src.models.orm.executions import Execution
@@ -11,6 +12,18 @@ from src.models.orm.executions import Execution
 
 PATH_PUBLISH = "src.jobs.schedulers.deferred_execution_promoter._publish_pending"
 PATH_DB_CTX = "src.jobs.schedulers.deferred_execution_promoter.get_db_context"
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _fresh_redis_client(monkeypatch):
+    # A refused Run As is audited through the shared Redis client, which binds
+    # to the event loop that created it; each test runs in its own loop.
+    from src.core.cache import redis_client
+    from src.core.cache.redis_client import close_shared_redis
+
+    monkeypatch.setattr(redis_client, "_shared_client", None)
+    yield
+    await close_shared_redis()
 
 
 def _new_scheduled(when: datetime) -> Execution:
@@ -227,6 +240,15 @@ def _published(pub: AsyncMock) -> set[str]:
     return {call.kwargs["execution_id"] for call in pub.await_args_list}
 
 
+async def _run_as_audit(db_session, user_id):
+    from sqlalchemy import select
+
+    from src.models.orm.audit import AuditLog
+
+    query = select(AuditLog).where(AuditLog.user_id == user_id, AuditLog.resource_type == "run_as")
+    return list((await db_session.execute(query)).scalars().all())
+
+
 @pytest.mark.asyncio
 async def test_a_run_as_whose_grant_was_revoked_fails_and_is_not_published(db_session):
     from sqlalchemy import delete
@@ -250,6 +272,18 @@ async def test_a_run_as_whose_grant_was_revoked_fails_and_is_not_published(db_se
     assert row.status == ExecutionStatus.FAILED
     assert row.error_message == "Run As is no longer permitted: You don't have permission to run as this user"
     assert row.completed_at is not None
+    # Recorded as a live refusal is: the initiator, the user and their organization, enforced.
+    [audit] = await _run_as_audit(db_session, initiator.id)
+    assert (audit.action, audit.outcome, audit.organization_id) == (
+        "access.check",
+        "failure",
+        colleague.organization_id,
+    )
+    assert audit.details is not None
+    colleague_id = str(colleague.id)
+    assert (audit.details["enforced"], audit.details["inputs"]["run_as_user_id"]) == (True, colleague_id)
+    stopped = [step["key"] for step in audit.details["trace"]["steps"] if step["status"] == "stopped"]
+    assert stopped == ["permission"]
 
 
 @pytest.mark.asyncio
@@ -269,6 +303,28 @@ async def test_a_run_as_whose_target_was_deactivated_fails(db_session):
     assert row.status == ExecutionStatus.FAILED
     expected = f"Run As is no longer permitted: Run As user '{colleague.id}' is inactive"
     assert row.error_message == expected
+    [audit] = await _run_as_audit(db_session, initiator.id)
+    assert audit.details is not None
+    stopped = [(step["key"], step["reason"]) for step in audit.details["trace"]["steps"] if step["status"] == "stopped"]
+    assert (audit.outcome, audit.details["enforced"], stopped) == ("failure", True, [("run_as_user", "inactive")])
+
+
+@pytest.mark.asyncio
+async def test_a_run_as_whose_initiator_is_inactive_fails(db_session):
+    initiator, colleague, _role = await _impersonation(db_session)
+    row = _acting_as(colleague.id, initiator.id, enforced=True)
+    initiator.is_active = False
+    db_session.add(row)
+    await db_session.commit()
+
+    pub = await _promote(db_session)
+
+    published = _published(pub)
+    row_id = str(row.id)
+    assert row_id not in published
+    await db_session.refresh(row)
+    assert row.status == ExecutionStatus.FAILED
+    assert row.error_message == "Run As is no longer permitted: The user who scheduled this run is inactive"
 
 
 @pytest.mark.asyncio
@@ -303,6 +359,9 @@ async def test_a_run_as_still_permitted_is_published_as_the_target(db_session):
     assert kwargs["user_id"] == colleague_id
     await db_session.refresh(row)
     assert row.status == ExecutionStatus.PENDING
+    # Only a refusal is recorded; the decision when it was scheduled already was.
+    audit = await _run_as_audit(db_session, initiator.id)
+    assert audit == []
 
 
 @pytest.mark.asyncio

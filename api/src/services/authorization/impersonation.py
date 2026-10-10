@@ -25,8 +25,9 @@ noted.
 
 A scheduled run keeps what was decided (``scheduled_run_as``) and is decided
 again when it fires (``recheck_run_as``): a person's impersonation on the
-initiator's roles as they are then, an execution credential's on the target
-alone.
+initiator's roles as they are then (an initiator who is no longer active
+can't act), an execution credential's on the target alone. A person's
+refusal is noted as a live one is.
 """
 
 from __future__ import annotations
@@ -34,10 +35,12 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared import access_checks
 from src.core.principal import UserPrincipal
+from src.models.orm.users import User
 from src.services.authorization.enforce import Caller, load_caller, permitted_organizations
 from src.services.authorization.explain import (
     RunAsTarget,
@@ -112,16 +115,26 @@ def scheduled_run_as(principal: UserPrincipal, target: RunAsTarget) -> dict[str,
 async def recheck_run_as(db: AsyncSession, run_as: dict[str, Any]) -> str | None:
     """Why the impersonation ``scheduled_run_as`` kept is no longer permitted,
     or None while it still is. A person's is judged again on the initiator's
-    roles as they are now; an execution credential's checks the target only."""
+    roles as they are now, and needs the initiator still active; a refusal
+    is noted (into the caller's collector) as a live one is. An execution
+    credential's checks the target only."""
     try:
         target = await _load(db, UUID(run_as["user_id"]))
         if not run_as["enforced"]:
             _raise_if_unusable(target)
             return None
-        initiator = await load_run_user(db, UUID(run_as["authorized_by"]))
-        if initiator is None:
+        initiator_id = UUID(run_as["authorized_by"])
+        active = (await db.execute(select(User.is_active).where(User.id == initiator_id))).scalar_one_or_none()
+        if active is None:
             return "The user who scheduled this run no longer exists"
-        _raise_if_refused(check_run_as(initiator, None, target), target)
+        if not active:
+            return "The user who scheduled this run is inactive"
+        initiator = await load_run_user(db, initiator_id)
+        assert initiator is not None, "the initiator was just read"
+        trace = check_run_as(initiator, None, target)
+        if trace.outcome == "failure":
+            _note(target, enforced=True)
+        _raise_if_refused(trace, target)
     except RunAsError as exc:
         return exc.detail
     return None
