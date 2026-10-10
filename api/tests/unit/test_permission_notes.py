@@ -204,7 +204,8 @@ async def test_websocket_checks_are_judged_in_the_background(monkeypatch) -> Non
         assert judged == [] and len(websocket._judging) == 1
         [task] = websocket._judging
         release.set()
-        await task
+        judged_task = await task
+        assert judged_task is None
     finally:
         access_checks.stop_collecting(token)
 

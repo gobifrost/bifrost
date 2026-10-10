@@ -612,7 +612,8 @@ async def test_a_row_another_writer_is_inserting_is_written_by_a_later_attempt(d
         await flush(db_session, _person_collector(person.id, second), **ROUTE)
         assert attempts == ["access.check"]
         fail.set()
-        await holder
+        held = await holder
+        assert held is None
         await flush(db_session, _person_collector(person.id, second), **ROUTE)
 
     assert attempts == ["access.check", "access.check"]
