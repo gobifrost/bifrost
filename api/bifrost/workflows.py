@@ -111,8 +111,10 @@ class workflows:
             ValueError: If ``scheduled_at`` and ``delay_seconds`` are both
                 provided, or if ``scheduled_at`` is naive (no tzinfo).
             httpx.HTTPStatusError: If the request fails (403 for non-admin
-                using org_id or without Impersonate Users for run_as, 404 for
-                workflow or Run As user not found, etc.)
+                using org_id, or for a run_as user outside the caller's
+                Impersonate Users, which includes an unknown user when a
+                person calls; 404 for workflow not found, or for a Run As
+                user not found when a workflow calls, etc.)
             RuntimeError: If not authenticated
 
         Example:

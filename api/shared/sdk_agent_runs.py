@@ -166,28 +166,18 @@ async def authorize_agent_run_as(
     """The user an agent run acts as when ``run_as`` names ``run_as_user_id``;
     None when it names the caller, who then acts as without ``run_as``.
 
-    ``authorize_run_as`` decides, and its refusal keeps its status. Naming
-    the run user is not impersonation, but the run still acts as that user
-    (a workflow's engine token is not the run user), so only existence is
-    checked.
+    ``impersonation.acting_target`` decides, and its refusal keeps its
+    status.
 
     Raises:
-        SdkAgentRunError: the helper's 403/404/400, or 404 when the named
-            run user no longer exists.
+        SdkAgentRunError: the helper's 403/404/400.
     """
-    from src.services.authorization.explain import load_run_as_target
-    from src.services.authorization.impersonation import RunAsError, authorize_run_as
+    from src.services.authorization.impersonation import RunAsError, acting_target
 
     try:
-        target = await authorize_run_as(session, principal, run_as_user_id)
+        return await acting_target(session, principal, run_as_user_id)
     except RunAsError as exc:
         raise SdkAgentRunError(exc.status_code, exc.detail) from None
-    if target is not None or run_as_user_id == principal.user_id:
-        return target
-    target = await load_run_as_target(session, run_as_user_id)
-    if target is None:
-        raise SdkAgentRunError(404, f"Run As user '{run_as_user_id}' not found")
-    return target
 
 
 def _acting_org(agent_org_id: UUID | None, target: RunAsTarget) -> UUID | None:

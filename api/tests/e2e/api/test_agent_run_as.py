@@ -21,48 +21,12 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.test import TestModel
 from sqlalchemy import func, select
 
-from tests.e2e.conftest import poll_until, write_and_register
-from tests.e2e.fixtures.setup import _register_and_authenticate_user
+from tests.e2e.conftest import write_and_register
+from tests.e2e.fixtures.run_as import RUN_AS_DENIED, create_person, ok, query, recorded_run_as
 from tests.e2e.fixtures.users import E2EUser
 
 
 pytestmark = pytest.mark.e2e
-
-USER_ROLE_ID = "00000000-0000-0000-0000-000000000006"
-RUN_AS_DENIED = "You don't have permission to run as this user"
-
-
-def _ok(response, status: int = 200):
-    assert response.status_code == status, f"{response.request.url}: {response.status_code} {response.text}"
-    return response.json() if response.content else None
-
-
-def _person(e2e_client, admin: dict, organization: dict, tag: str, label: str, *, additional: list[dict]) -> E2EUser:
-    person = E2EUser(
-        email=f"agent-run-as-{label}-{tag}@contoso.example",
-        password="AgentRunAs123!",
-        name=f"Agent Run As {label} {tag}",
-        organization_id=UUID(organization["id"]),
-    )
-    created = _ok(
-        e2e_client.post(
-            "/api/users",
-            headers=admin,
-            json={"email": person.email, "name": person.name, "organization_id": organization["id"]},
-        ),
-        201,
-    )
-    person = _register_and_authenticate_user(person)
-    person.user_id = UUID(created["id"])
-    _ok(
-        e2e_client.put(
-            f"/api/users/{created['id']}/role-assignments",
-            headers=admin,
-            json={"base_role_id": USER_ROLE_ID, "additional": additional},
-        )
-    )
-    return person
-
 
 @pytest.fixture(scope="module")
 def agent_run_as_world(e2e_client, platform_admin):
@@ -70,17 +34,17 @@ def agent_run_as_world(e2e_client, platform_admin):
     without it, a Contoso colleague, a Fabrikam person, and a Contoso agent."""
     tag = uuid4().hex[:8]
     admin = platform_admin.headers
-    contoso = _ok(e2e_client.post("/api/organizations", headers=admin, json={"name": f"Contoso-{tag}"}), 201)
-    fabrikam = _ok(e2e_client.post("/api/organizations", headers=admin, json={"name": f"Fabrikam-{tag}"}), 201)
-    role = _ok(e2e_client.post("/api/roles", headers=admin, json={"name": f"Contoso Agent Impersonation {tag}"}), 201)
-    _ok(
+    contoso = ok(e2e_client.post("/api/organizations", headers=admin, json={"name": f"Contoso-{tag}"}), 201)
+    fabrikam = ok(e2e_client.post("/api/organizations", headers=admin, json={"name": f"Fabrikam-{tag}"}), 201)
+    role = ok(e2e_client.post("/api/roles", headers=admin, json={"name": f"Contoso Agent Impersonation {tag}"}), 201)
+    ok(
         e2e_client.put(
             f"/api/roles/{role['id']}/permissions",
             headers=admin,
             json={"permissions": ["users.impersonate"]},
         )
     )
-    initiator = _person(
+    initiator = create_person(
         e2e_client,
         admin,
         contoso,
@@ -88,10 +52,10 @@ def agent_run_as_world(e2e_client, platform_admin):
         "initiator",
         additional=[{"role_id": role["id"], "boundaries": [{"kind": "organization", "organization_id": contoso["id"]}]}],
     )
-    ungranted = _person(e2e_client, admin, contoso, tag, "ungranted", additional=[])
-    colleague = _person(e2e_client, admin, contoso, tag, "colleague", additional=[])
-    outsider = _person(e2e_client, admin, fabrikam, tag, "outsider", additional=[])
-    agent = _ok(
+    ungranted = create_person(e2e_client, admin, contoso, tag, "ungranted", additional=[])
+    colleague = create_person(e2e_client, admin, contoso, tag, "colleague", additional=[])
+    outsider = create_person(e2e_client, admin, fabrikam, tag, "outsider", additional=[])
+    agent = ok(
         e2e_client.post(
             "/api/agents",
             headers=admin,
@@ -133,42 +97,11 @@ def _enqueue(e2e_client, person: E2EUser, agent: dict, run_as: UUID):
     )
 
 
-async def _query(session_factory, statement):
-    from src.core.database import close_db
-
-    try:
-        async with session_factory() as session:
-            return (await session.execute(statement)).all()
-    finally:
-        await close_db()
-
-
 def _runs_of(session_factory, agent_id: str) -> int:
     from src.models.orm.agent_runs import AgentRun
 
-    rows = asyncio.run(_query(session_factory, select(func.count()).where(AgentRun.agent_id == UUID(agent_id))))
+    rows = asyncio.run(query(session_factory, select(func.count()).where(AgentRun.agent_id == UUID(agent_id))))
     return rows[0][0]
-
-
-def _recorded_run_as(session_factory, initiator: UUID, run_as_user: UUID) -> list[dict]:
-    from src.models.orm.audit import AuditLog
-
-    statement = select(AuditLog.outcome, AuditLog.organization_id, AuditLog.details).where(
-        AuditLog.action == "access.check",
-        AuditLog.resource_type == "run_as",
-        AuditLog.user_id == initiator,
-    )
-
-    def found():
-        rows = asyncio.run(_query(session_factory, statement))
-        matching = [
-            {"outcome": outcome, "organization_id": org_id, "details": details}
-            for outcome, org_id, details in rows
-            if details["inputs"].get("run_as_user_id") == str(run_as_user)
-        ]
-        return matching or None
-
-    return poll_until(found, max_wait=30, interval=0.5) or []
 
 
 def test_a_person_without_impersonate_users_is_refused_and_nothing_is_queued(
@@ -194,15 +127,15 @@ def test_impersonate_users_runs_an_agent_as_a_user_in_its_organization(
 
     accepted = _enqueue(e2e_client, initiator, world["agent"], colleague.user_id)
 
-    receipt = _ok(accepted, 202)
-    run = _ok(e2e_client.get(f"/api/agent-runs/{receipt['run_id']}", headers=initiator.headers))
+    receipt = ok(accepted, 202)
+    run = ok(e2e_client.get(f"/api/agent-runs/{receipt['run_id']}", headers=initiator.headers))
     acting_user = str(colleague.user_id)
     shown = (run["run_as_user_id"], run["run_as_user_name"], run["org_id"], run["caller_user_id"])
     expected = (acting_user, colleague.name, world["contoso"]["id"], str(initiator.user_id))
     assert receipt["run_as_user_id"] == acting_user
     assert shown == expected
 
-    checks = _recorded_run_as(async_session_factory, initiator.user_id, colleague.user_id)
+    checks = recorded_run_as(async_session_factory, initiator.user_id, colleague.user_id)
     summary = [(c["outcome"], str(c["organization_id"]), c["details"]["enforced"]) for c in checks]
     assert summary == [("success", world["contoso"]["id"], True)]
 
@@ -318,7 +251,7 @@ async def {name}():
     return {{"user_id": str(context.user_id)}}
 """
     workflow = write_and_register(e2e_client, admin, path, source, name, organization_id=contoso_id)
-    agent = _ok(
+    agent = ok(
         e2e_client.post(
             "/api/agents",
             headers=admin,
@@ -340,7 +273,7 @@ async def {name}():
         )
 
         rows = asyncio.run(
-            _query(
+            query(
                 async_session_factory,
                 select(Execution.executed_by, Execution.run_user_id).where(
                     Execution.id == UUID(tool_result["execution_id"])

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -24,7 +25,13 @@ from src.models.orm.audit import AuditLog
 from src.models.orm.organizations import Organization
 from src.models.orm.users import Role, RolePermission, User, UserRole, UserRoleBoundary
 from src.services.access_check_writer import flush
-from src.services.authorization.impersonation import RunAsError, authorize_run_as, scheduled_run_as
+from src.services.authorization.impersonation import (
+    DENIED_MESSAGE,
+    RunAsError,
+    acting_target,
+    authorize_run_as,
+    scheduled_run_as,
+)
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -128,10 +135,23 @@ def _collecting(user_id: UUID) -> Iterator[access_checks.Collector]:
         access_checks.stop_collecting(token)
 
 
-async def _status(db: AsyncSession, principal: UserPrincipal, user_id: UUID) -> int:
+async def _refusal(db: AsyncSession, principal: UserPrincipal, user_id: UUID) -> tuple[int, str]:
     with pytest.raises(RunAsError) as exc_info:
         await authorize_run_as(db, principal, user_id)
-    return exc_info.value.status_code
+    return exc_info.value.status_code, exc_info.value.detail
+
+
+async def _status(db: AsyncSession, principal: UserPrincipal, user_id: UUID) -> int:
+    status, _detail = await _refusal(db, principal, user_id)
+    return status
+
+
+async def _platform_admin(db: AsyncSession) -> User:
+    admin = User(email=f"{uuid4().hex[:8]}@provider.example", name="Admin", organization_id=PROVIDER_ORG_ID)
+    db.add(admin)
+    await db.flush()
+    await set_platform_admin(db, admin, True, assigned_by="impersonation-test")
+    return admin
 
 
 async def _contoso_impersonator(db: AsyncSession) -> tuple[Organization, Organization, User]:
@@ -185,23 +205,65 @@ async def test_a_grant_at_contoso_covers_contoso_users_only(db_session: AsyncSes
     assert status == 403
     looked_up = counting.looked_up(in_contoso.id)
     assert looked_up is True
+    # The Fabrikam refusal is noted at the caller's organization, by the requested id alone.
     run_as = [(note.target, note.facts) for note in collector.notes if note.kind == "run_as"]
     assert run_as == [
         (contoso.id, {"run_as_user_id": in_contoso.id, "enforced": True}),
-        (fabrikam.id, {"run_as_user_id": in_fabrikam.id, "enforced": True}),
+        (contoso.id, {"run_as_user_id": in_fabrikam.id, "enforced": True}),
     ]
     powers = [(note.target, note.facts["permission"]) for note in collector.notes if note.kind == "permission"]
-    assert powers == [(contoso.id, "users.impersonate"), (fabrikam.id, "users.impersonate")]
+    assert powers == [(contoso.id, "users.impersonate")]
 
 
-async def test_an_unknown_user_is_not_found(db_session: AsyncSession) -> None:
-    _contoso, _fabrikam, holder = await _contoso_impersonator(db_session)
+async def test_users_outside_the_grant_are_refused_alike_whether_they_exist_or_not(db_session: AsyncSession) -> None:
+    contoso, fabrikam, holder = await _contoso_impersonator(db_session)
+    active, inactive = await _user(db_session, fabrikam), await _user(db_session, fabrikam, is_active=False)
     unknown = uuid4()
 
-    with pytest.raises(RunAsError) as exc_info:
-        await authorize_run_as(db_session, _person(holder), unknown)
+    refusals = [await _refusal(db_session, _person(holder), user_id) for user_id in (unknown, active.id, inactive.id)]
 
-    assert (exc_info.value.status_code, exc_info.value.detail) == (404, f"Run As user '{unknown}' not found")
+    assert refusals == [(403, DENIED_MESSAGE)] * 3
+
+
+async def test_an_inactive_user_inside_the_grant_is_named_as_inactive(db_session: AsyncSession) -> None:
+    contoso, _fabrikam, holder = await _contoso_impersonator(db_session)
+    inactive = await _user(db_session, contoso, is_active=False)
+
+    refusal = await _refusal(db_session, _person(holder), inactive.id)
+
+    assert refusal == (400, f"Run As user '{inactive.id}' is inactive")
+
+
+async def test_refusals_outside_the_grant_are_recorded_at_the_callers_organization(db_session: AsyncSession) -> None:
+    contoso, fabrikam, holder = await _contoso_impersonator(db_session)
+    outsider = await _user(db_session, fabrikam)
+    unknown = uuid4()
+
+    with _collecting(holder.id) as collector:
+        statuses = (
+            await _status(db_session, _person(holder), unknown),
+            await _status(db_session, _person(holder), outsider.id),
+        )
+    await flush(db_session, collector, operation="POST /api/workflows/execute", route=None)
+
+    assert statuses == (403, 403)
+    rows = (await db_session.execute(select(AuditLog).where(AuditLog.user_id == holder.id))).scalars().all()
+    recorded = sorted(
+        (row.action, row.outcome, row.organization_id, cast(dict, row.details).get("run_as_user_id"))
+        for row in rows
+    )
+    assert recorded == sorted(
+        [
+            ("access.check", "failure", contoso.id, None),
+            ("access.check_gap", "failure", contoso.id, str(unknown)),
+        ]
+    )
+    [check] = [row for row in rows if row.action == "access.check"]
+    assert check.details is not None
+    requested = (check.details["enforced"], check.details["inputs"]["run_as_user_id"])
+    assert requested == (True, str(outsider.id))
+    stopped = [step["key"] for step in check.details["trace"]["steps"] if step["status"] == "stopped"]
+    assert stopped == ["target"]
 
 
 @pytest.mark.parametrize("kind", ["inactive", "identity", "system"])
@@ -217,6 +279,8 @@ async def test_only_an_active_person_can_be_acted_as(db_session: AsyncSession, k
             )
         ).scalar_one()
     else:
+        # The system account is Global: only a grant that covers Global reaches it.
+        holder = await _platform_admin(db_session)
         target_id = SYSTEM_USER_UUID
 
     with _collecting(holder.id) as collector:
@@ -231,10 +295,7 @@ async def test_a_privileged_user_needs_a_platform_admin(db_session: AsyncSession
     contoso, _fabrikam, holder = await _contoso_impersonator(db_session)
     privileged = await _user(db_session, contoso)
     await _grant(db_session, privileged, "users.readwrite", contoso)
-    admin = User(email=f"{uuid4().hex[:8]}@provider.example", name="Admin", organization_id=PROVIDER_ORG_ID)
-    db_session.add(admin)
-    await db_session.flush()
-    await set_platform_admin(db_session, admin, True, assigned_by="impersonation-test")
+    admin = await _platform_admin(db_session)
 
     status = await _status(db_session, _person(holder), privileged.id)
     with _collecting(admin.id) as collector:
@@ -268,7 +329,8 @@ async def test_a_workflow_runs_as_a_user_report_only(db_session: AsyncSession) -
     collector = access_checks.current()
     try:
         target = await authorize_run_as(db_session, _engine(run_user.id), colleague.id)
-        missing = await _status(db_session, _engine(run_user.id), uuid4())
+        missing_id = uuid4()
+        missing = await _status(db_session, _engine(run_user.id), missing_id)
         unusable = await _status(db_session, _engine(run_user.id), inactive.id)
     finally:
         access_checks.stop_collecting(token)
@@ -276,8 +338,13 @@ async def test_a_workflow_runs_as_a_user_report_only(db_session: AsyncSession) -
     assert target is not None and target.user_id == colleague.id
     assert (missing, unusable) == (404, 400)
     assert collector is not None
+    # Refusals are noted report-only too; an unknown user by its id alone.
     run_as = [(note.target, note.facts) for note in collector.notes if note.kind == "run_as"]
-    assert run_as == [(contoso.id, {"run_as_user_id": colleague.id})]
+    assert run_as == [
+        (contoso.id, {"run_as_user_id": colleague.id}),
+        (None, {"run_as_user_id": missing_id}),
+        (contoso.id, {"run_as_user_id": inactive.id}),
+    ]
 
 
 async def test_a_service_token_naming_its_own_run_user_is_refused(db_session: AsyncSession) -> None:
@@ -352,11 +419,39 @@ async def test_a_scheduled_row_keeps_who_decided_and_whether_it_is_enforced(db_s
     colleague = await _user(db_session, contoso)
     target = await authorize_run_as(db_session, _person(holder), colleague.id)
     assert target is not None
-    engine = _engine(holder.id)
+    engine = replace(_engine(holder.id), workflow_id=uuid4())
 
     by_person = scheduled_run_as(_person(holder), target)
     by_engine = scheduled_run_as(engine, target)
+    by_its_run_user = scheduled_run_as(_engine(colleague.id), target)
 
     colleague_id, holder_id, engine_id = str(colleague.id), str(holder.id), str(SYSTEM_USER_UUID)
     assert by_person == {"user_id": colleague_id, "authorized_by": holder_id, "enforced": True}
-    assert by_engine == {"user_id": colleague_id, "authorized_by": engine_id, "enforced": False}
+    assert by_engine == {
+        "user_id": colleague_id,
+        "authorized_by": engine_id,
+        "enforced": False,
+        "run_user_id": holder_id,
+        "workflow_id": str(engine.workflow_id),
+        "execution_id": engine.engine_execution_id,
+    }
+    assert by_its_run_user is None
+
+
+async def test_a_launch_acts_as_the_run_user_it_names(db_session: AsyncSession) -> None:
+    contoso = await _org(db_session, "Contoso")
+    run_user = await _user(db_session, contoso)
+    stranger = uuid4()
+    counting = _CountingSession(db_session)
+
+    mine = await acting_target(cast(AsyncSession, counting), _person(run_user), run_user.id)
+    looked_up = counting.looked_up(run_user.id)
+    runs = await acting_target(db_session, _engine(run_user.id), run_user.id)
+    with pytest.raises(RunAsError) as exc_info:
+        await acting_target(db_session, _engine(stranger), stranger)
+
+    # A person naming themselves changes nothing; a run naming its run user acts as them.
+    assert (mine, looked_up) == (None, False)
+    assert runs is not None and runs.user_id == run_user.id
+    refusal = (exc_info.value.status_code, exc_info.value.detail)
+    assert refusal == (404, f"Run As user '{stranger}' not found")

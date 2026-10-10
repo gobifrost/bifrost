@@ -39,6 +39,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared import access_checks
+from shared.execution_visibility import is_own_execution
 from shared.run_lineage import RunLineage, lineage_columns, principal_lineage
 from src.core.org_filter import resolve_target_org
 from src.core.principal import UserPrincipal
@@ -188,7 +189,7 @@ async def execute_sdk_workflow(
     exactly: org-scoped lookup, Solution own-install scope with inbound
     denial (404 without shared fallback), UUID vs portable-ref role checks,
     admin-only inline code and ``org_id`` override, ``run_as`` decided by
-    ``authorize_run_as`` (it changes the acting user only), execution-org
+    ``impersonation.acting_target`` (it changes the acting user only), execution-org
     priority (explicit override > workflow org > caller org),
     ``delay_seconds`` normalization, scheduled
     insert, inline-code / data-provider (cache-hit, transient/sync) /
@@ -339,29 +340,19 @@ async def execute_sdk_workflow(
 
     if request.run_as:
         from src.services.authorization import impersonation
-        from src.services.authorization.explain import load_run_as_target
-        from src.services.authorization.impersonation import RunAsError, authorize_run_as
 
-        run_as_user_id = UUID(request.run_as)
         try:
-            target = await authorize_run_as(session, principal, run_as_user_id)
-        except RunAsError as exc:
+            target = await impersonation.acting_target(session, principal, UUID(request.run_as))
+        except impersonation.RunAsError as exc:
             raise SdkWorkflowExecutionError(exc.status_code, exc.detail) from None
-        if target is None:
-            # Naming the run user is not impersonation, but the run still acts
-            # as that user: a workflow's engine token is not the run user. Only
-            # existence is checked: a run whose user is a managed identity
-            # passes run_as=context.user_id and must keep acting as it.
-            target = await load_run_as_target(session, run_as_user_id)
-            if target is None:
-                raise SdkWorkflowExecutionError(404, f"Run As user '{run_as_user_id}' not found")
-        else:
-            logger.info(f"Impersonating user: {target.user_id} ({target.email})")
+        if target is not None:
             scheduled_run_as = impersonation.scheduled_run_as(principal, target)
-        exec_user_id = str(target.user_id)
-        exec_user_name = target.name or target.email or "Unknown"
-        exec_user_email = target.email
-        exec_is_admin = target.is_superuser
+            if scheduled_run_as is not None:
+                logger.info(f"Impersonating user: {target.user_id} ({target.email})")
+            exec_user_id = str(target.user_id)
+            exec_user_name = target.name or target.email or "Unknown"
+            exec_user_email = target.email
+            exec_is_admin = target.is_superuser
 
     # Who the run is for: the authenticated caller, never the run_as user.
     lineage = await principal_lineage(session, principal)
@@ -623,8 +614,9 @@ async def cancel_scheduled_sdk_execution(
     exactly, including the 404/403/409 precedence:
 
     - 404 when the row is missing,
-    - 403 when a non-admin reaches across orgs or cancels another
-      submitter's row,
+    - 403 when a non-admin reaches across orgs or cancels a row that is
+      not their own (``execution_visibility.is_own_execution``: they act in
+      it, or started it as its root, as with Run As),
     - 409 with the current status when the row is no longer SCHEDULED
       (the promoter or a concurrent cancel won the race).
 
@@ -649,7 +641,13 @@ async def cancel_scheduled_sdk_execution(
         raise SdkWorkflowExecutionError(403, "Access denied")
 
     # Non-admin can only cancel their own scheduled rows.
-    if row.executed_by != principal.user_id:
+    if not is_own_execution(
+        principal.user_id,
+        execution_id=row.id,
+        executed_by=row.executed_by,
+        started_by_user_id=row.started_by_user_id,
+        root_execution_id=row.root_execution_id,
+    ):
         if not principal.is_superuser:
             raise SdkWorkflowExecutionError(
                 403, "Only the submitter or an admin may cancel"

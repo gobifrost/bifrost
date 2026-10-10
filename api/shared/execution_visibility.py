@@ -5,7 +5,8 @@ root runs they started (``started_by_user_id`` with the row as its own root).
 A root started with Run As acts as someone else, so its initiator reaches it
 through the second clause; its children keep the root's
 ``root_execution_id`` and are not the initiator's. Reading anything else takes
-the ``executions.read.all`` power, decided by each caller.
+the ``executions.read.all`` power, decided by each caller. Cancelling a
+scheduled execution follows the same rule.
 
 One rule in three shapes: a SQL filter, a row check, and a Redis pending
 record check (an execution the worker has not persisted yet).

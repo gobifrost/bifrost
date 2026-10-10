@@ -450,6 +450,20 @@ class TestExecuteRunAs:
         expected = (str(person.id), person.email, False)
         assert (acting.user_id, acting.email, acting.is_platform_admin) == expected
 
+    async def test_a_person_naming_themselves_runs_exactly_as_without_run_as(self, db_session):
+        org = await _seed_org(db_session)
+        wf = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
+        principal = _user(org.id)
+
+        plain = await self._dispatched_context(db_session, principal, workflow_id=str(wf.id))
+        named = await self._dispatched_context(
+            db_session, principal, workflow_id=str(wf.id), run_as=str(principal.user_id)
+        )
+
+        acting = [(c.user_id, c.email, c.name, c.is_platform_admin) for c in (plain["context"], named["context"])]
+        assert acting[0] == acting[1]
+        assert named["lineage"] == plain["lineage"]
+
     async def test_without_run_as_the_caller_acts_and_nothing_is_authorized(self, db_session):
         org = await _seed_org(db_session)
         wf = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
@@ -1010,6 +1024,62 @@ class TestCancelScheduled:
             await db_session.execute(
                 delete(ExecutionModel).where(ExecutionModel.id == row.id)
             )
+            await db_session.commit()
+
+    async def _run_as_row(self, db_session, *, root_of_its_own: bool):
+        """A scheduled row acting as a Contoso colleague, started by a Contoso initiator."""
+        org = await _seed_org(db_session)
+        initiator = await _seed_user(db_session, org_id=org.id)
+        colleague = await _seed_user(db_session, org_id=org.id)
+        unrelated = await _seed_user(db_session, org_id=org.id)
+        row = await _seed_execution(db_session, "wf", user_id=colleague.id, org_id=org.id)
+        row.run_user_id = initiator.id
+        row.started_by_user_id = initiator.id
+        row.root_execution_id = row.id if root_of_its_own else uuid4()
+        await db_session.commit()
+        return org, row, {"initiator": initiator, "colleague": colleague, "unrelated": unrelated}
+
+    async def test_the_initiator_may_cancel_a_run_they_started_as_someone_else(self, db_session):
+        from src.models.orm.executions import Execution as ExecutionModel
+
+        org, row, people = await self._run_as_row(db_session, root_of_its_own=True)
+        try:
+            principal = _user(org.id, user_id=people["initiator"].id)
+            result = await cancel_scheduled_sdk_execution(db_session, principal, row.id, caller_org_id=org.id)
+            assert result["status"] == ExecutionStatus.CANCELLED.value
+        finally:
+            await db_session.execute(delete(ExecutionModel).where(ExecutionModel.id == row.id))
+            await db_session.commit()
+
+    @pytest.mark.parametrize(
+        ("caller", "root_of_its_own"),
+        [("initiator", False), ("unrelated", True)],
+        ids=["initiator_of_a_child_run", "unrelated_caller"],
+    )
+    async def test_a_run_as_row_is_not_cancellable_by_anyone_else(self, db_session, caller, root_of_its_own):
+        from src.models.orm.executions import Execution as ExecutionModel
+
+        org, row, people = await self._run_as_row(db_session, root_of_its_own=root_of_its_own)
+        try:
+            principal = _user(org.id, user_id=people[caller].id)
+            with pytest.raises(SdkWorkflowExecutionError) as exc_info:
+                await cancel_scheduled_sdk_execution(db_session, principal, row.id, caller_org_id=org.id)
+            refusal = (exc_info.value.status_code, exc_info.value.detail)
+            assert refusal == (403, "Only the submitter or an admin may cancel")
+        finally:
+            await db_session.execute(delete(ExecutionModel).where(ExecutionModel.id == row.id))
+            await db_session.commit()
+
+    async def test_the_acting_user_still_cancels_a_run_as_row(self, db_session):
+        from src.models.orm.executions import Execution as ExecutionModel
+
+        org, row, people = await self._run_as_row(db_session, root_of_its_own=True)
+        try:
+            principal = _user(org.id, user_id=people["colleague"].id)
+            result = await cancel_scheduled_sdk_execution(db_session, principal, row.id, caller_org_id=org.id)
+            assert result["status"] == ExecutionStatus.CANCELLED.value
+        finally:
+            await db_session.execute(delete(ExecutionModel).where(ExecutionModel.id == row.id))
             await db_session.commit()
 
 

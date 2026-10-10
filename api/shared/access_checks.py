@@ -105,14 +105,20 @@ def start_collecting(payload: dict[str, Any] | None) -> Token[Collector | None] 
     run_user = payload.get("engine_run_user_id")
     subject = payload.get("sub")
     if engine or (run_user and run_user != subject):
-        return _current.set(
-            Collector(
-                execution_id=_uuid(payload.get("engine_execution_id")) if engine else None,
-                run_user_id=_uuid(run_user),
-                workflow_id=_uuid(payload.get("engine_workflow_id")),
-            )
+        return collect_run(
+            _uuid(payload.get("engine_execution_id")) if engine else None,
+            _uuid(run_user),
+            _uuid(payload.get("engine_workflow_id")),
         )
     return collect_person(_uuid(subject))
+
+
+def collect_run(
+    execution_id: UUID | None, run_user_id: UUID | None, workflow_id: UUID | None
+) -> Token[Collector | None]:
+    """Start a collector for a run's request: every note kind, judged
+    against ``run_user_id`` with ``workflow_id``'s powers."""
+    return _current.set(Collector(execution_id=execution_id, run_user_id=run_user_id, workflow_id=workflow_id))
 
 
 def collect_person(user_id: UUID | None) -> Token[Collector | None] | None:

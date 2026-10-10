@@ -13,8 +13,8 @@ against their own roles. Written to the audit log:
   person's ``run_as`` is enforced, and written in both outcomes with
   ``enforced`` true. A run's stays report-only.
 - ``access.check_gap``: when the request carries no run user, the run user or
-  the user a ``run_as`` names no longer exists, or a check could not be
-  judged.
+  the user a ``run_as`` names does not exist (that gap names the requested
+  user), or a check could not be judged.
 
 Each decision (kind, operation, target, run user, outcome and subject: the
 table, secret, path, user or object it concerns) is written once per run, or
@@ -281,8 +281,23 @@ class _Writer:
         return await self._claim(self._key("judged", *self._decision(note)))
 
     async def gap(self, kind: str, reason: str, user_id: UUID | None = None) -> bool:
-        return await self._write_once(
-            ["gap", kind, self.operation, reason],
+        return await self._write_once(["gap", kind, self.operation, reason], **self._gap_row(kind, reason, user_id))
+
+    async def missing_run_as(self, note: Note, user_id: UUID) -> bool:
+        """A gap for a ``run_as`` naming a user that does not exist, naming
+        the requested user at the note's organization (the caller's); an
+        enforced one is written on every call."""
+        requested = str(note.facts["run_as_user_id"])
+        row = self._gap_row(note.kind, "run_as_user_missing", user_id)
+        row["organization_id"] = _target_org(note.target)
+        row["details"]["run_as_user_id"] = requested
+        if _enforced(note):
+            await self._insert(**row)
+            return True
+        return await self._write_once(["gap", note.kind, self.operation, "run_as_user_missing", requested], **row)
+
+    def _gap_row(self, kind: str, reason: str, user_id: UUID | None) -> dict[str, Any]:
+        return dict(
             action="access.check_gap",
             user_id=user_id,
             organization_id=None,
@@ -403,7 +418,7 @@ async def _judge_and_write(
         if names_a_user_to_load(resolved):
             run_as = await load_run_as_target(db, UUID(str(resolved.facts["run_as_user_id"])))
             if run_as is None:
-                return await writer.gap(resolved.kind, "run_as_user_missing", run_user.user_id)
+                return await writer.missing_run_as(resolved, run_user.user_id)
         trace = judge(run_user, powers, resolved, entry, run_as)
     except Exception as exc:
         logger.warning("access check could not be judged (kind=%s): %s", noted.kind, type(exc).__name__)
