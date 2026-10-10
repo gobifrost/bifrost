@@ -354,7 +354,11 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # and `home_organization_name`, and RoleUserSummary `identity_kind`
     # (2026-10-07): optional additive fields the CLI ignores. Fingerprint
     # refreshed only.
-    "063684feb78cf33f46fe3419c03752adbc1d1836c98d7e43509b9e184da44b03"
+    #
+    # NowUnavailable gained `run_as_user_missing` (2026-10-09): a stored
+    # `run_as` check whose user no longer exists. `bifrost audit explain` is
+    # still unreleased and ships handling it. Fingerprint refreshed only.
+    "c32cbd76066d09977737c6c7d2f22d7eeee61e4373eee424065a7b28c52afe6e"
 )
 
 

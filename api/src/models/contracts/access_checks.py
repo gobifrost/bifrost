@@ -41,7 +41,12 @@ class AccessCheckRequest(BaseModel):
 
 
 NowUnavailable = Literal[
-    "rows_not_stored", "run_user_missing", "workflow_missing", "solution_not_recorded", "inputs_not_stored"
+    "rows_not_stored",
+    "run_user_missing",
+    "run_as_user_missing",
+    "workflow_missing",
+    "solution_not_recorded",
+    "inputs_not_stored",
 ]
 
 

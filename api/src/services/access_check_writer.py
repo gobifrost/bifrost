@@ -9,9 +9,12 @@ against their own roles. Written to the audit log:
   what today allows.
 - ``access.check`` with outcome ``success``: when a run crosses into another
   organization, acts as another user (``run_as``), or is a policy or secret
-  decision. A person's request writes failures only.
-- ``access.check_gap``: when the request carries no run user, the run user no
-  longer exists, or a check could not be judged.
+  decision. A person's request writes failures only, except ``run_as``: a
+  person's ``run_as`` is enforced, and written in both outcomes with
+  ``enforced`` true. A run's stays report-only.
+- ``access.check_gap``: when the request carries no run user, the run user or
+  the user a ``run_as`` names no longer exists, or a check could not be
+  judged.
 
 Each decision (kind, operation, target, run user, outcome and subject: the
 table, secret, path, user or object it concerns) is written once per run, or
@@ -28,7 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cache
 from typing import Any, Literal
 from uuid import UUID, uuid4
@@ -46,6 +49,7 @@ from src.repositories.audit_logs import AuditLogRepository
 from src.services.authorization.explain import (
     ALL_ORGS,
     Powers,
+    RunAsTarget,
     RunUser,
     Trace,
     check_entry,
@@ -55,6 +59,7 @@ from src.services.authorization.explain import (
     check_secret,
     check_target,
     load_powers,
+    load_run_as_target,
     load_run_user,
 )
 
@@ -138,16 +143,20 @@ async def _resolve_owned(db: AsyncSession, note: Note) -> Note | Unresolved:
     return Note(note.kind, organization_id, {key: value for key, value in facts.items() if key not in _OWNED_FACTS})
 
 
-def judge(run_user: RunUser, powers: Powers | None, note: Note, entry: AccessEntry | None) -> Trace:
-    """Judge one note; ``powers`` is None for a person acting directly."""
+def judge(
+    run_user: RunUser, powers: Powers | None, note: Note, entry: AccessEntry | None, run_as: RunAsTarget | None
+) -> Trace:
+    """Judge one note; ``powers`` is None for a person acting directly.
+    ``run_as`` is the user a ``run_as`` note names, loaded by the caller."""
     facts = note.facts
     if note.kind == "permission":
         return check_permission(run_user, powers, facts["permission"], note.target)
     if note.kind in ("scope_switch", "child_run"):
         return check_target(run_user, powers, note.target, entry)
-    assert powers is not None, "only a run's request notes the other kinds"
     if note.kind == "run_as":
-        return check_run_as(run_user, powers, UUID(str(facts["run_as_user_id"])))
+        assert run_as is not None, "the caller loads the user a run_as names"
+        return check_run_as(run_user, powers, run_as)
+    assert powers is not None, "only a run's request notes the other kinds"
     if note.kind == "entry":
         return check_entry(run_user, allowed=facts["allowed"], subject=facts["subject"])
     if note.kind == "policy":
@@ -157,8 +166,9 @@ def judge(run_user: RunUser, powers: Powers | None, note: Note, entry: AccessEnt
 
 def _written(note: Note, trace: Trace, run_user: RunUser, *, direct: bool) -> bool:
     if direct:
-        # A person's own request records would-deny decisions only.
-        return trace.outcome == "failure"
+        # A person's own request records would-deny decisions, and the
+        # enforced run_as in both outcomes.
+        return trace.outcome == "failure" or note.kind in _ALWAYS_WRITTEN
     if trace.outcome == "failure":
         # Only what today allows: a denial today already stops the request.
         return bool(note.facts.get("today", True))
@@ -273,6 +283,7 @@ class _Writer:
     async def check(self, note: Note, trace: Trace, run_user: RunUser) -> bool:
         kind, operation, target, subject = self._decision(note)
         today = note.facts.get("today", True)
+        enforced = bool(note.facts.get("enforced", False))
         return await self._write_once(
             [kind, operation, target, run_user.user_id, trace.outcome, subject],
             action="access.check",
@@ -285,10 +296,10 @@ class _Writer:
             ip_address=None,
             user_agent=None,
             details={
-                "enforced": False,
+                "enforced": enforced,
                 "direct": self.collector.direct,
                 "workflow_id": _plain(self.collector.workflow_id),
-                "trace": trace.as_dict(),
+                "trace": replace(trace, enforced=enforced).as_dict(),
                 "inputs": {
                     "operation": self.operation,
                     "target": target,
@@ -351,7 +362,8 @@ async def _judge_and_write(
     """Judge one note and write it if it matters; whether the judgement
     completed. An object that does not exist yet, a check that failed, or a
     row another writer is still inserting returns False, and a failed write
-    raises, so a later request judges it again."""
+    raises, so a later request judges it again. A ``run_as`` naming a user
+    that no longer exists is a gap."""
     try:
         resolved = await _resolve_owned(db, noted) if "owned" in noted.facts else noted
         if resolved == "own":
@@ -359,7 +371,12 @@ async def _judge_and_write(
         if resolved == "absent":
             return False
         assert isinstance(resolved, Note)
-        trace = judge(run_user, powers, resolved, entry)
+        run_as = None
+        if resolved.kind == "run_as":
+            run_as = await load_run_as_target(db, UUID(str(resolved.facts["run_as_user_id"])))
+            if run_as is None:
+                return await writer.gap(resolved.kind, "run_as_user_missing", run_user.user_id)
+        trace = judge(run_user, powers, resolved, entry, run_as)
     except Exception as exc:
         logger.warning("access check could not be judged (kind=%s): %s", noted.kind, type(exc).__name__)
         await writer.gap(noted.kind, f"observer_error:{type(exc).__name__}", run_user.user_id)

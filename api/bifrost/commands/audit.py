@@ -25,6 +25,7 @@ _GROUP_BY = ["workflow", "action", "resource_type", "outcome", "user", "organiza
 _NOW_UNAVAILABLE = {
     "rows_not_stored": "table row decisions can't be re-run: the rows aren't stored",
     "run_user_missing": "the run's user no longer exists",
+    "run_as_user_missing": "the user it acted as no longer exists",
     "workflow_missing": "the workflow no longer exists",
     "solution_not_recorded": "this file check was recorded before Solutions were stored with it",
     "inputs_not_stored": "this check was recorded before its inputs were stored with it",

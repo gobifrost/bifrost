@@ -345,6 +345,7 @@ class TestAuditExplain:
         [
             ("rows_not_stored", "table row decisions can't be re-run: the rows aren't stored"),
             ("run_user_missing", "the run's user no longer exists"),
+            ("run_as_user_missing", "the user it acted as no longer exists"),
             ("workflow_missing", "the workflow no longer exists"),
             (
                 "solution_not_recorded",

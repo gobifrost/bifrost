@@ -305,6 +305,9 @@ describe("nowUnavailableSentence", () => {
 		expect(nowUnavailableSentence("run_user_missing")).toBe(
 			"The user or identity it ran as no longer exists, so this check can't be tested again.",
 		);
+		expect(nowUnavailableSentence("run_as_user_missing")).toBe(
+			"The user it acted as no longer exists, so this check can't be tested again.",
+		);
 		expect(nowUnavailableSentence("rows_not_stored")).toBe(
 			"Table row checks can't be tested again: the rows aren't stored.",
 		);

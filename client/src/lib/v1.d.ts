@@ -12068,7 +12068,7 @@ export interface components {
             then: components["schemas"]["AccessTrace"] | null;
             now: components["schemas"]["AccessTrace"] | null;
             /** Now Unavailable */
-            now_unavailable: ("rows_not_stored" | "run_user_missing" | "workflow_missing" | "solution_not_recorded" | "inputs_not_stored") | null;
+            now_unavailable: ("rows_not_stored" | "run_user_missing" | "run_as_user_missing" | "workflow_missing" | "solution_not_recorded" | "inputs_not_stored") | null;
             /** Changed */
             changed: boolean | null;
         };

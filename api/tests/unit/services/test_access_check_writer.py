@@ -18,7 +18,7 @@ from src.core.constants import PROVIDER_ORG_ID
 from src.models.enums import IdentityKind
 from src.models.orm.audit import AuditLog
 from src.models.orm.organizations import Organization
-from src.models.orm.users import User
+from src.models.orm.users import Role, RolePermission, User, UserRole, UserRoleBoundary
 from src.services.access_check_writer import flush, flush_detached
 
 ROUTE = {"operation": "POST /api/tables/{name}/documents", "route": ("POST", "/api/tables/{name}/documents")}
@@ -131,10 +131,10 @@ async def test_a_cross_org_success_is_written(db_session: AsyncSession) -> None:
 
 async def test_powers_and_policies_are_written_when_allowed(db_session: AsyncSession) -> None:
     home = await _org(db_session)
-    person = await _person(db_session, home)
+    person, colleague = await _person(db_session, home), await _person(db_session, home)
     collector = _collector(
         person.id,
-        Note("run_as", None, {"run_as_user_id": str(uuid4())}),
+        Note("run_as", home.id, {"run_as_user_id": str(colleague.id)}),
         Note("secret", home.id, {"kind": "config", "name": "api_key"}),
         Note("policy", home.id, {"today": True, "model": True, "missing": [], "table": "t"}),
     )
@@ -171,6 +171,18 @@ async def test_missing_lineage_is_a_coverage_gap(db_session: AsyncSession) -> No
         ("access.check_gap", "secret"),
     }
     assert all(row.details == {"reason": "missing_lineage", "operation": ROUTE["operation"]} for row in rows)
+
+
+async def test_a_run_as_user_that_no_longer_exists_is_a_coverage_gap(db_session: AsyncSession) -> None:
+    home = await _org(db_session)
+    person = await _person(db_session, home)
+    collector = _collector(person.id, Note("run_as", home.id, {"run_as_user_id": str(uuid4())}))
+
+    await flush(db_session, collector, **ROUTE)
+
+    [row] = await _rows(db_session, collector)
+    assert (row.action, row.resource_type) == ("access.check_gap", "run_as")
+    assert row.details is not None and row.details["reason"] == "run_as_user_missing"
 
 
 async def test_a_run_user_that_no_longer_exists_is_a_coverage_gap(db_session: AsyncSession) -> None:
@@ -319,6 +331,58 @@ async def test_a_full_runs_permission_is_held(db_session: AsyncSession) -> None:
     await flush(db_session, collector, **ROUTE)
 
     assert await _rows(db_session, collector) == []
+
+
+async def _impersonator(session: AsyncSession, home: Organization, at: Organization) -> User:
+    """A person in ``home`` holding Impersonate Users at ``at``."""
+    person = await _person(session, home)
+    role = Role(name=f"Impersonators {uuid4().hex[:8]}", created_by="access-check-test")
+    session.add(role)
+    await session.flush()
+    session.add_all(
+        [
+            RolePermission(role_id=role.id, permission="users.impersonate"),
+            UserRole(user_id=person.id, role_id=role.id, assigned_by="access-check-test"),
+        ]
+    )
+    await session.flush()
+    session.add(UserRoleBoundary(user_id=person.id, role_id=role.id, kind="organization", organization_id=at.id))
+    await session.flush()
+    return person
+
+
+def _run_as(user: User) -> Note:
+    return Note("run_as", user.organization_id, {"run_as_user_id": str(user.id), "enforced": True})
+
+
+async def test_a_persons_run_as_is_written_enforced_in_both_outcomes(db_session: AsyncSession) -> None:
+    provider, contoso, fabrikam = await _org(db_session), await _org(db_session), await _org(db_session)
+    person = await _impersonator(db_session, provider, contoso)
+    in_contoso, in_fabrikam = await _person(db_session, contoso), await _person(db_session, fabrikam)
+
+    await flush(db_session, _person_collector(person.id, _run_as(in_contoso), _run_as(in_fabrikam)), **ROUTE)
+
+    rows = {row.organization_id: row for row in await _person_rows(db_session, person.id)}
+    assert {org: row.outcome for org, row in rows.items()} == {contoso.id: "success", fabrikam.id: "failure"}
+    for row in rows.values():
+        assert row.details is not None
+        assert (row.resource_type, row.details["enforced"], row.details["direct"]) == ("run_as", True, True)
+        assert row.details["trace"]["enforced"] is True
+    stopped = [step["key"] for step in rows[fabrikam.id].details["trace"]["steps"] if step["status"] == "stopped"]
+    assert stopped == ["target"]
+
+
+async def test_a_runs_run_as_is_written_report_only(db_session: AsyncSession) -> None:
+    home = await _org(db_session)
+    person, colleague = await _person(db_session, home), await _person(db_session, home)
+    collector = _collector(person.id, Note("run_as", home.id, {"run_as_user_id": str(colleague.id)}))
+
+    await flush(db_session, collector, **ROUTE)
+
+    [row] = await _rows(db_session, collector)
+    assert (row.resource_type, row.outcome) == ("run_as", "success")
+    assert row.details is not None
+    assert (row.details["enforced"], row.details["trace"]["enforced"]) == (False, False)
 
 
 async def test_nothing_noted_opens_no_session() -> None:
@@ -534,11 +598,11 @@ async def test_a_judgement_that_failed_is_judged_again(db_session: AsyncSession)
     calls: list[str] = []
     real = access_check_writer.judge
 
-    def flaky(run_user, powers, note, entry):
+    def flaky(run_user, powers, note, entry, run_as):
         calls.append(note.kind)
         if len(calls) == 1:
             raise TimeoutError("transient")
-        return real(run_user, powers, note, entry)
+        return real(run_user, powers, note, entry, run_as)
 
     with patch.object(access_check_writer, "judge", flaky):
         for _ in range(3):

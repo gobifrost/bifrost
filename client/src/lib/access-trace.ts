@@ -248,6 +248,8 @@ export function nowUnavailableSentence(reason: NowUnavailable): string {
 			"Table row checks can't be tested again: the rows aren't stored.",
 		run_user_missing:
 			"The user or identity it ran as no longer exists, so this check can't be tested again.",
+		run_as_user_missing:
+			"The user it acted as no longer exists, so this check can't be tested again.",
 		workflow_missing:
 			"The workflow no longer exists, so this check can't be tested again.",
 		solution_not_recorded:
