@@ -340,9 +340,20 @@ def test_impersonate_users_is_refused_outside_its_organization(
     detail = resp.json()["detail"]
     assert detail == RUN_AS_DENIED
 
-    checks = recorded_run_as(async_session_factory, initiator.user_id, outsider.user_id)
-    summary = [(c["outcome"], c["details"]["enforced"]) for c in checks]
-    assert summary == [("failure", True)]
+    # The initiator's organization records the request alone; the outsider's
+    # organization records the full decision.
+    checks = recorded_run_as(async_session_factory, initiator.user_id, outsider.user_id, count=2)
+    summary = sorted(
+        (
+            c["outcome"],
+            c["details"]["enforced"],
+            next(step["reason"] for step in c["details"]["trace"]["steps"] if step["status"] == "stopped"),
+        )
+        for c in checks
+    )
+    assert summary == [("failure", True, "outside"), ("failure", True, "outside_reach")]
+    organizations = {c["organization_id"] for c in checks}
+    assert len(organizations) == 2
 
 
 def test_the_initiator_cancels_a_run_scheduled_as_a_colleague(

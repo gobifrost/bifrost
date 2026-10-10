@@ -60,9 +60,9 @@ async def query(session_factory, statement) -> list[Any]:
         await close_db()
 
 
-def recorded_run_as(session_factory, initiator: UUID, run_as_user: UUID) -> list[dict]:
+def recorded_run_as(session_factory, initiator: UUID, run_as_user: UUID, *, count: int = 1) -> list[dict]:
     """The ``run_as`` access checks recorded for ``initiator`` naming
-    ``run_as_user``, once the writer has written at least one."""
+    ``run_as_user``, once the writer has written at least ``count``."""
     from src.models.orm.audit import AuditLog
 
     statement = select(AuditLog.outcome, AuditLog.organization_id, AuditLog.details).where(
@@ -78,6 +78,6 @@ def recorded_run_as(session_factory, initiator: UUID, run_as_user: UUID) -> list
             for outcome, org_id, details in rows
             if details["inputs"].get("run_as_user_id") == str(run_as_user)
         ]
-        return matching or None
+        return matching if len(matching) >= count else None
 
     return poll_until(found, max_wait=30, interval=0.5) or []

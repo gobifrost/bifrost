@@ -216,9 +216,10 @@ async def _authorize_for_person(db: AsyncSession, caller: Caller, run_as_user_id
     if target is None or not reach.covers(target.organization_id):
         # An unknown user and one outside the caller's Impersonate Users are
         # refused alike. The caller's organization records only the request;
-        # an existing user's own organization records the full decision.
+        # an existing user's own organization records the full decision,
+        # unless that is the caller's organization.
         access_checks.note("run_as", home, run_as_user_id=run_as_user_id, enforced=True, outside_reach=True)
-        if target is not None:
+        if target is not None and target.organization_id != home:
             _note(target, enforced=True)
         raise RunAsError(403, DENIED_MESSAGE)
     user_id = caller.principal.user_id

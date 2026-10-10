@@ -275,6 +275,23 @@ async def test_refusals_outside_the_grant_reveal_nothing_at_the_callers_organiza
     assert (full.outcome, stopped) == ("failure", ["run_as_user"])
 
 
+async def test_a_user_in_the_callers_own_organization_outside_the_grant_reveals_nothing(
+    db_session: AsyncSession,
+) -> None:
+    contoso, fabrikam, _holder = await _contoso_impersonator(db_session)
+    # A Contoso member whose Impersonate Users covers Fabrikam only.
+    member = await _user(db_session, contoso)
+    await _grant(db_session, member, "users.impersonate", fabrikam)
+    colleague = await _user(db_session, contoso, is_active=False)
+
+    with _collecting(member.id) as collector:
+        status = await _status(db_session, _person(member), colleague.id)
+
+    assert status == 403
+    run_as = [(note.target, note.facts) for note in collector.notes if note.kind == "run_as"]
+    assert run_as == [(contoso.id, {"run_as_user_id": colleague.id, "enforced": True, "outside_reach": True})]
+
+
 @pytest.mark.parametrize("kind", ["inactive", "identity", "system"])
 async def test_only_an_active_person_can_be_acted_as(db_session: AsyncSession, kind: str) -> None:
     contoso, _fabrikam, holder = await _contoso_impersonator(db_session)
