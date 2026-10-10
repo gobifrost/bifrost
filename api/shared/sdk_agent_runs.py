@@ -18,7 +18,7 @@ identical by construction.
 
 Only the SDK-consumed ``enqueue`` / ``get_run`` operations live here, plus
 the ``run_as`` decision (``resolve_agent_run_actor`` /
-``authorize_agent_run_as``) that ``/execute`` and rerun share with
+``resolve_rerun_actor``) that ``/execute`` and rerun share with
 ``enqueue``. Agent definitions, backfill, summaries, cancel, verdict, flag
 conversations, and dry-run keep their router-level logic.
 
@@ -63,6 +63,7 @@ from src.models.contracts.executions import AIUsagePublicSimple, AIUsageTotalsSi
 from src.services.execution.agent_run_access import agent_run_visibility_conditions
 
 if TYPE_CHECKING:
+    from src.models.orm.agent_runs import AgentRun
     from src.models.orm.agents import Agent
     from src.services.authorization.explain import RunAsTarget
 
@@ -161,8 +162,9 @@ class AgentRunActor(NamedTuple):
 
 async def authorize_agent_run_as(
     session: AsyncSession, principal: UserPrincipal, run_as_user_id: UUID
-) -> RunAsTarget:
-    """The user an agent run acts as when ``run_as`` names ``run_as_user_id``.
+) -> RunAsTarget | None:
+    """The user an agent run acts as when ``run_as`` names ``run_as_user_id``;
+    None when it names the caller, who then acts as without ``run_as``.
 
     ``authorize_run_as`` decides, and its refusal keeps its status. Naming
     the run user is not impersonation, but the run still acts as that user
@@ -180,11 +182,22 @@ async def authorize_agent_run_as(
         target = await authorize_run_as(session, principal, run_as_user_id)
     except RunAsError as exc:
         raise SdkAgentRunError(exc.status_code, exc.detail) from None
+    if target is not None or run_as_user_id == principal.user_id:
+        return target
+    target = await load_run_as_target(session, run_as_user_id)
     if target is None:
-        target = await load_run_as_target(session, run_as_user_id)
-        if target is None:
-            raise SdkAgentRunError(404, f"Run As user '{run_as_user_id}' not found")
+        raise SdkAgentRunError(404, f"Run As user '{run_as_user_id}' not found")
     return target
+
+
+def _acting_org(agent_org_id: UUID | None, target: RunAsTarget) -> UUID | None:
+    """Where a run acting as ``target`` runs: the agent's organization, which
+    must be the user's, or the user's home organization for a Global agent."""
+    if agent_org_id is None:
+        return target.organization_id
+    if target.organization_id != agent_org_id:
+        raise SdkAgentRunError(400, "Run As user must belong to the agent's organization")
+    return agent_org_id
 
 
 async def resolve_agent_run_actor(
@@ -195,23 +208,50 @@ async def resolve_agent_run_actor(
 ) -> AgentRunActor:
     """The run's organization and acting user for a launch by ``principal``.
 
-    Without ``run_as`` the run is in the caller's organization and the
-    caller acts. With it, the run acts as the authorized user: in the
-    agent's organization when the agent is org-scoped (the user must belong
-    to it), otherwise in the user's home organization.
+    Without ``run_as``, or when it names the caller, the run is in the
+    caller's organization and the caller acts. Otherwise the run acts as the
+    authorized user: in the agent's organization when the agent is
+    org-scoped (the user must belong to it), otherwise in the user's home
+    organization.
 
     Raises:
         SdkAgentRunError: as ``authorize_agent_run_as``; 400 when an
             org-scoped agent's organization is not the user's.
     """
+    caller_acts = AgentRunActor(principal.organization_id, None)
     if run_as is None:
-        return AgentRunActor(principal.organization_id, None)
+        return caller_acts
     target = await authorize_agent_run_as(session, principal, run_as)
-    if agent.organization_id is None:
-        return AgentRunActor(target.organization_id, target.user_id)
-    if target.organization_id != agent.organization_id:
-        raise SdkAgentRunError(400, "Run As user must belong to the agent's organization")
-    return AgentRunActor(agent.organization_id, target.user_id)
+    if target is None:
+        return caller_acts
+    return AgentRunActor(_acting_org(agent.organization_id, target), target.user_id)
+
+
+async def resolve_rerun_actor(
+    session: AsyncSession, principal: UserPrincipal, run: AgentRun
+) -> AgentRunActor:
+    """The organization and acting user for ``principal`` rerunning ``run``.
+
+    A run that acted as someone keeps acting as them, decided again for
+    this caller, and the organization follows the user's current home
+    organization as a launch's does. Otherwise (or when the acting user is
+    the caller) the rerun keeps the run's organization and the caller acts.
+
+    Raises:
+        SdkAgentRunError: as ``resolve_agent_run_actor``.
+    """
+    from src.models.orm.agents import Agent
+
+    keep = AgentRunActor(run.org_id, None)
+    if run.run_as_user_id is None:
+        return keep
+    target = await authorize_agent_run_as(session, principal, run.run_as_user_id)
+    if target is None:
+        return keep
+    agent_org_id = (
+        await session.execute(select(Agent.organization_id).where(Agent.id == run.agent_id))
+    ).scalar_one()
+    return AgentRunActor(_acting_org(agent_org_id, target), target.user_id)
 
 
 async def enqueue_sdk_agent_run(

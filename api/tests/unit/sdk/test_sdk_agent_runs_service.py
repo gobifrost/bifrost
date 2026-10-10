@@ -473,6 +473,44 @@ class TestEnqueueRunAs:
         assert exc_info.value.status_code == 403
         mock_enqueue.assert_not_awaited()
 
+    async def test_a_person_naming_themselves_launches_exactly_as_without_run_as(self, db_session):
+        from shared import access_checks
+
+        provider = await _seed_org(db_session, is_provider=True)
+        contoso = await _seed_org(db_session)
+        await _seed_agent(db_session, "Contoso Self Agent", organization_id=contoso.id)
+        admin = UserPrincipal(
+            user_id=uuid4(),
+            email="admin@provider.example",
+            organization_id=provider.id,
+            name="Provider Admin",
+            is_superuser=True,
+            is_provider_org=True,
+        )
+        receipt_id = uuid4()
+        launches = []
+        for run_as in (None, admin.user_id):
+            token = access_checks.collect_person(admin.user_id)
+            try:
+                with _patch_enqueue(str(receipt_id)) as mock_enqueue:
+                    result = await enqueue_sdk_agent_run(
+                        db_session, admin, agent_name="Contoso Self Agent", run_as=run_as
+                    )
+                collector = access_checks.current()
+                notes = list(collector.notes) if collector else None
+            finally:
+                access_checks.stop_collecting(token)
+            launches.append((result, mock_enqueue.await_args.kwargs, notes))
+
+        (plain_result, plain_kwargs, plain_notes), (self_result, self_kwargs, self_notes) = launches
+        noted_kinds = [note.kind for note in self_notes or []]
+        expected_actor = (str(provider.id), None)
+        assert self_kwargs == plain_kwargs
+        assert (self_kwargs["org_id"], self_kwargs["run_as_user_id"]) == expected_actor
+        assert self_result == plain_result
+        assert self_notes == plain_notes
+        assert "run_as" not in noted_kinds
+
     async def test_a_workflow_naming_its_run_user_acts_as_the_run_user(self, db_session):
         from src.core.constants import SYSTEM_USER_ID
 
@@ -533,6 +571,44 @@ class TestRerunKeepsRunAs:
         assert calls == [(principal, target.id)]
         assert (kwargs["org_id"], kwargs["caller_user_id"], kwargs["run_as_user_id"]) == expected
 
+    async def test_a_rerun_refuses_an_acting_user_now_in_another_organization(self, db_session):
+        contoso = await _seed_org(db_session)
+        fabrikam = await _seed_org(db_session)
+        moved = await _seed_user(db_session, fabrikam.id)
+        agent = await _seed_agent(db_session, "Moved User Agent", organization_id=contoso.id)
+        principal = _principal(contoso.id, is_superuser=True)
+        run = await _seed_run(db_session, agent.id, org_id=contoso.id, run_as_user_id=moved.id)
+        authorize, _calls = _patch_authorize_run_as(returns=_run_as_target(moved))
+
+        with authorize, patch(
+            "src.routers.agent_runs.enqueue_agent_run", new=AsyncMock()
+        ) as mock_enqueue, pytest.raises(HTTPException) as exc_info:
+            await self._rerun(db_session, principal, run)
+
+        assert (exc_info.value.status_code, exc_info.value.detail) == (
+            400,
+            "Run As user must belong to the agent's organization",
+        )
+        mock_enqueue.assert_not_awaited()
+
+    async def test_a_global_agent_rerun_follows_the_acting_users_current_organization(self, db_session):
+        contoso = await _seed_org(db_session)
+        fabrikam = await _seed_org(db_session)
+        moved = await _seed_user(db_session, fabrikam.id)
+        agent = await _seed_agent(db_session, "Global Rerun Agent")
+        principal = _principal(contoso.id, is_superuser=True)
+        run = await _seed_run(db_session, agent.id, org_id=contoso.id, run_as_user_id=moved.id)
+        authorize, _calls = _patch_authorize_run_as(returns=_run_as_target(moved))
+
+        with authorize, patch(
+            "src.routers.agent_runs.enqueue_agent_run", new=AsyncMock(return_value=str(uuid4()))
+        ) as mock_enqueue:
+            await self._rerun(db_session, principal, run)
+
+        kwargs = mock_enqueue.await_args.kwargs
+        expected = (str(fabrikam.id), moved.id)
+        assert (kwargs["org_id"], kwargs["run_as_user_id"]) == expected
+
     async def test_a_refused_rerun_keeps_the_helpers_status(self, db_session):
         contoso = await _seed_org(db_session)
         target = await _seed_user(db_session, contoso.id)
@@ -568,6 +644,89 @@ class TestRerunKeepsRunAs:
 
         assert calls == []
         assert mock_enqueue.await_args.kwargs["run_as_user_id"] is None
+
+
+@pytest.mark.asyncio
+class TestExecuteAgentRun:
+    async def _execute(self, db_session, principal, request, result_data):
+        from shared import access_checks
+        from src.routers.agent_runs import execute_agent_run
+
+        token = access_checks.collect_person(principal.user_id)
+        try:
+            with patch(
+                "src.routers.agent_runs.enqueue_agent_run", new=AsyncMock(return_value=str(uuid4()))
+            ) as mock_enqueue, patch(
+                "src.routers.agent_runs.wait_for_agent_run_result", new=AsyncMock(return_value=result_data)
+            ):
+                response = await execute_agent_run(request, db_session, principal)
+            collector = access_checks.current()
+            notes = list(collector.notes) if collector else []
+        finally:
+            access_checks.stop_collecting(token)
+        return response, mock_enqueue.await_args.kwargs, notes
+
+    async def test_without_run_as_the_response_and_notes_are_unchanged(self, db_session):
+        from shared.access_checks import Note
+        from src.models.contracts.agent_runs import AgentRunCreateRequest
+        from src.models.enums import AgentAccessLevel
+
+        contoso = await _seed_org(db_session)
+        agent = await _seed_agent(
+            db_session,
+            "Sync Agent",
+            organization_id=contoso.id,
+            access_level=AgentAccessLevel.AUTHENTICATED,
+        )
+        principal = _principal(contoso.id, name="Contoso Caller")
+        result_data = {"status": "completed", "output": {"answer": 42}}
+        expected_notes = [
+            Note("permission", contoso.id, {"permission": "agents.execute", "subject": f"agent:{agent.id}"})
+        ]
+        authorize, calls = _patch_authorize_run_as()
+
+        with authorize:
+            response, kwargs, notes = await self._execute(
+                db_session, principal, AgentRunCreateRequest(agent_name="Sync Agent"), result_data
+            )
+
+        expected_kwargs = {
+            "agent_id": str(agent.id),
+            "trigger_type": "api",
+            "input_data": None,
+            "output_schema": None,
+            "org_id": str(contoso.id),
+            "caller_user_id": str(principal.user_id),
+            "caller_email": principal.email,
+            "caller_name": "Contoso Caller",
+            "sync": True,
+            "lineage": person_lineage(principal.user_id),
+            "run_as_user_id": None,
+        }
+        assert response == {"status": "completed", "output": {"answer": 42}}
+        assert kwargs == expected_kwargs
+        assert notes == expected_notes
+        assert calls == []
+
+    async def test_run_as_is_recorded_and_echoed(self, db_session):
+        from src.models.contracts.agent_runs import AgentRunCreateRequest
+
+        contoso = await _seed_org(db_session)
+        target = await _seed_user(db_session, contoso.id)
+        await _seed_agent(db_session, "Sync Run As Agent", organization_id=contoso.id)
+        principal = _principal(contoso.id, is_superuser=True)
+        request = AgentRunCreateRequest(agent_name="Sync Run As Agent", run_as=target.id)
+        expected = {"status": "completed", "run_as_user_id": str(target.id)}
+        authorize, _calls = _patch_authorize_run_as(returns=_run_as_target(target))
+
+        with authorize:
+            response, kwargs, _notes = await self._execute(
+                db_session, principal, request, {"status": "completed"}
+            )
+
+        expected_actor = (str(contoso.id), target.id)
+        assert response == expected
+        assert (kwargs["org_id"], kwargs["run_as_user_id"]) == expected_actor
 
 
 @pytest.mark.asyncio
