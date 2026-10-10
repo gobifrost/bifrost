@@ -68,8 +68,9 @@ class Execution(Base):
     executed_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), default=None)
     executed_by_name: Mapped[str] = mapped_column(String(255))
     # Run lineage: who this run is for, who started its run tree, and the
-    # tree's first execution. Recorded by shared.run_lineage; nothing decides
-    # on it yet. NULL on rows created before lineage was recorded.
+    # tree's first execution. Recorded by shared.run_lineage; execution reads
+    # use it (shared.execution_visibility). NULL on rows created before
+    # lineage was recorded.
     run_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), default=None)
     started_by_user_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), default=None
