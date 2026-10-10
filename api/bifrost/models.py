@@ -142,6 +142,7 @@ class AgentRunHandle(BaseModel):
 
     run_id: str
     status: Literal["queued"] = "queued"
+    run_as_user_id: str | None = None
 
 
 class AgentRunPending(BaseModel):

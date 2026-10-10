@@ -72,6 +72,42 @@ class TestEngineRequestFacade:
         }
         assert "timeout" not in call.kwargs
 
+    async def test_enqueue_run_as_posts_it_to_the_same_route(self):
+        import httpx
+
+        agents_mod = _importlib.import_module("bifrost.agents")
+
+        run_id = str(uuid4())
+        contoso_user = str(uuid4())
+        client = self._client(
+            [
+                httpx.Response(
+                    202,
+                    json={
+                        "run_id": run_id,
+                        "status": "queued",
+                        "run_as_user_id": contoso_user,
+                    },
+                )
+            ]
+        )
+        with patch.object(agents_mod, "get_client", return_value=client):
+            handle = await agents_mod.agents.enqueue(
+                "Local Agent", {"a": 1}, run_as=contoso_user
+            )
+
+        assert handle.run_as_user_id == contoso_user
+        call = client.engine_request.await_args
+        assert call.args == ("POST", "/api/agent-runs/enqueue")
+        assert call.kwargs == {
+            "json": {
+                "agent_name": "Local Agent",
+                "input": {"a": 1},
+                "output_schema": None,
+                "run_as": contoso_user,
+            }
+        }
+
     async def test_enqueue_paused_maps_to_typed_error(self):
         import httpx
 

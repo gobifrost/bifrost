@@ -97,3 +97,145 @@ async def test_get_run_translates_not_found(monkeypatch):
 
     with pytest.raises(ValueError, match="Agent run not found"):
         await mod.agents.get_run("missing")
+
+
+_RUN_ID = "11111111-1111-1111-1111-111111111111"
+_CONTOSO_USER = "33333333-3333-3333-3333-333333333333"
+
+
+def _client_returning(mod, monkeypatch, body):
+    response = MagicMock(status_code=202, is_success=True)
+    response.json.return_value = body
+    client = MagicMock()
+    client.engine_request = AsyncMock(return_value=response)
+    monkeypatch.setattr(mod, "get_client", lambda: client)
+    return client
+
+
+@pytest.mark.asyncio
+async def test_enqueue_without_run_as_sends_no_run_as_key(monkeypatch):
+    mod = _agents_module()
+    client = _client_returning(
+        mod, monkeypatch, {"run_id": _RUN_ID, "status": "queued", "run_as_user_id": None}
+    )
+
+    handle = await mod.agents.enqueue("Contoso Agent", input={"ticket_id": 7})
+
+    assert handle.run_as_user_id is None
+    client.engine_request.assert_awaited_once_with(
+        "POST",
+        "/api/agent-runs/enqueue",
+        json={
+            "agent_name": "Contoso Agent",
+            "input": {"ticket_id": 7},
+            "output_schema": None,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_enqueue_without_run_as_accepts_a_server_without_run_as(monkeypatch):
+    mod = _agents_module()
+    _client_returning(mod, monkeypatch, {"run_id": _RUN_ID, "status": "queued"})
+
+    handle = await mod.agents.enqueue("Contoso Agent")
+
+    assert handle.run_id == _RUN_ID
+    assert handle.run_as_user_id is None
+
+
+@pytest.mark.asyncio
+async def test_enqueue_with_run_as_sends_it_and_returns_the_echo(monkeypatch):
+    mod = _agents_module()
+    client = _client_returning(
+        mod,
+        monkeypatch,
+        {"run_id": _RUN_ID, "status": "queued", "run_as_user_id": _CONTOSO_USER},
+    )
+
+    handle = await mod.agents.enqueue(
+        "Contoso Agent", input={"ticket_id": 7}, run_as=_CONTOSO_USER
+    )
+
+    assert handle.run_as_user_id == _CONTOSO_USER
+    client.engine_request.assert_awaited_once_with(
+        "POST",
+        "/api/agent-runs/enqueue",
+        json={
+            "agent_name": "Contoso Agent",
+            "input": {"ticket_id": 7},
+            "output_schema": None,
+            "run_as": _CONTOSO_USER,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_enqueue_with_run_as_accepts_a_null_echo(monkeypatch):
+    """Naming yourself is a plain launch: the server answers with a null echo."""
+    mod = _agents_module()
+    _client_returning(
+        mod, monkeypatch, {"run_id": _RUN_ID, "status": "queued", "run_as_user_id": None}
+    )
+
+    handle = await mod.agents.enqueue("Contoso Agent", run_as=_CONTOSO_USER)
+
+    assert handle.run_as_user_id is None
+
+
+@pytest.mark.asyncio
+async def test_enqueue_with_run_as_refuses_a_server_without_run_as(monkeypatch):
+    mod = _agents_module()
+    _client_returning(mod, monkeypatch, {"run_id": _RUN_ID, "status": "queued"})
+
+    with pytest.raises(
+        RuntimeError, match="^This Bifrost server does not support Run As for agents$"
+    ):
+        await mod.agents.enqueue("Contoso Agent", run_as=_CONTOSO_USER)
+
+
+@pytest.mark.asyncio
+async def test_enqueue_with_run_as_on_a_paused_agent_raises_paused(monkeypatch):
+    mod = _agents_module()
+    _client_returning(
+        mod,
+        monkeypatch,
+        {"status": "paused", "accepted": False, "message": "Agent is paused"},
+    )
+
+    with pytest.raises(mod.AgentPausedError):
+        await mod.agents.enqueue("Paused Agent", run_as=_CONTOSO_USER)
+
+
+@pytest.mark.asyncio
+async def test_run_passes_run_as_to_enqueue(monkeypatch):
+    mod = _agents_module()
+    handle = mod.AgentRunHandle(run_id=_RUN_ID, run_as_user_id=_CONTOSO_USER)
+    enqueue = AsyncMock(return_value=handle)
+    wait = AsyncMock(return_value="done")
+    monkeypatch.setattr(mod.agents, "enqueue", enqueue)
+    monkeypatch.setattr(mod.agents, "wait", wait)
+
+    result = await mod.agents.run(
+        "Contoso Agent", {"ticket_id": 7}, timeout=5.0, run_as=_CONTOSO_USER
+    )
+
+    assert result == "done"
+    enqueue.assert_awaited_once_with(
+        "Contoso Agent", {"ticket_id": 7}, output_schema=None, run_as=_CONTOSO_USER
+    )
+    wait.assert_awaited_once_with(_RUN_ID, output_schema=None, timeout=5.0)
+
+
+@pytest.mark.asyncio
+async def test_run_without_run_as_passes_none(monkeypatch):
+    mod = _agents_module()
+    enqueue = AsyncMock(return_value=mod.AgentRunHandle(run_id=_RUN_ID))
+    monkeypatch.setattr(mod.agents, "enqueue", enqueue)
+    monkeypatch.setattr(mod.agents, "wait", AsyncMock(return_value="done"))
+
+    await mod.agents.run("Contoso Agent")
+
+    enqueue.assert_awaited_once_with(
+        "Contoso Agent", None, output_schema=None, run_as=None
+    )

@@ -2166,18 +2166,94 @@ class TestSocketAgentRuns:
                         headers=headers,
                     )
             assert response.status_code == 202, response.text
-            assert response.json() == {"run_id": run_id, "status": "queued"}
+            receipt = response.json()
+            assert receipt == {
+                "run_id": run_id,
+                "status": "queued",
+                "run_as_user_id": None,
+            }
             assert mock_enqueue.await_count == 1
             kwargs = mock_enqueue.call_args.kwargs
             assert kwargs["agent_id"] == str(agent_id)
             assert kwargs["trigger_type"] == "api"
             assert kwargs["input_data"] == {"ticket_id": 1}
             assert kwargs["sync"] is False
+            assert kwargs["run_as_user_id"] is None
         finally:
             await server.stop()
             async with async_session_factory() as session:
                 await session.execute(
                     delete(AgentModel).where(AgentModel.id == agent_id)
+                )
+                await session.commit()
+
+    @pytest.mark.asyncio
+    async def test_enqueue_over_socket_forwards_run_as(self, async_session_factory):
+        from sqlalchemy import delete
+
+        from src.models.orm.agents import Agent as AgentModel
+        from src.models.orm.organizations import Organization as OrganizationModel
+        from src.models.orm.users import User as UserModel
+
+        stem = uuid4().hex[:8]
+        contoso_id = uuid4()
+        async with async_session_factory() as session:
+            contoso = OrganizationModel(
+                id=contoso_id,
+                name=f"Contoso {stem}",
+                is_active=True,
+                created_by="worker-sdk-http-test",
+            )
+            target = UserModel(
+                email=f"wsdk-run-as-{stem}@contoso.example.com",
+                name="Contoso Technician",
+                organization_id=contoso_id,
+            )
+            agent = AgentModel(
+                name=f"wsdk-run-as-agent-{stem}",
+                system_prompt="Socket Run As agent.",
+                is_active=True,
+                created_by="worker-sdk-http-test",
+            )
+            session.add_all([contoso, target, agent])
+            await session.commit()
+            target_id, agent_id, agent_name = target.id, agent.id, agent.name
+
+        run_id = str(uuid4())
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            # Only the broker-publishing leaf is stubbed: the route, auth,
+            # Run As decision and the shared service run for real.
+            with patch(
+                "src.services.execution.agent_run_service.enqueue_agent_run",
+                new=AsyncMock(return_value=run_id),
+            ) as mock_enqueue:
+                async with _socket_client(server) as client:
+                    response = await client.post(
+                        "/api/agent-runs/enqueue",
+                        json={"agent_name": agent_name, "run_as": str(target_id)},
+                        headers={"Authorization": f"Bearer {_engine_token()}"},
+                    )
+            assert response.status_code == 202, response.text
+            receipt = response.json()
+            assert receipt == {
+                "run_id": run_id,
+                "status": "queued",
+                "run_as_user_id": str(target_id),
+            }
+            assert mock_enqueue.await_count == 1
+            kwargs = mock_enqueue.call_args.kwargs
+            assert kwargs["agent_id"] == str(agent_id)
+            assert kwargs["run_as_user_id"] == target_id
+            assert kwargs["org_id"] == str(contoso_id)
+        finally:
+            await server.stop()
+            async with async_session_factory() as session:
+                await session.execute(delete(AgentModel).where(AgentModel.id == agent_id))
+                await session.execute(delete(UserModel).where(UserModel.id == target_id))
+                await session.execute(
+                    delete(OrganizationModel).where(OrganizationModel.id == contoso_id)
                 )
                 await session.commit()
 
