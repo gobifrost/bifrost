@@ -27,7 +27,7 @@ from src.repositories.org_scoped import OrgScopedRepository
 from src.repositories.workflows import WorkflowRepository
 from src.services.access_check_entry import run_user_may_open
 from src.services.access_check_policies import load_policy_principal
-from src.services.access_check_writer import judge
+from src.services.access_check_writer import judge, names_a_user_to_load
 from src.services.authorization.enforce import operation_key
 from src.services.authorization.explain import (
     Trace,
@@ -100,7 +100,7 @@ async def rerun(db: AsyncSession, row: AuditLog) -> tuple[Trace | None, NowUnava
     note = stored_note(row)
     facts = note.facts
     run_as = None
-    if note.kind == "run_as":
+    if names_a_user_to_load(note):
         run_as = await load_run_as_target(db, UUID(str(facts["run_as_user_id"])))
         if run_as is None:
             return None, "run_as_user_missing"

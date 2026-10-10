@@ -71,6 +71,7 @@ _DEDUPE_SECONDS = 86_400
 # A judgement in progress holds its marker this long at most; a judgement
 # that completes keeps it for the day.
 _IN_FLIGHT_SECONDS = 300
+_IMPERSONATE_PERMISSION = "users.impersonate"
 _ALWAYS_WRITTEN = frozenset({"run_as", "policy", "secret"})
 # Facts that vary between calls of the same decision (a query's row counts).
 _PER_CALL_FACTS = frozenset({"hidden", "returned"})
@@ -145,17 +146,28 @@ async def _resolve_owned(db: AsyncSession, note: Note) -> Note | Unresolved:
     return Note(note.kind, organization_id, {key: value for key, value in facts.items() if key not in _OWNED_FACTS})
 
 
+def names_a_user_to_load(note: Note) -> bool:
+    """Whether judging ``note`` needs the user its ``run_as`` names loaded:
+    not when the person held Impersonate Users nowhere and was refused
+    before any user was looked up (``held_nowhere``), which is judged as
+    the permission at the note's organization, theirs."""
+    return note.kind == "run_as" and not note.facts.get("held_nowhere")
+
+
 def judge(
     run_user: RunUser, powers: Powers | None, note: Note, entry: AccessEntry | None, run_as: RunAsTarget | None
 ) -> Trace:
     """Judge one note; ``powers`` is None for a person acting directly.
-    ``run_as`` is the user a ``run_as`` note names, loaded by the caller."""
+    ``run_as`` is the user a ``run_as`` note names, loaded by the caller
+    when ``names_a_user_to_load``."""
     facts = note.facts
     if note.kind == "permission":
         return check_permission(run_user, powers, facts["permission"], note.target)
     if note.kind in ("scope_switch", "child_run"):
         return check_target(run_user, powers, note.target, entry)
     if note.kind == "run_as":
+        if facts.get("held_nowhere"):
+            return check_permission(run_user, powers, _IMPERSONATE_PERMISSION, note.target)
         assert run_as is not None, "the caller loads the user a run_as names"
         return check_run_as(run_user, powers, run_as)
     assert powers is not None, "only a run's request notes the other kinds"
@@ -388,7 +400,7 @@ async def _judge_and_write(
             return False
         assert isinstance(resolved, Note)
         run_as = None
-        if resolved.kind == "run_as":
+        if names_a_user_to_load(resolved):
             run_as = await load_run_as_target(db, UUID(str(resolved.facts["run_as_user_id"])))
             if run_as is None:
                 return await writer.gap(resolved.kind, "run_as_user_missing", run_user.user_id)

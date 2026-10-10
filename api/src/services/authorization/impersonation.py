@@ -11,7 +11,7 @@ the run has), the initiator and the lineage stay the caller's.
   access. ``explain.check_run_as`` decides, so the enforced decision and the
   recorded trace are the same. Someone who holds Impersonate Users nowhere is
   refused before any user is looked up, so they learn nothing about which
-  users exist.
+  users exist; the refusal is recorded at their own organization.
 - An execution credential (a workflow's engine token, a service token) is
   decided by the staged rule ``enforce.decide_for`` applies to every
   execution credential: allowed iff the token is a superuser token. The check
@@ -102,6 +102,14 @@ async def _authorize_for_run(
 async def _authorize_for_person(db: AsyncSession, caller: Caller, run_as_user_id: UUID) -> RunAsTarget:
     ctx = caller.ctx
     if ctx is None or permitted_organizations(caller, IMPERSONATE_PERMISSION).is_empty:
+        # Recorded at the caller's own organization: the user is not looked up.
+        access_checks.note(
+            "run_as",
+            caller.principal.organization_id,
+            run_as_user_id=run_as_user_id,
+            enforced=True,
+            held_nowhere=True,
+        )
         raise RunAsError(403, DENIED_MESSAGE)
     target = await _load(db, run_as_user_id)
     trace = check_run_as(RunUser(caller.principal.user_id, ctx, None), None, target)

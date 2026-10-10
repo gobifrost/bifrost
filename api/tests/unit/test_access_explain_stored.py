@@ -106,3 +106,37 @@ async def test_a_run_as_check_naming_a_user_that_no_longer_exists_cannot_be_judg
     result = await rerun(db_session, _run_as_row(person.id, uuid4()))
 
     assert result == (None, "run_as_user_missing")
+
+
+async def test_a_refusal_recorded_before_any_lookup_is_judged_without_the_user(db_session: AsyncSession) -> None:
+    org = Organization(name=f"Contoso {uuid4().hex[:8]}", created_by="explain-test")
+    db_session.add(org)
+    await db_session.flush()
+    person = User(email=f"{uuid4()}@contoso.example", name="Contoso Person", organization_id=org.id)
+    db_session.add(person)
+    await db_session.flush()
+    row = AuditLog(
+        action="access.check",
+        resource_type="run_as",
+        outcome="failure",
+        user_id=person.id,
+        organization_id=org.id,
+        details={
+            "enforced": True,
+            "direct": True,
+            "workflow_id": None,
+            "inputs": {
+                "operation": "POST /api/workflows/execute",
+                "target": str(org.id),
+                "run_as_user_id": str(uuid4()),
+                "enforced": True,
+                "held_nowhere": True,
+            },
+        },
+    )
+
+    now, unavailable = await rerun(db_session, row)
+
+    assert unavailable is None and now is not None
+    stopped = [step.key for step in now.steps if step.status == "stopped"]
+    assert (now.outcome, stopped) == ("failure", ["permission"])

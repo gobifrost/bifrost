@@ -248,6 +248,6 @@ def test_users_describes_impersonate_users() -> None:
     impersonation = description.partition("to sign out. ")[2]
     assert impersonation == (
         "Impersonate Users runs a workflow or an agent as another user in an organization where the "
-        "holder has this permission. Running as a user who holds privileged access also needs Manage "
-        "Privileged Access."
+        "holder has this permission. Running as a user who holds privileged access also needs Read "
+        "and Write Privileged Access."
     )

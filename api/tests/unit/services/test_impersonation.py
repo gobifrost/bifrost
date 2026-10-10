@@ -16,12 +16,26 @@ from sqlalchemy.util import EMPTY_DICT
 from shared import access_checks
 from shared.identities import ensure_default_identity
 from shared.sdk_users import set_platform_admin
+from src.core.cache.redis_client import close_shared_redis
 from src.core.constants import PROVIDER_ORG_ID, SYSTEM_USER_UUID
 from src.core.principal import UserPrincipal
 from src.models.enums import IdentityKind
+from src.models.orm.audit import AuditLog
 from src.models.orm.organizations import Organization
 from src.models.orm.users import Role, RolePermission, User, UserRole, UserRoleBoundary
+from src.services.access_check_writer import flush
 from src.services.authorization.impersonation import RunAsError, authorize_run_as
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _fresh_redis_client(monkeypatch):
+    # The shared client binds to the event loop that created it; each test
+    # runs in its own loop, so it starts without one and closes the one it made.
+    from src.core.cache import redis_client
+
+    monkeypatch.setattr(redis_client, "_shared_client", None)
+    yield
+    await close_shared_redis()
 
 
 @pytest_asyncio.fixture
@@ -127,18 +141,35 @@ async def _contoso_impersonator(db: AsyncSession) -> tuple[Organization, Organiz
     return contoso, fabrikam, holder
 
 
-async def test_a_person_without_the_permission_is_refused_before_any_user_is_looked_up(
+async def test_a_person_without_the_permission_is_refused_and_recorded_before_any_user_is_looked_up(
     db_session: AsyncSession,
 ) -> None:
     contoso = await _org(db_session, "Contoso")
     person, colleague = await _user(db_session, contoso), await _user(db_session, contoso)
     counting = _CountingSession(db_session)
 
-    status = await _status(cast(AsyncSession, counting), _person(person), colleague.id)
+    with _collecting(person.id) as collector:
+        status = await _status(cast(AsyncSession, counting), _person(person), colleague.id)
+    await flush(cast(AsyncSession, counting), collector, operation="POST /api/workflows/execute", route=None)
 
     assert status == 403
     looked_up = counting.looked_up(colleague.id)
     assert looked_up is False
+    rows = (await db_session.execute(select(AuditLog).where(AuditLog.user_id == person.id))).scalars().all()
+    [row] = rows
+    assert (row.action, row.outcome, row.resource_type, row.organization_id) == (
+        "access.check",
+        "failure",
+        "run_as",
+        contoso.id,
+    )
+    assert row.details is not None
+    requested = str(colleague.id)
+    assert (row.details["enforced"], row.details["inputs"]["run_as_user_id"]) == (True, requested)
+    stopped = [(step["key"], step["facts"]) for step in row.details["trace"]["steps"] if step["status"] == "stopped"]
+    assert stopped == [
+        ("permission", {"permission": "users.impersonate", "permission_display_name": "Impersonate Users"})
+    ]
 
 
 async def test_a_grant_at_contoso_covers_contoso_users_only(db_session: AsyncSession) -> None:
