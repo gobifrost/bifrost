@@ -31,13 +31,14 @@ const SMALL_WORDS = new Set([
 	"with",
 ]);
 
-/** "Target in reach" → "Target in Reach". */
+/** "Target in reach" → "Target in Reach". A word the server already
+ * capitalized is part of a name and stays as written ("Run As User"). */
 export function stepTitle(label: string): string {
 	return label
 		.split(" ")
 		.map((word, index) =>
-			index > 0 && SMALL_WORDS.has(word.toLowerCase())
-				? word.toLowerCase()
+			index > 0 && SMALL_WORDS.has(word)
+				? word
 				: word.charAt(0).toUpperCase() + word.slice(1),
 		)
 		.join(" ");
@@ -69,6 +70,8 @@ function workflowAccessSentence(reason: string): string | undefined {
 }
 
 function runUserSentence(step: AccessStep): string | undefined {
+	if (step.reason === "inactive")
+		return "They're inactive, so they can't act as another user.";
 	const who = { person: "this person", identity: "this identity" }[
 		step.reason
 	];
@@ -76,6 +79,16 @@ function runUserSentence(step: AccessStep): string | undefined {
 	return step.facts.is_platform_admin
 		? `Runs as ${who}, a Platform Admin.`
 		: `Runs as ${who}.`;
+}
+
+function runAsUserSentence(reason: string): string | undefined {
+	return {
+		person: "This user is an active person, so they can be acted as.",
+		inactive: "This user is inactive, so no one can act as them.",
+		system_account: "This is the system account, which no one can act as.",
+		managed_identity:
+			"This is a managed identity, which no one can act as. Assign it to the workflow or agent instead.",
+	}[reason];
 }
 
 function powersSentence(step: AccessStep): string | undefined {
@@ -149,7 +162,8 @@ function permissionSentence(
 /** The Graph-style name the server stored on a permission step ("Read Agents"). */
 function storedPermissionName(step: AccessStep): string | undefined {
 	const name = step.facts.permission_display_name;
-	return step.key === "permission" && typeof name === "string"
+	return (step.key === "permission" || step.key === "privileged_target") &&
+		typeof name === "string"
 		? name
 		: undefined;
 }
@@ -178,6 +192,8 @@ export function stepSentence(
 		powers: () => powersSentence(step),
 		target: () => targetSentence(step, names),
 		permission: () => permissionSentence(step, names, runUserId),
+		run_as_user: () => runAsUserSentence(step.reason),
+		privileged_target: () => permissionSentence(step, names, runUserId),
 	};
 	return sentences[step.key]?.() ?? step.reason;
 }

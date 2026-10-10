@@ -355,6 +355,45 @@ describe("AgentRunDetailPage — header + summary", () => {
 		);
 	});
 
+	it("shows the user the run acts as next to the caller", async () => {
+		mockUseAgentRun.mockReturnValue({
+			data: makeRun({
+				run_as_user_id: "user-2",
+				run_as_user_name: "Contoso Helpdesk",
+				run_as_user_email: "helpdesk@contoso.com",
+			}),
+			isLoading: false,
+		});
+
+		await renderPage();
+		expect(screen.getByText(/Alice · test/)).toBeVisible();
+		expect(screen.getByTestId("run-as")).toHaveTextContent(
+			"· Run As Contoso Helpdesk",
+		);
+	});
+
+	it("names the Run As user by email when they have no name", async () => {
+		mockUseAgentRun.mockReturnValue({
+			data: makeRun({
+				run_as_user_id: "user-2",
+				run_as_user_name: null,
+				run_as_user_email: "helpdesk@contoso.com",
+			}),
+			isLoading: false,
+		});
+
+		await renderPage();
+		expect(screen.getByTestId("run-as")).toHaveTextContent(
+			"· Run As helpdesk@contoso.com",
+		);
+	});
+
+	it("shows no Run As when the caller acts as themselves", async () => {
+		await renderPage();
+		expect(screen.queryByTestId("run-as")).not.toBeInTheDocument();
+		expect(screen.queryByText(/Run As/)).not.toBeInTheDocument();
+	});
+
 	it("renders the RunReviewPanel with the run id", async () => {
 		await renderPage();
 		expect(screen.getByTestId("run-review-panel")).toHaveAttribute(

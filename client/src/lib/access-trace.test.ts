@@ -43,6 +43,11 @@ describe("stepTitle", () => {
 		expect(stepTitle("Run as another user")).toBe("Run as Another User");
 		expect(stepTitle("Workflow powers")).toBe("Workflow Powers");
 	});
+
+	it("keeps a word the server capitalized as written", () => {
+		expect(stepTitle("Run As User")).toBe("Run As User");
+		expect(stepTitle("Privileged User")).toBe("Privileged User");
+	});
 });
 
 describe("stepSentence", () => {
@@ -166,6 +171,29 @@ describe("stepSentence", () => {
 			"Needs Read Agents.",
 		);
 		expect(sentence(step("target", "", named, "not_reached"))).toBe("");
+	});
+
+	it("says whether the Run As user can be acted as", () => {
+		expect(sentence(step("run_as_user", "person"))).toBe(
+			"This user is an active person, so they can be acted as.",
+		);
+		expect(sentence(step("run_as_user", "inactive", {}, "stopped"))).toBe(
+			"This user is inactive, so no one can act as them.",
+		);
+		expect(
+			sentence(step("run_as_user", "system_account", {}, "stopped")),
+		).toBe("This is the system account, which no one can act as.");
+		expect(
+			sentence(step("run_as_user", "managed_identity", {}, "stopped")),
+		).toBe(
+			"This is a managed identity, which no one can act as. Assign it to the workflow or agent instead.",
+		);
+	});
+
+	it("says an inactive person can't act as another user", () => {
+		expect(sentence(step("run_user", "inactive", {}, "stopped"))).toBe(
+			"They're inactive, so they can't act as another user.",
+		);
 	});
 
 	it("shows a reason it doesn't know as written", () => {
@@ -365,5 +393,162 @@ describe("checkResourceTitle", () => {
 		expect(checkResourceTitle("secret", named("Read Agents"))).toBe(
 			"Secret",
 		);
+	});
+});
+
+describe("a stored Run As trace", () => {
+	const runAsNames: TraceNames = {
+		...names,
+		permission: (permission) =>
+			({
+				"users.impersonate": "Impersonate Users",
+				"privilegedaccess.readwrite":
+					"Read and Write Privileged Access",
+			})[permission] ?? permission,
+	};
+	const impersonate = {
+		permission: "users.impersonate",
+		permission_display_name: "Impersonate Users",
+	};
+	const privileged = {
+		permission: "privilegedaccess.readwrite",
+		permission_display_name: "Read and Write Privileged Access",
+	};
+	const runAsUser = {
+		key: "run_as_user",
+		label: "Run As User",
+		reason: "person",
+		facts: { run_as_user_id: "user-2", organization_id: "org-1" },
+	};
+	const read = (details: Record<string, unknown>) => {
+		const stored = storedTrace(details);
+		return stored?.steps.map((s) => [
+			stepTitle(s.label),
+			s.status,
+			stepSentence(s, runAsNames, "user-1"),
+		]);
+	};
+
+	it("reads every step of an allowed Run As of a privileged user", () => {
+		const details = {
+			trace: {
+				outcome: "success",
+				enforced: true,
+				steps: [
+					{
+						key: "run_user",
+						label: "Run user",
+						status: "passed",
+						reason: "person",
+						facts: { user_id: "user-1", is_platform_admin: true },
+					},
+					{
+						key: "powers",
+						label: "Workflow powers",
+						status: "not_applicable",
+						reason: "no_workflow",
+						facts: {},
+					},
+					{ ...runAsUser, status: "passed" },
+					{
+						key: "target",
+						label: "Target in reach",
+						status: "passed",
+						reason: "platform_admin",
+						facts: { organization_id: "org-1" },
+					},
+					{
+						key: "permission",
+						label: "Permission",
+						status: "passed",
+						reason: "platform_admin",
+						facts: impersonate,
+					},
+					{
+						key: "privileged_target",
+						label: "Privileged User",
+						status: "passed",
+						reason: "platform_admin",
+						facts: privileged,
+					},
+				],
+			},
+		};
+		expect(read(details)).toEqual([
+			["Run User", "passed", "Runs as this person, a Platform Admin."],
+			[
+				"Workflow Powers",
+				"not_applicable",
+				"No workflow: only their own roles apply.",
+			],
+			[
+				"Run As User",
+				"passed",
+				"This user is an active person, so they can be acted as.",
+			],
+			[
+				"Target in Reach",
+				"passed",
+				"A Platform Admin reaches every organization.",
+			],
+			["Permission", "passed", "A Platform Admin holds All Permissions."],
+			[
+				"Privileged User",
+				"passed",
+				"A Platform Admin holds All Permissions.",
+			],
+		]);
+		expect(checkResourceTitle("run_as", details)).toBe("Run As");
+	});
+
+	it("names the permission a refused Run As of a privileged user lacked", () => {
+		const details = {
+			trace: {
+				outcome: "failure",
+				enforced: true,
+				steps: [
+					{
+						key: "run_user",
+						label: "Run user",
+						status: "passed",
+						reason: "person",
+						facts: { user_id: "user-1", is_platform_admin: false },
+					},
+					{ ...runAsUser, status: "passed" },
+					{
+						key: "permission",
+						label: "Permission",
+						status: "passed",
+						reason: "role:role-helpdesk:users.impersonate@organization",
+						facts: impersonate,
+					},
+					{
+						key: "privileged_target",
+						label: "Privileged User",
+						status: "stopped",
+						reason: "denied:missing:privilegedaccess.readwrite",
+						facts: privileged,
+					},
+				],
+			},
+		};
+		expect(read(details)?.slice(2)).toEqual([
+			[
+				"Permission",
+				"passed",
+				"Helpdesk grants Impersonate Users there.",
+			],
+			[
+				"Privileged User",
+				"stopped",
+				"No role grants Read and Write Privileged Access there.",
+			],
+		]);
+	});
+
+	it("says what an unreached privileged step needs", () => {
+		expect(
+			sentence(step("privileged_target", "", privileged, "not_reached")),
+		).toBe("Needs Read and Write Privileged Access.");
 	});
 });
