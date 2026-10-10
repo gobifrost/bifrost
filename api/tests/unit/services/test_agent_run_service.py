@@ -107,6 +107,33 @@ class TestEnqueueAgentRun:
     @pytest.mark.asyncio
     @patch("src.services.execution.agent_run_service.publish_message")
     @patch("src.services.execution.agent_run_service.get_redis")
+    async def test_run_as_is_recorded_on_the_row_only(
+        self, mock_get_redis, mock_publish, db_session
+    ):
+        redis = _redis_context(mock_get_redis)
+        acting_user_id = uuid4()
+        launch = {
+            "agent_id": str(uuid4()),
+            "trigger_type": "api",
+            "org_id": str(uuid4()),
+            "caller_user_id": str(uuid4()),
+            "run_id": str(uuid4()),
+            "lineage": None,
+        }
+
+        await enqueue_agent_run(**launch)
+        await enqueue_agent_run(**launch, run_as_user_id=acting_user_id)
+
+        plain_row, run_as_row = (call.args[0] for call in db_session.add.call_args_list)
+        plain_context, run_as_context = (call.args[1] for call in redis.set.call_args_list)
+        plain_message, run_as_message = (call.args[1] for call in mock_publish.call_args_list)
+        assert (plain_row.run_as_user_id, run_as_row.run_as_user_id) == (None, acting_user_id)
+        assert run_as_context == plain_context
+        assert run_as_message == plain_message
+
+    @pytest.mark.asyncio
+    @patch("src.services.execution.agent_run_service.publish_message")
+    @patch("src.services.execution.agent_run_service.get_redis")
     async def test_enqueue_supports_agentless_conversation_runs(
         self, mock_get_redis, mock_publish, db_session
     ):

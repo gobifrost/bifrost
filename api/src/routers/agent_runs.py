@@ -50,8 +50,10 @@ from src.models.contracts.agent_runs import (
 )
 from shared.sdk_agent_runs import (
     SdkAgentRunError,
+    authorize_agent_run_as,
     enqueue_sdk_agent_run,
     get_sdk_agent_run,
+    resolve_agent_run_actor,
     resolve_executable_agent,
 )
 from src.models.enums import AgentAccessLevel
@@ -569,6 +571,15 @@ async def rerun_agent_run(
     await _require_own_private_agent_run(db, user, original)
     access_checks.note_launch("agents.execute", original.org_id, user.organization_id, subject=f"agent:{original.agent_id}")
 
+    # A rerun keeps the user the run acted as, decided again for this caller.
+    run_as_user_id = None
+    if original.run_as_user_id is not None:
+        try:
+            target = await authorize_agent_run_as(db, user, original.run_as_user_id)
+        except SdkAgentRunError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.detail) from None
+        run_as_user_id = target.user_id
+
     new_run_id = await enqueue_agent_run(
         agent_id=str(original.agent_id),
         trigger_type="rerun",
@@ -581,6 +592,7 @@ async def rerun_agent_run(
         caller_name=getattr(user, "name", None),
         sync=False,
         lineage=await principal_lineage(db, user),
+        run_as_user_id=run_as_user_id,
     )
 
     return AgentRunRerunResponse(run_id=UUID(new_run_id))
@@ -959,6 +971,7 @@ async def enqueue_agent_run_request(
             agent_name=request.agent_name,
             input_data=request.input,
             output_schema=request.output_schema,
+            run_as=request.run_as,
         )
     except SdkAgentRunError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
@@ -986,18 +999,24 @@ async def execute_agent_run(
             "agent_id": str(agent.id),
         }
 
+    try:
+        actor = await resolve_agent_run_actor(db, user, agent, request.run_as)
+    except SdkAgentRunError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
+
     # Enqueue the agent run for sync execution
     run_id = await enqueue_agent_run(
         agent_id=str(agent.id),
         trigger_type="api",
         input_data=request.input,
         output_schema=request.output_schema,
-        org_id=str(user.organization_id) if user.organization_id else None,
+        org_id=str(actor.org_id) if actor.org_id else None,
         caller_user_id=str(user.user_id),
         caller_email=user.email,
         caller_name=getattr(user, "name", None),
         sync=True,
         lineage=await principal_lineage(db, user),
+        run_as_user_id=actor.run_as_user_id,
     )
 
     # Wait for the result
@@ -1009,6 +1028,8 @@ async def execute_agent_run(
             detail="Agent run timed out",
         )
 
+    if actor.run_as_user_id is not None:
+        return {**result_data, "run_as_user_id": str(actor.run_as_user_id)}
     return result_data
 
 
