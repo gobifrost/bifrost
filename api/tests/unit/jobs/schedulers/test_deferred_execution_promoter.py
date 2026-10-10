@@ -325,6 +325,29 @@ async def test_a_run_as_whose_initiator_is_inactive_fails(db_session):
     await db_session.refresh(row)
     assert row.status == ExecutionStatus.FAILED
     assert row.error_message == "Run As is no longer permitted: The user who scheduled this run is inactive"
+    [audit] = await _run_as_audit(db_session, initiator.id)
+    assert audit.details is not None
+    stopped = [(step["key"], step["reason"]) for step in audit.details["trace"]["steps"] if step["status"] == "stopped"]
+    assert (audit.outcome, audit.organization_id, audit.details["enforced"], stopped) == (
+        "failure",
+        colleague.organization_id,
+        True,
+        [("run_user", "inactive")],
+    )
+
+
+async def _missing_run_user_gaps(db_session) -> int:
+    from sqlalchemy import func, select
+
+    from src.jobs.schedulers.deferred_execution_promoter import RECHECK_OPERATION
+    from src.models.orm.audit import AuditLog
+
+    query = select(func.count()).where(
+        AuditLog.action == "access.check_gap",
+        AuditLog.resource_type == "run_as",
+        AuditLog.operation_id == RECHECK_OPERATION,
+    )
+    return (await db_session.execute(query)).scalar_one()
 
 
 @pytest.mark.asyncio
@@ -333,8 +356,13 @@ async def test_a_run_as_whose_initiator_no_longer_exists_fails(db_session):
     row = _acting_as(colleague.id, uuid4(), enforced=True)
     db_session.add(row)
     await db_session.commit()
+    gaps_before = await _missing_run_user_gaps(db_session)
 
     pub = await _promote(db_session)
+
+    # The writer records a decision whose person no longer exists as a gap.
+    gaps_after = await _missing_run_user_gaps(db_session)
+    assert gaps_after == gaps_before + 1
 
     published = _published(pub)
     row_id = str(row.id)
@@ -420,3 +448,36 @@ async def test_a_row_without_run_as_is_published_as_before(db_session):
     }
     await db_session.refresh(plain)
     assert (plain.status, plain.error_message, plain.completed_at) == (ExecutionStatus.PENDING, None, None)
+
+
+@pytest.mark.asyncio
+async def test_an_initiator_deleted_during_the_recheck_fails_that_row_only(db_session):
+    from sqlalchemy.exc import NoResultFound
+
+    from src.services.authorization import explain
+
+    initiator, colleague, _role = await _impersonation(db_session)
+    other_initiator, other_colleague, _other_role = await _impersonation(db_session)
+    orphaned = _acting_as(colleague.id, initiator.id, enforced=True)
+    permitted = _acting_as(other_colleague.id, other_initiator.id, enforced=True)
+    plain = _new_scheduled(datetime.now(timezone.utc) - timedelta(seconds=1))
+    db_session.add_all([orphaned, permitted, plain])
+    await db_session.commit()
+    real_context = explain.build_authorization_context
+
+    async def deleted_meanwhile(db, user_id):
+        # The initiator is found, then gone by the time their roles are read.
+        if user_id == initiator.id:
+            raise NoResultFound()
+        return await real_context(db, user_id)
+
+    with patch.object(explain, "build_authorization_context", deleted_meanwhile):
+        pub = await _promote(db_session)
+
+    published = _published(pub)
+    orphaned_id, permitted_id, plain_id = str(orphaned.id), str(permitted.id), str(plain.id)
+    assert orphaned_id not in published
+    assert {permitted_id, plain_id} <= published
+    await db_session.refresh(orphaned)
+    assert orphaned.status == ExecutionStatus.FAILED
+    assert orphaned.error_message == "Run As is no longer permitted: The user who scheduled this run no longer exists"

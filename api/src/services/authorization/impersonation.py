@@ -25,8 +25,8 @@ noted.
 
 A scheduled run keeps what was decided (``scheduled_run_as``) and is decided
 again when it fires (``recheck_run_as``): a person's impersonation on the
-initiator's roles as they are then (an initiator who is no longer active
-can't act), an execution credential's on the target alone. A person's
+initiator as they are then (their roles; someone inactive can't act as
+anyone, live or later), an execution credential's on the target alone. A person's
 refusal is noted as a live one is.
 """
 
@@ -114,26 +114,25 @@ def scheduled_run_as(principal: UserPrincipal, target: RunAsTarget) -> dict[str,
 
 async def recheck_run_as(db: AsyncSession, run_as: dict[str, Any]) -> str | None:
     """Why the impersonation ``scheduled_run_as`` kept is no longer permitted,
-    or None while it still is. A person's is judged again on the initiator's
-    roles as they are now, and needs the initiator still active; a refusal
-    is noted (into the caller's collector) as a live one is. An execution
+    or None while it still is. A person's is judged again on the initiator as
+    they are now (their roles, and still active and present); a refusal is
+    noted (into the caller's collector) as a live one is. An execution
     credential's checks the target only."""
     try:
         target = await _load(db, UUID(run_as["user_id"]))
         if not run_as["enforced"]:
             _raise_if_unusable(target)
             return None
-        initiator_id = UUID(run_as["authorized_by"])
-        active = (await db.execute(select(User.is_active).where(User.id == initiator_id))).scalar_one_or_none()
-        if active is None:
-            return "The user who scheduled this run no longer exists"
-        if not active:
-            return "The user who scheduled this run is inactive"
-        initiator = await load_run_user(db, initiator_id)
-        assert initiator is not None, "the initiator was just read"
-        trace = check_run_as(initiator, None, target)
-        if trace.outcome == "failure":
+        initiator = await load_run_user(db, UUID(run_as["authorized_by"]))
+        if initiator is None:
             _note(target, enforced=True)
+            return "The user who scheduled this run no longer exists"
+        trace = check_run_as(initiator, None, target)
+        if trace.outcome == "success":
+            return None
+        _note(target, enforced=True)
+        if not initiator.is_active:
+            return "The user who scheduled this run is inactive"
         _raise_if_refused(trace, target)
     except RunAsError as exc:
         return exc.detail
@@ -164,7 +163,9 @@ async def _authorize_for_person(db: AsyncSession, caller: Caller, run_as_user_id
         )
         raise RunAsError(403, DENIED_MESSAGE)
     target = await _load(db, run_as_user_id)
-    trace = check_run_as(RunUser(caller.principal.user_id, ctx, None), None, target)
+    user_id = caller.principal.user_id
+    active = (await db.execute(select(User.is_active).where(User.id == user_id))).scalar_one_or_none()
+    trace = check_run_as(RunUser(user_id, ctx, None, is_active=bool(active)), None, target)
     _note(target, enforced=True)
     _raise_if_refused(trace, target)
     return target

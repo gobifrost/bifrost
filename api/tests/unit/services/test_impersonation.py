@@ -333,6 +333,20 @@ async def test_removing_the_role_revokes_impersonation(db_session: AsyncSession)
     assert after == 403
 
 
+async def test_someone_inactive_is_refused_and_recorded(db_session: AsyncSession) -> None:
+    contoso, _fabrikam, holder = await _contoso_impersonator(db_session)
+    colleague = await _user(db_session, contoso)
+    holder.is_active = False
+    await db_session.flush()
+
+    with _collecting(holder.id) as collector:
+        status = await _status(db_session, _person(holder), colleague.id)
+
+    assert status == 403
+    run_as = [(note.target, note.facts) for note in collector.notes if note.kind == "run_as"]
+    assert run_as == [(contoso.id, {"run_as_user_id": colleague.id, "enforced": True})]
+
+
 async def test_a_scheduled_row_keeps_who_decided_and_whether_it_is_enforced(db_session: AsyncSession) -> None:
     contoso, _fabrikam, holder = await _contoso_impersonator(db_session)
     colleague = await _user(db_session, contoso)

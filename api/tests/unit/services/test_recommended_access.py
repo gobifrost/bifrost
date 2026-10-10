@@ -39,7 +39,7 @@ def _holder(*held: RoleRef, home: UUID | None = CONTOSO, placed_at: tuple[UUID, 
         ),
     )
     return Holder(
-        run_user=RunUser(user_id=ctx.user_id, ctx=ctx, identity_kind="custom"),
+        run_user=RunUser(user_id=ctx.user_id, ctx=ctx, identity_kind="custom", is_active=True),
         held_roles=frozenset(ref for role in held for ref in (role.name, str(role.id))),
     )
 

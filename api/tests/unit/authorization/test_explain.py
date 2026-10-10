@@ -51,7 +51,9 @@ WRITE_TABLES = AccessEntry(
 )
 
 
-def _user(*grants: RoleGrant, home: UUID | None = CONTOSO, kind: str | None = None) -> RunUser:
+def _user(
+    *grants: RoleGrant, home: UUID | None = CONTOSO, kind: str | None = None, active: bool = True
+) -> RunUser:
     ctx = AuthorizationContext(
         user_id=uuid4(),
         home_organization_id=home,
@@ -60,7 +62,7 @@ def _user(*grants: RoleGrant, home: UUID | None = CONTOSO, kind: str | None = No
         base_permissions=USER_BASE_PERMISSIONS,
         role_grants=tuple(grants),
     )
-    return RunUser(user_id=ctx.user_id, ctx=ctx, identity_kind=kind)
+    return RunUser(user_id=ctx.user_id, ctx=ctx, identity_kind=kind, is_active=active)
 
 
 def _run_as(
@@ -246,6 +248,13 @@ def test_only_an_active_person_may_be_acted_as() -> None:
         assert stopped == "run_as_user"
         assert trace.steps[2].reason == reason
         assert trace.steps[2].facts == {"run_as_user_id": target_id, "organization_id": contoso}
+
+
+def test_someone_inactive_can_act_as_no_one() -> None:
+    trace = check_run_as(_user(platform_admin_grant(), home=PROVIDER_ORG_ID, active=False), None, _run_as())
+
+    stopped = _stopped_at(trace)
+    assert (stopped, trace.steps[0].reason) == ("run_user", "inactive")
 
 
 def test_a_privileged_target_needs_privileged_access() -> None:

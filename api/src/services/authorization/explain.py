@@ -25,6 +25,7 @@ from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.access_checks import ALL_ORGS, NoteTarget
@@ -89,6 +90,8 @@ class RunUser:
     user_id: UUID
     ctx: AuthorizationContext
     identity_kind: str | None
+    # Only acting as another user asks: someone inactive can't act as anyone.
+    is_active: bool
 
     @property
     def home(self) -> UUID | None:
@@ -402,8 +405,11 @@ def check_run_as(run_user: RunUser, powers: Powers | None, target: RunAsTarget) 
     acting directly; Full adds both permissions, Restricted needs a grant
     naming them."""
     org = target.organization_id
+    run_user_step = _run_user_step(run_user)
+    if not run_user.is_active:
+        run_user_step = replace(run_user_step, status="stopped", reason="inactive")
     steps = [
-        _run_user_step(run_user),
+        run_user_step,
         _NO_WORKFLOW if powers is None else _powers_step(powers),
         run_as_user_step(target),
         _target_step(run_user, org),
@@ -452,14 +458,18 @@ def check_secret(run_user: RunUser, powers: Powers, target: UUID | None, *, kind
 
 async def load_run_user(db: AsyncSession, user_id: UUID) -> RunUser | None:
     """The run user's authorization context; None when the user no longer exists."""
-    identity_kind = (
-        await db.execute(select(User.identity_kind).where(User.id == user_id))
+    row = (
+        await db.execute(select(User.identity_kind, User.is_active).where(User.id == user_id))
     ).one_or_none()
-    if identity_kind is None:
+    if row is None:
         return None
-    ctx = await build_authorization_context(db, user_id)
-    kind = identity_kind[0]
-    return RunUser(user_id=user_id, ctx=ctx, identity_kind=None if kind is None else str(kind))
+    try:
+        ctx = await build_authorization_context(db, user_id)
+    except NoResultFound:
+        # Deleted between the two reads.
+        return None
+    kind, is_active = row
+    return RunUser(user_id=user_id, ctx=ctx, identity_kind=None if kind is None else str(kind), is_active=is_active)
 
 
 async def load_run_as_target(db: AsyncSession, user_id: UUID) -> RunAsTarget | None:
