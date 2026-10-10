@@ -96,6 +96,61 @@ async def test_pending_execution_preserves_owner_authorization():
 
 
 @pytest.mark.asyncio
+async def test_initiator_can_read_a_pending_root_run_acting_as_someone_else():
+    redis = AsyncMock()
+    redis.get_pending_execution.return_value = _pending(
+        user_id=str(OTHER_USER_ID),
+        script_name="contoso run as",
+        workflow_id=None,
+        lineage={
+            "run_user_id": str(USER_ID),
+            "started_by_user_id": str(USER_ID),
+            "root_execution_id": str(EXECUTION_ID),
+        },
+    )
+
+    with patch(
+        "shared.pending_execution.get_redis_client",
+        return_value=redis,
+    ):
+        execution, error = await get_pending_execution_fallback(
+            EXECUTION_ID,
+            _principal(),
+            AsyncMock(),
+        )
+
+    assert error is None
+    assert execution is not None
+    assert execution.executed_by == str(OTHER_USER_ID)
+
+
+@pytest.mark.asyncio
+async def test_initiator_cannot_read_a_pending_child_run():
+    redis = AsyncMock()
+    redis.get_pending_execution.return_value = _pending(
+        user_id=str(OTHER_USER_ID),
+        lineage={
+            "run_user_id": str(USER_ID),
+            "started_by_user_id": str(USER_ID),
+            "root_execution_id": "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+        },
+    )
+
+    with patch(
+        "shared.pending_execution.get_redis_client",
+        return_value=redis,
+    ):
+        execution, error = await get_pending_execution_fallback(
+            EXECUTION_ID,
+            _principal(),
+            AsyncMock(),
+        )
+
+    assert execution is None
+    assert error == "Forbidden"
+
+
+@pytest.mark.asyncio
 async def test_platform_admin_can_read_any_pending_execution():
     redis = AsyncMock()
     redis.get_pending_execution.return_value = _pending(

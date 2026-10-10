@@ -44,7 +44,14 @@ async def get_pending_execution_fallback(
         org_id = org_id.removeprefix("ORG:")
 
     pending_user_id = pending.get("user_id")
-    if pending_user_id != str(user.user_id):
+    # As shared.sdk_execution_reads._is_visible_to: the acting user, or the
+    # initiator of a root run (a Run As launch polled before the worker persists it).
+    lineage = pending.get("lineage") or {}
+    started_root = (
+        lineage.get("started_by_user_id") == str(user.user_id)
+        and lineage.get("root_execution_id") == str(execution_id)
+    )
+    if pending_user_id != str(user.user_id) and not started_root:
         if not user.is_superuser:
             return None, "Forbidden"
         try:

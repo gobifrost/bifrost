@@ -442,6 +442,31 @@ async def list_sdk_workflows(
 # =============================================================================
 
 
+def _visible_to(user_id: UUID):
+    """Rows a non-superuser sees: runs they acted in, and root runs they started.
+
+    A root run started with Run As acts as someone else, so its initiator
+    reaches it through ``started_by_user_id``. Children of that run keep the
+    root's ``root_execution_id`` and stay hidden. Mirrors ``_is_visible_to``.
+    """
+    from src.models import Execution as ExecutionModel
+
+    return or_(
+        ExecutionModel.executed_by == user_id,
+        and_(
+            ExecutionModel.started_by_user_id == user_id,
+            ExecutionModel.root_execution_id == ExecutionModel.id,
+        ),
+    )
+
+
+def _is_visible_to(execution, user_id: UUID) -> bool:
+    """One row, judged as ``_visible_to`` filters a query."""
+    return execution.executed_by == user_id or (
+        execution.started_by_user_id == user_id and execution.root_execution_id == execution.id
+    )
+
+
 def _execution_org_name(execution) -> str | None:
     """Display name for the execution's effective scope."""
     if execution.organization_id:
@@ -501,7 +526,8 @@ async def list_sdk_executions(
     Preserves the historical ``GET /api/executions`` behavior exactly:
     org scope via ``resolve_org_filter`` (org users pinned to their org,
     superusers unfiltered unless scoped), non-superusers restricted to
-    their own rows, ``workflow_id`` winning over ``workflow_name``,
+    their own rows and the root runs they started (``_visible_to``),
+    ``workflow_id`` winning over ``workflow_name``,
     comma-separated status match-any, silently-ignored malformed
     start/end dates, the
     ``started_at/scheduled_at/completed_at/created_at`` timeline anchor,
@@ -541,7 +567,7 @@ async def list_sdk_executions(
         query = query.where(ExecutionModel.organization_id == org_filter)
 
     if not principal.is_superuser:
-        query = query.where(ExecutionModel.executed_by == principal.user_id)
+        query = query.where(_visible_to(principal.user_id))
     else:
         access_checks.note_power("executions.read.all", filter_target(filter_type, filter_org), subject="executions")
 
@@ -639,7 +665,7 @@ async def get_sdk_execution(
 
     Preserves the historical ``GET /api/executions/{id}`` behavior
     exactly: 404 when the row is missing (including a Redis-pending
-    fallback miss), 403 when a non-superuser views another user's row,
+    fallback miss), 403 when a non-superuser views a row outside ``_is_visible_to``,
     dual-read logs (Redis Stream when in-progress, Postgres when
     complete, DEBUG/TRACEBACK filtered for non-admins), AI usage rows
     plus totals, admin-only variables/context/resource fields, and the
@@ -683,7 +709,7 @@ async def get_sdk_execution(
             )
         return pending
 
-    if execution.executed_by != principal.user_id:
+    if not _is_visible_to(execution, principal.user_id):
         if not principal.is_superuser:
             raise SdkExecutionReadError(
                 403, "You do not have permission to view this execution"
