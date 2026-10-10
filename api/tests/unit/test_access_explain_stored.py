@@ -87,9 +87,10 @@ async def test_an_older_run_as_check_is_judged_against_the_user_it_named(db_sess
     now, unavailable = await rerun(db_session, _run_as_row(person.id, colleague.id))
 
     assert unavailable is None and now is not None
-    assert now.outcome == "success"
     run_as_user = next(step for step in now.steps if step.key == "run_as_user")
-    assert run_as_user.facts == {"run_as_user_id": str(colleague.id), "organization_id": str(org.id)}
+    expected = {"run_as_user_id": str(colleague.id), "organization_id": str(org.id)}
+    assert now.outcome == "success"
+    assert run_as_user.facts == expected
 
 
 async def test_a_run_as_check_naming_a_user_that_no_longer_exists_cannot_be_judged_now(
@@ -102,4 +103,6 @@ async def test_a_run_as_check_naming_a_user_that_no_longer_exists_cannot_be_judg
     db_session.add(person)
     await db_session.flush()
 
-    assert await rerun(db_session, _run_as_row(person.id, uuid4())) == (None, "run_as_user_missing")
+    result = await rerun(db_session, _run_as_row(person.id, uuid4()))
+
+    assert result == (None, "run_as_user_missing")

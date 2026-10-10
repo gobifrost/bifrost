@@ -363,12 +363,15 @@ async def test_a_persons_run_as_is_written_enforced_in_both_outcomes(db_session:
     await flush(db_session, _person_collector(person.id, _run_as(in_contoso), _run_as(in_fabrikam)), **ROUTE)
 
     rows = {row.organization_id: row for row in await _person_rows(db_session, person.id)}
-    assert {org: row.outcome for org, row in rows.items()} == {contoso.id: "success", fabrikam.id: "failure"}
+    outcomes = {org: row.outcome for org, row in rows.items()}
+    assert outcomes == {contoso.id: "success", fabrikam.id: "failure"}
     for row in rows.values():
         assert row.details is not None
         assert (row.resource_type, row.details["enforced"], row.details["direct"]) == ("run_as", True, True)
         assert row.details["trace"]["enforced"] is True
-    stopped = [step["key"] for step in rows[fabrikam.id].details["trace"]["steps"] if step["status"] == "stopped"]
+    failure = rows[fabrikam.id].details
+    assert failure is not None
+    stopped = [step["key"] for step in failure["trace"]["steps"] if step["status"] == "stopped"]
     assert stopped == ["target"]
 
 

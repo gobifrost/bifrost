@@ -181,36 +181,43 @@ def test_restricted_without_an_entry_cannot_judge_the_permission() -> None:
 
 def test_a_full_run_may_act_as_a_user_in_reach() -> None:
     trace = check_run_as(_user(), FULL, _run_as())
+    keys = [step.key for step in trace.steps]
 
     assert trace.outcome == "success"
-    assert [step.key for step in trace.steps] == ["run_user", "powers", "run_as_user", "target", "permission"]
+    assert keys == ["run_user", "powers", "run_as_user", "target", "permission"]
     assert trace.steps[2].label == "Run As User"
     assert trace.steps[-1].facts == {"permission": "users.impersonate", "permission_display_name": "Impersonate Users"}
 
 
 def test_a_restricted_run_without_a_grant_stops_at_the_permission() -> None:
     trace = check_run_as(_user(), RESTRICTED, _run_as())
+    stopped = _stopped_at(trace)
 
-    assert _stopped_at(trace) == "permission"
+    assert stopped == "permission"
     assert trace.steps[-1].reason == "denied:missing:users.impersonate"
 
 
 def test_a_restricted_run_with_an_impersonate_grant_may_act_as_a_user() -> None:
     granted = Powers(WorkflowPermissionMode.RESTRICTED, (WorkflowGrant(permission="users.impersonate"),))
+    trace = check_run_as(_user(), granted, _run_as())
 
-    assert check_run_as(_user(), granted, _run_as()).outcome == "success"
+    assert trace.outcome == "success"
 
 
 def test_run_as_never_lifts_reach() -> None:
-    assert _stopped_at(check_run_as(_user(), FULL, _run_as(FABRIKAM))) == "target"
+    stopped = _stopped_at(check_run_as(_user(), FULL, _run_as(FABRIKAM)))
+
+    assert stopped == "target"
 
 
 def test_a_persons_impersonate_role_reaches_only_its_organization() -> None:
     person = _impersonator(Boundary(BoundaryKind.ORGANIZATION, CONTOSO))
-
-    assert check_run_as(person, None, _run_as(CONTOSO)).outcome == "success"
+    contoso = check_run_as(person, None, _run_as(CONTOSO))
     fabrikam = check_run_as(person, None, _run_as(FABRIKAM))
-    assert _stopped_at(fabrikam) == "target"
+    stopped = _stopped_at(fabrikam)
+
+    assert contoso.outcome == "success"
+    assert stopped == "target"
     assert fabrikam.steps[1].reason == "no_workflow"
     assert fabrikam.steps[-1].status == "not_reached"
     assert fabrikam.steps[-1].facts["permission"] == "users.impersonate"
@@ -218,38 +225,44 @@ def test_a_persons_impersonate_role_reaches_only_its_organization() -> None:
 
 def test_a_global_target_needs_the_platform_boundary() -> None:
     org_bound = check_run_as(_impersonator(Boundary(BoundaryKind.ORGANIZATION, CONTOSO)), None, _run_as(None))
+    platform_bound = check_run_as(_impersonator(Boundary(BoundaryKind.PLATFORM)), None, _run_as(None))
+    stopped = _stopped_at(org_bound)
 
     assert org_bound.steps[3].reason == "global"
-    assert _stopped_at(org_bound) == "permission"
-    assert check_run_as(_impersonator(Boundary(BoundaryKind.PLATFORM)), None, _run_as(None)).outcome == "success"
+    assert stopped == "permission"
+    assert platform_bound.outcome == "success"
 
 
 def test_only_an_active_person_may_be_acted_as() -> None:
+    contoso = str(CONTOSO)
     for target, reason in (
         (_run_as(active=False), "inactive"),
         (_run_as(system=True), "system_account"),
         (_run_as(kind="org_default"), "managed_identity"),
     ):
         trace = check_run_as(_user(), FULL, target)
-        assert _stopped_at(trace) == "run_as_user"
+        stopped = _stopped_at(trace)
+        target_id = str(target.user_id)
+        assert stopped == "run_as_user"
         assert trace.steps[2].reason == reason
-        assert trace.steps[2].facts == {"run_as_user_id": str(target.user_id), "organization_id": str(CONTOSO)}
+        assert trace.steps[2].facts == {"run_as_user_id": target_id, "organization_id": contoso}
 
 
 def test_a_privileged_target_needs_privileged_access() -> None:
     target = _run_as(privileged=True)
     person = _impersonator(Boundary(BoundaryKind.ORGANIZATION, CONTOSO))
-
-    trace = check_run_as(person, None, target)
-    assert _stopped_at(trace) == "privileged_target"
-    assert trace.steps[-1].label == "Privileged User"
-    assert trace.steps[-1].facts == {
-        "permission": "privilegedaccess.readwrite",
-        "permission_display_name": permission_display_name("privilegedaccess.readwrite"),
-    }
     admin = _user(platform_admin_grant(), home=PROVIDER_ORG_ID)
-    assert check_run_as(admin, None, target).outcome == "success"
-    assert check_run_as(person, None, _run_as()).outcome == "success"
+    trace = check_run_as(person, None, target)
+    stopped = _stopped_at(trace)
+    display_name = permission_display_name("privilegedaccess.readwrite")
+    admin_trace = check_run_as(admin, None, target)
+    unprivileged = check_run_as(person, None, _run_as())
+
+    assert stopped == "privileged_target"
+    assert trace.steps[-1].label == "Privileged User"
+    assert trace.steps[-1].facts == {"permission": "privilegedaccess.readwrite", "permission_display_name": display_name}
+    assert admin_trace.outcome == "success"
+    assert unprivileged.outcome == "success"
 
 
 def test_entry_follows_the_run_users_access() -> None:

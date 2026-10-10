@@ -73,13 +73,14 @@ def test_a_persons_request_collects_permissions_scope_switches_and_run_as_only()
         access_checks.note_power("agents.read", org, subject="agent:1")
         access_checks.note("run_as", org, run_as_user_id=str(colleague), enforced=True)
         collector = access_checks.current()
-        assert collector is not None
-        assert (collector.direct, collector.run_user_id, collector.execution_id) == (True, person, None)
-        assert collector.notes == [
+        expected = [
             access_checks.Note("scope_switch", org, {}),
             access_checks.Note("permission", org, {"permission": "agents.read", "subject": "agent:1"}),
             access_checks.Note("run_as", org, {"run_as_user_id": str(colleague), "enforced": True}),
         ]
+        assert collector is not None
+        assert (collector.direct, collector.run_user_id, collector.execution_id) == (True, person, None)
+        assert collector.notes == expected
     finally:
         access_checks.stop_collecting(token)
 

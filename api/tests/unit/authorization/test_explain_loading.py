@@ -79,7 +79,9 @@ async def test_powers_follow_the_workflow_mode_and_grants(db_session: AsyncSessi
 
 
 async def test_a_run_as_user_that_does_not_exist_loads_as_none(db_session: AsyncSession) -> None:
-    assert await load_run_as_target(db_session, uuid4()) is None
+    target = await load_run_as_target(db_session, uuid4())
+
+    assert target is None
 
 
 async def test_a_run_as_user_loads_with_home_and_privilege(db_session: AsyncSession) -> None:
