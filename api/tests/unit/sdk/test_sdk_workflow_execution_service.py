@@ -511,6 +511,8 @@ class TestExecuteScheduling:
             admin_row.id,
             row.id,
         )
+        # Without run_as the row keeps nothing to decide again when it fires.
+        assert row.execution_context == {"is_platform_admin": True}
 
         await db_session.execute(
             delete(ExecutionModel).where(ExecutionModel.id == row.id)
@@ -551,6 +553,9 @@ class TestExecuteScheduling:
             admin_row.id,
             row.id,
         )
+        # A person decided it, so the promoter judges it again on their roles.
+        run_as = {"user_id": str(target.id), "authorized_by": str(admin_row.id), "enforced": True}
+        assert row.execution_context == {"is_platform_admin": False, "run_as": run_as}
 
         await db_session.execute(
             delete(ExecutionModel).where(ExecutionModel.id == row.id)

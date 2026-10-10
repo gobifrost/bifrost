@@ -162,3 +162,202 @@ async def test_forwards_the_row_lineage(db_session):
         "root_execution_id": str(due.id),
     }
     assert lineage[str(plain.id)] is None
+
+
+async def _contoso_person(db_session, **fields):
+    from src.models.orm.organizations import Organization
+    from src.models.orm.users import User
+
+    org = Organization(name=f"Contoso {uuid4().hex[:8]}", created_by="promoter-test")
+    db_session.add(org)
+    await db_session.flush()
+    user = User(
+        email=f"{uuid4().hex[:8]}@contoso.example", name="Contoso Person", organization_id=org.id, **fields
+    )
+    db_session.add(user)
+    await db_session.flush()
+    return org, user
+
+
+async def _impersonation(db_session):
+    """A Contoso initiator holding Impersonate Users at Contoso, and a colleague."""
+    from src.models.orm.users import Role, RolePermission, User, UserRole, UserRoleBoundary
+
+    org, initiator = await _contoso_person(db_session)
+    colleague = User(email=f"{uuid4().hex[:8]}@contoso.example", name="Contoso Colleague", organization_id=org.id)
+    role = Role(name=f"Contoso Impersonation {uuid4().hex[:8]}", created_by="promoter-test")
+    db_session.add_all([colleague, role])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            RolePermission(role_id=role.id, permission="users.impersonate"),
+            UserRole(user_id=initiator.id, role_id=role.id, assigned_by="promoter-test"),
+        ]
+    )
+    await db_session.flush()
+    db_session.add(
+        UserRoleBoundary(user_id=initiator.id, role_id=role.id, kind="organization", organization_id=org.id)
+    )
+    await db_session.flush()
+    return initiator, colleague, role
+
+
+def _acting_as(target_id, authorized_by, *, enforced: bool) -> Execution:
+    row = _new_scheduled(datetime.now(timezone.utc) - timedelta(seconds=1))
+    row.executed_by = target_id
+    row.execution_context = {
+        "is_platform_admin": False,
+        "run_as": {"user_id": str(target_id), "authorized_by": str(authorized_by), "enforced": enforced},
+    }
+    return row
+
+
+async def _promote(db_session) -> AsyncMock:
+    from src.jobs.schedulers.deferred_execution_promoter import promote_due_executions
+
+    with (
+        patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
+        patch(PATH_PUBLISH, new=AsyncMock()) as pub,
+    ):
+        await promote_due_executions()
+    return pub
+
+
+def _published(pub: AsyncMock) -> set[str]:
+    return {call.kwargs["execution_id"] for call in pub.await_args_list}
+
+
+@pytest.mark.asyncio
+async def test_a_run_as_whose_grant_was_revoked_fails_and_is_not_published(db_session):
+    from sqlalchemy import delete
+
+    from src.models.orm.users import UserRole, UserRoleBoundary
+
+    initiator, colleague, role = await _impersonation(db_session)
+    row = _acting_as(colleague.id, initiator.id, enforced=True)
+    db_session.add(row)
+    await db_session.commit()
+    await db_session.execute(delete(UserRoleBoundary).where(UserRoleBoundary.role_id == role.id))
+    await db_session.execute(delete(UserRole).where(UserRole.role_id == role.id))
+    await db_session.commit()
+
+    pub = await _promote(db_session)
+
+    published = _published(pub)
+    row_id = str(row.id)
+    assert row_id not in published
+    await db_session.refresh(row)
+    assert row.status == ExecutionStatus.FAILED
+    assert row.error_message == "Run As is no longer permitted: You don't have permission to run as this user"
+    assert row.completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_a_run_as_whose_target_was_deactivated_fails(db_session):
+    initiator, colleague, _role = await _impersonation(db_session)
+    row = _acting_as(colleague.id, initiator.id, enforced=True)
+    colleague.is_active = False
+    db_session.add(row)
+    await db_session.commit()
+
+    pub = await _promote(db_session)
+
+    published = _published(pub)
+    row_id = str(row.id)
+    assert row_id not in published
+    await db_session.refresh(row)
+    assert row.status == ExecutionStatus.FAILED
+    expected = f"Run As is no longer permitted: Run As user '{colleague.id}' is inactive"
+    assert row.error_message == expected
+
+
+@pytest.mark.asyncio
+async def test_a_run_as_whose_initiator_no_longer_exists_fails(db_session):
+    _org, colleague = await _contoso_person(db_session)
+    row = _acting_as(colleague.id, uuid4(), enforced=True)
+    db_session.add(row)
+    await db_session.commit()
+
+    pub = await _promote(db_session)
+
+    published = _published(pub)
+    row_id = str(row.id)
+    assert row_id not in published
+    await db_session.refresh(row)
+    assert row.status == ExecutionStatus.FAILED
+    assert row.error_message == "Run As is no longer permitted: The user who scheduled this run no longer exists"
+
+
+@pytest.mark.asyncio
+async def test_a_run_as_still_permitted_is_published_as_the_target(db_session):
+    initiator, colleague, _role = await _impersonation(db_session)
+    row = _acting_as(colleague.id, initiator.id, enforced=True)
+    db_session.add(row)
+    await db_session.commit()
+
+    pub = await _promote(db_session)
+
+    calls = [call.kwargs for call in pub.await_args_list if call.kwargs["execution_id"] == str(row.id)]
+    [kwargs] = calls
+    colleague_id = str(colleague.id)
+    assert kwargs["user_id"] == colleague_id
+    await db_session.refresh(row)
+    assert row.status == ExecutionStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_a_workflow_run_as_checks_the_target_only(db_session):
+    from src.core.constants import SYSTEM_USER_UUID
+
+    # The engine account holds no grant; a workflow's Run As is not judged on roles here.
+    _org, colleague = await _contoso_person(db_session)
+    _org2, departed = await _contoso_person(db_session, is_active=False)
+    allowed = _acting_as(colleague.id, SYSTEM_USER_UUID, enforced=False)
+    refused = _acting_as(departed.id, SYSTEM_USER_UUID, enforced=False)
+    db_session.add_all([allowed, refused])
+    await db_session.commit()
+
+    pub = await _promote(db_session)
+
+    published = _published(pub)
+    allowed_id, refused_id = str(allowed.id), str(refused.id)
+    assert allowed_id in published
+    assert refused_id not in published
+    await db_session.refresh(refused)
+    assert refused.status == ExecutionStatus.FAILED
+    expected = f"Run As is no longer permitted: Run As user '{departed.id}' is inactive"
+    assert refused.error_message == expected
+
+
+@pytest.mark.asyncio
+async def test_a_row_without_run_as_is_published_as_before(db_session):
+    plain = _new_scheduled(datetime.now(timezone.utc) - timedelta(seconds=1))
+    plain.execution_context = {"is_platform_admin": True}
+    db_session.add(plain)
+    await db_session.commit()
+
+    pub = await _promote(db_session)
+
+    calls = [call.kwargs for call in pub.await_args_list if call.kwargs["execution_id"] == str(plain.id)]
+    [kwargs] = calls
+    assert kwargs == {
+        "execution_id": str(plain.id),
+        "workflow_id": None,
+        "parameters": {"k": 1},
+        "org_id": None,
+        "user_id": "",
+        "user_name": "user",
+        "user_email": "",
+        "form_id": None,
+        "startup": None,
+        "form_inputs": {},
+        "embed": {},
+        "api_key_id": None,
+        "sync": False,
+        "is_platform_admin": True,
+        "file_path": None,
+        "execution_record_exists": True,
+        "lineage": None,
+    }
+    await db_session.refresh(plain)
+    assert (plain.status, plain.error_message, plain.completed_at) == (ExecutionStatus.PENDING, None, None)

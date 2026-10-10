@@ -20,16 +20,22 @@ Design notes:
   the User record keyed by ``executed_by``. ``startup=None`` for the same
   reason — startup results are per-session context and would be stale by
   the time a scheduled row matures.
+- A row that acts as another user (``execution_context.run_as``) is decided
+  again before it is promoted (``impersonation.recheck_run_as``). A row that
+  is no longer permitted is marked Failed and never published.
 """
 import logging
 from datetime import datetime, timezone
 
 from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.run_lineage import RunLineage
 from src.core.database import get_db_context
+from src.core.log_safety import log_safe
 from src.models.enums import ExecutionStatus
 from src.models.orm.executions import Execution
+from src.services.authorization.impersonation import recheck_run_as
 from src.services.execution.async_executor import _publish_pending
 
 logger = logging.getLogger(__name__)
@@ -58,6 +64,11 @@ async def promote_due_executions() -> tuple[int, int]:
         rows = list(result.scalars().all())
 
         if not rows:
+            return 0, 0
+
+        rows = await _fail_rows_no_longer_permitted(db, rows)
+        if not rows:
+            await db.commit()
             return 0, 0
 
         ids = [r.id for r in rows]
@@ -117,3 +128,28 @@ async def promote_due_executions() -> tuple[int, int]:
             extra={"promoted": promoted, "failures": failures},
         )
         return promoted, failures
+
+
+async def _fail_rows_no_longer_permitted(db: AsyncSession, rows: list[Execution]) -> list[Execution]:
+    """Mark Failed each row whose Run As is no longer permitted; return the others."""
+    permitted: list[Execution] = []
+    for row in rows:
+        run_as = (row.execution_context or {}).get("run_as")
+        reason = None if run_as is None else await recheck_run_as(db, run_as)
+        if reason is None:
+            permitted.append(row)
+            continue
+        await db.execute(
+            update(Execution)
+            .where(Execution.id == row.id)
+            .values(
+                status=ExecutionStatus.FAILED,
+                error_message=f"Run As is no longer permitted: {reason}",
+                completed_at=datetime.now(timezone.utc),
+            )
+        )
+        logger.warning(
+            "deferred_execution_promoter: Run As no longer permitted, row failed",
+            extra={"execution_id": log_safe(row.id), "reason": log_safe(reason)},
+        )
+    return permitted

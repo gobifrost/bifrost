@@ -24,7 +24,7 @@ from src.models.orm.audit import AuditLog
 from src.models.orm.organizations import Organization
 from src.models.orm.users import Role, RolePermission, User, UserRole, UserRoleBoundary
 from src.services.access_check_writer import flush
-from src.services.authorization.impersonation import RunAsError, authorize_run_as
+from src.services.authorization.impersonation import RunAsError, authorize_run_as, scheduled_run_as
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -331,3 +331,18 @@ async def test_removing_the_role_revokes_impersonation(db_session: AsyncSession)
 
     assert before is not None
     assert after == 403
+
+
+async def test_a_scheduled_row_keeps_who_decided_and_whether_it_is_enforced(db_session: AsyncSession) -> None:
+    contoso, _fabrikam, holder = await _contoso_impersonator(db_session)
+    colleague = await _user(db_session, contoso)
+    target = await authorize_run_as(db_session, _person(holder), colleague.id)
+    assert target is not None
+    engine = _engine(holder.id)
+
+    by_person = scheduled_run_as(_person(holder), target)
+    by_engine = scheduled_run_as(engine, target)
+
+    colleague_id, holder_id, engine_id = str(colleague.id), str(holder.id), str(SYSTEM_USER_UUID)
+    assert by_person == {"user_id": colleague_id, "authorized_by": holder_id, "enforced": True}
+    assert by_engine == {"user_id": colleague_id, "authorized_by": engine_id, "enforced": False}

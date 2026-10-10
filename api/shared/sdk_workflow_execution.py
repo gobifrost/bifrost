@@ -93,16 +93,22 @@ async def insert_scheduled_execution(
     api_key_id: UUID | None,
     is_platform_admin: bool,
     lineage: RunLineage | None,
+    run_as: dict[str, Any] | None,
 ) -> UUID:
     """Insert a SCHEDULED execution row.
 
     Skips Redis/RabbitMQ — the deferred_execution_promoter job will publish
     the row when scheduled_at matures. Shared with the form execute path.
+    ``run_as`` (from ``impersonation.scheduled_run_as``) is kept when the row
+    acts as another user, so the promoter decides it again when it fires.
     """
     from src.models.enums import ExecutionStatus
     from src.models.orm.executions import Execution
 
     exec_id = uuid4()
+    execution_context: dict[str, Any] = {"is_platform_admin": is_platform_admin}
+    if run_as is not None:
+        execution_context["run_as"] = run_as
     db.add(
         Execution(
             id=exec_id,
@@ -116,7 +122,7 @@ async def insert_scheduled_execution(
             executed_by_name=executed_by_name,
             form_id=form_id,
             api_key_id=api_key_id,
-            execution_context={"is_platform_admin": is_platform_admin},
+            execution_context=execution_context,
             **lineage_columns(lineage.bound(exec_id) if lineage else None),
         )
     )
@@ -329,8 +335,10 @@ async def execute_sdk_workflow(
     exec_user_name = principal.name or principal.email or "Unknown"
     exec_user_email = principal.email or ""
     exec_is_admin = principal.is_superuser
+    scheduled_run_as: dict[str, Any] | None = None
 
     if request.run_as:
+        from src.services.authorization import impersonation
         from src.services.authorization.explain import load_run_as_target
         from src.services.authorization.impersonation import RunAsError, authorize_run_as
 
@@ -349,6 +357,7 @@ async def execute_sdk_workflow(
                 raise SdkWorkflowExecutionError(404, f"Run As user '{run_as_user_id}' not found")
         else:
             logger.info(f"Impersonating user: {target.user_id} ({target.email})")
+            scheduled_run_as = impersonation.scheduled_run_as(principal, target)
         exec_user_id = str(target.user_id)
         exec_user_name = target.name or target.email or "Unknown"
         exec_user_email = target.email
@@ -410,6 +419,7 @@ async def execute_sdk_workflow(
             api_key_id=None,  # API-key-triggered scheduling not supported in v1
             is_platform_admin=exec_is_admin,
             lineage=lineage,
+            run_as=scheduled_run_as,
         )
         return WorkflowExecutionResponse(
             execution_id=str(exec_id),
