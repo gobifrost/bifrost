@@ -35,7 +35,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared import access_checks
@@ -181,9 +181,10 @@ async def execute_sdk_workflow(
     Preserves the historical ``POST /api/workflows/execute`` behavior
     exactly: org-scoped lookup, Solution own-install scope with inbound
     denial (404 without shared fallback), UUID vs portable-ref role checks,
-    admin-only inline code and ``org_id`` / ``run_as`` overrides, ``run_as``
-    identity resolution, execution-org priority (explicit override >
-    workflow org > caller org), ``delay_seconds`` normalization, scheduled
+    admin-only inline code and ``org_id`` override, ``run_as`` decided by
+    ``authorize_run_as`` (it changes the acting user only), execution-org
+    priority (explicit override > workflow org > caller org),
+    ``delay_seconds`` normalization, scheduled
     insert, inline-code / data-provider (cache-hit, transient/sync) /
     normal dispatch forms, terminal-transient marking, and request-side
     non-terminal WebSocket fan-out ordering.
@@ -316,41 +317,40 @@ async def execute_sdk_workflow(
     if workflow is not None:
         await _note_entry(session, principal, workflow)
 
-    # Validate admin-only overrides (org_id, run_as)
-    if (request.org_id or request.run_as) and not principal.is_superuser:
+    # The org_id override stays platform-admin only.
+    if request.org_id and not principal.is_superuser:
         raise SdkWorkflowExecutionError(
             403,
             "org_id and run_as overrides require platform admin",
         )
 
-    # Resolve run_as user if provided
+    # The acting user: the caller, or the run_as user when the caller may act as them.
     exec_user_id = str(principal.user_id)
     exec_user_name = principal.name or principal.email or "Unknown"
     exec_user_email = principal.email or ""
     exec_is_admin = principal.is_superuser
 
     if request.run_as:
-        from src.models.orm.users import User
+        from src.services.authorization.explain import load_run_as_target
+        from src.services.authorization.impersonation import RunAsError, authorize_run_as
 
-        run_as_result = await session.execute(
-            select(User).where(User.id == UUID(request.run_as))
-        )
-        run_as_user = run_as_result.scalar_one_or_none()
-        if not run_as_user:
-            raise SdkWorkflowExecutionError(
-                404,
-                f"run_as user '{request.run_as}' not found",
-            )
-        exec_user_id = str(run_as_user.id)
-        exec_user_name = run_as_user.name or run_as_user.email or "Unknown"
-        exec_user_email = run_as_user.email or ""
-        exec_is_admin = run_as_user.is_superuser
-        logger.info(f"Impersonating user: {exec_user_id} ({exec_user_email})")
-        if run_as_user.id != principal.run_user_id:
-            access_checks.note("run_as", None, run_as_user_id=run_as_user.id)
-        access_checks.note_power(
-            "users.impersonate", run_as_user.organization_id, subject=f"user:{run_as_user.id}"
-        )
+        run_as_user_id = UUID(request.run_as)
+        try:
+            target = await authorize_run_as(session, principal, run_as_user_id)
+        except RunAsError as exc:
+            raise SdkWorkflowExecutionError(exc.status_code, exc.detail) from None
+        if target is None:
+            # Naming the run user is not impersonation, but the run still acts
+            # as that user: a workflow's engine token is not the run user.
+            target = await load_run_as_target(session, run_as_user_id)
+            if target is None:
+                raise SdkWorkflowExecutionError(404, f"Run As user '{run_as_user_id}' not found")
+        else:
+            logger.info(f"Impersonating user: {target.user_id} ({target.email})")
+        exec_user_id = str(target.user_id)
+        exec_user_name = target.name or target.email or "Unknown"
+        exec_user_email = target.email
+        exec_is_admin = target.is_superuser
 
     # Who the run is for: the authenticated caller, never the run_as user.
     lineage = await principal_lineage(session, principal)

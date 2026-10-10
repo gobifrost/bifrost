@@ -29689,7 +29689,7 @@ export interface components {
             org_id?: string | null;
             /**
              * Run As
-             * @description Execute as this user UUID (impersonation). Requires platform admin.
+             * @description Execute as this user UUID. Requires Impersonate Users in that user's organization.
              */
             run_as?: string | null;
             /**

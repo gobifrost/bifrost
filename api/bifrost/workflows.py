@@ -92,8 +92,9 @@ class workflows:
             input_data: Input parameters for the workflow
             org_id: Override execution org context (admin only).
                      Like `bifrost run --org <org_id>`.
-            run_as: Execute as this user UUID (admin only).
-                    The execution will run under this user's identity.
+            run_as: Execute as this user UUID. Requires Impersonate Users
+                    in that user's organization. The execution runs under
+                    this user's identity; its reach stays the caller's.
             solution: Target solution install (UUID or slug/name) in the
                 resolved scope. Unset → today's behavior (own install if
                 running inside one, else _repo/). Per-call only.
@@ -110,7 +111,8 @@ class workflows:
             ValueError: If ``scheduled_at`` and ``delay_seconds`` are both
                 provided, or if ``scheduled_at`` is naive (no tzinfo).
             httpx.HTTPStatusError: If the request fails (403 for non-admin
-                using org_id/run_as, 404 for workflow not found, etc.)
+                using org_id or without Impersonate Users for run_as, 404 for
+                workflow or Run As user not found, etc.)
             RuntimeError: If not authenticated
 
         Example:

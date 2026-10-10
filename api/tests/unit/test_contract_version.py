@@ -358,7 +358,10 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # NowUnavailable gained `run_as_user_missing` (2026-10-09): a stored
     # `run_as` check whose user no longer exists. `bifrost audit explain` is
     # still unreleased and ships handling it. Fingerprint refreshed only.
-    "c32cbd76066d09977737c6c7d2f22d7eeee61e4373eee424065a7b28c52afe6e"
+    #
+    # WorkflowExecutionRequest.run_as description now names Impersonate Users
+    # (2026-10-09). COSMETIC: description text only. Fingerprint refreshed only.
+    "cb8c9ece543a1f21406eb7115de553cf830e55f6eb134ea1e2379eea3e109e76"
 )
 
 
