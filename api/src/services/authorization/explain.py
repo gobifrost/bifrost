@@ -429,6 +429,15 @@ def check_run_as(run_user: RunUser, powers: Powers | None, target: RunAsTarget) 
     )
 
 
+def check_run_as_outside_reach(run_user: RunUser) -> Trace:
+    """A holder of Impersonate Users named a user they can't act as: one that
+    doesn't exist, or one outside the organizations their grant covers. The
+    trace is the same for both and records nothing about that user; the
+    detailed decision is recorded in the user's own organization."""
+    step = Step("target", "Target in reach", "stopped", "outside_reach", {})
+    return _trace([_run_user_step(run_user), _NO_WORKFLOW, step])
+
+
 def check_entry(run_user: RunUser, *, allowed: bool, subject: str) -> Trace:
     """Starting ``subject`` (workflow, agent): the run user's own access to it."""
     step = Step("entry", "Entry", "passed" if allowed else "stopped", "access" if allowed else "no_access", {"subject": subject})

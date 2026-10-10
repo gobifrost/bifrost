@@ -205,14 +205,16 @@ async def test_a_grant_at_contoso_covers_contoso_users_only(db_session: AsyncSes
     assert status == 403
     looked_up = counting.looked_up(in_contoso.id)
     assert looked_up is True
-    # The Fabrikam refusal is noted at the caller's organization, by the requested id alone.
+    # The Fabrikam refusal is noted at the caller's organization by the
+    # requested id alone, and in full at Fabrikam, the user's organization.
     run_as = [(note.target, note.facts) for note in collector.notes if note.kind == "run_as"]
     assert run_as == [
         (contoso.id, {"run_as_user_id": in_contoso.id, "enforced": True}),
-        (contoso.id, {"run_as_user_id": in_fabrikam.id, "enforced": True}),
+        (contoso.id, {"run_as_user_id": in_fabrikam.id, "enforced": True, "outside_reach": True}),
+        (fabrikam.id, {"run_as_user_id": in_fabrikam.id, "enforced": True}),
     ]
     powers = [(note.target, note.facts["permission"]) for note in collector.notes if note.kind == "permission"]
-    assert powers == [(contoso.id, "users.impersonate")]
+    assert powers == [(contoso.id, "users.impersonate"), (fabrikam.id, "users.impersonate")]
 
 
 async def test_users_outside_the_grant_are_refused_alike_whether_they_exist_or_not(db_session: AsyncSession) -> None:
@@ -234,9 +236,11 @@ async def test_an_inactive_user_inside_the_grant_is_named_as_inactive(db_session
     assert refusal == (400, f"Run As user '{inactive.id}' is inactive")
 
 
-async def test_refusals_outside_the_grant_are_recorded_at_the_callers_organization(db_session: AsyncSession) -> None:
+async def test_refusals_outside_the_grant_reveal_nothing_at_the_callers_organization(
+    db_session: AsyncSession,
+) -> None:
     contoso, fabrikam, holder = await _contoso_impersonator(db_session)
-    outsider = await _user(db_session, fabrikam)
+    outsider = await _user(db_session, fabrikam, is_active=False)
     unknown = uuid4()
 
     with _collecting(holder.id) as collector:
@@ -247,23 +251,28 @@ async def test_refusals_outside_the_grant_are_recorded_at_the_callers_organizati
     await flush(db_session, collector, operation="POST /api/workflows/execute", route=None)
 
     assert statuses == (403, 403)
-    rows = (await db_session.execute(select(AuditLog).where(AuditLog.user_id == holder.id))).scalars().all()
-    recorded = sorted(
-        (row.action, row.outcome, row.organization_id, cast(dict, row.details).get("run_as_user_id"))
-        for row in rows
+    rows = (
+        await db_session.execute(
+            select(AuditLog).where(AuditLog.user_id == holder.id, AuditLog.resource_type == "run_as")
+        )
+    ).scalars().all()
+    at_caller = [row for row in rows if row.organization_id == contoso.id]
+    at_target = [row for row in rows if row.organization_id == fabrikam.id]
+    # The caller's organization holds the same record for both requests:
+    # only the requested id differs, and nothing about the user is stored.
+    shapes = sorted(
+        (row.action, row.outcome, cast(dict, row.details)["inputs"]["run_as_user_id"], str(row.details["trace"]))
+        for row in at_caller
     )
-    assert recorded == sorted(
-        [
-            ("access.check", "failure", contoso.id, None),
-            ("access.check_gap", "failure", contoso.id, str(unknown)),
-        ]
-    )
-    [check] = [row for row in rows if row.action == "access.check"]
-    assert check.details is not None
-    requested = (check.details["enforced"], check.details["inputs"]["run_as_user_id"])
-    assert requested == (True, str(outsider.id))
-    stopped = [step["key"] for step in check.details["trace"]["steps"] if step["status"] == "stopped"]
-    assert stopped == ["target"]
+    assert [shape[:2] for shape in shapes] == [("access.check", "failure")] * 2
+    assert {shape[2] for shape in shapes} == {str(unknown), str(outsider.id)}
+    assert len({shape[3] for shape in shapes}) == 1
+    assert str(fabrikam.id) not in str([row.details for row in at_caller])
+    assert "inactive" not in str([row.details for row in at_caller])
+    # The existing user's organization records the full decision.
+    [full] = at_target
+    stopped = [step["key"] for step in cast(dict, full.details)["trace"]["steps"] if step["status"] == "stopped"]
+    assert (full.outcome, stopped) == ("failure", ["run_as_user"])
 
 
 @pytest.mark.parametrize("kind", ["inactive", "identity", "system"])

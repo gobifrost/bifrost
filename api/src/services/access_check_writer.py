@@ -58,6 +58,7 @@ from src.services.authorization.explain import (
     check_permission,
     check_policy,
     check_run_as,
+    check_run_as_outside_reach,
     check_secret,
     check_target,
     load_powers,
@@ -151,7 +152,7 @@ def names_a_user_to_load(note: Note) -> bool:
     not when the person held Impersonate Users nowhere and was refused
     before any user was looked up (``held_nowhere``), which is judged as
     the permission at the note's organization, theirs."""
-    return note.kind == "run_as" and not note.facts.get("held_nowhere")
+    return note.kind == "run_as" and not (note.facts.get("held_nowhere") or note.facts.get("outside_reach"))
 
 
 def judge(
@@ -168,6 +169,8 @@ def judge(
     if note.kind == "run_as":
         if facts.get("held_nowhere"):
             return check_permission(run_user, powers, _IMPERSONATE_PERMISSION, note.target)
+        if facts.get("outside_reach"):
+            return check_run_as_outside_reach(run_user)
         assert run_as is not None, "the caller loads the user a run_as names"
         return check_run_as(run_user, powers, run_as)
     assert powers is not None, "only a run's request notes the other kinds"

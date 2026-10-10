@@ -115,6 +115,7 @@ describe("stepSentence", () => {
 		expect(target("outside", "org-unknown")).toBe(
 			"This organization is outside their reach.",
 		);
+		expect(target("outside_reach")).toBe("Not a user they can run as.");
 	});
 
 	it("says which role grants the permission, by name", () => {

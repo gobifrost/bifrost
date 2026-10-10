@@ -121,6 +121,7 @@ function targetSentence(
 		platform_admin: "A Platform Admin reaches every organization.",
 		home: `${organization} is their home organization.`,
 		outside: `${organization} is outside their reach.`,
+		outside_reach: "Not a user they can run as.",
 	}[reason];
 }
 
