@@ -171,6 +171,9 @@ class AgentRun(BaseModel):
     caller_user_id: str | None = None
     caller_email: str | None = None
     caller_name: str | None = None
+    run_as_user_id: str | None = None
+    run_as_user_name: str | None = None
+    run_as_user_email: str | None = None
     iterations_used: int = 0
     tokens_used: int = 0
     budget_max_iterations: int | None = None

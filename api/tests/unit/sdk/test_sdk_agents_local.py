@@ -151,6 +151,40 @@ class TestEngineRequestFacade:
         assert call.args == ("GET", f"/api/agent-runs/{run_id}")
         assert call.kwargs == {}
 
+    async def test_get_run_carries_the_run_as_user(self):
+        import httpx
+
+        agents_mod = _importlib.import_module("bifrost.agents")
+
+        run_id, contoso_user = str(uuid4()), str(uuid4())
+        body = {
+            **_agent_run_body(run_id),
+            "run_as_user_id": contoso_user,
+            "run_as_user_name": "Megan Bowen",
+            "run_as_user_email": "megan@contoso.com",
+        }
+        client = self._client([httpx.Response(200, json=body)])
+        with patch.object(agents_mod, "get_client", return_value=client):
+            run = await agents_mod.agents.get_run(run_id)
+
+        assert (run.run_as_user_id, run.run_as_user_name, run.run_as_user_email) == (
+            contoso_user,
+            "Megan Bowen",
+            "megan@contoso.com",
+        )
+
+    async def test_get_run_without_run_as_has_no_run_as_user(self):
+        import httpx
+
+        agents_mod = _importlib.import_module("bifrost.agents")
+
+        run_id = str(uuid4())
+        client = self._client([httpx.Response(200, json=_agent_run_body(run_id))])
+        with patch.object(agents_mod, "get_client", return_value=client):
+            run = await agents_mod.agents.get_run(run_id)
+
+        assert (run.run_as_user_id, run.run_as_user_name, run.run_as_user_email) == (None, None, None)
+
     async def test_get_run_404_and_403_map_to_public_errors(self):
         import httpx
 

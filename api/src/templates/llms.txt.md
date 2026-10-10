@@ -26,6 +26,24 @@ from bifrost import UserError, WorkflowError, ValidationError
 
 {sdk_models_docs}
 
+### Run As
+
+`workflows.execute(..., run_as=user_id)` and `agents.run(..., run_as=user_id)` (or `agents.enqueue`) start the run as another user:
+
+```python
+from bifrost import agents, workflows
+
+execution_id = await workflows.execute("workflows/onboard.py::onboard_user", {"ticket_id": ticket_id}, run_as=user_id)
+result = await agents.run("ticket-triage-agent", input={"ticket_id": ticket_id}, run_as=user_id)
+```
+
+- The caller needs the Impersonate Users permission in that user's organization. Without it the call returns 403.
+- Tools and SDK calls act as that user. The run is still the caller's: it keeps the caller's reach and records the caller as the one who started it.
+- Naming yourself is a plain launch, not impersonation, and needs no permission.
+- Inactive users, the system account and managed identities can't be run as (400). To run as a managed identity, assign it to the workflow or agent instead.
+- An organization-scoped agent can only run as a user from its own organization.
+- A delayed or scheduled workflow run is checked again when it fires.
+
 ### File Locations
 
 The `files` module accepts special locations plus custom, user-defined
@@ -145,6 +163,8 @@ async def process_ticket(ticket_id: str):
         }
     return result
 ```
+
+Pass `run_as=user_id` to run the agent as another user (see Run As above).
 
 `timeout` limits how long the workflow waits, not how long the agent runs.
 Without an explicit wait limit, `agents.run()` waits until the agent completes
