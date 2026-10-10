@@ -2,8 +2,9 @@
 
 Phase 3 contract for autonomous runs:
 
-- ``run()`` reads ``_caller["user_id"]`` (if present) and stores it on
-  the executor so MCP dispatch can pick it up.
+- ``run()`` reads ``_caller["user_id"]`` (if present), or the Run As
+  user when there is one, and stores it on the executor so MCP dispatch
+  can pick it up.
 - ``_execute_tool`` routes ``mcp__<connection_id>__<tool>`` names to
   ``_execute_mcp_tool`` BEFORE the workflow-tool fallback.
 - Webhook deliveries with a signed user claim get user-token resolution.
@@ -14,13 +15,14 @@ Phase 3 contract for autonomous runs:
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
 from tests.unit.services.agent_runtime_fakes import LegacyMockModel
 from src.services.execution.agent_helpers import MCP_TOOL_PREFIX
 from src.services.execution.autonomous_agent_executor import (
+    ActingUser,
     AutonomousAgentExecutor,
     ToolError,
 )
@@ -97,11 +99,11 @@ def mock_agent():
 
 @pytest.mark.asyncio
 async def test_execute_mcp_tool_uses_threaded_caller(mock_session_factory):
-    """When ``_caller_user_id`` is set on the executor (by ``run()``),
+    """When ``_acting_user_id`` is set on the executor (by ``run()``),
     ``_execute_mcp_tool`` forwards it to dispatch."""
     executor = AutonomousAgentExecutor(mock_session_factory)
     caller_user_id = uuid4()
-    executor._caller_user_id = caller_user_id
+    executor._acting_user_id = caller_user_id
 
     connection_id = uuid4()
     fake_envelope = {
@@ -136,11 +138,11 @@ async def test_execute_mcp_tool_uses_threaded_caller(mock_session_factory):
 
 @pytest.mark.asyncio
 async def test_execute_mcp_tool_with_no_caller(mock_session_factory):
-    """A fully autonomous run has ``_caller_user_id=None``; dispatch
+    """A fully autonomous run has ``_acting_user_id=None``; dispatch
     sees ``None`` and routes to service-token resolution."""
     executor = AutonomousAgentExecutor(mock_session_factory)
-    # Intentionally not setting _caller_user_id — should default to None
-    assert executor._caller_user_id is None
+    # Intentionally not setting _acting_user_id — should default to None
+    assert executor._acting_user_id is None
 
     connection_id = uuid4()
     fake_envelope = {"content": [], "is_error": False}
@@ -261,7 +263,7 @@ async def test_execute_tool_routes_mcp_prefix(mock_session_factory):
     """The tool dispatcher in _execute_tool routes ``mcp__<uuid>__<tool>``
     to _execute_mcp_tool BEFORE workflow-id lookup."""
     executor = AutonomousAgentExecutor(mock_session_factory)
-    executor._caller_user_id = uuid4()
+    executor._acting_user_id = uuid4()
 
     connection_id = uuid4()
     fake_envelope = {"content": [], "is_error": False}
@@ -288,7 +290,7 @@ async def test_execute_tool_routes_mcp_prefix(mock_session_factory):
     assert mock_invoke.await_args is not None
     assert (
         mock_invoke.await_args.kwargs["caller_user_id"]
-        == executor._caller_user_id
+        == executor._acting_user_id
     )
 
 
@@ -308,7 +310,7 @@ async def test_run_threads_user_id_from_caller(
     mock_resolve_tools, mock_get_llm, mock_session_factory, mock_agent
 ):
     """``run(_caller={'user_id': '...'})`` parses to UUID and stores on
-    ``self._caller_user_id`` so dispatch can pick it up."""
+    ``self._acting_user_id`` so dispatch can pick it up."""
     mock_resolve_tools.return_value = ([], {})
     mock_llm = AsyncMock()
     mock_llm.complete = AsyncMock(
@@ -331,10 +333,11 @@ async def test_run_threads_user_id_from_caller(
         run_id=str(uuid4()),
         _caller={"user_id": str(user_id), "email": "a@b"},
         run_user_id=None,
+        run_as=None,
     )
 
     # The executor stored the parsed UUID; resolve_agent_tools saw it
-    assert executor._caller_user_id == user_id
+    assert executor._acting_user_id == user_id
     assert mock_resolve_tools.await_count == 1
     assert mock_resolve_tools.await_args is not None
     assert (
@@ -352,7 +355,7 @@ async def test_run_threads_user_id_from_caller(
 async def test_run_treats_missing_caller_as_autonomous(
     mock_resolve_tools, mock_get_llm, mock_session_factory, mock_agent
 ):
-    """``run(_caller=None)`` → ``self._caller_user_id`` is None and
+    """``run(_caller=None)`` → ``self._acting_user_id`` is None and
     resolve_agent_tools sees None (autonomous-only filtering applies)."""
     mock_resolve_tools.return_value = ([], {})
     mock_llm = AsyncMock()
@@ -375,9 +378,10 @@ async def test_run_treats_missing_caller_as_autonomous(
         run_id=str(uuid4()),
         _caller=None,
         run_user_id=None,
+        run_as=None,
     )
 
-    assert executor._caller_user_id is None
+    assert executor._acting_user_id is None
     assert mock_resolve_tools.await_args is not None
     assert mock_resolve_tools.await_args.kwargs["caller_user_id"] is None
 
@@ -416,9 +420,10 @@ async def test_run_treats_caller_without_user_id_as_autonomous(
         run_id=str(uuid4()),
         _caller={"email": "webhook@source.example", "name": "webhook"},
         run_user_id=None,
+        run_as=None,
     )
 
-    assert executor._caller_user_id is None
+    assert executor._acting_user_id is None
     assert mock_resolve_tools.await_args is not None
     assert mock_resolve_tools.await_args.kwargs["caller_user_id"] is None
 
@@ -457,9 +462,79 @@ async def test_run_invalid_user_id_falls_back_to_autonomous(
         run_id=str(uuid4()),
         _caller={"user_id": "not-a-uuid"},
         run_user_id=None,
+        run_as=None,
     )
 
     assert result["status"] == "completed"
-    assert executor._caller_user_id is None
+    assert executor._acting_user_id is None
     assert mock_resolve_tools.await_args is not None
     assert mock_resolve_tools.await_args.kwargs["caller_user_id"] is None
+
+
+@pytest.mark.asyncio
+@patch(
+    "src.services.agent_runtime.model_factory.create_agent_model"
+)
+@patch(
+    "src.services.execution.autonomous_agent_executor.resolve_agent_tools"
+)
+async def test_run_as_user_reaches_tool_resolution_and_mcp_dispatch(
+    mock_resolve_tools, mock_get_llm, mock_session_factory, mock_agent
+):
+    """Under Run As, MCP connections authenticate as the Run As user, not
+    the caller who started the run."""
+    mock_resolve_tools.return_value = ([], {})
+    mock_llm = AsyncMock()
+    mock_llm.complete = AsyncMock(
+        return_value=LLMResponse(
+            content="done",
+            tool_calls=None,
+            finish_reason="end_turn",
+            input_tokens=1,
+            output_tokens=1,
+        )
+    )
+    mock_llm.provider_name = "openai"
+    mock_get_llm.return_value = LegacyMockModel(mock_llm)
+    run_as = ActingUser(
+        user_id=str(uuid4()),
+        email="portal.user@contoso.example",
+        name="Contoso Portal User",
+        organization_id=mock_agent.organization_id,
+        is_platform_admin=False,
+        is_external=True,
+        is_provider_org=False,
+    )
+
+    executor = AutonomousAgentExecutor(mock_session_factory)
+    await executor.run(
+        agent=mock_agent,
+        input_data={"task": "x"},
+        run_id=str(uuid4()),
+        _caller={"user_id": str(uuid4()), "email": "helpdesk.lead@contoso.example"},
+        run_user_id=None,
+        run_as=run_as,
+    )
+
+    target = UUID(run_as.user_id)
+    assert executor.acting_user == run_as
+    assert mock_resolve_tools.await_args is not None
+    assert mock_resolve_tools.await_args.kwargs["caller_user_id"] == target
+
+    connection_id = uuid4()
+    with patch(
+        "src.services.execution.autonomous_agent_executor.mcp_dispatch.invoke",
+        new=AsyncMock(return_value={"content": [], "is_error": False}),
+    ) as mock_invoke:
+        await executor._execute_mcp_tool(
+            ToolCallRequest(
+                id="tc-7",
+                name=f"{MCP_TOOL_PREFIX}{connection_id}__t",
+                arguments={},
+            ),
+            connection_id=connection_id,
+            remote_tool_name="t",
+        )
+
+    assert mock_invoke.await_args is not None
+    assert mock_invoke.await_args.kwargs["caller_user_id"] == target

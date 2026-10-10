@@ -1957,6 +1957,8 @@ class AgentExecutor:
                 _shared_usage=self._active_usage,
                 _shared_budget=self._active_budget,
                 run_user_id=self._run_user_id,
+                # Chat runs have no Run As user; the caller acts.
+                run_as=None,
             )
             metadata = {
                 "child_run_id": str(outcome.child_run_id),

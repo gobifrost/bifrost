@@ -192,6 +192,7 @@ async def test_chat_delegation_creates_terminal_run_with_conversation_and_caller
                 conversation_id=conversation_id,
                 caller=caller,
                 run_user_id=alice_user.user_id,
+                run_as=None,
             )
 
         # The delegated run keeps the delegating run's user.
@@ -357,6 +358,7 @@ async def test_delegation_timeout_persists_sanitized_partial_evidence(
                     arguments={"task": "Check the service"},
                 ),
                 run_user_id=None,
+                run_as=None,
             )
 
         assert outcome.status == "timeout"
