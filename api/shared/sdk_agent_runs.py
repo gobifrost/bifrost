@@ -399,6 +399,7 @@ async def get_sdk_agent_run(
         caller_name=run.caller_name,
         run_as_user_id=run.run_as_user_id,
         run_as_user_name=run.run_as_user.name if run.run_as_user else None,
+        run_as_user_email=run.run_as_user.email if run.run_as_user else None,
         iterations_used=run.iterations_used,
         tokens_used=run.tokens_used,
         budget_max_iterations=run.budget_max_iterations,

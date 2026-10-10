@@ -12492,6 +12492,8 @@ export interface components {
             run_as_user_id?: string | null;
             /** Run As User Name */
             run_as_user_name?: string | null;
+            /** Run As User Email */
+            run_as_user_email?: string | null;
             /** Iterations Used */
             iterations_used: number;
             /** Tokens Used */
@@ -12651,6 +12653,8 @@ export interface components {
             run_as_user_id?: string | null;
             /** Run As User Name */
             run_as_user_name?: string | null;
+            /** Run As User Email */
+            run_as_user_email?: string | null;
             /** Iterations Used */
             iterations_used: number;
             /** Tokens Used */

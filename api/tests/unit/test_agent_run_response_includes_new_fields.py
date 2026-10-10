@@ -56,6 +56,7 @@ def test_run_as_fields_on_list_and_detail_contracts():
         fields = model.model_fields
         assert "run_as_user_id" in fields
         assert "run_as_user_name" in fields
+        assert "run_as_user_email" in fields
 
 
 def _superuser() -> UserPrincipal:
@@ -117,7 +118,10 @@ async def test_ordinary_run_has_no_run_as_user(db_session):
 
     assert detail.run_as_user_id is None
     assert detail.run_as_user_name is None
-    assert [(i.run_as_user_id, i.run_as_user_name) for i in listed.items] == [(None, None)]
+    assert detail.run_as_user_email is None
+    assert [
+        (i.run_as_user_id, i.run_as_user_name, i.run_as_user_email) for i in listed.items
+    ] == [(None, None, None)]
 
 
 @pytest.mark.asyncio
@@ -125,8 +129,9 @@ async def test_run_as_user_is_named_from_the_users_row(db_session):
     fabrikam = Organization(name=f"Fabrikam {uuid4().hex[:8]}", created_by="run-as-test")
     db_session.add(fabrikam)
     await db_session.flush()
+    email = f"{uuid4()}@fabrikam.example"
     target = User(
-        email=f"{uuid4()}@fabrikam.example",
+        email=email,
         name="Fabrikam Technician",
         organization_id=fabrikam.id,
     )
@@ -139,6 +144,7 @@ async def test_run_as_user_is_named_from_the_users_row(db_session):
 
     assert detail.run_as_user_id == target.id
     assert detail.run_as_user_name == "Fabrikam Technician"
-    assert [(i.run_as_user_id, i.run_as_user_name) for i in listed.items] == [
-        (target.id, "Fabrikam Technician")
-    ]
+    assert detail.run_as_user_email == email
+    assert [
+        (i.run_as_user_id, i.run_as_user_name, i.run_as_user_email) for i in listed.items
+    ] == [(target.id, "Fabrikam Technician", email)]

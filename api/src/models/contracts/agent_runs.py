@@ -56,6 +56,7 @@ class AgentRunResponse(BaseModel):
     caller_name: str | None = None
     run_as_user_id: UUID | None = None
     run_as_user_name: str | None = None
+    run_as_user_email: str | None = None
     iterations_used: int
     tokens_used: int
     budget_max_iterations: int | None = None
