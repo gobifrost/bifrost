@@ -263,11 +263,13 @@ async def test_workflow_tool_identity_arguments_stay_workflow_parameters(
             run_as=run_as,
         )
 
+    expected_caller = _expected_workflow_caller(caller, run_as)
+    expected_lineage = RunLineage(run_user_id, run_user_id, None)
     assert calls == [
         {
             "parameters": arguments,
-            "caller": _expected_workflow_caller(caller, run_as),
-            "lineage": RunLineage(run_user_id, run_user_id, None),
+            "caller": expected_caller,
+            "lineage": expected_lineage,
         }
     ]
 
@@ -319,7 +321,9 @@ async def test_run_input_naming_another_user_acts_as_the_caller(
             run_as=None,
         )
 
-    assert [call["caller"] for call in calls] == [_expected_workflow_caller(caller, None)]
+    expected_caller = _expected_workflow_caller(caller, None)
+    seen_callers = [call["caller"] for call in calls]
+    assert seen_callers == [expected_caller]
 
 
 @pytest.mark.asyncio
@@ -369,7 +373,8 @@ async def test_launch_input_naming_another_user_records_no_run_as(db_session):
         lineage=person_lineage(principal.user_id),
         run_as_user_id=None,
     )
-    assert result == AgentRunEnqueueResponse(run_id=run_id, run_as_user_id=None)
+    expected_response = AgentRunEnqueueResponse(run_id=run_id, run_as_user_id=None)
+    assert result == expected_response
 
 
 @pytest.mark.asyncio
