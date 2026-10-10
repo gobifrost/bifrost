@@ -71,7 +71,7 @@ function workflowAccessSentence(reason: string): string | undefined {
 
 function runUserSentence(step: AccessStep): string | undefined {
 	if (step.reason === "inactive")
-		return "They're inactive, so they can't act as another user.";
+		return "They're inactive, so they can't run as another user.";
 	const who = { person: "this person", identity: "this identity" }[
 		step.reason
 	];
@@ -83,11 +83,11 @@ function runUserSentence(step: AccessStep): string | undefined {
 
 function runAsUserSentence(reason: string): string | undefined {
 	return {
-		person: "This user is an active person, so they can be acted as.",
-		inactive: "This user is inactive, so no one can act as them.",
-		system_account: "This is the system account, which no one can act as.",
+		person: "Active user, so Run As is allowed.",
+		inactive: "This user is inactive, so no one can run as them.",
+		system_account: "This is the system account, so no one can run as it.",
 		managed_identity:
-			"This is a managed identity, which no one can act as. Assign it to the workflow or agent instead.",
+			"This is a managed identity, so no one can run as it. Assign it to the workflow or agent instead.",
 	}[reason];
 }
 

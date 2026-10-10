@@ -388,6 +388,22 @@ describe("AgentRunDetailPage — header + summary", () => {
 		);
 	});
 
+	it("names the Run As user by email when their name is empty", async () => {
+		mockUseAgentRun.mockReturnValue({
+			data: makeRun({
+				run_as_user_id: "user-2",
+				run_as_user_name: "  ",
+				run_as_user_email: "helpdesk@contoso.com",
+			}),
+			isLoading: false,
+		});
+
+		await renderPage();
+		expect(screen.getByTestId("run-as")).toHaveTextContent(
+			"· Run As helpdesk@contoso.com",
+		);
+	});
+
 	it("shows no Run As when the caller acts as themselves", async () => {
 		await renderPage();
 		expect(screen.queryByTestId("run-as")).not.toBeInTheDocument();

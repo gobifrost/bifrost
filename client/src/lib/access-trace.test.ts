@@ -173,26 +173,26 @@ describe("stepSentence", () => {
 		expect(sentence(step("target", "", named, "not_reached"))).toBe("");
 	});
 
-	it("says whether the Run As user can be acted as", () => {
+	it("says whether Run As is allowed for the target user", () => {
 		expect(sentence(step("run_as_user", "person"))).toBe(
-			"This user is an active person, so they can be acted as.",
+			"Active user, so Run As is allowed.",
 		);
 		expect(sentence(step("run_as_user", "inactive", {}, "stopped"))).toBe(
-			"This user is inactive, so no one can act as them.",
+			"This user is inactive, so no one can run as them.",
 		);
 		expect(
 			sentence(step("run_as_user", "system_account", {}, "stopped")),
-		).toBe("This is the system account, which no one can act as.");
+		).toBe("This is the system account, so no one can run as it.");
 		expect(
 			sentence(step("run_as_user", "managed_identity", {}, "stopped")),
 		).toBe(
-			"This is a managed identity, which no one can act as. Assign it to the workflow or agent instead.",
+			"This is a managed identity, so no one can run as it. Assign it to the workflow or agent instead.",
 		);
 	});
 
-	it("says an inactive person can't act as another user", () => {
+	it("says an inactive person can't run as another user", () => {
 		expect(sentence(step("run_user", "inactive", {}, "stopped"))).toBe(
-			"They're inactive, so they can't act as another user.",
+			"They're inactive, so they can't run as another user.",
 		);
 	});
 
@@ -481,11 +481,7 @@ describe("a stored Run As trace", () => {
 				"not_applicable",
 				"No workflow: only their own roles apply.",
 			],
-			[
-				"Run As User",
-				"passed",
-				"This user is an active person, so they can be acted as.",
-			],
+			["Run As User", "passed", "Active user, so Run As is allowed."],
 			[
 				"Target in Reach",
 				"passed",

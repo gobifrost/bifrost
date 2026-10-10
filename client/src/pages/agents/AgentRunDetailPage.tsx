@@ -630,8 +630,9 @@ export function AgentRunDetailPage() {
 	// don't render two competing affordances.
 	const showRegen = isPlatformAdmin && !summaryFailed && !summaryInFlight;
 	const headerSummary = run.agent_name || agent?.name || "Agent run";
-	// The user the run acts as when someone started it as another user.
-	const runAsLabel = run.run_as_user_name ?? run.run_as_user_email;
+	// The user the run acts as when someone started it as another user; an
+	// empty name falls back to the email.
+	const runAsLabel = run.run_as_user_name?.trim() || run.run_as_user_email;
 	const parentRunHref = parentRun?.agent_id
 		? `/agents/${parentRun.agent_id}/runs/${parentRun.id}`
 		: null;
@@ -699,7 +700,7 @@ export function AgentRunDetailPage() {
 									"System"}{" "}
 								· {run.trigger_type}
 							</span>
-							{runAsLabel ? (
+							{run.run_as_user_id ? (
 								<span data-testid="run-as">
 									· Run As{" "}
 									<span className="font-medium text-foreground">
