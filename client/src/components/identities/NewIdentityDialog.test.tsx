@@ -231,7 +231,7 @@ describe("NewIdentityDialog", () => {
 			is_platform_admin: false,
 			grants: [
 				{
-					permission: "users.lifecycle.readwrite",
+					permission: "userlifecycle.readwrite",
 					boundary: {
 						kind: "organization",
 						organization_id: "org-2",
@@ -276,7 +276,7 @@ describe("NewIdentityDialog", () => {
 						organization_id: "org-1",
 					},
 				},
-				...["users.lifecycle.readwrite", "organizations.read"].map(
+				...["userlifecycle.readwrite", "organizations.read"].map(
 					(permission) => ({
 						permission,
 						boundary: {
@@ -306,7 +306,7 @@ describe("NewIdentityDialog", () => {
 			is_platform_admin: false,
 			grants: [
 				{
-					permission: "users.lifecycle.readwrite",
+					permission: "userlifecycle.readwrite",
 					boundary: {
 						kind: "organization",
 						organization_id: "org-2",

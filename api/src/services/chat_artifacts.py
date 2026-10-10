@@ -10,6 +10,7 @@ from uuid import UUID
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared import access_checks
 from shared.artifact_generation import (
     GeneratedArtifact,
     generate_document,
@@ -154,6 +155,11 @@ async def execute_artifact_tool(
             user_id=user.id,
             bypass=user.is_superuser,
         )
+        others = next((item for item in artifacts if item.created_by_user_id != user.id), None)
+        if others is not None:
+            access_checks.note_power(
+                "artifacts.read.all", others.organization_id, subject=f"artifact_workspace:{conversation_id}"
+            )
         return None, {
             "workspace_id": str(conversation_id),
             "files": [artifact_ref(item).model_dump(mode="json") for item in artifacts],
@@ -180,6 +186,10 @@ async def execute_artifact_tool(
                     user_id=user.id,
                     bypass=user.is_superuser,
                 )
+                if artifact.created_by_user_id != user.id:
+                    access_checks.note_power(
+                        "artifacts.read.all", artifact.organization_id, subject=f"artifact:{artifact.id}"
+                    )
                 if not artifact.content_type.startswith("image/"):
                     raise ValueError(f"{image.path} is not an image artifact.")
                 image_content[image.path] = await service.read(artifact)

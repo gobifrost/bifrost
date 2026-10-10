@@ -302,14 +302,16 @@ def install_request_context_middleware(app: FastAPI) -> None:
 
 
 def _judge_after_response(request: Request, response, collector) -> None:
-    """Judge and write a run's report-only access checks after the response
-    is sent (see ``shared.access_checks``), so the client never waits for it."""
+    """Judge and write a request's report-only access checks after the
+    response is sent (see ``shared.access_checks``), so the client never waits for it."""
     from starlette.background import BackgroundTask, BackgroundTasks
+
+    from src.services.access_check_writer import flush_detached
 
     route = request.scope.get("route")
     path = getattr(route, "path", None) or request.url.path
     operation = getattr(route, "operation_id", None) or f"{request.method} {path}"
-    judge = BackgroundTask(_judge_access_checks, collector, operation=operation, route=(request.method, path))
+    judge = BackgroundTask(flush_detached, collector, operation=operation, route=(request.method, path))
     if response.background is None:
         response.background = judge
         return
@@ -317,18 +319,6 @@ def _judge_after_response(request: Request, response, collector) -> None:
     tasks.add_task(response.background)
     tasks.add_task(judge)
     response.background = tasks
-
-
-async def _judge_access_checks(collector, *, operation: str, route: tuple[str, str]) -> None:
-    """Never raises: a failure here is logged, never surfaced."""
-    from src.core.database import get_db_context
-    from src.services import access_check_writer
-
-    try:
-        async with get_db_context() as db:
-            await access_check_writer.flush(db, collector, operation=operation, route=route)
-    except Exception as exc:
-        logger.warning("access checks not written (operation=%s): %s", operation, type(exc).__name__)
 
 
 async def _record_workflow_operation_usage(workflow_id: str, operation_key: str) -> None:

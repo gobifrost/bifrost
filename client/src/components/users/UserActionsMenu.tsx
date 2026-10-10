@@ -34,7 +34,7 @@ interface Props {
 	isSelf: boolean;
 	/** Invites, registration links, MFA reset, sign out, enable/disable (users.readwrite). */
 	canSupport: boolean;
-	/** Permanent deletion (users.lifecycle.readwrite). */
+	/** Permanent deletion (userlifecycle.readwrite). */
 	canDelete: boolean;
 	/** A protected user: the caller's actions show disabled, with why. */
 	isProtected?: boolean;

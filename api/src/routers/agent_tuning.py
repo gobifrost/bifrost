@@ -21,6 +21,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
+from shared import access_checks
 from shared.scope_resolver import has_scope_bypass
 from src.core.auth import CurrentActiveUser
 from src.core.database import get_session_factory
@@ -80,6 +81,10 @@ async def _load_agent_with_access(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Agent {agent_id} not found",
             )
+    elif agent.access_level != AgentAccessLevel.PRIVATE:
+        access_checks.note_power("agents.readwrite", agent.organization_id, subject=f"agent:{agent.id}")
+    elif agent.owner_user_id != user.user_id:
+        access_checks.note_power("agents.readwrite.all", agent.organization_id, subject=f"agent:{agent.id}")
 
     return agent
 

@@ -1929,7 +1929,7 @@ export interface paths {
         get: operations["get_role_permissions_api_roles__role_id__permissions_get"];
         /**
          * Set a role's identity permissions
-         * @description Replace the role's identity permissions (users, users.lifecycle, organizations, roleassignments, roles); its other permissions are kept. Builtin roles can't be changed.
+         * @description Replace the role's identity permissions (users, userlifecycle, organizations, roleassignments, roles); its other permissions are kept. Builtin roles can't be changed.
          */
         put: operations["set_role_permissions_api_roles__role_id__permissions_put"];
         post?: never;
@@ -5287,7 +5287,8 @@ export interface paths {
          * Dismiss Notification
          * @description Dismiss (delete) a notification.
          *
-         *     Only the owner can dismiss their notification.
+         *     Only the owner can dismiss their notification. Platform admins can also
+         *     dismiss admin-scoped notifications, which they can read.
          *
          *     For embedding-reindex notifications that are still running, this also sets
          *     the Redis cancellation flag the scheduler polls between batches — so the
@@ -25280,7 +25281,7 @@ export interface components {
         };
         /**
          * RolePermissionsUpdate
-         * @description The role's identity permissions (users, users.lifecycle, organizations,
+         * @description The role's identity permissions (users, userlifecycle, organizations,
          *     roleassignments, roles). Other permissions the role holds are kept.
          */
         RolePermissionsUpdate: {

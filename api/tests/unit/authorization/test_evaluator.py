@@ -118,8 +118,8 @@ class TestPlatformBoundary:
 
 class TestBaseRole:
     def test_base_permission_applies_at_home_only(self) -> None:
-        entry = _perm_entry("agents.read")
-        assert decide(_ctx(), entry, HOME).rule == "base_role:agents.read"
+        entry = _perm_entry("agents.readbasic")
+        assert decide(_ctx(), entry, HOME).rule == "base_role:agents.readbasic"
         assert not decide(_ctx(), entry, cross_org(CUSTOMER_B)).allowed
         assert not decide(_ctx(), entry, GLOBAL).allowed
 
@@ -145,7 +145,7 @@ class TestPlatformAdmin:
         assert decide(self.admin, entry, GLOBAL).allowed
 
     def test_wildcard_satisfies_extended_reads(self) -> None:
-        entry = _perm_entry("apps.read.all", current_gate=CurrentGate.SUPERUSER)
+        entry = _perm_entry("agents.read.all", current_gate=CurrentGate.SUPERUSER)
         assert decide(self.admin, entry, HOME).rule == "platform_admin"
 
 
@@ -180,7 +180,7 @@ class TestSecretDecryption:
 class TestNonPermissionClasses:
     @pytest.mark.parametrize(
         "access_class",
-        [AccessClass.PERSONAL, AccessClass.EXECUTE, AccessClass.OWN_PRIVATE_AGENT, AccessClass.TABLE_POLICY],
+        [AccessClass.PERSONAL, AccessClass.OWN_PRIVATE_AGENT, AccessClass.TABLE_POLICY],
     )
     def test_signed_in_user_at_home_only(self, access_class: AccessClass) -> None:
         entry = _entry(access_class)
@@ -207,5 +207,5 @@ class TestNonPermissionClasses:
             is_external=True,
             base_permissions=USER_BASE_PERMISSIONS,
         )
-        assert decide(external, _perm_entry("agents.read"), HOME).allowed
+        assert decide(external, _perm_entry("agents.readbasic"), HOME).allowed
         assert not decide(external, _perm_entry("agents.readwrite"), HOME).allowed

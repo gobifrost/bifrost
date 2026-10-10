@@ -2,19 +2,20 @@
 
 Generated from the canonical operation catalog. Use the stable intent
 ID when reasoning; select the CLI or MCP binding available in the current
-harness.
+harness. A scope with a note in parentheses is needed only beyond the
+caller's own items.
 
 | Intent | CLI | MCP | Scope |
 |---|---|---|---|
 | `productupdates.get` | — | — | `settings.read` |
 | `productupdates.receipts.create` | — | — | `settings.readwrite` |
-| `agents.list` | `bifrost agents list` | `bifrost_agent_list` | `agents.read` |
-| `agents.get` | `bifrost agents get` | `bifrost_agent_get` | `agents.read` |
-| `agents.create` | `bifrost agents create` | `bifrost_agent_create` | `agents.readwrite` |
-| `agents.update` | `bifrost agents update` | `bifrost_agent_update` | `agents.readwrite` |
-| `agents.delete` | `bifrost agents delete` | `bifrost_agent_delete` | `agents.readwrite` |
-| `forms.list` | `bifrost forms list` | `bifrost_form_list` | `forms.read` |
-| `forms.get` | `bifrost forms get` | `bifrost_form_get` | `forms.read` |
+| `agents.list` | `bifrost agents list` | `bifrost_agent_list` | `agents.readbasic` |
+| `agents.get` | `bifrost agents get` | `bifrost_agent_get` | `agents.readbasic` |
+| `agents.create` | `bifrost agents create` | `bifrost_agent_create` | `agents.readwrite` (not for your own private agents) |
+| `agents.update` | `bifrost agents update` | `bifrost_agent_update` | `agents.readwrite` (not for your own private agents) |
+| `agents.delete` | `bifrost agents delete` | `bifrost_agent_delete` | `agents.readwrite` (not for your own private agents) |
+| `forms.list` | `bifrost forms list` | `bifrost_form_list` | `forms.readbasic` |
+| `forms.get` | `bifrost forms get` | `bifrost_form_get` | `forms.readbasic` |
 | `forms.create` | `bifrost forms create` | `bifrost_form_create` | `forms.readwrite` |
 | `forms.update` | `bifrost forms update` | `bifrost_form_update` | `forms.readwrite` |
 | `forms.delete` | `bifrost forms delete` | `bifrost_form_delete` | `forms.readwrite` |
@@ -23,27 +24,27 @@ harness.
 | `tables.create` | `bifrost tables create` | `bifrost_table_create` | `tables.readwrite` |
 | `tables.update` | `bifrost tables update` | `bifrost_table_update` | `tables.readwrite` |
 | `tables.delete` | `bifrost tables delete` | `bifrost_table_delete` | `tables.readwrite` |
-| `apps.list` | `bifrost apps list` | `bifrost_app_list` | `apps.read` |
-| `apps.get` | `bifrost apps get` | `bifrost_app_get` | `apps.read` |
+| `apps.list` | `bifrost apps list` | `bifrost_app_list` | `apps.readbasic` |
+| `apps.get` | `bifrost apps get` | `bifrost_app_get` | `apps.readbasic` |
 | `apps.create` | `bifrost apps create` | `bifrost_app_create` | `apps.readwrite` |
 | `apps.update` | `bifrost apps update` | `bifrost_app_update` | `apps.readwrite` |
 | `apps.delete` | `bifrost apps delete` | `bifrost_app_delete` | `apps.readwrite` |
-| `apps.dependencies.get` | `bifrost apps get-dependencies` | `bifrost_app_dependencies_get` | `apps.read` |
+| `apps.dependencies.get` | `bifrost apps get-dependencies` | `bifrost_app_dependencies_get` | `apps.readbasic` |
 | `apps.dependencies.update` | `bifrost apps update-dependencies` | `bifrost_app_dependencies_update` | `apps.readwrite` |
-| `apps.validate` | `bifrost apps validate` | `bifrost_app_validate` | `apps.read` |
-| `apps.publish` | `bifrost apps publish` | `bifrost_app_publish` | `apps.deploy.execute` |
-| `platform.jobs.get` | `bifrost platform-jobs get` | `bifrost_platform_job_get` | — |
+| `apps.validate` | `bifrost apps validate` | `bifrost_app_validate` | `apps.readbasic` |
+| `apps.publish` | `bifrost apps publish` | `bifrost_app_publish` | `apps.publish` |
+| `platform.jobs.get` | `bifrost platform-jobs get` | `bifrost_platform_job_get` | `platformjobs.read.all` (only for other people's items) |
 | `apps.replace` | `bifrost apps replace` | `bifrost_app_replace` | `apps.readwrite` |
 | `solutions.list` | — | `bifrost_solution_list` | `solutions.read` |
 | `solutions.get` | — | `bifrost_solution_get` | `solutions.read` |
 | `solutions.create` | `bifrost solution create` | `bifrost_solution_create` | `solutions.readwrite` |
 | `solutions.update` | — | `bifrost_solution_update` | `solutions.readwrite` |
-| `solutions.delete` | — | `bifrost_solution_delete` | `solutions.readwrite`, `solutions.deploy.execute` |
-| `solutions.sync` | — | `bifrost_solution_sync` | `solutions.readwrite`, `solutions.deploy.execute` |
-| `solutions.export` | `bifrost solution export` | — | `solutions.read`, `solutions.build.execute` |
-| `solutions.deploy` | `bifrost solution deploy` | — | `solutions.readwrite`, `solutions.deploy.execute` |
-| `solutions.install` | `bifrost solution install` | — | `solutions.deploy.execute` |
-| `solutions.capture` | `bifrost solution capture` | — | `solutions.readwrite`, `solutions.build.execute` |
+| `solutions.delete` | — | `bifrost_solution_delete` | `solutions.readwrite`, `solutions.deploy` |
+| `solutions.sync` | — | `bifrost_solution_sync` | `solutions.readwrite`, `solutions.deploy` |
+| `solutions.export` | `bifrost solution export` | — | `solutions.read`, `solutions.build` |
+| `solutions.deploy` | `bifrost solution deploy` | — | `solutions.readwrite`, `solutions.deploy` |
+| `solutions.install` | `bifrost solution install` | — | `solutions.deploy` |
+| `solutions.capture` | `bifrost solution capture` | — | `solutions.readwrite`, `solutions.build` |
 | `workflows.list` | `bifrost workflows list` | `bifrost_workflow_list` | `workflows.read` |
 | `workflows.validate` | `bifrost workflows validate` | `bifrost_workflow_validate` | `workflows.read` |
 | `workflows.register` | `bifrost workflows register` | `bifrost_workflow_register` | `workflows.readwrite`, `repository.read` |
@@ -76,8 +77,8 @@ harness.
 | `integrations.oauth.entity_id_source.delete` | — | — | `integrations.readwrite` |
 | `integrations.test` | — | — | `integrations.read` |
 | `integrations.generate_sdk` | — | — | `integrations.readwrite` |
-| `executions.list` | `bifrost workflows list-executions` | `bifrost_execution_list` | `executions.read` |
-| `executions.get` | `bifrost workflows get-execution` | `bifrost_execution_get` | `executions.read` |
+| `executions.list` | `bifrost workflows list-executions` | `bifrost_execution_list` | `executions.readbasic` |
+| `executions.get` | `bifrost workflows get-execution` | `bifrost_execution_get` | `executions.readbasic` |
 | `knowledge.namespaces.list` | `bifrost knowledge list-namespaces` | `bifrost_knowledge_namespace_list` | `knowledge.read` |
 | `knowledge.documents.list` | `bifrost knowledge list-documents` | `bifrost_knowledge_document_list` | `knowledge.read` |
 | `knowledge.documents.get` | `bifrost knowledge get-document` | `bifrost_knowledge_document_get` | `knowledge.read` |
@@ -93,26 +94,26 @@ harness.
 | `roles.users.assign` | — | — | `roleassignments.readwrite` |
 | `roles.users.remove` | — | — | `roleassignments.readwrite` |
 | `roles.users.bulk_remove` | — | — | `roleassignments.readwrite` |
-| `roles.forms.list` | — | — | `forms.read.all` |
+| `roles.forms.list` | — | — | `roles.read` |
 | `roles.forms.assign` | — | — | `forms.readwrite` |
 | `roles.forms.remove` | — | — | `forms.readwrite` |
 | `roles.forms.bulk_remove` | — | — | `forms.readwrite` |
-| `roles.agents.list` | — | — | `agents.read.all` |
+| `roles.agents.list` | — | — | `roles.read` |
 | `roles.agents.assign` | — | — | `agents.readwrite` |
 | `roles.agents.remove` | — | — | `agents.readwrite` |
 | `roles.agents.bulk_remove` | — | — | `agents.readwrite` |
-| `roles.apps.list` | — | — | `apps.read.all` |
+| `roles.apps.list` | — | — | `roles.read` |
 | `roles.apps.assign` | — | — | `apps.readwrite` |
 | `roles.apps.bulk_remove` | — | — | `apps.readwrite` |
-| `roles.workflows.list` | — | — | `workflows.read.all` |
+| `roles.workflows.list` | — | — | `roles.read` |
 | `roles.workflows.assign` | — | — | `workflows.readwrite` |
 | `roles.workflows.bulk_remove` | — | — | `workflows.readwrite` |
 | `users.list` | — | — | `users.read` |
 | `users.get` | — | — | `users.read` |
-| `users.create` | — | — | `users.readwrite`, `users.lifecycle.readwrite` |
-| `users.update` | — | — | `users.lifecycle.readwrite` |
-| `users.delete` | — | — | `users.lifecycle.readwrite` |
-| `users.bulk_update` | — | — | `users.lifecycle.readwrite` |
+| `users.create` | — | — | `users.readwrite`, `userlifecycle.readwrite` |
+| `users.update` | — | — | `userlifecycle.readwrite` |
+| `users.delete` | — | — | `userlifecycle.readwrite` |
+| `users.bulk_update` | — | — | `userlifecycle.readwrite` |
 | `users.invites.resend` | — | — | `users.readwrite` |
 | `users.invites.send` | — | — | `users.readwrite` |
 | `users.invites.regenerate` | — | — | `users.readwrite` |

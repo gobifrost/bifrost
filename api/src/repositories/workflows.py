@@ -328,7 +328,7 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
         Platform admins (``self.is_superuser``) see every tool workflow in
         scope, unchanged. Everyone else is further filtered to the tools
         they could actually attach to an agent — the same rule
-        ``_validate_user_tool_access`` enforces at save time (see
+        ``agent_write_policy.validate_user_tool_access`` enforces at save time (see
         ``shared.workflow_access.user_can_access_workflow``) — so the agent
         editor's tool picker never offers a tool the save would reject.
         """

@@ -41,7 +41,6 @@ _CATALOG = [
         "actions": ["read", "readwrite"],
         "names": {
             "tables.read": "Read Tables",
-            "tables.read.all": "Read All Tables",
             "tables.readwrite": "Read and Write Tables",
         },
         "privileged": [],
@@ -55,7 +54,7 @@ _CATALOG = [
         "description": "Claim records.",
         "who_should_hold": "Platform admins.",
         "actions": ["read"],
-        "names": {"claims.read": "Read Claims"},
+        "names": {"claims.read": "Read Claims", "claims.readwrite": "Read and Write Claims"},
         "privileged": [],
         "scope": "varies",
         "enforced": False,
@@ -86,7 +85,7 @@ def test_list_reads_the_catalog_endpoint() -> None:
 
 
 def test_list_prints_one_row_per_checked_permission_with_its_name() -> None:
-    # tables.read.all is named but no route checks it, so it is not listed.
+    # claims.readwrite is named but no route checks it, so it is not listed.
     result = _invoke(["list"], {})
     assert result.exit_code == 0, result.output
     assert result.output.splitlines() == [

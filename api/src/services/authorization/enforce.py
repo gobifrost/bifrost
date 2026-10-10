@@ -39,6 +39,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared import access_checks
 from src.core.principal import UserPrincipal
 from src.models.contracts.access_list import AccessEntry, CurrentGate
 from src.models.contracts.permissions import WILDCARD_EXCLUDED_PERMISSIONS
@@ -58,20 +59,20 @@ logger = logging.getLogger(__name__)
 # request needs). ``require_operation(..., permission=...)`` accepts only
 # these, so a handler cannot decide an operation by an arbitrary permission.
 NARROWER_PERMISSIONS: dict[str, frozenset[str]] = {
-    # Global or Platform Admin users (users.lifecycle.readwrite at Global).
-    "users.create": frozenset({"users.lifecycle.readwrite"}),
+    # Global or Platform Admin users (userlifecycle.readwrite at Global).
+    "users.create": frozenset({"userlifecycle.readwrite"}),
     # Per supplied field: support fields are users.readwrite.
     "users.update": frozenset({"users.readwrite"}),
     # Per operation: set_active and replace_roles.
     "users.bulk_update": frozenset({"users.readwrite", "roleassignments.readwrite"}),
     # A base-role change.
-    "PUT /api/users/{user_id}/role-assignments": frozenset({"users.lifecycle.readwrite"}),
+    "PUT /api/users/{user_id}/role-assignments": frozenset({"userlifecycle.readwrite"}),
 }
 
 _ACTION_PHRASES: dict[str, str] = {
     "users.read": "view users",
     "users.readwrite": "manage users",
-    "users.lifecycle.readwrite": "create, move, or delete users or change their base role",
+    "userlifecycle.readwrite": "create, move, or delete users or change their base role",
     "roleassignments.read": "view role assignments",
     "roleassignments.readwrite": "assign roles",
     "roles.read": "view roles",
@@ -236,8 +237,14 @@ def org_target(organization_id: UUID | None) -> Target:
 
 
 def require_unprotected(caller: Caller, target_is_privileged: bool) -> None:
-    if target_is_privileged and not caller.is_platform_admin:
+    if not target_is_privileged:
+        return
+    if not caller.is_platform_admin:
         raise HTTPException(status.HTTP_403_FORBIDDEN, PROTECTED_TARGET_MESSAGE)
+    # The target user's organization is not known here; noted at the caller's.
+    access_checks.note_power(
+        "privilegedaccess.readwrite", caller.principal.organization_id, subject="user:privileged"
+    )
 
 
 def permitted_organizations(caller: Caller, permission: str) -> OrgReach:

@@ -69,6 +69,7 @@ from src.models.contracts.artifacts import (
     SpreadsheetArtifactSpec,
     TextArtifactSpec,
 )
+from shared import access_checks
 from shared.scope_resolver import has_scope_bypass
 from shared.sdk_artifacts import ArtifactCaller, SdkArtifactError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -225,6 +226,7 @@ async def sdk_generate_image_artifact(
         record_media_usage,
     )
 
+    access_checks.note_launch("ai.execute", None, caller.user.organization_id, subject="ai:image")
     async with _isolated_session(caller.db) as config_db:
         config = await get_media_provider_config(config_db, "image")
     generated = await generate_image_with_config(

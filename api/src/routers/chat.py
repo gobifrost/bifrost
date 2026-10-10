@@ -21,6 +21,7 @@ from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import selectinload
 
+from shared import access_checks
 from shared.scope_resolver import has_scope_bypass
 from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
@@ -743,6 +744,16 @@ async def send_message(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have access to this agent",
         )
+    if conversation.agent:
+        access_checks.note_launch(
+            "agents.execute",
+            conversation.agent.organization_id,
+            user.organization_id,
+            subject=f"agent:{conversation.agent.id}",
+        )
+    else:
+        # Chat without an agent spends AI directly.
+        access_checks.note_launch("ai.execute", None, user.organization_id, subject="ai:chat")
 
     # Agent is now optional - agentless chat uses default system prompt
 

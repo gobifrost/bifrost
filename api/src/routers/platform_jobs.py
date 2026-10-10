@@ -7,6 +7,8 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import case, func, or_, select
 
+from shared import access_checks
+from shared.access_checks import ALL_ORGS
 from src.core.auth import Context, CurrentUser
 from src.models.contracts.platform_jobs import (
     PlatformJobCancelResponse,
@@ -29,11 +31,13 @@ async def _get_visible_job(
     ctx: Context,
     user: CurrentUser,
     job_id: UUID,
+    *,
+    cancel: bool = False,
 ) -> PlatformJob:
     from shared.sdk_video import SdkVideoJobError, get_visible_platform_job
 
     try:
-        return await get_visible_platform_job(ctx.db, user, job_id)
+        return await get_visible_platform_job(ctx.db, user, job_id, cancel=cancel)
     except SdkVideoJobError as exc:
         raise HTTPException(
             status_code=exc.status_code,
@@ -60,6 +64,8 @@ async def list_platform_jobs(
         filters.append(
             PlatformJob.requested_by_user_id == str(user.user_id)
         )
+    else:
+        access_checks.note_power("platformjobs.read.all", ALL_ORGS, subject="platform_jobs")
     if job_status is not None:
         filters.append(PlatformJob.status == job_status.value)
     elif active_only:
@@ -131,7 +137,7 @@ async def cancel_platform_job(
     ctx: Context,
     user: CurrentUser,
 ) -> PlatformJobCancelResponse:
-    job = await _get_visible_job(ctx, user, job_id)
+    job = await _get_visible_job(ctx, user, job_id, cancel=True)
     job, accepted = await request_platform_job_cancel(ctx.db, job)
     return PlatformJobCancelResponse(
         job=platform_job_to_public(job),

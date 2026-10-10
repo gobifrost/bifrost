@@ -52,7 +52,12 @@ async def test_workflow_artifact_results_become_mcp_media_and_resources(
             return type(
                 "StoredArtifact",
                 (),
-                {"id": artifact_id, "s3_key": f"_artifacts/{artifact_id}"},
+                {
+                    "id": artifact_id,
+                    "s3_key": f"_artifacts/{artifact_id}",
+                    "created_by_user_id": None,
+                    "organization_id": None,
+                },
             )()
 
         async def read(self, artifact):

@@ -144,7 +144,7 @@ export function Identities() {
 		authorization.canAnywhere("roleassignments.readwrite") &&
 		// The replace-roles dialog lists every role, which needs roles.read.
 		authorization.meets({ permission: "roles.read", at: "global" });
-	const canDelete = authorization.canAnywhere("users.lifecycle.readwrite");
+	const canDelete = authorization.canAnywhere("userlifecycle.readwrite");
 	const showSelection = canReplaceRoles || canDelete;
 	const selection = useUserSelection(identities);
 	const deletable = selection.selectedItems.filter(
@@ -202,7 +202,7 @@ export function Identities() {
 							/>
 						</Button>
 						{authorization.canAnywhere(
-							"users.lifecycle.readwrite",
+							"userlifecycle.readwrite",
 						) && (
 							<Button
 								className="min-h-11 lg:min-h-0"

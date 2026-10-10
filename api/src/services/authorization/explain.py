@@ -3,7 +3,8 @@
 Every run has a user: the person who started it, or the identity it runs as.
 The model allows an action when the target is in that user's reach and the
 power is held: the user's own roles plus what the workflow adds (Full: every
-permission, secrets included; Restricted: the workflow's grants).
+permission, secrets included; Restricted: the workflow's grants). A person
+acting directly is judged on their own roles, with no workflow powers.
 
 Reach is the user's home organization, every organization a role of theirs
 is placed on, and Global, which is in everyone's reach. A Platform Admin
@@ -18,7 +19,7 @@ decides every request. The decision itself comes from the evaluator
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Literal
 from uuid import UUID
 
@@ -28,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.access_checks import ALL_ORGS, NoteTarget
 from src.core.constants import PROVIDER_ORG_ID
 from src.models.contracts.access_list import AccessClass, AccessEntry, CurrentGate
+from src.models.contracts.permissions import permission_display_name
 from src.models.contracts.workflow_permissions import WorkflowGrant, WorkflowPermissionMode
 from src.models.orm.users import User
 from src.models.orm.workflows import Workflow
@@ -196,7 +198,8 @@ def _evaluator_target(run_user: RunUser, target: UUID | None) -> Target:
 
 def _permission_entry(permission: str) -> AccessEntry:
     """An organization-boundary entry for a power the access list does not
-    route (secret decryption happens inside many routes)."""
+    route (secret decryption and elevated branches happen inside many
+    routes)."""
     return AccessEntry(
         method="GET",
         path="(report-only access check)",
@@ -225,6 +228,21 @@ def _permission_step(
     )
 
 
+def _direct_permission_step(run_user: RunUser, target: UUID | None, entry: AccessEntry) -> Step:
+    """The permission held by the person's own roles at ``target``."""
+    decision = decide(run_user.ctx, entry, _evaluator_target(run_user, target))
+    return Step(
+        "permission",
+        "Permission",
+        "passed" if decision.allowed else "stopped",
+        decision.rule,
+        {"permission": entry.permission},
+    )
+
+
+_NO_WORKFLOW = Step("powers", "Workflow powers", "not_applicable", "no_workflow")
+
+
 def _target_step(run_user: RunUser, target: TargetOrg) -> Step:
     inside, via = in_reach(run_user, target)
     return Step(
@@ -237,18 +255,21 @@ def _target_step(run_user: RunUser, target: TargetOrg) -> Step:
 
 
 def check_target(
-    run_user: RunUser, powers: Powers, target: TargetOrg, entry: AccessEntry | None
+    run_user: RunUser, powers: Powers | None, target: TargetOrg, entry: AccessEntry | None
 ) -> Trace:
-    """Acting in ``target``: in reach, and the power held there."""
+    """Acting in ``target``: in reach, and the power held there. ``powers``
+    None is a person acting directly."""
     org = target if isinstance(target, UUID) else None
-    return _trace(
-        [
-            _run_user_step(run_user),
-            _powers_step(powers),
-            _target_step(run_user, target),
-            _permission_step(run_user, powers, org, entry),
-        ]
-    )
+    if powers is None:
+        powers_step = _NO_WORKFLOW
+        permission = (
+            Step("permission", "Permission", "not_applicable", "no_access_list_entry")
+            if entry is None
+            else _direct_permission_step(run_user, org, entry)
+        )
+    else:
+        powers_step, permission = _powers_step(powers), _permission_step(run_user, powers, org, entry)
+    return _trace([_run_user_step(run_user), powers_step, _target_step(run_user, target), permission])
 
 
 def _workflow_access_step(run_user: RunUser, workflow_access: bool | None) -> Step:
@@ -271,19 +292,12 @@ def check_operation(
     (``powers`` None) or through a workflow. ``workflow_access`` is read only
     for a person starting a workflow."""
     if powers is None:
-        decision = decide(run_user.ctx, entry, _evaluator_target(run_user, target))
         return _trace(
             [
                 _run_user_step(run_user),
-                Step("powers", "Workflow powers", "not_applicable", "no_workflow"),
+                _NO_WORKFLOW,
                 _target_step(run_user, target),
-                Step(
-                    "permission",
-                    "Permission",
-                    "passed" if decision.allowed else "stopped",
-                    decision.rule,
-                    {"permission": entry.permission},
-                ),
+                _direct_permission_step(run_user, target, entry),
             ]
         )
     return _trace(
@@ -295,6 +309,25 @@ def check_operation(
             _permission_step(run_user, powers, target, entry),
         ]
     )
+
+
+def check_permission(
+    run_user: RunUser, powers: Powers | None, permission: str, target: TargetOrg
+) -> Trace:
+    """Using a named permission in ``target``: in reach, and the permission
+    held there. ``powers`` None is a person acting directly (their own roles
+    decide); otherwise the run user's roles plus what the workflow adds. A
+    Platform Admin holds every permission but ``secrets.read``."""
+    org = target if isinstance(target, UUID) else None
+    entry = _permission_entry(permission)
+    if powers is None:
+        powers_step, step = _NO_WORKFLOW, _direct_permission_step(run_user, org, entry)
+    else:
+        powers_step, step = _powers_step(powers), _permission_step(run_user, powers, org, entry)
+    trace = _trace([_run_user_step(run_user), powers_step, _target_step(run_user, target), step])
+    # The permission is named even when the target stopped the trace first.
+    named = {"permission": permission, "permission_display_name": permission_display_name(permission)}
+    return replace(trace, steps=(*trace.steps[:-1], replace(trace.steps[-1], facts=named)))
 
 
 def check_run_as(run_user: RunUser, powers: Powers, run_as_user_id: UUID) -> Trace:

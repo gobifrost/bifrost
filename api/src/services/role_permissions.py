@@ -31,8 +31,8 @@ class RolePermissionError(Exception):
 
 def validate_permission(permission: str) -> None:
     """Raise ``RolePermissionError(422, ...)`` unless `permission` is a
-    well-formed ``<domain>.<read|readwrite|execute>[.all]`` string in the
-    closed ``PERMISSION_DOMAINS`` vocabulary (see ``parse_permission``)."""
+    well-formed ``<resource>.<action>[.all]`` string in the closed
+    ``PERMISSION_DOMAINS`` vocabulary (see ``parse_permission``)."""
     try:
         parse_permission(permission)
     except ValueError as exc:
@@ -97,7 +97,7 @@ async def role_has_permission(
 # (for example ``agents.readwrite``, which agent promotion reads) are kept
 # as they are.
 IDENTITY_PERMISSION_DOMAINS = frozenset(
-    {"users", "users.lifecycle", "organizations", "roleassignments", "roles"}
+    {"users", "userlifecycle", "organizations", "roleassignments", "roles"}
 )
 
 

@@ -220,6 +220,21 @@ async def _assign_secrets_reader_later(database_url: str, user_id: str) -> None:
     await _run_in_database(database_url, assign)
 
 
+# The later 20261009_graph_permission_names revision renames the basic
+# resources' everyday read to readbasic, gives the role Run Agents and says so
+# in its description.
+OPERATOR_DESCRIPTION_AT_HEAD = (
+    "Support for customer organizations: view organizations and users, invite users, "
+    "reset MFA, deactivate ordinary users, assign roles that carry no permissions, "
+    "and run workflows and agents in customer organizations. Additional role only."
+)
+_READBASIC = {f"{resource}.read": f"{resource}.readbasic" for resource in ("agents", "apps", "executions", "forms")}
+
+
+def _readbasic(permissions: set[str]) -> set[str]:
+    return {_READBASIC.get(permission, permission) for permission in permissions}
+
+
 def test_operator_and_secrets_reader_go_to_exactly_the_right_people() -> None:
     database_name = f"bifrost_r2b_rehearsal_{uuid4().hex[:12]}"
     _assert_safe_database_name(database_name)
@@ -276,12 +291,19 @@ def test_operator_and_secrets_reader_go_to_exactly_the_right_people() -> None:
         }
 
         _upgrade(database_url, "head")
-        assert asyncio.run(_state(database_url, OPERATOR_ROLE_ID)) == operator
-        assert asyncio.run(_state(database_url, DECRYPTION_ROLE_ID)) == decryption
+        operator_at_head = asyncio.run(_state(database_url, OPERATOR_ROLE_ID))
+        assert operator_at_head == {
+            **operator,
+            "role": ("Platform Operator", OPERATOR_DESCRIPTION_AT_HEAD, False, True),
+            "permissions": _readbasic(operator["permissions"]) | {"agents.execute"},
+        }
+        decryption_at_head = asyncio.run(_state(database_url, DECRYPTION_ROLE_ID))
+        assert decryption_at_head == decryption
 
         asyncio.run(_assign_secrets_reader_later(database_url, ids["staff"]))
         _downgrade(database_url, PREVIOUS_REVISION)
-        assert asyncio.run(_state(database_url, OPERATOR_ROLE_ID)) == operator_before
+        operator_after_downgrade = asyncio.run(_state(database_url, OPERATOR_ROLE_ID))
+        assert operator_after_downgrade == operator_before
         after_downgrade = asyncio.run(_state(database_url, DECRYPTION_ROLE_ID))
         assert after_downgrade["role"] == decryption_before["role"]
         assert after_downgrade["permissions"] == decryption_before["permissions"]

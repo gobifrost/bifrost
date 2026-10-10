@@ -28,8 +28,8 @@ def test_validate_permission_accepts_known_domain_and_action():
 
 
 def test_validate_permission_accepts_extended_suffix_and_identity_domains():
-    validate_permission("apps.read.all")
-    validate_permission("users.lifecycle.readwrite")
+    validate_permission("agents.read.all")
+    validate_permission("userlifecycle.readwrite")
     validate_permission("roleassignments.readwrite")
     validate_permission("secrets.read")
 

@@ -13,7 +13,7 @@ protection, and transaction behavior.
 
 Authorization is decided here, with the evaluator
 (``src.services.authorization.enforce``), from the ``Caller`` the handler
-loads: users.read / users.readwrite / users.lifecycle.readwrite at the
+loads: users.read / users.readwrite / userlifecycle.readwrite at the
 target user's organization, a Platform Admin for privileged targets. Over
 the engine socket the caller is an execution credential, decided as the
 superuser dependency decided it: ordinary workflow engine tokens pass even
@@ -49,6 +49,7 @@ from uuid import UUID
 from sqlalchemy import case, delete, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared import access_checks
 from src.core.constants import PROVIDER_ORG_ID
 from src.core.log_safety import log_safe
 
@@ -353,7 +354,7 @@ async def create_user(
 
     An ordinary invite (a User in an organization) is users.readwrite at
     that organization. A Global user or a Platform Admin is
-    users.lifecycle.readwrite at Global, and a Platform Admin can only be
+    userlifecycle.readwrite at Global, and a Platform Admin can only be
     created by a Platform Admin. The new user gets no additional roles.
 
     Mirrors the historical handler: no password is set, the user is
@@ -377,11 +378,13 @@ async def create_user(
     refuse_reserved_email(email)
     if is_superuser or organization_id is None:
         require_operation(
-            caller, "users.create", GLOBAL, permission="users.lifecycle.readwrite"
+            caller, "users.create", GLOBAL, permission="userlifecycle.readwrite"
         )
         require_unprotected(caller, is_superuser)
     else:
         require_operation(caller, "users.create", cross_org(organization_id))
+    if is_superuser:
+        access_checks.note_power("privilegedaccess.readwrite", organization_id, subject="user:new")
 
     now = datetime.now(timezone.utc)
 
@@ -467,7 +470,7 @@ async def get_user(
 
 
 # How each ``UserUpdate`` field is authorized: user support (users.readwrite),
-# elevated lifecycle changes (users.lifecycle.readwrite), or the legacy
+# elevated lifecycle changes (userlifecycle.readwrite), or the legacy
 # Platform Admin flag, which adds or removes the Platform Admin role and so
 # takes a Platform Admin. Every supplied field is authorized,
 # including explicit nulls and false.
@@ -478,11 +481,11 @@ UPDATE_FIELD_PERMISSIONS: dict[str, str] = {
     "mfa_enabled": "users.readwrite",
     # Accepted but never applied (historical), still a support change.
     "password": "users.readwrite",
-    "email": "users.lifecycle.readwrite",
-    "is_verified": "users.lifecycle.readwrite",
-    "is_external": "users.lifecycle.readwrite",
+    "email": "userlifecycle.readwrite",
+    "is_verified": "userlifecycle.readwrite",
+    "is_external": "userlifecycle.readwrite",
     # A move: authority at the source and at the destination.
-    "organization_id": "users.lifecycle.readwrite",
+    "organization_id": "userlifecycle.readwrite",
     "is_superuser": PLATFORM_ADMIN_ONLY,
 }
 
@@ -519,6 +522,9 @@ def _authorize_update(
                 raise UserServiceError(
                     403, "Only a Platform Admin can change whether a user is a Platform Admin"
                 )
+            access_checks.note_power(
+                "privilegedaccess.readwrite", db_user.organization_id, subject=f"user:{db_user.id}"
+            )
             continue
         require_operation(caller, "users.update", source, permission=permission)
         if field == "organization_id" and organization_id is not None:
@@ -604,6 +610,9 @@ async def update_user(
     if is_active is not None:
         db_user.is_active = is_active
     if is_superuser is not None:
+        access_checks.note_power(
+            "privilegedaccess.readwrite", db_user.organization_id, subject=f"user:{db_user.id}"
+        )
         await set_platform_admin(
             session, db_user, is_superuser, assigned_by=caller.principal.email
         )
@@ -656,7 +665,7 @@ async def delete_user(
     *,
     user_id: str,
 ) -> UUID:
-    """Permanently delete a user (users.lifecycle.readwrite at their org; a
+    """Permanently delete a user (userlifecycle.readwrite at their org; a
     privileged user only by a Platform Admin).
 
     Error precedence (unchanged from the handler): self-delete is
@@ -707,7 +716,7 @@ async def delete_user(
 
 
 _BULK_PERMISSIONS = {
-    "move_org": "users.lifecycle.readwrite",
+    "move_org": "userlifecycle.readwrite",
     "replace_roles": "roleassignments.readwrite",
     "set_active": "users.readwrite",
 }
@@ -722,7 +731,7 @@ async def bulk_update_users(
     """Apply one operation to many users; per-user outcomes.
 
     Each operation is decided per target user: set_active is
-    users.readwrite and move_org users.lifecycle.readwrite (at the source
+    users.readwrite and move_org userlifecycle.readwrite (at the source
     and at the destination; Global for a move into Global) at the user's
     organization, and replace_roles is roleassignments.readwrite plus the
     grant ceiling for every role added or removed. A privileged user can
@@ -824,18 +833,22 @@ async def bulk_update_users(
             fail(uid, denial_message(permission))
             continue
         user_held = held.get(uid, frozenset())
-        if is_privileged_principal(user_held) and not caller.is_platform_admin:
-            fail(uid, PROTECTED_TARGET_MESSAGE)
-            continue
+        if is_privileged_principal(user_held):
+            if not caller.is_platform_admin:
+                fail(uid, PROTECTED_TARGET_MESSAGE)
+                continue
+            access_checks.note_power("privilegedaccess.readwrite", u.organization_id, subject=f"user:{uid}")
 
         if request.operation == "move_org":
             target = request.organization_id  # may be None (= Global)
             if not allows_operation(caller, operation, org_target(target), permission=permission):
                 fail(uid, denial_message(permission))
                 continue
-            if u.is_superuser and target is not None and target != PROVIDER_ORG_ID:
-                fail(uid, "Platform admin must be demoted before moving to a non-provider org")
-                continue
+            if u.is_superuser:
+                if target is not None and target != PROVIDER_ORG_ID:
+                    fail(uid, "Platform admin must be demoted before moving to a non-provider org")
+                    continue
+                access_checks.note_power("userlifecycle.readwrite", target, subject=f"user:{uid}")
             if uid in operators and target != PROVIDER_ORG_ID:
                 fail(uid, OPERATOR_MOVE_MESSAGE)
                 continue

@@ -33,7 +33,7 @@ pytestmark = pytest.mark.asyncio
 
 
 def _lifecycle_holder(*organization_ids: UUID) -> Caller:
-    """Holds users.read and users.lifecycle.readwrite at each organization, and nothing else."""
+    """Holds users.read and userlifecycle.readwrite at each organization, and nothing else."""
     ctx = AuthorizationContext(
         user_id=uuid4(),
         home_organization_id=PROVIDER_ORG_ID,
@@ -43,7 +43,7 @@ def _lifecycle_holder(*organization_ids: UUID) -> Caller:
         role_grants=(
             RoleGrant(
                 uuid4(),
-                frozenset({"users.read", "users.lifecycle.readwrite"}),
+                frozenset({"users.read", "userlifecycle.readwrite"}),
                 tuple(Boundary(BoundaryKind.ORGANIZATION, org_id) for org_id in organization_ids),
             ),
         ),
@@ -169,7 +169,7 @@ class TestChange:
         role = Role(name=f"ids-role-{uuid4().hex[:6]}", created_by="t")
         db_session.add(role)
         await db_session.flush()
-        db_session.add(RolePermission(role_id=role.id, permission="users.lifecycle.readwrite"))
+        db_session.add(RolePermission(role_id=role.id, permission="userlifecycle.readwrite"))
         await db_session.flush()
         await insert_assignment(
             db_session,

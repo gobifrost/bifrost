@@ -5,8 +5,8 @@ credential. The model evaluates them against the run's user: their own roles
 and claims, with the admin predicate true when the user is a Platform Admin
 or the workflow is Full. Each helper notes the model's outcome, today's, and
 what the run user is missing (roles named by ``has_role``, claims that
-resolved to nothing). Helpers do nothing outside a run's request and never
-raise into it.
+resolved to nothing). Helpers do nothing outside a run's request (a person's
+own policies already decide for them) and never raise into it.
 """
 
 from __future__ import annotations
@@ -137,7 +137,7 @@ async def check_table_rule(
     principal. Runs in a savepoint so a failed query never affects the
     request's transaction."""
     collector = access_checks.current()
-    if collector is None:
+    if collector is None or collector.direct:
         return
     facts = {"table": str(table.id), "action": action, "today": allowed_today}
     try:
@@ -204,7 +204,7 @@ async def check_file(
 ) -> None:
     """A file policy decision, in a savepoint like the table checks."""
     collector = access_checks.current()
-    if collector is None:
+    if collector is None or collector.direct:
         return
     from src.services.file_policy_service import FilePolicyService
 

@@ -53,6 +53,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared import access_checks
 from shared.scope_resolver import has_scope_bypass
 from src.core.principal import UserPrincipal
 from src.models.contracts.artifacts import ArtifactDownloadResponse, ArtifactRef
@@ -174,6 +175,11 @@ async def sdk_list_artifacts(
             is_provider_org=caller.user.is_provider_org,
         ),
     )
+    others = next((item for item in stored if item.created_by_user_id != caller.user.user_id), None)
+    if others is not None:
+        access_checks.note_power(
+            "artifacts.read.all", others.organization_id, subject=f"artifact_workspace:{workspace_id}"
+        )
     return [artifact_ref(item) for item in stored]
 
 
@@ -207,6 +213,8 @@ async def sdk_read_artifact(
         )
     except ArtifactAccessError as exc:
         raise SdkArtifactError(404, str(exc)) from exc
+    if artifact.created_by_user_id != caller.user.user_id:
+        access_checks.note_power("artifacts.read.all", artifact.organization_id, subject=f"artifact:{artifact.id}")
     content = await service.read(artifact)
     if preview:
         from shared.artifact_preview import preview_office_artifact
@@ -264,6 +272,8 @@ async def sdk_artifact_download_url(
         )
     except ArtifactAccessError as exc:
         raise SdkArtifactError(404, str(exc)) from exc
+    if artifact.created_by_user_id != caller.user.user_id:
+        access_checks.note_power("artifacts.read.all", artifact.organization_id, subject=f"artifact:{artifact.id}")
     url = await service.generate_download_url(artifact)
     return ArtifactDownloadResponse(url=url)
 

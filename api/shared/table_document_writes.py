@@ -41,6 +41,7 @@ from shared.table_documents import (
     DocumentRepository,
     check_table_action_or_403,
 )
+from shared import access_checks
 from src.core.constants import SYSTEM_USER_UUID
 from src.core.principal import UserPrincipal
 from src.models.orm.tables import Document, Table
@@ -103,6 +104,8 @@ def resolve_attribution(
             raise TableWriteForbidden(
                 "created_by/updated_by override requires engine or platform-admin caller"
             )
+        # The table's organization is not known here; noted at the caller's.
+        access_checks.note_power("tableattribution.readwrite", user.organization_id, subject="table_document")
     caller = str(user.user_id)
     created_by = body_created_by or caller
     updated_by = body_updated_by or body_created_by or caller

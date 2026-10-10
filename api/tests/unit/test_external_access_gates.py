@@ -106,7 +106,7 @@ class TestResolveProviderOrgClaim:
 
 
 # =============================================================================
-# 2a. Agents router: _validate_user_tool_access
+# 2a. Agent write policy: validate_user_tool_access
 # =============================================================================
 
 
@@ -132,7 +132,7 @@ def _workflow(access_level: str):
 
 class TestValidateUserToolAccessExternal:
     async def test_authenticated_workflow_denied_for_external_without_role(self):
-        from src.routers.agents import _validate_user_tool_access
+        from src.services.agent_write_policy import validate_user_tool_access
 
         tool_id = str(uuid4())
         db = AsyncMock()
@@ -142,13 +142,13 @@ class TestValidateUserToolAccessExternal:
             _rows_result([]),  # workflow's roles: none
         ]
         with pytest.raises(HTTPException) as exc:
-            await _validate_user_tool_access(
+            await validate_user_tool_access(
                 db, uuid4(), [tool_id], is_external=True
             )
         assert exc.value.status_code == 403
 
     async def test_authenticated_workflow_allowed_for_regular_user(self):
-        from src.routers.agents import _validate_user_tool_access
+        from src.services.agent_write_policy import validate_user_tool_access
 
         tool_id = str(uuid4())
         db = AsyncMock()
@@ -157,10 +157,10 @@ class TestValidateUserToolAccessExternal:
             _scalar_result(_workflow("authenticated")),
             _rows_result([]),  # workflow's roles: none (unused — access_level grants first)
         ]
-        await _validate_user_tool_access(db, uuid4(), [tool_id])
+        await validate_user_tool_access(db, uuid4(), [tool_id])
 
     async def test_role_based_workflow_allowed_for_external_with_role(self):
-        from src.routers.agents import _validate_user_tool_access
+        from src.services.agent_write_policy import validate_user_tool_access
 
         role_id = uuid4()
         tool_id = str(uuid4())
@@ -170,7 +170,7 @@ class TestValidateUserToolAccessExternal:
             _scalar_result(_workflow("role_based")),
             _rows_result([role_id]),  # workflow's roles
         ]
-        await _validate_user_tool_access(db, uuid4(), [tool_id], is_external=True)
+        await validate_user_tool_access(db, uuid4(), [tool_id], is_external=True)
 
 
 # =============================================================================

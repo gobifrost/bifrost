@@ -116,7 +116,7 @@ class TestUpdateFieldClassification:
         request = UserUpdate.model_validate({"name": "x", "email": None, "is_superuser": False})
         assert update_field_permissions(set(request.model_fields_set)) == {
             "name": "users.readwrite",
-            "email": "users.lifecycle.readwrite",
+            "email": "userlifecycle.readwrite",
             "is_superuser": "platform_admin",
         }
 
@@ -151,7 +151,7 @@ class TestUpdateUser:
             with pytest.raises(HTTPException) as exc_info:
                 await self._update(db_session, support, user, **fields)
             assert exc_info.value.status_code == 403, fields
-        lifecycle = _delegate(({"users.readwrite", "users.lifecycle.readwrite"}, _at(org.id)))
+        lifecycle = _delegate(({"users.readwrite", "userlifecycle.readwrite"}, _at(org.id)))
         with pytest.raises(UserServiceError) as exc_info:
             await self._update(db_session, lifecycle, user, is_superuser=False)
         assert exc_info.value.status_code == 403
@@ -159,7 +159,7 @@ class TestUpdateUser:
     async def test_a_move_needs_the_source_and_the_destination(self, db_session) -> None:
         source, destination = await _org(db_session), await _org(db_session)
         user = await _user(db_session, source.id)
-        lifecycle = {"users.lifecycle.readwrite"}
+        lifecycle = {"userlifecycle.readwrite"}
         only_source = _delegate((lifecycle, _at(source.id)))
         with pytest.raises(HTTPException):
             await self._update(db_session, only_source, user, organization_id=destination.id)
@@ -402,7 +402,7 @@ class TestRolePermissions:
         from src.services.role_permissions import RolePermissionError, replace_identity_permissions
 
         role = await _role(db_session)
-        for permission in ("agents.readwrite", "secrets.read", "users.lifecycle.read"):
+        for permission in ("agents.readwrite", "secrets.read", "userlifecycle.read"):
             with pytest.raises(RolePermissionError) as exc_info:
                 await replace_identity_permissions(db_session, role_id=role.id, permissions=[permission])
             assert exc_info.value.status_code == 422, permission

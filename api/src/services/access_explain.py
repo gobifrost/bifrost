@@ -114,7 +114,7 @@ async def rerun(db: AsyncSession, row: AuditLog) -> tuple[Trace | None, NowUnava
         kind, _, entity_id = facts["subject"].partition(":")
         facts["allowed"] = await run_user_may_open(db, _ENTRY_REPOSITORIES[kind], row.user_id, UUID(entity_id))
 
-    powers = await load_powers(db, workflow_id)
+    powers = None if details.get("direct") else await load_powers(db, workflow_id)
     operation = cast("dict[str, Any]", details["inputs"])["operation"]
     return judge(run_user, powers, note, entry_for_key(operation)), None
 

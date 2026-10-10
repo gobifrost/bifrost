@@ -49,6 +49,7 @@ from src.models import (
     WorkflowIdConflict,
 )
 from src.services.file_storage import FileStorageService
+from shared import access_checks
 from shared.role_cache import get_user_roles
 from shared.file_access import (
     FileCaller,
@@ -366,6 +367,7 @@ async def _test_principal(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"User not found: {user_id}",
         )
+    access_checks.note_power("filepolicies.read", target.organization_id, subject=f"user:{target.id}")
     role_ids, role_names = await get_user_roles(target.id, db)
     return UserPrincipal(
         user_id=target.id,
@@ -441,6 +443,7 @@ async def test_file_policy_access(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     principal = await _test_principal(ctx, db, request.user_id)
+    access_checks.note_power("filepolicies.read", org_id, subject=f"file:{request.location}:{request.path}")
 
     # workspace is superuser-only and never policy-governed — mirror the real
     # enforcement in _authorize_file_policy so Test Access reports what actually

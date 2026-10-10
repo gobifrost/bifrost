@@ -25,6 +25,7 @@ from typing import Any
 
 from fastmcp.tools import ToolResult
 
+from shared import access_checks
 from src.services.mcp_server.tools.db import get_tool_db
 from src.services.file_storage import FileStorageService
 from src.services.repo_storage import RepoStorage
@@ -47,6 +48,8 @@ def _check_write_scope(context: Any, path: str) -> str | None:
     CurrentSuperuser).
     """
     if mcp_write_scope_bypass(context):
+        # The workspace repository is Global.
+        access_checks.note_power("repository.readwrite", None, subject="repository")
         return None
     return f"File not found: {path}"
 
@@ -59,6 +62,8 @@ def _check_read_scope(context: Any) -> str | None:
     CurrentSuperuser-only.
     """
     if mcp_write_scope_bypass(context):
+        # The workspace repository is Global.
+        access_checks.note_power("repository.read", None, subject="repository")
         return None
     return "Not found"
 

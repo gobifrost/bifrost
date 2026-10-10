@@ -6,6 +6,7 @@ import {
 	changeSentence,
 	changedStepKeys,
 	checkKindTitle,
+	checkResourceTitle,
 	nowUnavailableSentence,
 	stepSentence,
 	stepTitle,
@@ -154,6 +155,17 @@ describe("stepSentence", () => {
 
 	it("says nothing for a step that wasn't reached", () => {
 		expect(sentence(step("permission", "", {}, "not_reached"))).toBe("");
+	});
+
+	it("names the permission a named permission check needs, even when not reached", () => {
+		const named = {
+			permission: "agents.read",
+			permission_display_name: "Read Agents",
+		};
+		expect(sentence(step("permission", "", named, "not_reached"))).toBe(
+			"Needs Read Agents.",
+		);
+		expect(sentence(step("target", "", named, "not_reached"))).toBe("");
 	});
 
 	it("shows a reason it doesn't know as written", () => {
@@ -313,9 +325,42 @@ describe("checkKindTitle", () => {
 		expect(checkKindTitle("entry")).toBe("Workflow or Agent Access");
 		expect(checkKindTitle("policy")).toBe("Data Policy");
 		expect(checkKindTitle("secret")).toBe("Secret");
+		expect(checkKindTitle("permission")).toBe("Permission");
 	});
 
 	it("title-cases a kind it doesn't know", () => {
 		expect(checkKindTitle("new_kind")).toBe("New Kind");
+	});
+});
+
+describe("checkResourceTitle", () => {
+	const named = (permission_display_name: unknown) => ({
+		trace: trace(
+			"failure",
+			step("run_user", "person"),
+			step("target", "outside", {}, "stopped"),
+			step(
+				"permission",
+				"",
+				{ permission: "agents.read", permission_display_name },
+				"not_reached",
+			),
+		),
+	});
+
+	it("names the permission a permission check used", () => {
+		expect(checkResourceTitle("permission", named("Read Agents"))).toBe(
+			"Permission: Read Agents",
+		);
+	});
+
+	it("is the kind alone without a stored name, or for other kinds", () => {
+		expect(checkResourceTitle("permission", named(undefined))).toBe(
+			"Permission",
+		);
+		expect(checkResourceTitle("permission", null)).toBe("Permission");
+		expect(checkResourceTitle("secret", named("Read Agents"))).toBe(
+			"Secret",
+		);
 	});
 });

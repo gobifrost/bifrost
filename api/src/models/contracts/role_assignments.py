@@ -135,7 +135,7 @@ class RolePermissionsResponse(BaseModel):
 
 
 class RolePermissionsUpdate(BaseModel):
-    """The role's identity permissions (users, users.lifecycle, organizations,
+    """The role's identity permissions (users, userlifecycle, organizations,
     roleassignments, roles). Other permissions the role holds are kept."""
 
     permissions: list[str]

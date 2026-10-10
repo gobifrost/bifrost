@@ -26,9 +26,9 @@ code.
    Global / platform-level targets. A ``platform``-boundary entry is only
    satisfied by a ``platform`` boundary.
 3. Other classes: ``public`` allows anyone (anonymous included); ``personal``,
-   ``execute``, ``own_private_agent`` and ``table_policy`` allow any signed-in
-   user acting in their home org (the object check decides the rest);
-   ``embed`` is never a user decision.
+   ``own_private_agent`` and ``table_policy`` allow any signed-in user acting
+   in their home org (the object check decides the rest); ``embed`` is never
+   a user decision.
 4. External users decide the same as Users here: External only changes the
    object-level meaning of "authenticated".
 

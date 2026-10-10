@@ -58,7 +58,7 @@ class TestIsPrivilegedPrincipal:
         assert is_privileged_principal(frozenset({"forms.read", "configs.readwrite"}))
 
     def test_read_only_and_extended_reads_are_not_privileged(self) -> None:
-        assert not is_privileged_principal(frozenset({"configs.read", "apps.read.all", "users.read"}))
+        assert not is_privileged_principal(frozenset({"configs.read", "agentruns.read.all", "users.read"}))
 
     def test_wildcard_is_privileged(self) -> None:
         assert is_privileged_principal(frozenset({WILDCARD_PERMISSION}))
@@ -113,7 +113,7 @@ class TestOperatorAssignableRole:
         )
 
     def test_role_with_any_permission_is_refused(self) -> None:
-        for permission in ("forms.read", "apps.read.all", "users.readwrite"):
+        for permission in ("forms.read", "agentruns.read.all", "users.readwrite"):
             assert not operator_assignable_role(
                 role_id=uuid4(),
                 role_permissions=frozenset({permission}),
@@ -164,7 +164,7 @@ class TestGrantCeiling:
     def test_platform_admin_may_change_anything(self) -> None:
         assert self._may(admin=True, role_id=PLATFORM_OPERATOR_ROLE_ID)
         assert self._may(admin=True, role_id=PLATFORM_ADMIN_ROLE_ID)
-        assert self._may(admin=True, permissions={"users.lifecycle.readwrite"}, target={"configs.readwrite"})
+        assert self._may(admin=True, permissions={"userlifecycle.readwrite"}, target={"configs.readwrite"})
 
     def test_delegate_may_change_a_permissionless_custom_role_on_an_ordinary_user(self) -> None:
         assert self._may(admin=False)

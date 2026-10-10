@@ -12,6 +12,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import select
 
+from shared import access_checks
 from src.config import get_settings
 from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
@@ -491,6 +492,7 @@ async def get_user_forms(
 
     # Platform admins have access to all forms
     if db_user.is_superuser:
+        access_checks.note_power("forms.read", db_user.organization_id, subject=f"user:{db_user.id}")
         return UserFormsResponse(
             is_superuser=True,
             has_access_to_all_forms=True,

@@ -76,26 +76,30 @@ def test_platform_admin_wildcard_is_stored_data_in_the_admin_additional_migratio
     assert migration.WILDCARD_PERMISSION == WILDCARD_PERMISSION == "*"
 
 
-def test_derived_permissions_are_read_only_organization_scoped():
+def test_derived_permissions_read_or_launch_only():
     """Sanity check on the derivation's own filter, independent of the
-    frozen copy: every permission it derives is a `.read` action, and the
-    User role must never gain a write permission (see access_list.py's own
+    frozen copy: every permission it derives reads or launches, never
+    writes or reaches other people's items (see access_list.py's own
     'never grant a write permission to the User base role' principle)."""
     derived = derive_user_base_permissions(ACCESS_LIST)
     assert derived, "expected at least one derived permission"
     for permission in derived:
-        assert permission.endswith(".read"), permission
+        parsed = parse_permission(permission)
+        assert parsed.action in {"read", "readbasic", "execute"}, permission
+        assert not parsed.extended, permission
 
 
 def test_platform_operator_permissions_are_user_support_reads_and_execution():
     """The Operator role gets read visibility plus user support, role
     assignment (constrained at the cutover to permissionless roles on
-    unprivileged users) and running workflows. Never secret decryption,
+    unprivileged users) and running workflows and agents. Never secret decryption,
     elevated user lifecycle, role authoring, platform-wide permissions, or
     extended management detail."""
-    writes = {p for p in PLATFORM_OPERATOR_PERMISSIONS if not p.endswith(".read")}
-    assert writes == {"users.readwrite", "roleassignments.readwrite", "workflows.execute"}
-    for forbidden in ("secrets.read", "users.lifecycle.readwrite", "roles.readwrite"):
+    writes = {
+        p for p in PLATFORM_OPERATOR_PERMISSIONS if parse_permission(p).action not in {"read", "readbasic"}
+    }
+    assert writes == {"users.readwrite", "roleassignments.readwrite", "workflows.execute", "agents.execute"}
+    for forbidden in ("secrets.read", "userlifecycle.readwrite", "roles.readwrite"):
         assert forbidden not in PLATFORM_OPERATOR_PERMISSIONS
     assert not any(parse_permission(p).domain == "platform" for p in PLATFORM_OPERATOR_PERMISSIONS)
     assert not any(parse_permission(p).extended for p in PLATFORM_OPERATOR_PERMISSIONS)
@@ -122,12 +126,32 @@ def _load_migration(filename: str):
     return migration
 
 
+def _graph_renamed(migration, role_id: UUID, permissions: frozenset[str]) -> frozenset[str]:
+    """What the Graph-names migration leaves of built-in role `role_id`
+    holding `permissions` (the built-in roles hold only renames and
+    basic-resource reads), plus the launch permissions it gains."""
+    renamed = set(migration.ADDED_LAUNCH_PERMISSIONS.get(str(role_id), ()))
+    for permission in permissions:
+        resource, _, action = permission.partition(".")
+        if permission in migration.GRAPH_RENAMES:
+            renamed.add(migration.GRAPH_RENAMES[permission])
+        elif resource in migration.BASIC_RESOURCES and action == "read":
+            renamed.add(f"{resource}.readbasic")
+        else:
+            assert permission not in migration.MERGED_READS, permission
+            assert action != "read.all", permission
+            renamed.add(permission)
+    return frozenset(renamed)
+
+
 def test_migration_frozen_copies_match_live_constants():
     """Each migration carries its own frozen copy (it must not import live
     code). The latest migration that seeds each builtin role must equal the
-    live constant: `20260929_user_base_perm_fix` for the User role and
-    `20261003_r3_operator_secrets` for Platform Operator and
-    `20261001_r3a_operator_perms` for Secrets Reader. After a deliberate
+    live constant: `20261009_graph_permission_names` renames what
+    `20260929_user_base_perm_fix` seeded for the User role and what
+    `20261003_r3_operator_secrets` seeded for Platform Operator and adds
+    their launch permissions, and
+    `20261001_r3a_operator_perms` seeds Secrets Reader. After a deliberate
     change to the live values, update them through a NEW migration and adjust
     this test to pin the new revision instead. The R2b migration stays pinned
     to what it seeded."""
@@ -135,11 +159,16 @@ def test_migration_frozen_copies_match_live_constants():
     r2b = _load_migration("20260929_r2b_roles.py")
     operator = _load_migration("20261001_r3a_operator_perms.py")
     latest = _load_migration("20261003_r3_operator_secrets.py")
+    graph = _load_migration("20261009_graph_permission_names.py")
 
     assert fix.down_revision == "20260929_r2b_wf_permissions"
     assert fix.USER_ROLE_ID == USER_ROLE_ID
-    assert fix.USER_BASE_PERMISSIONS == USER_BASE_PERMISSIONS
-    assert (r2b.USER_BASE_PERMISSIONS - fix.REMOVED_PERMISSIONS) | fix.ADDED_PERMISSIONS == USER_BASE_PERMISSIONS
+    assert (r2b.USER_BASE_PERMISSIONS - fix.REMOVED_PERMISSIONS) | fix.ADDED_PERMISSIONS == fix.USER_BASE_PERMISSIONS
+    assert graph.down_revision == "20261009_merge_integ_identity"
+    assert graph.USER_ROLE_ID == str(USER_ROLE_ID)
+    assert graph.PLATFORM_OPERATOR_ROLE_ID == str(PLATFORM_OPERATOR_ROLE_ID)
+    user_at_graph = _graph_renamed(graph, USER_ROLE_ID, fix.USER_BASE_PERMISSIONS)
+    assert user_at_graph == USER_BASE_PERMISSIONS
 
     assert r2b.PLATFORM_ADMIN_ROLE_ID == PLATFORM_ADMIN_ROLE_ID
     assert r2b.USER_ROLE_ID == USER_ROLE_ID
@@ -162,14 +191,16 @@ def test_migration_frozen_copies_match_live_constants():
     assert latest.PLATFORM_OPERATOR_ROLE_ID == PLATFORM_OPERATOR_ROLE_ID
     assert latest.DECRYPTION_ROLE_ID == DECRYPTION_ROLE_ID
     assert latest.PROVIDER_ORG_ID == PROVIDER_ORG_ID
-    assert latest.PLATFORM_OPERATOR_PERMISSIONS == PLATFORM_OPERATOR_PERMISSIONS
+    operator_at_graph = _graph_renamed(graph, PLATFORM_OPERATOR_ROLE_ID, latest.PLATFORM_OPERATOR_PERMISSIONS)
+    assert operator_at_graph == PLATFORM_OPERATOR_PERMISSIONS
     assert (
         operator.PLATFORM_OPERATOR_PERMISSIONS | latest.ADDED_OPERATOR_PERMISSIONS
-        == PLATFORM_OPERATOR_PERMISSIONS
+        == latest.PLATFORM_OPERATOR_PERMISSIONS
     )
     assert not operator.PLATFORM_OPERATOR_PERMISSIONS & latest.ADDED_OPERATOR_PERMISSIONS
     desc = _load_migration("20261001_r3a_operator_desc.py")
     assert latest.PREVIOUS_OPERATOR_DESCRIPTION == desc.DESCRIPTION
+    assert graph.PREVIOUS_OPERATOR_DESCRIPTION == latest.OPERATOR_DESCRIPTION
     assert latest.PREVIOUS_DECRYPTION_DESCRIPTION == operator.DECRYPTION_ROLE_DESCRIPTION
 
     identities = _load_migration("20261003_r3b_identities.py")

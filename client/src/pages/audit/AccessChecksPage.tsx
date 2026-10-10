@@ -43,6 +43,7 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import {
 	checkKindTitle,
+	checkResourceTitle,
 	stepTitle,
 	stoppedStep,
 	storedTrace,
@@ -314,7 +315,10 @@ function CheckList({
 								</dt>
 								<dd className="mt-1">
 									{entry.resource_type
-										? checkKindTitle(entry.resource_type)
+										? checkResourceTitle(
+												entry.resource_type,
+												entry.details,
+											)
 										: "—"}
 								</dd>
 							</div>
@@ -360,7 +364,10 @@ function CheckList({
 						</DataTableCell>
 						<DataTableCell>
 							{entry.resource_type
-								? checkKindTitle(entry.resource_type)
+								? checkResourceTitle(
+										entry.resource_type,
+										entry.details,
+									)
 								: "—"}
 						</DataTableCell>
 						<DataTableCell>

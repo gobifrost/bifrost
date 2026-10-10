@@ -31,6 +31,7 @@ from uuid import UUID
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared import access_checks
 from shared.builtin_roles import (
     BASE_ROLE_IDS,
     DECRYPTION_ROLE_ID,
@@ -344,11 +345,15 @@ def _assignable_roles(
     org = org_target(target.user.organization_id)
     if not allows_operation(caller, PUT_OPERATION, org):
         return []
-    if target.is_privileged and not caller.is_platform_admin:
-        return []
+    if target.is_privileged:
+        if not caller.is_platform_admin:
+            return []
+        access_checks.note_power(
+            "privilegedaccess.readwrite", target.user.organization_id, subject=f"user:{target.user.id}"
+        )
     current_base = roles[target.user.base_role_id]
     may_change_base = allows_operation(
-        caller, PUT_OPERATION, org, permission="users.lifecycle.readwrite"
+        caller, PUT_OPERATION, org, permission="userlifecycle.readwrite"
     ) and _may_change(caller, current_base, target.held)
     out: list[AssignableRole] = []
     for role in sorted(roles.values(), key=lambda r: (not r.is_builtin, r.name.lower())):
@@ -566,6 +571,7 @@ async def replace_role_assignments(
     if PLATFORM_ADMIN_ROLE_ID in added | removed:
         if not caller.is_platform_admin:
             raise RoleAssignmentError(403, ADMIN_ROLE_MESSAGE)
+        access_checks.note_power("privilegedaccess.readwrite", user.organization_id, subject=f"user:{user.id}")
         if (
             PLATFORM_ADMIN_ROLE_ID in removed
             and user.organization_id is None
@@ -643,7 +649,7 @@ async def replace_role_assignments(
 
 def _check_base_change(caller: Caller, target: AssignmentTarget, old: RoleInfo, new: RoleInfo) -> None:
     org = org_target(target.user.organization_id)
-    require_operation(caller, PUT_OPERATION, org, permission="users.lifecycle.readwrite")
+    require_operation(caller, PUT_OPERATION, org, permission="userlifecycle.readwrite")
     if new.is_builtin and new.id not in BASE_ROLE_IDS:
         raise RoleAssignmentError(422, f"'{new.name}' can't be a base role")
     check_role_change(caller, old, target.held)

@@ -16,7 +16,7 @@ from uuid import UUID
 
 from sqlalchemy import ColumnElement, false, or_
 
-from shared.access_checks import ALL_ORGS
+from shared.access_checks import ALL_ORGS, NoteTarget
 from shared.access_checks import note as note_access_target
 from src.core.principal import UserPrincipal
 
@@ -62,6 +62,16 @@ def org_filter_clause(
     if filter_org_id is None:
         return org_column.is_(None)
     return or_(org_column == filter_org_id, org_column.is_(None))
+
+
+def filter_target(filter_type: OrgFilterType, filter_org_id: UUID | None) -> NoteTarget:
+    """The organization a resolved list filter reads, as an access check's
+    target: every organization, Global, or the one org."""
+    if filter_type is OrgFilterType.ALL:
+        return ALL_ORGS
+    if filter_type is OrgFilterType.GLOBAL_ONLY:
+        return None
+    return filter_org_id
 
 
 def resolve_org_filter(
