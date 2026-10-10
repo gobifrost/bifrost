@@ -12,6 +12,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import desc, func, literal_column, or_, select, update
+from sqlalchemy.orm import selectinload
 
 from shared import access_checks
 from shared.access_checks import ALL_ORGS
@@ -151,6 +152,8 @@ def _run_to_response(
         caller_user_id=run.caller_user_id,
         caller_email=run.caller_email,
         caller_name=run.caller_name,
+        run_as_user_id=run.run_as_user_id,
+        run_as_user_name=run.run_as_user.name if run.run_as_user else None,
         iterations_used=run.iterations_used,
         tokens_used=run.tokens_used,
         budget_max_iterations=run.budget_max_iterations,
@@ -324,7 +327,12 @@ async def list_agent_runs(
     total = total_result.scalar_one()
 
     # Fetch paginated results
-    query = query.order_by(desc(AgentRun.created_at)).limit(limit + 1).offset(page_offset)
+    query = (
+        query.options(selectinload(AgentRun.run_as_user))
+        .order_by(desc(AgentRun.created_at))
+        .limit(limit + 1)
+        .offset(page_offset)
+    )
     result = await db.execute(query)
     runs = list(result.scalars().all())
     has_more = len(runs) > limit

@@ -12443,6 +12443,11 @@ export interface components {
              * @default 1800
              */
             timeout: number;
+            /**
+             * Run As
+             * @description Run the agent as this user. Requires Impersonate Users in that user's organization.
+             */
+            run_as?: string | null;
         };
         /** AgentRunDetailResponse */
         AgentRunDetailResponse: {
@@ -12483,6 +12488,10 @@ export interface components {
             caller_email?: string | null;
             /** Caller Name */
             caller_name?: string | null;
+            /** Run As User Id */
+            run_as_user_id?: string | null;
+            /** Run As User Name */
+            run_as_user_name?: string | null;
             /** Iterations Used */
             iterations_used: number;
             /** Tokens Used */
@@ -12560,6 +12569,11 @@ export interface components {
             output_schema?: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Run As
+             * @description Run the agent as this user. Requires Impersonate Users in that user's organization.
+             */
+            run_as?: string | null;
         };
         /** AgentRunEnqueueResponse */
         AgentRunEnqueueResponse: {
@@ -12574,6 +12588,8 @@ export interface components {
              * @constant
              */
             status: "queued";
+            /** Run As User Id */
+            run_as_user_id?: string | null;
         };
         /** AgentRunListResponse */
         AgentRunListResponse: {
@@ -12631,6 +12647,10 @@ export interface components {
             caller_email?: string | null;
             /** Caller Name */
             caller_name?: string | null;
+            /** Run As User Id */
+            run_as_user_id?: string | null;
+            /** Run As User Name */
+            run_as_user_name?: string | null;
             /** Iterations Used */
             iterations_used: number;
             /** Tokens Used */

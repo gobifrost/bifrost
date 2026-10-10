@@ -236,7 +236,7 @@ async def get_sdk_agent_run(
 
     query = (
         select(AgentRun)
-        .options(selectinload(AgentRun.steps))
+        .options(selectinload(AgentRun.steps), selectinload(AgentRun.run_as_user))
         .where(AgentRun.id == run_id)
     )
 
@@ -397,6 +397,8 @@ async def get_sdk_agent_run(
         caller_user_id=run.caller_user_id,
         caller_email=run.caller_email,
         caller_name=run.caller_name,
+        run_as_user_id=run.run_as_user_id,
+        run_as_user_name=run.run_as_user.name if run.run_as_user else None,
         iterations_used=run.iterations_used,
         tokens_used=run.tokens_used,
         budget_max_iterations=run.budget_max_iterations,

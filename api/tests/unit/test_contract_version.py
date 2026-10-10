@@ -33,6 +33,11 @@ from bifrost.contract_version import CONTRACT_VERSION as CLI_CONTRACT_VERSION  #
 from shared.contract_version import CONTRACT_VERSION as SERVER_CONTRACT_VERSION  # noqa: E402
 
 # DTOs the CLI sends/receives. Server-canonical classes (the wire truth).
+from src.models.contracts.agent_runs import (  # noqa: E402
+    AgentRunCreateRequest,
+    AgentRunEnqueueRequest,
+    AgentRunEnqueueResponse,
+)
 from src.models.contracts.agents import AgentCreate, AgentUpdate  # noqa: E402
 from src.models.contracts.applications import (  # noqa: E402
     ApplicationCreate,
@@ -112,6 +117,9 @@ _COMMAND_DTOS: list[type] = [
     FormUpdate,
     AgentCreate,
     AgentUpdate,
+    AgentRunCreateRequest,
+    AgentRunEnqueueRequest,
+    AgentRunEnqueueResponse,
     ApplicationCreate,
     ApplicationUpdate,
     PlatformJobAccepted,
@@ -361,7 +369,13 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     #
     # WorkflowExecutionRequest.run_as description now names Impersonate Users
     # (2026-10-09). COSMETIC: description text only. Fingerprint refreshed only.
-    "cb8c9ece543a1f21406eb7115de553cf830e55f6eb134ea1e2379eea3e109e76"
+    #
+    # Agent run launch shapes newly fingerprinted, with optional `run_as`
+    # (2026-10-10): the SDK sends AgentRunEnqueueRequest and parses
+    # AgentRunEnqueueResponse (which echoes `run_as_user_id`), and
+    # AgentRunCreateRequest is the /execute body. ADDITIVE: old clients omit
+    # `run_as` and ignore the echo. Fingerprint refreshed only.
+    "8af658bc3908620526f16736393dff529c5d12e4cf36a5a113303809a178395e"
 )
 
 

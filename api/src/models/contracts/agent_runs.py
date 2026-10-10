@@ -54,6 +54,8 @@ class AgentRunResponse(BaseModel):
     caller_user_id: str | None = None
     caller_email: str | None = None
     caller_name: str | None = None
+    run_as_user_id: UUID | None = None
+    run_as_user_name: str | None = None
     iterations_used: int
     tokens_used: int
     budget_max_iterations: int | None = None
@@ -108,22 +110,28 @@ class AgentRunListResponse(BaseModel):
     next_cursor: str | None = None
 
 
+_RUN_AS_DESCRIPTION = "Run the agent as this user. Requires Impersonate Users in that user's organization."
+
+
 class AgentRunCreateRequest(BaseModel):
     agent_name: str
     input: dict | None = None
     output_schema: dict | None = None
     timeout: int = 1800
+    run_as: UUID | None = Field(default=None, description=_RUN_AS_DESCRIPTION)
 
 
 class AgentRunEnqueueRequest(BaseModel):
     agent_name: str
     input: dict | None = None
     output_schema: dict | None = None
+    run_as: UUID | None = Field(default=None, description=_RUN_AS_DESCRIPTION)
 
 
 class AgentRunEnqueueResponse(BaseModel):
     run_id: UUID
     status: Literal["queued"] = "queued"
+    run_as_user_id: UUID | None = None
 
 
 class AgentRunRerunResponse(BaseModel):
