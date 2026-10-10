@@ -20,7 +20,9 @@ Each decision (kind, operation, target, run user, outcome and subject: the
 table, secret, path, user or object it concerns) is written once per run, or
 once per person acting directly (Redis marks it for a day). A note already
 judged for that run or person that day is not judged again, so a repeated
-launch costs one judgement a day. Without Redis nothing is written. Nothing
+launch costs one judgement a day. An enforced decision (a person acting as
+another user) is the exception: it is judged and written on every call, each
+one a record of an impersonation. Without Redis nothing is written. Nothing
 here raises into the request.
 
 A note on an object the request did not load (``Owned``) is resolved here:
@@ -235,6 +237,10 @@ class _Writer:
         else:
             await self.redis.eval(_SETTLE_SCRIPT, 1, claim.key, claim.token)
 
+    async def _insert(self, **row: Any) -> None:
+        await self.repo.create(**row)
+        await self.db.commit()
+
     async def _write_once(self, parts: list[Any], **row: Any) -> bool:
         """Insert the audit ``row`` unless it was written for ``parts`` today;
         whether the row exists. The day's marker is kept only once the row is
@@ -245,8 +251,7 @@ class _Writer:
         if claim is None:
             return await self.redis.get(key) == _DONE
         try:
-            await self.repo.create(**row)
-            await self.db.commit()
+            await self._insert(**row)
         except Exception:
             await self.settle(claim, done=False)
             raise
@@ -283,9 +288,8 @@ class _Writer:
     async def check(self, note: Note, trace: Trace, run_user: RunUser) -> bool:
         kind, operation, target, subject = self._decision(note)
         today = note.facts.get("today", True)
-        enforced = bool(note.facts.get("enforced", False))
-        return await self._write_once(
-            [kind, operation, target, run_user.user_id, trace.outcome, subject],
+        enforced = _enforced(note)
+        row = dict(
             action="access.check",
             user_id=run_user.user_id,
             organization_id=_target_org(note.target),
@@ -314,14 +318,25 @@ class _Writer:
             execution_id=self.collector.execution_id,
             operation_id=self.operation,
         )
+        if enforced:
+            await self._insert(**row)
+            return True
+        return await self._write_once([kind, operation, target, run_user.user_id, trace.outcome, subject], **row)
+
+
+def _enforced(note: Note) -> bool:
+    """A decision the request also enforces: written on every call, never
+    deduplicated."""
+    return bool(note.facts.get("enforced", False))
 
 
 async def _write(db: AsyncSession, collector: Collector, *, operation: str, route: tuple[str, str] | None) -> None:
     writer = _Writer(db, await get_shared_redis(), collector, operation)
     notes: list[tuple[Note, Claim | None]] = []
     for note in collector.notes:
-        claim = None if "gap" in note.facts else await writer.reserve(note)
-        if "gap" in note.facts or claim is not None:
+        if "gap" in note.facts or _enforced(note):
+            notes.append((note, None))
+        elif (claim := await writer.reserve(note)) is not None:
             notes.append((note, claim))
     if not notes:
         return
@@ -339,14 +354,15 @@ async def _write(db: AsyncSession, collector: Collector, *, operation: str, rout
     powers = None if collector.direct else await load_powers(db, collector.workflow_id)
     entry = None if route is None else _entries_by_route().get(route)
     for noted, claim in notes:
-        if claim is None:
+        if "gap" in noted.facts:
             await writer.gap(noted.kind, noted.facts["gap"], run_user.user_id)
             continue
         judged = False
         try:
             judged = await _judge_and_write(db, writer, run_user, powers, noted, entry, direct=collector.direct)
         finally:
-            await writer.settle(claim, done=judged)
+            if claim is not None:
+                await writer.settle(claim, done=judged)
 
 
 async def _judge_and_write(

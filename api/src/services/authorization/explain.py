@@ -371,7 +371,9 @@ def _named(step: Step, permission: str) -> Step:
     )
 
 
-def _run_as_user_step(target: RunAsTarget) -> Step:
+def run_as_user_step(target: RunAsTarget) -> Step:
+    """Whether ``target`` can be acted as at all: a person who is active, not
+    the system account and not a managed identity."""
     if not target.is_active:
         status, reason = "stopped", "inactive"
     elif target.is_system:
@@ -403,7 +405,7 @@ def check_run_as(run_user: RunUser, powers: Powers | None, target: RunAsTarget) 
     steps = [
         _run_user_step(run_user),
         _NO_WORKFLOW if powers is None else _powers_step(powers),
-        _run_as_user_step(target),
+        run_as_user_step(target),
         _target_step(run_user, org),
         _held_step(run_user, powers, org, _IMPERSONATE_PERMISSION),
     ]

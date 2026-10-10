@@ -388,6 +388,23 @@ async def test_a_runs_run_as_is_written_report_only(db_session: AsyncSession) ->
     assert (row.details["enforced"], row.details["trace"]["enforced"]) == (False, False)
 
 
+async def test_every_enforced_run_as_is_written_and_a_report_only_one_once(db_session: AsyncSession) -> None:
+    provider, contoso = await _org(db_session), await _org(db_session)
+    person = await _impersonator(db_session, provider, contoso)
+    in_contoso = await _person(db_session, contoso)
+    execution_id = uuid4()
+
+    for _ in range(2):
+        await flush(db_session, _person_collector(person.id, _run_as(in_contoso)), **ROUTE)
+        report_only = Note("run_as", contoso.id, {"run_as_user_id": str(in_contoso.id)})
+        collector = Collector(execution_id=execution_id, run_user_id=person.id, workflow_id=None, notes=[report_only])
+        await flush(db_session, collector, **ROUTE)
+
+    rows = await _person_rows(db_session, person.id)
+    enforced = sorted(row.details["enforced"] for row in rows if row.details is not None)
+    assert enforced == [False, True, True]
+
+
 async def test_nothing_noted_opens_no_session() -> None:
     collector = _person_collector(uuid4())
 

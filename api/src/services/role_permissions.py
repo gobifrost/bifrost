@@ -102,13 +102,14 @@ IDENTITY_PERMISSION_DOMAINS = frozenset(
 
 
 def identity_permissions() -> tuple[str, ...]:
-    """The identity permissions an editor offers: every permission the
-    identity routes are decided by (their access-list entries and the
-    narrower per-field permissions), sorted."""
-    from src.services.access_list import ACCESS_LIST
+    """The identity permissions an editor offers, sorted: every permission
+    the permission catalog lists for an identity domain (what the routes are
+    decided by, and the privileged ones no route names, such as Impersonate
+    Users) and the narrower per-field permissions."""
     from src.services.authorization.enforce import NARROWER_PERMISSIONS
+    from src.services.permission_catalog import build_catalog
 
-    found = {entry.permission for entry in ACCESS_LIST if entry.permission}
+    found = {f"{entry.domain}.{action}" for entry in build_catalog() for action in entry.actions}
     found |= {p for permissions in NARROWER_PERMISSIONS.values() for p in permissions}
     return tuple(
         sorted(p for p in found if parse_permission(p).domain in IDENTITY_PERMISSION_DOMAINS)
