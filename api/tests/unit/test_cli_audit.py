@@ -340,10 +340,10 @@ class TestAuditExplain:
             "failure",
             [
                 ("run_user", "Run user", "passed", "person"),
-                ("workflow", "Workflow", "passed", "none"),
+                ("powers", "Workflow powers", "not_applicable", "no_workflow"),
                 ("run_as_user", "Run As User", "passed", "person"),
                 ("target", "Target in reach", "passed", "home"),
-                ("permission", "Permission", "passed", "held"),
+                ("permission", "Permission", "passed", "role:contoso-impersonation:users.impersonate@organization"),
                 ("privileged_target", "Privileged User", "stopped", "denied:missing:privilegedaccess.readwrite"),
             ],
         )
@@ -362,7 +362,7 @@ class TestAuditExplain:
         assert rows[3:] == [
             ["Run As User", "passed (person)"],
             ["Target in reach", "passed (home)"],
-            ["Permission", "passed (held)"],
+            ["Permission", "passed (role:contoso-impersonation:users.impersonate@organization)"],
             ["Privileged User", "stopped (denied:missing:privilegedaccess.readwrite)"],
         ]
 

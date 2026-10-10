@@ -37,7 +37,7 @@ execution_id = await workflows.execute("workflows/onboard.py::onboard_user", {"t
 result = await agents.run("ticket-triage-agent", input={"ticket_id": ticket_id}, run_as=user_id)
 ```
 
-- The caller needs the Impersonate Users permission in that user's organization. Without it the call returns 403.
+- The caller needs the Impersonate Users permission in that user's organization. Without it the call returns 403. Running as a privileged user, such as a Platform Admin, also needs Read and Write Privileged Access.
 - Tools and SDK calls act as that user. The run is still the caller's: it keeps the caller's reach and records the caller as the one who started it.
 - Naming yourself is a plain launch, not impersonation, and needs no permission.
 - Inactive users, the system account and managed identities can't be run as (400). To run as a managed identity, assign it to the workflow or agent instead.
