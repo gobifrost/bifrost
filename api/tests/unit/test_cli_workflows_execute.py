@@ -6,6 +6,7 @@ end-to-end (POST → WS log tail → final GET) without a live platform.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -14,7 +15,7 @@ import pytest
 from click.testing import CliRunner
 
 from bifrost import client as bifrost_client_module
-from bifrost.commands.workflows import workflows_group
+from bifrost.commands.workflows import _stream_execution_logs, workflows_group
 
 
 _WORKFLOW_UUID = "11111111-2222-3333-4444-555555555555"
@@ -41,6 +42,8 @@ class _FakeClient:
 
     def _build(self, method: str, path: str) -> httpx.Response:
         status, body = self._next(method, path)
+        if callable(body):
+            body = body()
         request = httpx.Request(method, f"{self.api_url}{path}")
         if isinstance(body, (dict, list)):
             return httpx.Response(status, json=body, request=request)
@@ -80,13 +83,27 @@ class _FakeWebSocket:
 
 def _ws_connect_factory(messages: list[dict[str, Any]]):
     captured: dict[str, Any] = {}
+    websocket = _FakeWebSocket(messages)
 
     def _connect(uri: str, *, additional_headers=None, **_kwargs):
         captured["uri"] = uri
         captured["headers"] = dict(additional_headers or {})
-        return _FakeWebSocket(messages)
+        captured["websocket"] = websocket
+        return websocket
 
     return _connect, captured
+
+
+def _queue_terminal_after_snapshot_begins(captured: dict[str, Any]) -> dict[str, str]:
+    """Publish after the connected ack while the CLI obtains its snapshot."""
+    captured["websocket"]._messages.append(
+        {
+            "type": "execution_update",
+            "executionId": "queued-terminal",
+            "status": "Success",
+        }
+    )
+    return {"execution_id": "queued-terminal", "status": "Pending"}
 
 
 @pytest.fixture
@@ -138,7 +155,14 @@ class TestWorkflowsExecute:
             200,
             {"execution_id": "exec-1", "status": "Pending"},
         )
-        # Final GET returns the completed record.
+        # The post-connection snapshot sees a live execution. The final GET
+        # after the terminal websocket event returns the completed record.
+        fake_client.queue(
+            "GET",
+            "/api/executions/exec-1",
+            200,
+            {"execution_id": "exec-1", "status": "Pending"},
+        )
         fake_client.queue(
             "GET",
             "/api/executions/exec-1",
@@ -202,6 +226,11 @@ class TestWorkflowsExecute:
         # Logs surfaced on stdout (between execution_id stderr and JSON body).
         assert "[INFO] Starting work" in result.output
         assert "[INFO] Done" in result.output
+        assert [call[:2] for call in fake_client.calls] == [
+            ("POST", "/api/workflows/execute"),
+            ("GET", "/api/executions/exec-1"),
+            ("GET", "/api/executions/exec-1"),
+        ]
 
     def test_failure_status_returns_exit_1(
         self,
@@ -219,6 +248,12 @@ class TestWorkflowsExecute:
             "GET",
             "/api/executions/exec-2",
             200,
+            {"execution_id": "exec-2", "status": "Pending"},
+        )
+        fake_client.queue(
+            "GET",
+            "/api/executions/exec-2",
+            200,
             {
                 "execution_id": "exec-2",
                 "status": "Failed",
@@ -226,6 +261,7 @@ class TestWorkflowsExecute:
             },
         )
         ws_messages = [
+            {"type": "connected", "executionId": "exec-2"},
             {
                 "type": "execution_update",
                 "executionId": "exec-2",
@@ -238,6 +274,88 @@ class TestWorkflowsExecute:
 
         result = _invoke(["--json", "execute", "my-workflow"])
         assert result.exit_code == 1, result.output
+
+    @pytest.mark.parametrize(
+        ("status", "expected_exit_code"),
+        [
+            ("Success", 0),
+            ("Failed", 1),
+            ("CompletedWithErrors", 1),
+            ("Timeout", 1),
+            ("Cancelled", 1),
+        ],
+    )
+    def test_late_subscriber_exits_from_terminal_snapshot(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_client: _FakeClient,
+        stub_resolver: dict[str, str],
+        status: str,
+        expected_exit_code: int,
+    ) -> None:
+        """A completed run cannot strand a late CLI subscriber."""
+        fake_client.queue(
+            "POST",
+            "/api/workflows/execute",
+            200,
+            {"execution_id": "late-exec", "status": "Pending"},
+        )
+        fake_client.queue(
+            "GET",
+            "/api/executions/late-exec",
+            200,
+            {"execution_id": "late-exec", "status": status},
+        )
+        fake_client.queue(
+            "GET",
+            "/api/executions/late-exec",
+            200,
+            {"execution_id": "late-exec", "status": status, "result": {"done": True}},
+        )
+        connect, _ = _ws_connect_factory(
+            [{"type": "connected", "executionId": "late-exec"}]
+        )
+        import websockets.asyncio.client as ws_client_module
+        monkeypatch.setattr(ws_client_module, "connect", connect)
+
+        result = _invoke(["--json", "execute", "my-workflow"])
+        assert result.exit_code == expected_exit_code, result.output
+        assert json.loads(result.stdout) == {
+            "execution_id": "late-exec",
+            "status": status,
+            "result": {"done": True},
+        }
+        assert [call[:2] for call in fake_client.calls] == [
+            ("POST", "/api/workflows/execute"),
+            ("GET", "/api/executions/late-exec"),
+            ("GET", "/api/executions/late-exec"),
+        ]
+
+    def test_terminal_event_buffered_during_nonterminal_snapshot_is_streamed(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_client: _FakeClient,
+    ) -> None:
+        """The connected ack registers the channel before the snapshot GET."""
+        fake_client.queue(
+            "GET",
+            "/api/executions/queued-terminal",
+            200,
+            lambda: _queue_terminal_after_snapshot_begins(captured),
+        )
+        connect, captured = _ws_connect_factory(
+            [{"type": "connected", "executionId": "queued-terminal"}]
+        )
+        import websockets.asyncio.client as ws_client_module
+        monkeypatch.setattr(ws_client_module, "connect", connect)
+
+        assert (
+            asyncio.run(_stream_execution_logs(fake_client, "queued-terminal"))
+            == "Success"
+        )
+        assert [call[:2] for call in fake_client.calls] == [
+            ("GET", "/api/executions/queued-terminal")
+        ]
 
     def test_terminal_status_in_initial_post_skips_websocket(
         self,
