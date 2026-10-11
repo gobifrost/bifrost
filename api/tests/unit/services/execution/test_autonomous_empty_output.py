@@ -12,7 +12,7 @@ import pytest
 
 from tests.unit.services.agent_runtime_fakes import LegacyMockModel
 from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
-from src.services.llm.base import LLMConfig, LLMResponse
+from src.services.llm.base import LLMConfig, LLMResponse, ToolCallRequest, ToolDefinition
 
 
 @pytest.fixture
@@ -72,6 +72,22 @@ def _incident_blank() -> LLMResponse:
     )
 
 
+def _successful_tool_call() -> LLMResponse:
+    """One completed operational action before the blank final responses."""
+    return LLMResponse(
+        tool_calls=[
+            ToolCallRequest(
+                id="completed-ticket-update",
+                name="update_ticket",
+                arguments={"ticket_id": 42, "summary": "Owner notified"},
+            )
+        ],
+        finish_reason="tool_call",
+        input_tokens=100,
+        output_tokens=50,
+    )
+
+
 @pytest.mark.asyncio
 @patch("src.services.agent_runtime.model_factory.create_agent_model")
 @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
@@ -111,6 +127,77 @@ async def test_blank_responses_fallback_once_then_hand_off_with_usage(
     assert len(warnings) == 1
     assert warnings[0]["content"]["reason"] == "empty_model_output"
     assert warnings[0]["content"]["fallbacks_used"] == 1
+
+
+@pytest.mark.asyncio
+@patch("src.services.agent_runtime.model_factory.create_agent_model")
+@patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
+async def test_blank_final_recovery_preserves_completed_tool_receipt(
+    mock_resolve_tools, mock_get_llm, mock_session, mock_agent
+):
+    """A model-only correction never replays an already-completed tool call."""
+    mock_resolve_tools.return_value = (
+        [
+            ToolDefinition(
+                name="update_ticket",
+                description="Record the resolved ticket owner.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "ticket_id": {"type": "integer"},
+                        "summary": {"type": "string"},
+                    },
+                    "required": ["ticket_id", "summary"],
+                },
+            )
+        ],
+        {},
+    )
+    mock_llm = AsyncMock()
+    mock_llm.complete = AsyncMock(
+        side_effect=[_successful_tool_call(), _blank(), _blank()]
+    )
+    mock_get_llm.return_value = LegacyMockModel(mock_llm)
+    operational_executor = AsyncMock(return_value="Ticket 42 updated successfully")
+
+    with patch(
+        "src.services.execution.autonomous_agent_executor.get_llm_configs",
+        new_callable=AsyncMock,
+        return_value=[
+            LLMConfig(provider="openai", model="test-model", api_key="test-key")
+        ],
+    ), patch.object(
+        AutonomousAgentExecutor, "_execute_tool", operational_executor
+    ):
+        executor = AutonomousAgentExecutor(mock_session)
+        result = await executor.run(agent=mock_agent, run_id=str(uuid4()), run_user_id=None)
+
+    # The final-output correction requests the model again, not the completed
+    # operational action. The second blank completes the existing handoff.
+    assert mock_llm.complete.call_count == 3
+    operational_executor.assert_awaited_once()
+    dispatched_call = operational_executor.await_args.args[0]
+    assert dispatched_call.id == "completed-ticket-update"
+    assert dispatched_call.arguments == {
+        "ticket_id": 42,
+        "summary": "Owner notified",
+    }
+    assert result["status"] == "completed"
+    assert result["output"] is not None
+    assert "after one bounded retry" in str(result["output"])
+    assert "Completed tool results" in str(result["output"])
+    assert result["iterations_used"] == 3
+    assert result["tokens_used"] == 3 * (100 + 50)
+
+    tool_results = [
+        step for step in executor._pending_steps if step["type"] == "tool_result"
+    ]
+    assert len(tool_results) == 1
+    assert tool_results[0]["content"] == {
+        "tool_name": "update_ticket",
+        "is_error": False,
+        "result": "Ticket 42 updated successfully",
+    }
 
 
 @pytest.mark.asyncio
