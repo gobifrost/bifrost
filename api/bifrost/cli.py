@@ -27,6 +27,7 @@ import time
 import webbrowser
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -57,6 +58,25 @@ logger = logging.getLogger(__name__)
 # Solution capture/export so both surfaces skip the same files. The matcher is
 # built from this list at _build_file_filter.
 _DEFAULT_IGNORE_PATTERNS = _CANONICAL_IGNORE_PATTERNS
+
+
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    """Return a non-negative Retry-After delay in seconds, when supplied."""
+    retry_after = response.headers.get("Retry-After")
+    if retry_after is None:
+        return None
+
+    try:
+        return max(0.0, float(retry_after))
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(retry_after)
+        except (TypeError, ValueError):
+            return None
+
+        if retry_at.tzinfo is None:
+            return None
+        return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
 
 
 def _ensure_utf8_stdio() -> None:
@@ -348,6 +368,7 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
             user_code = data["user_code"]
             verification_url = data["verification_url"]
             interval = data.get("interval", 5)
+            deadline = time.monotonic() + data["expires_in"]
 
             # Step 2: Display instructions
             full_url = f"{api_url}{verification_url}"
@@ -363,20 +384,25 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
 
             # Step 4: Poll for authorization
             print("Waiting for authorization", end="", flush=True)
-            max_attempts = 60  # 5 minutes max (60 * 5 seconds)
-            attempts = 0
-
-            while attempts < max_attempts:
-                await asyncio.sleep(interval)
+            while time.monotonic() < deadline:
+                await asyncio.sleep(min(interval, deadline - time.monotonic()))
+                if time.monotonic() >= deadline:
+                    break
                 print(".", end="", flush=True)
-                attempts += 1
 
                 poll_response = await client.post(
                     "/auth/device/token",
                     json={"device_code": device_code}
                 )
 
-                if poll_response.status_code != 200:
+                if poll_response.status_code == 429:
+                    interval += 5
+                    retry_after = _retry_after_seconds(poll_response)
+                    if retry_after is not None:
+                        interval = max(interval, retry_after)
+                    continue
+
+                if poll_response.status_code not in {200, 400}:
                     print(f"\nError polling for token: {poll_response.status_code}", file=sys.stderr)
                     return False
 
@@ -387,6 +413,9 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
                     error = poll_data["error"]
                     if error == "authorization_pending":
                         continue  # Keep polling
+                    elif error == "slow_down":
+                        interval += 5
+                        continue
                     elif error == "expired_token":
                         print("\nDevice code expired. Please try again.", file=sys.stderr)
                         return False
@@ -426,7 +455,7 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
 
                     return True
 
-            print("\nTimeout waiting for authorization.", file=sys.stderr)
+            print("\nDevice code expired. Please try again.", file=sys.stderr)
             return False
 
     except Exception as e:

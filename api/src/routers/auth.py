@@ -54,7 +54,7 @@ from src.config import get_settings
 from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
-from src.core.rate_limit import auth_limiter, mfa_limiter, get_client_ip
+from src.core.rate_limit import auth_limiter, device_token_limiter, mfa_limiter, get_client_ip
 from src.services.audit import emit_audit
 from src.services.audit_context import ActorContext, current_actor
 from src.core.security import (
@@ -1499,7 +1499,7 @@ async def exchange_device_token(
 
     # Rate limiting (more lenient for polling)
     client_ip = get_client_ip(request)
-    await auth_limiter.check("device_token", client_ip)
+    await device_token_limiter.check("device_token", client_ip)
 
     r = await get_shared_redis()
 
