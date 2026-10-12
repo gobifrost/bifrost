@@ -7,8 +7,10 @@ Tests OAuth configuration and authorization endpoints.
 
 import pytest
 import pytest_asyncio
-from uuid import uuid4
-from src.models.orm import Config, IntegrationMapping, OAuthProvider
+from uuid import UUID, uuid4
+from sqlalchemy import select
+
+from src.models.orm import Config, IntegrationMapping, OAuthProvider, OAuthToken
 
 
 def _sdk_get(e2e_client, headers, *, name, org_id=None):
@@ -169,6 +171,63 @@ class TestIntegrationsCRUD:
         integrations = response.json().get("items", response.json())
         ids = [i["id"] for i in integrations]
         assert integration["id"] not in ids
+
+    async def test_delete_integration_removes_oauth_credentials(
+        self, e2e_client, platform_admin, org1, db_session
+    ):
+        """Deleting an integration removes its OAuth provider and tokens so
+        the refresh scheduler stops refreshing them."""
+        create = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={"name": f"e2e_delete_oauth_{uuid4().hex[:8]}"},
+        )
+        assert create.status_code == 201, create.text
+        integration_id = UUID(create.json()["id"])
+        org_id = UUID(str(org1["id"]))
+
+        provider = OAuthProvider(
+            provider_name=f"e2e_delete_oauth_{uuid4().hex[:6]}",
+            oauth_flow_type="authorization_code",
+            client_id="client",
+            encrypted_client_secret=b"secret",
+            token_url="https://login.example.com/token",
+            integration_id=integration_id,
+        )
+        db_session.add(provider)
+        await db_session.flush()
+        token = OAuthToken(
+            provider_id=provider.id,
+            organization_id=org_id,
+            encrypted_access_token=b"access",
+            encrypted_refresh_token=b"refresh",
+        )
+        db_session.add(token)
+        await db_session.flush()
+        mapping = IntegrationMapping(
+            integration_id=integration_id,
+            organization_id=org_id,
+            entity_id="tenant",
+            oauth_token_id=token.id,
+        )
+        db_session.add(mapping)
+        await db_session.commit()
+        provider_id, token_id, mapping_id = provider.id, token.id, mapping.id
+
+        response = e2e_client.delete(
+            f"/api/integrations/{integration_id}", headers=platform_admin.headers
+        )
+        assert response.status_code == 204, response.text
+
+        db_session.expunge_all()
+        assert await db_session.get(OAuthProvider, provider_id) is None
+        assert await db_session.get(OAuthToken, token_id) is None
+        remaining_mapping = (
+            await db_session.execute(
+                select(IntegrationMapping).where(IntegrationMapping.id == mapping_id)
+            )
+        ).scalar_one()
+        assert remaining_mapping.oauth_token_id is None
 
     async def test_recreate_soft_deleted_name_has_fresh_configuration_and_mappings(
         self, e2e_client, platform_admin, org1, db_session
