@@ -16,7 +16,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from typing import Any
 
-from sqlalchemy import and_, delete, func, select, union
+from sqlalchemy import and_, delete, func, select, union, update
 
 from src.core.auth import Context, CurrentSuperuser
 from src.core.log_safety import log_safe
@@ -384,13 +384,35 @@ class IntegrationsRepository:
         return await self.get_integration_by_id(integration_id)
 
     async def delete_integration(self, integration_id: UUID) -> bool:
-        """Soft delete an integration."""
+        """Soft delete an integration and remove its OAuth credentials.
+
+        The integration row is kept, but its OAuth provider and tokens are
+        deleted: a soft-deleted integration can't be managed from the UI,
+        so leaving them would keep the refresh scheduler refreshing (and
+        alerting on) a connection nobody can disconnect.
+        """
         integration = await self.get_integration_by_id(integration_id)
         if not integration:
             return False
 
         integration.is_deleted = True
         integration.updated_at = datetime.now(timezone.utc)
+
+        provider_ids = select(OAuthProvider.id).where(
+            OAuthProvider.integration_id == integration_id
+        )
+        token_ids = select(OAuthToken.id).where(OAuthToken.provider_id.in_(provider_ids))
+        await self.db.execute(
+            update(IntegrationMapping)
+            .where(IntegrationMapping.oauth_token_id.in_(token_ids))
+            .values(oauth_token_id=None)
+        )
+        await self.db.execute(
+            delete(OAuthToken).where(OAuthToken.provider_id.in_(provider_ids))
+        )
+        await self.db.execute(
+            delete(OAuthProvider).where(OAuthProvider.integration_id == integration_id)
+        )
         await self.db.flush()
         return True
 
@@ -595,7 +617,6 @@ class IntegrationsRepository:
 
                 if existing:
                     # Update existing record
-                    from sqlalchemy import update
                     await self.db.execute(
                         update(ConfigModel)
                         .where(ConfigModel.id == existing)
