@@ -127,8 +127,7 @@ order `sdk_delete_file` uses:
 2. `require_declared_solution_file_location`.
 3. Per item, before any existence probe: path validation (`source ==
    destination`, or a path `resolve_s3_key` rejects → a 400 result), then
-   file policy with denial audit via `require_file_policy` /
-   `deny_file_policy`:
+   file policy with denial audit:
    - `read` on the source (without it, delete + write would let a caller move
      an unreadable file into a path they can read),
    - `delete` on the source,
