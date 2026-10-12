@@ -200,3 +200,29 @@ class TestWorkflowRunIdentity:
             f"(run_identity_id), which can't run workflows of organization {fabrikam}; "
             "change its run_identity_id first"
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("integration_owned", [True, False])
+async def test_mcp_manifest_requires_independent_oauth_provider(integration_owned):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from uuid import uuid4
+
+    from bifrost.manifest import ManifestMCPServer
+    from src.services.manifest_import import ManifestResolver
+
+    db = AsyncMock()
+    db.get.return_value = SimpleNamespace(integration_id=uuid4() if integration_owned else None)
+    server = ManifestMCPServer(
+        id=str(uuid4()), name="MCP", server_url="https://example.com/mcp",
+        oauth_provider_id=str(uuid4()),
+    )
+    resolver = ManifestResolver(db)
+    if integration_owned:
+        with pytest.raises(ValueError, match="independent MCP OAuth provider"):
+            await resolver._resolve_mcp_server("MCP", server)
+        db.execute.assert_not_awaited()
+    else:
+        await resolver._resolve_mcp_server("MCP", server)
+        db.execute.assert_awaited_once()

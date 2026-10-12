@@ -21733,12 +21733,7 @@ export interface components {
              * @description MCP server URL (Streamable HTTP endpoint)
              */
             server_url: string;
-            /**
-             * Oauth Provider Id
-             * @description OAuth provider configuration FK; absent for servers without auth
-             */
-            oauth_provider_id?: string | null;
-            /** @description Inline OAuth provider creation. When set, the router creates an OAuthProvider row and links it via ``oauth_provider_id``. Mutually exclusive with ``oauth_provider_id``. */
+            /** @description Inline OAuth provider creation. When set, the router creates an OAuthProvider row and links it via ``oauth_provider_id``. */
             oauth_provider?: components["schemas"]["MCPServerOAuthProviderCreate"] | null;
             /**
              * Redirect Url
@@ -21898,8 +21893,6 @@ export interface components {
             name?: string | null;
             /** Server Url */
             server_url?: string | null;
-            /** Oauth Provider Id */
-            oauth_provider_id?: string | null;
             /** Redirect Url */
             redirect_url?: string | null;
             /** Discovery Metadata */

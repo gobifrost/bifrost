@@ -260,16 +260,7 @@ async def create_mcp_server(
     each org registers its own OAuth app with the vendor — the provider's
     ``encrypted_client_secret`` is a non-authoritative placeholder.
     """
-    if request.oauth_provider_id is not None and request.oauth_provider is not None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                "Provide either ``oauth_provider_id`` (link existing) or "
-                "``oauth_provider`` (create inline), not both."
-            ),
-        )
-
-    oauth_provider_id: UUID | None = request.oauth_provider_id
+    oauth_provider_id: UUID | None = None
 
     if request.oauth_provider is not None:
         op = request.oauth_provider

@@ -3061,6 +3061,15 @@ class ManifestResolver:
         oauth_provider_id = UUID(vals["oauth_provider_id"]) if vals["oauth_provider_id"] else None
         organization_id = UUID(vals["organization_id"]) if vals["organization_id"] else None
 
+        if oauth_provider_id is not None:
+            from src.models.orm.oauth import OAuthProvider
+
+            provider = await self.db.get(OAuthProvider, oauth_provider_id)
+            if provider is None or provider.integration_id is not None:
+                raise ValueError(
+                    f"MCP server {server_name!r} must reference an independent MCP OAuth provider"
+                )
+
         stmt = insert(MCPServer).values(
             id=server_id,
             name=server_name,

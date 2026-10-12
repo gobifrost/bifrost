@@ -344,27 +344,6 @@ class TestMCPServerCreateWithOAuthProvider:
         )
         assert resp.status_code == 422, resp.text
 
-    def test_server_create_rejects_both_provider_id_and_inline(
-        self, e2e_client, platform_admin
-    ):
-        """Cannot pass both ``oauth_provider_id`` and ``oauth_provider``."""
-        name = f"e2e_mcp_srv_{uuid4().hex[:8]}"
-        resp = e2e_client.post(
-            "/api/mcp-servers",
-            headers=platform_admin.headers,
-            json={
-                "name": name,
-                "server_url": "https://example.com/mcp",
-                "oauth_provider_id": str(uuid4()),
-                "oauth_provider": {
-                    "oauth_flow_type": "client_credentials",
-                    "token_url": "https://example.com/oauth/token",
-                },
-            },
-        )
-        assert resp.status_code == 422, resp.text
-
-
 @pytest.mark.e2e
 class TestMCPConnectClientCredentials:
     """Negative-path checks for the client_credentials connect flow.
