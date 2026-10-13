@@ -18,6 +18,7 @@
 **Where and how to work**
 - Work only in the worktree `/home/michael/Github/bifrost/.claude/worktrees/files-move` (branch `feat/files-move`). Never edit the primary checkout.
 - Run Python tests only through `./test.sh` from the worktree root, e.g. `./test.sh tests/unit/... -v`. Host pytest fails for anything touching DB, queue or storage. Paths given to `./test.sh` are relative to `api/`.
+- Tests touch only the isolated `./test.sh` stack: its own Postgres (`bifrost_test`), Redis and SeaweedFS (`bifrost-test` bucket), with the API at `http://api:8000` on the compose network. Never point `TEST_API_URL`, `BIFROST_DATABASE_URL*` or `BIFROST_S3_*` at a real environment. Never run the new SDK, CLI or routes against a real Bifrost instance or real bucket during implementation; unit tests for the SDK and CLI use mocked HTTP clients only.
 - Every commit message ends with:
   ```
   Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
@@ -3172,6 +3173,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -3182,6 +3184,7 @@ from pydantic import ValidationError
 
 from src.jobs.platform import file_move
 from src.jobs.platform.base import PlatformJobCancelled, PlatformJobFailure
+from src.services import platform_jobs
 from src.jobs.platform.file_move import (
     FILE_MOVE_DEFINITION,
     FileMovePayload,
@@ -3233,6 +3236,54 @@ def test_payload_requires_every_index_exactly_once() -> None:
             requested_by_user_id=uuid4(), total=2,
             items=[FileMoveWorkItem(index=0, source="a", destination="b")],
         )
+
+
+async def _enqueue_move(db_session):
+    job, reused = await platform_jobs.enqueue_platform_job(
+        db_session,
+        FILE_MOVE_DEFINITION,
+        FileMovePayload(
+            location="docs", scope=str(uuid4()), on_conflict="error",
+            requested_by_user_id=uuid4(), total=1,
+            items=[FileMoveWorkItem(index=0, source="a.pdf", destination="b.pdf")],
+        ),
+        dedupe_key=None,
+        organization_id=None,
+        requested_by_user_id=uuid4(),
+        requested_by_email="dev@example.com",
+        requested_by_name="Dev",
+        resource_type=None,
+        resource_id=None,
+        title="Moving 1 file",
+        action_url=None,
+    )
+    assert reused is False
+    return job
+
+
+async def test_cancel_succeeds_while_queued(db_session) -> None:
+    job = await _enqueue_move(db_session)
+    assert job.status == "queued"
+
+    job, accepted = await platform_jobs.request_platform_job_cancel(db_session, job)
+
+    assert accepted is True
+    assert job.status == "cancelled"
+
+
+async def test_cancel_is_refused_while_running(db_session) -> None:
+    job = await _enqueue_move(db_session)
+    job.status = "running"
+    job.lease_token = uuid4()
+    job.lease_owner = "scheduler-a"
+    job.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=1)
+    await db_session.commit()
+
+    job, accepted = await platform_jobs.request_platform_job_cancel(db_session, job)
+
+    assert accepted is False
+    assert job.status == "running"
+    assert job.cancel_requested_at is None
 
 
 async def test_results_in_request_order_with_rejections_and_checkpoints(store, solution_target, context) -> None:
