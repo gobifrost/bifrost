@@ -1,0 +1,13 @@
+{
+  "key": "pr:983",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Solution deployments spend less time refreshing source caches.",
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/983"
+    ]
+  }
+}
