@@ -224,3 +224,21 @@ logging in addition to the deploy adapter and app timing contracts:
 Final reporter run: 4 passed (6.67 seconds). Across the combined unit run and
 this additional reporter case, 171 distinct focused cases were exercised.
 Integration coverage comprised 19 distinct passing cases across the two batches.
+
+Draft review: [PR #984](https://github.com/gobifrost/bifrost/pull/984), targeting
+PR #983's branch. Product Updates classification is `other` / `fix` with draft
+review status; no release prose is marked approved.
+
+The operational script smoke check passed with aggregate-only output. The local
+API test image does not mount `/app/scripts` (the production image packages it),
+so the scratch smoke check copied the script into that container before running:
+
+```bash
+docker cp api/scripts/inspect_agent_run_step_streams.py bifrost-test-3393dc7d-api-1:/tmp/inspect-agent-step-streams.py
+docker exec bifrost-test-3393dc7d-api-1 python /tmp/inspect-agent-step-streams.py --cursor 0 --limit 1
+python3 scripts/product_updates.py validate --content-dir product-updates --inventory product-updates/inventory.json --dispositions product-updates/dispositions.json --target $(python3 -c 'import json; print(json.load(open("product-updates/inventory.json"))["target_ref"])')
+```
+
+Product Updates structural validation passed after adding the PR-numbered draft
+disposition. No known test/check failures remain. No production cleanup or rollout
+was executed.

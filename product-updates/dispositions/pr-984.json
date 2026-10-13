@@ -1,0 +1,13 @@
+{
+  "key": "pr:984",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Solution deployments refresh source caches faster and report publication progress.",
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/984"
+    ]
+  }
+}
