@@ -3,9 +3,10 @@
 ## Evidence and scope
 
 This follows issue #982 and PR #983. That immediate repair reduces repeated
-resolver scans to one traversal with COUNT 1000. This branch is based on its head;
-land #983 first, then rebase this follow-up onto main and rerun focused checks.
-The draft PR targets the predecessor branch so its diff contains only follow-up work.
+resolver scans to one traversal with COUNT 1000. PR #983 merged on 2026-10-13 as
+`e20f3c235095017bd8fb7f8b28ffd171a54f8804`. This follow-up was rebased onto
+that current main without conflicts; the predecessor added only its disposition
+approval after this branch was created.
 The follow-up changes the invalidation algorithm; it retains the predecessor's
 exact-name, ancestor, cross-scope, and unrelated-key regression contracts while
 updating their command expectations from one scan to zero scans.
@@ -106,7 +107,7 @@ retention deletion. Run focused import-boundary, SDK resolver, publication,
 retention, and executor tests plus API lint/type checks. Retain one existing
 Solution deploy happy path rather than introducing additional full deploy jobs.
 
-Land #983 before this draft. Roll out API, worker, and scheduler together after
+With #983 landed, roll out API, worker, and scheduler together after
 draining in-flight executions/publications: older processes use unversioned
 metadata and do not observe v2 generations. Do not leave old and new writers or
 readers serving concurrently. Existing unversioned metadata expires within its
@@ -225,9 +226,9 @@ Final reporter run: 4 passed (6.67 seconds). Across the combined unit run and
 this additional reporter case, 171 distinct focused cases were exercised.
 Integration coverage comprised 19 distinct passing cases across the two batches.
 
-Draft review: [PR #984](https://github.com/gobifrost/bifrost/pull/984), targeting
-PR #983's branch. Product Updates classification is `other` / `fix` with draft
-review status; no release prose is marked approved.
+Review: [PR #984](https://github.com/gobifrost/bifrost/pull/984). Jack authorized
+queueing after #983 merges. Product Updates classification is `other` / `fix`
+with approval evidence recording that instruction.
 
 The operational script smoke check passed with aggregate-only output. The local
 API test image does not mount `/app/scripts` (the production image packages it),
@@ -239,6 +240,22 @@ docker exec bifrost-test-3393dc7d-api-1 python /tmp/inspect-agent-step-streams.p
 python3 scripts/product_updates.py validate --content-dir product-updates --inventory product-updates/inventory.json --dispositions product-updates/dispositions.json --target $(python3 -c 'import json; print(json.load(open("product-updates/inventory.json"))["target_ref"])')
 ```
 
-Product Updates structural validation passed after adding the PR-numbered draft
+Product Updates structural validation passed after adding the PR-numbered
 disposition. No known test/check failures remain. No production cleanup or rollout
 was executed.
+
+## Post-dependency verification
+
+After #983 merged, rebased onto current `origin/main` without conflicts. The
+combined focused unit command listed above passed all 171 cases (13.76 seconds),
+and the combined five-file integration command passed all 19 cases (20.25 seconds):
+
+```bash
+./test.sh tests/e2e/platform/test_module_resolution_generations.py tests/e2e/platform/test_virtual_import_integration.py tests/e2e/platform/test_agent_run_step_stream_lifecycle.py tests/e2e/platform/test_run_retention_deleter.py tests/e2e/platform/test_solution_deploy_async.py::test_async_deploy_completes -q --durations=0
+./test.sh quality api
+```
+
+JUnit reported zero failures/errors/skips in both runs. API pyright reported zero
+errors/warnings/information and ruff passed. Product Updates validation and
+`git diff --check` passed. The original broader-suite limitations still apply;
+the merge queue supplies the complete CI gate. No production mutation occurred.
