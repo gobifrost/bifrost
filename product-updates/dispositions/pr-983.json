@@ -5,9 +5,10 @@
   "category": "fix",
   "summary": "Solution deployments spend less time refreshing source caches.",
   "review": {
-    "status": "draft",
+    "status": "approved",
     "evidence": [
-      "https://github.com/gobifrost/bifrost/pull/983"
+      "https://github.com/gobifrost/bifrost/pull/983",
+      "Jack approved shipping PR #983 on 2026-10-13 after reviewing the correctness checks and measured 51\u201381x cache-publication speedup."
     ]
   }
 }
