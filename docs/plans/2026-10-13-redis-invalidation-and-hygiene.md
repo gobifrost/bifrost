@@ -259,3 +259,35 @@ JUnit reported zero failures/errors/skips in both runs. API pyright reported zer
 errors/warnings/information and ruff passed. Product Updates validation and
 `git diff --check` passed. The original broader-suite limitations still apply;
 the merge queue supplies the complete CI gate. No production mutation occurred.
+
+## CI failure disposition
+
+The first main-target preliminary Unit Tests gate ran 9,106 cases: 9,104 passed,
+two failed. Both were reproducible changes in test coverage missed by the initial
+focused set, not intermittent product failures:
+
+- The session-management test double expected direct `XADD` and made
+  `pipeline()` async. It now queues synchronous pipeline commands and asserts
+  each buffered step executes a Redis transaction, retaining the no-DB-write
+  and no-session-during-LLM contracts.
+- The Redis-read inventory did not recognize Lua reads. It now detects
+  `eval`/`evalsha` on Redis receivers, keeps resolver scripts classified as
+  authority reads, and classifies aggregate orphan diagnostics as plain reads.
+  This also exposed existing chat sequencing and audit-claim settlement scripts;
+  their ordering/diagnostic reads are classified explicitly after source review.
+
+```bash
+./test.sh tests/unit/services/test_agent_executor_session.py tests/unit/test_access_list.py::TestElevatedInventories::test_every_redis_read_is_classified -q
+./test.sh tests/unit/services/test_agent_executor_session.py tests/unit/test_access_list.py tests/unit/services/test_autonomous_agent_executor.py tests/unit/services/test_agent_run_step_streams.py -q
+./test.sh tests/unit/test_access_list.py::TestElevatedInventories::test_every_redis_read_is_classified tests/unit/test_access_list.py::TestScannerBlindSpots::test_b10_redis_reads_are_recognised_by_receiver tests/unit/services/test_agent_executor_session.py -q
+```
+
+The first command reproduced both CI failures. The second exercised 137 cases:
+136 passed and the expanded inventory exposed the two existing unregistered Lua
+owners. After classifying those scripts, the final six focused cases passed
+(13.88 seconds; JUnit zero errors/failures/skips). Session pipeline coroutine
+warnings are eliminated. No runtime source, retries, skips, timeout increases,
+or warning filters were changed to resolve these failures.
+
+API quality checks passed again after the CI corrections: pyright zero
+errors/warnings/information and ruff clean.

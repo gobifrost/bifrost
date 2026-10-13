@@ -761,7 +761,8 @@ def _flag_policy_seed(node: ast.AST) -> str | None:
 # Redis client has count on any receiver; the generic ones (get, exists, ...)
 # count on a receiver that is visibly a Redis client.
 _REDIS_ONLY_READS = {"hget", "hgetall", "hmget", "xrange", "xrevrange", "xread", "smembers", "sismember", "blpop"}
-_REDIS_GENERIC_READS = {"get", "getdel", "mget", "exists", "lrange"}
+# Lua can read values even when it also writes; classify each script call.
+_REDIS_GENERIC_READS = {"get", "getdel", "mget", "exists", "lrange", "eval", "evalsha"}
 
 
 def _is_redis_type(annotation: ast.AST | None) -> bool:
@@ -2219,6 +2220,8 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "src.core.locks.DistributedLockService.release_lock": (1, "cutover"),
     "src.core.module_cache.get_module": (1, "cutover"),
     "src.core.module_cache.get_module_resolution_cache": (1, "cutover"),
+    "src.core.module_cache.get_module_resolution_generation": (1, "cutover"),
+    "src.core.module_cache.set_module_resolution_cache": (1, "cutover"),
     "src.core.module_cache_sync._get_cached_module_resolution": (2, "cutover"),
     "src.core.module_cache_sync._get_exact_scoped_module": (1, "cutover"),
     "src.core.module_cache_sync.get_module_sync": (1, "cutover"),
@@ -2257,6 +2260,9 @@ _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
     "src.core.cache.keys._current_global_version": (1, "Cache version counter."),
     "src.core.locks.DistributedLockService.get_lock_info": (1, "Lock diagnostics."),
     "src.core.module_cache.clear_module_cache": (1, "Lists cached module keys to delete them."),
+    "src.core.pubsub.publish_chat_run_event": (
+        1, "Returns a sequence for a chat event; subscriber authorization is checked separately.",
+    ),
     "src.core.pubsub.replay_chat_run_events": (
         1,
         "Replays a chat run's events to a subscriber authorized for the run.",
@@ -2295,9 +2301,15 @@ _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
     "src.routers.platform.workers.list_pools": (2, "Worker pool diagnostics."),
     "src.routers.platform.workers.recycle_all_processes": (2, "Checks a pool exists before asking it to recycle."),
     "src.routers.platform.workers.recycle_process": (1, "Checks a pool exists before asking it to recycle."),
+    "src.services.access_check_writer._Writer.settle": (
+        2, "Checks audit-write claim ownership before retaining or releasing a diagnostic deduplication marker.",
+    ),
     "src.services.access_check_writer._Writer._write_once": (
         1,
         "Audit-write marker: whether a report-only row is committed or still being inserted.",
+    ),
+    "src.services.agent_run_step_streams.inspect_orphaned_agent_run_step_streams": (
+        1, "Reads the newest step timestamp for an aggregate-only orphan preview; never grants access or loads code.",
     ),
     "src.services.ai_usage_service._notify_missing_pricing": (1, "Notification de-duplication marker."),
     "src.services.ai_usage_service.get_cached_pricing": (1, "Model pricing cache."),
@@ -2802,14 +2814,17 @@ class TestScannerBlindSpots:
             async def read(self, key, cache):
                 r = await get_shared_redis()
                 await r.get(key)
+                await r.eval("return redis.call('GET', KEYS[1])", 1, key)
+                await r.evalsha("digest", 1, key)
                 pending = await self._redis_client.get_pending_execution(key)
                 pending.get("user_id")
                 await self._redis.hget(key, "f")
                 async with get_redis() as conn:
                     await conn.exists(key)
                 cache.get(key)
+                expression.eval(key)
         """
-        assert _redis_reads(self._nodes(source)) == ["r.get", "self._redis.hget", "conn.exists"]
+        assert _redis_reads(self._nodes(source)) == ["r.get", "r.eval", "r.evalsha", "self._redis.hget", "conn.exists"]
 
     def test_b11_own_flag_classes_include_subclasses(self) -> None:
         tree = ast.parse(textwrap.dedent("""

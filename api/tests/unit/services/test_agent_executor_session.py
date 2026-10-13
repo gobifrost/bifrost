@@ -56,6 +56,19 @@ def _make_mock_session_factory():
     return factory, mock_session, sessions_open
 
 
+def _make_mock_redis():
+    """Model Redis transaction commands as synchronous queued operations."""
+    redis = MagicMock()
+    pipeline = MagicMock()
+    pipeline.__aenter__ = AsyncMock(return_value=pipeline)
+    pipeline.__aexit__ = AsyncMock(return_value=False)
+    pipeline.execute = AsyncMock(return_value=["1-0", True])
+    redis.pipeline.return_value = pipeline
+    redis.get = AsyncMock(return_value=None)
+    redis.delete = AsyncMock()
+    return redis
+
+
 def _make_mock_agent():
     """Create a mock Agent ORM instance."""
     agent = MagicMock()
@@ -110,9 +123,7 @@ class TestNoSessionDuringLLMCall:
         mock_llm_client.complete = mock_complete
         mock_llm_client.provider_name = "test"
 
-        mock_redis = AsyncMock()
-        mock_redis.get = AsyncMock(return_value=None)  # Not cancelled
-        mock_redis.xadd = AsyncMock()
+        mock_redis = _make_mock_redis()
 
         # Mock resolve_agent_tools to return empty (no tools)
         with patch(
@@ -152,9 +163,7 @@ class TestStepsBufferedToRedis:
         mock_llm_client.complete = AsyncMock(return_value=llm_response)
         mock_llm_client.provider_name = "test"
 
-        mock_redis = AsyncMock()
-        mock_redis.get = AsyncMock(return_value=None)
-        mock_redis.xadd = AsyncMock()
+        mock_redis = _make_mock_redis()
 
         with patch(
             "src.services.execution.autonomous_agent_executor.resolve_agent_tools",
@@ -176,8 +185,10 @@ class TestStepsBufferedToRedis:
         # (it's only called by flush_to_db() which hasn't been called yet)
         mock_session.add.assert_not_called()
 
-        # Redis xadd SHOULD have been called for steps
-        assert mock_redis.xadd.call_count > 0
+        # Every buffered step is appended through a committed Redis transaction.
+        pipeline = mock_redis.pipeline.return_value
+        assert pipeline.xadd.call_count == len(executor._pending_steps)
+        assert pipeline.execute.await_count == len(executor._pending_steps)
 
         # Steps should be buffered in the executor
         assert len(executor._pending_steps) > 0
@@ -197,9 +208,7 @@ class TestFlushToDb:
         mock_llm_client.complete = AsyncMock(return_value=llm_response)
         mock_llm_client.provider_name = "test"
 
-        mock_redis = AsyncMock()
-        mock_redis.get = AsyncMock(return_value=None)
-        mock_redis.xadd = AsyncMock()
+        mock_redis = _make_mock_redis()
 
         with patch(
             "src.services.execution.autonomous_agent_executor.resolve_agent_tools",
@@ -256,9 +265,7 @@ class TestDelegationUsesFactory:
         mock_result.scalar_one.return_value = child_agent
         mock_session.execute = AsyncMock(return_value=mock_result)
 
-        mock_redis = AsyncMock()
-        mock_redis.get = AsyncMock(return_value=None)
-        mock_redis.xadd = AsyncMock()
+        mock_redis = _make_mock_redis()
 
         # The child executor's run() should be called
         child_run_result = {
