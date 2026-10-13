@@ -132,7 +132,9 @@ path cap, the worst-case result is about 1 MB.
 
 ### CLI (`api/bifrost/commands/files.py`)
 
-`bifrost files move SOURCE DESTINATION --location L [--rename] [--timeout S]`
+`bifrost files move SOURCE DESTINATION --location L [--solution INSTALL] [--rename] [--timeout S]`
+(`--solution` targets a Solution install's files, resolved and passed as
+`?solution=` exactly as `files read` / `files stat` do)
 enqueues and follows the job with the shared `poll_platform_job` helper
 (`api/bifrost/platform_jobs.py`). `poll_platform_job` returns on job
 `succeeded` regardless of item outcome and raises on `failed` with only the
@@ -514,8 +516,8 @@ the failed items' results with their request indices (normally few — every
 earlier item's outcome is already final, so the list is complete; it is
 seeded from the payload's enqueue-time rejections before the first item, so
 a 403 at enqueue is never read as a success), and
-`in_flight` = that item's request index, source key, and requested
-destination key; `phase` = "Moving n of N". Size and ETag are not needed:
+`in_flight` = that item's request index, source path, and requested
+destination path (S3 keys derive from them); `phase` = "Moving n of N". Size and ETag are not needed:
 recovery is marker-based. Items run strictly in request order, so
 after a failure the caller can derive the outcome of every item: indices
 below `in_flight.index` that are not in the failed list succeeded, and
@@ -533,8 +535,8 @@ feature-specific status path.
 after — see step 7): roll back, then delete the destination copy with the raising delete
 — only if this item created it or resumed it
 (a resumed copy is this move's own orphan, proven by its markers). If cleanup
-itself fails, the item's result is 500 `cleanup_failed` with both S3 keys, and
-the job publishes an operator log entry (`context.log`) naming them, because
+itself fails, the item's result is 500 `cleanup_failed`, and the job
+publishes an operator log entry (`context.log`) naming both S3 keys, because
 an orphaned copy under a new prefix can be readable there.
 
 **Runner loss mid-item, including timeout** (the job is not retried). The job
