@@ -113,7 +113,8 @@ update, and only then return the 202, as the existing enqueue routes do
 dependency would otherwise commit only after the response is sent.
 
 Request-level failures reject the whole call before enqueue: empty or > 500
-items → 422; `location="workspace"` or a name `validate_location_name`
+items, or summed source + destination path length over 200,000 characters
+→ 422; `location="workspace"` or a name `validate_location_name`
 rejects → 400; the Solution does not declare the location → 404. The request models carry no `mode` field; moves are always
 cloud mode.
 
@@ -123,7 +124,11 @@ order, including the items rejected at enqueue. `FileMoveResult` = `source`,
 `destination` (requested), `path` (final; set on success), `renamed`,
 `adopted` (true when an interrupted earlier move was completed — see
 *Recognizing an interrupted earlier move*), `status_code` (200, 400, 403, 404, 409, 500), `error`. A 403 result's `error`
-is the literal `"forbidden"`, matching the `/signed-urls` precedent.
+is the literal `"forbidden"`, matching the `/signed-urls` precedent. `error`
+is a short code plus a message of at most 500 characters and never repeats S3
+keys (they derive from `source` / `destination` and the location and scope);
+`path` is set only when it differs from `destination` (a rename). With the
+path cap, the worst-case result is about 1 MB.
 
 ### CLI (`api/bifrost/commands/files.py`)
 
@@ -158,12 +163,10 @@ order `sdk_delete_file` uses:
    would create a scope-root or folder-marker object — or if the destination
    path, plus 7 characters of rename headroom (` (1000)`), would exceed
    `FileMetadata.path` (2000) or its S3 key would exceed `s3_key` (2500),
-   which would otherwise fail at the metadata step after a full copy. The
-   request as a whole is a 400 if the summed length of all source and
-   destination paths exceeds 200,000 characters, which bounds the terminal
-   result (it carries each path back, and `publish_platform_job_update`
-   broadcasts the whole result on the requester's and admins' notification
-   channels) to well under 1 MB. Then:
+   which would otherwise fail at the metadata step after a full copy. (The
+   request-level 200,000-character path cap, above, bounds the terminal
+   result — `publish_platform_job_update` broadcasts the whole result on the
+   requester's and admins' notification channels.) Then:
    - `read` on the source (without it, delete + write would let a caller move
      an unreadable file into a path they can read),
    - `delete` on the source,
@@ -242,9 +245,13 @@ Concurrency is per location and scope, not platform-wide:
 (hashed because location names have no length limit and the column is
 `String(255)`), which the
 scheduler enforces at claim time across replicas. Moves into one Solution's
-`docs` location run one job at a time (so a one-file move waits behind a
+`docs` location run one job at a time. The job runs items sequentially, and
+a multi-GB copy takes on the order of minutes, so the operation docs give
+batch-sizing guidance: a batch that would exceed the 4 h timeout should be
+split (retries are idempotent, so a timed-out batch can simply be
+re-submitted). A one-file move waits behind a
 running building move in the same location — the expected latency for that
-case, stated in the operation docs), while moves for other installs and orgs
+case, stated in the operation docs. Moves for other installs and orgs
 proceed. Capacity impact: each running move holds one scheduler slot for its
 duration; with many tenants moving at once, moves can occupy every slot on a
 replica, and the platform-jobs capacity guidance (scale replicas when queue
@@ -290,11 +297,16 @@ reached. The one exception that propagates as-is is `PlatformJobCancelled`,
 which `save_checkpoint` raises when the job's lease was lost; the scheduler
 already owns that outcome.
 
-**Systemic failure.** If no item moved and every attempted item failed with
-the same storage-level error (S3 unreachable, credentials rejected), the job
-does not finish as `succeeded` with N identical 500s: it raises
-`PlatformJobFailure("storage_unavailable", ..., result=<full results>)`, so
-callers and the notification see a failed job.
+**Systemic failure.** A storage outage must not run every item to the end:
+with botocore's default connect timeout and retries, each S3 call can take
+minutes to fail, so 500 items would run into the 4 h timeout while holding a
+scheduler slot and the scope's lock. After **3 consecutive** items fail with
+a storage-level error (connection or endpoint errors, `AccessDenied` /
+`InvalidAccessKeyId` / `SignatureDoesNotMatch` on the bucket, 5xx after
+retries), the job stops and raises
+`PlatformJobFailure("storage_unavailable", ..., result=<results so far, with
+every remaining item marked 500 "not_attempted">)`, so callers and the
+notification see a failed job and the full per-item picture.
 
 1. **Lock.** `lock_file_mutation` (`pg_advisory_xact_lock`) on the source and
    destination paths in sorted order. These are transaction-scoped locks,
@@ -311,11 +323,15 @@ callers and the notification see a failed job.
      S3 preconditions guard it instead (`CopySourceIfMatch` on every part for
      the source, `IfNoneMatch="*"` on complete for the destination). Steps
      5–8 run in a new transaction that re-takes both locks (source and final
-     destination, sorted) and, before anything else, re-checks that the
-     destination object still carries this item's markers and the source's
-     ETag is unchanged; if the destination was replaced after the copy
-     completed → 409 `file_exists`, and that object is not cleaned up (it is
-     no longer ours).
+     destination, sorted) and, before anything else, `HeadObject`s both:
+     - destination missing, or its markers are not this item's → 409
+       `destination_changed`; nothing is cleaned up (there is no copy of ours
+       left, or the object there is someone else's);
+     - source missing (deleted by a writer during the copy) → cleanup of our
+       copy, 404 — the step-6 "no row, insert one" branch must never run
+       here, or the deleted file would reappear at the destination;
+     - source ETag changed → cleanup, 409 `source_changed`;
+     - otherwise continue to step 5.
    The single-part hold depends on the deployment not setting PgBouncer
    `idle_transaction_timeout`/`query_timeout` or Postgres
    `idle_in_transaction_session_timeout` below the longest single-part copy;
@@ -326,7 +342,11 @@ callers and the notification see a failed job.
    returns `None`; anything else raises. `HeadObject` never raises
    `s3.exceptions.NoSuchKey`, so the existing `except NoSuchKey` pattern in
    `read_uploaded_file` must not be copied, and `file_exists` — which swallows
-   every error as "missing" — must not be used.) Record its size, ETag, content type,
+   every error as "missing" — must not be used. On AWS, `HeadObject` on a
+   missing key returns 403, not 404, unless the credentials have
+   `s3:ListBucket` on the bucket; 403 is not treated as missing, so the
+   operation docs and deployment guidance state that `s3:ListBucket` is
+   required.) Record its size, ETag, content type,
    and user metadata. If the source object is missing, check for an
    interrupted earlier move to **adopt** (see *Recognizing an interrupted
    earlier move*); if that does not apply → 404.
@@ -345,7 +365,9 @@ callers and the notification see a failed job.
      number, `HeadObject` each matching candidate: if one carries this item's
      markers, it is this item's copy from an interrupted run and is resumed
      (or adopted, from step 2) exactly as for the requested destination.
-     Otherwise take the lowest `n ≥ 1` not in that set. Lock that candidate and `HeadObject`
+     Otherwise take the lowest `n ≥ 1` not in that set. This is one
+     `HeadObject` per existing `stem (n)ext` sibling — O(siblings), normally
+     zero or a few. Lock that candidate and `HeadObject`
      it; if it now exists (a writer raced the listing), try the next `n`.
      Stop after 1000 attempted numbers with 409
      `{"reason": "no_available_name"}`.
@@ -355,7 +377,14 @@ callers and the notification see a failed job.
    same result as step 7's re-check. A 412 from `CompleteMultipartUpload`'s
    `IfNoneMatch="*"` is different: an object appeared at the *destination*,
    so the upload is aborted and the item reports 409 `file_exists` (no
-   cleanup — there is no copy of ours to delete).
+   cleanup — there is no copy of ours to delete). AWS can also answer a
+   concurrent conditional complete with 409 `ConditionalRequestConflict`,
+   mapped the same way. A source that disappears mid-copy (`NoSuchKey` / 404
+   from `CopyObject` or `UploadPartCopy`) → abort or cleanup, 404.
+
+   ETags (in `CopySourceIfMatch`, the `bifrost-move-etag` marker, and every
+   comparison) are stored and compared verbatim as `HeadObject` returns them,
+   quotes and multipart `-N` suffix included.
 
    The copy is **self-identifying**: it carries the source's system metadata
    (`ContentType`, `ContentDisposition`, `ContentEncoding`,
@@ -376,7 +405,8 @@ callers and the notification see a failed job.
      an object that appeared at the destination meanwhile;
      `AbortMultipartUpload` on any failure. `IfNoneMatch` on
      `CompleteMultipartUpload` needs botocore ≥ 1.35.x, so `aiobotocore`
-     (unpinned today, `pyproject.toml:127`) gets a minimum version that
+     (unpinned today in the repo-root `pyproject.toml:127`; no lock file is
+     committed) gets a minimum version that
      bundles it.
 
    Residual, stated in the operation docs: presigned uploads take no lock, so
@@ -423,10 +453,11 @@ callers and the notification see a failed job.
    and deleting the copy then would lose both. On any error after issuing it,
    `HeadObject` the source:
    - gone → continue to step 8 (success);
-   - still present → cleanup is safe, 500 `source_delete_failed`;
-   - the head itself fails → roll back the row, keep the copy, 500
-     `source_delete_unconfirmed`. A retry resolves it: if the source is gone
-     it adopts the copy, if present it resumes.
+   - anything else (still present, or the head itself fails) → roll back the
+     row, keep the copy, 500 `source_delete_unconfirmed`. "Still present" is
+     not proof the delete failed: a delete the client saw time out can still
+     be applied after the head. A retry resolves either way: if the source is
+     gone it adopts the copy, if present it resumes.
 
    Residual: an upload landing between the re-check and the delete
    (milliseconds) is still lost; stated in the operation docs.
@@ -445,13 +476,17 @@ source path has a different row id and can never match.
   timeout or runner loss can land between them: the source object is deleted,
   the copy exists, and the rollback leaves the row at the source path. If a
   row exists at the source path and the **requested** destination's markers
-  match, the item skips steps 3–5 and 7, runs step 6 against the requested
-  destination, commits, publishes, and reports success with
+  match, and the row's `size_bytes` (when set) equals the destination's
+  content length, the item skips steps 3–5 and 7, runs step 6 against the
+  requested destination, commits, publishes, and reports success with
   `"adopted": true`. Under `on_conflict="rename"` the copy may sit at a
   renamed candidate, so when the requested destination's markers do not
   match, the same candidate scan as step 3 is run and a matching candidate is
-  adopted. Otherwise → the "already moved" check below, then 404.
-- **Already moved** (source object missing, no row at the source path). A
+  adopted. Otherwise → 404. Markers are the identity; the size check is
+  only a guard that rejects a copy of an older version when the row has
+  since been overwritten in place (`upsert_metadata` keeps the row id).
+- **Already moved** (source object missing **and no row at the source
+  path** — only then; a row at the source path means adopt or 404). A
   retry of an item that in fact completed — the job died after its commit, or
   the caller re-submits it — finds the source gone and the row moved. If the
   destination (requested, or a candidate under rename) carries
@@ -476,7 +511,9 @@ in the result.
 **Checkpoint (one write per item).** At the start of each item, before step
 1, one `save_checkpoint` records compact state: `moved` / `failed` counts,
 the failed items' results with their request indices (normally few — every
-earlier item's outcome is already final, so the list is complete), and
+earlier item's outcome is already final, so the list is complete; it is
+seeded from the payload's enqueue-time rejections before the first item, so
+a 403 at enqueue is never read as a success), and
 `in_flight` = that item's request index, source key, and requested
 destination key; `phase` = "Moving n of N". Size and ETag are not needed:
 recovery is marker-based. Items run strictly in request order, so
@@ -492,8 +529,8 @@ notification would sit at 0% for the whole job). That is a shared-transport
 extension, as `docs/architecture/platform-jobs.md` asks for, not a
 feature-specific status path.
 
-**Cleanup** (failure in steps 4–7, before the source delete is issued — see
-step 7): roll back, then delete the destination copy with the raising delete
+**Cleanup** (failure in steps 4–7 before the source delete is issued; never
+after — see step 7): roll back, then delete the destination copy with the raising delete
 — only if this item created it or resumed it
 (a resumed copy is this move's own orphan, proven by its markers). If cleanup
 itself fails, the item's result is 500 `cleanup_failed` with both S3 keys, and
@@ -526,7 +563,7 @@ interrupted item. What a retry of that item does depends on where it stopped:
 | Storage | `S3StorageClient`: `head_object`, `copy_object_if_match` (single + multipart part-copy), `delete_object_strict`, `list_keys_with_prefix` (delimiter + continuation). Assumes the store implements `CopyObject`, `UploadPartCopy` with `CopySourceRange`, and the `x-amz-copy-source-if-match` precondition: true for AWS S3; for SeaweedFS (`chrislusf/seaweedfs:latest` in dev/test) `CopyObject` is exercised by e2e, while `UploadPartCopy` and precondition enforcement are not proven by CI |
 | Metadata | `FilePolicyService.move_metadata(...)` with write-path keying |
 | HTTP | `FileMoveRequest`, `FileMoveBatchRequest`, `FileMoveResult` (job result model); `POST /api/files/move` and `POST /api/files/move-many` in `api/src/routers/files.py`, each returning `202 PlatformJobAccepted` + `Location` |
-| Registries | `operation_catalog.py`: `workspace.files.move` (CLI `files move`) and `workspace.files.move_many` (CLI excluded), both with `async_policy=OperationAsyncPolicy.PLATFORM_JOB`. Both carry explicit `mcp` exclusions (`move` is not in `_MCP_VERBS`, and no file-content MCP tools exist — the `bifrost_file_delete` binding is dangling and is not copied), plus `native_builder` and `manifest` dispositions. `access_list.py` entries for both routes. Both enqueue paths added to `FILES_ROUTE_PATHS` (and its "All eight" comment updated). `api/tests/unit/services/test_operation_inventory.py` counts updated; both ops added to `CANONICAL_OPERATIONS` in `api/tests/unit/services/test_operation_catalog.py`. |
+| Registries | `operation_catalog.py`: `workspace.files.move` (CLI `files move`) and `workspace.files.move_many` (CLI excluded), both with `async_policy=OperationAsyncPolicy.PLATFORM_JOB`. Both carry explicit `mcp` exclusions (`move` is not in `_MCP_VERBS`, and no file-content MCP tools exist — the `bifrost_file_delete` binding is dangling and is not copied), plus `native_builder=True` (as `workspace.files.delete`) and a `manifest` exclusion worded like delete's. `access_list.py` entries for both routes. Both enqueue paths added to `FILES_ROUTE_PATHS` (and its "All eight" comment updated). `api/tests/unit/services/test_operation_inventory.py` counts updated; both ops added to `CANONICAL_OPERATIONS` in `api/tests/unit/services/test_operation_catalog.py`. |
 | Python SDK | `files.move`, `files.move_many` (enqueue + poll) |
 | CLI | `bifrost files move` (enqueue + `poll_platform_job`) |
 | Generated | `client/src/lib/v1.d.ts`; skill-truth appendices (`python api/scripts/skill-truth/generate.py`). The request DTOs stay router-local like the other file DTOs, but `FileMoveResult` — a response shape the CLI parses out of the job result — is defined in `api/src/models/contracts/cli.py` so `test_contract_version.py` fingerprints it; the fingerprint is refreshed as an additive change (no `MIN_CLI_VERSION` bump). No `CLIFile*`/`SDKFile*` sibling models are added for move (the existing ones for other file operations are unused). |
@@ -574,9 +611,21 @@ interrupted item. What a retry of that item does depends on where it stopped:
   without deleting it.
 - **Source delete outcome (unit)**: the delete raises after succeeding
   server-side (source head → gone) → success, copy kept; delete raises and
-  source still present → cleanup, `source_delete_failed`; confirming head
-  fails → row rolled back, copy kept, `source_delete_unconfirmed`, and a
-  retry adopts it.
+  source still present, or the confirming head fails → row rolled back, copy
+  kept (never cleaned up), `source_delete_unconfirmed`; a retry resumes it
+  (source present) or adopts it (source gone).
+- **Multipart re-check (unit)**: after the unlocked copy, destination
+  missing or markers changed → 409 `destination_changed`, nothing deleted;
+  source missing → our copy cleaned up, 404, no row inserted; `NoSuchKey` on
+  `UploadPartCopy` → abort, 404; `ConditionalRequestConflict` on complete →
+  409 `file_exists`.
+- **Systemic stop (unit)**: three consecutive storage-level failures →
+  `storage_unavailable` with the remaining items `not_attempted`; a
+  non-storage failure resets the count.
+- **Adopt guards (unit)**: row size differing from the destination's →
+  404, not adopted; a row present at the source never takes the "already
+  moved" branch; enqueue-time 403s appear in the first checkpoint's failed
+  list.
 - **Rename recovery (unit + e2e)**: a crash after copying to `report (1).pdf`
   (before or after the source delete) → the retry finds the candidate by its
   markers and resumes / adopts it rather than creating `report (2).pdf` or
