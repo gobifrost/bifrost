@@ -250,6 +250,7 @@ import pytest
 from botocore.exceptions import ClientError, EndpointConnectionError
 
 from src.services.file_storage.s3_client import (
+    COPY_OBJECT_LIMIT,
     ObjectHead,
     ObjectMissing,
     ObjectPreconditionFailed,
@@ -388,6 +389,16 @@ async def test_multipart_complete_conflict_is_destination_precondition(monkeypat
         await storage.copy_object("src", "dst", source=SOURCE, metadata={}, multipart_threshold=4, part_size=4)
     assert caught.value.side == "destination"
     client.abort_multipart_upload.assert_awaited_once()
+
+
+@pytest.mark.parametrize(("size", "multipart"), [(COPY_OBJECT_LIMIT, False), (COPY_OBJECT_LIMIT + 1, True)])
+async def test_default_threshold_is_the_5_gib_copy_limit(monkeypatch, size, multipart) -> None:
+    storage, client = multipart_client(monkeypatch)
+    client.copy_object = AsyncMock()
+    head = ObjectHead(size=size, etag='"abc"', metadata={}, headers={})
+    await storage.copy_object("src", "dst", source=head, metadata={})
+    assert client.create_multipart_upload.await_count == int(multipart)
+    assert client.copy_object.await_count == int(not multipart)
 
 
 async def test_multipart_part_failure_aborts(monkeypatch) -> None:
@@ -3163,6 +3174,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 from botocore.exceptions import EndpointConnectionError
@@ -3214,11 +3226,11 @@ def test_definition_is_registered_with_the_spec_policy() -> None:
     assert (policy.allow_running_cancellation, policy.min_memory_headroom_mb) == (False, 128)
 
 
-def test_payload_requires_every_index_exactly_once(solution_target) -> None:
+def test_payload_requires_every_index_exactly_once() -> None:
     with pytest.raises(ValidationError):
         FileMovePayload(
-            location="docs", scope=solution_target.scope, on_conflict="error",
-            requested_by_user_id=solution_target.requested_by, total=2,
+            location="docs", scope=str(uuid4()), on_conflict="error",
+            requested_by_user_id=uuid4(), total=2,
             items=[FileMoveWorkItem(index=0, source="a", destination="b")],
         )
 
@@ -3250,7 +3262,8 @@ async def test_item_failure_is_recorded_in_the_next_checkpoint(store, solution_t
         context,
         payload(solution_target, [(0, "a/missing.pdf", "b/1.pdf"), (1, "a/2.pdf", "b/2.pdf")]),
     )
-    second = context.save_checkpoint.await_args_list[1].args[0]
+    first, second = (c.args[0] for c in context.save_checkpoint.await_args_list)
+    assert first["failed"] == []
     assert [f["index"] for f in second["failed"]] == [0]
     assert second["failed"][0]["status_code"] == 404
 
@@ -3497,7 +3510,7 @@ async def run_file_move(context: PlatformJobContext, raw_payload: BaseModel) -> 
     for position, item in enumerate(work):
         checkpoint = {
             "moved": moved,
-            "failed": failed,
+            "failed": list(failed),
             "in_flight": {"index": item.index, "source": item.source, "destination": item.destination},
         }
         try:
@@ -4421,11 +4434,18 @@ Regenerate the JSON projection: `python api/scripts/generate_access_list.py`. If
 
 - [ ] **Step 6: Run the tripwires and update counts and fingerprint**
 
-Run: `./test.sh tests/unit/routers/test_files_move_routes.py tests/unit/services/test_operation_catalog.py tests/unit/services/test_worker_sdk_http.py tests/unit/test_access_list.py tests/unit/services/test_operation_inventory.py tests/unit/test_contract_version.py tests/unit/test_dto_flags.py -v`
+Regenerate the skill-truth appendices so `test_skill_appendix_fresh.py` stays green on this commit:
+```bash
+python api/scripts/skill-truth/generate.py
+scripts/sync-codex-skills.sh
+```
+If the host lacks the API dependencies for `generate.py`, run it in the test-runner container.
+
+Run: `./test.sh tests/unit/routers/test_files_move_routes.py tests/unit/services/test_operation_catalog.py tests/unit/services/test_worker_sdk_http.py tests/unit/test_access_list.py tests/unit/services/test_operation_inventory.py tests/unit/test_contract_version.py tests/unit/test_dto_flags.py tests/unit/test_skill_appendix_fresh.py -v`
 
 Expected:
 - Only `test_operation_inventory.py::test_every_observed_surface_is_classified_with_a_reason` and `test_contract_version.py` fail, both with count or fingerprint diffs.
-- The inventory diff should be `rest` 677→679 and `cli` 171→172, with `mcp` and `manifest` unchanged. An `sdk` change may appear if the inventory maps SDK methods to the new routes. Accept only these deltas; investigate anything else.
+- The inventory diff should be `rest` 677→679 only. `cli` stays at 171: the inventory reads the live Click tree, and `bifrost files move` does not exist until Task 14. `mcp` and `manifest` are unchanged. An `sdk` change may appear if the inventory maps SDK methods to the new routes. Accept only these deltas; investigate anything else.
 - Update the counts dict to the observed values.
 - `FileMoveResult` is an additive contract change. Update `EXPECTED_CONTRACT_FINGERPRINT` to the value the failing test prints, and leave `MIN_CLI_VERSION` unchanged.
 
@@ -4434,7 +4454,7 @@ Re-run the same command. Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add api/src/routers/files.py api/src/services/execution/worker_sdk_http.py api/src/services/operation_catalog.py api/src/services/access_list.py docs/generated/access-list.json api/tests/unit/routers/test_files_move_routes.py api/tests/unit/services/test_operation_catalog.py api/tests/unit/services/test_operation_inventory.py api/tests/unit/services/test_worker_sdk_http.py api/tests/unit/test_contract_version.py
+git add api/src/routers/files.py api/src/services/execution/worker_sdk_http.py api/src/services/operation_catalog.py api/src/services/access_list.py docs/generated/access-list.json api/tests/unit/routers/test_files_move_routes.py api/tests/unit/services/test_operation_catalog.py api/tests/unit/services/test_operation_inventory.py api/tests/unit/services/test_worker_sdk_http.py api/tests/unit/test_contract_version.py .claude/skills plugins/bifrost/skills .codex/skills
 git commit -m "feat(files): POST /api/files/move and /move-many with catalog, access, and socket surfaces
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
@@ -4713,13 +4733,20 @@ Add these static methods to `class files`, after `delete`:
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `./test.sh tests/unit/sdk/test_sdk_files_move.py tests/unit/sdk/ -v`
+Regenerate the skill-truth appendices so `test_skill_appendix_fresh.py` stays green on this commit:
+```bash
+python api/scripts/skill-truth/generate.py
+scripts/sync-codex-skills.sh
+```
+If the host lacks the API dependencies for `generate.py`, run it in the test-runner container.
+
+Run: `./test.sh tests/unit/sdk/test_sdk_files_move.py tests/unit/sdk/ tests/unit/test_skill_appendix_fresh.py -v`
 Expected: PASS. If an SDK surface tripwire (for example a public-method or signature snapshot test) fails because of the two new methods, regenerate or extend it as that test's message instructs, then re-run.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add api/bifrost/files.py api/tests/unit/sdk/test_sdk_files_move.py
+git add api/bifrost/files.py api/tests/unit/sdk/test_sdk_files_move.py .claude/skills plugins/bifrost/skills .codex/skills
 git commit -m "feat(sdk): files.move and files.move_many over the durable move job
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
@@ -4894,13 +4921,20 @@ async def move_cmd(
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `./test.sh tests/unit/test_cli_files.py tests/unit/test_dto_flags.py -v`
-Expected: PASS.
+Regenerate the skill-truth appendices so `test_skill_appendix_fresh.py` stays green on this commit:
+```bash
+python api/scripts/skill-truth/generate.py
+scripts/sync-codex-skills.sh
+```
+If the host lacks the API dependencies for `generate.py`, run it in the test-runner container.
+
+Run: `./test.sh tests/unit/test_cli_files.py tests/unit/test_dto_flags.py tests/unit/services/test_operation_inventory.py tests/unit/test_skill_appendix_fresh.py -v`
+Expected: only `test_operation_inventory.py::test_every_observed_surface_is_classified_with_a_reason` fails, with `cli` 171→172 (the new `files move` leaf now exists in the Click tree). Update `"cli"` to 172 in its counts dict and re-run. Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add api/bifrost/commands/files.py api/tests/unit/test_cli_files.py
+git add api/bifrost/commands/files.py api/tests/unit/test_cli_files.py api/tests/unit/services/test_operation_inventory.py .claude/skills plugins/bifrost/skills .codex/skills
 git commit -m "feat(cli): bifrost files move
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
@@ -5125,6 +5159,7 @@ def _org_location_policy(e2e_client, platform_admin, org1):
     grant_file_policy(e2e_client, platform_admin.headers, location="move-e2e", scope=org1["id"], allow_all=True)
 
 
+@pytest.mark.timeout(300)
 async def test_workflow_moves_and_enqueue_fits_the_sdk_budget(
     e2e_client, platform_admin, org1, org1_user, _org_location_policy
 ) -> None:
@@ -5143,6 +5178,12 @@ from bifrost.client import get_client
 
 @workflow(name="{name}", description="files.move e2e")
 async def {name}():
+    # The single move runs first: both jobs share the location/scope lock, so the reverse
+    # order would queue it behind 500 items. The budget batch is only timed at enqueue;
+    # its job finishes on its own with 404s after the workflow returns.
+    single = await files.move_many(
+        [{{"source": "{prefix}/one.txt", "destination": "{prefix}/two.txt"}}], location="move-e2e",
+    )
     items = [{{"source": f"{prefix}/missing-{{i}}.pdf", "destination": f"{prefix}/moved-{{i}}.pdf"}} for i in range(500)]
     started = time.monotonic()
     response = await get_client().engine_request(
@@ -5150,9 +5191,6 @@ async def {name}():
         json={{"items": items, "location": "move-e2e", "on_conflict": "error"}},
     )
     elapsed = time.monotonic() - started
-    single = await files.move_many(
-        [{{"source": "{prefix}/one.txt", "destination": "{prefix}/two.txt"}}], location="move-e2e",
-    )
     return {{"status": response.status_code, "elapsed": elapsed, "single": single}}
 '''
     registered = write_and_register(
@@ -5164,7 +5202,7 @@ async def {name}():
     )
     assert patched.status_code == 200, patched.text
 
-    result = execute_workflow_sync(e2e_client, org1_user.headers, registered["id"], max_wait=180.0)
+    result = execute_workflow_sync(e2e_client, org1_user.headers, registered["id"], max_wait=240.0)
 
     assert result["status"] == "Success", result
     out = result["result"]
@@ -5263,7 +5301,7 @@ scripts/sync-codex-skills.sh
 python api/scripts/skill-truth/generate.py
 python3 scripts/check_skill_mirrors.py
 ```
-Expected: the mirrors and `generated/*` update, including `python-sdk-signatures.md`, `cli-reference.md` and `operations.md`, and the check passes. If the host lacks the API dependencies for `generate.py`, run it in the test-runner container.
+Expected: the mirrors pick up the new `files.md` section; `generated/*` changes only if the docs edit feeds it (Tasks 12–14 already regenerated the code-driven appendices); the check passes. If the host lacks the API dependencies for `generate.py`, run it in the test-runner container.
 
 - [ ] **Step 3: Regenerate client types**
 
