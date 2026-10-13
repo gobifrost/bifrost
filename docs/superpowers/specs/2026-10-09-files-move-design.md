@@ -573,11 +573,12 @@ interrupted item. What a retry of that item does depends on where it stopped:
 
 - **Job handler (unit)**: per-item order — lock, head, conflict, copy with
   `CopySourceIfMatch`, size verify, metadata, strict source delete, commit,
-  publish; the source is never deleted before verify; verify mismatch,
-  source-delete failure, and copy failure each roll back and remove the
-  destination copy; cleanup failure reports `cleanup_failed` and logs; each
+  publish; the source is never deleted before verify; verify mismatch and
+  copy failure each roll back and remove the destination copy (a failure
+  after the source delete is issued never does — see *Source delete
+  outcome*); cleanup failure reports `cleanup_failed` and logs; each
   item ends in commit or rollback (a 409 on item 2 does not break item 3);
-  one compact checkpoint per item, written before the copy, carrying
+  one compact checkpoint per item, written at the start of the item, carrying
   `in_flight` and progress (`current`/`total`), not the cumulative success
   list; a DB error inside an item (dropped connection) becomes a 500 result
   and later items still run; an outer failure raises `PlatformJobFailure`
@@ -595,8 +596,9 @@ interrupted item. What a retry of that item does depends on where it stopped:
   nothing changes.
 - **Resume (unit)**: crash after the copy with the source intact → the retry
   finds the marked orphan with `bifrost-move-etag` equal to the source ETag,
-  skips the copy, and completes; under `on_conflict="rename"` it still
-  completes at the requested destination instead of creating `dest (1)`; a
+  skips the copy, and completes; under `on_conflict="rename"` it completes
+  at the orphan's location (requested destination or candidate) instead of
+  creating a new candidate; a
   marked orphan whose ETag no longer matches the source is a plain 409.
 - **Copy markers (unit)**: single-part `CopyObject` uses
   `MetadataDirective=REPLACE` and re-sends the source's system and user
@@ -607,8 +609,8 @@ interrupted item. What a retry of that item does depends on where it stopped:
   upload and maps to 409 `file_exists` with no cleanup.
 - **Lock scope (unit)**: single-part holds the path locks across the copy;
   multipart releases them after step 3 and re-takes them for steps 5–8, and a
-  destination whose markers changed after the copy → 409 `file_exists`
-  without deleting it.
+  destination whose markers changed after the copy → 409
+  `destination_changed` without deleting it.
 - **Source delete outcome (unit)**: the delete raises after succeeding
   server-side (source head → gone) → success, copy kept; delete raises and
   source still present, or the confirming head fails → row rolled back, copy
@@ -634,9 +636,9 @@ interrupted item. What a retry of that item does depends on where it stopped:
   `adopted: true`.
 - **HeadObject contract (unit)**: a `ClientError` with code `404` returns
   `None`; other errors raise.
-- **Request size (unit)**: summed path length over 200,000 → 400; a request
+- **Request size (unit)**: summed path length over 200,000 → 422; a request
   whose items are all rejected is enqueued without a `resource_lock_key`.
-- **Job outcome (unit)**: every item failing with the same storage error →
+- **Job outcome (unit)**: three consecutive storage-level failures →
   `PlatformJobFailure("storage_unavailable")` with full results; a lost lease
   surfaces as `PlatformJobCancelled`, not `PlatformJobFailure`; the checkpoint
   carries `in_flight.index` and failed indices, is written at the start of
