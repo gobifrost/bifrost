@@ -202,8 +202,9 @@ order `sdk_delete_file` uses:
    default priority, so a rejected request is never queued behind a running
    move in the same scope.
 
-The payload stores, per authorized item, the source, the requested
-destination, and the resolved S3 keys; plus the location, effective scope,
+The payload stores, per authorized item, its request index, the source, and
+the requested destination (the job re-derives S3 keys with `resolve_s3_key`);
+plus the location, effective scope,
 `solution_id`, install `organization_id`, `on_conflict`, the requester, and the
 pre-recorded results of rejected items — enough to run after the request
 context is gone. It holds no credentials.
