@@ -24,11 +24,13 @@ and are added in their sub-plans.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 import logging
+from time import perf_counter
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4, uuid5
 
@@ -64,6 +66,50 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from src.services.application_sdk_status import CurrentApplicationSdkMetadata
+
+
+SolutionDeployProgressCallback = Callable[[str, float], Awaitable[None]]
+SolutionDeployTimingCallback = Callable[[str, int], Awaitable[None]]
+
+
+@dataclass(frozen=True)
+class SolutionDeployInstrumentation:
+    """Optional bounded observation hooks for one deploy execution.
+
+    The deployer uses this only to surface coarse progress and aggregate,
+    operator-safe timings. It never changes deploy control flow or persistence.
+    """
+
+    progress_callback: SolutionDeployProgressCallback | None = None
+    timing_callback: SolutionDeployTimingCallback | None = None
+
+    async def report(self, phase: str, percent: float) -> None:
+        if self.progress_callback is not None:
+            await self.progress_callback(phase, percent)
+
+    async def record_timing(self, category: str, elapsed_seconds: float) -> None:
+        if self.timing_callback is not None:
+            elapsed_ms = round(elapsed_seconds * 1000)
+            await self.timing_callback(category, elapsed_ms)
+
+
+_deploy_instrumentation: ContextVar[SolutionDeployInstrumentation | None] = ContextVar(
+    "solution_deploy_instrumentation", default=None
+)
+
+
+@contextmanager
+def solution_deploy_instrumentation(
+    instrumentation: SolutionDeployInstrumentation,
+):
+    """Scope optional observation hooks to one Solution deploy call chain."""
+
+    token = _deploy_instrumentation.set(instrumentation)
+    try:
+        yield
+    finally:
+        _deploy_instrumentation.reset(token)
+
 
 def _decode_logo(
     label: str, b64: str | None, content_type: str | None
@@ -354,6 +400,7 @@ class SolutionDeployer:
 
     def __init__(self, db: AsyncSession):
         self.db = db
+        self._instrumentation = _deploy_instrumentation.get()
         # Accumulates role names auto-created during this deploy (see
         # _resolve_roles). Surfaced on DeployResult.roles_created.
         self._created_roles: set[str] = set()
@@ -386,6 +433,7 @@ class SolutionDeployer:
         """
         solution = bundle.solution
         sid = solution.id
+        await self._report_phase("Reconciling Solution resources", 20)
 
         # Source portability artifact: the exact workspace shape export/install
         # consume. Build it from the author-time bundle before per-install UUID
@@ -511,6 +559,7 @@ class SolutionDeployer:
 
         # ── COMPILE app dists to memory NOW (pre-commit) — a vite/npm failure
         #    raises here and rolls back the whole deploy, no S3 touched. ───────
+        await self._report_phase("Compiling Solution applications", 45)
         compiled = await self._compile_app_dists(builds)
 
         # ── S3 phase, DEFERRED until after the caller's commit (cheap PUTs) ───
@@ -521,21 +570,30 @@ class SolutionDeployer:
         # install runnable. Only an outage that survives all retries raises
         # SolutionFinalizeIncomplete — and even then a later deploy/sync heals it.
         async def _finalize_s3() -> None:
-            await _retry_idempotent(
-                "store source artifact", sid,
-                lambda: self._write_source_artifact(sid, source_artifact),
+            await self._report_phase("Storing Solution source artifact", 70)
+            await self._timed(
+                "source_artifact_s3",
+                lambda: _retry_idempotent(
+                    "store source artifact", sid,
+                    lambda: self._write_source_artifact(sid, source_artifact),
+                ),
             )
+            await self._report_phase("Publishing Solution runtime source", 75)
             await _retry_idempotent(
                 "write python source", sid,
                 lambda: self._write_python(sid, rb.python_files),
             )
+            await self._report_phase("Uploading Solution application artifacts", 90)
             await _retry_idempotent(
                 "upload app dists", sid,
                 lambda: self._upload_compiled_dists(compiled),
             )
-            await _retry_idempotent(
-                "sweep stale dist", sid,
-                lambda: self._delete_stale_app_dist(stale_app_dist),
+            await self._timed(
+                "stale_app_artifacts_s3",
+                lambda: _retry_idempotent(
+                    "sweep stale dist", sid,
+                    lambda: self._delete_stale_app_dist(stale_app_dist),
+                ),
             )
             # ── Bundle file sidecars (O1: no mirror-delete) ───────────────────
             # Write each sidecar that carries content_bytes.  Files absent from
@@ -544,10 +602,13 @@ class SolutionDeployer:
             # dropped from the bundle must NOT delete the previously-installed
             # file (user may have modified it).
             if bundle.solution_files:
-                await _retry_idempotent(
-                    "write bundle file sidecars", sid,
-                    lambda: self._write_bundle_files(
-                        sid, bundle.solution_files, file_mode
+                await self._timed(
+                    "bundle_files_s3",
+                    lambda: _retry_idempotent(
+                        "write bundle file sidecars", sid,
+                        lambda: self._write_bundle_files(
+                            sid, bundle.solution_files, file_mode
+                        ),
                     ),
                 )
 
@@ -570,6 +631,24 @@ class SolutionDeployer:
             roles_created=sorted(self._created_roles),
             finalize_s3=_finalize_s3,
         )
+
+    async def _report_phase(self, phase: str, percent: float) -> None:
+        if self._instrumentation is not None:
+            await self._instrumentation.report(phase, percent)
+
+    async def _timed(
+        self,
+        category: str,
+        operation: Callable[[], Awaitable[None]],
+    ) -> None:
+        started_at = perf_counter()
+        try:
+            await operation()
+        finally:
+            if self._instrumentation is not None:
+                await self._instrumentation.record_timing(
+                    category, perf_counter() - started_at
+                )
 
     @staticmethod
     def _apply_readme(solution: Solution, bundle: Any) -> None:
@@ -844,29 +923,62 @@ class SolutionDeployer:
         from src.services.file_index_service import FileIndexService
 
         storage = SolutionStorage(sid)
+        timings = {
+            "runtime_source_s3": 0.0,
+            "file_index": 0.0,
+            "redis_module_cache": 0.0,
+        }
 
-        # Prior state: every file currently under this install's prefix.
-        prior = set(await storage.list(""))
-        new_rel = set(python_files.keys())
+        async def _measure(
+            category: str,
+            operation: Callable[[], Awaitable[Any]],
+        ) -> Any:
+            started_at = perf_counter()
+            try:
+                return await operation()
+            finally:
+                timings[category] += perf_counter() - started_at
 
-        index = FileIndexService(self.db)
-        for rel_path, content in python_files.items():
-            body = content.encode("utf-8")
-            content_hash = await storage.write(rel_path, body)
-            await index.index_solution(sid, rel_path, body, content_hash)
-            storage_key = storage._key(rel_path)  # _solutions/{id}/<rel>
-            # Write-through so the next execution reads the new bytes, not the
-            # 24h-TTL cache. Only .py files are import-cached.
-            if rel_path.endswith(".py"):
-                await set_module(storage_key, content, content_hash)
+        try:
+            # Prior state: every file currently under this install's prefix.
+            prior = set(await _measure("runtime_source_s3", lambda: storage.list("")))
+            new_rel = set(python_files.keys())
 
-        # Remove files dropped from the bundle (full replace of source).
-        for rel_path in prior - new_rel:
-            await storage.delete(rel_path)
-            await index.unindex_solution(sid, rel_path)
-            if rel_path.endswith(".py"):
-                await invalidate_module(storage._key(rel_path))
-        await self.db.flush()
+            index = FileIndexService(self.db)
+            for rel_path, content in python_files.items():
+                body = content.encode("utf-8")
+                content_hash = await _measure(
+                    "runtime_source_s3", lambda: storage.write(rel_path, body)
+                )
+                await _measure(
+                    "file_index",
+                    lambda: index.index_solution(sid, rel_path, body, content_hash),
+                )
+                storage_key = storage._key(rel_path)  # _solutions/{id}/<rel>
+                # Write-through so the next execution reads the new bytes, not the
+                # 24h-TTL cache. Only .py files are import-cached.
+                if rel_path.endswith(".py"):
+                    await _measure(
+                        "redis_module_cache",
+                        lambda: set_module(storage_key, content, content_hash),
+                    )
+
+            # Remove files dropped from the bundle (full replace of source).
+            for rel_path in prior - new_rel:
+                await _measure("runtime_source_s3", lambda: storage.delete(rel_path))
+                await _measure(
+                    "file_index", lambda: index.unindex_solution(sid, rel_path)
+                )
+                if rel_path.endswith(".py"):
+                    await _measure(
+                        "redis_module_cache",
+                        lambda: invalidate_module(storage._key(rel_path)),
+                    )
+            await self.db.flush()
+        finally:
+            if self._instrumentation is not None:
+                for category, elapsed_seconds in timings.items():
+                    await self._instrumentation.record_timing(category, elapsed_seconds)
 
     # ── 2. Entity upserts (stamp solution_id + inherited scope) ──────────────
     async def _upsert_workflows(
@@ -1378,6 +1490,7 @@ class SolutionDeployer:
             return
         builder = SolutionAppBuilder()
         uploaded: list[CompiledSolutionAppDeployment] = []
+        upload_started_at = perf_counter()
         try:
             for item in compiled:
                 await builder.upload_deployment(
@@ -1396,6 +1509,13 @@ class SolutionDeployer:
                         exc_info=True,
                     )
             raise
+        finally:
+            if self._instrumentation is not None:
+                await self._instrumentation.record_timing(
+                    "app_artifacts_s3", perf_counter() - upload_started_at
+                )
+        await self._report_phase("Activating Solution applications", 95)
+        activation_started_at = perf_counter()
         try:
             await self._activate_compiled_dists(compiled)
         except Exception:
@@ -1410,6 +1530,11 @@ class SolutionDeployer:
                         exc_info=True,
                     )
             raise
+        finally:
+            if self._instrumentation is not None:
+                await self._instrumentation.record_timing(
+                    "app_finalization_db", perf_counter() - activation_started_at
+                )
         for item in compiled:
             old = item.superseded_deployment_id
             if old is not None and old != item.deployment_id:

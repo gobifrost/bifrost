@@ -17,37 +17,49 @@ from sqlalchemy.ext.asyncio import AsyncSession
 @pytest.mark.e2e
 @pytest.mark.asyncio
 async def test_resolver_invalidation_with_large_unrelated_keyspace():
-    """Nested source updates invalidate all scopes in one batched Redis walk."""
-    from src.core.module_cache import MODULE_RESOLUTION_KEY_PREFIX, set_module
+    """Nested source updates invalidate all scopes without a Redis walk."""
+    from src.core.module_cache import (
+        get_module_resolution_cache, get_module_resolution_generation,
+        set_module_resolution_cache, set_module,
+    )
     from src.core.redis_client import get_redis_client
 
     redis = await get_redis_client()._get_redis()
-    prefix = MODULE_RESOLUTION_KEY_PREFIX
     affected = [
-        f"{prefix}{scope}:{name}"
+        f"{scope}:{name}"
         for scope in ["-:0", "-:1", "solution-a:0", "solution-b:1"]
         for name in ["modules", "modules.helpers", "modules.helpers.tool"]
     ]
-    preserved = [f"{prefix}solution-a:0:modules.other", f"{prefix}-:1:modules.helpers.toolkit"]
+    preserved = ["solution-a:0:modules.other", "-:1:modules.helpers.toolkit"]
     unrelated = [f"resolver-scale-test:{i}" for i in range(10_000)]
     source_path = "_solutions/solution-a/modules/helpers/tool.py"
-    source_key = f"bifrost:module:{source_path}"
     try:
+        for key in affected + preserved:
+            generation = await get_module_resolution_generation(key)
+            await set_module_resolution_cache(
+                key, {"kind": "namespace", "path": "test"}, generation=generation,
+            )
         async with redis.pipeline(transaction=False) as pipeline:
-            for key in affected + preserved + unrelated:
+            for key in unrelated:
                 pipeline.set(key, "{}", ex=60)
             await pipeline.execute()
 
         with patch.object(redis, "scan_iter", wraps=redis.scan_iter) as scan:
             await set_module(source_path, "VALUE = 2", "new-hash")
 
-        scan.assert_called_once_with(f"{prefix}*", count=1000)
-        assert await redis.mget(affected) == [None] * len(affected)
-        assert await redis.mget(preserved) == ["{}"] * len(preserved)
+        scan.assert_not_called()
+        for key in affected:
+            assert await get_module_resolution_cache(key) is None
+        for key in preserved:
+            assert await get_module_resolution_cache(key) == {"kind": "namespace", "path": "test"}
         assert await redis.get(unrelated[0]) == "{}"
-        assert await redis.get(source_key) is not None
     finally:
-        await redis.delete(*affected, *preserved, *unrelated, source_key)
+        from src.core.module_cache_contract import MODULE_RESOLUTION_KEY_PREFIX, module_resolution_generation_key
+        await redis.delete(
+            *unrelated, f"bifrost:module:{source_path}",
+            *[f"{MODULE_RESOLUTION_KEY_PREFIX}{key}" for key in affected + preserved],
+            *[module_resolution_generation_key(key) for key in affected + preserved],
+        )
         await cast(Awaitable[int], redis.srem("bifrost:module:index", source_path))
 
 

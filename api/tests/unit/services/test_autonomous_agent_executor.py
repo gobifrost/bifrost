@@ -42,6 +42,21 @@ def _tool(name: str) -> ToolDefinition:
     )
 
 
+def _redis_with_transactional_pipeline() -> MagicMock:
+    """Redis double whose queued transaction commands are synchronous."""
+    redis = MagicMock()
+    pipeline = MagicMock()
+    pipeline.xadd = MagicMock()
+    pipeline.expire = MagicMock()
+    pipeline.execute = AsyncMock(return_value=["1-0", True])
+    pipeline.__aenter__ = AsyncMock(return_value=pipeline)
+    pipeline.__aexit__ = AsyncMock(return_value=False)
+    redis.pipeline = MagicMock(return_value=pipeline)
+    redis.delete = AsyncMock()
+    redis.get = AsyncMock(return_value=None)
+    return redis
+
+
 def test_timeout_receipt_keeps_only_sanitized_terminal_tool_evidence() -> None:
     """A timeout receipt contains finished tool facts, never prompts or LLM text."""
     executor = AutonomousAgentExecutor(MagicMock())
@@ -1718,7 +1733,7 @@ class TestAutonomousAgentExecutor:
         ])
         mock_create_model.return_value = LegacyMockModel(mock_llm)
 
-        mock_redis = MagicMock()
+        mock_redis = _redis_with_transactional_pipeline()
         executor = AutonomousAgentExecutor(mock_session, redis_client=mock_redis)
 
         with patch.object(
@@ -2037,7 +2052,7 @@ class TestAutonomousAgentExecutor:
         mock_create_model.return_value = LegacyMockModel(mock_llm)
 
         # Mock Redis client to return cancel flag after first iteration
-        mock_redis = AsyncMock()
+        mock_redis = _redis_with_transactional_pipeline()
         call_count = 0
 
         async def mock_get(key):

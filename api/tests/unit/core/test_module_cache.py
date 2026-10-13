@@ -18,6 +18,11 @@ class TestModuleCacheAsync:
         """Create a mock async Redis client."""
         mock_client = AsyncMock()
         mock_redis = AsyncMock()
+        pipeline = MagicMock()
+        pipeline.__aenter__ = AsyncMock(return_value=pipeline)
+        pipeline.__aexit__ = AsyncMock()
+        pipeline.execute = AsyncMock()
+        mock_redis.pipeline = MagicMock(return_value=pipeline)
         mock_client._get_redis = AsyncMock(return_value=mock_redis)
         mock_client.get = AsyncMock()
         mock_client.setex = AsyncMock()
@@ -318,106 +323,92 @@ class TestKeyPatterns:
 
 @pytest.mark.asyncio
 async def test_set_module_invalidates_resolution_cache_for_exact_and_ancestors():
+    path = "modules/helpers/tool.py"
+    names = ["modules", "modules.helpers", "modules.helpers.tool"]
     from src.core.module_cache import set_module
+    from src.core.module_cache_contract import MODULE_RESOLUTION_GENERATION_PREFIX
 
-    class FakeRedisConn:
-        async def sadd(self, *_args):
-            return 1
+    pipeline = MagicMock()
+    pipeline.__aenter__ = AsyncMock(return_value=pipeline)
+    pipeline.__aexit__ = AsyncMock()
+    pipeline.execute = AsyncMock()
+    connection = AsyncMock()
+    connection.pipeline = MagicMock(return_value=pipeline)
+    client = AsyncMock()
+    client._get_redis.return_value = connection
+    with patch("src.core.module_cache.get_redis_client", return_value=client):
+        await set_module(path, "VALUE = 1", "hash")
 
-        async def scan_iter(self, pattern, *, count):
-            scans.append((pattern, count))
-            for key in [
-                "bifrost:module:resolution:-:0:modules",
-                "bifrost:module:resolution:solution-a:1:modules.helpers",
-                "bifrost:module:resolution:solution-b:0:modules.helpers.tool",
-                "bifrost:module:resolution:-:1:modules.helpers.tool.extra",
-                "bifrost:module:resolution:solution-a:0:unrelated",
-            ]:
-                yield key
-
-        async def delete(self, *keys):
-            deleted.extend(keys)
-            return len(keys)
-
-    class FakeRedis:
-        async def setex(self, *_args):
-            return True
-
-        async def _get_redis(self):
-            return FakeRedisConn()
-
-    scans: list[tuple[str, int]] = []
-    deleted: list[str] = []
-
-    with patch("src.core.module_cache.get_redis_client", return_value=FakeRedis()):
-        await set_module("modules/helpers/tool.py", "VALUE = 1", "hash")
-
-    assert scans == [("bifrost:module:resolution:*", 1000)]
-    assert deleted == [
-        "bifrost:module:resolution:-:0:modules",
-        "bifrost:module:resolution:solution-a:1:modules.helpers",
-        "bifrost:module:resolution:solution-b:0:modules.helpers.tool",
+    assert [call.args[0] for call in pipeline.set.call_args_list] == [
+        f"{MODULE_RESOLUTION_GENERATION_PREFIX}{name}" for name in names
     ]
+    assert all(call.kwargs == {"ex": 86400} for call in pipeline.set.call_args_list)
+    connection.pipeline.assert_called_once_with(transaction=True)
+    connection.scan_iter.assert_not_called()
+    connection.delete.assert_not_awaited()
+    pipeline.execute.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_invalidate_module_resolution_cache_handles_solution_package_paths():
+    path = "_solutions/solution-a/workflows/triage/__init__.py"
+    names = ["workflows", "workflows.triage"]
     from src.core.module_cache import invalidate_module_resolution_cache
+    from src.core.module_cache_contract import MODULE_RESOLUTION_GENERATION_PREFIX
 
-    class FakeRedisConn:
-        async def scan_iter(self, pattern, *, count):
-            scans.append((pattern, count))
-            for key in keys:
-                yield key
+    pipeline = MagicMock()
+    pipeline.__aenter__ = AsyncMock(return_value=pipeline)
+    pipeline.__aexit__ = AsyncMock()
+    pipeline.execute = AsyncMock()
+    connection = AsyncMock()
+    connection.pipeline = MagicMock(return_value=pipeline)
+    client = AsyncMock()
+    client._get_redis.return_value = connection
+    with patch("src.core.module_cache.get_redis_client", return_value=client):
+        await invalidate_module_resolution_cache(path)
 
-        async def delete(self, *keys_to_delete):
-            deleted.extend(keys_to_delete)
-            return len(keys_to_delete)
-
-    class FakeRedis:
-        async def _get_redis(self):
-            return FakeRedisConn()
-
-    prefix = "bifrost:module:resolution:"
-    keys = [
-        f"{prefix}-:0:workflows",
-        f"{prefix}solution-a:1:workflows.triage",
-        f"{prefix}solution-b:0:workflows.triage",
-        f"{prefix}-:1:workflows.triage.child",
-        f"{prefix}solution-a:0:workflows.triages",
-        f"{prefix}-:0:unrelated",
-        f"{prefix}solution-a:1:unrelated",
+    assert [call.args[0] for call in pipeline.set.call_args_list] == [
+        f"{MODULE_RESOLUTION_GENERATION_PREFIX}{name}" for name in names
     ]
-    scans: list[tuple[str, int]] = []
-    deleted: list[str] = []
-
-    with patch("src.core.module_cache.get_redis_client", return_value=FakeRedis()):
-        await invalidate_module_resolution_cache(
-            "_solutions/solution-a/workflows/triage/__init__.py"
-        )
-
-    assert scans == [(f"{prefix}*", 1000)]
-    assert deleted == keys[:3]
+    assert all(call.kwargs == {"ex": 86400} for call in pipeline.set.call_args_list)
+    connection.pipeline.assert_called_once_with(transaction=True)
+    connection.scan_iter.assert_not_called()
+    connection.delete.assert_not_awaited()
+    pipeline.execute.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_invalidate_module_resolution_cache_skips_delete_when_no_names_match():
+    """Invalidation never enumerates or deletes scoped result keys, even cold."""
+    path = "modules/helpers/tool.py"
+    names = ["modules", "modules.helpers", "modules.helpers.tool"]
     from src.core.module_cache import invalidate_module_resolution_cache
+    from src.core.module_cache_contract import MODULE_RESOLUTION_GENERATION_PREFIX
 
-    class FakeRedisConn:
-        async def scan_iter(self, _pattern, *, count):
-            assert count == 1000
-            yield "bifrost:module:resolution:-:0:unrelated"
+    pipeline = MagicMock()
+    pipeline.__aenter__ = AsyncMock(return_value=pipeline)
+    pipeline.__aexit__ = AsyncMock()
+    pipeline.execute = AsyncMock()
+    connection = AsyncMock()
+    connection.pipeline = MagicMock(return_value=pipeline)
+    client = AsyncMock()
+    client._get_redis.return_value = connection
+    with patch("src.core.module_cache.get_redis_client", return_value=client):
+        await invalidate_module_resolution_cache(path)
 
-        delete = AsyncMock()
+    assert [call.args[0] for call in pipeline.set.call_args_list] == [
+        f"{MODULE_RESOLUTION_GENERATION_PREFIX}{name}" for name in names
+    ]
+    assert all(call.kwargs == {"ex": 86400} for call in pipeline.set.call_args_list)
+    connection.pipeline.assert_called_once_with(transaction=True)
+    connection.scan_iter.assert_not_called()
+    connection.delete.assert_not_awaited()
+    pipeline.execute.assert_awaited_once()
 
-    class FakeRedis:
-        async def _get_redis(self):
-            return redis_conn
 
-    redis_conn = FakeRedisConn()
-
-    with patch("src.core.module_cache.get_redis_client", return_value=FakeRedis()):
-        await invalidate_module_resolution_cache("modules/helpers/tool.py")
-
-    redis_conn.delete.assert_not_awaited()
+@pytest.mark.asyncio
+async def test_invalidate_module_resolution_cache_skips_empty_names():
+    from src.core.module_cache import invalidate_module_resolution_cache
+    with patch("src.core.module_cache.get_redis_client") as client:
+        await invalidate_module_resolution_cache("")
+    client.assert_not_called()

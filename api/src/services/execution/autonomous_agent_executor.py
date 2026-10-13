@@ -33,6 +33,7 @@ from src.models.orm.agent_runs import AgentRun, AgentRunStep
 from src.core.constants import SYSTEM_USER_ID, SYSTEM_USER_EMAIL
 from src.core.cache.keys import agent_run_steps_stream_key
 from src.core.pubsub import publish_agent_run_step
+from src.services.agent_run_step_streams import append_agent_run_step
 from src.services.execution.agent_helpers import (
     build_agent_system_prompt,
     find_delegated_agent,
@@ -1651,10 +1652,10 @@ class AutonomousAgentExecutor:
         # Write to Redis Stream for dual-read (API reads from Redis when run is in-progress)
         if self.redis_client:
             try:
-                stream_key = agent_run_steps_stream_key(str(run_id))
-                await self.redis_client.xadd(
-                    stream_key,
-                    {
+                await append_agent_run_step(
+                    self.redis_client,
+                    run_id=run_id,
+                    fields={
                         "id": step_id,
                         "run_id": str(run_id),
                         "step_number": str(step_number),
@@ -1664,7 +1665,6 @@ class AutonomousAgentExecutor:
                         "duration_ms": str(duration_ms) if duration_ms is not None else "",
                         "created_at": datetime.now(timezone.utc).isoformat(),
                     },
-                    maxlen=1000,
                 )
             except Exception:
                 pass  # Don't fail the run if Redis write fails

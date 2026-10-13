@@ -14,6 +14,12 @@ SOLUTION_A = "12345678-1234-5678-1234-567812345678"
 SOLUTION_B = "87654321-4321-8765-4321-876543218765"
 
 
+@pytest.fixture(autouse=True)
+def resolver_generation():
+    with patch(f"{SERVICE}.get_module_resolution_generation", new_callable=AsyncMock, return_value="generation"):
+        yield
+
+
 def _system_user() -> UserPrincipal:
     return UserPrincipal(
         user_id=SYSTEM_USER_UUID,
@@ -573,7 +579,7 @@ async def test_resolve_module_uses_cached_not_found_before_storage():
     async def fake_get_cache(key: str):
         return store.get(key)
 
-    async def fake_set_cache(key: str, value: dict):
+    async def fake_set_cache(key: str, value: dict, *, generation: str):
         store[key] = value
 
     with (
@@ -599,7 +605,7 @@ async def test_concurrent_cold_misses_share_one_storage_probe():
     async def fake_get_cache(key: str):
         return store.get(key)
 
-    async def fake_set_cache(key: str, value: dict):
+    async def fake_set_cache(key: str, value: dict, *, generation: str):
         store[key] = value
 
     async def fake_get_module(_path: str):

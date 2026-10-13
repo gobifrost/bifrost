@@ -21,6 +21,7 @@ from src.core.database import get_db_context
 from src.models.contracts.run_retention import RunRetentionSettings
 from src.models.enums import ExecutionStatus
 from src.models.orm import AgentRun, AIUsage, Event, Execution, PlatformJob, WorkflowRunDaily
+from src.services.agent_run_step_streams import delete_agent_run_step_streams
 from src.services.platform_job_lease import hold_lease
 
 RUN_RETENTION_JOB_TYPE = "run.retention"
@@ -160,6 +161,7 @@ async def delete_agent_run_batch(
         if deleted.rowcount != len(ids):
             raise DeleteMismatch(f"agent runs: deleted {deleted.rowcount} of {len(ids)}")
         await db.commit()
+        await delete_agent_run_step_streams(ids)
         return len(ids)
 
 

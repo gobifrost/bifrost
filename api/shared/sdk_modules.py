@@ -36,6 +36,7 @@ from src.core.log_safety import log_safe
 from src.core.module_cache import (
     get_module,
     get_module_resolution_cache,
+    get_module_resolution_generation,
     module_resolution_cache_key,
     set_module_resolution_cache,
 )
@@ -170,6 +171,7 @@ async def resolve_module_name(
     # this API process. This bounds S3 amplification during a workflow fan-out;
     # the Redis result remains the cross-process/pod cache.
     async with _resolution_lock(cache_key):
+        generation = await get_module_resolution_generation(cache_key)
         cached = await get_module_resolution_cache(cache_key)
         if cached is not None:
             hydrated = await hydrate_cached_resolution(cached)
@@ -202,6 +204,7 @@ async def resolve_module_name(
                             "storage_path": storage_path,
                             "hash": module["hash"],
                         },
+                        generation=generation,
                     )
                     return module_result
 
@@ -213,12 +216,12 @@ async def resolve_module_name(
                     "kind": "namespace",
                     "path": base_path,
                 }
-                await set_module_resolution_cache(cache_key, namespace_result)
+                await set_module_resolution_cache(cache_key, namespace_result, generation=generation)
                 return namespace_result
 
         logger.debug("SDK module resolver miss: %s", log_safe(name))
         miss_result: dict[str, object] = {"kind": "not_found", "path": base_path}
-        await set_module_resolution_cache(cache_key, miss_result)
+        await set_module_resolution_cache(cache_key, miss_result, generation=generation)
         return miss_result
 
 

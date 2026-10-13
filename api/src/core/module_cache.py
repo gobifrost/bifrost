@@ -14,12 +14,18 @@ import json
 import logging
 from pathlib import Path
 from typing import Awaitable, cast
+from uuid import uuid4
 
 from src.core.log_safety import log_safe
 from src.core.module_cache_contract import (
     MODULE_INDEX_KEY,
     MODULE_KEY_PREFIX,
     MODULE_RESOLUTION_KEY_PREFIX,
+    MODULE_RESOLUTION_GENERATION_PREFIX,
+    MODULE_RESOLUTION_GENERATION_SCRIPT,
+    MODULE_RESOLUTION_READ_SCRIPT,
+    MODULE_RESOLUTION_WRITE_SCRIPT,
+    module_resolution_generation_key,
     MODULE_RESOLUTION_NEGATIVE_TTL,
     MODULE_RESOLUTION_TTL,
     CachedModule,
@@ -93,26 +99,42 @@ async def get_module(path: str) -> CachedModule | None:
     return module
 
 
+async def get_module_resolution_generation(cache_key: str) -> str:
+    """Capture a generation before probing storage; expired tokens never revive."""
+    redis_conn = await get_redis_client()._get_redis()
+    return await cast(Awaitable[str], redis_conn.eval(
+        MODULE_RESOLUTION_GENERATION_SCRIPT, 1,
+        module_resolution_generation_key(cache_key), uuid4().hex, MODULE_RESOLUTION_TTL,
+    ))
+
+
 async def get_module_resolution_cache(cache_key: str) -> dict | None:
-    """Read a targeted module resolver result from Redis."""
-    redis = get_redis_client()
-    data = await redis.get(f"{MODULE_RESOLUTION_KEY_PREFIX}{cache_key}")
+    """Read metadata only while its name generation is still current."""
+    redis_conn = await get_redis_client()._get_redis()
+    data = await cast(Awaitable[str | None], redis_conn.eval(
+        MODULE_RESOLUTION_READ_SCRIPT, 2,
+        module_resolution_generation_key(cache_key),
+        f"{MODULE_RESOLUTION_KEY_PREFIX}{cache_key}",
+    ))
     return json.loads(data) if data else None
 
 
-async def set_module_resolution_cache(cache_key: str, result: dict) -> None:
-    """Cache a targeted module resolver result."""
+async def set_module_resolution_cache(
+    cache_key: str, result: dict, *, generation: str,
+) -> None:
+    """A lookup started before invalidation cannot repopulate the current cache."""
     ttl = (
         MODULE_RESOLUTION_NEGATIVE_TTL
         if result.get("kind") == "not_found"
         else MODULE_RESOLUTION_TTL
     )
-    redis = get_redis_client()
-    await redis.setex(
+    redis_conn = await get_redis_client()._get_redis()
+    await cast(Awaitable[int], redis_conn.eval(
+        MODULE_RESOLUTION_WRITE_SCRIPT, 2,
+        module_resolution_generation_key(cache_key),
         f"{MODULE_RESOLUTION_KEY_PREFIX}{cache_key}",
-        ttl,
-        json.dumps(result),
-    )
+        generation, ttl, json.dumps({"generation": generation, "result": result}),
+    ))
 
 
 async def _scan_keys(redis_conn, pattern: str) -> list[str]:
@@ -153,15 +175,14 @@ async def invalidate_module_resolution_cache(path: str) -> None:
 
     redis = get_redis_client()
     redis_conn = await redis._get_redis()
-    # Redis SCAN MATCH still traverses the keyspace. Scan this namespace once,
-    # then match every affected ancestor locally to avoid repeated round trips.
-    keys = [
-        key
-        for key in await _scan_keys(redis_conn, f"{MODULE_RESOLUTION_KEY_PREFIX}*")
-        if key.rpartition(":")[2] in names
-    ]
-    if keys:
-        await cast(Awaitable[int], redis_conn.delete(*dict.fromkeys(keys)))
+    # No scope index and no keyspace walk: every scope checks this same token.
+    async with redis_conn.pipeline(transaction=True) as pipeline:
+        for name in sorted(names):
+            pipeline.set(
+                f"{MODULE_RESOLUTION_GENERATION_PREFIX}{name}",
+                uuid4().hex, ex=MODULE_RESOLUTION_TTL,
+            )
+        await pipeline.execute()
 
 
 async def set_module(path: str, content: str, content_hash: str) -> None:
@@ -265,8 +286,9 @@ async def clear_module_cache() -> int:
     # Resolver metadata can otherwise outlive the source cache and turn a
     # deliberate cold-cache reset into a partially warm lookup.
     resolution_keys = await _scan_keys(redis_conn, f"{MODULE_RESOLUTION_KEY_PREFIX}*")
-    if resolution_keys:
-        await cast(Awaitable[int], redis_conn.delete(*resolution_keys))
+    generation_keys = await _scan_keys(redis_conn, f"{MODULE_RESOLUTION_GENERATION_PREFIX}*")
+    if resolution_keys or generation_keys:
+        await cast(Awaitable[int], redis_conn.delete(*resolution_keys, *generation_keys))
 
     logger.info(f"Cleared {count} modules from cache")
     return count

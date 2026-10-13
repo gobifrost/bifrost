@@ -17,6 +17,7 @@ import os
 import re
 import tempfile
 import zipfile
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -144,9 +145,11 @@ from src.services.solutions.deploy_job_storage import SolutionDeployJobStorage
 from shared.solution_deploy_status import project_solution_deploy_job_status
 from src.services.solutions.deploy import (
     SolutionDeployConflict,
+    SolutionDeployInstrumentation,
     SolutionDowngradeBlocked,
     SolutionFinalizeIncomplete,
     SolutionWorkflowNameMismatch,
+    solution_deploy_instrumentation,
 )
 from src.services.solutions.export_jobs import (
     create_export_job,
@@ -2351,6 +2354,8 @@ async def _run_deploy_job(
     force: bool,
     allow_connected_install: bool = False,
     delete_install_on_failure: bool = False,
+    progress_callback: Callable[[str, float], Awaitable[None]] | None = None,
+    timing_callback: Callable[[str, int], Awaitable[None]] | None = None,
 ) -> None:
     """Execute the deploy under a fresh session (background task).
 
@@ -2409,6 +2414,10 @@ async def _run_deploy_job(
     async def _set_phase(phase: str) -> None:
         await _set_status("running", result={"phase": phase})
 
+    async def _report(phase: str, percent: float) -> None:
+        if progress_callback is not None:
+            await progress_callback(phase, percent)
+
     if not await _set_status("running"):
         _cleanup_file(zip_path)
         return
@@ -2427,14 +2436,22 @@ async def _run_deploy_job(
                         "deploy is disabled (auto-pull is the only writer)."
                     )
                 await _set_phase("validating bundle and applying resources")
-                result = await deploy_zip_to_solution_path(
-                    db, solution, zip_path, force=force
+                await _report("Validating Solution bundle", 12)
+                instrumentation = SolutionDeployInstrumentation(
+                    progress_callback=progress_callback,
+                    timing_callback=timing_callback,
                 )
+                with solution_deploy_instrumentation(instrumentation):
+                    result = await deploy_zip_to_solution_path(
+                        db, solution, zip_path, force=force
+                    )
+                await _report("Committing Solution resources", 65)
                 await db.commit()
                 # S3 only after the DB is durable — a failed commit changes no running
                 # code (P1-c). Still inside the lock so finalize can't race another deploy.
                 await _set_phase("storing source artifact and runtime files")
                 await result.finalize_s3()
+                await _report("Persisting Solution source index", 98)
                 await db.commit()  # source search index rows written by finalize
                 deploy_result = {
                     "solution_id": str(solution_id),
@@ -2503,6 +2520,8 @@ async def _run_install_job(
     replace_secrets: bool,
     replace_data: bool,
     reactivate: bool,
+    progress_callback: Callable[[str, float], Awaitable[None]] | None = None,
+    timing_callback: Callable[[str, int], Awaitable[None]] | None = None,
 ) -> None:
     """Execute a zip install under a fresh session (background task).
 
@@ -2554,21 +2573,32 @@ async def _run_install_job(
         return
     install_result: dict | None = None
 
+    async def _report(phase: str, percent: float) -> None:
+        if progress_callback is not None:
+            await progress_callback(phase, percent)
+
     async def _execute() -> None:
         nonlocal install_result
         async with get_db_context() as db:
-            solution = await install_zip_path(
-                db,
-                zip_path,
-                organization_id=organization_id,
-                config_values=config_values,
-                deployer_email=deployer_email,
-                force=force,
-                password=password,
-                replace_secrets=replace_secrets,
-                replace_data=replace_data,
-                reactivate=reactivate,
+            await _report("Validating Solution install bundle", 12)
+            instrumentation = SolutionDeployInstrumentation(
+                progress_callback=progress_callback,
+                timing_callback=timing_callback,
             )
+            with solution_deploy_instrumentation(instrumentation):
+                solution = await install_zip_path(
+                    db,
+                    zip_path,
+                    organization_id=organization_id,
+                    config_values=config_values,
+                    deployer_email=deployer_email,
+                    force=force,
+                    password=password,
+                    replace_secrets=replace_secrets,
+                    replace_data=replace_data,
+                    reactivate=reactivate,
+                )
+            await _report("Finalizing Solution installation", 98)
             install_result = {"solution_id": str(solution.id), "slug": solution.slug}
     try:
         await asyncio.wait_for(

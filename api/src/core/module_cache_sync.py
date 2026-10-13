@@ -47,6 +47,8 @@ from src.core.module_cache_contract import (
     MODULE_INDEX_KEY,
     MODULE_KEY_PREFIX,
     MODULE_RESOLUTION_KEY_PREFIX,
+    MODULE_RESOLUTION_READ_SCRIPT,
+    module_resolution_generation_key,
     CachedModule,
     module_resolution_cache_key,
 )
@@ -461,7 +463,11 @@ def _get_cached_module_resolution(name: str) -> ModuleResolution | None:
     """Hydrate resolver metadata and source directly from worker-visible Redis."""
     try:
         client = _get_sync_redis()
-        raw_resolution = client.get(_resolution_redis_key(name))
+        resolution_key = _resolution_redis_key(name)
+        raw_resolution = client.eval(
+            MODULE_RESOLUTION_READ_SCRIPT, 2,
+            module_resolution_generation_key(resolution_key), resolution_key,
+        )
         if not raw_resolution:
             return None
         data = json.loads(raw_resolution)

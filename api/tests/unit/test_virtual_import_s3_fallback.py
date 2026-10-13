@@ -145,14 +145,10 @@ def test_targeted_resolution_hydrates_resolver_metadata_from_redis_without_http(
     from src.core import module_cache_sync as mcs
 
     redis_client = MagicMock()
+    redis_client.eval.return_value = json.dumps(
+        {"kind": "module", "path": "modules/tickets.py", "storage_path": "_solutions/sol-1/modules/tickets.py"}
+    )
     redis_client.get.side_effect = [
-        json.dumps(
-            {
-                "kind": "module",
-                "path": "modules/tickets.py",
-                "storage_path": "_solutions/sol-1/modules/tickets.py",
-            }
-        ),
         json.dumps(
             {
                 "content": "VALUE = 42",
@@ -185,8 +181,8 @@ def test_targeted_resolution_reads_exact_workspace_module_without_http():
     from src.core import module_cache_sync as mcs
 
     redis_client = MagicMock()
+    redis_client.eval.return_value = None
     redis_client.get.side_effect = [
-        None,
         json.dumps(
             {
                 "content": "VALUE = 7",
@@ -217,6 +213,7 @@ def test_solution_global_fallback_uses_api_when_primary_scope_has_no_exact_match
 
     redis_client = MagicMock()
     redis_client.get.return_value = None
+    redis_client.eval.return_value = None
     api_result = mcs.ModuleResolution(
         kind="namespace",
         path="modules",
@@ -235,8 +232,7 @@ def test_solution_global_fallback_uses_api_when_primary_scope_has_no_exact_match
         assert result is api_result
         api.assert_called_once_with("modules")
         assert redis_client.get.call_args_list == [
-            # Resolver metadata, then Solution module and package candidates.
-            call("bifrost:module:resolution:sol-1:1:modules"),
+            # Metadata is checked atomically by EVAL; GET probes scoped source.
             call("bifrost:module:_solutions/sol-1/modules.py"),
             call("bifrost:module:_solutions/sol-1/modules/__init__.py"),
         ]

@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.cache.redis_client import get_redis
 from src.core.database import get_db_context
 from src.core.principal import UserPrincipal
 from src.jobs.platform.base import (
@@ -19,6 +20,7 @@ from src.jobs.platform.base import (
 from src.jobs.platform.system_maintenance import enqueue_system_maintenance
 from src.models.orm.platform_jobs import PlatformJob
 from src.scheduler.registry import ScheduledTaskOutcome
+from src.services.agent_run_step_streams import inspect_orphaned_agent_run_step_streams
 from src.services.platform_job_lease import LeaseLost
 from src.services.platform_jobs import (
     enqueue_platform_job,
@@ -64,7 +66,14 @@ async def run_run_retention(context: PlatformJobContext, payload: RunRetentionPa
 
     if payload.dry_run:
         async with get_db_context() as db:
-            return {"dry_run": True, **await plan_run_retention(db, cutoff=cutoff)}
+            retention_plan = await plan_run_retention(db, cutoff=cutoff)
+            async with get_redis() as redis:
+                stream_plan = await inspect_orphaned_agent_run_step_streams(db, redis)
+            return {
+                "dry_run": True,
+                **retention_plan,
+                "agent_run_step_streams": stream_plan,
+            }
 
     await context.save_checkpoint(state, phase="Deleting")
     for key, label, delete_batch in (

@@ -485,12 +485,13 @@ class AgentRunConsumer(BaseConsumer):
                 if run_obj:
                     agent_run = run_obj
 
-            # Clean up Redis Stream now that steps are committed to DB
+            # Clean up Redis Stream now that steps are committed to DB. Its TTL
+            # bounds the leak if this best-effort delete cannot reach Redis.
             try:
                 async with get_redis() as r:
                     await r.delete(agent_run_steps_stream_key(run_id))
             except Exception as e:
-                # Stream cleanup is best-effort — Redis stream has a TTL anyway
+                # Stream cleanup is best-effort; write-time TTL bounds a leak.
                 logger.debug(f"failed to delete agent_run steps stream for {run_id}: {e}")
 
             await publish_agent_run_update(agent_run, agent.name)
@@ -568,12 +569,12 @@ class AgentRunConsumer(BaseConsumer):
                 except Exception:
                     logger.exception(f"Failed to update agent_run {run_id} after error")
 
-                # Clean up Redis Stream on failure too
+                # Clean up Redis Stream on failure too; write-time TTL bounds a leak.
                 try:
                     async with get_redis() as r:
                         await r.delete(agent_run_steps_stream_key(run_id))
                 except Exception as cleanup_err:
-                    # Stream cleanup is best-effort
+                    # Stream cleanup is best-effort; write-time TTL bounds a leak.
                     logger.debug(f"failed to delete agent_run steps stream for {run_id}: {cleanup_err}")
 
                 if trigger_type == "chat" or context.get("trigger_type") == "chat":

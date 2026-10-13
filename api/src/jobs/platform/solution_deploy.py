@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import tempfile
 import logging
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
@@ -31,6 +32,35 @@ class SolutionDeployPayload(BaseModel):
     options: dict[str, Any]
 
 
+@dataclass
+class _SolutionDeployReporter:
+    """Throttle bounded deployment progress onto the shared job record."""
+
+    context: PlatformJobContext
+    last_percent: float = 0
+
+    async def progress(self, phase: str, percent: float) -> None:
+        bounded_percent = min(99, max(self.last_percent, percent))
+        if bounded_percent == self.last_percent:
+            return
+        self.last_percent = bounded_percent
+        await self.context.report(phase, percent=bounded_percent)
+
+    async def timing(self, category: str, elapsed_ms: int) -> None:
+        try:
+            await self.context.log(
+                "info",
+                "solution_deploy_timing",
+                f"Solution deploy {category} elapsed {elapsed_ms} ms",
+            )
+        except Exception as exc:  # noqa: BLE001 - diagnostics must not abort publication
+            logger.warning(
+                "Failed to publish Solution deploy timing category %s (%s)",
+                category,
+                type(exc).__name__,
+            )
+
+
 async def run_solution_deploy(
     context: PlatformJobContext,
     payload: SolutionDeployPayload,
@@ -39,6 +69,7 @@ async def run_solution_deploy(
 
     storage = SolutionDeployJobStorage(payload.deploy_job_id)
     await context.report("Loading staged Solution input", percent=2)
+    reporter = _SolutionDeployReporter(context, last_percent=2)
     try:
         with tempfile.TemporaryDirectory(prefix="bifrost-solution-job-") as tmp:
             zip_path = Path(tmp) / "input.zip"
@@ -46,6 +77,7 @@ async def run_solution_deploy(
                 zip_path,
                 expected_sha256=payload.input_sha256,
             )
+            await reporter.progress("Preparing Solution deployment", 8)
             if payload.kind in {"deploy", "install_from_repo"}:
                 if payload.install_id is None:
                     raise PlatformJobFailure(
@@ -65,6 +97,8 @@ async def run_solution_deploy(
                     # brand-new install is deleted atomically with the job's
                     # failed status (see _run_deploy_job docstring).
                     delete_install_on_failure=payload.kind == "install_from_repo",
+                    progress_callback=reporter.progress,
+                    timing_callback=reporter.timing,
                 )
             else:
                 raw_org_id = payload.options.get("organization_id")
@@ -79,6 +113,8 @@ async def run_solution_deploy(
                     replace_secrets=bool(payload.options.get("replace_secrets", False)),
                     replace_data=bool(payload.options.get("replace_data", False)),
                     reactivate=bool(payload.options.get("reactivate", False)),
+                    progress_callback=reporter.progress,
+                    timing_callback=reporter.timing,
                 )
         failure: PlatformJobFailure | None = None
         result: dict[str, Any] = {}

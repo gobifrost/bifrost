@@ -19,6 +19,7 @@ from unittest.mock import patch
 from redis.asyncio import Redis
 
 from src.core import module_cache
+from src.core.module_cache_contract import module_resolution_generation_key
 
 
 class MeasuredRedis(Redis):
@@ -83,7 +84,10 @@ async def main():
     }
     unrelated = [f"module-cache-benchmark:{i}" for i in range(args.keys)]
     sources = [f"{module_cache.MODULE_KEY_PREFIX}{path}" for path in paths]
-    owned = unrelated + resolver_keys + sources + [module_cache.MODULE_INDEX_KEY]
+    generation_keys = [
+        module_resolution_generation_key(key) for key in resolver_keys
+    ]
+    owned = unrelated + resolver_keys + generation_keys + sources + [module_cache.MODULE_INDEX_KEY]
     redis = MeasuredRedis(host="redis", port=6379, db=15, decode_responses=True)
     if await redis.dbsize():
         await redis.aclose()
@@ -107,10 +111,10 @@ async def main():
                 {
                     "event": "setup",
                     "python_files": len(paths),
-                    "old_traversals": sum(
+                    "affected_name_updates": sum(
                         len(module_cache._resolver_names_for_path(p)) for p in paths
                     ),
-                    "new_traversals": len(paths),
+                    "new_traversals": 0,
                     "unrelated_keys": args.keys,
                     "resolver_keys": len(resolver_keys),
                 }
@@ -125,10 +129,14 @@ async def main():
             if round_number % 2:
                 writers.reverse()
             for label, writer in writers:
-                async with redis.pipeline(transaction=False) as pipeline:
+                with patch.object(module_cache, "get_redis_client", return_value=redis):
                     for key in resolver_keys:
-                        pipeline.set(key, "{}", ex=3600)
-                    await pipeline.execute()
+                        cache_key = key.removeprefix(module_cache.MODULE_RESOLUTION_KEY_PREFIX)
+                        generation = await module_cache.get_module_resolution_generation(cache_key)
+                        await module_cache.set_module_resolution_cache(
+                            cache_key, {"kind": "namespace", "path": "benchmark"},
+                            generation=generation,
+                        )
                 redis.scan_calls = 0
                 redis.scan_seconds = 0
                 start = time.perf_counter()
@@ -152,12 +160,14 @@ async def main():
                 elapsed = time.perf_counter() - start
                 workload_calls = redis.scan_calls
                 scan_seconds = redis.scan_seconds
-                survivors = {
-                    key
-                    async for key in redis.scan_iter(
-                        f"{module_cache.MODULE_RESOLUTION_KEY_PREFIX}*", count=1000
-                    )
-                }
+                # Generation invalidation leaves expiring values physically
+                # present; correctness is the shared reader's visible result.
+                survivors = set()
+                with patch.object(module_cache, "get_redis_client", return_value=redis):
+                    for key in resolver_keys:
+                        cache_key = key.removeprefix(module_cache.MODULE_RESOLUTION_KEY_PREFIX)
+                        if await module_cache.get_module_resolution_cache(cache_key) is not None:
+                            survivors.add(key)
                 assert survivors == expected_survivors
                 assert await redis.get(unrelated[0]) == "{}"
                 assert await redis.get(unrelated[-1]) == "{}"

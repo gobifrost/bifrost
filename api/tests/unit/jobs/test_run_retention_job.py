@@ -123,6 +123,20 @@ def _install(monkeypatch: pytest.MonkeyPatch, deleter: Deleter) -> None:
     monkeypatch.setattr(run_retention, "delete_event_batch", deleter.delete_event_batch)
     monkeypatch.setattr(run_retention, "plan_run_retention", deleter.plan_run_retention)
 
+    @asynccontextmanager
+    async def fake_redis_context() -> AsyncGenerator[object, None]:
+        yield object()
+
+    async def fake_stream_inspection(db: object, redis: object) -> dict[str, int]:
+        return {"scanned": 0, "orphaned_streams": 0, "next_cursor": 0}
+
+    monkeypatch.setattr(run_retention, "get_redis", fake_redis_context)
+    monkeypatch.setattr(
+        run_retention,
+        "inspect_orphaned_agent_run_step_streams",
+        fake_stream_inspection,
+    )
+
 
 def _checkpoint(**counts: int) -> dict[str, Any]:
     return {
@@ -282,6 +296,11 @@ async def test_dry_run_plans_without_deleting(monkeypatch: pytest.MonkeyPatch) -
     assert result["workflow_runs"] == 4
     assert result["events"] == 9
     assert result["cutoff"] == deleter.planned[0].isoformat()
+    assert result["agent_run_step_streams"] == {
+        "scanned": 0,
+        "orphaned_streams": 0,
+        "next_cursor": 0,
+    }
 
 
 @pytest.mark.asyncio
