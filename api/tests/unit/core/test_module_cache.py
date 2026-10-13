@@ -324,9 +324,15 @@ async def test_set_module_invalidates_resolution_cache_for_exact_and_ancestors()
         async def sadd(self, *_args):
             return 1
 
-        async def scan_iter(self, pattern):
-            patterns.append(pattern)
-            for key in [f"cached:{pattern}"]:
+        async def scan_iter(self, pattern, *, count):
+            scans.append((pattern, count))
+            for key in [
+                "bifrost:module:resolution:-:0:modules",
+                "bifrost:module:resolution:solution-a:1:modules.helpers",
+                "bifrost:module:resolution:solution-b:0:modules.helpers.tool",
+                "bifrost:module:resolution:-:1:modules.helpers.tool.extra",
+                "bifrost:module:resolution:solution-a:0:unrelated",
+            ]:
                 yield key
 
         async def delete(self, *keys):
@@ -340,15 +346,78 @@ async def test_set_module_invalidates_resolution_cache_for_exact_and_ancestors()
         async def _get_redis(self):
             return FakeRedisConn()
 
-    patterns: list[str] = []
+    scans: list[tuple[str, int]] = []
     deleted: list[str] = []
 
     with patch("src.core.module_cache.get_redis_client", return_value=FakeRedis()):
         await set_module("modules/helpers/tool.py", "VALUE = 1", "hash")
 
-    assert patterns == [
-        "bifrost:module:resolution:*:modules",
-        "bifrost:module:resolution:*:modules.helpers",
-        "bifrost:module:resolution:*:modules.helpers.tool",
+    assert scans == [("bifrost:module:resolution:*", 1000)]
+    assert deleted == [
+        "bifrost:module:resolution:-:0:modules",
+        "bifrost:module:resolution:solution-a:1:modules.helpers",
+        "bifrost:module:resolution:solution-b:0:modules.helpers.tool",
     ]
-    assert deleted == [f"cached:{pattern}" for pattern in patterns]
+
+
+@pytest.mark.asyncio
+async def test_invalidate_module_resolution_cache_handles_solution_package_paths():
+    from src.core.module_cache import invalidate_module_resolution_cache
+
+    class FakeRedisConn:
+        async def scan_iter(self, pattern, *, count):
+            scans.append((pattern, count))
+            for key in keys:
+                yield key
+
+        async def delete(self, *keys_to_delete):
+            deleted.extend(keys_to_delete)
+            return len(keys_to_delete)
+
+    class FakeRedis:
+        async def _get_redis(self):
+            return FakeRedisConn()
+
+    prefix = "bifrost:module:resolution:"
+    keys = [
+        f"{prefix}-:0:workflows",
+        f"{prefix}solution-a:1:workflows.triage",
+        f"{prefix}solution-b:0:workflows.triage",
+        f"{prefix}-:1:workflows.triage.child",
+        f"{prefix}solution-a:0:workflows.triages",
+        f"{prefix}-:0:unrelated",
+        f"{prefix}solution-a:1:unrelated",
+    ]
+    scans: list[tuple[str, int]] = []
+    deleted: list[str] = []
+
+    with patch("src.core.module_cache.get_redis_client", return_value=FakeRedis()):
+        await invalidate_module_resolution_cache(
+            "_solutions/solution-a/workflows/triage/__init__.py"
+        )
+
+    assert scans == [(f"{prefix}*", 1000)]
+    assert deleted == keys[:3]
+
+
+@pytest.mark.asyncio
+async def test_invalidate_module_resolution_cache_skips_delete_when_no_names_match():
+    from src.core.module_cache import invalidate_module_resolution_cache
+
+    class FakeRedisConn:
+        async def scan_iter(self, _pattern, *, count):
+            assert count == 1000
+            yield "bifrost:module:resolution:-:0:unrelated"
+
+        delete = AsyncMock()
+
+    class FakeRedis:
+        async def _get_redis(self):
+            return redis_conn
+
+    redis_conn = FakeRedisConn()
+
+    with patch("src.core.module_cache.get_redis_client", return_value=FakeRedis()):
+        await invalidate_module_resolution_cache("modules/helpers/tool.py")
+
+    redis_conn.delete.assert_not_awaited()

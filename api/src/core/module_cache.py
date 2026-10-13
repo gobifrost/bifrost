@@ -117,7 +117,7 @@ async def set_module_resolution_cache(cache_key: str, result: dict) -> None:
 
 async def _scan_keys(redis_conn, pattern: str) -> list[str]:
     """Collect Redis keys from both real and lightweight test clients."""
-    iterator = redis_conn.scan_iter(pattern)
+    iterator = redis_conn.scan_iter(pattern, count=1000)
     if hasattr(iterator, "__await__"):
         iterator = await iterator
     if not hasattr(iterator, "__aiter__"):
@@ -153,11 +153,13 @@ async def invalidate_module_resolution_cache(path: str) -> None:
 
     redis = get_redis_client()
     redis_conn = await redis._get_redis()
-    keys: list[str] = []
-    for name in sorted(names):
-        keys.extend(
-            await _scan_keys(redis_conn, f"{MODULE_RESOLUTION_KEY_PREFIX}*:{name}")
-        )
+    # Redis SCAN MATCH still traverses the keyspace. Scan this namespace once,
+    # then match every affected ancestor locally to avoid repeated round trips.
+    keys = [
+        key
+        for key in await _scan_keys(redis_conn, f"{MODULE_RESOLUTION_KEY_PREFIX}*")
+        if key.rpartition(":")[2] in names
+    ]
     if keys:
         await cast(Awaitable[int], redis_conn.delete(*dict.fromkeys(keys)))
 
