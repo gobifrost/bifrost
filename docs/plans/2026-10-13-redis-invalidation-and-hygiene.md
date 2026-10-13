@@ -291,3 +291,32 @@ or warning filters were changed to resolve these failures.
 
 API quality checks passed again after the CI corrections: pyright zero
 errors/warnings/information and ruff clean.
+
+## Merge-queue E2E failure disposition
+
+The first synthetic queue candidate failed one case in E2E shard 3/3 (703
+passed; three existing skips): the new orphan test assumed a single SCAN page
+would include its three matching streams. A populated shared keyspace exposed
+an empty first page. The production inspector correctly returns one bounded
+page and its continuation cursor; this was a test-harness assumption.
+
+Reproduced locally by seeding 1,000 owned unrelated keys and limiting inspection
+to one key per page: the old assertion failed with the same zero scanned count.
+The corrected test follows continuation cursors through one complete traversal
+using bounded pages, requires an empty intermediate page, verifies all three
+lifecycle classifications, and verifies no stream was deleted. The fixture
+deletes only its owned keys in `finally`; it never flushes Redis.
+
+```bash
+./test.sh tests/e2e/platform/test_agent_run_step_stream_lifecycle.py::test_orphan_inspection_uses_agent_run_rows_and_never_deletes -q
+./test.sh tests/e2e/platform/test_agent_run_step_stream_lifecycle.py tests/e2e/platform/test_run_retention_deleter.py -q --durations=0
+./test.sh quality api
+```
+
+The first command reproduced the failure before correction. After the fix, all
+nine integration cases passed (3.24 seconds, JUnit zero errors/failures/skips).
+The inspector's runtime behavior and bounded operational contract are unchanged;
+there are no retries, skips, or longer timeouts.
+
+API quality checks passed after this E2E correction: pyright zero
+errors/warnings/information and ruff clean. Main had not advanced.

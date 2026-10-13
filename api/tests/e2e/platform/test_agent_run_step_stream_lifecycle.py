@@ -65,12 +65,18 @@ async def test_orphan_inspection_uses_agent_run_rows_and_never_deletes(db_sessio
         agent_run_steps_stream_key(str(run_id))
         for run_id in (existing_run_id, missing_old_run_id, missing_recent_run_id)
     ]
+    unrelated_prefix = f"test:agent-step-orphan-inspection:{uuid4()}:"
+    unrelated_keys = [f"{unrelated_prefix}{index}" for index in range(1000)]
     db_session.add(AgentRun(id=existing_run_id, trigger_type="test", status="running"))
     await db_session.commit()
 
     old_entry_id = f"{int((now - timedelta(seconds=AGENT_RUN_STEP_STREAM_TTL_SECONDS + 1)).timestamp() * 1000)}-0"
     try:
         async with get_redis() as redis:
+            async with redis.pipeline(transaction=False) as pipeline:
+                for key in unrelated_keys:
+                    pipeline.set(key, "unrelated", ex=60)
+                await pipeline.execute()
             for run_id in (existing_run_id, missing_old_run_id):
                 await redis.xadd(
                     agent_run_steps_stream_key(str(run_id)),
@@ -82,23 +88,42 @@ async def test_orphan_inspection_uses_agent_run_rows_and_never_deletes(db_sessio
                 _stream_entry(str(missing_recent_run_id)),
             )
 
-            report = await inspect_orphaned_agent_run_step_streams(
-                db_session,
-                redis,
-                cursor=0,
-                limit=100,
-                now=now,
-            )
+            # SCAN MATCH filters each page; an empty page does not end traversal.
+            totals = {
+                "scanned": 0,
+                "protected_existing_runs": 0,
+                "recent_missing_runs": 0,
+                "orphaned_streams": 0,
+            }
+            cursor = 0
+            saw_empty_page = False
+            while True:
+                report = await inspect_orphaned_agent_run_step_streams(
+                    db_session,
+                    redis,
+                    cursor=cursor,
+                    limit=100,
+                    now=now,
+                )
+                assert report["scanned"] <= 100
+                assert report["uninspected_keys"] == 0
+                saw_empty_page |= report["scanned"] == 0 and report["next_cursor"] != 0
+                for category in totals:
+                    totals[category] += report[category]
+                cursor = report["next_cursor"]
+                if cursor == 0:
+                    break
 
-            assert report["scanned"] >= 3
-            assert report["protected_existing_runs"] >= 1
-            assert report["recent_missing_runs"] >= 1
-            assert report["orphaned_streams"] >= 1
+            assert saw_empty_page
+            assert totals["scanned"] >= 3
+            assert totals["protected_existing_runs"] >= 1
+            assert totals["recent_missing_runs"] >= 1
+            assert totals["orphaned_streams"] >= 1
             for stream_key in stream_keys:
                 assert await redis.exists(stream_key)
     finally:
         async with get_redis() as redis:
-            await redis.delete(*stream_keys)
+            await redis.delete(*stream_keys, *unrelated_keys)
         await db_session.execute(delete(AgentRun).where(AgentRun.id == existing_run_id))
         await db_session.commit()
 
