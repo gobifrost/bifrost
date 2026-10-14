@@ -12,6 +12,10 @@ Each item:
 7. Re-checks the source, then deletes it.
 8. Commits and publishes.
 
+A retry recognizes an interrupted earlier run of the same item by the copy
+markers, never by size: it resumes a marked copy (source present), adopts it
+(source gone, row still at the source) or reports the item already moved.
+
 The full contract is ``docs/superpowers/specs/2026-10-09-files-move-design.md``.
 
 A move never raises. Every outcome, including storage and database errors,
@@ -258,12 +262,50 @@ class FileMover:
         on_conflict: OnConflict,
     ) -> _Destination | MoveOutcome:
         destination_key = self._key(request.destination)
-        if await self._store.head_object(destination_key) is None:
+        existing = await self._store.head_object(destination_key)
+        if existing is None:
             return _Destination(request.destination, destination_key, renamed=False, resume=False)
+        if self._is_orphan(existing, source_key, source, row):
+            return _Destination(request.destination, destination_key, renamed=False, resume=True)
         if on_conflict == "error":
             return _fail(409, "file_exists")
         taken = await self._candidates(request.destination)
+        found = await self._find_own_copy(
+            db,
+            [taken[number] for number in sorted(taken)],
+            lambda head: self._is_orphan(head, source_key, source, row),
+        )
+        if found is not None:
+            path, key, _ = found
+            return _Destination(path, key, renamed=True, resume=True)
         return await self._first_free_candidate(db, request.destination, taken)
+
+    async def _find_own_copy(
+        self,
+        db: AsyncSession,
+        targets: list[tuple[str, str]],
+        is_ours: Callable[[ObjectHead], bool],
+        *,
+        locked: str | None = None,
+    ) -> tuple[str, str, ObjectHead] | None:
+        """The first target holding this item's copy, confirmed under its path lock.
+
+        ``locked`` names a path whose lock is already held. Any other match is
+        locked and looked at again: a writer can replace the object between
+        the first look and the lock, and its file must never be resumed (and
+        then cleaned up) or adopted.
+        """
+        for path, key in targets:
+            head = await self._store.head_object(key)
+            if head is None or not is_ours(head):
+                continue
+            if path != locked:
+                await self._lock(db, path)
+                head = await self._store.head_object(key)
+                if head is None or not is_ours(head):
+                    continue
+            return path, key, head
+        return None
 
     async def _candidates(self, destination: str) -> dict[int, tuple[str, str]]:
         """Existing ``stem (n)ext`` siblings of ``destination``: n → (path, key)."""
@@ -482,8 +524,64 @@ class FileMover:
         row: _Row | None,
         on_conflict: OnConflict,
     ) -> MoveOutcome:
+        """The source object is gone: adopt our copy, report already moved, or 404."""
+        targets = await self._recovery_targets(request.destination, on_conflict)
+        if row is not None:
+            # Adopt: an earlier run deleted the source but died before its
+            # commit (or its commit failed). The source is gone, so the copy
+            # is never cleaned up here; any error leaves it for another retry.
+            # The size guard rejects a copy of an older version of a row that
+            # was since overwritten in place (same row id). Never the identity.
+            expected_size = row.size_bytes
+            found = await self._find_own_copy(
+                db,
+                targets,
+                lambda head: self._is_copy_of(head, source_key, row)
+                and expected_size in (None, head.size),
+                locked=request.destination,
+            )
+            if found is not None:
+                path, key, head = found
+                destination = _Destination(path, key, renamed=path != request.destination, resume=True)
+                await self._write_metadata(db, destination, head, row)
+                await db.commit()
+                await self._publish(request.source, path)
+                return MoveOutcome(
+                    status_code=200,
+                    path=path if destination.renamed else None,
+                    renamed=destination.renamed,
+                    adopted=True,
+                )
+            await db.rollback()
+            return _fail(404, "not_found")
+
+        # Already moved: the source row now lives at a destination we copied to.
+        for path, key in targets:
+            head = await self._store.head_object(key)
+            if head is None or head.metadata.get(MARK_SOURCE) != source_marker(source_key):
+                continue
+            moved = await self._row(db, path)
+            if moved is not None and head.metadata.get(MARK_ROW) == str(moved.id):
+                await db.rollback()
+                renamed = path != request.destination
+                return MoveOutcome(
+                    status_code=200,
+                    path=path if renamed else None,
+                    renamed=renamed,
+                    adopted=True,
+                )
         await db.rollback()
         return _fail(404, "not_found")
+
+    async def _recovery_targets(
+        self, destination: str, on_conflict: OnConflict
+    ) -> list[tuple[str, str]]:
+        """Where an earlier run of this item could have put its copy."""
+        targets = [(destination, self._key(destination))]
+        if on_conflict == "rename":
+            candidates = await self._candidates(destination)
+            targets += [candidates[number] for number in sorted(candidates)]
+        return targets
 
     # -- helpers ------------------------------------------------------------
 
@@ -495,6 +593,20 @@ class FileMover:
         return (
             head.metadata.get(MARK_SOURCE) == source_marker(source_key)
             and head.metadata.get(MARK_ROW) == _row_marker(row)
+        )
+
+    def _is_orphan(
+        self,
+        head: ObjectHead,
+        source_key: str,
+        source: ObjectHead,
+        row: _Row | None,
+    ) -> bool:
+        """An interrupted run's copy of exactly the current source bytes."""
+        return (
+            row is not None
+            and self._is_copy_of(head, source_key, row)
+            and head.metadata.get(MARK_ETAG) == source.etag
         )
 
     async def _lock(self, db: AsyncSession, *paths: str) -> None:
