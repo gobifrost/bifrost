@@ -124,7 +124,7 @@ dependencies = [
     # =========================================================================
     # Object Storage (S3-compatible)
     # =========================================================================
-    "aiobotocore",  # Async S3 client
+    "aiobotocore>=2.15.0",  # Async S3 client; >=2.15 bundles botocore with IfNoneMatch on CompleteMultipartUpload (files.move)
     "types-aiobotocore[s3]",  # Type stubs for S3
 
     # =========================================================================
