@@ -514,7 +514,10 @@ source path has a different row id and can never match.
   it skips step 4 and continues from step 5, instead of reporting 409 or
   renaming around it. Under rename the orphan may be at a candidate; step 3's
   candidate scan finds it. A marker match with a different ETag (the source was
-  replaced since) is a normal 409 / rename.
+  replaced since) is a normal 409 / rename. A resumed copy is never cleaned
+  up: a failed resume (any failure in steps 5–7, with the usual result code)
+  rolls back and leaves the copy for a later retry or an operator, because the
+  earlier run that made it may already have issued its source delete.
 
 Residuals, stated in the operation docs: a source object deleted out of band
 (not by a move) is a plain 404, and a source with no metadata row cannot be
@@ -545,8 +548,8 @@ feature-specific status path.
 **Cleanup** (failure in steps 4–7 before the source delete is issued; never
 after — see step 7): delete the destination copy with the raising delete while
 the path locks are still held, then roll back (the rollback releases the locks)
-— only if this item created it or resumed it
-(a resumed copy is this move's own orphan, proven by its markers). If cleanup
+— only if this item created it (a resumed copy is never cleaned up; see
+*Resume*). If cleanup
 itself fails, the item's result is 500 `cleanup_failed`, and the job
 publishes an operator log entry (`context.log`) naming both S3 keys, because
 an orphaned copy under a new prefix can be readable there.

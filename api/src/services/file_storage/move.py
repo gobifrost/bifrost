@@ -391,12 +391,7 @@ class FileMover:
         try:
             current = await self._store.head_object(source_key)
         except Exception:
-            if destination.resume:
-                # An earlier run's unconfirmed source delete may have landed
-                # by now, leaving this copy as the only one: keep it.
-                await db.rollback()
-            else:
-                await self._cleanup(request, source_key, destination)
+            await self._cleanup(request, source_key, destination)
             raise
         if current is None and destination.resume:
             return await self._adopt_resumed(db, request, source_key, row, destination)
@@ -521,7 +516,14 @@ class FileMover:
 
         Call it while the path locks are still held (before any rollback).
         Returns False when the copy could not be removed; never raises.
+
+        A resumed copy is never removed: an earlier run created it and may
+        already have issued its source delete, which can land at any moment
+        and leave the copy as the only one. A failed resume leaves it for a
+        later retry (which resumes or adopts it) or an operator.
         """
+        if destination.resume:
+            return True
         paths = {
             "location": self._target.location,
             "source_path": request.source,

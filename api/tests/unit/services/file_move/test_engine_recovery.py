@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 from sqlalchemy import update
 
 from src.core.database import get_db_context
+from src.services.file_policy_service import FilePolicyService
 from src.models.orm.file_metadata import FileMetadata
 from src.services.file_storage.move import MARK_ROW, FileMover, MoveRequest
 
@@ -192,27 +194,6 @@ async def test_candidate_copy_replaced_before_its_lock_is_not_adopted(store, sol
     assert [r.id for r in await rows_at(solution_target, "a/r.pdf")] == [row_id]
 
 
-async def test_resumed_copy_is_removed_when_the_source_changes_before_delete(store, solution_target) -> None:
-    row_id = await seed_file(store, solution_target, "a/r.pdf")
-    await _interrupted_copy(store, solution_target, "a/r.pdf", "b/r.pdf", row_id, delete_source=False)
-    source_key = key_for(solution_target, "a/r.pdf")
-    seen = 0
-
-    async def upload_lands_before_recheck(key: str) -> None:
-        nonlocal seen
-        if key == source_key:
-            seen += 1
-            if seen == 2:  # the pre-delete re-check
-                store.put(source_key, b"new upload")
-
-    store.before["head"] = upload_lands_before_recheck
-    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
-    assert (outcome.status_code, outcome.error) == (409, "source_changed")
-    assert key_for(solution_target, "b/r.pdf") not in store.objects
-    assert store.objects[source_key].data == b"new upload"
-    assert [r.id for r in await rows_at(solution_target, "a/r.pdf")] == [row_id]
-
-
 def _on_second_source_head(store, source_key: str, action):
     """Run ``action`` just before the step-7 re-check heads the source."""
     seen = 0
@@ -296,3 +277,81 @@ async def test_adopt_without_a_recorded_size_relies_on_markers(store, solution_t
     outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
     assert (outcome.status_code, outcome.adopted) == (200, True)
     assert [r.id for r in await rows_at(solution_target, "b/r.pdf")] == [row_id]
+
+
+# A resumed copy is never cleaned up: an earlier run's source delete may land
+# at any moment, so a failed resume keeps the copy for a later retry.
+
+
+def _on_second_head(store, key: str, action):
+    """Run ``action`` just before the engine's second head of ``key``."""
+    seen = 0
+
+    async def hook(head_key: str) -> None:
+        nonlocal seen
+        if head_key == key:
+            seen += 1
+            if seen == 2:
+                await action()
+
+    return hook
+
+
+async def _resume_setup(store, target):
+    row_id = await seed_file(store, target, "a/r.pdf")
+    await _interrupted_copy(store, target, "a/r.pdf", "b/r.pdf", row_id, delete_source=False)
+    return row_id, key_for(target, "a/r.pdf"), key_for(target, "b/r.pdf")
+
+
+async def _assert_copy_kept(store, target, row_id, dest_key: str) -> None:
+    assert dest_key in store.objects
+    assert not any(op == "delete" for op, _ in store.calls)
+    assert [r.id for r in await rows_at(target, "a/r.pdf")] == [row_id]
+    assert await rows_at(target, "b/r.pdf") == []
+
+
+async def test_failed_resume_keeps_the_copy_when_the_verify_head_raises(store, solution_target) -> None:
+    row_id, _, dest_key = await _resume_setup(store, solution_target)
+
+    async def head_fails() -> None:
+        raise RuntimeError("head failed")
+
+    store.before["head"] = _on_second_head(store, dest_key, head_fails)  # step 5
+    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    assert outcome.status_code == 500 and outcome.error.startswith("internal_error")
+    await _assert_copy_kept(store, solution_target, row_id, dest_key)
+
+
+async def test_failed_resume_keeps_the_copy_when_the_metadata_write_raises(
+    store, solution_target, monkeypatch
+) -> None:
+    row_id, _, dest_key = await _resume_setup(store, solution_target)
+    monkeypatch.setattr(FilePolicyService, "move_metadata", AsyncMock(side_effect=RuntimeError("db")))
+    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    assert outcome.status_code == 500 and outcome.error.startswith("internal_error")
+    await _assert_copy_kept(store, solution_target, row_id, dest_key)
+
+
+async def test_failed_resume_keeps_the_copy_when_verification_fails(store, solution_target) -> None:
+    row_id, _, dest_key = await _resume_setup(store, solution_target)
+
+    async def copy_size_changes() -> None:
+        store.objects[dest_key].data += b" truncated differently"
+
+    store.before["head"] = _on_second_head(store, dest_key, copy_size_changes)  # step 5
+    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    assert (outcome.status_code, outcome.error) == (500, "copy_verification_failed")
+    await _assert_copy_kept(store, solution_target, row_id, dest_key)
+
+
+async def test_failed_resume_keeps_the_copy_when_the_source_changes(store, solution_target) -> None:
+    row_id, source_key, dest_key = await _resume_setup(store, solution_target)
+
+    async def upload_lands() -> None:
+        store.put(source_key, b"new upload")
+
+    store.before["head"] = _on_second_head(store, source_key, upload_lands)  # step 7
+    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    assert (outcome.status_code, outcome.error) == (409, "source_changed")
+    assert store.objects[source_key].data == b"new upload"
+    await _assert_copy_kept(store, solution_target, row_id, dest_key)
