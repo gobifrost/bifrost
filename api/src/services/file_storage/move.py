@@ -130,6 +130,10 @@ def _row_marker(row: _Row | None) -> str:
     return str(row.id) if row is not None else ""
 
 
+def _row_id(row: _Row | None) -> UUID | None:
+    return row.id if row is not None else None
+
+
 def _fail(status_code: int, code: str, message: str | None = None) -> MoveOutcome:
     error = code if message is None else f"{code}: {message}"
     return MoveOutcome(status_code=status_code, error=error[:500])
@@ -189,12 +193,58 @@ class FileMover:
             if isinstance(chosen, MoveOutcome):
                 await db.rollback()
                 return chosen
-            if not chosen.resume:
-                failure = await self._copy(source_key, chosen, source, row)
-                if failure is not None:
-                    await db.rollback()
-                    return failure
-            return await self._complete(db, request, source_key, source, row, chosen)
+            if chosen.resume or source.size <= self._multipart_threshold:
+                if not chosen.resume:
+                    failure = await self._copy(source_key, chosen, source, row)
+                    if failure is not None:
+                        await db.rollback()
+                        return failure
+                return await self._complete(db, request, source_key, source, row, chosen)
+            # Multipart: end the locked transaction (nothing is written yet) so
+            # no API writer waits on these paths for the length of the copy.
+            # The S3 preconditions guard the copy instead.
+            await db.rollback()
+
+        failure = await self._copy(source_key, chosen, source, row)
+        if failure is not None:
+            return failure
+        async with self._open_session() as db:
+            await self._lock(db, request.source, chosen.path)
+            landed = await self._store.head_object(chosen.key)
+            if landed is None or not self._is_copy_of(landed, source_key, row):
+                # No copy of ours is left, or the object there is someone
+                # else's: nothing to clean up.
+                await db.rollback()
+                return _fail(409, "destination_changed")
+            # The destination is our copy from here on; every failure before
+            # the source delete removes it while the re-taken locks are held.
+            try:
+                failure, current_row = await self._recheck_source(db, request, source_key, source, row)
+            except Exception:
+                await self._cleanup(request, source_key, chosen)
+                raise
+            if failure is not None:
+                return await self._discard(db, request, source_key, chosen, failure)
+            return await self._complete(db, request, source_key, source, current_row, chosen)
+
+    async def _recheck_source(
+        self,
+        db: AsyncSession,
+        request: MoveRequest,
+        source_key: str,
+        source: ObjectHead,
+        row: _Row | None,
+    ) -> tuple[MoveOutcome | None, _Row | None]:
+        """After an unlocked copy: the source must be the object that was copied."""
+        current = await self._store.head_object(source_key)
+        if current is None:
+            # Never fall through to step 6's "no row, insert one": the
+            # deleted file would reappear at the destination.
+            return _fail(404, "not_found", "the source was deleted during the move"), None
+        current_row = await self._row(db, request.source)
+        if current.etag != source.etag or _row_id(current_row) != _row_id(row):
+            return _fail(409, "source_changed"), current_row
+        return None, current_row
 
     # -- destination ------------------------------------------------------
 
@@ -293,10 +343,7 @@ class FileMover:
             await self._cleanup(request, source_key, destination)
             raise
         if failure is not None:
-            if not await self._cleanup(request, source_key, destination):
-                failure = _fail(500, "cleanup_failed")
-            await db.rollback()
-            return failure
+            return await self._discard(db, request, source_key, destination, failure)
 
         # Point of no return: once the delete is issued, the copy is never
         # cleaned up — a delete can land server-side after a client error.
@@ -356,6 +403,20 @@ class FileMover:
             size_bytes=head.size,
             updated_by=self._target.requested_by,
         )
+
+    async def _discard(
+        self,
+        db: AsyncSession,
+        request: MoveRequest,
+        source_key: str,
+        destination: _Destination,
+        failure: MoveOutcome,
+    ) -> MoveOutcome:
+        """Remove our copy under the path locks, then roll back and fail."""
+        if not await self._cleanup(request, source_key, destination):
+            failure = _fail(500, "cleanup_failed")
+        await db.rollback()
+        return failure
 
     async def _confirmed_gone(self, key: str) -> bool:
         try:
@@ -428,6 +489,13 @@ class FileMover:
 
     def _key(self, path: str) -> str:
         return resolve_s3_key(self._target.location, self._target.scope, path)
+
+    def _is_copy_of(self, head: ObjectHead, source_key: str, row: _Row | None) -> bool:
+        """The object carries this item's markers (source key and source row)."""
+        return (
+            head.metadata.get(MARK_SOURCE) == source_marker(source_key)
+            and head.metadata.get(MARK_ROW) == _row_marker(row)
+        )
 
     async def _lock(self, db: AsyncSession, *paths: str) -> None:
         for path in sorted(set(paths)):
