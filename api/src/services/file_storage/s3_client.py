@@ -38,7 +38,7 @@ _COPIED_HEADERS = (
     "Expires",
 )
 _NOT_FOUND_CODES = frozenset({"404", "NoSuchKey", "NotFound"})
-_UNAVAILABLE_CODES = frozenset({"AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch"})
+_UNAVAILABLE_CODES = frozenset({"AccessDenied", "403", "Forbidden", "InvalidAccessKeyId", "SignatureDoesNotMatch"})
 
 
 @dataclass(frozen=True)

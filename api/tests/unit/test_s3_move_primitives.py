@@ -197,6 +197,8 @@ async def test_list_keys_follows_continuation(monkeypatch) -> None:
 def test_storage_unavailable_classification() -> None:
     assert is_storage_unavailable(EndpointConnectionError(endpoint_url="http://s3"))
     assert is_storage_unavailable(client_error("AccessDenied", 403))
+    assert is_storage_unavailable(client_error("403", 403))
+    assert is_storage_unavailable(client_error("Forbidden", 403))
     assert is_storage_unavailable(client_error("InternalError", 503))
     assert not is_storage_unavailable(client_error("NoSuchKey", 404))
     assert not is_storage_unavailable(ValueError("x"))
