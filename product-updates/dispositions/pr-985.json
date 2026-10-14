@@ -2,7 +2,7 @@
   "key": "pr:985",
   "classification": "omit",
   "entry_ids": [],
-  "reason": "Internal CI deployment-observer configuration for operator-controlled rollout schedules; no customer-facing platform change.",
+  "reason": "Remove internal DigitalOcean rollout-observer jobs so operator deployment repositories control cadence; no customer-facing platform change.",
   "review": {
     "status": "approved",
     "evidence": [

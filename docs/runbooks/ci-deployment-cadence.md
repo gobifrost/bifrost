@@ -1,19 +1,20 @@
-# CI deployment verification and operator schedules
+# CI image publication and operator deployment schedules
 
-The `deploy-dev` CI job observes the external image updater after a main-branch
-image publication. It does not initiate a Kubernetes rollout.
+Bifrost CI builds, tests, signs, attests, and publishes GitHub Container Registry
+images. The operator's deployment repository controls image selection, rollout
+timing, and deployment health. CI does not connect to the production Kubernetes
+cluster or wait for each published image to appear there.
 
-By default, or when `BIFROST_VERIFY_IMMEDIATE_DEPLOYMENT` is any value other than
-`false`, CI waits for the published version to reach DigitalOcean and checks
-rollout status and application readiness. Operators who promote images on a
-schedule can set the GitHub repository variable
-`BIFROST_VERIFY_IMMEDIATE_DEPLOYMENT=false` to skip that immediate observer.
-This preserves the merge gates, image publication, signing, and attestations.
+The former `deploy-dev` job originally restarted workloads using a floating
+`:dev` tag. It later became an observer of immutable-tag image automation. Its
+immediate rollout expectation conflicts with operator-controlled schedules and
+is removed along with its manual DigitalOcean authentication dry run. Image
+publication and merge requirements retain their existing gates.
 
-Merge this support before changing the repository variable and enabling the
-deployment schedule. The operator's scheduled/manual promotion procedure must
-check deployment readiness; skipping the immediate observer does not add a
-scheduled CI smoke check.
+Operators can promote images continuously, on a schedule, or manually using
+their deployment tooling. Kubernetes readiness/liveness probes continue to run.
+The removed GitHub job's post-rollout API/client smoke checks and workflow-failure
+alerts are no longer provided by CI; any desired post-rollout verification
+belongs with the operator's deployment process.
 
-To restore immediate verification, first restore continuous image promotion,
-then remove the variable or set it to `true`.
+No deployment-cadence repository variable is required.

@@ -7,8 +7,6 @@ that candidate reaches ``main``. The live required-check settings are audited
 separately because they are GitHub repository configuration, not source code.
 """
 
-import os
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -121,7 +119,6 @@ def test_full_suite_gates_exact_merge_candidate_before_dev_image() -> None:
     )
     assert "verify_merge_candidate.py" in verification["run"]
     assert '--sha "$GITHUB_SHA"' in verification["run"]
-    assert jobs["deploy-dev"]["needs"] == ["build-dev"]
 
 
 def test_critical_browser_smoke_strengthens_only_exact_candidate_events() -> None:
@@ -246,87 +243,18 @@ def test_dev_artifact_is_built_on_merge_candidate_and_promoted_without_rebuild()
     assert "fallback" not in promotion_source.lower()
     assert promotion["outputs"]["version"] == "${{ steps.version.outputs.version }}"
 
-    deploy = jobs["deploy-dev"]
-    assert deploy["needs"] == ["build-dev"]
-    assert _normalized(deploy["if"]) == (
-        "github.event_name == 'push' && github.ref == 'refs/heads/main' && "
-        "vars.BIFROST_VERIFY_IMMEDIATE_DEPLOYMENT != 'false'"
-    )
-    deploy_source = "\n".join(step.get("run", "") for step in deploy["steps"])
-    assert "rollout restart" not in deploy_source
-    assert "Wait for image automation" in {
-        step.get("name") for step in deploy["steps"]
-    }
-    assert "needs.build-dev.outputs.version" in str(deploy["steps"])
-    assert 'expected_api="ghcr.io/${{ env.API_IMAGE }}:${EXPECTED_VERSION}"' in deploy_source
-    assert 'expected_client="ghcr.io/${{ env.CLIENT_IMAGE }}:${EXPECTED_VERSION}"' in deploy_source
-    assert "app.kubernetes.io/component!=message-broker" in deploy_source
-    assert "Timed out waiting for image automation" in deploy_source
-    assert "port-forward service/api" in deploy_source
-    assert "port-forward service/client" in deploy_source
-    assert "http://127.0.0.1:18000/health/ready" in deploy_source
-    assert "http://127.0.0.1:18080/" in deploy_source
 
-
-def test_worker_rollout_budget_executes_for_component_and_uses_live_values(
-    tmp_path: Path,
-) -> None:
-    """A worker timeout follows its component, replicas, and shutdown grace."""
-    deploy = _load_workflow(CI_WORKFLOW)["jobs"]["deploy-dev"]
-    rollout = next(
-        step for step in deploy["steps"] if step.get("name") == "Wait for rollouts"
-    )
-    source = rollout["run"]
-
-    calls = tmp_path / "kubectl-calls"
-    kubectl = tmp_path / "kubectl"
-    kubectl.write_text(
-        """#!/usr/bin/env bash
-set -euo pipefail
-if [[ "$1" == "-n" ]]; then
-  shift 2
-fi
-
-case "$*" in
-  "get deployment -l "*)
-    printf '%s\\n' api-main browser-gateway background-executor
-    ;;
-  "get deployment/api-main "*)
-    printf 'api'
-    ;;
-  "get deployment/browser-gateway "*)
-    printf 'client'
-    ;;
-  "get deployment/background-executor "*)
-    if [[ "$*" == *"terminationGracePeriodSeconds"* ]]; then
-      printf '6 330'
-    else
-      printf 'worker'
-    fi
-    ;;
-  "rollout status "*)
-    printf '%s\\n' "$*" >> "$KUBECTL_CALLS"
-    ;;
-  *)
-    printf 'unexpected kubectl arguments: %s\\n' "$*" >&2
-    exit 1
-    ;;
-esac
-"""
-    )
-    kubectl.chmod(0o755)
-    environment = os.environ | {
-        "PATH": f"{tmp_path}:{os.environ['PATH']}",
-        "KUBECTL_CALLS": str(calls),
-    }
-
-    subprocess.run(["bash", "-c", source], check=True, cwd=REPO_ROOT, env=environment)
-
-    assert calls.read_text().splitlines() == [
-        "rollout status deployment/api-main --timeout=5m",
-        "rollout status deployment/browser-gateway --timeout=5m",
-        "rollout status deployment/background-executor --timeout=2580s",
-    ]
+def test_ci_publication_does_not_depend_on_an_operator_cluster() -> None:
+    jobs = _load_workflow(CI_WORKFLOW)["jobs"]
+    assert "deploy-dev" not in jobs
+    assert "deploy-dry-run" not in jobs
+    source = CI_WORKFLOW.read_text()
+    assert "DIGITALOCEAN_ACCESS_TOKEN" not in source
+    assert "DO_CLUSTER_NAME" not in source
+    assert "kubectl" not in source
+    for job in jobs.values():
+        assert "deploy-dev" not in job.get("needs", [])
+        assert "deploy-dry-run" not in job.get("needs", [])
 
 
 def test_pull_request_reports_required_e2e_context_without_running_full_suite() -> None:
