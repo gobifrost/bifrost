@@ -533,7 +533,8 @@ extension, as `docs/architecture/platform-jobs.md` asks for, not a
 feature-specific status path.
 
 **Cleanup** (failure in steps 4–7 before the source delete is issued; never
-after — see step 7): roll back, then delete the destination copy with the raising delete
+after — see step 7): delete the destination copy with the raising delete while
+the path locks are still held, then roll back (the rollback releases the locks)
 — only if this item created it or resumed it
 (a resumed copy is this move's own orphan, proven by its markers). If cleanup
 itself fails, the item's result is 500 `cleanup_failed`, and the job

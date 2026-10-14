@@ -282,22 +282,21 @@ class FileMover:
         row: _Row | None,
         destination: _Destination,
     ) -> MoveOutcome:
-        landed = await self._store.head_object(destination.key)
-        if landed is None or landed.size != source.size:
+        # Cleanup runs before the rollback: the rollback releases the path
+        # locks, and a writer waiting on the destination lock could otherwise
+        # PUT its own file there for our cleanup to delete.
+        try:
+            failure = await self._verify_and_stage(db, source_key, source, row, destination)
+        except Exception:
+            # Steps 5–7 raised before the source delete was issued: remove our
+            # copy, then let move() map the error (storage vs internal).
+            await self._cleanup(request, source_key, destination)
+            raise
+        if failure is not None:
+            if not await self._cleanup(request, source_key, destination):
+                failure = _fail(500, "cleanup_failed")
             await db.rollback()
-            return await self._cleanup(source_key, destination, _fail(500, "copy_verification_failed"))
-        await self._write_metadata(db, destination, landed, row)
-
-        current = await self._store.head_object(source_key)
-        if current is None:
-            await db.rollback()
-            return await self._cleanup(
-                source_key, destination, _fail(404, "not_found", "the source was deleted during the move")
-            )
-        if current.etag != source.etag:
-            # A presigned upload replaced the source mid-move; keep it.
-            await db.rollback()
-            return await self._cleanup(source_key, destination, _fail(409, "source_changed"))
+            return failure
 
         # Point of no return: once the delete is issued, the copy is never
         # cleaned up — a delete can land server-side after a client error.
@@ -316,6 +315,28 @@ class FileMover:
             path=destination.path if destination.renamed else None,
             renamed=destination.renamed,
         )
+
+    async def _verify_and_stage(
+        self,
+        db: AsyncSession,
+        source_key: str,
+        source: ObjectHead,
+        row: _Row | None,
+        destination: _Destination,
+    ) -> MoveOutcome | None:
+        """Steps 5–7 up to the source delete; a returned outcome needs cleanup."""
+        landed = await self._store.head_object(destination.key)
+        if landed is None or landed.size != source.size:
+            return _fail(500, "copy_verification_failed")
+        await self._write_metadata(db, destination, landed, row)
+
+        current = await self._store.head_object(source_key)
+        if current is None:
+            return _fail(404, "not_found", "the source was deleted during the move")
+        if current.etag != source.etag:
+            # A presigned upload replaced the source mid-move; keep it.
+            return _fail(409, "source_changed")
+        return None
 
     async def _write_metadata(
         self,
@@ -344,17 +365,31 @@ class FileMover:
             return False
 
     async def _cleanup(
-        self, source_key: str, destination: _Destination, outcome: MoveOutcome
-    ) -> MoveOutcome:
-        """Remove this item's copy before the source delete was issued."""
+        self, request: MoveRequest, source_key: str, destination: _Destination
+    ) -> bool:
+        """Remove this item's copy before the source delete was issued.
+
+        Call it while the path locks are still held (before any rollback).
+        Returns False when the copy could not be removed; never raises.
+        """
+        paths = {
+            "location": self._target.location,
+            "source_path": request.source,
+            "destination_path": destination.path,
+        }
         try:
             await self._store.delete_object_strict(destination.key)
+            return True
         except Exception:
-            logger.warning("Could not remove a failed move's copy", exc_info=True)
-            if self._on_cleanup_failed is not None:
+            logger.warning("Could not remove a failed move's copy", extra=paths, exc_info=True)
+        if self._on_cleanup_failed is not None:
+            try:
                 await self._on_cleanup_failed(source_key, destination.key)
-            return _fail(500, "cleanup_failed")
-        return outcome
+            except Exception:
+                logger.warning(
+                    "Could not report a failed move cleanup", extra=paths, exc_info=True
+                )
+        return False
 
     async def _publish(self, source_path: str, destination_path: str) -> None:
         from src.core import pubsub

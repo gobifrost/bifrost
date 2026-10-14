@@ -6,6 +6,10 @@ from unittest.mock import AsyncMock, call
 
 import pytest
 from botocore.exceptions import EndpointConnectionError
+from sqlalchemy import text
+
+from src.core.database import get_db_context
+from src.services.file_policy_service import FilePolicyService
 
 from src.services.file_storage.move import (
     MARK_ETAG,
@@ -275,3 +279,107 @@ async def test_publish_failure_after_commit_still_reports_success(store, solutio
     outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
     assert outcome.status_code == 200
     assert len(await rows_at(solution_target, "b/r.pdf")) == 1
+
+
+async def _lock_is_held(target, path: str) -> bool:
+    """True when another session holds ``lock_file_mutation``'s lock on ``path``."""
+    lock_key = f"{target.location}:{target.scope}:{path}"
+    async with get_db_context() as db:
+        acquired = (
+            await db.execute(
+                text("SELECT pg_try_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+                {"lock_key": lock_key},
+            )
+        ).scalar_one()
+    return not acquired
+
+
+async def test_path_locks_are_held_across_the_copy(store, solution_target) -> None:
+    await seed_file(store, solution_target, "a/r.pdf")
+    held: list[bool] = []
+
+    async def check_locks(_key: str) -> None:
+        held.append(await _lock_is_held(solution_target, "a/r.pdf"))
+        held.append(await _lock_is_held(solution_target, "b/r.pdf"))
+
+    store.before["copy"] = check_locks
+    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    assert outcome.status_code == 200
+    assert held == [True, True]
+
+
+async def test_destination_lock_is_held_during_cleanup(store, solution_target) -> None:
+    await seed_file(store, solution_target, "a/r.pdf")
+    source_key, dest_key = key_for(solution_target, "a/r.pdf"), key_for(solution_target, "b/r.pdf")
+    held: list[bool] = []
+
+    async def presigned_upload_replaces_source(_key: str) -> None:
+        store.put(source_key, b"new upload")
+
+    async def check_lock(key: str) -> None:
+        if key == dest_key:
+            held.append(await _lock_is_held(solution_target, "b/r.pdf"))
+
+    store.after["copy"] = presigned_upload_replaces_source
+    store.before["delete"] = check_lock
+    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    assert (outcome.status_code, outcome.error) == (409, "source_changed")
+    assert held == [True]
+    assert dest_key not in store.objects
+
+
+async def test_verify_head_raising_cleans_up_copy(store, solution_target) -> None:
+    await seed_file(store, solution_target, "a/r.pdf")
+    source_key, dest_key = key_for(solution_target, "a/r.pdf"), key_for(solution_target, "b/r.pdf")
+    copied = False
+
+    async def mark_copied(_key: str) -> None:
+        nonlocal copied
+        copied = True
+
+    async def verify_head_fails(key: str) -> None:
+        if copied and key == dest_key:
+            raise EndpointConnectionError(endpoint_url="http://s3")
+
+    store.after["copy"] = mark_copied
+    store.before["head"] = verify_head_fails
+    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    assert outcome.status_code == 500 and outcome.storage_error
+    assert outcome.error.startswith("storage_unavailable")
+    assert dest_key not in store.objects
+    assert source_key in store.objects
+    assert len(await rows_at(solution_target, "a/r.pdf")) == 1
+    assert await rows_at(solution_target, "b/r.pdf") == []
+
+
+async def test_metadata_write_raising_cleans_up_copy(store, solution_target, monkeypatch) -> None:
+    await seed_file(store, solution_target, "a/r.pdf")
+    source_key, dest_key = key_for(solution_target, "a/r.pdf"), key_for(solution_target, "b/r.pdf")
+    monkeypatch.setattr(FilePolicyService, "move_metadata", AsyncMock(side_effect=RuntimeError("db")))
+    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    assert outcome.status_code == 500 and not outcome.storage_error
+    assert outcome.error.startswith("internal_error")
+    assert dest_key not in store.objects
+    assert source_key in store.objects
+    assert len(await rows_at(solution_target, "a/r.pdf")) == 1
+
+
+async def test_cleanup_failure_callback_raising_still_reports_cleanup_failed(store, solution_target) -> None:
+    await seed_file(store, solution_target, "a/r.pdf")
+    dest_key = key_for(solution_target, "b/r.pdf")
+
+    async def truncate(key: str) -> None:
+        store.objects[key].data = b"short"
+
+    async def cleanup_fails(key: str) -> None:
+        if key == dest_key:
+            raise RuntimeError("delete failed")
+
+    store.after["copy"] = truncate
+    store.before["delete"] = cleanup_fails
+    notify = AsyncMock(side_effect=RuntimeError("log sink down"))
+    outcome = await FileMover(store, solution_target, on_cleanup_failed=notify).move(
+        MoveRequest("a/r.pdf", "b/r.pdf"), "error"
+    )
+    assert (outcome.status_code, outcome.error) == (500, "cleanup_failed")
+    notify.assert_awaited_once()
