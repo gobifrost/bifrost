@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -23,6 +24,24 @@ from src.models.orm.file_metadata import FileMetadata, FilePolicy
 from src.repositories.policy_rule import PolicyRuleRepository
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class FilePolicyEvalCache:
+    """Request-scoped memo for evaluating many paths in one location.
+
+    Used by the ``files.move`` enqueue, which runs up to three policy checks
+    per item. It memoizes the policy rows each cascade arm loads, each policy
+    row's validated and ref-resolved policies, claim pre-resolution per
+    (principal, policy row), and metadata rows per path. Decisions are
+    identical to uncached evaluation: the canonical cascade and evaluator
+    still run.
+    """
+
+    policy_rows: dict[tuple[Any, ...], list[FilePolicy]] = field(default_factory=dict)
+    resolved: dict[UUID, FilePolicies | None] = field(default_factory=dict)
+    preresolved: set[tuple[int, UUID]] = field(default_factory=set)
+    metadata: dict[tuple[Any, ...], FileMetadata | None] = field(default_factory=dict)
 
 
 class FilePolicyService:
@@ -365,6 +384,19 @@ class FilePolicyService:
         await self.db.flush()
         return True
 
+    async def _policy_rows(
+        self,
+        key: tuple[Any, ...],
+        stmt: Any,
+        cache: "FilePolicyEvalCache | None",
+    ) -> list[FilePolicy]:
+        if cache is not None and key in cache.policy_rows:
+            return cache.policy_rows[key]
+        rows = list((await self.db.execute(stmt)).scalars().all())
+        if cache is not None:
+            cache.policy_rows[key] = rows
+        return rows
+
     async def load_policy(
         self,
         *,
@@ -372,6 +404,7 @@ class FilePolicyService:
         location: str,
         path: str,
         solution_id: UUID | None = None,
+        cache: "FilePolicyEvalCache | None" = None,
     ) -> FilePolicy | None:
         """Resolve the governing policy with own-solution → org → global cascade.
 
@@ -382,47 +415,45 @@ class FilePolicyService:
         unchanged.
 
         For non-solution callers (``solution_id=None``) the original org →
-        global cascade applies with no change.
+        global cascade applies with no change. ``cache`` memoizes each arm's
+        rows for the rest of one request.
         """
-        # Step 0: solution-own arm — only when a solution context is active.
         if solution_id is not None:
-            solution_rows = (
-                await self.db.execute(
-                    select(FilePolicy).where(
-                        FilePolicy.solution_id == solution_id,
-                        FilePolicy.location == location,
-                    )
-                )
-            ).scalars().all()
+            solution_rows = await self._policy_rows(
+                ("solution", solution_id, location),
+                select(FilePolicy).where(
+                    FilePolicy.solution_id == solution_id,
+                    FilePolicy.location == location,
+                ),
+                cache,
+            )
             solution_match = select_longest_prefix(solution_rows, location, path)  # type: ignore[arg-type]
             if solution_match is not None:
                 return cast(FilePolicy, solution_match)
 
-        # Step 1: org-specific (override) — longest-prefix among the org's rows.
         if organization_id is not None:
-            org_rows = (
-                await self.db.execute(
-                    select(FilePolicy).where(
-                        FilePolicy.organization_id == organization_id,
-                        FilePolicy.location == location,
-                        FilePolicy.solution_id.is_(None),
-                    )
-                )
-            ).scalars().all()
+            org_rows = await self._policy_rows(
+                ("org", organization_id, location),
+                select(FilePolicy).where(
+                    FilePolicy.organization_id == organization_id,
+                    FilePolicy.location == location,
+                    FilePolicy.solution_id.is_(None),
+                ),
+                cache,
+            )
             org_match = select_longest_prefix(org_rows, location, path)  # type: ignore[arg-type]
             if org_match is not None:
                 return cast(FilePolicy, org_match)
 
-        # Step 2: fall back to global (org=NULL).
-        global_rows = (
-            await self.db.execute(
-                select(FilePolicy).where(
-                    FilePolicy.organization_id.is_(None),
-                    FilePolicy.location == location,
-                    FilePolicy.solution_id.is_(None),
-                )
-            )
-        ).scalars().all()
+        global_rows = await self._policy_rows(
+            ("global", location),
+            select(FilePolicy).where(
+                FilePolicy.organization_id.is_(None),
+                FilePolicy.location == location,
+                FilePolicy.solution_id.is_(None),
+            ),
+            cache,
+        )
         global_match = select_longest_prefix(global_rows, location, path)  # type: ignore[arg-type]
         return cast("FilePolicy | None", global_match)
 
@@ -435,6 +466,7 @@ class FilePolicyService:
         path: str,
         user: Any,
         solution_id: UUID | None = None,
+        cache: "FilePolicyEvalCache | None" = None,
     ) -> bool:
         if not self._principal_matches_org(user, organization_id):
             return False
@@ -444,10 +476,62 @@ class FilePolicyService:
             location=location,
             path=path,
             solution_id=solution_id,
+            cache=cache,
         )
         if policy_row is None:
             return False
 
+        if cache is not None and policy_row.id in cache.resolved:
+            policies = cache.resolved[policy_row.id]
+        else:
+            policies = await self._resolved_policies(policy_row, organization_id)
+            if cache is not None:
+                cache.resolved[policy_row.id] = policies
+        if policies is None:
+            return False
+
+        preresolve_key = (id(user), policy_row.id)
+        if cache is None or preresolve_key not in cache.preresolved:
+            await preresolve_for_policies(
+                user,
+                policies,  # type: ignore[arg-type]
+                self.db,
+                organization_id,
+                solution_id,
+            )
+            if cache is not None:
+                cache.preresolved.add(preresolve_key)
+
+        metadata_key = (solution_id, organization_id, location, path)
+        if cache is not None and metadata_key in cache.metadata:
+            metadata = cache.metadata[metadata_key]
+        else:
+            if solution_id is not None:
+                metadata = await self._get_solution_metadata(
+                    solution_id=solution_id,
+                    location=location,
+                    path=path,
+                )
+            else:
+                metadata = await self.get_metadata(
+                    organization_id=organization_id,
+                    location=location,
+                    path=path,
+                )
+            if cache is not None:
+                cache.metadata[metadata_key] = metadata
+        context = FilePolicyContext(
+            location=location,
+            path=path,
+            created_by=metadata.created_by if metadata is not None else None,
+            created_at=metadata.created_at if metadata is not None else None,
+        )
+        return evaluate_file_action(action, policies, context, user)
+
+    async def _resolved_policies(
+        self, policy_row: FilePolicy, organization_id: UUID | None
+    ) -> FilePolicies | None:
+        """Validated, ref-resolved policies for a row, or ``None`` to deny."""
         try:
             policies = FilePolicies.model_validate(policy_row.policies)
         except ValidationError as exc:
@@ -455,7 +539,7 @@ class FilePolicyService:
                 "malformed file policies; denying file access: %s",
                 exc.__class__.__name__,
             )
-            return False
+            return None
 
         rule_repo = PolicyRuleRepository(self.db, org_id=organization_id, is_superuser=True)
         try:
@@ -465,34 +549,8 @@ class FilePolicyService:
                 "unresolvable file policy ref; denying file access: %s",
                 exc.__class__.__name__,
             )
-            return False
-
-        await preresolve_for_policies(
-            user,
-            policies,  # type: ignore[arg-type]
-            self.db,
-            organization_id,
-            solution_id,
-        )
-        if solution_id is not None:
-            metadata = await self._get_solution_metadata(
-                solution_id=solution_id,
-                location=location,
-                path=path,
-            )
-        else:
-            metadata = await self.get_metadata(
-                organization_id=organization_id,
-                location=location,
-                path=path,
-            )
-        context = FilePolicyContext(
-            location=location,
-            path=path,
-            created_by=metadata.created_by if metadata is not None else None,
-            created_at=metadata.created_at if metadata is not None else None,
-        )
-        return evaluate_file_action(action, policies, context, user)
+            return None
+        return policies
 
     async def _get_policy_exact(
         self,

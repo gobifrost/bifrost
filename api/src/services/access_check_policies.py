@@ -201,6 +201,7 @@ async def check_file(
     path: str,
     solution_id: UUID | None,
     allowed_today: bool,
+    policy_cache: Any = None,
 ) -> None:
     """A file policy decision, in a savepoint like the table checks."""
     collector = access_checks.current()
@@ -228,6 +229,7 @@ async def check_file(
                     path=path,
                     user=principal,
                     solution_id=solution_id,
+                    cache=policy_cache,
                 )
             )
         if model is None:

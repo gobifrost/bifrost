@@ -2101,7 +2101,7 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.services.execution.service.execute_tool": (1, "reach"),
     "src.services.execution.worker.run_execution": (2, "cutover"),
     "src.services.file_policy_service.FilePolicyService._principal_matches_org": (2, "reach"),
-    "src.services.file_policy_service.FilePolicyService.is_allowed": (1, "reach"),
+    "src.services.file_policy_service.FilePolicyService._resolved_policies": (1, "reach"),
     "src.services.identities.require_delegation": (1, "delete"),
     "src.services.manifest_import.ManifestResolver._index_agents_from_manifest": (1, "system"),
     "src.services.manifest_import.ManifestResolver._resolve_file_policy": (1, "system"),
