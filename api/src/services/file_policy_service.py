@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import logging
 from typing import Any, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import ValidationError
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.claims.preresolve import preresolve_for_policies
@@ -151,6 +151,105 @@ class FilePolicyService:
             FileMetadata.solution_id.is_(None),
         )
         return (await self.db.execute(stmt)).scalar_one_or_none()
+
+    def _scoped_row_filter(
+        self,
+        *,
+        organization_id: UUID | None,
+        solution_id: UUID | None,
+        location: str,
+        path: str,
+    ) -> list[Any]:
+        """Row key used by the write path (``record_file_write_metadata``)."""
+        if solution_id is not None:
+            return [
+                FileMetadata.solution_id == solution_id,
+                FileMetadata.location == location,
+                FileMetadata.path == path,
+            ]
+        return [
+            FileMetadata.organization_id == organization_id,
+            FileMetadata.location == location,
+            FileMetadata.path == path,
+            FileMetadata.solution_id.is_(None),
+        ]
+
+    async def get_scoped_metadata(
+        self,
+        *,
+        organization_id: UUID | None,
+        solution_id: UUID | None,
+        location: str,
+        path: str,
+    ) -> FileMetadata | None:
+        stmt = select(FileMetadata).where(
+            *self._scoped_row_filter(
+                organization_id=organization_id,
+                solution_id=solution_id,
+                location=location,
+                path=path,
+            )
+        )
+        return (await self.db.execute(stmt)).scalar_one_or_none()
+
+    async def move_metadata(
+        self,
+        *,
+        organization_id: UUID | None,
+        solution_id: UUID | None,
+        location: str,
+        source_row_id: UUID | None,
+        destination_path: str,
+        s3_key: str,
+        content_type: str | None,
+        size_bytes: int,
+        updated_by: UUID,
+    ) -> None:
+        """Re-key a moved file's row to its destination; executed, not committed.
+
+        Core statements only: the Solution write guard rejects ORM flushes of
+        Solution-owned rows, and every Solution file row is one. A stale row
+        already at the destination (its object is gone) is removed first so
+        the partial unique indexes hold. The source row keeps its id,
+        creator, creation time, size, sha256, and content type.
+        """
+        await self.db.execute(
+            delete(FileMetadata).where(
+                *self._scoped_row_filter(
+                    organization_id=organization_id,
+                    solution_id=solution_id,
+                    location=location,
+                    path=destination_path,
+                )
+            )
+        )
+        if source_row_id is not None:
+            await self.db.execute(
+                update(FileMetadata)
+                .where(FileMetadata.id == source_row_id)
+                .values(
+                    path=destination_path,
+                    s3_key=s3_key,
+                    updated_by=updated_by,
+                    updated_at=func.now(),
+                )
+            )
+            return
+        await self.db.execute(
+            insert(FileMetadata).values(
+                id=uuid4(),
+                organization_id=organization_id,
+                solution_id=solution_id,
+                location=location,
+                path=destination_path,
+                s3_key=s3_key,
+                content_type=content_type,
+                size_bytes=size_bytes,
+                sha256=None,
+                created_by=updated_by,
+                updated_by=updated_by,
+            )
+        )
 
     async def upsert_policy(
         self,
