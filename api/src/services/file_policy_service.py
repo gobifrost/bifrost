@@ -39,7 +39,7 @@ class FilePolicyEvalCache:
     """
 
     policy_rows: dict[tuple[Any, ...], list[FilePolicy]] = field(default_factory=dict)
-    resolved: dict[UUID, FilePolicies | None] = field(default_factory=dict)
+    resolved: dict[tuple[UUID | None, UUID], FilePolicies | None] = field(default_factory=dict)
     preresolved: set[tuple[int, UUID]] = field(default_factory=set)
     metadata: dict[tuple[Any, ...], FileMetadata | None] = field(default_factory=dict)
 
@@ -481,15 +481,17 @@ class FilePolicyService:
         if policy_row is None:
             return False
 
-        if cache is not None and policy_row.id in cache.resolved:
-            policies = cache.resolved[policy_row.id]
+        resolved_key = (organization_id, policy_row.id)
+        if cache is not None and resolved_key in cache.resolved:
+            policies = cache.resolved[resolved_key]
         else:
             policies = await self._resolved_policies(policy_row, organization_id)
             if cache is not None:
-                cache.resolved[policy_row.id] = policies
+                cache.resolved[resolved_key] = policies
         if policies is None:
             return False
 
+        # Keyed by object identity: the principal must outlive the cache.
         preresolve_key = (id(user), policy_row.id)
         if cache is None or preresolve_key not in cache.preresolved:
             await preresolve_for_policies(

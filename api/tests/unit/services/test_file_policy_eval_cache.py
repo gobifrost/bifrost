@@ -91,3 +91,30 @@ async def test_authorize_forwards_cache_to_evaluator_and_check(monkeypatch) -> N
     )
     assert is_allowed.await_args.kwargs["cache"] is cache
     assert check.await_args.kwargs["policy_cache"] is cache
+
+
+async def test_resolution_memo_is_per_organization(db_session) -> None:
+    """A ref resolved under one org's cascade is not reused for another org."""
+    from src.models.orm.file_metadata import FilePolicy
+
+    org_a = Organization(id=uuid4(), name=f"CacheA-{uuid4().hex[:8]}", created_by="test")
+    org_b = Organization(id=uuid4(), name=f"CacheB-{uuid4().hex[:8]}", created_by="test")
+    db_session.add_all([org_a, org_b])
+    await db_session.flush()
+    row = FilePolicy(
+        id=uuid4(), organization_id=None, location=f"glob-{uuid4().hex[:8]}", path="",
+        policies={"policies": [{"name": "r", "actions": ["read"], "when": None}]},
+        created_by=uuid4(),
+    )
+    db_session.add(row)
+    await db_session.flush()
+
+    service = FilePolicyService(db_session)
+    cache = FilePolicyEvalCache()
+    for org in (org_a, org_b):
+        assert await service.is_allowed(
+            "read", organization_id=org.id, location=row.location, path="x",
+            user=_user(org.id), cache=cache,
+        )
+
+    assert set(cache.resolved) == {(org_a.id, row.id), (org_b.id, row.id)}
