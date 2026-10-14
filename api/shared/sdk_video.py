@@ -120,22 +120,9 @@ async def finalize_sdk_video_job(db: AsyncSession, job: PlatformJob) -> None:
     notification creation (failures only warn, never fail the enqueue),
     then commit, then refresh, then the WebSocket/notification update.
     """
-    from src.services.platform_jobs import (
-        ensure_platform_job_notification,
-        publish_platform_job_update,
-    )
+    from src.services.platform_jobs import finalize_enqueued_platform_job
 
-    try:
-        await ensure_platform_job_notification(db, job)
-    except Exception:
-        logger.warning(
-            "SDK video generation queued without a progress notification",
-            extra={"platform_job_id": str(job.id)},
-            exc_info=True,
-        )
-    await db.commit()
-    await db.refresh(job)
-    await publish_platform_job_update(job)
+    await finalize_enqueued_platform_job(db, job, log_label="SDK video generation")
 
 
 def sdk_video_job_accepted(

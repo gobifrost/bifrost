@@ -103,10 +103,24 @@ class PlatformJobContext:
             platform_job_id=self.job_id,
         )
 
-    async def save_checkpoint(self, result: dict[str, Any], *, phase: str) -> None:
+    async def save_checkpoint(
+        self,
+        result: dict[str, Any],
+        *,
+        phase: str,
+        current: int | None = None,
+        total: int | None = None,
+    ) -> None:
         from src.services.platform_jobs import checkpoint_platform_job
 
-        if not await checkpoint_platform_job(self.job_id, self.lease_token, result=result, phase=phase):
+        if not await checkpoint_platform_job(
+            self.job_id,
+            self.lease_token,
+            result=result,
+            phase=phase,
+            current=current,
+            total=total,
+        ):
             raise PlatformJobCancelled
 
 

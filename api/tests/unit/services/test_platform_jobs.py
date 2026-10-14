@@ -780,3 +780,35 @@ async def test_stale_runner_cannot_defer_job(
     )
     await db_session.refresh(job)
     assert job.status == "running"
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_with_progress_sets_percent_in_same_write(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job = await _enqueue(db_session)
+    token = uuid4()
+    job.status = "running"
+    job.lease_token = token
+    await db_session.commit()
+    monkeypatch.setattr(service, "publish_platform_job_update", AsyncMock())
+
+    assert await service.checkpoint_platform_job(
+        job.id, token, result={"moved": 1}, phase="Moving 2 of 4", current=1, total=4
+    )
+    await db_session.refresh(job)
+    assert (job.result, job.phase) == ({"moved": 1}, "Moving 2 of 4")
+    assert (job.progress_current, job.progress_total, job.progress_percent) == (1, 4, 25.0)
+
+    assert await service.checkpoint_platform_job(job.id, token, result={"moved": 2}, phase="Later")
+    await db_session.refresh(job)
+    assert (job.progress_current, job.progress_total, job.progress_percent) == (1, 4, 25.0)
+
+
+@pytest.mark.asyncio
+async def test_find_active_platform_job_ignores_terminal_jobs(db_session: AsyncSession) -> None:
+    job = await _enqueue(db_session)
+    assert (await service.find_active_platform_job(db_session, job.job_type, job.dedupe_key)).id == job.id
+    job.status = "succeeded"
+    await db_session.flush()
+    assert await service.find_active_platform_job(db_session, job.job_type, job.dedupe_key) is None

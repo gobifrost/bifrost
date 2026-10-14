@@ -180,6 +180,46 @@ async def publish_platform_job_update(job: PlatformJob) -> None:
             )
 
 
+async def find_active_platform_job(
+    db: AsyncSession, job_type: str, dedupe_key: str
+) -> PlatformJob | None:
+    """The oldest active job for a deduplication key, if any."""
+    return (
+        await db.execute(
+            select(PlatformJob)
+            .where(
+                PlatformJob.job_type == job_type,
+                PlatformJob.dedupe_key == dedupe_key,
+                PlatformJob.status.in_(ACTIVE_PLATFORM_JOB_STATUSES),
+            )
+            .order_by(PlatformJob.created_at.asc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+async def finalize_enqueued_platform_job(
+    db: AsyncSession, job: PlatformJob, *, log_label: str
+) -> None:
+    """Attach the notification, commit, refresh, and publish an enqueued job.
+
+    Notification creation is best effort (a failure only warns), and the
+    commit precedes the publish so a caller polling right after the 202
+    always finds the durable row.
+    """
+    try:
+        await ensure_platform_job_notification(db, job)
+    except Exception:
+        logger.warning(
+            f"{log_label} queued without a progress notification",
+            extra={"platform_job_id": str(job.id)},
+            exc_info=True,
+        )
+    await db.commit()
+    await db.refresh(job)
+    await publish_platform_job_update(job)
+
+
 async def enqueue_platform_job(
     db: AsyncSession,
     definition: PlatformJobDefinition,
@@ -209,18 +249,7 @@ async def enqueue_platform_job(
             ),
             {"lock_key": f"{definition.job_type}:{dedupe_key}"},
         )
-        existing = (
-            await db.execute(
-                select(PlatformJob)
-                .where(
-                    PlatformJob.job_type == definition.job_type,
-                    PlatformJob.dedupe_key == dedupe_key,
-                    PlatformJob.status.in_(ACTIVE_PLATFORM_JOB_STATUSES),
-                )
-                .order_by(PlatformJob.created_at.asc())
-                .limit(1)
-            )
-        ).scalar_one_or_none()
+        existing = await find_active_platform_job(db, definition.job_type, dedupe_key)
         if existing is not None:
             return existing, True
 
@@ -409,9 +438,19 @@ async def finish_platform_job(
 
 
 async def checkpoint_platform_job(
-    job_id: UUID, lease_token: UUID, *, result: dict[str, Any], phase: str
+    job_id: UUID,
+    lease_token: UUID,
+    *,
+    result: dict[str, Any],
+    phase: str,
+    current: int | None = None,
+    total: int | None = None,
 ) -> bool:
-    """Durably save resumable handler state on the fenced shared job row."""
+    """Durably save resumable handler state on the fenced shared job row.
+
+    With ``current`` the same write also records progress, so a job that
+    checkpoints per unit of work does not need a second progress write.
+    """
     async with get_db_context() as db:
         job = (await db.execute(
             select(PlatformJob).where(
@@ -423,6 +462,10 @@ async def checkpoint_platform_job(
             return False
         job.result = result
         job.phase = phase[:200]
+        if current is not None:
+            job.progress_current = max(0, current)
+            job.progress_total = total
+            job.progress_percent = (current / total * 100) if total else None
         job.revision += 1
         await db.commit()
     await publish_platform_job_update(job)
