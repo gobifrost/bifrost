@@ -190,7 +190,7 @@ describe("ChatMessage — assistant messages", () => {
 		expect(container.querySelector(".animate-pulse")).toBeNull();
 	});
 
-	it("shows token counts on hover section when provided", () => {
+	it("keeps message time and duration without showing token counts", () => {
 		renderWithProviders(
 			<ChatMessage
 				message={makeMessage({
@@ -202,9 +202,10 @@ describe("ChatMessage — assistant messages", () => {
 				})}
 			/>,
 		);
-		expect(screen.getByText(/In: 10/)).toBeInTheDocument();
-		expect(screen.getByText(/Out: 42/)).toBeInTheDocument();
+		expect(screen.queryByText(/In: 10/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/Out: 42/)).not.toBeInTheDocument();
 		expect(screen.getByText(/1500ms/)).toBeInTheDocument();
+		expect(screen.getByText(/Apr 20, 2026/i)).toBeInTheDocument();
 	});
 
 	it("shows message time, copies content, and disables local file links", async () => {

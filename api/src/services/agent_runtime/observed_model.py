@@ -40,6 +40,7 @@ class ModelCallEvent:
     context_breakdown: dict[str, int | str] | None = None
     # Provider this candidate bills under (see provider_name_for_config).
     billing_provider: str | None = None
+    request_model: str | None = None
 
 
 ModelCallObserver = Callable[[ModelCallEvent], Awaitable[None]]
@@ -197,6 +198,7 @@ class ObservedModel(WrapperModel):
                 tools_count=tools_count,
                 context_breakdown=context_breakdown,
                 billing_provider=self._billing_provider,
+                request_model=self.wrapped.model_name,
             )
         )
         started = time.monotonic()
@@ -221,6 +223,7 @@ class ObservedModel(WrapperModel):
                     error=str(exc),
                     context_breakdown=context_breakdown,
                     billing_provider=self._billing_provider,
+                    request_model=self.wrapped.model_name,
                 )
             )
             raise
@@ -234,6 +237,7 @@ class ObservedModel(WrapperModel):
                 response=response,
                 context_breakdown=context_breakdown,
                 billing_provider=self._billing_provider,
+                request_model=self.wrapped.model_name,
             )
         )
         return response
@@ -257,6 +261,7 @@ class ObservedModel(WrapperModel):
                 tools_count=tools_count,
                 context_breakdown=context_breakdown,
                 billing_provider=self._billing_provider,
+                request_model=self.wrapped.model_name,
             )
         )
         started = time.monotonic()
@@ -290,6 +295,7 @@ class ObservedModel(WrapperModel):
                     error=str(exc),
                     context_breakdown=context_breakdown,
                     billing_provider=self._billing_provider,
+                    request_model=self.wrapped.model_name,
                 )
             )
             raise
@@ -303,5 +309,6 @@ class ObservedModel(WrapperModel):
                 response=response,
                 context_breakdown=context_breakdown,
                 billing_provider=self._billing_provider,
+                request_model=self.wrapped.model_name,
             )
         )

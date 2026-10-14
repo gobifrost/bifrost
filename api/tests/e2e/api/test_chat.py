@@ -11,6 +11,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from shared.chat_context import store_chat_context_usage
+from src.models.contracts.agents import ChatContextUsage
 from src.models.enums import MessageRole
 from src.models.orm import Conversation, Message
 from src.services.chat_attachments import ChatAttachmentService
@@ -717,6 +719,47 @@ class TestConversationsAccessControl:
 
 class TestDurableChatRuns:
     """Test the request/replay boundary used by the realtime chat client."""
+
+    @pytest.mark.asyncio
+    async def test_state_restores_latest_request_context_without_accumulating(
+        self,
+        e2e_client,
+        platform_admin,
+        test_conversation,
+        db_session,
+    ):
+        conversation_id = UUID(test_conversation["id"])
+        conversation = await db_session.get(Conversation, conversation_id)
+        assert conversation is not None
+        conversation.extra_data = {"channel_marker": "preserved"}
+        await db_session.commit()
+        profile_id = uuid4()
+        for input_tokens, cache_read_tokens in [(105_000, 78_750), (60_000, 45_000)]:
+            await store_chat_context_usage(
+                db_session,
+                conversation_id,
+                ChatContextUsage(
+                    input_tokens=input_tokens,
+                    context_window=475_000,
+                    cache_read_tokens=cache_read_tokens,
+                    model_profile_id=profile_id,
+                ),
+            )
+            await db_session.commit()
+
+        state = e2e_client.get(
+            f"/api/chat/conversations/{conversation_id}/state",
+            headers=platform_admin.headers,
+        )
+        assert state.status_code == 200, state.text
+        assert state.json()["context_usage"] == {
+            "input_tokens": 60_000,
+            "context_window": 475_000,
+            "cache_read_tokens": 45_000,
+            "model_profile_id": str(profile_id),
+        }
+        await db_session.refresh(conversation)
+        assert conversation.extra_data["channel_marker"] == "preserved"
 
     def test_submission_is_idempotent_and_state_replays_the_persisted_turn(
         self,

@@ -152,6 +152,49 @@ describe("chat-runtime reducer", () => {
 		});
 	});
 
+	it("keeps the latest context usage through stream and snapshot replays", () => {
+		const latestUsage = {
+			input_tokens: 105_000,
+			context_window: 475_000,
+			cache_read_tokens: 78_750,
+			model_profile_id: "profile-balanced",
+		};
+		const previousUsage = {
+			input_tokens: 400_000,
+			context_window: 475_000,
+			cache_read_tokens: 300_000,
+			model_profile_id: "profile-fast",
+		};
+
+		const withPreviousUsage = applyChatStreamEnvelope(
+			makeEmptyChatProjection("conversation-1"),
+			makeEnvelope(3, "run-1", {
+				type: "context_usage",
+				context_usage: previousUsage,
+			}),
+		);
+		const withLatestUsage = applyChatStreamEnvelope(
+			withPreviousUsage,
+			makeEnvelope(5, "run-2", {
+				type: "context_usage",
+				context_usage: latestUsage,
+			}),
+		);
+		const staleSnapshot = hydrateChatProjection(withLatestUsage, {
+			conversation_id: "conversation-1",
+			last_sequence: 4,
+			context_usage: previousUsage,
+		});
+		const restored = hydrateChatProjection(staleSnapshot, {
+			conversation_id: "conversation-1",
+			last_sequence: 6,
+			context_usage: latestUsage,
+		});
+
+		expect(staleSnapshot.context_usage).toEqual(latestUsage);
+		expect(restored.context_usage).toEqual(latestUsage);
+	});
+
 	it("hydrates snapshots without losing optimistic unsent turns and stays idempotent on replay", () => {
 		const staged = stageOptimisticUserTurn(
 			makeEmptyChatProjection("conversation-1"),

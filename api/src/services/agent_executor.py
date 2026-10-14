@@ -36,9 +36,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from shared.scope_resolver import has_scope_bypass
+from shared.chat_context import store_chat_context_usage
 from src.core.principal import UserPrincipal
 from src.models.contracts.agents import (
     AgentSwitch,
+    ChatContextUsage,
     ChatStreamChunk,
     ContextWarning,
     ToolCall,
@@ -68,7 +70,9 @@ from src.services.agent_runtime import (
     reasoning_tokens,
 )
 from src.services.model_capabilities import should_offer_tool_calling
-from src.services.model_pricing import chain_context_window
+from src.services.model_pricing import chain_context_window, config_context_window
+from src.services.model_catalog import get_model_catalog
+from src.services.agent_runtime.model_factory import provider_name_for_config
 from src.services.execution.agent_helpers import (
     find_delegated_agent,
     parse_mcp_tool_name,
@@ -452,6 +456,20 @@ class AgentExecutor:
                     [llm_client.config, *llm_client.fallback_configs],
                     primary_model=model_override,
                 )
+                catalog = await get_model_catalog(session)
+                request_context_windows = {
+                    (
+                        provider_name_for_config(config),
+                        model_override if index == 0 else config.model,
+                    ): config_context_window(
+                        catalog,
+                        config,
+                        model=model_override if index == 0 else config.model,
+                    )
+                    for index, config in enumerate(
+                        [llm_client.config, *llm_client.fallback_configs]
+                    )
+                }
 
             # 7. Hand the full loop to Pydantic AI. Bifrost remains responsible
             # for authorization, persistence, and its stable stream contract;
@@ -479,6 +497,7 @@ class AgentExecutor:
             provider_cost_seen = False
             final_finish_reason: str | None = None
             final_incomplete: bool | None = None
+            pending_context_chunks: list[ChatStreamChunk] = []
 
             async def record_model_event(event: ModelCallEvent) -> None:
                 nonlocal total_input_tokens, total_output_tokens, model_name
@@ -489,6 +508,19 @@ class AgentExecutor:
                 if event.type != "response" or event.response is None:
                     return
                 response_usage = event.response.usage
+                context_usage = ChatContextUsage(
+                    input_tokens=response_usage.input_tokens,
+                    context_window=request_context_windows.get(
+                        (event.billing_provider, event.request_model)
+                    ),
+                    cache_read_tokens=response_usage.cache_read_tokens,
+                    model_profile_id=chat_profile.id,
+                )
+                async with self._db() as session:
+                    await store_chat_context_usage(session, conversation.id, context_usage)
+                pending_context_chunks.append(
+                    ChatStreamChunk(type="context_usage", context_usage=context_usage)
+                )
                 total_input_tokens += response_usage.input_tokens
                 total_output_tokens += response_usage.output_tokens
                 total_cache_read_tokens += response_usage.cache_read_tokens
@@ -703,6 +735,9 @@ class AgentExecutor:
                     conversation_id=str(conversation.id),
                 ) as events:
                     async for event in events:
+                        for chunk in pending_context_chunks:
+                            yield chunk
+                        pending_context_chunks.clear()
                         if pending_tool_chunks:
                             for pending_chunk in pending_tool_chunks:
                                 yield pending_chunk
@@ -809,6 +844,10 @@ class AgentExecutor:
                         message="The agent reached its run budget and left a resumable handoff.",
                     ),
                 )
+
+            for chunk in pending_context_chunks:
+                yield chunk
+            pending_context_chunks.clear()
 
             # 9. Save final assistant message (using pre-generated ID)
             duration_ms = int((time.time() - start_time) * 1000)

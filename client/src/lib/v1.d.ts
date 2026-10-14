@@ -14882,6 +14882,20 @@ export interface components {
             filename: string;
         };
         /**
+         * ChatContextUsage
+         * @description Context and cached input for the latest request in the Chat conversation.
+         */
+        ChatContextUsage: {
+            /** Input Tokens */
+            input_tokens: number;
+            /** Context Window */
+            context_window?: number | null;
+            /** Cache Read Tokens */
+            cache_read_tokens: number;
+            /** Model Profile Id */
+            model_profile_id: string;
+        };
+        /**
          * ChatModelProfilePublic
          * @description One administrator-governed reusable model profile exposed in Chat.
          */
@@ -15082,6 +15096,7 @@ export interface components {
              * @default 0
              */
             latest_sequence: number;
+            context_usage?: components["schemas"]["ChatContextUsage"] | null;
         };
         /**
          * ChatStreamChunk
@@ -15094,7 +15109,7 @@ export interface components {
              * Type
              * @enum {string}
              */
-            type: "message_start" | "delta" | "assistant_message_end" | "tool_call" | "tool_progress" | "tool_result" | "artifact_started" | "artifact_ready" | "artifact_failed" | "agent_switch" | "context_warning" | "run_status" | "title_update" | "done" | "cancelled" | "error";
+            type: "message_start" | "delta" | "assistant_message_end" | "tool_call" | "tool_progress" | "tool_result" | "artifact_started" | "artifact_ready" | "artifact_failed" | "agent_switch" | "context_warning" | "context_usage" | "run_status" | "title_update" | "done" | "cancelled" | "error";
             /** Content */
             content?: string | null;
             tool_call?: components["schemas"]["ToolCall"] | null;
@@ -15108,6 +15123,7 @@ export interface components {
             execution_id?: string | null;
             agent_switch?: components["schemas"]["AgentSwitch"] | null;
             context_warning?: components["schemas"]["ContextWarning"] | null;
+            context_usage?: components["schemas"]["ChatContextUsage"] | null;
             /** Message Id */
             message_id?: string | null;
             /**

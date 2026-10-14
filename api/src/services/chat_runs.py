@@ -388,6 +388,7 @@ async def get_chat_state(
         messages=messages,
         events=[_coerce_chat_event(event) for event in events],
         latest_sequence=latest_sequence,
+        context_usage=(conversation.extra_data or {}).get("context_usage"),
     )
 
 
