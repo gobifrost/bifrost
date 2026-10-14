@@ -10,6 +10,7 @@ from src.jobs.platform.application_sdk_update import (
 from src.jobs.platform.audit_archive import AUDIT_ARCHIVE_DEFINITION
 from src.jobs.platform.audit_query import AUDIT_QUERY_DEFINITION
 from src.jobs.platform.base import PlatformJobDefinition
+from src.jobs.platform.file_move import FILE_MOVE_DEFINITION
 from src.jobs.platform.run_retention import RUN_RETENTION_DEFINITION
 from src.jobs.platform.system_maintenance import (
     ARTIFACT_RETENTION_CLEANUP_DEFINITION,
@@ -45,6 +46,7 @@ _DEFINITIONS = {
     AUDIT_QUERY_DEFINITION.job_type: AUDIT_QUERY_DEFINITION,
     RUN_RETENTION_DEFINITION.job_type: RUN_RETENTION_DEFINITION,
     MODEL_CATALOG_REFRESH_DEFINITION.job_type: MODEL_CATALOG_REFRESH_DEFINITION,
+    FILE_MOVE_DEFINITION.job_type: FILE_MOVE_DEFINITION,
     SOLUTION_EXPORT_DEFINITION.job_type: SOLUTION_EXPORT_DEFINITION,
     SOLUTION_DEPLOY_DEFINITION.job_type: SOLUTION_DEPLOY_DEFINITION,
     SOLUTION_GIT_SYNC_DEFINITION.job_type: SOLUTION_GIT_SYNC_DEFINITION,

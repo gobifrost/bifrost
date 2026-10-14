@@ -65,6 +65,23 @@ class CLIFileDeleteRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class FileMoveResult(BaseModel):
+    """One item's outcome in a ``files.move`` platform-job result.
+
+    ``path`` is set only when the file landed somewhere other than
+    ``destination`` (rename mode). ``error`` is ``code`` or ``code: message``
+    (≤ 500 characters), and the literal ``"forbidden"`` for a policy denial.
+    """
+
+    source: str
+    destination: str
+    path: str | None = None
+    renamed: bool = False
+    adopted: bool = False
+    status_code: int
+    error: str | None = None
+
+
 # ==================== CLI CONFIG OPERATIONS ====================
 
 
