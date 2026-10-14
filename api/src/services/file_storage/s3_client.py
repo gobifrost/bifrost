@@ -8,14 +8,83 @@ Handles S3 operations including:
 """
 
 import hashlib
+import logging
+import math
 import mimetypes
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from botocore.config import Config
+from botocore.exceptions import BotoCoreError, ClientError
 
 from src.config import Settings
+
+logger = logging.getLogger(__name__)
+
+
+COPY_OBJECT_LIMIT = 5 * 1024**3
+MIN_COPY_PART = 256 * 1024**2
+_MAX_PARTS = 10_000
+# System metadata a copy must carry over (MetadataDirective=REPLACE drops it).
+_COPIED_HEADERS = (
+    "ContentType",
+    "ContentDisposition",
+    "ContentEncoding",
+    "ContentLanguage",
+    "CacheControl",
+    "Expires",
+)
+_NOT_FOUND_CODES = frozenset({"404", "NoSuchKey", "NotFound"})
+_UNAVAILABLE_CODES = frozenset({"AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch"})
+
+
+@dataclass(frozen=True)
+class ObjectHead:
+    """The parts of a HeadObject response a server-side move relies on."""
+
+    size: int
+    etag: str
+    metadata: dict[str, str]
+    headers: dict[str, Any]
+
+
+class ObjectMissing(Exception):
+    """The copy source no longer exists."""
+
+
+class ObjectPreconditionFailed(Exception):
+    """A conditional copy was refused: the source changed or the destination exists."""
+
+    def __init__(self, side: Literal["source", "destination"]) -> None:
+        super().__init__(f"{side} precondition failed")
+        self.side = side
+
+
+def _error_code(exc: ClientError) -> str:
+    return str(exc.response.get("Error", {}).get("Code", ""))
+
+
+def _http_status(exc: ClientError) -> int | None:
+    return exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+
+
+def is_storage_unavailable(exc: BaseException) -> bool:
+    """True when ``exc`` means object storage is unreachable or refusing the bucket."""
+    if isinstance(exc, ClientError):
+        status = _http_status(exc)
+        return _error_code(exc) in _UNAVAILABLE_CODES or (status is not None and status >= 500)
+    return isinstance(exc, (BotoCoreError, ConnectionError, TimeoutError))
+
+
+def _copy_error(exc: ClientError) -> Exception:
+    if _error_code(exc) == "PreconditionFailed" or _http_status(exc) == 412:
+        return ObjectPreconditionFailed("source")
+    if _error_code(exc) in _NOT_FOUND_CODES:
+        return ObjectMissing(str(exc))
+    return exc
 
 
 class S3StorageClient:
@@ -302,3 +371,129 @@ class S3StorageClient:
                 raise
 
         return digest.hexdigest(), total
+
+    async def head_object(self, key: str) -> ObjectHead | None:
+        """HeadObject; ``None`` only when the key does not exist, anything else raises."""
+        async with self.get_client() as s3:
+            try:
+                response = await s3.head_object(Bucket=self.settings.s3_bucket, Key=key)
+            except ClientError as exc:
+                if _error_code(exc) in _NOT_FOUND_CODES:
+                    return None
+                raise
+        return ObjectHead(
+            size=int(response["ContentLength"]),
+            etag=response["ETag"],
+            metadata=dict(response.get("Metadata") or {}),
+            headers={
+                name: response[name]
+                for name in _COPIED_HEADERS
+                if response.get(name) is not None
+            },
+        )
+
+    async def copy_object(
+        self,
+        source_key: str,
+        destination_key: str,
+        *,
+        source: ObjectHead,
+        metadata: dict[str, str],
+        multipart_threshold: int = COPY_OBJECT_LIMIT,
+        part_size: int | None = None,
+    ) -> None:
+        """Server-side copy of exactly the bytes ``source`` describes.
+
+        Every copy request carries ``CopySourceIfMatch=source.etag``. Objects
+        up to ``multipart_threshold`` use one ``CopyObject``; larger ones use
+        a multipart part copy whose completion refuses to overwrite an object
+        that appeared at the destination (``IfNoneMatch="*"``) and which is
+        aborted on any failure.
+        """
+        bucket = self.settings.s3_bucket
+        copy_source = {"Bucket": bucket, "Key": source_key}
+        async with self.get_client() as s3:
+            if source.size <= multipart_threshold:
+                try:
+                    await s3.copy_object(
+                        Bucket=bucket,
+                        Key=destination_key,
+                        CopySource=copy_source,
+                        CopySourceIfMatch=source.etag,
+                        MetadataDirective="REPLACE",
+                        Metadata=metadata,
+                        **source.headers,
+                    )
+                except ClientError as exc:
+                    mapped = _copy_error(exc)
+                    if mapped is exc:
+                        raise
+                    raise mapped from exc
+                return
+
+            size_per_part = part_size or max(MIN_COPY_PART, math.ceil(source.size / _MAX_PARTS))
+            created = await s3.create_multipart_upload(
+                Bucket=bucket, Key=destination_key, Metadata=metadata, **source.headers
+            )
+            upload_id = created["UploadId"]
+            try:
+                parts: list[dict[str, Any]] = []
+                for number, start in enumerate(range(0, source.size, size_per_part), start=1):
+                    end = min(start + size_per_part, source.size) - 1
+                    try:
+                        response = await s3.upload_part_copy(
+                            Bucket=bucket,
+                            Key=destination_key,
+                            UploadId=upload_id,
+                            PartNumber=number,
+                            CopySource=copy_source,
+                            CopySourceRange=f"bytes={start}-{end}",
+                            CopySourceIfMatch=source.etag,
+                        )
+                    except ClientError as exc:
+                        mapped = _copy_error(exc)
+                        if mapped is exc:
+                            raise
+                        raise mapped from exc
+                    parts.append({"PartNumber": number, "ETag": response["CopyPartResult"]["ETag"]})
+                try:
+                    await s3.complete_multipart_upload(
+                        Bucket=bucket,
+                        Key=destination_key,
+                        UploadId=upload_id,
+                        MultipartUpload={"Parts": parts},
+                        IfNoneMatch="*",
+                    )
+                except ClientError as exc:
+                    if _error_code(exc) in {"PreconditionFailed", "ConditionalRequestConflict"} or _http_status(exc) == 412:
+                        raise ObjectPreconditionFailed("destination") from exc
+                    raise
+            except BaseException:
+                try:
+                    await s3.abort_multipart_upload(
+                        Bucket=bucket, Key=destination_key, UploadId=upload_id
+                    )
+                except Exception:
+                    logger.warning("Could not abort multipart copy", exc_info=True)
+                raise
+
+    async def delete_object_strict(self, key: str) -> None:
+        """DeleteObject that raises on any failure (unlike ``delete_raw_from_s3``)."""
+        async with self.get_client() as s3:
+            await s3.delete_object(Bucket=self.settings.s3_bucket, Key=key)
+
+    async def list_keys(self, prefix: str, *, delimiter: str = "/") -> list[str]:
+        """Keys directly under ``prefix`` (no deeper ``delimiter``), all pages."""
+        keys: list[str] = []
+        kwargs: dict[str, Any] = {
+            "Bucket": self.settings.s3_bucket,
+            "Prefix": prefix,
+            "Delimiter": delimiter,
+        }
+        async with self.get_client() as s3:
+            while True:
+                response = await s3.list_objects_v2(**kwargs)
+                keys.extend(item["Key"] for item in response.get("Contents", []))
+                if not response.get("IsTruncated"):
+                    return keys
+                kwargs["ContinuationToken"] = response["NextContinuationToken"]
