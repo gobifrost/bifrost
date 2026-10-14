@@ -378,12 +378,29 @@ class FileMover:
         # locks, and a writer waiting on the destination lock could otherwise
         # PUT its own file there for our cleanup to delete.
         try:
-            failure = await self._verify_and_stage(db, source_key, source, row, destination)
+            failure = await self._verify_and_stage(db, source, row, destination)
         except Exception:
-            # Steps 5–7 raised before the source delete was issued: remove our
+            # Steps 5–6 raised before the source delete was issued: remove our
             # copy, then let move() map the error (storage vs internal).
             await self._cleanup(request, source_key, destination)
             raise
+        if failure is not None:
+            return await self._discard(db, request, source_key, destination, failure)
+
+        # Step 7's re-check.
+        try:
+            current = await self._store.head_object(source_key)
+        except Exception:
+            if destination.resume:
+                # An earlier run's unconfirmed source delete may have landed
+                # by now, leaving this copy as the only one: keep it.
+                await db.rollback()
+            else:
+                await self._cleanup(request, source_key, destination)
+            raise
+        if current is None and destination.resume:
+            return await self._adopt_resumed(db, request, source_key, row, destination)
+        failure = self._recheck_before_delete(source, current)
         if failure is not None:
             return await self._discard(db, request, source_key, destination, failure)
 
@@ -408,24 +425,54 @@ class FileMover:
     async def _verify_and_stage(
         self,
         db: AsyncSession,
-        source_key: str,
         source: ObjectHead,
         row: _Row | None,
         destination: _Destination,
     ) -> MoveOutcome | None:
-        """Steps 5–7 up to the source delete; a returned outcome needs cleanup."""
+        """Steps 5–6; a returned outcome needs cleanup."""
         landed = await self._store.head_object(destination.key)
         if landed is None or landed.size != source.size:
             return _fail(500, "copy_verification_failed")
         await self._write_metadata(db, destination, landed, row)
+        return None
 
-        current = await self._store.head_object(source_key)
+    @staticmethod
+    def _recheck_before_delete(source: ObjectHead, current: ObjectHead | None) -> MoveOutcome | None:
+        """Step 7's source re-check; a returned outcome needs cleanup."""
         if current is None:
             return _fail(404, "not_found", "the source was deleted during the move")
         if current.etag != source.etag:
             # A presigned upload replaced the source mid-move; keep it.
             return _fail(409, "source_changed")
         return None
+
+    async def _adopt_resumed(
+        self,
+        db: AsyncSession,
+        request: MoveRequest,
+        source_key: str,
+        row: _Row | None,
+        destination: _Destination,
+    ) -> MoveOutcome:
+        """A resume whose source vanished before step 7: never clean up.
+
+        An earlier run's unconfirmed source delete can land after this run's
+        step-2 head, leaving the resumed copy as the only one. Step 6 is
+        already staged against it, so it is committed as an adopt when the
+        adopt guards hold, and otherwise kept for a later retry.
+        """
+        head = await self._store.head_object(destination.key)
+        if head is None or not self._is_adoptable(head, source_key, row):
+            await db.rollback()
+            return _fail(500, "source_missing_during_resume")
+        await db.commit()
+        await self._publish(request.source, destination.path)
+        return MoveOutcome(
+            status_code=200,
+            path=destination.path if destination.renamed else None,
+            renamed=destination.renamed,
+            adopted=True,
+        )
 
     async def _write_metadata(
         self,
@@ -530,14 +577,10 @@ class FileMover:
             # Adopt: an earlier run deleted the source but died before its
             # commit (or its commit failed). The source is gone, so the copy
             # is never cleaned up here; any error leaves it for another retry.
-            # The size guard rejects a copy of an older version of a row that
-            # was since overwritten in place (same row id). Never the identity.
-            expected_size = row.size_bytes
             found = await self._find_own_copy(
                 db,
                 targets,
-                lambda head: self._is_copy_of(head, source_key, row)
-                and expected_size in (None, head.size),
+                lambda head: self._is_adoptable(head, source_key, row),
                 locked=request.destination,
             )
             if found is not None:
@@ -607,6 +650,18 @@ class FileMover:
             row is not None
             and self._is_copy_of(head, source_key, row)
             and head.metadata.get(MARK_ETAG) == source.etag
+        )
+
+    def _is_adoptable(self, head: ObjectHead, source_key: str, row: _Row | None) -> bool:
+        """This item's copy, finishable although the source object is gone.
+
+        The size guard rejects a copy of an older version of a row that was
+        since overwritten in place (same row id). It is never the identity.
+        """
+        return (
+            row is not None
+            and self._is_copy_of(head, source_key, row)
+            and row.size_bytes in (None, head.size)
         )
 
     async def _lock(self, db: AsyncSession, *paths: str) -> None:

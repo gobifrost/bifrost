@@ -367,7 +367,10 @@ notification see a failed job and the full per-item picture.
      `^{re.escape(stem)} \((\d+)\){re.escape(ext)}$`. Before choosing a
      number, `HeadObject` each matching candidate: if one carries this item's
      markers, it is this item's copy from an interrupted run and is resumed
-     (or adopted, from step 2) exactly as for the requested destination.
+     (or adopted, from step 2) exactly as for the requested destination. A
+     matching candidate is locked and `HeadObject`ed again before it is
+     resumed or adopted: a writer can replace it between the first head and
+     the lock, and its file must never be resumed (then cleaned up) or adopted.
      Otherwise take the lowest `n ≥ 1` not in that set. This is one
      `HeadObject` per existing `stem (n)ext` sibling — O(siblings), normally
      zero or a few. Lock that candidate and `HeadObject`
@@ -461,6 +464,13 @@ notification see a failed job and the full per-item picture.
      not proof the delete failed: a delete the client saw time out can still
      be applied after the head. A retry resolves either way: if the source is
      gone it adopts the copy, if present it resumes.
+
+   On a **resume** the re-check differs, because an earlier run's
+   unconfirmed delete can land after this run's step 2: a missing source is
+   never cleaned up but finished as an adopt (markers and size guard
+   re-checked; commit, publish, `"adopted": true`), or, if the guards fail,
+   rolled back with the copy kept, 500 `source_missing_during_resume`; a
+   failing source head rolls back and keeps the copy too.
 
    Residual: an upload landing between the re-check and the delete
    (milliseconds) is still lost; stated in the operation docs.

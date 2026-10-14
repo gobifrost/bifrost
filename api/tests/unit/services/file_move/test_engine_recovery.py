@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from uuid import uuid4
+
+from sqlalchemy import update
 
 from src.core.database import get_db_context
-from src.services.file_storage.move import FileMover, MoveRequest
+from src.models.orm.file_metadata import FileMetadata
+from src.services.file_storage.move import MARK_ROW, FileMover, MoveRequest
 
 from .support import key_for, markers, rows_at, seed_file
 
@@ -45,6 +49,8 @@ async def test_resume_under_rename_finishes_at_the_orphans_candidate(store, solu
     assert (outcome.status_code, outcome.path, outcome.renamed) == (200, "b/r (1).pdf", True)
     assert key_for(solution_target, "b/r (2).pdf") not in store.objects
     assert not any(op == "copy" for op, _ in store.calls)
+    assert key_for(solution_target, "a/r.pdf") not in store.objects
+    assert [r.id for r in await rows_at(solution_target, "b/r (1).pdf")] == [row_id]
 
 
 async def test_adopt_completes_a_move_whose_source_was_deleted(store, solution_target, published) -> None:
@@ -108,6 +114,7 @@ async def test_already_moved_under_rename_reports_the_final_path(store, solution
     store.put(key_for(solution_target, "b/r.pdf"), b"someone else")
     mover = FileMover(store, solution_target)
     first = await mover.move(MoveRequest("a/r.pdf", "b/r.pdf"), "rename")
+    assert (first.status_code, first.path) == (200, "b/r (1).pdf")
     again = await mover.move(MoveRequest("a/r.pdf", "b/r.pdf"), "rename")
     assert (again.status_code, again.path, again.adopted) == (200, first.path, True)
 
@@ -204,3 +211,88 @@ async def test_resumed_copy_is_removed_when_the_source_changes_before_delete(sto
     assert key_for(solution_target, "b/r.pdf") not in store.objects
     assert store.objects[source_key].data == b"new upload"
     assert [r.id for r in await rows_at(solution_target, "a/r.pdf")] == [row_id]
+
+
+def _on_second_source_head(store, source_key: str, action):
+    """Run ``action`` just before the step-7 re-check heads the source."""
+    seen = 0
+
+    async def hook(key: str) -> None:
+        nonlocal seen
+        if key == source_key:
+            seen += 1
+            if seen == 2:
+                await action()
+
+    return hook
+
+
+async def test_resume_whose_source_vanishes_before_recheck_is_adopted(store, solution_target, published) -> None:
+    row_id = await seed_file(store, solution_target, "a/r.pdf")
+    await _interrupted_copy(store, solution_target, "a/r.pdf", "b/r.pdf", row_id, delete_source=False)
+    source_key, dest_key = key_for(solution_target, "a/r.pdf"), key_for(solution_target, "b/r.pdf")
+
+    async def late_delete_lands() -> None:  # an earlier run's unconfirmed delete
+        store.objects.pop(source_key)
+
+    store.before["head"] = _on_second_source_head(store, source_key, late_delete_lands)
+    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    assert (outcome.status_code, outcome.adopted) == (200, True)
+    assert store.objects[dest_key].data == b"%PDF-1.7 test"
+    assert [r.id for r in await rows_at(solution_target, "b/r.pdf")] == [row_id]
+    assert await rows_at(solution_target, "a/r.pdf") == []
+    assert published.await_count == 2
+
+
+async def test_resume_whose_source_vanishes_keeps_a_copy_that_fails_the_adopt_guards(store, solution_target) -> None:
+    row_id = await seed_file(store, solution_target, "a/r.pdf")
+    await _interrupted_copy(store, solution_target, "a/r.pdf", "b/r.pdf", row_id, delete_source=False)
+    source_key, dest_key = key_for(solution_target, "a/r.pdf"), key_for(solution_target, "b/r.pdf")
+
+    async def source_gone_and_markers_lost() -> None:
+        store.objects.pop(source_key)
+        store.objects[dest_key].metadata[MARK_ROW] = str(uuid4())
+
+    store.before["head"] = _on_second_source_head(store, source_key, source_gone_and_markers_lost)
+    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    assert (outcome.status_code, outcome.error) == (500, "source_missing_during_resume")
+    assert dest_key in store.objects
+    assert ("delete", dest_key) not in store.calls
+    assert [r.id for r in await rows_at(solution_target, "a/r.pdf")] == [row_id]
+    assert await rows_at(solution_target, "b/r.pdf") == []
+
+
+async def test_resume_whose_source_recheck_raises_keeps_the_copy(store, solution_target) -> None:
+    row_id = await seed_file(store, solution_target, "a/r.pdf")
+    await _interrupted_copy(store, solution_target, "a/r.pdf", "b/r.pdf", row_id, delete_source=False)
+    source_key, dest_key = key_for(solution_target, "a/r.pdf"), key_for(solution_target, "b/r.pdf")
+
+    async def head_fails() -> None:
+        raise RuntimeError("head failed")
+
+    store.before["head"] = _on_second_source_head(store, source_key, head_fails)
+    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    assert outcome.status_code == 500
+    assert dest_key in store.objects
+    assert ("delete", dest_key) not in store.calls
+    assert [r.id for r in await rows_at(solution_target, "a/r.pdf")] == [row_id]
+    assert await rows_at(solution_target, "b/r.pdf") == []
+
+
+async def test_already_moved_refuses_a_row_marker_that_is_not_the_rows(store, solution_target) -> None:
+    await seed_file(store, solution_target, "a/r.pdf")
+    mover = FileMover(store, solution_target)
+    assert (await mover.move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")).status_code == 200
+    store.objects[key_for(solution_target, "b/r.pdf")].metadata[MARK_ROW] = str(uuid4())
+    outcome = await mover.move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    assert (outcome.status_code, outcome.error) == (404, "not_found")
+
+
+async def test_adopt_without_a_recorded_size_relies_on_markers(store, solution_target) -> None:
+    row_id = await seed_file(store, solution_target, "a/r.pdf")
+    async with get_db_context() as db:
+        await db.execute(update(FileMetadata).where(FileMetadata.id == row_id).values(size_bytes=None))
+    await _interrupted_copy(store, solution_target, "a/r.pdf", "b/r.pdf", row_id, delete_source=True)
+    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    assert (outcome.status_code, outcome.adopted) == (200, True)
+    assert [r.id for r in await rows_at(solution_target, "b/r.pdf")] == [row_id]
