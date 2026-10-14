@@ -248,6 +248,10 @@ def test_dev_artifact_is_built_on_merge_candidate_and_promoted_without_rebuild()
 
     deploy = jobs["deploy-dev"]
     assert deploy["needs"] == ["build-dev"]
+    assert _normalized(deploy["if"]) == (
+        "github.event_name == 'push' && github.ref == 'refs/heads/main' && "
+        "vars.BIFROST_VERIFY_IMMEDIATE_DEPLOYMENT != 'false'"
+    )
     deploy_source = "\n".join(step.get("run", "") for step in deploy["steps"])
     assert "rollout restart" not in deploy_source
     assert "Wait for image automation" in {

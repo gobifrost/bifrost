@@ -758,7 +758,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # =============================================================================
-  # Deploy Dev - Push-to-main only. Waits for Keel to move the DigitalOcean
+  # Deploy Dev - Push-to-main only. Waits for image automation to move DigitalOcean
   # deployments to the immutable version tags published alongside :dev.
   # Targets anything labeled
   # `app.kubernetes.io/part-of=bifrost` in the `bifrost` namespace so new
@@ -766,8 +766,12 @@ jobs:
   # GitHub's built-in workflow-failure email (no extra wiring).
   # =============================================================================
   deploy-dev:
-    # Fires only after build-dev lands a new image on push: main.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Scheduled deployments opt out of this immediate observer. Image publication
+    # and the merge gates remain unchanged; unset preserves immediate verification.
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      vars.BIFROST_VERIFY_IMMEDIATE_DEPLOYMENT != 'false'
     needs: [build-dev]
     runs-on: ubuntu-latest
     name: Deploy Dev to DigitalOcean
