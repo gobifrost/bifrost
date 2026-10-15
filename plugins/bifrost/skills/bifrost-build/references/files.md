@@ -87,10 +87,10 @@ results = await files.move_many(
 ```
 
 **Requests and authorization**
-- Up to 500 items per call. Use `move_many` for more than one file, since every `move` is its own job.
+- Up to 500 items per call, and the summed length of all source and destination paths must be at most 200,000 characters; otherwise the request is a 422. Use `move_many` for more than one file, since every `move` is its own job.
 - Each item needs `read` and `delete` on the source and `write` on the destination. These are checked when the job is queued.
 - Items succeed or fail independently. `move_many` returns results in request order, with `status_code` and `error` per item.
-- Item status codes are 200, 400, 403, 404, 409 and 500. Per-item error codes include `file_exists`, `no_available_name`, `not_found`, `source_changed`, `destination_changed`, `copy_verification_failed`, `source_delete_unconfirmed`, `source_missing_during_resume` (500), `not_attempted` (500) and `internal_error`. A 403 is the literal `forbidden`.
+- Item status codes are 200, 400, 403, 404, 409 and 500. Per-item error codes include `file_exists`, `no_available_name`, `not_found`, `source_changed`, `destination_changed`, `copy_verification_failed`, `source_delete_unconfirmed`, `source_missing_during_resume` (500), `cleanup_failed` (500), `storage_unavailable` (500), `not_attempted` (500) and `internal_error`. A destination path that is too long (over 2000 characters, or an S3 key over 2500, each with 7 characters reserved for rename suffixes) is a per-item 400. A 403 is the literal `forbidden`.
 
 **Errors in the Python SDK**
 - `files.move` raises `FileMoveError` (with `.status_code`, `.error`, `.job_id`) when the item fails. `files.move_many` does not raise for item failures; check each result's `status_code`.
@@ -98,7 +98,7 @@ results = await files.move_many(
 - If the wait times out, `TimeoutError` is raised and the job may still be running.
 
 **Retries and recovery**
-- A retry of the same request is safe. Based on what the interrupted run left behind, it resumes the marked copy, adopts it (`adopted: true`) when the source is already gone, or reports an already moved file as success.
+- A retry of the same request is safe. Based on what the interrupted run left behind, it resumes the marked copy, adopts it (`adopted: true`) when the source is already gone, or reports an already moved file as success. `adopted: true` appears on both an adopted copy and an already-moved success.
 - A resumed copy is never deleted when it fails, because the earlier run may have issued the source delete. A failed resume leaves the copy for a later retry or for an operator.
 
 **Timing**
@@ -115,7 +115,7 @@ results = await files.move_many(
 - Retrying an identical request while its job is still queued returns that job, including any 403s it recorded, even if the policy has since changed.
 
 **Deployment requirements**
-- The bucket credentials need `s3:ListBucket`. Without it, AWS reports a missing file as 403, and moves report 500 instead of 404.
+- The bucket credentials need `s3:ListBucket`. Without it, `HeadObject` on a missing key returns 403 instead of 404. The engine treats a 403 as a storage-level error, so the item fails 500 `storage_unavailable` instead of 404. Three consecutive such failures stop the job with `storage_unavailable`, and the remaining items are marked 500 `not_attempted`.
 - Configure an `AbortIncompleteMultipartUpload` lifecycle rule on the bucket.
 - Keep PgBouncer and Postgres idle-transaction timeouts above the longest single-part copy.
 
