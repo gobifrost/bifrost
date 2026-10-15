@@ -10,7 +10,7 @@
 import { test, expect, grantWorkspaceAppPolicy } from "./fixtures/api-fixture";
 import type { AuthedApi } from "./fixtures/api-fixture";
 import type { Page } from "@playwright/test";
-import { routeMonacoAssets } from "./fixtures/monaco-assets";
+import { editorForPath, readEditorContent } from "./fixtures/monaco-editor";
 
 type ViewportCase = {
 	name: "desktop" | "mobile";
@@ -107,52 +107,14 @@ async function openFile(page: Page, viewport: ViewportCase, filename: string) {
 	await file.click();
 }
 
-async function getEditorModelValue(page: Page, path: string) {
-	return await page.evaluate((filePath) => {
-		const monaco = (
-			window as typeof window & {
-				monaco?: {
-					editor?: {
-						getModels?: () => Array<{
-							uri: { path: string };
-							getValue: () => string;
-						}>;
-					};
-				};
-			}
-		).monaco;
-		const model = monaco?.editor
-			?.getModels?.()
-			.find((item) => item.uri.path.endsWith(filePath));
-		if (!model) {
-			throw new Error(`${filePath} Monaco model not found`);
-		}
-		return model.getValue();
-	}, path);
-}
-
 async function prependEditorComment(
 	page: Page,
 	path: string,
 	comment: string,
 	source: string,
 ) {
-	const editor = page.locator(".monaco-editor").first();
+	const editor = editorForPath(page, path);
 	await expect(editor).toBeVisible();
-	await page.waitForFunction((filePath) => {
-		const monaco = (
-			window as typeof window & {
-				monaco?: {
-					editor?: {
-						getModels?: () => Array<{ uri: { path: string } }>;
-					};
-				};
-			}
-		).monaco;
-		return monaco?.editor
-			?.getModels?.()
-			.some((model) => model.uri.path.endsWith(filePath));
-	}, path);
 
 	const editorInput = editor.getByRole("textbox", {
 		name: "Editor content",
@@ -162,7 +124,7 @@ async function prependEditorComment(
 	await page.keyboard.press("Control+Home");
 	await page.keyboard.insertText(`// ${comment}`);
 	await page.keyboard.press("Enter");
-	await expect.poll(() => getEditorModelValue(page, path)).toBe(source);
+	await expect.poll(() => readEditorContent(editor)).toBe(source);
 }
 
 async function saveCurrentFile(page: Page, appId: string, path: string) {
@@ -220,7 +182,6 @@ for (const viewport of VIEWPORTS) {
 			async ({ page, api }) => {
 				if (!app) throw new Error("Editor app fixture was not created");
 				await page.setViewportSize(viewport.size);
-				await routeMonacoAssets(page.context());
 				await page.goto(`/apps/${app.slug}/edit`);
 				await openFile(page, viewport, "index.tsx");
 				await prependEditorComment(

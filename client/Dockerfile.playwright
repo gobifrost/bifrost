@@ -24,16 +24,6 @@ RUN npm ci
 COPY e2e/fixtures/sdk-header/package*.json /opt/sdk-header-react18/
 RUN cd /opt/sdk-header-react18 && npm ci --ignore-scripts
 
-# Cache the exact Monaco CDN assets used by the app editor tests. The product
-# runtime loads Monaco from jsDelivr, but E2E runs should not depend on live CDN
-# timing. Keep this version aligned with client/src/lib/monaco-setup.ts.
-RUN set -eux; \
-    tmp_dir="$(mktemp -d)"; \
-    npm pack monaco-editor@0.54.0 --pack-destination "$tmp_dir"; \
-    mkdir -p /opt/monaco-cdn/monaco-editor-0.54.0; \
-    tar -xzf "$tmp_dir"/monaco-editor-0.54.0.tgz -C /opt/monaco-cdn/monaco-editor-0.54.0 --strip-components=1; \
-    rm -rf "$tmp_dir"
-
 # Install only Chromium browser (faster than installing all browsers)
 RUN npx playwright install chromium
 

@@ -16,7 +16,6 @@
  */
 
 import { test, expect } from "./fixtures/api-fixture";
-import { routeMonacoAssets } from "./fixtures/monaco-assets";
 
 const UNIQUE = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 const TABLE_NAME = `e2e_mgr_table_${UNIQUE}`.replace(/[^a-z0-9_]/g, "_");
@@ -24,10 +23,6 @@ const RULE_NAME = `e2e-mgr-rule-${UNIQUE}`;
 let tableId: string;
 
 test.describe("Policy rules manager", () => {
-	test.beforeEach(async ({ page }) => {
-		await routeMonacoAssets(page.context());
-	});
-
 	test.beforeAll(async ({ api }) => {
 		// Create the table we'll edit policies on.
 		const res = await api.post("/api/tables", {

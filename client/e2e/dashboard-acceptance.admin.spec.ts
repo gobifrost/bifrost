@@ -151,6 +151,24 @@ let seededWorkflow: WorkflowRecord;
 test.beforeAll(async ({ api }) => {
 	workflowId = await registerWorkflow(api);
 	seededWorkflow = await readWorkflow(api, workflowId);
+	// A populated chart exercises Decimal's constructor; the empty state does not.
+	const execute = await api.post("/api/workflows/execute", {
+		data: { workflow_id: workflowId, input_data: {} },
+	});
+	await expectOk(execute, "execute dashboard workflow fixture");
+	const { execution_id } = (await execute.json()) as { execution_id: string };
+	await expect
+		.poll(
+			async () => {
+				const response = await api.get(
+					`/api/executions/${execution_id}`,
+				);
+				await expectOk(response, "read dashboard execution fixture");
+				return ((await response.json()) as { status: string }).status;
+			},
+			{ timeout: 30_000 },
+		)
+		.toBe("Success");
 });
 
 test.afterAll(async ({ api }) => {
@@ -161,6 +179,20 @@ test("DASHBOARD-PRIMARY-01 renders API-backed metrics, refreshes, and drills int
 	page,
 }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto("/workflows");
+	await page.getByRole("button", { name: "Shell (Cmd+/)" }).click();
+	const editor = page.getByRole("dialog", { name: "Code editor" });
+	await editor.getByRole("button", { name: "Files", exact: true }).click();
+	await editor
+		.getByRole("button", {
+			name: new RegExp(`^${escapeRegExp(workflowPath)}(?:\\s|$)`),
+		})
+		.click();
+	await expect(
+		editor.getByRole("textbox", { name: "Editor content", exact: true }),
+	).toBeVisible();
+	await page.getByRole("button", { name: "Close editor" }).click();
+	await page.getByRole("link", { name: "Home", exact: true }).click();
 
 	const metricsPromise = page.waitForResponse(
 		(response) => isMetricsResponse(response.url()) && response.ok(),
@@ -175,7 +207,10 @@ test("DASHBOARD-PRIMARY-01 renders API-backed metrics, refreshes, and drills int
 		(response) => isApplicationsResponse(response.url()) && response.ok(),
 	);
 
-	await page.goto("/dashboard");
+	// Stay in the same document: a hard navigation would clear Monaco's AMD global.
+	await page.getByRole("link", { name: "Dashboard", exact: true }).click();
+	await expect(page.getByRole("application")).toBeVisible();
+	expect(await page.evaluate(() => "define" in window)).toBe(false);
 	const [
 		metricsResponse,
 		timeseriesResponse,
