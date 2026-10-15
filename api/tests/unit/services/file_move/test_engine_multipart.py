@@ -11,7 +11,7 @@ from src.core.database import get_db_context
 from src.services.file_storage.move import FileMover, MoveRequest
 from src.services.file_storage.s3_client import ObjectMissing
 
-from .support import key_for, rows_at, seed_file
+from .support import holds_move_copy, key_for, rows_at, seed_file
 
 DATA = b"x" * 64  # above the test threshold of 16 bytes
 
@@ -216,4 +216,30 @@ async def test_recheck_cleanup_failure_is_cleanup_failed(store, solution_target)
     )
     assert (outcome.status_code, outcome.error) == (500, "cleanup_failed")
     notify.assert_awaited_once_with(source_key, dest_key)
+    assert source_key in store.objects
+
+
+async def test_recheck_cleanup_keeps_a_foreign_object_that_replaced_our_copy(store, solution_target) -> None:
+    await seed_file(store, solution_target, "a/big.bin", data=DATA)
+    source_key, dest_key = key_for(solution_target, "a/big.bin"), key_for(solution_target, "b/big.bin")
+    copied = verified = False
+
+    async def presigned_upload(_key: str) -> None:
+        nonlocal copied
+        store.put(source_key, b"y" * 64)
+        copied = True
+
+    async def destination_swapped_at_recheck(key: str) -> None:
+        nonlocal verified
+        if copied and key == dest_key:
+            verified = True
+        elif verified and key == source_key and holds_move_copy(store, dest_key):
+            store.put(dest_key, b"someone else")
+
+    store.after["copy"] = presigned_upload
+    store.before["head"] = destination_swapped_at_recheck
+    outcome = await mover(store, solution_target).move(MoveRequest("a/big.bin", "b/big.bin"), "error")
+    assert (outcome.status_code, outcome.error) == (409, "source_changed")
+    assert dest_key in store.objects and store.objects[dest_key].data == b"someone else"
+    assert ("delete", dest_key) not in store.calls
     assert source_key in store.objects

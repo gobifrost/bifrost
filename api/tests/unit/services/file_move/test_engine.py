@@ -21,7 +21,7 @@ from src.services.file_storage.move import (
 )
 from src.services.file_storage.s3_client import ObjectPreconditionFailed
 
-from .support import key_for, rows_at, seed_file
+from .support import holds_move_copy, key_for, rows_at, seed_file
 
 
 async def test_moves_file_keeps_row_identity_and_publishes(store, solution_target, published) -> None:
@@ -331,14 +331,17 @@ async def test_destination_lock_is_held_during_cleanup(store, solution_target) -
 async def test_verify_head_raising_cleans_up_copy(store, solution_target) -> None:
     await seed_file(store, solution_target, "a/r.pdf")
     source_key, dest_key = key_for(solution_target, "a/r.pdf"), key_for(solution_target, "b/r.pdf")
-    copied = False
+    copied = failed = False
 
     async def mark_copied(_key: str) -> None:
         nonlocal copied
         copied = True
 
     async def verify_head_fails(key: str) -> None:
-        if copied and key == dest_key:
+        # Only step 5's head fails; cleanup's ownership head then succeeds.
+        nonlocal failed
+        if copied and key == dest_key and not failed:
+            failed = True
             raise EndpointConnectionError(endpoint_url="http://s3")
 
     store.after["copy"] = mark_copied
@@ -383,3 +386,94 @@ async def test_cleanup_failure_callback_raising_still_reports_cleanup_failed(sto
     )
     assert (outcome.status_code, outcome.error) == (500, "cleanup_failed")
     notify.assert_awaited_once()
+
+
+# -- Final review: the destination must still be our copy -------------------
+# Presigned uploads take no path lock, so a PUT can replace the destination
+# between the copy and any later step.
+
+
+@pytest.mark.parametrize(
+    ("foreign", "same_size"),
+    [(b"someone else's upload", False), (b"%PDF-1.7 tes!", True)],
+    ids=["other-size", "same-size"],
+)
+async def test_destination_replaced_after_single_part_copy_is_destination_changed(
+    store, solution_target, foreign, same_size
+) -> None:
+    row_id = await seed_file(store, solution_target, "a/r.pdf")
+    source_key, dest_key = key_for(solution_target, "a/r.pdf"), key_for(solution_target, "b/r.pdf")
+    source_etag = store.objects[source_key].etag
+    assert (len(foreign) == len(store.objects[source_key].data)) is same_size
+
+    async def presigned_put_replaces_destination(key: str) -> None:
+        store.put(key, foreign)
+
+    store.after["copy"] = presigned_put_replaces_destination
+    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    assert (outcome.status_code, outcome.error) == (409, "destination_changed")
+    assert store.objects[dest_key].data == foreign
+    assert store.objects[dest_key].metadata == {}
+    assert ("delete", dest_key) not in store.calls
+    assert store.objects[source_key].etag == source_etag
+    assert ("delete", source_key) not in store.calls
+    assert [r.id for r in await rows_at(solution_target, "a/r.pdf")] == [row_id]
+    assert await rows_at(solution_target, "b/r.pdf") == []
+
+
+async def test_cleanup_keeps_a_foreign_object_that_replaced_our_copy(store, solution_target) -> None:
+    """Our copy passed the ownership check, then a PUT replaced it before cleanup."""
+    row_id = await seed_file(store, solution_target, "a/r.pdf")
+    source_key, dest_key = key_for(solution_target, "a/r.pdf"), key_for(solution_target, "b/r.pdf")
+    copied = verified = False
+
+    async def presigned_upload_replaces_source(_key: str) -> None:
+        nonlocal copied
+        store.put(source_key, b"new upload")
+        copied = True
+
+    async def destination_swapped_at_step_7(key: str) -> None:
+        nonlocal verified
+        if copied and key == dest_key:
+            verified = True
+        elif verified and key == source_key and holds_move_copy(store, dest_key):
+            store.put(dest_key, b"someone else's upload")
+
+    store.after["copy"] = presigned_upload_replaces_source
+    store.before["head"] = destination_swapped_at_step_7
+    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    assert (outcome.status_code, outcome.error) == (409, "source_changed")
+    assert dest_key in store.objects and store.objects[dest_key].data == b"someone else's upload"
+    assert ("delete", dest_key) not in store.calls
+    assert store.objects[source_key].data == b"new upload"
+    assert [r.id for r in await rows_at(solution_target, "a/r.pdf")] == [row_id]
+    assert await rows_at(solution_target, "b/r.pdf") == []
+
+
+async def test_cleanup_head_raising_keeps_the_copy_and_reports_cleanup_failed(store, solution_target) -> None:
+    """Ownership cannot be re-proven, so nothing is deleted; the copy is reported."""
+    await seed_file(store, solution_target, "a/r.pdf")
+    source_key, dest_key = key_for(solution_target, "a/r.pdf"), key_for(solution_target, "b/r.pdf")
+    copied = False
+
+    async def mark_copied(_key: str) -> None:
+        nonlocal copied
+        copied = True
+
+    async def destination_head_fails(key: str) -> None:
+        if copied and key == dest_key:
+            raise EndpointConnectionError(endpoint_url="http://s3")
+
+    store.after["copy"] = mark_copied
+    store.before["head"] = destination_head_fails
+    notify = AsyncMock()
+    outcome = await FileMover(store, solution_target, on_cleanup_failed=notify).move(
+        MoveRequest("a/r.pdf", "b/r.pdf"), "error"
+    )
+    assert outcome.status_code == 500 and outcome.storage_error
+    assert outcome.error.startswith("storage_unavailable")
+    assert dest_key in store.objects
+    assert ("delete", dest_key) not in store.calls
+    assert source_key in store.objects
+    notify.assert_awaited_once_with(source_key, dest_key)
+    assert await rows_at(solution_target, "b/r.pdf") == []

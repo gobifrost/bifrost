@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from contextlib import asynccontextmanager
 from urllib.parse import quote
 from uuid import UUID
 
@@ -166,6 +167,30 @@ async def test_retry_adopts_an_interrupted_move(
     assert (await _row(db_session, sid, landed_at)).id == row.id
 
 
+def _record_s3_calls(storage: S3StorageClient) -> list[str]:
+    """Record the name of every S3 client method ``storage`` calls from now on."""
+    issued: list[str] = []
+    open_client = storage.get_client
+
+    class Recorder:
+        def __init__(self, client) -> None:
+            self._client = client
+
+        def __getattr__(self, name: str):
+            attribute = getattr(self._client, name)
+            if callable(attribute):
+                issued.append(name)
+            return attribute
+
+    @asynccontextmanager
+    async def recording_client():
+        async with open_client() as client:
+            yield Recorder(client)
+
+    storage.get_client = recording_client  # type: ignore[method-assign]
+    return issued
+
+
 async def test_multipart_copy_against_object_storage(
     platform_admin, solution, async_session_factory
 ) -> None:
@@ -189,10 +214,25 @@ async def test_multipart_copy_against_object_storage(
         part_size=5 * 1024 * 1024,
     )
 
+    source_head = await storage.head_object(resolve_s3_key(LOCATION, sid, source))
+    issued = _record_s3_calls(storage)
+
     outcome = await mover.move(MoveRequest(source, "campus-b/Floor Plan – Rev 2 (final).bin"), "error")
 
     assert outcome.status_code == 200, outcome
-    moved = await storage.read_uploaded_file(resolve_s3_key(LOCATION, sid, "campus-b/Floor Plan – Rev 2 (final).bin"))
+    # The multipart branch ran (11 MiB in 5 MiB parts), not a single CopyObject.
+    assert "copy_object" not in issued
+    assert issued.count("create_multipart_upload") == 1
+    assert issued.count("upload_part_copy") == 3
+    assert issued.count("complete_multipart_upload") == 1
+    destination_key = resolve_s3_key(LOCATION, sid, "campus-b/Floor Plan – Rev 2 (final).bin")
+    landed = await storage.head_object(destination_key)
+    # SeaweedFS gives a multipart object an "<md5>-<parts>" ETag. The source's
+    # own chunked upload is multipart too ("-2" in 8 MiB parts), so only "-3"
+    # proves the copy was assembled from this move's three part copies.
+    assert source_head.etag.endswith('-2"'), source_head.etag
+    assert landed.etag.endswith('-3"'), landed.etag
+    moved = await storage.read_uploaded_file(destination_key)
     assert moved == payload
     assert await storage.head_object(resolve_s3_key(LOCATION, sid, source)) is None
 

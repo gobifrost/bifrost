@@ -121,6 +121,12 @@ class FakeStore:
         )
 
 
+def holds_move_copy(store: FakeStore, key: str) -> bool:
+    """A marked move copy currently sits at ``key``."""
+    obj = store.objects.get(key)
+    return obj is not None and MARK_SOURCE in obj.metadata
+
+
 def key_for(target: MoveTarget, path: str) -> str:
     return resolve_s3_key(target.location, target.scope, path)
 

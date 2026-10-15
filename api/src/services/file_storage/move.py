@@ -7,7 +7,7 @@ Each item:
 2. Inspects the source.
 3. Resolves the destination (conflict or rename).
 4. Copies server-side with a source-ETag guard.
-5. Verifies the copy's size.
+5. Verifies the destination is our copy (markers) and its size.
 6. Re-keys metadata.
 7. Re-checks the source, then deletes it.
 8. Commits and publishes.
@@ -225,10 +225,11 @@ class FileMover:
             try:
                 failure, current_row = await self._recheck_source(db, request, source_key, source, row)
             except Exception:
-                await self._cleanup(request, source_key, chosen)
+                await self._cleanup(request, source_key, row, chosen)
                 raise
             if failure is not None:
-                return await self._discard(db, request, source_key, chosen, failure)
+                # The copy carries the step-2 row's marker, not current_row's.
+                return await self._discard(db, request, source_key, row, chosen, failure)
             return await self._complete(db, request, source_key, source, current_row, chosen)
 
     async def _recheck_source(
@@ -378,26 +379,36 @@ class FileMover:
         # locks, and a writer waiting on the destination lock could otherwise
         # PUT its own file there for our cleanup to delete.
         try:
-            failure = await self._verify_and_stage(db, source, row, destination)
+            landed = await self._store.head_object(destination.key)
         except Exception:
             # Steps 5–6 raised before the source delete was issued: remove our
             # copy, then let move() map the error (storage vs internal).
-            await self._cleanup(request, source_key, destination)
+            await self._cleanup(request, source_key, row, destination)
+            raise
+        if landed is None or not self._is_copy_of(landed, source_key, row):
+            # A presigned upload (which takes no path lock) replaced or removed
+            # our copy: the object there is someone else's, so delete nothing.
+            await db.rollback()
+            return _fail(409, "destination_changed")
+        try:
+            failure = await self._verify_and_stage(db, source, row, destination, landed)
+        except Exception:
+            await self._cleanup(request, source_key, row, destination)
             raise
         if failure is not None:
-            return await self._discard(db, request, source_key, destination, failure)
+            return await self._discard(db, request, source_key, row, destination, failure)
 
         # Step 7's re-check.
         try:
             current = await self._store.head_object(source_key)
         except Exception:
-            await self._cleanup(request, source_key, destination)
+            await self._cleanup(request, source_key, row, destination)
             raise
         if current is None and destination.resume:
             return await self._adopt_resumed(db, request, source_key, row, destination)
         failure = self._recheck_before_delete(source, current)
         if failure is not None:
-            return await self._discard(db, request, source_key, destination, failure)
+            return await self._discard(db, request, source_key, row, destination, failure)
 
         # Point of no return: once the delete is issued, the copy is never
         # cleaned up — a delete can land server-side after a client error.
@@ -423,10 +434,10 @@ class FileMover:
         source: ObjectHead,
         row: _Row | None,
         destination: _Destination,
+        landed: ObjectHead,
     ) -> MoveOutcome | None:
-        """Steps 5–6; a returned outcome needs cleanup."""
-        landed = await self._store.head_object(destination.key)
-        if landed is None or landed.size != source.size:
+        """Steps 5–6 on our copy (``landed``); a returned outcome needs cleanup."""
+        if landed.size != source.size:
             return _fail(500, "copy_verification_failed")
         await self._write_metadata(db, destination, landed, row)
         return None
@@ -493,11 +504,12 @@ class FileMover:
         db: AsyncSession,
         request: MoveRequest,
         source_key: str,
+        row: _Row | None,
         destination: _Destination,
         failure: MoveOutcome,
     ) -> MoveOutcome:
         """Remove our copy under the path locks, then roll back and fail."""
-        if not await self._cleanup(request, source_key, destination):
+        if not await self._cleanup(request, source_key, row, destination):
             failure = _fail(500, "cleanup_failed")
         await db.rollback()
         return failure
@@ -510,7 +522,11 @@ class FileMover:
             return False
 
     async def _cleanup(
-        self, request: MoveRequest, source_key: str, destination: _Destination
+        self,
+        request: MoveRequest,
+        source_key: str,
+        row: _Row | None,
+        destination: _Destination,
     ) -> bool:
         """Remove this item's copy before the source delete was issued.
 
@@ -521,6 +537,11 @@ class FileMover:
         already have issued its source delete, which can land at any moment
         and leave the copy as the only one. A failed resume leaves it for a
         later retry (which resumes or adopts it) or an operator.
+
+        Only our copy is deleted. Presigned uploads take no path lock, so the
+        destination is looked at first: a missing or foreign object means
+        there is nothing of ours to remove. A look that raises leaves
+        ownership unproven, so nothing is deleted and the cleanup fails.
         """
         if destination.resume:
             return True
@@ -530,6 +551,9 @@ class FileMover:
             "destination_path": destination.path,
         }
         try:
+            head = await self._store.head_object(destination.key)
+            if head is None or not self._is_copy_of(head, source_key, row):
+                return True
             await self._store.delete_object_strict(destination.key)
             return True
         except Exception:
@@ -667,6 +691,11 @@ class FileMover:
         )
 
     async def _lock(self, db: AsyncSession, *paths: str) -> None:
+        # Paths passed together are locked in sorted order. Rename candidates
+        # (and recovery targets) are locked by later calls, after the sorted
+        # source/destination pair, so they are not globally ordered. That is
+        # deadlock-free only because every other locker takes a single path
+        # and move jobs are serialized per scope (one resource_lock_key).
         for path in sorted(set(paths)):
             await lock_file_mutation(
                 db, location=self._target.location, scope=self._target.scope, path=path
