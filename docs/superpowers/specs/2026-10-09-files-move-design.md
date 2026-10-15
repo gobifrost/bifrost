@@ -419,9 +419,15 @@ notification see a failed job and the full per-item picture.
    a browser upload can land at the destination between step 3's check and a
    single-part copy, and the copy overwrites it (`CopyObject` has no
    destination precondition on S3). The multipart path refuses instead.
-5. **Verify** with `HeadObject` on the destination: content length equals the
-   source size. ETags are not compared — a copy of a multipart-uploaded object
-   legitimately gets a different ETag. Mismatch → cleanup (below), 500
+5. **Verify** with `HeadObject` on the destination. First, ownership: the
+   object must carry this item's copy markers (`bifrost-move-source` and
+   `bifrost-move-row`). A presigned upload takes no lock and can replace the
+   destination after a single-part copy; missing or foreign → roll back, 409
+   `destination_changed`, nothing deleted (the multipart path makes the same
+   check after re-taking its locks; a resumed copy already matched its
+   markers). Then content length equals the source size. ETags are not
+   compared — a copy of a multipart-uploaded object legitimately gets a
+   different ETag. Mismatch → cleanup (below), 500
    `copy_verification_failed`.
 6. **Metadata**, with Core `delete()` / `update()` / `insert()` statements
    only. The Solution write guard (`install_solution_write_guard`) rejects
@@ -470,7 +476,9 @@ notification see a failed job and the full per-item picture.
    never cleaned up but finished as an adopt (markers and size guard
    re-checked; commit, publish, `"adopted": true`), or, if the guards fail,
    rolled back with the copy kept, 500 `source_missing_during_resume`; a
-   failing source head rolls back and keeps the copy too.
+   failing source head rolls back and keeps the copy too. If the adopt's own
+   destination head raises, the item reports `storage_unavailable` or
+   `internal_error` (by the error) and the copy is kept.
 
    Residual: an upload landing between the re-check and the delete
    (milliseconds) is still lost; stated in the operation docs.
@@ -549,10 +557,17 @@ feature-specific status path.
 after — see step 7): delete the destination copy with the raising delete while
 the path locks are still held, then roll back (the rollback releases the locks)
 — only if this item created it (a resumed copy is never cleaned up; see
-*Resume*). If cleanup
+*Resume*). Cleanup first heads the destination and deletes only when the
+object there still carries this item's copy markers: a presigned upload can
+replace our copy at any time, and a missing or foreign object means there is
+nothing of ours to remove (cleanup counts as done). If that head raises,
+ownership is unproven, nothing is deleted and cleanup has failed. If cleanup
 itself fails, the item's result is 500 `cleanup_failed`, and the job
 publishes an operator log entry (`context.log`) naming both S3 keys, because
-an orphaned copy under a new prefix can be readable there.
+an orphaned copy under a new prefix can be readable there. When cleanup ran
+because a step raised (a head, the metadata write), the item reports that
+error as `storage_unavailable` or `internal_error` instead, with the copy
+kept and the operator log entry still published.
 
 **Runner loss mid-item, including timeout** (the job is not retried). The job
 fails; its stored result is the last checkpoint, whose `in_flight` names the
