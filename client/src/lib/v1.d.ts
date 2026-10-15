@@ -3056,6 +3056,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/files/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move File
+         * @description Move one file within a location as a durable platform job.
+         */
+        post: operations["workspace.files.move"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/files/move-many": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move Files
+         * @description Move up to 500 files within a location as one durable platform job.
+         */
+        post: operations["workspace.files.move_many"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/files/list": {
         parameters: {
             query?: never;
@@ -18427,6 +18467,80 @@ export interface components {
          * @enum {string}
          */
         FileMode: "draft" | "live";
+        /**
+         * FileMoveBatchRequest
+         * @description Move up to 500 files within one non-workspace location (one platform job).
+         */
+        FileMoveBatchRequest: {
+            /** Items */
+            items: components["schemas"]["FileMoveItem"][];
+            /**
+             * Location
+             * @description Storage location. Special values: workspace (default), temp, uploads. Custom names like reports are accepted; internal prefixes _repo, _tmp, and _apps are blocked.
+             */
+            location: string;
+            /**
+             * Scope
+             * @description Org scope; Solution context wins.
+             */
+            scope?: string | null;
+            /**
+             * On Conflict
+             * @description error: fail an item whose destination exists. rename: use the first free 'name (n).ext' instead.
+             * @default error
+             * @enum {string}
+             */
+            on_conflict: "error" | "rename";
+        };
+        /**
+         * FileMoveItem
+         * @description One file to move within the request's location.
+         */
+        FileMoveItem: {
+            /**
+             * Source
+             * @description Current path relative to the location root
+             */
+            source: string;
+            /**
+             * Destination
+             * @description New path relative to the location root
+             */
+            destination: string;
+        };
+        /**
+         * FileMoveRequest
+         * @description Move one file within a non-workspace location (a durable platform job).
+         */
+        FileMoveRequest: {
+            /**
+             * Source
+             * @description Current path relative to the location root
+             */
+            source: string;
+            /**
+             * Destination
+             * @description New path relative to the location root
+             */
+            destination: string;
+            /**
+             * Location
+             * @description Storage location. Special values: workspace (default), temp, uploads. Custom names like reports are accepted; internal prefixes _repo, _tmp, and _apps are blocked.
+             */
+            location: string;
+            /**
+             * Scope
+             * @description Org scope; Solution context wins.
+             */
+            scope?: string | null;
+            /**
+             * On Conflict
+             * @description error: fail an item whose destination exists. rename: use the first free 'name (n).ext' instead.
+             * @default error
+             * @enum {string}
+             */
+            on_conflict: "error" | "rename";
+        };
         /** FilePolicies */
         FilePolicies: {
             /** Policies */
@@ -36190,6 +36304,72 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "workspace.files.move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FileMoveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "workspace.files.move_many": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FileMoveBatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
+                };
             };
             /** @description Validation Error */
             422: {

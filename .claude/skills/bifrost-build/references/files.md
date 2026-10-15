@@ -67,6 +67,60 @@ signed = await files.get_signed_url(
 
 Use `write_bytes`/`read_bytes` for small binary values and signed URLs for large transfers. Consult `../generated/python-sdk-signatures.md` for the exact available options and return types.
 
+## Move files
+
+`files.move` and `files.move_many` relocate files inside one non-workspace location (for example a Solution's `docs` location) without downloading them. Each call runs as one durable `files.move` platform job:
+- Bytes are copied server-side.
+- The file's metadata row moves with it, so path-prefix file policies grant access at the new path.
+- The original is deleted only after the copy is verified.
+
+```python
+from bifrost import files
+
+final_path = await files.move("campus-a/plan.pdf", "campus-b/plan.pdf", location="docs")
+results = await files.move_many(
+    [{"source": "campus-a/a.pdf", "destination": "campus-b/a.pdf"},
+     {"source": "campus-a/b.pdf", "destination": "campus-b/b.pdf"}],
+    location="docs",
+    on_conflict="rename",  # "error" (default) fails an item whose destination exists
+)
+```
+
+**Requests and authorization**
+- Up to 500 items per call. Use `move_many` for more than one file, since every `move` is its own job.
+- Each item needs `read` and `delete` on the source and `write` on the destination. These are checked when the job is queued.
+- Items succeed or fail independently. `move_many` returns results in request order, with `status_code` and `error` per item.
+- Item status codes are 200, 400, 403, 404, 409 and 500. Per-item error codes include `file_exists`, `no_available_name`, `not_found`, `source_changed`, `destination_changed`, `copy_verification_failed`, `source_delete_unconfirmed`, `source_missing_during_resume` (500), `not_attempted` (500) and `internal_error`. A 403 is the literal `forbidden`.
+
+**Errors in the Python SDK**
+- `files.move` raises `FileMoveError` (with `.status_code`, `.error`, `.job_id`) when the item fails. `files.move_many` does not raise for item failures; check each result's `status_code`.
+- If the job itself fails or is cancelled, both raise `FileMoveJobError` (a `RuntimeError`) with `.job_id`, `.code` (for example `storage_unavailable` after 3 consecutive storage failures, or `checkpoint_failed`) and `.results`, the per-item results when the job recorded any (otherwise `None`). Unattempted items carry 500 `not_attempted`.
+- If the wait times out, `TimeoutError` is raised and the job may still be running.
+
+**Retries and recovery**
+- A retry of the same request is safe. Based on what the interrupted run left behind, it resumes the marked copy, adopts it (`adopted: true`) when the source is already gone, or reports an already moved file as success.
+- A resumed copy is never deleted when it fails, because the earlier run may have issued the source delete. A failed resume leaves the copy for a later retry or for an operator.
+
+**Timing**
+- Moves in one location and scope run one job at a time, so a single move can wait behind a large batch in the same location.
+- A calling workflow must set its own `timeout_seconds` high enough. The SDK waits up to 4 hours by default, and the job itself is limited to 4 hours.
+- A batch of very large files that would exceed 4 hours should be split.
+
+**Limits and residual risks**
+- `on_conflict="rename"` names are authorized by the requested destination's `write` grant. A file-level policy on one exact candidate name is not consulted.
+- Browser uploads through signed URLs take no lock:
+  - An upload that lands on the **destination** while a copy of 5 GiB or less runs is overwritten. Larger copies refuse instead.
+  - An upload that lands on the **source** within milliseconds of its delete is lost.
+- A source deleted outside a move is a plain 404. A source without a metadata row cannot be resumed or adopted after an interruption.
+- Retrying an identical request while its job is still queued returns that job, including any 403s it recorded, even if the policy has since changed.
+
+**Deployment requirements**
+- The bucket credentials need `s3:ListBucket`. Without it, AWS reports a missing file as 403, and moves report 500 instead of 404.
+- Configure an `AbortIncompleteMultipartUpload` lifecycle rule on the bucket.
+- Keep PgBouncer and Postgres idle-transaction timeouts above the longest single-part copy.
+
+The CLI moves one file: `bifrost files move SOURCE DESTINATION --location docs [--solution INSTALL] [--rename]`.
+
 ## CLI boundaries
 
 Unqualified `bifrost files` commands target instance `_repo`/`workspace`. On commands that accept it, `--solution <install>` targets installed Solution runtime files and defaults to the Solution location rules. Check `../generated/cli-reference.md` because not every file verb supports every scope.
