@@ -375,7 +375,7 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # AgentRunEnqueueResponse (which echoes `run_as_user_id`), and
     # AgentRunCreateRequest is the /execute body. ADDITIVE: old clients omit
     # `run_as` and ignore the echo. Fingerprint refreshed only.
-    "8af658bc3908620526f16736393dff529c5d12e4cf36a5a113303809a178395e"
+    "800eaf4ec90f2d182b580d79fe6d7ec239507af10a2b38e08732a707bb48212d"
 )
 
 

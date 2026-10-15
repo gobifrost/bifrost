@@ -9543,6 +9543,123 @@
     {
       "observed": {
         "cli": {
+          "path": [
+            "files",
+            "move"
+          ],
+          "status": "missing_surface"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "workspace.files.move",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "missing_surface"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "repository.readwrite"
+        ],
+        "async_policy": "platform_job",
+        "audit_event": null,
+        "authorization_resolver": "File policy read and delete on the source and write on the destination, evaluated at enqueue",
+        "cli": {
+          "path": [
+            "files",
+            "move"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Moving runtime files does not change portable manifest state.",
+          "mcp": "File-content operations have no MCP tools; moves are an SDK and CLI surface."
+        },
+        "manifest": null,
+        "mcp": null,
+        "native_builder": true,
+        "operation_id": "workspace.files.move",
+        "rest": {
+          "method": "POST",
+          "path": "/api/files/move",
+          "request_model": "FileMoveRequest",
+          "response_model": "PlatformJobAccepted"
+        },
+        "side_effects": [
+          "enqueue a durable files.move Platform Job",
+          "copy server-side, re-key file metadata, and delete the source object",
+          "publish file activity"
+        ],
+        "summary": "Move one file within a location",
+        "target_kind": "workspace"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": null,
+          "status": "intentionally_unsupported"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "workspace.files.move_many",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "missing_surface"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "repository.readwrite"
+        ],
+        "async_policy": "platform_job",
+        "audit_event": null,
+        "authorization_resolver": "File policy read and delete on each source and write on each destination, evaluated at enqueue",
+        "cli": null,
+        "exclusions": {
+          "cli": "A batch is an SDK primitive; the CLI moves one file with `files move`.",
+          "manifest": "Moving runtime files does not change portable manifest state.",
+          "mcp": "File-content operations have no MCP tools; moves are an SDK and CLI surface."
+        },
+        "manifest": null,
+        "mcp": null,
+        "native_builder": true,
+        "operation_id": "workspace.files.move_many",
+        "rest": {
+          "method": "POST",
+          "path": "/api/files/move-many",
+          "request_model": "FileMoveBatchRequest",
+          "response_model": "PlatformJobAccepted"
+        },
+        "side_effects": [
+          "enqueue a durable files.move Platform Job",
+          "copy server-side, re-key file metadata, and delete source objects",
+          "publish file activity"
+        ],
+        "summary": "Move up to 500 files within a location",
+        "target_kind": "workspace"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
           "path": null,
           "status": "intentionally_unsupported"
         },
@@ -10080,7 +10197,7 @@
     "cli": 171,
     "manifest": 16,
     "mcp": 94,
-    "rest": 677,
+    "rest": 679,
     "sdk": 21
   },
   "schema_version": 1,

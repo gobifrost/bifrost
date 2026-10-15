@@ -101,7 +101,7 @@ TABLE_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/tables/{table_id}/documents/batch-delete": frozenset({"POST"}),
 }
 
-# The existing files facade routes. All eight live in
+# The existing files facade routes. All ten live in
 # ``src.routers.files`` (path-selected exactly, like the config and
 # integrations routes). They carry the ordinary ``CurrentActiveUser``
 # auth, the shared ``shared.sdk_files`` service, and the worker's
@@ -112,6 +112,8 @@ FILES_ROUTE_PATHS: frozenset[str] = frozenset(
         "/api/files/write",
         "/api/files/list",
         "/api/files/delete",
+        "/api/files/move",
+        "/api/files/move-many",
         "/api/files/stat",
         "/api/files/exists",
         "/api/files/signed-url",

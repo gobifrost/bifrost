@@ -166,6 +166,8 @@ caller's own items.
 | `workspace.files.exists` | `bifrost files exists` | `bifrost_file_exists` | `repository.read` |
 | `workspace.files.write` | `bifrost files write` | `bifrost_file_write` | `repository.readwrite` |
 | `workspace.files.delete` | `bifrost files delete` | `bifrost_file_delete` | `repository.readwrite` |
+| `workspace.files.move` | `bifrost files move` | — | `repository.readwrite` |
+| `workspace.files.move_many` | — | — | `repository.readwrite` |
 | `workspace.files.pull` | — | — | `repository.read` |
 | `workspace.files.manifest` | — | — | `repository.read` |
 | `workspace.files.watch` | — | — | `repository.read` |

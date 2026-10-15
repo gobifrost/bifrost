@@ -544,13 +544,15 @@ class TestRouteReuse:
         )
 
     def test_files_route_selection_is_exact(self):
-        """Gate C4a mounts the eight files facade routes as real objects."""
+        """Gate C4a mounts the ten files facade routes as real objects."""
         assert FILES_ROUTE_PATHS == frozenset(
             {
                 "/api/files/read",
                 "/api/files/write",
                 "/api/files/list",
                 "/api/files/delete",
+                "/api/files/move",
+                "/api/files/move-many",
                 "/api/files/stat",
                 "/api/files/exists",
                 "/api/files/signed-url",

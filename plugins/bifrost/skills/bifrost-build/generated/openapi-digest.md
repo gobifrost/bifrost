@@ -214,6 +214,8 @@
 | POST | `/api/files/exists` |
 | POST | `/api/files/list` |
 | GET | `/api/files/manifest` |
+| POST | `/api/files/move` |
+| POST | `/api/files/move-many` |
 | GET | `/api/files/policies` |
 | POST | `/api/files/policies/test` |
 | DELETE | `/api/files/policies/{policy_path}` |

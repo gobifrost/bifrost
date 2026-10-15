@@ -18,8 +18,8 @@ from typing import Literal
 from urllib.parse import unquote
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,6 +33,8 @@ from src.models.contracts.files import (
 from src.models.contracts.policies import FileAction
 from src.models.contracts.policies import FilePolicies
 from src.core.database import get_db
+from src.jobs.platform.file_move import MAX_FILE_MOVE_ITEMS, MAX_FILE_MOVE_PATH_CHARS
+from src.models.contracts.platform_jobs import PlatformJobAccepted
 from src.models import (
     AffectedEntity,
     AvailableReplacement,
@@ -128,6 +130,52 @@ class FileDeleteRequest(BaseModel):
         default=None,
         description="Delete only when the current content has this version",
     )
+
+
+class FileMoveItem(BaseModel):
+    """One file to move within the request's location."""
+    source: str = Field(..., description="Current path relative to the location root")
+    destination: str = Field(..., description="New path relative to the location root")
+
+
+def _check_move_path_budget(paths: list[str]) -> None:
+    if sum(len(path) for path in paths) > MAX_FILE_MOVE_PATH_CHARS:
+        raise ValueError(
+            f"source and destination paths total more than {MAX_FILE_MOVE_PATH_CHARS} characters"
+        )
+
+
+_ON_CONFLICT_DESCRIPTION = (
+    "error: fail an item whose destination exists. rename: use the first free "
+    "'name (n).ext' instead."
+)
+
+
+class FileMoveRequest(BaseModel):
+    """Move one file within a non-workspace location (a durable platform job)."""
+    source: str = Field(..., description="Current path relative to the location root")
+    destination: str = Field(..., description="New path relative to the location root")
+    location: str = Field(..., description=FILE_LOCATION_DESCRIPTION)
+    scope: str | None = Field(default=None, description="Org scope; Solution context wins.")
+    on_conflict: Literal["error", "rename"] = Field(default="error", description=_ON_CONFLICT_DESCRIPTION)
+
+    @model_validator(mode="after")
+    def _bounded_paths(self) -> "FileMoveRequest":
+        _check_move_path_budget([self.source, self.destination])
+        return self
+
+
+class FileMoveBatchRequest(BaseModel):
+    """Move up to 500 files within one non-workspace location (one platform job)."""
+    items: list[FileMoveItem] = Field(..., min_length=1, max_length=MAX_FILE_MOVE_ITEMS)
+    location: str = Field(..., description=FILE_LOCATION_DESCRIPTION)
+    scope: str | None = Field(default=None, description="Org scope; Solution context wins.")
+    on_conflict: Literal["error", "rename"] = Field(default="error", description=_ON_CONFLICT_DESCRIPTION)
+
+    @model_validator(mode="after")
+    def _bounded_paths(self) -> "FileMoveBatchRequest":
+        _check_move_path_budget([p for item in self.items for p in (item.source, item.destination)])
+        return self
 
 
 class FileListRequest(BaseModel):
@@ -823,6 +871,84 @@ async def delete_file(
         )
     except FileServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from e
+
+
+async def _enqueue_file_moves(
+    ctx: Context,
+    response: Response,
+    *,
+    items: list[tuple[str, str]],
+    location: str,
+    scope: str | None,
+    on_conflict: str,
+) -> PlatformJobAccepted:
+    from shared import sdk_files
+    from src.services import platform_jobs
+
+    caller = FileCaller.from_context(ctx)
+    try:
+        job, reused = await sdk_files.sdk_enqueue_file_moves(
+            caller, items=items, location=location, scope=scope, on_conflict=on_conflict
+        )
+    except FileServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
+    # Commit and publish before the 202: the SDK polls the job immediately.
+    await platform_jobs.finalize_enqueued_platform_job(caller.db, job, log_label="File move")
+    response.headers["Location"] = f"/api/platform-jobs/{job.id}"
+    return PlatformJobAccepted(
+        job_id=job.id,
+        notification_id=job.notification_id,
+        status=job.status,  # type: ignore[arg-type]
+        reused=reused,
+    )
+
+
+@router.post(
+    "/move",
+    response_model=PlatformJobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+    **operation_route("workspace.files.move"),
+)
+async def move_file(
+    request: FileMoveRequest,
+    ctx: Context,
+    user: CurrentActiveUser,
+    response: Response,
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> PlatformJobAccepted:
+    """Move one file within a location as a durable platform job."""
+    return await _enqueue_file_moves(
+        ctx,
+        response,
+        items=[(request.source, request.destination)],
+        location=request.location,
+        scope=request.scope,
+        on_conflict=request.on_conflict,
+    )
+
+
+@router.post(
+    "/move-many",
+    response_model=PlatformJobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+    **operation_route("workspace.files.move_many"),
+)
+async def move_files(
+    request: FileMoveBatchRequest,
+    ctx: Context,
+    user: CurrentActiveUser,
+    response: Response,
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> PlatformJobAccepted:
+    """Move up to 500 files within a location as one durable platform job."""
+    return await _enqueue_file_moves(
+        ctx,
+        response,
+        items=[(item.source, item.destination) for item in request.items],
+        location=request.location,
+        scope=request.scope,
+        on_conflict=request.on_conflict,
+    )
 
 
 @router.post("/list", response_model=FileListResponse, **operation_route("workspace.files.list"))

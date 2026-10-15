@@ -73,6 +73,7 @@ _ROLE_RESOURCE_ASSIGNMENT_SURFACE_EXCLUSIONS = {
     "manifest": "Role resource assignments are deployment-local authorization state.",
     "sdk": _ROLE_SDK_EXCLUSION,
 }
+_FILE_MOVE_MCP_EXCLUSION = "File-content operations have no MCP tools; moves are an SDK and CLI surface."
 _PLATFORM_JOB_SDK_EXCLUSION = "Platform-job status is a platform operation surface, not an application SDK binding."
 _CLAIM_SDK_EXCLUSION = (
     "Custom Claim administration is not available to application SDKs."
@@ -3431,6 +3432,56 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         ),
         exclusions={
             "manifest": "Workspace deletes may regenerate manifests through entity indexing; no one manifest entry owns the operation."
+        },
+    ),
+    OperationDefinition(
+        operation_id="workspace.files.move",
+        summary="Move one file within a location",
+        target_kind=OperationTargetKind.WORKSPACE,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/files/move",
+            request_model="FileMoveRequest",
+            response_model="PlatformJobAccepted",
+        ),
+        cli=CliOperationBinding(path=("files", "move")),
+        native_builder=True,
+        action_scopes=("repository.readwrite",),
+        authorization_resolver="File policy read and delete on the source and write on the destination, evaluated at enqueue",
+        side_effects=(
+            "enqueue a durable files.move Platform Job",
+            "copy server-side, re-key file metadata, and delete the source object",
+            "publish file activity",
+        ),
+        async_policy=OperationAsyncPolicy.PLATFORM_JOB,
+        exclusions={
+            "mcp": _FILE_MOVE_MCP_EXCLUSION,
+            "manifest": "Moving runtime files does not change portable manifest state.",
+        },
+    ),
+    OperationDefinition(
+        operation_id="workspace.files.move_many",
+        summary="Move up to 500 files within a location",
+        target_kind=OperationTargetKind.WORKSPACE,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/files/move-many",
+            request_model="FileMoveBatchRequest",
+            response_model="PlatformJobAccepted",
+        ),
+        native_builder=True,
+        action_scopes=("repository.readwrite",),
+        authorization_resolver="File policy read and delete on each source and write on each destination, evaluated at enqueue",
+        side_effects=(
+            "enqueue a durable files.move Platform Job",
+            "copy server-side, re-key file metadata, and delete source objects",
+            "publish file activity",
+        ),
+        async_policy=OperationAsyncPolicy.PLATFORM_JOB,
+        exclusions={
+            "cli": "A batch is an SDK primitive; the CLI moves one file with `files move`.",
+            "mcp": _FILE_MOVE_MCP_EXCLUSION,
+            "manifest": "Moving runtime files does not change portable manifest state.",
         },
     ),
     OperationDefinition(
