@@ -132,45 +132,30 @@ export async function initializeMonaco(monaco: typeof Monaco) {
 
 	// Configure TypeScript/JavaScript compiler options to support JSX/TSX
 	// Use jsx: React (1) for classic transform which doesn't require jsx runtime import
-	// Note: Using type assertion as monaco.languages.typescript types are marked deprecated
-	// but the runtime API still works
-	const ts = monaco.languages.typescript as typeof monaco.languages.typescript & {
-		typescriptDefaults: {
-			setCompilerOptions: (options: Record<string, unknown>) => void;
-			setDiagnosticsOptions: (options: Record<string, unknown>) => void;
-		};
-		javascriptDefaults: {
-			setCompilerOptions: (options: Record<string, unknown>) => void;
-			setDiagnosticsOptions: (options: Record<string, unknown>) => void;
-		};
-		ScriptTarget: { ESNext: number };
-		ModuleResolutionKind: { NodeJs: number };
-		ModuleKind: { ESNext: number };
-		JsxEmit: { React: number };
-	};
+	const typescript = monaco.typescript;
 
-	ts.typescriptDefaults.setCompilerOptions({
-		target: ts.ScriptTarget.ESNext,
+	typescript.typescriptDefaults.setCompilerOptions({
+		target: typescript.ScriptTarget.ESNext,
 		allowNonTsExtensions: true,
-		moduleResolution: ts.ModuleResolutionKind.NodeJs,
-		module: ts.ModuleKind.ESNext,
+		moduleResolution: typescript.ModuleResolutionKind.NodeJs,
+		module: typescript.ModuleKind.ESNext,
 		noEmit: true,
 		esModuleInterop: true,
-		jsx: ts.JsxEmit.React,
+		jsx: typescript.JsxEmit.React,
 		reactNamespace: "React",
 		allowJs: true,
 		strict: false, // Less strict for user code
 		skipLibCheck: true,
 	});
 
-	ts.javascriptDefaults.setCompilerOptions({
-		target: ts.ScriptTarget.ESNext,
+	typescript.javascriptDefaults.setCompilerOptions({
+		target: typescript.ScriptTarget.ESNext,
 		allowNonTsExtensions: true,
-		moduleResolution: ts.ModuleResolutionKind.NodeJs,
-		module: ts.ModuleKind.ESNext,
+		moduleResolution: typescript.ModuleResolutionKind.NodeJs,
+		module: typescript.ModuleKind.ESNext,
 		noEmit: true,
 		esModuleInterop: true,
-		jsx: ts.JsxEmit.React,
+		jsx: typescript.JsxEmit.React,
 		reactNamespace: "React",
 		allowJs: true,
 		strict: false,
@@ -179,12 +164,12 @@ export async function initializeMonaco(monaco: typeof Monaco) {
 
 	// Disable semantic validation entirely for app code - we use Babel for compilation
 	// and the platform scope provides runtime APIs that TypeScript doesn't know about
-	ts.typescriptDefaults.setDiagnosticsOptions({
+	typescript.typescriptDefaults.setDiagnosticsOptions({
 		noSemanticValidation: true,
 		noSyntaxValidation: false,
 	});
 
-	ts.javascriptDefaults.setDiagnosticsOptions({
+	typescript.javascriptDefaults.setDiagnosticsOptions({
 		noSemanticValidation: true,
 		noSyntaxValidation: false,
 	});

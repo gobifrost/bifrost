@@ -178,6 +178,8 @@ test.afterAll(async ({ api }) => {
 test("DASHBOARD-PRIMARY-01 renders API-backed metrics, refreshes, and drills into workflows", async ({
 	page,
 }) => {
+	const pageErrors: string[] = [];
+	page.on("pageerror", (error) => pageErrors.push(error.message));
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await page.goto("/workflows");
 	await page.getByRole("button", { name: "Shell (Cmd+/)" }).click();
@@ -318,4 +320,5 @@ test("DASHBOARD-PRIMARY-01 renders API-backed metrics, refreshes, and drills int
 			exact: true,
 		}),
 	).toBeVisible();
+	expect(pageErrors).toEqual([]);
 });

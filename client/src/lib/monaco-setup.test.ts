@@ -16,15 +16,44 @@ const mocks = vi.hoisted(() => {
 	const tsWorker = vi.fn(function TsWorker() {
 		return { kind: "typescript" };
 	});
+	const typescriptDefaults = {
+		setCompilerOptions: vi.fn(),
+		setDiagnosticsOptions: vi.fn(),
+	};
+	const javascriptDefaults = {
+		setCompilerOptions: vi.fn(),
+		setDiagnosticsOptions: vi.fn(),
+	};
+	const languages = {
+		getLanguages: vi.fn(() => [{ id: "python" }]),
+		setLanguageConfiguration: vi.fn(),
+		registerCodeLensProvider: vi.fn(),
+	};
+	const editor = { registerCommand: vi.fn() };
 
 	return {
 		loaderConfig: vi.fn(),
-		monaco: {},
+		monaco: {
+			languages,
+			editor,
+			typescript: {
+				typescriptDefaults,
+				javascriptDefaults,
+				ScriptTarget: { ESNext: 99 },
+				ModuleResolutionKind: { NodeJs: 2 },
+				ModuleKind: { ESNext: 99 },
+				JsxEmit: { React: 1 },
+			},
+		},
 		editorWorker,
 		jsonWorker,
 		cssWorker,
 		htmlWorker,
 		tsWorker,
+		typescriptDefaults,
+		javascriptDefaults,
+		languages,
+		editor,
 	};
 });
 
@@ -48,7 +77,7 @@ vi.mock("monaco-editor/language/typescript/ts.worker?worker", () => ({
 	default: mocks.tsWorker,
 }));
 
-import { configureMonaco } from "./monaco-setup";
+import { configureMonaco, initializeMonaco } from "./monaco-setup";
 
 const originalEnvironment = globalThis.MonacoEnvironment;
 
@@ -88,5 +117,47 @@ describe("configureMonaco", () => {
 		configureMonaco();
 		expect(mocks.loaderConfig).toHaveBeenCalledTimes(1);
 		expect(globalThis.MonacoEnvironment).toBe(environment);
+	});
+});
+
+describe("initializeMonaco", () => {
+	it("configures TypeScript through the ESM API before registering CodeLens", async () => {
+		const monaco = await import("monaco-editor");
+		await initializeMonaco(monaco);
+
+		const compilerOptions = {
+			target: 99,
+			allowNonTsExtensions: true,
+			moduleResolution: 2,
+			module: 99,
+			noEmit: true,
+			esModuleInterop: true,
+			jsx: 1,
+			reactNamespace: "React",
+			allowJs: true,
+			strict: false,
+			skipLibCheck: true,
+		};
+		expect(mocks.typescriptDefaults.setCompilerOptions).toHaveBeenCalledWith(
+			compilerOptions,
+		);
+		expect(mocks.javascriptDefaults.setCompilerOptions).toHaveBeenCalledWith(
+			compilerOptions,
+		);
+		expect(mocks.typescriptDefaults.setDiagnosticsOptions).toHaveBeenCalledWith(
+			{ noSemanticValidation: true, noSyntaxValidation: false },
+		);
+		expect(mocks.javascriptDefaults.setDiagnosticsOptions).toHaveBeenCalledWith(
+			{ noSemanticValidation: true, noSyntaxValidation: false },
+		);
+		expect(mocks.languages.registerCodeLensProvider).toHaveBeenCalledWith(
+			"python",
+			expect.any(Object),
+		);
+		expect(
+			mocks.languages.registerCodeLensProvider.mock.invocationCallOrder[0],
+		).toBeGreaterThan(
+			mocks.javascriptDefaults.setDiagnosticsOptions.mock.invocationCallOrder[0],
+		);
 	});
 });

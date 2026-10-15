@@ -762,7 +762,7 @@ export interface PlatformScope {
  * ```typescript
  * import { MONACO_TYPE_DEFINITIONS } from '@/lib/app-code-platform.d.ts';
  *
- * monaco.languages.typescript.typescriptDefaults.addExtraLib(
+ * monaco.typescript.typescriptDefaults.addExtraLib(
  *   MONACO_TYPE_DEFINITIONS,
  *   'app-code-platform.d.ts'
  * );

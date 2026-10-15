@@ -180,6 +180,8 @@ for (const viewport of VIEWPORTS) {
 			`[APP-01] editor save/file switching persists the selected file after reload — ${viewport.name}`,
 			{ tag: viewport.name === "desktop" ? "@smoke" : [] },
 			async ({ page, api }) => {
+				const pageErrors: string[] = [];
+				page.on("pageerror", (error) => pageErrors.push(error.message));
 				if (!app) throw new Error("Editor app fixture was not created");
 				await page.setViewportSize(viewport.size);
 				await page.goto(`/apps/${app.slug}/edit`);
@@ -210,6 +212,7 @@ for (const viewport of VIEWPORTS) {
 				await expect(
 					page.locator(".monaco-editor").first(),
 				).toContainText(`home saved ${viewport.name}`);
+				expect(pageErrors).toEqual([]);
 			},
 		);
 	});
