@@ -62,6 +62,23 @@ class FileMoveError(RuntimeError):
         self.job_id = job_id
 
 
+class FileMoveJobError(RuntimeError):
+    """The move platform job failed or was cancelled.
+
+    ``results`` holds the per-item results when the job carried them (for
+    example ``storage_unavailable``), so callers can see what had moved;
+    it is ``None`` when the job left none.
+    """
+
+    def __init__(self, job_id: str, status: str, error: dict, results: list[dict] | None) -> None:
+        super().__init__(
+            f"File move platform job {job_id} {status}: {error.get('message') or status}"
+        )
+        self.job_id = job_id
+        self.code = error.get("code")
+        self.results = results
+
+
 async def _run_move_job(
     path: str,
     body: dict,
@@ -79,18 +96,23 @@ async def _run_move_job(
     raise_for_status_with_detail(response)
     job_id = str(response.json()["job_id"])
     deadline = time.monotonic() + timeout_seconds
-    while time.monotonic() < deadline:
+    while True:
         status_response = await client.engine_request("GET", f"/api/platform-jobs/{job_id}")
         raise_for_status_with_detail(status_response)
         job = status_response.json()
         if job["status"] == "succeeded":
             return job_id, list(job["result"]["results"])
         if job["status"] in ("failed", "cancelled"):
-            error = job.get("error") or {}
-            raise RuntimeError(
-                f"File move platform job {job_id} {job['status']}: "
-                f"{error.get('message') or job['status']}"
+            result = job.get("result")
+            results = result.get("results") if isinstance(result, dict) else None
+            raise FileMoveJobError(
+                job_id,
+                job["status"],
+                job.get("error") or {},
+                list(results) if results is not None else None,
             )
+        if time.monotonic() >= deadline:
+            break
         await asyncio.sleep(poll_interval_seconds)
     raise TimeoutError(f"File move is still running as platform job {job_id}; the move may still be running.")
 

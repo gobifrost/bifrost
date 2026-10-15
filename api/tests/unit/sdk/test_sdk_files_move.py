@@ -74,16 +74,54 @@ async def test_move_returns_final_path_or_raises_item_error(monkeypatch) -> None
     assert (caught.value.status_code, caught.value.error, caught.value.job_id) == (409, "file_exists", "job-2")
 
 
-async def test_failed_job_raises_with_job_id(monkeypatch) -> None:
+async def test_failed_job_raises_with_results_code_and_job_id(monkeypatch) -> None:
+    items = [ITEM, {**ITEM, "source": "c"}, {**ITEM, "status_code": 500, "error": "not_attempted"}]
     module, _ = _module(
         monkeypatch,
         {"job_id": "job-3"},
-        {"status": "failed", "error": {"message": "Object storage is unavailable"}},
+        {
+            "status": "failed",
+            "error": {"code": "storage_unavailable", "message": "Object storage is unavailable"},
+            "result": {"results": items, "moved": 2, "failed": 1},
+        },
     )
-    with pytest.raises(RuntimeError, match="job-3.*Object storage is unavailable"):
+    with pytest.raises(module.FileMoveJobError, match="job-3.*Object storage is unavailable") as caught:
         await module.files.move_many(
             [{"source": "a", "destination": "b"}], location="docs", poll_interval_seconds=0.001
         )
+    assert (caught.value.job_id, caught.value.code, caught.value.results) == (
+        "job-3", "storage_unavailable", items
+    )
+    assert isinstance(caught.value, RuntimeError)
+
+
+async def test_cancelled_job_without_result_has_no_results(monkeypatch) -> None:
+    module, _ = _module(monkeypatch, {"job_id": "job-5"}, {"status": "cancelled", "error": None})
+    with pytest.raises(module.FileMoveJobError) as caught:
+        await module.files.move("a", "b", location="docs", poll_interval_seconds=0.001)
+    assert caught.value.results is None
+    assert caught.value.code is None
+    assert caught.value.job_id == "job-5"
+
+
+async def test_job_finishing_during_last_sleep_is_not_a_timeout(monkeypatch) -> None:
+    module, client = _module(
+        monkeypatch,
+        {"job_id": "job-6"},
+        {"status": "running"},
+        {"status": "succeeded", "result": {"results": [ITEM], "moved": 1, "failed": 0}},
+    )
+    real_sleep = module.asyncio.sleep
+
+    async def slow_sleep(delay):
+        await real_sleep(0.05)
+
+    monkeypatch.setattr(module.asyncio, "sleep", slow_sleep)
+    results = await module.files.move_many(
+        [{"source": "a", "destination": "b"}], location="docs",
+        timeout_seconds=0.02, poll_interval_seconds=0.01,
+    )
+    assert results == [ITEM]
 
 
 async def test_deadline_raises_timeout_naming_the_job(monkeypatch) -> None:
