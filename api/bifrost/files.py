@@ -32,6 +32,8 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
+import time
 from typing import Literal
 from urllib.parse import urlencode
 
@@ -42,6 +44,56 @@ Mode = Literal["local", "cloud"]
 # `location` is a free string. Special names: "workspace", "temp", "uploads".
 # Anything else is a freeform user-defined location (e.g. "reports", "exports"),
 # except blocked internal prefixes such as "_repo", "_tmp", and "_apps".
+
+# Matches the files.move platform job's timeout, so the SDK never gives up on
+# a job that is still allowed to run.
+MOVE_TIMEOUT_SECONDS = 4 * 60 * 60
+
+
+class FileMoveError(RuntimeError):
+    """``files.move`` could not move the file; ``status_code`` follows HTTP semantics."""
+
+    def __init__(self, status_code: int, error: str | None, *, job_id: str) -> None:
+        super().__init__(
+            f"File move failed ({status_code}): {error or 'unknown error'} (platform job {job_id})"
+        )
+        self.status_code = status_code
+        self.error = error
+        self.job_id = job_id
+
+
+async def _run_move_job(
+    path: str,
+    body: dict,
+    *,
+    timeout_seconds: float,
+    poll_interval_seconds: float,
+) -> tuple[str, list[dict]]:
+    """Enqueue a files.move job, then poll it with short requests until terminal."""
+    if timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be greater than zero.")
+    if poll_interval_seconds <= 0:
+        raise ValueError("poll_interval_seconds must be greater than zero.")
+    client = get_client()
+    response = await client.engine_request("POST", f"{path}{_solution_query()}", json=body)
+    raise_for_status_with_detail(response)
+    job_id = str(response.json()["job_id"])
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        status_response = await client.engine_request("GET", f"/api/platform-jobs/{job_id}")
+        raise_for_status_with_detail(status_response)
+        job = status_response.json()
+        if job["status"] == "succeeded":
+            return job_id, list(job["result"]["results"])
+        if job["status"] in ("failed", "cancelled"):
+            error = job.get("error") or {}
+            raise RuntimeError(
+                f"File move platform job {job_id} {job['status']}: "
+                f"{error.get('message') or job['status']}"
+            )
+        await asyncio.sleep(poll_interval_seconds)
+    raise TimeoutError(f"File move is still running as platform job {job_id}; the move may still be running.")
+
 
 
 def _current_context():
@@ -299,6 +351,89 @@ class files:
             },
         )
         raise_for_status_with_detail(response)
+
+    @staticmethod
+    async def move_many(
+        items: list[dict[str, str]],
+        location: str,
+        on_conflict: Literal["error", "rename"] = "error",
+        scope: str | None = None,
+        timeout_seconds: float = MOVE_TIMEOUT_SECONDS,
+        poll_interval_seconds: float = 2,
+    ) -> list[dict]:
+        """
+        Move up to 500 files within one location as a single durable job.
+
+        Each file is copied server-side, its metadata (and so its file-policy
+        access) follows it, and the original is deleted only after the copy
+        is verified. Items succeed or fail independently; nothing is undone
+        when another item fails. Workspace files cannot be moved.
+
+        Args:
+            items: ``[{"source": ..., "destination": ...}]``, 1–500 entries.
+            location: A non-workspace location (required).
+            on_conflict: ``"error"`` fails an item whose destination exists;
+                ``"rename"`` uses the first free ``name (n).ext`` instead.
+            scope: Org scope; provider-org override allowed. Solution context wins.
+            timeout_seconds: How long to wait for the job (default: the job's
+                own 4-hour limit). The calling workflow's ``timeout_seconds``
+                must be at least this long, including time queued behind other
+                moves in the same location.
+
+        Returns:
+            One result per item, in request order: ``source``, ``destination``,
+            ``path`` (set when renamed), ``renamed``, ``adopted``,
+            ``status_code`` (200, 400, 403, 404, 409, 500), and ``error``.
+        """
+        _, results = await _run_move_job(
+            "/api/files/move-many",
+            {
+                "items": [
+                    {"source": item["source"], "destination": item["destination"]}
+                    for item in items
+                ],
+                "location": location,
+                "scope": resolve_scope(scope),
+                "on_conflict": on_conflict,
+            },
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+        return results
+
+    @staticmethod
+    async def move(
+        source: str,
+        destination: str,
+        location: str,
+        on_conflict: Literal["error", "rename"] = "error",
+        scope: str | None = None,
+        timeout_seconds: float = MOVE_TIMEOUT_SECONDS,
+        poll_interval_seconds: float = 2,
+    ) -> str:
+        """
+        Move one file within a location; returns its final path.
+
+        Each call is its own durable job, so move more than one file with
+        ``files.move_many``. Raises :class:`FileMoveError` with the item's
+        status code when the move fails (for example 409 ``file_exists``).
+        See ``files.move_many`` for the arguments.
+        """
+        job_id, (result,) = await _run_move_job(
+            "/api/files/move",
+            {
+                "source": source,
+                "destination": destination,
+                "location": location,
+                "scope": resolve_scope(scope),
+                "on_conflict": on_conflict,
+            },
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+        if result["status_code"] != 200:
+            raise FileMoveError(result["status_code"], result.get("error"), job_id=job_id)
+        return result.get("path") or result["destination"]
 
     @staticmethod
     async def stat(
