@@ -25,6 +25,8 @@ from src.models.contracts.cli import FileMoveResult
 
 FILE_MOVE_JOB_TYPE = "files.move"
 MAX_FILE_MOVE_ITEMS = 500
+# Bounds the terminal result, which is broadcast on notification channels.
+MAX_FILE_MOVE_PATH_CHARS = 200_000
 # Consecutive storage-level item failures that mean storage itself is down.
 SYSTEMIC_FAILURE_RUN = 3
 

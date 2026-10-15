@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import logging
 from dataclasses import dataclass
 
@@ -44,6 +45,7 @@ from shared.file_access import (
     resolve_effective_scope,
     tiers_for_backend_mode,
 )
+from src.services.audit import emit_file_policy_deny
 
 logger = logging.getLogger(__name__)
 
@@ -717,3 +719,228 @@ __all__ = [
     "sdk_signed_url",
     "sdk_write_file",
 ]
+
+
+# ``name (1000).ext`` is the longest a rename can make a destination.
+_RENAME_HEADROOM = len(" (1000)")
+_MAX_METADATA_PATH = 2000
+_MAX_METADATA_KEY = 2500
+
+
+def file_move_dedupe_key(
+    user_id: object,
+    location: str,
+    scope: str,
+    on_conflict: str,
+    items: list[tuple[str, str]],
+) -> str:
+    """Identical retries of one request map to one active move job."""
+    material = json.dumps(
+        [str(user_id), location, scope, on_conflict, [list(item) for item in items]],
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def file_move_lock_key(location: str, scope: str) -> str:
+    """Scheduler lock: one running move job per location and scope."""
+    return "files.move:" + hashlib.sha256(f"{location}:{scope}".encode("utf-8")).hexdigest()
+
+
+def _move_path_error(location: str, scope: str, path: str) -> str | None:
+    from shared.file_paths import resolve_s3_key
+
+    if not path or path.endswith("/"):
+        return "invalid_path: a file path is required"
+    if any(segment in ("", ".") for segment in path.split("/")):
+        return "invalid_path: empty or '.' path segment"
+    try:
+        resolve_s3_key(location, scope, path)
+    except ValueError as exc:
+        return f"invalid_path: {exc}"[:500]
+    return None
+
+
+def _move_item_error(location: str, scope: str, source: str, destination: str) -> str | None:
+    """Why an item cannot be moved, checked before any policy or storage probe."""
+    from shared.file_paths import resolve_s3_key
+
+    if source == destination:
+        return "same_path: source and destination are the same file"
+    for path in (source, destination):
+        error = _move_path_error(location, scope, path)
+        if error is not None:
+            return error
+    destination_key = resolve_s3_key(location, scope, destination)
+    if (
+        len(destination) + _RENAME_HEADROOM > _MAX_METADATA_PATH
+        or len(destination_key) + _RENAME_HEADROOM > _MAX_METADATA_KEY
+    ):
+        return "path_too_long: the destination path is too long"
+    return None
+
+
+async def _move_item_denied(
+    caller: FileCaller,
+    *,
+    location: str,
+    scope: str,
+    solution_id: object,
+    organization_id: object,
+    source: str,
+    destination: str,
+    policy_cache: object,
+) -> bool:
+    """Read + delete on the source and write on the destination; audit a denial."""
+    for action, path in (("read", source), ("delete", source), ("write", destination)):
+        allowed = await authorize_file_policy(
+            caller,
+            action=action,
+            location=location,
+            scope=scope,
+            path=path,
+            solution_id=solution_id,
+            organization_id=organization_id,
+            policy_cache=policy_cache,
+        )
+        if not allowed:
+            await emit_file_policy_deny(
+                caller.db,
+                policy_action=action,
+                location=location,
+                path=path,
+                scope=scope,
+                solution_id=solution_id,
+            )
+            return True
+    return False
+
+
+async def sdk_enqueue_file_moves(
+    caller: FileCaller,
+    *,
+    items: list[tuple[str, str]],
+    location: str,
+    scope: str | None,
+    on_conflict: str = "error",
+):
+    """Validate, authorize, and enqueue one ``files.move`` job.
+
+    Request-level problems raise :class:`FileServiceError`:
+    - ``workspace`` or an invalid location name → 400
+    - an undeclared Solution location → 404
+    - an invalid superuser scope → 400
+
+    Per-item problems become results instead, and are left out of the work
+    list:
+    - path validation failures → 400
+    - policy denials → 403 ``"forbidden"``, each one audited
+
+    A job is always enqueued, even when every item was rejected. An identical
+    request whose job is still active returns that job before any policy
+    check runs. The row is flushed, not committed; the caller commits and
+    publishes before acknowledging.
+    """
+    from shared.file_paths import SCOPE_SKIP, scope_to_org_id, validate_location_name
+    from src.jobs.platform.file_move import (
+        FILE_MOVE_DEFINITION,
+        FILE_MOVE_JOB_TYPE,
+        FileMovePayload,
+        FileMoveWorkItem,
+        RejectedFileMove,
+    )
+    from src.models.contracts.cli import FileMoveResult
+    from src.services import platform_jobs
+    from src.services.file_policy_service import FilePolicyEvalCache
+
+    if location == "workspace":
+        raise FileServiceError(400, "files.move does not support the workspace location")
+    try:
+        validate_location_name(location)
+        effective_scope = resolve_effective_scope(caller, location, scope)
+    except ValueError as exc:
+        raise FileServiceError(400, str(exc)) from exc
+    if effective_scope is None:
+        raise FileServiceError(400, f"A scope is required for location '{location}'")
+    solution_id = ctx_solution_id(caller, location)
+
+    dedupe_key = file_move_dedupe_key(
+        caller.user.user_id, location, effective_scope, on_conflict, items
+    )
+    existing = await platform_jobs.find_active_platform_job(
+        caller.db, FILE_MOVE_JOB_TYPE, dedupe_key
+    )
+    if existing is not None:
+        return existing, True
+
+    await require_declared_solution_file_location(
+        caller, solution_id=solution_id, location=location
+    )
+    if solution_id is not None:
+        organization_id = await install_org_id(caller, solution_id)
+    else:
+        mapped = scope_to_org_id(location, effective_scope)
+        if mapped is SCOPE_SKIP:
+            raise FileServiceError(400, f"Invalid scope: {effective_scope}")
+        organization_id = mapped
+
+    policy_cache = FilePolicyEvalCache()
+    work: list[FileMoveWorkItem] = []
+    rejected: list[RejectedFileMove] = []
+    for index, (source, destination) in enumerate(items):
+        error = _move_item_error(location, effective_scope, source, destination)
+        status_code = 400
+        if error is None and await _move_item_denied(
+            caller,
+            location=location,
+            scope=effective_scope,
+            solution_id=solution_id,
+            organization_id=organization_id,
+            source=source,
+            destination=destination,
+            policy_cache=policy_cache,
+        ):
+            error, status_code = "forbidden", 403
+        if error is not None:
+            rejected.append(
+                RejectedFileMove(
+                    index=index,
+                    result=FileMoveResult(
+                        source=source,
+                        destination=destination,
+                        status_code=status_code,
+                        error=error,
+                    ),
+                )
+            )
+            continue
+        work.append(FileMoveWorkItem(index=index, source=source, destination=destination))
+
+    total = len(items)
+    return await platform_jobs.enqueue_platform_job(
+        caller.db,
+        FILE_MOVE_DEFINITION,
+        FileMovePayload(
+            location=location,
+            scope=effective_scope,
+            solution_id=solution_id,
+            organization_id=organization_id,
+            on_conflict=on_conflict,
+            requested_by_user_id=caller.user.user_id,
+            total=total,
+            items=work,
+            rejected=rejected,
+        ),
+        dedupe_key=dedupe_key,
+        # A request with nothing to move must not queue behind a running move.
+        resource_lock_key=file_move_lock_key(location, effective_scope) if work else None,
+        priority=50 if work else 100,
+        organization_id=organization_id,
+        requested_by_user_id=caller.user.user_id,
+        requested_by_email=caller.user.email,
+        requested_by_name=caller.user.name or caller.user.email,
+        resource_type="file_location",
+        resource_id=f"{location}:{effective_scope}"[:255],
+        title=f"Move {total} file{'' if total == 1 else 's'} in {location}",
+        action_url=None,
+    )
