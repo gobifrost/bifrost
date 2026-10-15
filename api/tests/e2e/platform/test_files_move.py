@@ -1,0 +1,255 @@
+"""files.move end to end: scheduler job, real object storage, policy-following access."""
+
+from __future__ import annotations
+
+import time
+import uuid
+from urllib.parse import quote
+from uuid import UUID
+
+import pytest
+from sqlalchemy import select
+
+from shared.file_paths import resolve_s3_key
+from src.config import get_settings
+from src.models.orm.file_metadata import FileMetadata
+from src.models.orm.solution_file_location import SolutionFileLocation
+from src.services.file_storage.move import (
+    MARK_ETAG,
+    MARK_ROW,
+    MARK_SOURCE,
+    FileMover,
+    MoveRequest,
+    MoveTarget,
+    source_marker,
+)
+from src.services.file_storage.s3_client import S3StorageClient
+from tests.e2e.conftest import execute_workflow_sync, write_and_register
+from tests.e2e.file_policy_helpers import grant_file_policy
+
+pytestmark = pytest.mark.e2e
+
+LOCATION = "docs"
+ADMIN_RULE = {"name": "admin", "actions": ["read", "write", "delete", "list"], "when": {"user": "is_platform_admin"}}
+READ_ALL_RULE = {"name": "read_all", "actions": ["read"], "when": None}
+
+
+def _put_policy(e2e_client, headers, *, scope: str, prefix: str, rules: list[dict]) -> None:
+    response = e2e_client.put(
+        f"/api/files/policies/{quote(prefix or '/', safe='')}",
+        headers=headers,
+        params={"location": LOCATION, "scope": scope},
+        json={"policies": {"policies": rules}},
+    )
+    assert response.status_code in (200, 201, 204), response.text
+
+
+@pytest.fixture
+async def solution(e2e_client, platform_admin, org1, db_session):
+    slug = f"move-{uuid.uuid4().hex[:8]}"
+    created = e2e_client.post(
+        "/api/solutions", headers=platform_admin.headers,
+        json={"slug": slug, "name": slug.upper(), "organization_id": org1["id"]},
+    )
+    assert created.status_code in (200, 201), created.text
+    body = created.json()
+    db_session.add(SolutionFileLocation(solution_id=UUID(body["id"]), location=LOCATION))
+    await db_session.commit()
+    _put_policy(e2e_client, platform_admin.headers, scope=body["organization_id"], prefix="", rules=[ADMIN_RULE])
+    _put_policy(
+        e2e_client, platform_admin.headers, scope=body["organization_id"],
+        prefix="campus-b", rules=[ADMIN_RULE, READ_ALL_RULE],
+    )
+    return body
+
+
+def _write(e2e_client, headers, sid: str, path: str, content: str) -> None:
+    response = e2e_client.post(
+        f"/api/files/write?solution={sid}", headers=headers,
+        json={"location": LOCATION, "path": path, "content": content, "mode": "cloud"},
+    )
+    assert response.status_code == 204, response.text
+
+
+def _read(e2e_client, headers, sid: str, path: str):
+    return e2e_client.post(
+        f"/api/files/read?solution={sid}", headers=headers,
+        json={"location": LOCATION, "path": path, "mode": "cloud", "binary": False},
+    )
+
+
+def _poll(e2e_client, headers, job_id: str) -> dict:
+    for _ in range(240):
+        response = e2e_client.get(f"/api/platform-jobs/{job_id}", headers=headers)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        if body["status"] in ("succeeded", "failed", "cancelled"):
+            return body
+        time.sleep(0.25)
+    raise AssertionError(f"move job {job_id} did not finish")
+
+
+def _move_many(e2e_client, headers, sid: str, items: list[tuple[str, str]], on_conflict: str = "error") -> dict:
+    response = e2e_client.post(
+        f"/api/files/move-many?solution={sid}", headers=headers,
+        json={"items": [{"source": s, "destination": d} for s, d in items],
+              "location": LOCATION, "on_conflict": on_conflict},
+    )
+    assert response.status_code == 202, response.text
+    assert response.headers["Location"] == f"/api/platform-jobs/{response.json()['job_id']}"
+    return _poll(e2e_client, headers, response.json()["job_id"])
+
+
+async def _row(db_session, sid: str, path: str) -> FileMetadata | None:
+    db_session.expire_all()
+    return (
+        await db_session.execute(
+            select(FileMetadata).where(
+                FileMetadata.solution_id == UUID(sid),
+                FileMetadata.location == LOCATION,
+                FileMetadata.path == path,
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def test_move_many_moves_files_and_access_follows(
+    e2e_client, platform_admin, org1_user, solution, db_session
+) -> None:
+    sid, admin = solution["id"], platform_admin.headers
+    _write(e2e_client, admin, sid, "campus-a/b1/plan.pdf", "plan")
+    _write(e2e_client, admin, sid, "campus-a/b1/spec.pdf", "spec")
+    before = await _row(db_session, sid, "campus-a/b1/plan.pdf")
+    assert _read(e2e_client, org1_user.headers, sid, "campus-a/b1/plan.pdf").status_code == 403
+
+    job = _move_many(
+        e2e_client, admin, sid,
+        [("campus-a/b1/plan.pdf", "campus-b/b1/plan.pdf"), ("campus-a/b1/spec.pdf", "campus-b/b1/spec.pdf")],
+    )
+
+    assert job["status"] == "succeeded", job
+    assert [r["status_code"] for r in job["result"]["results"]] == [200, 200]
+    assert _read(e2e_client, org1_user.headers, sid, "campus-b/b1/plan.pdf").json()["content"] == "plan"
+    assert _read(e2e_client, admin, sid, "campus-a/b1/plan.pdf").status_code == 404
+    after = await _row(db_session, sid, "campus-b/b1/plan.pdf")
+    assert after is not None and after.id == before.id
+    assert await _row(db_session, sid, "campus-a/b1/plan.pdf") is None
+
+
+@pytest.mark.parametrize("rename", [False, True])
+async def test_retry_adopts_an_interrupted_move(
+    e2e_client, platform_admin, solution, db_session, rename
+) -> None:
+    sid, admin = solution["id"], platform_admin.headers
+    _write(e2e_client, admin, sid, "campus-a/r.pdf", "report")
+    destination = "campus-b/r.pdf"
+    landed_at = destination
+    if rename:
+        _write(e2e_client, admin, sid, destination, "someone else")
+        landed_at = "campus-b/r (1).pdf"
+    row = await _row(db_session, sid, "campus-a/r.pdf")
+    storage = S3StorageClient(get_settings())
+    source_key = resolve_s3_key(LOCATION, sid, "campus-a/r.pdf")
+    head = await storage.head_object(source_key)
+    # Simulate a run that copied and deleted the source, then died before commit.
+    await storage.copy_object(
+        source_key, resolve_s3_key(LOCATION, sid, landed_at), source=head,
+        metadata={MARK_SOURCE: source_marker(source_key), MARK_ROW: str(row.id), MARK_ETAG: head.etag},
+    )
+    await storage.delete_object_strict(source_key)
+
+    job = _move_many(e2e_client, admin, sid, [("campus-a/r.pdf", destination)], "rename" if rename else "error")
+
+    [result] = job["result"]["results"]
+    assert (result["status_code"], result["adopted"]) == (200, True)
+    assert (result["path"] or destination) == landed_at
+    assert (await _row(db_session, sid, landed_at)).id == row.id
+
+
+async def test_multipart_copy_against_object_storage(
+    platform_admin, solution, async_session_factory
+) -> None:
+    sid = solution["id"]
+    storage = S3StorageClient(get_settings())
+    source = "campus-a/Floor Plan – Rev 2 (final).bin"
+    payload = bytes((i * 31) % 256 for i in range(11 * 1024 * 1024))
+
+    async def chunks():
+        yield payload
+
+    await storage.put_object_from_chunks(resolve_s3_key(LOCATION, sid, source), chunks())
+    mover = FileMover(
+        storage,
+        MoveTarget(
+            location=LOCATION, scope=sid, solution_id=UUID(sid),
+            organization_id=UUID(solution["organization_id"]), requested_by=platform_admin.user_id,
+        ),
+        open_session=async_session_factory,
+        multipart_threshold=6 * 1024 * 1024,
+        part_size=5 * 1024 * 1024,
+    )
+
+    outcome = await mover.move(MoveRequest(source, "campus-b/Floor Plan – Rev 2 (final).bin"), "error")
+
+    assert outcome.status_code == 200, outcome
+    moved = await storage.read_uploaded_file(resolve_s3_key(LOCATION, sid, "campus-b/Floor Plan – Rev 2 (final).bin"))
+    assert moved == payload
+    assert await storage.head_object(resolve_s3_key(LOCATION, sid, source)) is None
+
+
+@pytest.fixture
+def _org_location_policy(e2e_client, platform_admin, org1):
+    grant_file_policy(e2e_client, platform_admin.headers, location="move-e2e", scope=org1["id"], allow_all=True)
+
+
+@pytest.mark.timeout(300)
+async def test_workflow_moves_and_enqueue_fits_the_sdk_budget(
+    e2e_client, platform_admin, org1, org1_user, _org_location_policy
+) -> None:
+    tag = uuid.uuid4().hex[:8]
+    prefix = f"e2e-move-{tag}"
+    write = e2e_client.post(
+        "/api/files/write", headers=platform_admin.headers,
+        json={"location": "move-e2e", "path": f"{prefix}/one.txt", "content": "one", "mode": "cloud", "scope": org1["id"]},
+    )
+    assert write.status_code == 204, write.text
+    name = f"e2e_files_move_{tag}"
+    content = f'''"""files.move e2e workflow."""
+import time
+from bifrost import workflow, files
+from bifrost.client import get_client
+
+@workflow(name="{name}", description="files.move e2e")
+async def {name}():
+    # The single move runs first: both jobs share the location/scope lock, so the reverse
+    # order would queue it behind 500 items. The budget batch is only timed at enqueue;
+    # its job finishes on its own with 404s after the workflow returns.
+    single = await files.move_many(
+        [{{"source": "{prefix}/one.txt", "destination": "{prefix}/two.txt"}}], location="move-e2e",
+    )
+    items = [{{"source": f"{prefix}/missing-{{i}}.pdf", "destination": f"{prefix}/moved-{{i}}.pdf"}} for i in range(500)]
+    started = time.monotonic()
+    response = await get_client().engine_request(
+        "POST", "/api/files/move-many",
+        json={{"items": items, "location": "move-e2e", "on_conflict": "error"}},
+    )
+    elapsed = time.monotonic() - started
+    return {{"status": response.status_code, "elapsed": elapsed, "single": single}}
+'''
+    registered = write_and_register(
+        e2e_client, platform_admin.headers, f"{name}.py", content, name, organization_id=org1["id"]
+    )
+    patched = e2e_client.patch(
+        f"/api/workflows/{registered['id']}", headers=platform_admin.headers,
+        json={"organization_id": org1["id"], "access_level": "authenticated"},
+    )
+    assert patched.status_code == 200, patched.text
+
+    result = execute_workflow_sync(e2e_client, org1_user.headers, registered["id"], max_wait=240.0)
+
+    assert result["status"] == "Success", result
+    out = result["result"]
+    assert out["status"] == 202
+    # 500 items × three policy checks, through the engine socket, well inside the SDK's 30 s.
+    assert out["elapsed"] < 10, out["elapsed"]
+    assert [r["status_code"] for r in out["single"]] == [200]
