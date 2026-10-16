@@ -613,7 +613,7 @@ export function SubscriptionsTable({ sourceId }: SubscriptionsTableProps) {
 							</DataTable>
 						</div>
 
-						<ul className="grid gap-3 @[64rem]/subscriptions:hidden">
+						<ul className="grid gap-3 lg:min-h-0 lg:overflow-auto @[64rem]/subscriptions:hidden">
 							{subscriptions.map((subscription) => (
 								<SubscriptionMobileRecord
 									key={subscription.id}

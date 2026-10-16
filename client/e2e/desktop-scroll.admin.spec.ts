@@ -237,3 +237,88 @@ test("mobile records keep natural page scrolling", async ({ page }) => {
 		page.getByRole("heading", { name: "Configuration", exact: true }),
 	).not.toBeInViewport();
 });
+
+for (const width of [1440, 1100]) {
+	test(`event source events accept wheel scrolling at ${width}px`, async ({
+		page,
+	}) => {
+		await page.setViewportSize({ width, height: 760 });
+		const sourceId = "00000000-0000-4000-8000-0000000000e1";
+		const source = {
+			id: sourceId,
+			name: "Scroll events",
+			source_type: "webhook",
+			organization_id: null,
+			is_active: true,
+			subscription_count: 0,
+			event_count_24h: 60,
+			webhook: {
+				adapter_name: "generic",
+				callback_url: `/api/hooks/${sourceId}`,
+			},
+			created_at: "2026-10-15T12:00:00Z",
+			updated_at: "2026-10-15T12:00:00Z",
+		};
+		await page.route(
+			new RegExp(`/api/events/sources/${sourceId}$`),
+			(route) => route.fulfill({ json: source }),
+		);
+		await page.route(
+			new RegExp(`/api/events/sources/${sourceId}/events(?:\\?.*)?$`),
+			(route) =>
+				route.fulfill({
+					json: {
+						items: Array.from({ length: 60 }, (_, i) => ({
+							id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+							event_source_id: sourceId,
+							event_type: `scroll.event.${i}`,
+							received_at: new Date(
+								Date.now() - i * 60_000,
+							).toISOString(),
+							headers: {},
+							data: {},
+							source_ip: "10.0.0.1",
+							status: "completed",
+							delivery_count: 0,
+							success_count: 0,
+							failed_count: 0,
+							created_at: "2026-10-15T12:00:00Z",
+						})),
+						total: 60,
+					},
+				}),
+		);
+		await page.goto(`/event-sources/${sourceId}`);
+		await expect(
+			page.getByRole("heading", { name: "Scroll events", exact: true }),
+		).toBeVisible();
+		const last = page
+			.getByText("scroll.event.59", { exact: true })
+			.filter({ visible: true });
+		await expect(last).toBeAttached();
+		await expect(last).not.toBeInViewport();
+		const bounds = await last.evaluate((element) => {
+			let parent = element.parentElement;
+			while (
+				parent &&
+				!(
+					getComputedStyle(parent).overflowY === "auto" &&
+					parent.scrollHeight > parent.clientHeight
+				)
+			)
+				parent = parent.parentElement;
+			if (!parent) throw new Error("Events have no scrolling ancestor");
+			const r = parent.getBoundingClientRect();
+			return { x: r.x, y: r.y, width: r.width, height: r.height };
+		});
+		await page.mouse.move(
+			bounds.x + bounds.width / 2,
+			bounds.y + bounds.height / 2,
+		);
+		await page.mouse.wheel(0, 40000);
+		await expect(last).toBeInViewport();
+		await expect(
+			page.getByRole("button", { name: "Copy Webhook URL" }),
+		).toBeInViewport();
+	});
+}

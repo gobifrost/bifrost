@@ -88,7 +88,7 @@ function getSourceTypeLabel(type: EventSourceType) {
 	}
 }
 
-function SourceWebhookAddress({
+function CopyWebhookUrlButton({
 	url,
 	copied,
 	onCopy,
@@ -98,28 +98,29 @@ function SourceWebhookAddress({
 	onCopy: () => void;
 }) {
 	return (
-		<div className="flex w-full min-w-0 flex-wrap items-start gap-2 rounded-[var(--bf-radius-surface)] border p-3">
-			<code className="min-w-0 basis-full text-sm leading-6 [overflow-wrap:anywhere] sm:basis-0 sm:flex-1">
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<Button
+					type="button"
+					variant="outline"
+					className="min-h-11 gap-2"
+					onClick={onCopy}
+				>
+					{copied ? (
+						<Check aria-hidden="true" className="h-4 w-4" />
+					) : (
+						<Copy aria-hidden="true" className="h-4 w-4" />
+					)}
+					{copied ? "Copied" : "Copy Webhook URL"}
+					<span role="status" className="sr-only">
+						{copied ? "Webhook URL copied" : ""}
+					</span>
+				</Button>
+			</TooltipTrigger>
+			<TooltipContent className="max-w-sm font-mono [overflow-wrap:anywhere]">
 				{url}
-			</code>
-			<Button
-				type="button"
-				variant="outline"
-				className="min-h-11 shrink-0"
-				onClick={onCopy}
-				aria-label="Copy webhook URL"
-			>
-				{copied ? (
-					<Check className="h-4 w-4" />
-				) : (
-					<Copy className="h-4 w-4" />
-				)}
-				{copied ? "Copied" : "Copy"}
-			</Button>
-			<span role="status" className="sr-only">
-				{copied ? "Webhook URL copied" : ""}
-			</span>
-		</div>
+			</TooltipContent>
+		</Tooltip>
 	);
 }
 
@@ -203,7 +204,7 @@ export function EventSourceDetail({
 			setActionError(null);
 		} catch {
 			setActionError(
-				"Could not copy the URL. Select and copy the address, or try again.",
+				`Could not copy the URL. Copy it manually: ${webhookUrl}`,
 			);
 		}
 	};
@@ -413,6 +414,13 @@ export function EventSourceDetail({
 							</TooltipContent>
 						</Tooltip>
 					)}
+					{webhookUrl && (
+						<CopyWebhookUrlButton
+							url={webhookUrl}
+							copied={copied}
+							onCopy={handleCopyUrl}
+						/>
+					)}
 					<Button
 						variant="outline"
 						size="icon"
@@ -457,7 +465,10 @@ export function EventSourceDetail({
 				</div>
 			)}
 			{actionError && (
-				<p role="alert" className="text-sm text-destructive">
+				<p
+					role="alert"
+					className="text-sm text-destructive [overflow-wrap:anywhere]"
+				>
 					{actionError}
 				</p>
 			)}
@@ -524,13 +535,6 @@ export function EventSourceDetail({
 							{source.schedule.enabled ? "Enabled" : "Disabled"}
 						</Badge>
 					</>
-				)}
-				{webhookUrl && (
-					<SourceWebhookAddress
-						url={webhookUrl}
-						copied={copied}
-						onCopy={handleCopyUrl}
-					/>
 				)}
 			</div>
 
@@ -672,7 +676,7 @@ export function EventSourceDetail({
 					value="subscriptions"
 					className="mt-4 flex min-h-0 flex-1 flex-col"
 				>
-					<PageScrollArea className="lg:flex lg:flex-col lg:overflow-hidden">
+					<PageScrollArea className="lg:flex lg:flex-col">
 						<SubscriptionsTable sourceId={sourceId} />
 					</PageScrollArea>
 				</TabsContent>
@@ -681,7 +685,7 @@ export function EventSourceDetail({
 					value="events"
 					className="mt-4 flex-1 flex flex-col min-h-0"
 				>
-					<PageScrollArea className="lg:flex lg:flex-col lg:overflow-hidden">
+					<PageScrollArea className="lg:flex lg:flex-col">
 						<EventsTable
 							sourceId={sourceId}
 							source={source}
