@@ -1,0 +1,14 @@
+{
+  "key": "pr:991",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Event source events scroll on desktop, and the webhook URL is a compact copy button.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/991",
+      "Jack reported the unscrollable events list and oversized webhook URL box and asked for this change to merge; the fix was reproduced on main and verified in headless Chromium at 1440px and 1100px."
+    ]
+  }
+}
