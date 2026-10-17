@@ -427,7 +427,7 @@ class TestAutonomousAgentExecutor:
                 "email": "person@example.com",
                 "name": "Person",
                 "organization_id": str(caller_org_id),
-                "is_platform_admin": True,
+                "is_superuser": True,
             },
             mock_agent,
         )
@@ -528,6 +528,25 @@ class TestAutonomousAgentExecutor:
 
         assert acting.organization_id is None
 
+    def test_caller_claims_use_canonical_superuser_key_and_keep_scope_flags(
+        self, mock_session, mock_agent
+    ):
+        caller_user_id = uuid4()
+
+        acting = _acting_user_from_caller(
+            caller_user_id,
+            {
+                "user_id": str(caller_user_id),
+                "organization_id": str(uuid4()),
+                "is_superuser": True,
+                "is_external": True,
+                "is_provider_org": True,
+            },
+            mock_agent,
+        )
+
+        assert (acting.is_platform_admin, acting.is_external, acting.is_provider_org) == (True, True, True)
+
     def test_run_without_caller_uses_agent_org(self, mock_session, mock_agent):
         acting = _acting_user_from_caller(None, None, mock_agent)
 
@@ -556,7 +575,7 @@ class TestAutonomousAgentExecutor:
                 "email": "person@example.com",
                 "name": "Person",
                 "organization_id": str(caller_org_id),
-                "is_platform_admin": True,
+                "is_superuser": True,
             },
             mock_agent,
         )
@@ -2118,7 +2137,7 @@ def _contoso_lead(organization_id) -> dict:
         "email": "helpdesk.lead@contoso.example",
         "name": "Contoso Helpdesk Lead",
         "organization_id": str(organization_id),
-        "is_platform_admin": True,
+        "is_superuser": True,
     }
 
 

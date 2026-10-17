@@ -154,9 +154,9 @@ def _acting_user_from_caller(
         email=str(caller.get("email")) if caller.get("email") else SYSTEM_USER_EMAIL,
         name=str(caller.get("name")) if caller.get("name") else agent.name,
         organization_id=None if raw_org_id is None else UUID(str(raw_org_id)),
-        is_platform_admin=bool(caller.get("is_platform_admin", False)),
-        is_external=False,
-        is_provider_org=False,
+        is_platform_admin=bool(caller.get("is_superuser", False)),
+        is_external=bool(caller.get("is_external", False)),
+        is_provider_org=bool(caller.get("is_provider_org", False)),
     )
 
 

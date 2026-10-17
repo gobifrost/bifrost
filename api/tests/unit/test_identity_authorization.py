@@ -509,12 +509,64 @@ class TestRoleDelete:
 
 
 class TestRolePermissions:
+    async def test_ordinary_caller_cannot_add_privileged_identity_permission(self, db_session) -> None:
+        from src.services.role_permissions import RolePermissionError, replace_identity_permissions
+
+        role = await _role(db_session)
+        with pytest.raises(RolePermissionError) as exc_info:
+            await replace_identity_permissions(
+                db_session,
+                caller=_delegate(),
+                role_id=role.id,
+                permissions=["users.impersonate"],
+            )
+        assert exc_info.value.status_code == 403
+
+    async def test_org_bound_privileged_access_cannot_edit_privileged_role(self, db_session) -> None:
+        from src.services.role_permissions import RolePermissionError, replace_identity_permissions
+
+        role = await _role(db_session)
+        with pytest.raises(RolePermissionError) as exc_info:
+            await replace_identity_permissions(
+                db_session,
+                caller=_delegate(
+                    grants=(
+                        {"privilegedaccess.readwrite"},
+                        (Boundary(BoundaryKind.ORGANIZATION, uuid4()),),
+                    ),
+                ),
+                role_id=role.id,
+                permissions=["users.impersonate"],
+            )
+        assert exc_info.value.status_code == 403
+
+    async def test_privileged_role_permissions_require_global_privileged_access(self, db_session) -> None:
+        from src.services.role_permissions import RolePermissionError, get_role_permissions, replace_identity_permissions
+
+        role = await _role(db_session, "users.impersonate")
+        with pytest.raises(RolePermissionError) as exc_info:
+            await replace_identity_permissions(
+                db_session, caller=_delegate(), role_id=role.id, permissions=[]
+            )
+        assert exc_info.value.status_code == 403
+        assert await get_role_permissions(db_session, role_id=role.id) == {"users.impersonate"}
+
+        response = await replace_identity_permissions(
+            db_session,
+            caller=_delegate(
+                grants=({"privilegedaccess.readwrite"}, (Boundary(BoundaryKind.PLATFORM),)),
+            ),
+            role_id=role.id,
+            permissions=[],
+        )
+        assert response.permissions == []
+
     async def test_identity_edit_keeps_other_permissions(self, db_session) -> None:
         from src.services.role_permissions import get_role_permissions, replace_identity_permissions
 
         role = await _role(db_session, "agents.readwrite", "users.read")
         response = await replace_identity_permissions(
-            db_session, role_id=role.id, permissions=["users.readwrite", "organizations.read"]
+            db_session, caller=admin_caller(), role_id=role.id, permissions=["users.readwrite", "organizations.read"]
         )
         assert await get_role_permissions(db_session, role_id=role.id) == {
             "agents.readwrite",
@@ -532,7 +584,7 @@ class TestRolePermissions:
         role = await _role(db_session)
         for permission in ("agents.readwrite", "secrets.read", "userlifecycle.read"):
             with pytest.raises(RolePermissionError) as exc_info:
-                await replace_identity_permissions(db_session, role_id=role.id, permissions=[permission])
+                await replace_identity_permissions(db_session, caller=admin_caller(), role_id=role.id, permissions=[permission])
             assert exc_info.value.status_code == 422, permission
 
     async def test_builtin_roles_are_read_only(self, db_session) -> None:
@@ -543,7 +595,7 @@ class TestRolePermissions:
         )
 
         with pytest.raises(RolePermissionError) as exc_info:
-            await replace_identity_permissions(db_session, role_id=PLATFORM_OPERATOR_ROLE_ID, permissions=[])
+            await replace_identity_permissions(db_session, caller=admin_caller(), role_id=PLATFORM_OPERATOR_ROLE_ID, permissions=[])
         assert exc_info.value.status_code == 409
         described = await describe_role_permissions(db_session, role_id=PLATFORM_OPERATOR_ROLE_ID)
         assert described.is_builtin
@@ -561,7 +613,7 @@ class TestRolePermissions:
 
         with pytest.raises(RolePermissionError) as exc_info:
             await replace_identity_permissions(
-                db_session, role_id=role.id, permissions=["users.readwrite"]
+                db_session, caller=admin_caller(), role_id=role.id, permissions=["users.readwrite"]
             )
         assert exc_info.value.status_code == 409
         assert "External users" in exc_info.value.detail
@@ -577,7 +629,7 @@ class TestRolePermissions:
 
         with pytest.raises(RolePermissionError) as exc_info:
             await replace_identity_permissions(
-                db_session, role_id=role.id, permissions=["users.readwrite"]
+                db_session, caller=admin_caller(), role_id=role.id, permissions=["users.readwrite"]
             )
         assert exc_info.value.status_code == 409
 

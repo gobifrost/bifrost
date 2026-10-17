@@ -963,10 +963,10 @@ async def set_role_permissions(
 ) -> RolePermissionsResponse:
     from src.services.role_permissions import RolePermissionError, replace_identity_permissions
 
-    await authorize_operation(db, user, "PUT /api/roles/{role_id}/permissions", GLOBAL)
+    caller = await authorize_operation(db, user, "PUT /api/roles/{role_id}/permissions", GLOBAL)
     try:
         return await replace_identity_permissions(
-            db, role_id=role_id, permissions=request.permissions
+            db, caller=caller, role_id=role_id, permissions=request.permissions
         )
     except RolePermissionError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None

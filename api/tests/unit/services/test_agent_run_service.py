@@ -107,6 +107,35 @@ class TestEnqueueAgentRun:
     @pytest.mark.asyncio
     @patch("src.services.execution.agent_run_service.publish_message")
     @patch("src.services.execution.agent_run_service.get_redis")
+    async def test_enqueue_serializes_caller_scope_claims(
+        self, mock_get_redis, _mock_publish, db_session
+    ):
+        redis = _redis_context(mock_get_redis)
+
+        await enqueue_agent_run(
+            agent_id=str(uuid4()),
+            trigger_type="sdk",
+            caller_is_superuser=True,
+            caller_is_external=True,
+            caller_is_provider_org=True,
+            lineage=None,
+        )
+
+        context = json.loads(redis.set.call_args.args[1])
+        assert context["caller"] == {
+            "user_id": None,
+            "email": None,
+            "name": None,
+            "organization_id": None,
+            "is_superuser": True,
+            "is_external": True,
+            "is_provider_org": True,
+            "roles": [],
+        }
+
+    @pytest.mark.asyncio
+    @patch("src.services.execution.agent_run_service.publish_message")
+    @patch("src.services.execution.agent_run_service.get_redis")
     async def test_run_as_is_recorded_on_the_row_only(
         self, mock_get_redis, mock_publish, db_session
     ):

@@ -605,11 +605,11 @@ class TestRouterBoundaries:
 
     async def test_execution_repository_exposes_no_read_compatibility_shims(self):
         """SDK reads have one public implementation in the shared service."""
-        from src.routers.executions import ExecutionRepository
+        from src.routers.executions import ExecutionReadAdapter
 
-        assert not hasattr(ExecutionRepository, "list_executions")
-        assert not hasattr(ExecutionRepository, "get_execution")
-        assert not hasattr(ExecutionRepository, "_to_summary")
+        assert not hasattr(ExecutionReadAdapter, "list_executions")
+        assert not hasattr(ExecutionReadAdapter, "get_execution")
+        assert not hasattr(ExecutionReadAdapter, "_to_summary")
 
 
 def test_shared_service_has_no_transport_imports():
