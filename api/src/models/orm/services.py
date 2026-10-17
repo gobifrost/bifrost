@@ -145,6 +145,12 @@ class ServiceAttempt(Base):
     )
     revision: Mapped[str | None] = mapped_column(String(64), default=None)
     worker_id: Mapped[str | None] = mapped_column(String(255), default=None)
+    # Immutable unattended identity selected when this attempt is claimed.
+    # A deleted identity remains absent so callers fail closed rather than
+    # resolving the workflow's then-current default identity.
+    run_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
 
     # Fencing + liveness.
     lease_token: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -177,6 +183,7 @@ class ServiceAttempt(Base):
 
     __table_args__ = (
         Index("ix_service_attempts_service_id", "service_id"),
+        Index("ix_service_attempts_run_user_id", "run_user_id", postgresql_where=run_user_id.isnot(None)),
         Index("ix_service_attempts_state", "state"),
         # Singleton enforcement: at most one live attempt per service.
         Index(
