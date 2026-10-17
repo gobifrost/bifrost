@@ -29,9 +29,7 @@ test("filters policy denials by file path and opens one in the detail drawer", a
 }) => {
 	const path = `browser-denial-${Date.now()}.txt`;
 	await page.goto("/audit");
-	await expect(
-		page.getByRole("heading", { name: "Audit Log" }),
-	).toBeVisible();
+	await expect(page.getByRole("heading", { name: "Auditing" })).toBeVisible();
 	expect(await createDeniedFileRead(page, path)).toBe(403);
 
 	await page.getByRole("combobox", { name: "Action filter" }).click();
@@ -192,9 +190,17 @@ test.describe("Access Checks on a recorded check", () => {
 	test("ACCESS-CHECKS-01 opens a recorded check and tests it again now", async ({
 		page,
 	}) => {
-		await page.goto(
-			`/audit/access-checks?group_by=workflow&key=${workflowId}`,
-		);
+		await page.goto("/");
+		await page.getByRole("link", { name: "Auditing", exact: true }).click();
+		await expect(
+			page.getByRole("tab", { name: "Activity", exact: true }),
+		).toHaveAttribute("aria-selected", "true");
+		await page
+			.getByRole("tab", { name: "Access Checks", exact: true })
+			.click();
+		await page
+			.getByRole("button", { name: workflowName, exact: true })
+			.click();
 		await expect(
 			page.getByRole("heading", { level: 2, name: workflowName }),
 		).toBeVisible();
@@ -225,22 +231,20 @@ test.describe("Access Checks on a recorded check", () => {
 			await page.setViewportSize({ width: 1280, height: 720 });
 		}
 		await page
-			.getByRole("button", { name: "Show 1 Recorded Check" })
+			.getByRole("button", { name: "Open 1 Recorded Check" })
 			.click();
-		const row = page
-			.getByRole("region", { name: "Recorded Checks" })
-			.locator("table tbody tr");
-		await expect(row).toHaveCount(1);
-		await expect(row).toContainText(identityName);
+		const drawer = page.getByRole("dialog", { name: "Access Check" });
+		await expect(drawer).toBeVisible();
+		await expect(drawer).toContainText(identityName);
+		await expect(drawer.getByRole("table")).toHaveCount(0);
 		if (process.env.PLAYWRIGHT_SCREENSHOT_ALL === "1") {
 			await page.screenshot({
 				animations: "disabled",
-				path: test.info().outputPath("expanded-desktop-light.png"),
+				path: test
+					.info()
+					.outputPath("selected-check-desktop-light.png"),
 			});
 		}
-		await row.getByRole("button").first().click();
-
-		const drawer = page.getByRole("dialog", { name: "Access Check" });
 		const reachStep = (trace: string) =>
 			drawer
 				.getByRole("list", { name: trace })
@@ -270,5 +274,11 @@ test.describe("Access Checks on a recorded check", () => {
 				path: test.info().outputPath("explanation-phone-light.png"),
 			});
 		}
+		await page.keyboard.press("Escape");
+		await expect(drawer).toBeHidden();
+		if (process.env.PLAYWRIGHT_SCREENSHOT_ALL === "1")
+			await page.setViewportSize({ width: 1280, height: 720 });
+		await page.getByRole("tab", { name: "Activity", exact: true }).click();
+		await expect(page).toHaveURL(/\/audit$/);
 	});
 });

@@ -1,7 +1,4 @@
-import {
-	PageWorkspace,
-	PageScrollArea,
-} from "@/components/layout/PageWorkspace";
+import { PageScrollArea } from "@/components/layout/PageWorkspace";
 import { AuditOutcome } from "./AuditOutcome";
 import { AuditEventCards } from "./AuditEventCards";
 import { AuditPagination } from "./AuditPagination";
@@ -26,6 +23,8 @@ import { AuditFilters } from "./AuditFilters";
 import { AuditRetentionBanner } from "./AuditRetentionBanner";
 import { AuditExportDialog } from "./AuditExportDialog";
 import { AuditEventDrawer } from "@/components/audit/AuditEventDrawer";
+
+import { AuditPageLayout } from "./AuditPageLayout";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent } from "@/components/ui/card";
@@ -157,33 +156,24 @@ export function AuditLogPage() {
 	}
 
 	return (
-		<PageWorkspace className="mx-auto flex w-full min-w-0 max-w-[1400px] flex-col gap-5">
-			{/* Header */}
+		<AuditPageLayout
+			view="activity"
+			actions={
+				<Button
+					variant="outline"
+					size="icon"
+					onClick={() => refetch()}
+					disabled={isFetching || invalidDateRange}
+					aria-label="Refresh audit log"
+					className="size-11"
+				>
+					<RefreshCw
+						className={`h-4 w-4 ${isFetching ? "animate-spin motion-reduce:animate-none" : ""}`}
+					/>
+				</Button>
+			}
+		>
 			<div className="shrink-0 space-y-6">
-				<div className="flex items-start justify-between gap-4">
-					<div>
-						<h1 className="font-display text-2xl font-semibold tracking-tight sm:text-3xl">
-							Audit Log
-						</h1>
-						<p className="mt-2 text-sm text-muted-foreground">
-							Trace security decisions and administrative activity
-							across the platform
-						</p>
-					</div>
-					<Button
-						variant="outline"
-						size="icon"
-						onClick={() => refetch()}
-						disabled={isFetching || invalidDateRange}
-						aria-label="Refresh audit log"
-						className="size-11 shrink-0"
-					>
-						<RefreshCw
-							className={`h-4 w-4 ${isFetching ? "animate-spin motion-reduce:animate-none" : ""}`}
-						/>
-					</Button>
-				</div>
-
 				<AuditRetentionBanner
 					retention={data?.retention}
 					onExport={() => setExportOpen(true)}
@@ -213,7 +203,7 @@ export function AuditLogPage() {
 			</div>
 
 			{/* Content */}
-			<PageScrollArea className="lg:overflow-hidden">
+			<PageScrollArea>
 				<div
 					className="flex min-w-0 flex-col lg:h-full lg:min-h-0"
 					hidden={invalidDateRange}
@@ -396,7 +386,7 @@ export function AuditLogPage() {
 					onClose={() => setExportOpen(false)}
 				/>
 			)}
-		</PageWorkspace>
+		</AuditPageLayout>
 	);
 }
 

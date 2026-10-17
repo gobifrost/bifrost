@@ -13,7 +13,6 @@ import {
 	X,
 	Stethoscope,
 	ShieldCheck,
-	ShieldAlert,
 	MessageSquare,
 	Bot,
 	Plug,
@@ -43,6 +42,7 @@ interface NavItem {
 	title: string;
 	termKey?: ProductTermKey;
 	href: string;
+	nonPlatformAdminHref?: string;
 	icon: React.ElementType;
 	requiresPlatformAdmin?: boolean;
 	requiresPermission?: PermissionRequirement;
@@ -207,16 +207,10 @@ const navSections: NavSection[] = [
 				requiresPlatformAdmin: true,
 			},
 			{
-				title: "Audit Log",
+				title: "Auditing",
 				href: "/audit",
+				nonPlatformAdminHref: "/audit/access-checks",
 				icon: ShieldCheck,
-				requiresPlatformAdmin: true,
-				end: true,
-			},
-			{
-				title: "Access Checks",
-				href: "/audit/access-checks",
-				icon: ShieldAlert,
 				requiresPermission: { permission: "roleassignments.read" },
 			},
 		],
@@ -338,6 +332,11 @@ export function Sidebar({
 									</h3>
 								)}
 								{section.items.map((item) => {
+									const href =
+										!isPlatformAdmin &&
+										item.nonPlatformAdminHref
+											? item.nonPlatformAdminHref
+											: item.href;
 									const itemTitle = item.termKey
 										? term(
 												terminology,
@@ -346,7 +345,7 @@ export function Sidebar({
 											)
 										: item.title;
 									return (
-										<div key={item.href}>
+										<div key={href}>
 											{item.dividerBefore &&
 												!isCollapsed && (
 													<div className="my-2 mx-3 border-t border-border" />
@@ -356,13 +355,13 @@ export function Sidebar({
 													<div className="my-2 mx-2 border-t border-border" />
 												)}
 											<SidebarLink
-												to={item.href}
+												to={href}
 												label={itemTitle}
 												icon={item.icon}
 												isCollapsed={isCollapsed}
 												end={item.end}
 												isActive={
-													item.href === "/"
+													href === "/"
 														? (location.pathname ===
 																"/" &&
 																!location.search) ||
@@ -422,6 +421,11 @@ export function Sidebar({
 										{section.title}
 									</h3>
 									{section.items.map((item) => {
+										const href =
+											!isPlatformAdmin &&
+											item.nonPlatformAdminHref
+												? item.nonPlatformAdminHref
+												: item.href;
 										const itemTitle = item.termKey
 											? term(
 													terminology,
@@ -430,12 +434,12 @@ export function Sidebar({
 												)
 											: item.title;
 										return (
-											<div key={item.href}>
+											<div key={href}>
 												{item.dividerBefore && (
 													<div className="my-2 mx-3 border-t border-border" />
 												)}
 												<SidebarLink
-													to={item.href}
+													to={href}
 													label={itemTitle}
 													icon={item.icon}
 													end={item.end}
@@ -445,7 +449,7 @@ export function Sidebar({
 														)
 													}
 													isActive={
-														item.href === "/"
+														href === "/"
 															? (location.pathname ===
 																	"/" &&
 																	!location.search) ||
