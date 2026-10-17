@@ -1,10 +1,49 @@
 """Tests for secret decryption in CLI config/get endpoint."""
 
+from unittest.mock import AsyncMock, patch
+from uuid import uuid4
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.core.security import encrypt_secret, decrypt_secret
-from tests.helpers.authorization import admin_caller
+from src.core.principal import UserPrincipal
+from src.services.authorization.context import (
+    AuthorizationContext,
+    Boundary,
+    BoundaryKind,
+    RoleGrant,
+)
+from src.services.authorization.enforce import Caller
+from shared.builtin_roles import USER_ROLE_ID
+from tests.helpers.authorization import admin_caller, platform_admin_grant
+
+
+def _secrets_reader_caller() -> Caller:
+    """A platform admin with explicit Secrets Reader at one org scope."""
+    organization_id = uuid4()
+    principal = UserPrincipal(
+        user_id=uuid4(),
+        email="secrets-reader@example.test",
+        organization_id=organization_id,
+    )
+    return Caller(
+        principal,
+        AuthorizationContext(
+            user_id=principal.user_id,
+            home_organization_id=organization_id,
+            base_role_id=USER_ROLE_ID,
+            is_external=False,
+            base_permissions=frozenset(),
+            role_grants=(
+                platform_admin_grant(),
+                RoleGrant(
+                    uuid4(),
+                    frozenset({"secrets.read"}),
+                    (Boundary(BoundaryKind.ORGANIZATION, organization_id),),
+                ),
+            ),
+        ),
+    )
 
 
 class TestConfigGetDecryptsSecrets:
@@ -24,9 +63,11 @@ class TestConfigGetDecryptsSecrets:
             "test_secret": {"value": encrypted, "type": "secret"},
         })
 
-        caller = admin_caller()
+        caller = _secrets_reader_caller()
 
-        request = CLIConfigGetRequest(key="test_secret")
+        request = CLIConfigGetRequest(
+            key="test_secret", scope=str(caller.principal.organization_id)
+        )
 
         with patch("src.services.authorization.enforce.load_caller", new=AsyncMock(return_value=caller)), \
              patch("src.repositories.config.ConfigRepository", return_value=mock_resolver):
@@ -49,9 +90,11 @@ class TestConfigGetDecryptsSecrets:
             "bad_secret": {"value": "not-valid-encrypted-data", "type": "secret"},
         })
 
-        caller = admin_caller()
+        caller = _secrets_reader_caller()
 
-        request = CLIConfigGetRequest(key="bad_secret")
+        request = CLIConfigGetRequest(
+            key="bad_secret", scope=str(caller.principal.organization_id)
+        )
 
         with patch("src.services.authorization.enforce.load_caller", new=AsyncMock(return_value=caller)), \
              patch("src.repositories.config.ConfigRepository", return_value=mock_resolver):

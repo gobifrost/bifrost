@@ -2019,8 +2019,10 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.services.execution.async_executor.enqueue_workflow_execution": (2, "actor_facts"),
     "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor.run": (3, "actor_facts"),
     "src.services.execution.engine.execute": (2, "actor_facts"),
+    "src.services.execution.engine.execute_service": (2, "actor_facts"),
     "src.services.execution.service.execute_tool": (1, "actor_facts"),
     "src.services.execution.worker.run_execution": (2, "actor_facts"),
+    "src.services.execution.worker.run_service": (2, "actor_facts"),
     "src.services.manifest_import.ManifestResolver._resolve_file_policy": (1, "internal_authorized_resource"),
     "src.services.manifest_import.ManifestResolver._resolve_table": (1, "internal_authorized_resource"),
     "src.services.mcp_server.auth.BifrostAuthProvider.verify_token": (4, "actor_facts"),
@@ -2087,6 +2089,7 @@ _FLAG_CARRIERS: dict[str, str] = {
     "shared.sdk_users.create_user": "Records the created user's own flag in the audit event.",
     "src.routers.mcp.mcp_status": "Reports the caller's own flag in the MCP status response.",
     "src.services.authorization.explain._run_user_step": "Copies the run user's flag into an explain trace.",
+    "src.services.service_claim.ServiceClaimLoop._launch_claimed": "Copies the pinned run user's current role fact into parent-owned child context; runtime authorization reloads durable authority.",
 }
 
 # Any remaining platform-seeded policy on a legacy flag must be deleted.

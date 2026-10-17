@@ -3,8 +3,7 @@
 Covers ``shared.sdk_ai.complete_sdk_ai`` / ``get_sdk_model_info`` and
 the thin HTTP adapters in ``api/src/routers/cli.py``:
 
-- scope rule reuse (UNSET/global/UUID, 403/422 precedence, best-effort
-  usage attribution never fails the request);
+- resolved-scope forwarding and best-effort usage attribution;
 - file-input decoding and the user-message requirement;
 - response shaping and profile/model/max-tokens forwarding;
 - error mapping (401 provider auth, 503 ValueError, sanitized 500);
@@ -409,41 +408,6 @@ async def test_complete_malformed_execution_id_never_fails_request():
         )
 
     assert result["content"] == "Hello"
-
-
-@pytest.mark.asyncio
-async def test_resolve_sdk_org_id_preserves_422_and_403():
-    from fastapi import HTTPException
-
-    from src.routers.cli import _resolve_sdk_org_id
-
-    org_id = uuid4()
-
-    # 422 for a malformed scope.
-    from src.core.principal import UserPrincipal
-
-    caller = UserPrincipal(user_id=uuid4(), email="ai-scope@contoso.example", organization_id=org_id)
-    with pytest.raises(HTTPException) as exc_info:
-        await _resolve_sdk_org_id(caller, "not-a-uuid", AsyncMock())
-    assert exc_info.value.status_code == 422
-
-    # 403 for a cross-org scope without bypass.
-    other = uuid4()
-    no_provider_db = AsyncMock()
-    no_provider_db.execute.return_value = SimpleNamespace(
-        scalar_one_or_none=lambda: None
-    )
-    with pytest.raises(HTTPException) as exc_info:
-        await _resolve_sdk_org_id(caller, str(other), no_provider_db)
-    assert exc_info.value.status_code == 403
-
-    # Own org resolves without any DB lookup.
-    resolved = await _resolve_sdk_org_id(caller, str(org_id), AsyncMock())
-    assert resolved == str(org_id)
-
-    # UNSET resolves to the caller's own org.
-    resolved = await _resolve_sdk_org_id(caller, None, AsyncMock())
-    assert resolved == str(org_id)
 
 
 @pytest.mark.asyncio

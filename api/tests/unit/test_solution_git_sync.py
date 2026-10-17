@@ -36,7 +36,7 @@ def _reset_redis_singleton():
 @pytest.mark.e2e
 class TestDeployFromWorkspace:
     async def test_reads_workspace_and_deploys(self, db_session, tmp_path) -> None:
-        from sqlalchemy import false, select
+        from sqlalchemy import select
 
         db = db_session
         sol = Solution(
