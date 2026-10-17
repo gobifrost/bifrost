@@ -1,16 +1,11 @@
-"""Pin the seed JSON used by both the create handler and the backfill migration.
-
-`make_seed_admin_bypass()` is the runtime helper for new tables; the 2026-05-04
-backfill migration hard-codes the same shape into a SQL UPDATE. The two paths
-must produce identical TablePolicies. This test fails loudly if either side
-drifts.
-"""
+"""Keep the historical seed valid while pinning the current authority seed."""
 import json
 from pathlib import Path
 
 import pytest
 
-from shared.policies.probe import make_seed_admin_bypass
+from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
+from shared.policies.probe import evaluate_action, make_seed_admin_bypass
 from src.models.contracts.policies import TablePolicies
 
 
@@ -31,14 +26,14 @@ def _extract_seed_from_migration() -> dict:
     return json.loads(src[start:end])
 
 
-def test_migration_seed_matches_runtime_helper():
+def test_historical_migration_seed_remains_the_legacy_user_fact():
     migration_seed = _extract_seed_from_migration()
+    assert migration_seed["policies"][0]["when"] == {"user": "is_platform_admin"}
+
+
+def test_runtime_seed_uses_execution_authority():
     runtime_seed = make_seed_admin_bypass()
-    assert migration_seed == runtime_seed, (
-        "20260504_backfill_table_access drifted from make_seed_admin_bypass(). "
-        "Update one or the other so the migration backfills the same shape "
-        "the create handler writes for new tables."
-    )
+    assert runtime_seed["policies"][0]["when"] == {"authority": "platform_admin"}
 
 
 def test_migration_seed_validates_as_table_policies():
@@ -54,13 +49,12 @@ def test_migration_seed_validates_as_table_policies():
 @pytest.mark.parametrize(
     "user_attrs,expected",
     [
-        ({"is_platform_admin": True}, True),
-        ({"is_platform_admin": False}, False),
+        ({"role_ids": [PLATFORM_ADMIN_ROLE_ID]}, True),
+        ({"is_platform_admin": True}, False),
     ],
 )
-def test_migration_seed_admin_only_evaluation(user_attrs, expected):
-    """Behaviorally: the seed grants every action to admins, denies all others."""
-    from shared.policies.probe import evaluate_action
+def test_historical_migration_seed_uses_role_membership(user_attrs, expected):
+    """Legacy user expressions retain their current role-derived meaning."""
 
     class StubUser:
         def __init__(self, **kw):
@@ -70,6 +64,7 @@ def test_migration_seed_admin_only_evaluation(user_attrs, expected):
             self.is_platform_admin = False
             self.role_ids = []
             self.role_names = []
+            self.policy_authorities = frozenset()
             for k, v in kw.items():
                 setattr(self, k, v)
 
@@ -79,3 +74,18 @@ def test_migration_seed_admin_only_evaluation(user_attrs, expected):
         assert evaluate_action(action, policies, row={}, user=user) is expected, (
             f"action={action!r} user={user_attrs} expected={expected}"
         )
+
+
+def test_runtime_seed_allows_execution_authority_without_forging_a_role():
+    class StubUser:
+        user_id = "u1"
+        email = "x@example.com"
+        organization_id = None
+        is_platform_admin = False
+        role_ids = []
+        role_names = []
+        policy_authorities = frozenset({"platform_admin"})
+
+    policies = TablePolicies.model_validate(make_seed_admin_bypass())
+    for action in ("read", "create", "update", "delete"):
+        assert evaluate_action(action, policies, row={}, user=StubUser())

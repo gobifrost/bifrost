@@ -743,7 +743,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
             return
         pending_ready_ms = (time.perf_counter() - dispatch_started) * 1000
 
-        # Extract context from Redis pending record
+        # Extract context from Redis pending record.
         parameters = pending["parameters"]
         org_id = pending["org_id"]
         user_id = pending["user_id"]
@@ -757,6 +757,51 @@ class WorkflowExecutionConsumer(BaseConsumer):
         event_data = pending.get("event")  # EventContext dict if event-triggered
         artifact_workspace_id = pending.get("artifact_workspace_id")
         lineage = pending.get("lineage")
+
+        # Immediate async runs have no durable row until this consumer starts.
+        # If their lineage user was deleted after enqueueing, record the same
+        # terminal cancellation that deletion applies to durable queued rows.
+        if not execution_record_exists and lineage is not None:
+            from shared.run_cancellation import cancel_redis_queued_run_if_user_deleted
+
+            async with get_db_context() as db:
+                cancelled = await cancel_redis_queued_run_if_user_deleted(
+                    db,
+                    execution_id=UUID(execution_id),
+                    run_user_id=UUID(lineage["run_user_id"]),
+                    workflow_name=script_name or "workflow",
+                    parameters=parameters,
+                    organization_id=UUID(org_id) if org_id else None,
+                    workflow_id=UUID(workflow_id) if workflow_id else None,
+                    form_id=UUID(form_id) if form_id else None,
+                    api_key_id=UUID(api_key_id) if api_key_id else None,
+                    executed_by_name=user_name,
+                )
+                await db.commit()
+            if cancelled:
+                logger.info(
+                    "Discarding Redis-queued execution whose run user was deleted",
+                    extra={"execution_id": execution_id},
+                )
+                await self._redis_client.delete_pending_execution(execution_id)
+                return
+
+        # Scheduled runs have a durable row before their queue message exists.
+        # Claim it atomically before dispatch so a deletion-side cancellation
+        # cannot be overwritten by this consumer after promotion commits.
+        if execution_record_exists:
+            from shared.run_cancellation import claim_pending_run_for_dispatch
+
+            async with get_db_context() as db:
+                claimed = await claim_pending_run_for_dispatch(db, UUID(execution_id))
+                await db.commit()
+            if not claimed:
+                logger.info(
+                    "Discarding queued execution whose durable row was not pending",
+                    extra={"execution_id": execution_id},
+                )
+                await self._redis_client.delete_pending_execution(execution_id)
+                return
 
         # Determine if this is a code or workflow execution
         is_script = bool(code_base64)

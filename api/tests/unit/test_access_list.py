@@ -742,6 +742,11 @@ def _token_minting(node: ast.AST) -> str | None:
     return None
 
 
+# Explicit cutover exception: this policy user field is a role-ID fact,
+# retained as part of the policy language rather than a legacy admin flag.
+_RETAINED_ROLE_POLICY_FIELDS = frozenset({"is_platform_admin"})
+
+
 def _flag_policy_seed(node: ast.AST) -> str | None:
     """Blind spot B9: a policy body condition on a flag, ``{"user": "<flag>"}``
     (the shape of ``when: {user: is_platform_admin}``)."""
@@ -752,6 +757,7 @@ def _flag_policy_seed(node: ast.AST) -> str | None:
                 and key.value == "user"
                 and isinstance(value, ast.Constant)
                 and value.value in _ELEVATED_ATTRS
+                and value.value not in _RETAINED_ROLE_POLICY_FIELDS
             ):
                 return f"user: {value.value}"
     return None
@@ -1861,12 +1867,13 @@ def scanned_functions(entry_functions) -> dict[str, list[tuple[str, str]]]:
 # registered function fails until it is counted and its replacement named.
 _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "bifrost._context.resolve_scope": (1, "cutover"),
+    # Full execution powers remain until delegated execution cutover.
+    "src.core.auth.get_execution_context": (1, "cutover"),
     "bifrost.cli._run_direct": (2, "cutover"),
     "bifrost.solution_dev.function_host.set_dev_execution_context": (2, "cutover"),
     "shared.claims.preresolve._load_source_policies": (1, "system"),
     "shared.event_emission.emit_topic_event": (3, "reach"),
     "shared.execution_timeseries.get_execution_time_series": (1, "reach"),
-    "shared.external_access.resolve_external_claim": (1, "delete"),
     "shared.file_access.authorize_file_policy": (1, ("repository.read", "repository.readwrite")),
     "shared.form_provider.execute_form_field_provider": (3, "reach"),
     "shared.form_publication._resolve_form_workflow": (1, "reach"),
@@ -1910,13 +1917,14 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "shared.sdk_users.bulk_update_users": (2, ("privilegedaccess.readwrite", "userlifecycle.readwrite")),
     "shared.sdk_users.create_user": (4, "privilegedaccess.readwrite"),
     "shared.sdk_users.list_users": (2, "cutover"),
-    "shared.sdk_users.update_user": (4, "privilegedaccess.readwrite"),
+    "shared.sdk_users.update_user": (8, "privilegedaccess.readwrite"),
     "shared.sdk_video.can_read_platform_job": (1, ("platformjobs.read.all", "platformjobs.readwrite.all")),
     "shared.sdk_workflow_execution.cancel_scheduled_sdk_execution": (2, "executions.readwrite.all"),
     "shared.sdk_workflow_execution.execute_sdk_workflow": (8, ("repository.readwrite", "reach")),
     "shared.system_account_guard.is_system_account": (1, "cutover"),
     "shared.table_document_writes.resolve_attribution": (2, "tableattribution.readwrite"),
     "shared.table_resolution.assert_explicit_scope_targets_table": (2, "reach"),
+    # Live table organization path: deleted at cutover (d).
     "shared.table_resolution.get_table_or_404": (2, "reach"),
     "src.core.auth.get_current_engine_or_bypass_user": (4, "route"),
     "src.core.auth.get_current_superuser": (1, "route"),
@@ -2063,7 +2071,7 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.routers.websocket.can_access_service": (1, "platform.read"),
     "src.routers.websocket.websocket_connect": (37, ("reach", "platform.read")),
     "src.services.access_check_entry.run_user_may_open": (2, "route"),
-    "src.services.access_check_policies.load_policy_principal": (2, "reach"),
+    "src.services.access_check_policies.load_policy_principal": (1, "reach"),
     "src.services.agent_executor.AgentExecutor._execute_knowledge_search": (1, "reach"),
     "src.services.agent_executor.AgentExecutor._execute_system_tool": (2, "reach"),
     "src.services.agent_executor.AgentExecutor._execute_tool": (3, "reach"),
@@ -2100,6 +2108,7 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.services.execution.engine.execute": (2, "cutover"),
     "src.services.execution.service.execute_tool": (1, "reach"),
     "src.services.execution.worker.run_execution": (2, "cutover"),
+    # Live provider-org path: deleted at cutover (d).
     "src.services.file_policy_service.FilePolicyService._principal_matches_org": (2, "reach"),
     "src.services.file_policy_service.FilePolicyService.is_allowed": (1, "reach"),
     "src.services.identities.require_delegation": (1, "delete"),
@@ -2193,13 +2202,9 @@ _FLAG_CARRIERS: dict[str, str] = {
     "src.services.authorization.explain._run_user_step": "Copies the run user's flag into an explain trace.",
 }
 
-# Platform-seeded policy bodies that condition on a flag (blind spot B9);
-# a follow-up change checks the Platform Admin role ID instead.
-_FLAG_POLICY_SEEDS: dict[str, str] = {
-    "shared.file_policies.make_seed_admin_bypass": "delete",
-    "shared.policies.probe.make_seed_admin_bypass": "delete",
-    "src.services.policy_rule_service._BUILTINS": "delete",
-}
+# Any remaining platform-seeded policy on a legacy flag must be deleted.
+# The retained role-ID user term is allowlisted by _RETAINED_ROLE_POLICY_FIELDS.
+_FLAG_POLICY_SEEDS: dict[str, str] = {}
 
 # Every Redis read (blind spot B10, ``_redis_reads``) is classified, with
 # the number of reads the function makes (a new read in a classified
@@ -2805,8 +2810,12 @@ class TestScannerBlindSpots:
         assert "src.services.mcp_server.gateway.MCPAgentGatewayService._has_scope_bypass" in targets
 
     def test_b9_flag_conditioned_policy_bodies_are_inventoried(self) -> None:
-        seeded = {t for n in self._nodes("P = {'when': {'user': 'is_platform_admin'}}") if (t := _flag_policy_seed(n))}
-        assert seeded == {"user: is_platform_admin"}
+        seeded = {t for n in self._nodes("P = {'when': {'user': 'is_provider_org'}}") if (t := _flag_policy_seed(n))}
+        assert seeded == {"user: is_provider_org"}
+        assert not [n for n in self._nodes("P = {'when': {'user': 'is_platform_admin'}}") if _flag_policy_seed(n)]
+        from src.models.contracts.policies import KNOWN_USER_FIELDS
+        assert _RETAINED_ROLE_POLICY_FIELDS == {"is_platform_admin"}
+        assert _RETAINED_ROLE_POLICY_FIELDS <= KNOWN_USER_FIELDS
         assert not [n for n in self._nodes("P = {'when': {'user': 'email'}}") if _flag_policy_seed(n)]
 
     def test_b10_redis_reads_are_recognised_by_receiver(self) -> None:

@@ -58,6 +58,7 @@ def user() -> SimpleNamespace:
         email="person@example.com",
         name="Person",
         is_superuser=False,
+        is_external=False,
         organization_id=uuid4(),
         identity_kind=None,
     )
@@ -90,7 +91,6 @@ def minted(user: SimpleNamespace, redis: _FakeRedis):
         patch("src.core.security.create_refresh_token", return_value=("refresh.jwt", "jti")),
         patch("src.core.database.get_db_context", get_db_context),
         patch("src.repositories.users.UserRepository", return_value=users),
-        patch("src.services.mcp_server.auth.resolve_external_claim", new=AsyncMock(return_value=False)),
         patch("src.services.mcp_server.auth.resolve_provider_org_claim", new=AsyncMock(return_value=False)),
     ):
         yield minted_tokens

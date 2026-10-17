@@ -80,6 +80,15 @@ async def set_user_base_role(session: AsyncSession, user: "UserORM", role_id: UU
         if role is None or role.is_builtin:
             raise ValueError(f"role_id {role_id} is not a base role or a custom role")
 
+    from shared.account_guards import (
+        AccountGuardError,
+        assert_role_assignment_allowed_for_user,
+    )
+
+    try:
+        await assert_role_assignment_allowed_for_user(session, user_id=user.id, role_id=role_id)
+    except AccountGuardError as exc:
+        raise UserServiceError(exc.status_code, exc.detail) from None
     user.base_role_id = role_id
 
 
@@ -100,6 +109,10 @@ async def set_platform_admin(
     from src.models import UserRole as UserRoleORM
     from src.services.authorization.context import Boundary, BoundaryKind
     from src.services.user_role_assignments import insert_assignment
+    from shared.account_guards import (
+        AccountGuardError,
+        assert_role_assignment_allowed_for_user,
+    )
 
     holds = (
         await session.scalar(
@@ -112,6 +125,12 @@ async def set_platform_admin(
     if holds == is_admin:
         return
     if is_admin:
+        try:
+            await assert_role_assignment_allowed_for_user(
+                session, user_id=user.id, role_id=PLATFORM_ADMIN_ROLE_ID
+            )
+        except AccountGuardError as exc:
+            raise UserServiceError(exc.status_code, exc.detail) from None
         await insert_assignment(
             session,
             user_id=user.id,
@@ -120,6 +139,15 @@ async def set_platform_admin(
             assigned_by=assigned_by,
         )
     else:
+        from shared.account_guards import (
+            AccountGuardError,
+            refuse_last_active_platform_admin_removal,
+        )
+
+        try:
+            await refuse_last_active_platform_admin_removal(session, {user.id})
+        except AccountGuardError as exc:
+            raise UserServiceError(exc.status_code, exc.detail) from None
         await session.execute(
             delete(UserRoleORM).where(
                 UserRoleORM.user_id == user.id, UserRoleORM.role_id == PLATFORM_ADMIN_ROLE_ID
@@ -385,6 +413,8 @@ async def create_user(
         require_operation(caller, "users.create", cross_org(organization_id))
     if is_superuser:
         access_checks.note_power("privilegedaccess.readwrite", organization_id, subject="user:new")
+        if is_external:
+            raise UserServiceError(409, "External users cannot hold privileged roles")
 
     now = datetime.now(timezone.utc)
 
@@ -602,6 +632,19 @@ async def update_user(
 
         raise UserServiceError(409, ADMIN_REMOVAL_MESSAGE)
 
+    if is_external is True and is_superuser is True:
+        raise UserServiceError(409, "External users cannot hold privileged roles")
+    if is_active is False or is_superuser is False:
+        from shared.account_guards import (
+            AccountGuardError,
+            refuse_last_active_platform_admin_removal,
+        )
+
+        try:
+            await refuse_last_active_platform_admin_removal(session, {db_user.id})
+        except AccountGuardError as exc:
+            raise UserServiceError(exc.status_code, exc.detail) from None
+
     if email is not None:
         db_user.email = email
     if name is not None:
@@ -620,6 +663,13 @@ async def update_user(
         db_user.organization_id = PROVIDER_ORG_ID
     if is_verified is not None:
         db_user.is_verified = is_verified
+    if is_external:
+        from shared.account_guards import AccountGuardError, assert_user_can_be_external
+
+        try:
+            await assert_user_can_be_external(session, db_user.id)
+        except AccountGuardError as exc:
+            raise UserServiceError(exc.status_code, exc.detail) from None
     if is_external is not None:
         db_user.is_external = is_external
     if mfa_enabled is not None:
@@ -687,6 +737,15 @@ async def delete_user(
 
     actor = caller.principal
     if user_id == str(actor.user_id) or user_id == actor.email:
+        from shared.account_guards import (
+            AccountGuardError,
+            refuse_last_active_platform_admin_removal,
+        )
+
+        try:
+            await refuse_last_active_platform_admin_removal(session, {actor.user_id})
+        except AccountGuardError as exc:
+            raise UserServiceError(exc.status_code, exc.detail) from None
         raise UserServiceError(400, "Cannot delete yourself")
 
     operation_reach(caller, "users.delete")
@@ -700,8 +759,21 @@ async def delete_user(
     require_operation(caller, "users.delete", org_target(db_user.organization_id))
     require_unprotected(caller, db_user.id in await privileged_user_ids(session, [db_user.id]))
 
+    from shared.account_guards import (
+        AccountGuardError,
+        refuse_last_active_platform_admin_removal,
+    )
+
+    try:
+        await refuse_last_active_platform_admin_removal(session, {db_user.id})
+    except AccountGuardError as exc:
+        raise UserServiceError(exc.status_code, exc.detail) from None
+
     deleted_id = db_user.id
     deleted_email = db_user.email
+    from shared.run_cancellation import cancel_unstarted_runs_for_deleted_user
+
+    await cancel_unstarted_runs_for_deleted_user(session, db_user.id)
     await session.delete(db_user)
     await session.flush()
     logger.info(f"Permanently deleted user {log_safe(user_id)}")
@@ -767,6 +839,7 @@ async def bulk_update_users(
         insert_assignment,
         load_roles,
     )
+    from shared.account_guards import AccountGuardError
 
     operation = "users.bulk_update"
     permission = _BULK_PERMISSIONS[request.operation]
@@ -817,6 +890,13 @@ async def bulk_update_users(
             fail(uid, IDENTITY_MANAGEMENT_MESSAGE)
             continue
         if request.operation in ("replace_roles", "set_active") and uid == actor_id:
+            if request.operation == "set_active" and request.is_active is False:
+                from shared.account_guards import refuse_last_active_platform_admin_removal
+
+                try:
+                    await refuse_last_active_platform_admin_removal(session, {uid})
+                except AccountGuardError as exc:
+                    raise UserServiceError(exc.status_code, exc.detail) from None
             fail(
                 uid,
                 "Cannot change your own roles via bulk action"
@@ -875,7 +955,18 @@ async def bulk_update_users(
                     check_boundaries(
                         caller, reach, roles[role_id], default_boundaries(u.organization_id)
                     )
+                from shared.account_guards import assert_role_assignment_allowed_for_user
+
+                # Check the locked database flag before changing any roles;
+                # the loaded account may predate an external transition.
+                for role_id in sorted(added):
+                    await assert_role_assignment_allowed_for_user(
+                        session, user_id=uid, role_id=role_id
+                    )
             except RoleAssignmentError as exc:
+                fail(uid, exc.detail)
+                continue
+            except AccountGuardError as exc:
                 fail(uid, exc.detail)
                 continue
             if removed:
@@ -896,6 +987,16 @@ async def bulk_update_users(
             succeeded.append(uid)
 
         elif request.operation == "set_active":
+            if not request.is_active:
+                from shared.account_guards import (
+                    AccountGuardError,
+                    refuse_last_active_platform_admin_removal,
+                )
+
+                try:
+                    await refuse_last_active_platform_admin_removal(session, {uid})
+                except AccountGuardError as exc:
+                    raise UserServiceError(exc.status_code, exc.detail) from None
             u.is_active = bool(request.is_active)
             u.updated_at = datetime.now(timezone.utc)
             succeeded.append(uid)

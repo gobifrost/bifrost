@@ -154,6 +154,17 @@ async def insert_assignment(
     assigned_by: str,
 ) -> None:
     """Add a ``user_roles`` row and its boundary rows."""
+    from shared.account_guards import (
+        AccountGuardError,
+        assert_role_assignment_allowed_for_user,
+    )
+
+    try:
+        await assert_role_assignment_allowed_for_user(
+            session, user_id=user_id, role_id=role_id
+        )
+    except AccountGuardError as exc:
+        raise RoleAssignmentError(exc.status_code, exc.detail) from None
     session.add(
         UserRole(
             user_id=user_id,
@@ -524,7 +535,7 @@ async def replace_role_assignments(
     as they leave it as it is.
     """
     from shared.role_cache import invalidate_user as invalidate_user_role_cache
-    from shared.sdk_users import set_platform_admin, set_user_base_role
+    from shared.sdk_users import UserServiceError, set_platform_admin, set_user_base_role
     from src.core.cache import invalidate_role_users
     from src.services.audit import emit_audit
 
@@ -533,6 +544,16 @@ async def replace_role_assignments(
     if is_system_account(user.id):
         raise RoleAssignmentError(422, SYSTEM_ACCOUNT_ROLE_MESSAGE)
     if user.id == caller.principal.user_id:
+        if PLATFORM_ADMIN_ROLE_ID not in {item.role_id for item in request.additional}:
+            from shared.account_guards import (
+                AccountGuardError,
+                refuse_last_active_platform_admin_removal,
+            )
+
+            try:
+                await refuse_last_active_platform_admin_removal(session, {user.id})
+            except AccountGuardError as exc:
+                raise RoleAssignmentError(exc.status_code, exc.detail) from None
         raise RoleAssignmentError(400, "You can't change your own role assignments")
     require_unprotected(caller, target.is_privileged)
 
@@ -568,6 +589,19 @@ async def replace_role_assignments(
     for role_id in added | rebounded:
         if role_id in BASE_ROLE_IDS:
             raise RoleAssignmentError(422, f"'{roles[role_id].name}' is a base role")
+    if user.is_external:
+        from shared.account_guards import (
+            AccountGuardError,
+            assert_role_assignment_allowed_for_user,
+        )
+
+        for role_id in added | ({request.base_role_id} if base_changed else set()):
+            try:
+                await assert_role_assignment_allowed_for_user(
+                    session, user_id=user.id, role_id=role_id
+                )
+            except AccountGuardError as exc:
+                raise RoleAssignmentError(exc.status_code, exc.detail) from None
     if PLATFORM_ADMIN_ROLE_ID in added | removed:
         if not caller.is_platform_admin:
             raise RoleAssignmentError(403, ADMIN_ROLE_MESSAGE)
@@ -578,6 +612,16 @@ async def replace_role_assignments(
             and not is_identity(user)
         ):
             raise RoleAssignmentError(409, ADMIN_REMOVAL_MESSAGE)
+        if PLATFORM_ADMIN_ROLE_ID in removed:
+            from shared.account_guards import (
+                AccountGuardError,
+                refuse_last_active_platform_admin_removal,
+            )
+
+            try:
+                await refuse_last_active_platform_admin_removal(session, {user.id})
+            except AccountGuardError as exc:
+                raise RoleAssignmentError(exc.status_code, exc.detail) from None
     for role_id in added | removed | rebounded:
         check_role_change(caller, roles[role_id], target.held)
     for role_id in added | rebounded:
@@ -595,7 +639,10 @@ async def replace_role_assignments(
 
     before = _audit_view(user.base_role_id, current)
     if base_changed:
-        await set_user_base_role(session, user, request.base_role_id)
+        try:
+            await set_user_base_role(session, user, request.base_role_id)
+        except UserServiceError as exc:
+            raise RoleAssignmentError(exc.status_code, exc.detail) from None
     if removed - {PLATFORM_ADMIN_ROLE_ID}:
         await session.execute(
             delete(UserRole).where(

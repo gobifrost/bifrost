@@ -266,7 +266,7 @@ def install_request_context_middleware(app: FastAPI) -> None:
         # Report-only access checks must never affect the request: a token
         # whose lineage claims cannot be read is simply not judged.
         try:
-            checks_token = access_checks.start_collecting(payload)
+            checks_token = access_checks.start_collecting(payload, surface=actor.surface)
         except ValueError:
             logger.warning("access checks skipped: unreadable lineage claims")
             checks_token = None

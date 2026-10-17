@@ -24,7 +24,7 @@ const isPolicyRuleRef = (rule: PolicyRule): rule is PolicyRuleRef =>
 	"$ref" in rule;
 const readableRuleName = (name: string) =>
 	name === "admin_bypass"
-		? "Administrator Access"
+		? "Platform Admin Access"
 		: name.replace(/[_-]+/g, " ");
 const describeRule = (rule: PolicyRule) =>
 	isPolicyRuleRef(rule)

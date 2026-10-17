@@ -8,6 +8,7 @@ Tests cover:
 - JSON serialization of tool results
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -993,3 +994,21 @@ class TestChatDelegation:
         assert result.error is not None
         assert "timed out" in result.error
         assert "completed step evidence-step (read_device): reachable" in result.error
+
+
+@pytest.mark.asyncio
+async def test_system_tool_bridge_preserves_the_chat_users_external_flag(executor, mock_agent):
+    person = SimpleNamespace(
+        id=uuid4(), organization_id=uuid4(), is_superuser=False, is_external=True,
+        email="guest@contoso.example", name="Contoso Guest",
+    )
+    tool = AsyncMock(return_value="ok")
+    with patch("src.services.mcp_server.server.get_system_tool_function", return_value=tool):
+        result = await executor._execute_system_tool(
+            ToolCallRequest(id="call", name="list_tables", arguments={}), mock_agent,
+            SimpleNamespace(user=person),
+        )
+    assert result.error is None
+    context = tool.await_args.args[0]
+    assert context.is_external is True
+    assert context.user_id == person.id

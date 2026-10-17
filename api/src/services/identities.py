@@ -350,6 +350,9 @@ async def delete_identity(session: AsyncSession, caller: Caller, identity_id: UU
     details = {"name": identity.name, "organization_id": str(identity.organization_id) if identity.organization_id else None}
     try:
         async with session.begin_nested():
+            from shared.run_cancellation import cancel_unstarted_runs_for_deleted_user
+
+            await cancel_unstarted_runs_for_deleted_user(session, identity.id)
             await session.delete(identity)
             await session.flush()
     except IntegrityError as e:

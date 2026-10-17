@@ -126,7 +126,7 @@ def test_privileged_lists_the_domains_privileged_permissions() -> None:
     assert catalog["users"].privileged == ["users.impersonate", "users.readwrite"]
     assert catalog["userlifecycle"].privileged == ["userlifecycle.readwrite"]
     assert catalog["platform"].privileged == ["platform.read", "platform.readwrite"]
-    assert catalog["tables"].privileged == []
+    assert catalog["tables"].privileged == ["tables.readwrite"]
 
 
 def test_user_lifecycle_entries_do_not_count_toward_users() -> None:

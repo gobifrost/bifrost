@@ -7,11 +7,35 @@ import pytest
 import pytest_asyncio
 
 from src.models.enums import ExecutionStatus
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.models.orm.executions import Execution
 
 
 PATH_PUBLISH = "src.jobs.schedulers.deferred_execution_promoter._publish_pending"
 PATH_DB_CTX = "src.jobs.schedulers.deferred_execution_promoter.get_db_context"
+
+
+@pytest_asyncio.fixture
+async def db_session(async_engine, monkeypatch):
+    # The promoter commits through this same session. Keep those commits inside
+    # a savepoint so scheduled rows and run users never leak into another test.
+    async with async_engine.connect() as connection:
+        transaction = await connection.begin()
+        async with AsyncSession(
+            bind=connection, expire_on_commit=False, join_transaction_mode="create_savepoint"
+        ) as session:
+            # The writer must see the same uncommitted test users. Its real
+            # insert/judging logic runs here; REST coverage tests the detached
+            # transaction boundary against committed users.
+            monkeypatch.setattr(
+                "src.services.access_check_writer.get_db_context", lambda: _DbCtx(session)
+            )
+            try:
+                yield session
+            finally:
+                await session.rollback()
+                await transaction.rollback()
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -78,6 +102,66 @@ async def test_promotes_due_rows(db_session):
 
     await db_session.refresh(due)
     assert due.status == ExecutionStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_deletion_cancellation_wins_after_promotion_before_dispatch(db_session):
+    """A queued message cannot resurrect a run cancelled after promotion."""
+    from shared.run_cancellation import (
+        RUN_USER_DELETED_ERROR,
+        cancel_unstarted_runs_for_deleted_user,
+        claim_pending_run_for_dispatch,
+    )
+    from src.jobs.schedulers.deferred_execution_promoter import promote_due_executions
+
+    _org, user = await _contoso_person(db_session)
+    due = _new_scheduled(datetime.now(timezone.utc) - timedelta(seconds=1))
+    due.executed_by = user.id
+    due.run_user_id = user.id
+    db_session.add(due)
+    await db_session.commit()
+
+    with (
+        patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
+        patch(PATH_PUBLISH, new=AsyncMock()),
+    ):
+        promoted, failures = await promote_due_executions()
+
+    assert (promoted, failures) == (1, 0)
+    assert await cancel_unstarted_runs_for_deleted_user(db_session, user.id) == 1
+    await db_session.commit()
+
+    assert await claim_pending_run_for_dispatch(db_session, due.id) is False
+    await db_session.refresh(due)
+    assert (due.status, due.error_message) == (
+        ExecutionStatus.CANCELLED,
+        RUN_USER_DELETED_ERROR,
+    )
+
+
+@pytest.mark.asyncio
+async def test_does_not_promote_row_with_deleted_run_user_snapshot(db_session):
+    from shared.run_cancellation import RUN_USER_DELETED_ERROR
+    from src.jobs.schedulers.deferred_execution_promoter import promote_due_executions
+
+    due = _new_scheduled(datetime.now(timezone.utc) - timedelta(seconds=1))
+    due.execution_context = {"run_user_id": str(uuid4())}
+    db_session.add(due)
+    await db_session.commit()
+
+    with (
+        patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
+        patch(PATH_PUBLISH, new=AsyncMock()) as publish,
+    ):
+        promoted, failures = await promote_due_executions()
+
+    assert (promoted, failures) == (0, 0)
+    publish.assert_not_awaited()
+    await db_session.refresh(due)
+    assert (due.status, due.error_message) == (
+        ExecutionStatus.CANCELLED,
+        RUN_USER_DELETED_ERROR,
+    )
 
 
 @pytest.mark.asyncio

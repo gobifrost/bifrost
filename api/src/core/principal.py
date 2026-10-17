@@ -72,6 +72,9 @@ class UserPrincipal:
     # principals (e.g. system accounts) and embed sessions.
     role_ids: list[UUID] = field(default_factory=list)
     role_names: list[str] = field(default_factory=list)
+    # Internal policy authorities materialize configured policy power. They do
+    # not change role membership and are never exposed through ``user`` facts.
+    policy_authorities: frozenset[str] = field(default_factory=frozenset)
     embed: bool = False  # True for typed app/form embed session tokens
     embed_kind: str | None = None  # "app" or "form"
     grant: str | None = None  # "hmac" or "public"

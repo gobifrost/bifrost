@@ -485,6 +485,7 @@ PRIVILEGED_PERMISSIONS: frozenset[str] = frozenset(
         "repository.readwrite",
         "claims.readwrite",
         "filepolicies.readwrite",
+        "tables.readwrite",
         "policyrules.readwrite",
         "solutions.deploy",
         "agents.readwrite.all",

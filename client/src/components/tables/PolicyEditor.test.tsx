@@ -247,6 +247,17 @@ describe("PolicyEditor — templates", () => {
 		});
 	});
 
+	it("uses Platform Admin Access for the admin bypass template", () => {
+		renderWithProviders(<PolicyEditor value={null} onChange={onChange} />);
+		const select = screen.getByLabelText(
+			/insert template/i,
+		) as HTMLSelectElement;
+		select.value = "admin_bypass";
+		select.dispatchEvent(new Event("change", { bubbles: true }));
+		const inserted = lastEmitted()!.policies![0] as { when: unknown };
+		expect(inserted.when).toEqual({ authority: "platform_admin" });
+	});
+
 	it("inserting a template while the JSON tab is active reseeds the JSON buffer", () => {
 		// Regression: AST mutations driven from outside the active code tab
 		// (template insert) used to leave the active tab's buffer stale

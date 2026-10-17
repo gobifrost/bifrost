@@ -70,7 +70,6 @@ from src.core.security import (
 from src.repositories.users import UserRepository
 from src.services.user_provisioning import ensure_user_provisioned, get_user_roles
 from shared.external_access import (
-    resolve_external_claim,
     resolve_provider_org_claim,
 )
 from shared.identities import is_identity, refuse_identity_sign_in
@@ -632,7 +631,7 @@ async def mfa_initial_verify(
         "email": user.email,
         "name": user.name or user.email.split("@")[0],
         "is_superuser": user.is_superuser,
-        "is_external": await resolve_external_claim(db, user),
+        "is_external": bool(user.is_external),
         "is_provider_org": await resolve_provider_org_claim(db, user),
         "org_id": str(user.organization_id) if user.organization_id else None,
         "roles": roles,
@@ -783,7 +782,7 @@ async def _generate_login_tokens(user, db, response: Response | None = None) -> 
         "email": user.email,
         "name": user.name or user.email.split("@")[0],
         "is_superuser": user.is_superuser,
-        "is_external": await resolve_external_claim(db, user),
+        "is_external": bool(user.is_external),
         "is_provider_org": await resolve_provider_org_claim(db, user),
         "org_id": str(user.organization_id) if user.organization_id else None,
         "roles": roles,
@@ -952,7 +951,7 @@ async def refresh_token(
         "email": user.email,
         "name": user.name or user.email.split("@")[0],
         "is_superuser": user.is_superuser,
-        "is_external": await resolve_external_claim(db, user),
+        "is_external": bool(user.is_external),
         "is_provider_org": await resolve_provider_org_claim(db, user),
         "org_id": str(user.organization_id) if user.organization_id else None,
         "roles": roles,
@@ -1717,7 +1716,7 @@ async def setup_passkey_verify(
         "email": user.email,
         "name": user.name or user.email.split("@")[0],
         "is_superuser": user.is_superuser,
-        "is_external": await resolve_external_claim(db, user),
+        "is_external": bool(user.is_external),
         "is_provider_org": await resolve_provider_org_claim(db, user),
         "org_id": str(user.organization_id) if user.organization_id else None,
         "roles": roles,

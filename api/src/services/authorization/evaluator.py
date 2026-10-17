@@ -25,20 +25,22 @@ code.
    every customer org (not the provider org, not Global), ``platform`` covers
    Global / platform-level targets. A ``platform``-boundary entry is only
    satisfied by a ``platform`` boundary.
-3. Other classes: ``public`` allows anyone (anonymous included); ``personal``,
-   ``own_private_agent`` and ``table_policy`` allow any signed-in user acting
-   in their home org (the object check decides the rest); ``embed`` is never
-   a user decision.
+3. Other classes: ``public`` allows anyone (anonymous included); ``personal``
+   and ``own_private_agent`` allow any signed-in user acting in their home
+   org; ``table_policy`` also reaches a cross-organization target through
+   any covering role boundary, after which the table or file policy decides
+   the data; ``embed`` is never a user decision.
 4. External users decide the same as Users here: External only changes the
    object-level meaning of "authenticated".
 
 Targets are the scope the caller acts in, as ``resolve_effective_scope``
 resolves it, not the owning org of a cascaded object: ``HOME`` is an unset
 scope or the caller's own org; ``CROSS`` is another org or explicit Global.
-Beyond one's own org only two things allow: a Platform Admin on an operation
-that acts beyond one's org at all (see ``acts_beyond_own_org``), or a
+Beyond one's own org only three things allow: a Platform Admin on an operation
+that acts beyond one's org at all (see ``acts_beyond_own_org``), a
 ``permission``-class operation whose permission a role with a covering
-boundary grants.
+boundary grants, or a table/file policy operation whose data policy makes the
+row-level decision after the role boundary establishes reach.
 """
 
 from __future__ import annotations
@@ -148,6 +150,14 @@ def decide(ctx: AuthorizationContext | None, entry: AccessEntry, target: Target)
 
     if entry.access_class != AccessClass.PERMISSION:
         if target.kind == TargetKind.CROSS:
+            if entry.access_class == AccessClass.TABLE_POLICY:
+                for grant in ctx.role_grants:
+                    for boundary in grant.boundaries:
+                        if _covers(boundary, entry, ctx, target):
+                            return Decision(
+                                True,
+                                f"role:{grant.role_id}:reach@{boundary.kind.value}",
+                            )
             return Decision(False, "denied:beyond_own_org_requires_role")
         return Decision(True, "public" if entry.access_class == AccessClass.PUBLIC else "signed_in")
 

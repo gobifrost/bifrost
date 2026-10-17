@@ -258,6 +258,7 @@ def world(e2e_client, platform_admin, async_session_factory):
         "person": person,
         "promoted": promoted,
         "operator": operator,
+        "operator_id": created["id"],
         "events": events,
         "tag": tag,
     }
@@ -394,6 +395,56 @@ def test_access_check_what_if(e2e_client, platform_admin, world) -> None:
     )
     assert _check(e2e_client, operator, person, organization_id="global", operation=CATALOG_ID).status_code == 403
     assert _check(e2e_client, operator, person, organization_id=fabrikam, operation=CATALOG_ID).status_code == 200
+
+
+def test_managed_operator_table_query_is_observed_and_predicted(e2e_client, platform_admin, world) -> None:
+    """An operator reaches an explicitly scoped customer table and both the
+    current policy and the report-only Access Check allow its rows."""
+    admin = platform_admin.headers
+    table = _ok(
+        e2e_client.post(
+            "/api/tables",
+            headers=admin,
+            json={
+                "name": f"fabrikam_rows_{world['tag']}",
+                "organization_id": world["fabrikam"]["id"],
+                "policies": {"policies": [{"name": "reader", "actions": ["read", "create"], "when": None}]},
+            },
+        ),
+        201,
+    )
+    try:
+        _ok(
+            e2e_client.post(
+                f"/api/tables/{table['id']}/documents",
+                headers=admin,
+                json={"id": "fabrikam-row", "data": {"account": "Fabrikam"}},
+            ),
+            201,
+        )
+        query = e2e_client.post(
+            f"/api/tables/{table['id']}/documents/query?scope={world['fabrikam']['id']}",
+            headers=world["operator"].headers,
+            json={},
+        )
+        assert query.status_code == 200, query.text
+        assert [document["id"] for document in query.json()["documents"]] == ["fabrikam-row"]
+
+        check = _ok(
+            _check(
+                e2e_client,
+                admin,
+                world["operator_id"],
+                organization_id=world["fabrikam"]["id"],
+                operation="POST /api/tables/{table_id}/documents/query",
+            )
+        )
+    finally:
+        _ok(e2e_client.delete(f"/api/tables/{table['id']}", headers=admin), 204)
+
+    assert check["outcome"] == "success"
+    assert _steps(check)["target"]["status"] == "passed"
+    assert _steps(check)["permission"]["reason"] == "role:00000000-0000-0000-0000-000000000007:reach@managed_organizations"
 
 
 def test_what_if_with_workflow_uses_powers(e2e_client, platform_admin, world) -> None:

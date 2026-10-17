@@ -170,8 +170,8 @@ async def list_sdk_tables(
         the DTOs), sorted by table name.
     """
     # Principal-derived sentinel trust (OPEN-B): the sentinel/admins keep
-    # is_superuser=True (their is_external claim is neutralized at mint); an
-    # EXTERNAL principal must not inherit it — they get the regular-user
+    # is_superuser=True; an EXTERNAL principal must not inherit that trust
+    # even when they belong to the provider organization — they get the regular-user
     # cascade instead. NOTE: attribute access at call time (not a top-level
     # from-import) keeps the ``TableRepository`` seam patchable for both
     # entry points.

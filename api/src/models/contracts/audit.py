@@ -42,7 +42,7 @@ class AuditLogEntry(BaseModel):
     )
     surface: str | None = Field(
         None,
-        description="Transport the request came in over: 'web', 'cli', 'mcp', 'embed', 'workflow', 'service'",
+        description="Transport the request came in over: 'web', 'cli', 'mcp', 'embed', 'workflow', 'agent', 'service'",
     )
     execution_id: UUID | None = Field(
         None,

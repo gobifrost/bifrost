@@ -50,10 +50,10 @@ describe("EffectiveAccessPanel", () => {
 				name: "admin_bypass",
 				domain: "file",
 				description:
-					"Platform admins bypass all file checks. Built-in, read-only.",
+					"Platform Admin Access bypasses all file checks. Built-in, read-only.",
 				body: {
 					actions: ["read", "write", "delete", "list"],
-					when: { user: "is_platform_admin" },
+					when: { authority: "platform_admin" },
 				},
 				is_builtin: true,
 				organization_id: null,
@@ -89,7 +89,7 @@ describe("EffectiveAccessPanel", () => {
 			onManagePolicy: vi.fn(),
 		});
 		await waitFor(() =>
-			expect(screen.getByText("Administrator Access")).toBeInTheDocument(),
+			expect(screen.getByText("Platform Admin Access")).toBeInTheDocument(),
 		);
 		expect(screen.getByText("Root Rule")).toBeInTheDocument();
 		expect(screen.getByText("Inherited Access")).toBeInTheDocument();

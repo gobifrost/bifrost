@@ -212,6 +212,7 @@ def test_privileged_set_is_the_reviewed_list() -> None:
         "repository.readwrite",
         "claims.readwrite",
         "filepolicies.readwrite",
+        "tables.readwrite",
         "policyrules.readwrite",
         "solutions.deploy",
         "agents.readwrite.all",

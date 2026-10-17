@@ -23,6 +23,7 @@ from sqlalchemy import true as sa_true
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import ColumnElement
 
+from shared.policies.evaluate import resolve_policy_authority, resolve_user_field
 from shared.policies.functions import FUNCTIONS
 from src.models.contracts.policies import Expr
 from src.models.orm.tables import Document
@@ -56,6 +57,8 @@ def _compile_node(node: Any, user: Any) -> ColumnElement:
         keys = set(node.keys())
         if keys == {"user"}:
             return _resolve_user_to_literal(user, node["user"])
+        if keys == {"authority"}:
+            return literal(resolve_policy_authority(user, node["authority"]))
         if keys == {"row"}:
             return _resolve_row_to_column(node["row"])
         if "call" in keys:
@@ -69,7 +72,7 @@ def _compile_node(node: Any, user: Any) -> ColumnElement:
 
 
 def _resolve_user_to_literal(user: Any, field: str) -> ColumnElement:
-    val = getattr(user, field, None)
+    val = resolve_user_field(user, field)
     if isinstance(val, UUID):
         val = str(val)
     return literal(val)
@@ -146,7 +149,9 @@ def _resolve_arg_for_call(arg: Any, user: Any) -> Any:
     if isinstance(arg, dict):
         keys = set(arg.keys())
         if keys == {"user"}:
-            return getattr(user, arg["user"], None)
+            return resolve_user_field(user, arg["user"])
+        if keys == {"authority"}:
+            return resolve_policy_authority(user, arg["authority"])
         raise ValueError(
             f"function call args must be literals or {{user: ...}}; "
             f"got {arg!r} which the SQL compiler cannot resolve"
@@ -167,10 +172,12 @@ def _resolve_to_scalar(node: Any, user: Any) -> Any:
     if isinstance(node, dict):
         keys = set(node.keys())
         if keys == {"user"}:
-            val = getattr(user, node["user"], None)
+            val = resolve_user_field(user, node["user"])
             if isinstance(val, UUID):
                 return str(val)
             return val
+        if keys == {"authority"}:
+            return resolve_policy_authority(user, node["authority"])
     return _NOT_SCALAR
 
 

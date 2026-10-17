@@ -11,6 +11,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 from uuid import UUID
 
+from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
 from shared.path_matching import path_within_any
 from shared.policies.functions import FUNCTIONS
 from src.models.contracts.policies import Expr
@@ -52,7 +53,9 @@ def _eval_node(
         if keys == {"row"}:
             return _resolve_row_path(row, node["row"])
         if keys == {"user"}:
-            return _resolve_user_field(user, node["user"])
+            return resolve_user_field(user, node["user"])
+        if keys == {"authority"}:
+            return resolve_policy_authority(user, node["authority"])
         if keys == {"claims"}:
             return _resolve_claims_field(user, node["claims"])
         if len(keys) == 1:
@@ -83,8 +86,18 @@ def _resolve_row_path(row: dict | None, path: str) -> Any:
     return cur
 
 
-def _resolve_user_field(user: Any, field: str) -> Any:
-    """Pull a known field off the user; UUIDs are stringified for comparison."""
+def resolve_user_field(user: Any, field: str) -> Any:
+    """Pull a policy user field from ``user``.
+
+    Policy ``is_platform_admin`` is the retained legacy term. It means the
+    user holds the built-in Platform Admin role at any boundary, never that a
+    token or execution context carries an administrative flag.
+    """
+    if field == "is_platform_admin":
+        return any(
+            str(role_id) == str(PLATFORM_ADMIN_ROLE_ID)
+            for role_id in getattr(user, "role_ids", ())
+        )
     val = getattr(user, field, None)
     if isinstance(val, UUID):
         return str(val)
@@ -92,6 +105,21 @@ def _resolve_user_field(user: Any, field: str) -> Any:
         # role_ids list of UUIDs -> list of strings
         return [str(v) if isinstance(v, UUID) else v for v in val]
     return val
+
+
+def resolve_policy_authority(user: Any, authority: str) -> bool:
+    """Return an internal policy authority without changing user facts.
+
+    The built-in Platform Admin authority is held by an actual Platform Admin
+    role member, or materializes the configured power of a Full workflow. It
+    never alters ``user`` fields or role membership exposed to expressions.
+    """
+    if authority != "platform_admin":
+        return False
+    return bool(
+        resolve_user_field(user, "is_platform_admin")
+        or authority in getattr(user, "policy_authorities", ())
+    )
 
 
 def _resolve_claims_field(user: Any, name: str) -> Any:

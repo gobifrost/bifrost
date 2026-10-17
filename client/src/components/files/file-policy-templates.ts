@@ -12,9 +12,10 @@ import type { FilePolicyRule } from "@/services/filePolicies";
 export const FILE_POLICY_TEMPLATES: Record<string, FilePolicyRule> = {
 	admin_bypass: {
 		name: "admin_bypass",
-		description: "Platform admins can do anything.",
+		description:
+			"Allows Platform Admin role holders and Full workflow executions within their existing reach.",
 		actions: ["read", "write", "delete", "list"],
-		when: { user: "is_platform_admin" },
+		when: { authority: "platform_admin" },
 	},
 	everyone_read: {
 		name: "everyone_read",

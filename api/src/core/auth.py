@@ -376,6 +376,29 @@ async def get_execution_context(
         user.role_ids = role_ids
         user.role_names = role_names
 
+    # A Full workflow has the built-in policy authority in addition to its
+    # ordinary user facts. Resolve it from the verified live execution row,
+    # never from the attribution-only workflow claim in the engine token.
+    if user.is_superuser and user.engine_execution_id:
+        from src.models.contracts.workflow_permissions import WorkflowPermissionMode
+        from src.models.orm.executions import Execution
+        from src.models.orm.workflows import Workflow
+        from src.services.workflow_permissions import (
+            effective_workflow_permission_mode,
+            get_default_workflow_permission_mode,
+        )
+
+        execution = await db.get(Execution, UUID(user.engine_execution_id))
+        if execution is not None:
+            workflow = None if execution.workflow_id is None else await db.get(Workflow, execution.workflow_id)
+            mode = (
+                await get_default_workflow_permission_mode(db)
+                if workflow is None
+                else await effective_workflow_permission_mode(db, workflow)
+            )
+            if mode is WorkflowPermissionMode.FULL:
+                user.policy_authorities = user.policy_authorities | {"platform_admin"}
+
     # Appended by the SDK (?solution=<install_id>) when a solution workflow is
     # executing.  Before forwarding it to the context, load the Solution row and
     # refuse execution for any install that has been uninstalled (status !=

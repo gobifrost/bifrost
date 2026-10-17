@@ -8,6 +8,7 @@ from shared.policies.probe import (
     is_subscribe_authorized,
     make_seed_admin_bypass,
 )
+from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
 from src.models.contracts.policies import Policy, TablePolicies
 from tests.unit.policies.test_evaluate import FakeUser
 
@@ -39,7 +40,7 @@ def test_evaluate_action_default_deny():
 
 def test_evaluate_action_admin_bypass():
     tp = TablePolicies(policies=[_admin_bypass_policy()])
-    admin = FakeUser(is_platform_admin=True)
+    admin = FakeUser(role_ids=[PLATFORM_ADMIN_ROLE_ID])
     other = FakeUser(is_platform_admin=False)
     assert evaluate_action("read", tp, row={}, user=admin) is True
     assert evaluate_action("update", tp, row={}, user=admin) is True
@@ -140,7 +141,7 @@ def test_subscribe_unauthorized_when_no_read_rules():
 
 def test_subscribe_authorized_for_admin_bypass():
     tp = TablePolicies(policies=[_admin_bypass_policy()])
-    assert is_subscribe_authorized(tp, user=FakeUser(is_platform_admin=True)) is True
+    assert is_subscribe_authorized(tp, user=FakeUser(role_ids=[PLATFORM_ADMIN_ROLE_ID])) is True
     # Non-admin, no other read rule → user-level fact resolves to False at probe time
     assert is_subscribe_authorized(tp, user=FakeUser(is_platform_admin=False)) is False
 
@@ -152,7 +153,7 @@ def test_make_seed_admin_bypass_shape():
     seed = make_seed_admin_bypass()
     assert seed["policies"][0]["name"] == "admin_bypass"
     assert set(seed["policies"][0]["actions"]) == {"read", "create", "update", "delete"}
-    assert seed["policies"][0]["when"] == {"user": "is_platform_admin"}
+    assert seed["policies"][0]["when"] == {"authority": "platform_admin"}
 
 
 def test_subscribe_user_dep_false_followed_by_row_dep_allows():
@@ -192,7 +193,7 @@ def test_compile_read_filter_single_rule_no_or_wrap():
     from src.models.orm.tables import Document
 
     tp = TablePolicies(policies=[_admin_bypass_policy()])
-    f = compile_read_filter(tp, user=FakeUser(is_platform_admin=True))
+    f = compile_read_filter(tp, user=FakeUser(role_ids=[PLATFORM_ADMIN_ROLE_ID]))
     assert f is not None
     sql = str(select(Document.id).where(f).compile(compile_kwargs={"literal_binds": True}))
     # Single fragment → no OR wrapping

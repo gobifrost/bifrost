@@ -138,15 +138,15 @@ class MCPContext:
     org_id: UUID | str | None = None
     is_platform_admin: bool = False
     is_provider_org: bool = False
-    # External (portal/guest) principal — no global tier, no authenticated-
-    # tier entitlement. Mirrors UserPrincipal.is_external (the claim is
-    # already bypass-neutralized at token mint).
+    # External account flag, preserved from User.is_external at token mint.
     is_external: bool = False
     user_email: str = ""
     user_name: str = ""
     # Who an agent run is for (its run lineage). The REST bridge carries it as
     # a token claim so child runs and access checks see the agent run's user.
     run_user_id: UUID | str | None = None
+    # Audit attribution only; never used for authorization.
+    agent_run_id: UUID | str | None = None
 
     # Knowledge namespaces accessible to this user (from agent.knowledge_sources)
     accessible_namespaces: list[str] = field(default_factory=list)
@@ -164,6 +164,8 @@ class MCPContext:
             self.org_id = UUID(self.org_id)
         if isinstance(self.run_user_id, str) and self.run_user_id:
             self.run_user_id = UUID(self.run_user_id)
+        if isinstance(self.agent_run_id, str) and self.agent_run_id:
+            self.agent_run_id = UUID(self.agent_run_id)
 
     @property
     def has_scope_bypass(self) -> bool:

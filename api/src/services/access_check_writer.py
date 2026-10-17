@@ -9,8 +9,9 @@ against their own roles. Written to the audit log:
   what today allows.
 - ``access.check`` with outcome ``success``: when a run crosses into another
   organization, acts as another user (``run_as``), or is a policy or secret
-  decision. A person's request writes failures only, except ``run_as``: a
-  person's ``run_as`` is enforced, and written in both outcomes with
+  decision. A direct non-admin person's permission passes are also written
+  during observation; runs (including agent bridges), identities and Platform
+  Admins do not write permission passes. A person's ``run_as`` is enforced, and written in both outcomes with
   ``enforced`` true. A run's stays report-only.
 - ``access.check_gap``: when the request carries no run user, the run user or
   the user a ``run_as`` names does not exist (that gap names the requested
@@ -42,6 +43,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.access_checks import Collector, Note
+from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
 from src.core.cache.redis_client import get_shared_redis
 from src.core.database import get_db_context
 from src.models.contracts.access_list import AccessEntry
@@ -181,11 +183,20 @@ def judge(
     return check_secret(run_user, powers, _target_org(note.target), kind=facts["kind"], name=facts["name"])
 
 
-def _written(note: Note, trace: Trace, run_user: RunUser, *, direct: bool) -> bool:
+def _written(
+    note: Note, trace: Trace, run_user: RunUser, *, direct: bool, is_run: bool
+) -> bool:
     if direct:
         # A person's own request records would-deny decisions, and the
         # enforced run_as in both outcomes.
-        return trace.outcome == "failure" or note.kind in _ALWAYS_WRITTEN
+        # Removed at cutover: proves which permissions non-admins rely on before enforcement.
+        permission_pass = (
+            note.kind == "permission"
+            and not is_run
+            and run_user.identity_kind is None
+            and not any(grant.role_id == PLATFORM_ADMIN_ROLE_ID for grant in run_user.ctx.role_grants)
+        )
+        return trace.outcome == "failure" or note.kind in _ALWAYS_WRITTEN or permission_pass
     if trace.outcome == "failure":
         # Only what today allows: a denial today already stops the request.
         return bool(note.facts.get("today", True))
@@ -230,8 +241,10 @@ class _Writer:
         self.collector = collector
         self.operation = operation
         self.run_key = (
-            f"person:{collector.run_user_id}"
-            if collector.direct
+            f"agent-run:{collector.agent_run_id}"
+            if collector.agent_run_id
+            else f"person:{collector.run_user_id}"
+            if collector.direct and not collector.is_run
             else str(collector.execution_id or f"run-user:{collector.run_user_id}")
         )
 
@@ -308,9 +321,14 @@ class _Writer:
             resource_id=None,
             outcome="failure",
             source="http",
+            surface=self.collector.surface,
             ip_address=None,
             user_agent=None,
-            details={"reason": reason, "operation": self.operation},
+            details={
+                "reason": reason,
+                "operation": self.operation,
+                **({"agent_run_id": str(self.collector.agent_run_id)} if self.collector.agent_run_id else {}),
+            },
             execution_id=self.collector.execution_id,
             operation_id=self.operation,
         )
@@ -327,11 +345,13 @@ class _Writer:
             resource_id=None,
             outcome=trace.outcome,
             source="http",
+            surface=self.collector.surface,
             ip_address=None,
             user_agent=None,
             details={
                 "enforced": enforced,
                 "direct": self.collector.direct,
+                **({"agent_run_id": str(self.collector.agent_run_id)} if self.collector.agent_run_id else {}),
                 "workflow_id": _plain(self.collector.workflow_id),
                 "trace": replace(trace, enforced=enforced).as_dict(),
                 "inputs": {
@@ -427,7 +447,10 @@ async def _judge_and_write(
         logger.warning("access check could not be judged (kind=%s): %s", noted.kind, type(exc).__name__)
         await writer.gap(noted.kind, f"observer_error:{type(exc).__name__}", run_user.user_id)
         return False
-    if _written(resolved, trace, run_user, direct=direct):
+    if _written(
+        resolved, trace, run_user, direct=direct,
+        is_run=writer.collector.is_run or writer.collector.agent_run_id is not None,
+    ):
         return await writer.check(resolved, trace, run_user)
     return True
 

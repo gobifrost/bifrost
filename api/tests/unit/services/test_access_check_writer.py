@@ -7,11 +7,13 @@ import logging
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
+import pytest
 import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.access_checks import Collector, Note
+from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
 from shared.identities import ensure_default_identity
 from src.core.cache.redis_client import close_shared_redis
 from src.core.constants import PROVIDER_ORG_ID
@@ -299,14 +301,18 @@ async def test_a_persons_elevated_branch_without_the_permission_is_a_would_deny(
     }
 
 
-async def test_a_permission_the_person_holds_writes_nothing(db_session: AsyncSession) -> None:
+async def test_a_permission_the_person_holds_is_written_once_per_day(db_session: AsyncSession) -> None:
     home = await _org(db_session)
     person = await _person(db_session, home)
-    collector = _person_collector(person.id, _power("workflows.execute", home.id, "workflow:1"))
+    for _ in range(2):
+        collector = _person_collector(person.id, _power("workflows.execute", home.id, "workflow:1"))
+        collector.surface = "cli"
+        await flush(db_session, collector, **ROUTE)
 
-    await flush(db_session, collector, **ROUTE)
-
-    assert await _person_rows(db_session, person.id) == []
+    [row] = await _person_rows(db_session, person.id)
+    assert (row.resource_type, row.outcome, row.surface) == ("permission", "success", "cli")
+    assert row.details["direct"] is True
+    assert row.details["enforced"] is False
 
 
 async def test_a_persons_decision_is_written_once_a_day(db_session: AsyncSession) -> None:
@@ -752,3 +758,56 @@ async def test_a_held_claim_is_kept_for_the_day_or_released(db_session: AsyncSes
     assert await redis.ttl(kept.key) > 300
     assert await redis.get(kept.key) == "done"
     assert await redis.exists(released.key) == 0
+
+
+@pytest.mark.parametrize("boundary", ["organization", "platform"])
+async def test_platform_admin_role_holders_do_not_write_permission_passes(db_session: AsyncSession, boundary: str) -> None:
+    home = await _org(db_session)
+    person = await _person(db_session, home)
+    db_session.add_all([
+        UserRole(user_id=person.id, role_id=PLATFORM_ADMIN_ROLE_ID, assigned_by="test"),
+        UserRoleBoundary(user_id=person.id, role_id=PLATFORM_ADMIN_ROLE_ID, kind=boundary,
+                         organization_id=home.id if boundary == "organization" else None),
+    ])
+    await db_session.flush()
+    await flush(db_session, _person_collector(person.id, _power("workflows.execute", home.id)), **ROUTE)
+    assert await _person_rows(db_session, person.id) == []
+
+
+async def test_identity_direct_requests_do_not_write_permission_passes(db_session: AsyncSession) -> None:
+    home = await _org(db_session)
+    identity = await ensure_default_identity(db_session, home)
+    await flush(db_session, _person_collector(identity.id, _power("workflows.execute", home.id)), **ROUTE)
+    assert await _person_rows(db_session, identity.id) == []
+
+
+async def test_agent_checks_keep_the_person_and_run_without_permission_passes(db_session: AsyncSession) -> None:
+    home = await _org(db_session)
+    person = await _person(db_session, home)
+    run = uuid4()
+    for _ in range(2):
+        collector = _person_collector(person.id, _power("agents.read", home.id), _power("workflows.execute", home.id))
+        collector.agent_run_id = run
+        collector.surface = "agent"
+        await flush(db_session, collector, **ROUTE)
+
+    [row] = await _person_rows(db_session, person.id)
+    assert (row.user_id, row.surface, row.outcome) == (person.id, "agent", "failure")
+    assert row.details["direct"] is True
+    assert row.details["agent_run_id"] == str(run)
+    assert row.execution_id is None
+    # A person's own permission pass is still recorded after the same agent decision.
+    await flush(db_session, _person_collector(person.id, _power("workflows.execute", home.id)), **ROUTE)
+    rows = await _person_rows(db_session, person.id)
+    assert sorted(row.outcome for row in rows) == ["failure", "success"]
+
+
+async def test_chat_bridges_without_an_agent_run_id_do_not_write_permission_passes(db_session: AsyncSession) -> None:
+    home = await _org(db_session)
+    person = await _person(db_session, home)
+    collector = _person_collector(person.id, _power("workflows.execute", home.id))
+    collector.is_run = True
+    await flush(db_session, collector, **ROUTE)
+    assert await _person_rows(db_session, person.id) == []
+    await flush(db_session, _person_collector(person.id, _power("workflows.execute", home.id)), **ROUTE)
+    assert len(await _person_rows(db_session, person.id)) == 1

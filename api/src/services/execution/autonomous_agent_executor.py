@@ -1525,6 +1525,7 @@ class AutonomousAgentExecutor:
                     user_email=acting.email,
                     user_name=acting.name,
                     run_user_id=self._run_user_id,
+                    agent_run_id=self._current_run_id,
                     session=db,
                 )
 

@@ -43,7 +43,7 @@ _CATALOG = [
             "tables.read": "Read Tables",
             "tables.readwrite": "Read and Write Tables",
         },
-        "privileged": [],
+        "privileged": ["tables.readwrite"],
         "scope": "per_organization",
         "enforced": False,
     },

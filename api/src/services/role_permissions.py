@@ -58,6 +58,13 @@ async def set_role_permissions(
     for permission in permissions:
         validate_permission(permission)
 
+    from shared.account_guards import AccountGuardError, assert_role_permissions_allowed
+
+    try:
+        await assert_role_permissions_allowed(session, role_id=role_id, permissions=permissions)
+    except AccountGuardError as exc:
+        raise RolePermissionError(exc.status_code, exc.detail) from None
+
     from src.models import RolePermission as RolePermissionORM
 
     await session.execute(delete(RolePermissionORM).where(RolePermissionORM.role_id == role_id))

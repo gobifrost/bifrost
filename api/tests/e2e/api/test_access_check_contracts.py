@@ -117,9 +117,6 @@ def world(e2e_client, platform_admin, org1, async_session_factory):
             json={
                 "name": f"ac_admin_{tag}",
                 "organization_id": None,
-                "policies": {
-                    "policies": [{"name": "admins", "actions": ["create", "read"], "when": {"user": "is_platform_admin"}}]
-                },
             },
         ),
     )
@@ -181,7 +178,8 @@ def test_a_role_policy_follows_the_run_users_own_roles(world) -> None:
     assert customer == []
 
 
-def test_a_full_run_passes_an_admin_only_global_table(world) -> None:
+def test_a_full_run_keeps_the_default_admin_policy_authority(world) -> None:
+    assert world["runs"]["customer"]["result"]["admin_table"] == "inserted"
     [check] = _policy(_run_checks(world, "customer"), world["admin_table"])
 
     assert (check["outcome"], check["details"]["enforced"]) == ("success", False)

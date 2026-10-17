@@ -78,10 +78,7 @@ def _token_from_context(context: "MCPContext") -> str:
         "name": context.user_name or "",
         "is_superuser": bool(context.is_platform_admin),
         "is_provider_org": bool(getattr(context, "is_provider_org", False)),
-        # OPEN-F: carry is_external from the MCP context. The real user-token
-        # mints (mcp_server/auth.py) stamp this via resolve_external_claim;
-        # this fallback mint (executor / test contexts) is the one site that
-        # dropped it, re-opening the global tier to external MCP principals.
+        # Preserve the account flag exactly as the normal sign-in paths do.
         "is_external": bool(getattr(context, "is_external", False)),
         "org_id": str(context.org_id) if context.org_id else None,
     }
@@ -89,6 +86,8 @@ def _token_from_context(context: "MCPContext") -> str:
         # Run lineage of the agent run (attribution and access checks only).
         claims["engine_run_user_id"] = str(context.run_user_id)
         claims["engine_started_by_user_id"] = str(context.run_user_id)
+    if context.agent_run_id:
+        claims["engine_agent_run_id"] = str(context.agent_run_id)
     return create_access_token(data=claims)
 
 

@@ -2093,6 +2093,7 @@ class AgentExecutor:
                     else None
                 ),
                 is_platform_admin=user.is_superuser if user else False,
+                is_external=user.is_external if user else False,
                 user_email=user.email if user else "",
                 user_name=user.name if user else "",
                 run_user_id=self._run_user_id,

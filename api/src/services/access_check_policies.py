@@ -2,9 +2,10 @@
 
 Today a run's table and file calls are evaluated against the execution
 credential. The model evaluates them against the run's user: their own roles
-and claims, with the admin predicate true when the user is a Platform Admin
-or the workflow is Full. Each helper notes the model's outcome, today's, and
-what the run user is missing (roles named by ``has_role``, claims that
+and claims. The user admin fact is true only for the built-in Platform Admin
+role; a Full workflow materializes its configured power separately for the
+canonical policy authority. Each helper notes the model's outcome, today's,
+and what the run user is missing (roles named by ``has_role``, claims that
 resolved to nothing). Helpers do nothing outside a run's request (a person's
 own policies already decide for them) and never raise into it.
 """
@@ -20,12 +21,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared import access_checks
+from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
 from shared.claims.preresolve import preresolve_for_policies
 from shared.claims.registry import referenced_claim_names
 from shared.policies.probe import evaluate_action
 from shared.role_cache import get_user_roles
 from src.core.principal import UserPrincipal
 from src.models.contracts.policies import TablePolicies
+from src.models.orm.executions import Execution
 from src.models.contracts.workflow_permissions import WorkflowPermissionMode
 from src.models.orm.organizations import Organization
 from src.models.orm.tables import Table
@@ -36,13 +39,18 @@ _PRINCIPAL = "run_user_principal"
 
 
 async def load_policy_principal(
-    db: AsyncSession, run_user_id: UUID, workflow_id: UUID | None
+    db: AsyncSession, run_user_id: UUID, execution_id: UUID | None
 ) -> UserPrincipal | None:
-    """``run_user_id`` as a policy principal; None when the user is gone."""
+    """``run_user_id`` as a policy principal; None when the user is gone.
+
+    Execution policy authority comes from the execution row, not the token's
+    workflow lineage claim. A missing execution has no workflow authority.
+    """
     run_user = await load_run_user(db, run_user_id)
     if run_user is None:
         return None
-    powers = await load_powers(db, workflow_id)
+    execution = None if execution_id is None else await db.get(Execution, execution_id)
+    powers = None if execution is None else await load_powers(db, execution.workflow_id)
     email, is_external, is_provider = (
         await db.execute(
             select(User.email, User.is_external, Organization.is_provider)
@@ -55,12 +63,17 @@ async def load_policy_principal(
         user_id=run_user.user_id,
         email=email,
         organization_id=run_user.home,
-        # The policy admin predicate: a Platform Admin, or a Full workflow.
-        is_superuser=run_user.is_platform_admin or powers.mode is WorkflowPermissionMode.FULL,
+        # The policy admin predicate is role membership, never workflow powers.
+        is_superuser=PLATFORM_ADMIN_ROLE_ID in role_ids,
         is_provider_org=bool(is_provider),
         is_external=bool(is_external),
         role_ids=list(role_ids),
         role_names=list(role_names),
+        policy_authorities=(
+            frozenset({"platform_admin"})
+            if powers is not None and powers.mode is WorkflowPermissionMode.FULL
+            else frozenset()
+        ),
     )
 
 
@@ -73,7 +86,7 @@ async def _run_user_principal(db: AsyncSession, collector: access_checks.Collect
     principal = (
         None
         if collector.run_user_id is None
-        else await load_policy_principal(db, collector.run_user_id, collector.workflow_id)
+        else await load_policy_principal(db, collector.run_user_id, collector.execution_id)
     )
     collector.cache[_PRINCIPAL] = principal
     return principal

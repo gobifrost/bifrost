@@ -4,11 +4,12 @@ grant ceiling, and role permission editing."""
 
 from __future__ import annotations
 
+import asyncio
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 
 from shared.builtin_roles import (
     DECRYPTION_ROLE_ID,
@@ -59,7 +60,9 @@ async def _org(db_session):
     return org
 
 
-async def _user(db_session, org_id: UUID | None, *, admin: bool = False):
+async def _user(
+    db_session, org_id: UUID | None, *, admin: bool = False, external: bool = False
+):
     from shared.sdk_users import set_platform_admin
     from src.models import User as UserORM
 
@@ -70,6 +73,7 @@ async def _user(db_session, org_id: UUID | None, *, admin: bool = False):
         organization_id=org_id,
         name="Before",
         is_superuser=admin,
+        is_external=external,
     )
     db_session.add(user)
     await db_session.flush()
@@ -209,6 +213,7 @@ class TestUpdateUser:
         org = await _org(db_session)
         custom = await _role(db_session)
         user = await _user(db_session, org.id, admin=True)
+        await _user(db_session, PROVIDER_ORG_ID, admin=True)
         user.base_role_id = custom.id
         await db_session.flush()
         updated = await self._update(db_session, admin_caller(), user, is_superuser=False)
@@ -231,6 +236,95 @@ class TestUpdateUser:
         assert updated.is_superuser is True
         assert user.base_role_id == USER_ROLE_ID
         assert await _boundaries(db_session, user.id, PLATFORM_ADMIN_ROLE_ID) == {("platform", None)}
+
+    async def test_last_active_platform_admin_cannot_be_demoted_or_deactivated(self, db_session) -> None:
+        from shared.sdk_users import UserServiceError
+
+        admin = await _user(db_session, PROVIDER_ORG_ID, admin=True)
+        for fields in ({"is_superuser": False}, {"is_active": False}):
+            with pytest.raises(UserServiceError) as exc_info:
+                await self._update(db_session, admin_caller(), admin, **fields)
+            assert exc_info.value.status_code == 409
+            assert "active person" in exc_info.value.detail
+
+    async def test_external_user_cannot_become_privileged(self, db_session) -> None:
+        from shared.sdk_users import UserServiceError
+        from src.models import UserRole
+
+        org = await _org(db_session)
+        user = await _user(db_session, org.id)
+        role = await _role(db_session, "configs.readwrite")
+        db_session.add(UserRole(user_id=user.id, role_id=role.id, assigned_by="test"))
+        await db_session.flush()
+
+        with pytest.raises(UserServiceError) as exc_info:
+            await self._update(db_session, admin_caller(), user, is_external=True)
+        assert exc_info.value.status_code == 409
+        assert "External users" in exc_info.value.detail
+
+    async def test_user_cannot_become_external_and_platform_admin_in_one_update(self, db_session) -> None:
+        from shared.sdk_users import UserServiceError
+
+        user = await _user(db_session, PROVIDER_ORG_ID)
+        with pytest.raises(UserServiceError) as exc_info:
+            await self._update(
+                db_session,
+                admin_caller(),
+                user,
+                is_external=True,
+                is_superuser=True,
+            )
+        assert exc_info.value.status_code == 409
+        assert user.is_external is False
+        assert user.is_superuser is False
+
+    async def test_concurrent_deactivation_and_role_removal_keep_an_active_platform_admin(
+        self, db_session, async_session_factory
+    ) -> None:
+        from src.models import User as UserORM
+        from src.models import UserRole
+        from shared.account_guards import (
+            AccountGuardError,
+            refuse_last_active_platform_admin_removal,
+        )
+
+        first = await _user(db_session, PROVIDER_ORG_ID, admin=True)
+        second = await _user(db_session, PROVIDER_ORG_ID, admin=True)
+        await db_session.commit()
+
+        try:
+            async with async_session_factory() as deactivate_session, async_session_factory() as remove_session:
+                await refuse_last_active_platform_admin_removal(deactivate_session, {first.id})
+                await deactivate_session.execute(
+                    update(UserORM).where(UserORM.id == first.id).values(is_active=False)
+                )
+                await deactivate_session.flush()
+
+                async def remove_second_admin() -> str | None:
+                    try:
+                        await refuse_last_active_platform_admin_removal(remove_session, {second.id})
+                    except AccountGuardError as exc:
+                        await remove_session.rollback()
+                        return exc.detail
+                    await remove_session.execute(
+                        delete(UserRole).where(
+                            UserRole.user_id == second.id,
+                            UserRole.role_id == PLATFORM_ADMIN_ROLE_ID,
+                        )
+                    )
+                    await remove_session.commit()
+                    return None
+
+                removal = asyncio.create_task(remove_second_admin())
+                await asyncio.sleep(0)
+                assert not removal.done()
+                await deactivate_session.commit()
+                assert await removal == "At least one active person must hold the Platform Admin role"
+        finally:
+            async with async_session_factory() as cleanup:
+                await cleanup.execute(delete(UserRole).where(UserRole.user_id.in_([first.id, second.id])))
+                await cleanup.execute(delete(UserORM).where(UserORM.id.in_([first.id, second.id])))
+                await cleanup.commit()
 
 
 class TestBulk:
@@ -288,6 +382,43 @@ class TestBulk:
             BulkUserOperation(user_ids=[operator.id], operation="move_org", organization_id=None),
         )
         assert [f.reason for f in result.failed] == [OPERATOR_MOVE_MESSAGE]
+
+    async def test_last_active_platform_admin_cannot_be_bulk_deactivated(self, db_session) -> None:
+        from shared.sdk_users import UserServiceError, bulk_update_users
+        from src.models import BulkUserOperation
+
+        admin = await _user(db_session, PROVIDER_ORG_ID, admin=True)
+        with pytest.raises(UserServiceError) as exc_info:
+            await bulk_update_users(
+                db_session,
+                admin_caller(),
+                BulkUserOperation(user_ids=[admin.id], operation="set_active", is_active=False),
+            )
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail == "At least one active person must hold the Platform Admin role"
+
+    async def test_bulk_role_grant_checks_the_current_external_flag(self, db_session) -> None:
+        from shared.sdk_users import bulk_update_users
+        from src.models import BulkUserOperation, User as UserORM
+
+        user = await _user(db_session, PROVIDER_ORG_ID)
+        role = await _role(db_session, "configs.readwrite")
+        # Preserve the loaded account snapshot while the database reflects an
+        # external transition before the role writer takes its lock.
+        await db_session.execute(
+            update(UserORM).where(UserORM.id == user.id).values(is_external=True)
+            .execution_options(synchronize_session=False)
+        )
+        assert user.is_external is False
+        result = await bulk_update_users(
+            db_session, admin_caller(),
+            BulkUserOperation(user_ids=[user.id], operation="replace_roles", role_ids=[role.id]),
+        )
+        assert result.succeeded == []
+        assert [failure.reason for failure in result.failed] == [
+            "External users cannot hold privileged roles"
+        ]
+        assert await _boundaries(db_session, user.id, role.id) == set()
 
     async def test_no_reach_is_refused_outright(self, db_session) -> None:
         from shared.sdk_users import bulk_update_users
@@ -421,6 +552,152 @@ class TestRolePermissions:
         assert described.is_builtin
         assert not any(item.editable for item in described.permissions + described.identity_permissions)
 
+    async def test_role_with_external_holders_cannot_gain_a_privileged_permission(self, db_session) -> None:
+        from src.models import UserRole
+        from src.services.role_permissions import RolePermissionError, replace_identity_permissions
+
+        org = await _org(db_session)
+        external = await _user(db_session, org.id, external=True)
+        role = await _role(db_session)
+        db_session.add(UserRole(user_id=external.id, role_id=role.id, assigned_by="test"))
+        await db_session.flush()
+
+        with pytest.raises(RolePermissionError) as exc_info:
+            await replace_identity_permissions(
+                db_session, role_id=role.id, permissions=["users.readwrite"]
+            )
+        assert exc_info.value.status_code == 409
+        assert "External users" in exc_info.value.detail
+
+    async def test_role_with_external_base_holder_cannot_gain_a_privileged_permission(self, db_session) -> None:
+        from shared.sdk_users import set_user_base_role
+        from src.services.role_permissions import RolePermissionError, replace_identity_permissions
+
+        org = await _org(db_session)
+        external = await _user(db_session, org.id, external=True)
+        role = await _role(db_session)
+        await set_user_base_role(db_session, external, role.id)
+
+        with pytest.raises(RolePermissionError) as exc_info:
+            await replace_identity_permissions(
+                db_session, role_id=role.id, permissions=["users.readwrite"]
+            )
+        assert exc_info.value.status_code == 409
+
+    async def test_permission_elevation_rechecks_an_external_transition_that_commits_while_waiting_for_the_role_lock(
+        self, db_session, async_session_factory, monkeypatch
+    ) -> None:
+        import shared.account_guards as account_guards
+        from shared.sdk_users import set_user_base_role
+        from src.models import Role as RoleORM
+        from src.models import RolePermission, UserRole
+        from src.models import User as UserORM
+        from src.models.orm.organizations import Organization
+        from src.services.role_permissions import RolePermissionError, set_role_permissions
+
+        org = await _org(db_session)
+        user = await _user(db_session, org.id)
+        role = await _role(db_session)
+        await set_user_base_role(db_session, user, role.id)
+        await db_session.commit()
+
+        try:
+            async with async_session_factory() as external_session, async_session_factory() as permission_session:
+                await account_guards.assert_user_can_be_external(external_session, user.id)
+                await external_session.execute(
+                    update(UserORM).where(UserORM.id == user.id).values(is_external=True)
+                )
+                await external_session.flush()
+
+                lock_attempted = asyncio.Event()
+                original_lock = account_guards._lock_roles
+
+                async def observe_lock_attempt(session, role_ids):
+                    if session is permission_session:
+                        lock_attempted.set()
+                    await original_lock(session, role_ids)
+
+                monkeypatch.setattr(account_guards, "_lock_roles", observe_lock_attempt)
+                elevation = asyncio.create_task(
+                    set_role_permissions(
+                        permission_session,
+                        role_id=role.id,
+                        permissions=frozenset({"users.readwrite"}),
+                    )
+                )
+                await lock_attempted.wait()
+                assert not elevation.done()
+                await external_session.commit()
+
+                with pytest.raises(RolePermissionError) as exc_info:
+                    await elevation
+                assert exc_info.value.status_code == 409
+        finally:
+            async with async_session_factory() as cleanup:
+                await cleanup.execute(delete(UserRole).where(UserRole.user_id == user.id))
+                await cleanup.execute(delete(UserORM).where(UserORM.id == user.id))
+                await cleanup.execute(delete(RolePermission).where(RolePermission.role_id == role.id))
+                await cleanup.execute(delete(RoleORM).where(RoleORM.id == role.id))
+                await cleanup.execute(delete(Organization).where(Organization.id == org.id))
+                await cleanup.commit()
+
+    async def test_permission_elevation_rechecks_an_external_role_assignment_that_commits_while_waiting_for_the_role_lock(
+        self, db_session, async_session_factory, monkeypatch
+    ) -> None:
+        import shared.account_guards as account_guards
+        from src.models import Role as RoleORM
+        from src.models import RolePermission, UserRole
+        from src.models import User as UserORM
+        from src.models.orm.organizations import Organization
+        from src.services.role_permissions import RolePermissionError, set_role_permissions
+
+        org = await _org(db_session)
+        user = await _user(db_session, org.id, external=True)
+        role = await _role(db_session)
+        await db_session.commit()
+
+        try:
+            async with async_session_factory() as assignment_session, async_session_factory() as permission_session:
+                await account_guards.assert_role_assignment_allowed_for_user(
+                    assignment_session, user_id=user.id, role_id=role.id
+                )
+                assignment_session.add(
+                    UserRole(user_id=user.id, role_id=role.id, assigned_by="test")
+                )
+                await assignment_session.flush()
+
+                lock_attempted = asyncio.Event()
+                original_lock = account_guards._lock_roles
+
+                async def observe_lock_attempt(session, role_ids):
+                    if session is permission_session:
+                        lock_attempted.set()
+                    await original_lock(session, role_ids)
+
+                monkeypatch.setattr(account_guards, "_lock_roles", observe_lock_attempt)
+                elevation = asyncio.create_task(
+                    set_role_permissions(
+                        permission_session,
+                        role_id=role.id,
+                        permissions=frozenset({"users.readwrite"}),
+                    )
+                )
+                await lock_attempted.wait()
+                assert not elevation.done()
+                await assignment_session.commit()
+
+                with pytest.raises(RolePermissionError) as exc_info:
+                    await elevation
+                assert exc_info.value.status_code == 409
+        finally:
+            async with async_session_factory() as cleanup:
+                await cleanup.execute(delete(UserRole).where(UserRole.user_id == user.id))
+                await cleanup.execute(delete(UserORM).where(UserORM.id == user.id))
+                await cleanup.execute(delete(RolePermission).where(RolePermission.role_id == role.id))
+                await cleanup.execute(delete(RoleORM).where(RoleORM.id == role.id))
+                await cleanup.execute(delete(Organization).where(Organization.id == org.id))
+                await cleanup.commit()
+
 
 class TestRoleAssignments:
     async def _put(self, db_session, caller, user, base=None, additional=()):
@@ -449,6 +726,21 @@ class TestRoleAssignments:
         assert await _boundaries(db_session, user.id, PLATFORM_OPERATOR_ROLE_ID) == {
             ("managed_organizations", None)
         }
+
+    async def test_external_user_cannot_receive_a_privileged_role(self, db_session) -> None:
+        from src.services.user_role_assignments import RoleAssignmentError
+
+        external = await _user(db_session, PROVIDER_ORG_ID, external=True)
+        privileged = await _role(db_session, "configs.readwrite")
+        with pytest.raises(RoleAssignmentError) as exc_info:
+            await self._put(
+                db_session,
+                admin_caller(),
+                external,
+                additional=[{"role_id": privileged.id}],
+            )
+        assert exc_info.value.status_code == 409
+        assert "External users" in exc_info.value.detail
 
     async def test_assignable_roles_say_where_each_may_apply(self, db_session) -> None:
         from src.services.user_role_assignments import get_role_assignments
@@ -654,6 +946,7 @@ class TestRoleAssignments:
 
     async def test_admin_grants_and_removes_platform_admin_as_an_additional_role(self, db_session) -> None:
         user = await _user(db_session, PROVIDER_ORG_ID)
+        await _user(db_session, PROVIDER_ORG_ID, admin=True)
         admin_item = {"role_id": PLATFORM_ADMIN_ROLE_ID}
 
         response = await self._put(db_session, admin_caller(), user, additional=[admin_item])

@@ -344,7 +344,7 @@ function isPolicyRuleRef(
 }
 
 function humanizeRuleName(name: string) {
-	if (name === "admin_bypass") return "Administrator Access";
+	if (name === "admin_bypass") return "Platform Admin Access";
 	return name
 		.split(/[_-]+/)
 		.filter(Boolean)

@@ -1,20 +1,7 @@
-"""
-External-user access rules: claim mint + tier-gate tests.
+"""Provider claim resolution and external access-level gates.
 
-Two things live here:
-
-1. ``resolve_external_claim`` — the token-mint helper that neutralizes the
-   raw ``User.is_external`` flag for bypass principals
-   (``is_platform_admin OR is_provider_org`` — the canonical C2 rule).
-2. The access-level gates that live OUTSIDE ``OrgScopedRepository``: the
-   agents-router tool-attach validation and the MCP agent access check.
-   The rule: ``authenticated`` ("Everyone except external users") does not
-   grant to externals; ``everyone`` does; ``role_based`` grants externals
-   exactly what it grants anyone with the role.
-
-``is_external`` deliberately plays NO part in org cascade scoping — the
-cascade is pure org→global for every principal (see
-api/src/repositories/README.md). Only the access-level check is external-aware.
+External account flags are preserved at token mint; authenticated resources
+exclude external callers unless explicitly shared by role.
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -23,14 +10,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from shared.external_access import (
-    resolve_external_claim,
-    resolve_provider_org_claim,
-)
-
-# =============================================================================
-# 1. resolve_external_claim (token mint)
-# =============================================================================
+from shared.external_access import resolve_provider_org_claim
 
 
 def _user(is_external=True, is_superuser=False, organization_id=...):
@@ -41,43 +21,12 @@ def _user(is_external=True, is_superuser=False, organization_id=...):
     return u
 
 
-class TestResolveExternalClaim:
-    async def test_non_external_user_is_false(self):
-        db = AsyncMock()
-        assert await resolve_external_claim(db, _user(is_external=False)) is False
-        db.scalar.assert_not_awaited()
-
-    async def test_platform_admin_is_neutralized(self):
-        db = AsyncMock()
-        assert (
-            await resolve_external_claim(db, _user(is_superuser=True)) is False
-        )
-        db.scalar.assert_not_awaited()
-
-    async def test_provider_org_member_is_neutralized(self):
-        db = AsyncMock()
-        db.scalar.return_value = True  # org.is_provider
-        assert await resolve_external_claim(db, _user()) is False
-
-    async def test_regular_org_external_is_true(self):
-        db = AsyncMock()
-        db.scalar.return_value = False
-        assert await resolve_external_claim(db, _user()) is True
-
-    async def test_orgless_external_is_false(self):
-        db = AsyncMock()
-        assert (
-            await resolve_external_claim(db, _user(organization_id=None)) is False
-        )
-        db.scalar.assert_not_awaited()
-
-
 class TestResolveProviderOrgClaim:
     """``resolve_provider_org_claim`` — the is_provider_org token-mint helper.
 
     Returns True iff the user's org has ``is_provider`` set. Org-less / system
-    users are False (no org row → no provider membership). Mirrors the single
-    indexed SELECT of ``resolve_external_claim``.
+    users are False (no org row → no provider membership). Uses a single
+    indexed organization lookup.
     """
 
     async def test_provider_org_member_is_true(self):

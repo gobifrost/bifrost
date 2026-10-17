@@ -77,10 +77,10 @@ itself has been resolved and RBAC-checked.
 
 ### External users live at gate 3 only
 
-`User.is_external` marks portal/guest principals. The flag is neutralized at
-token mint for bypass callers (`shared/external_access.py`:
-`is_platform_admin OR is_provider_org` → never externally restricted) and
-affects EXACTLY ONE thing: the access-level check at gate 3.
+`User.is_external` marks portal/guest principals. Token mint preserves the
+account flag exactly, including for provider-organization members. External
+accounts cannot hold privileged roles. The flag affects the access-level
+check at gate 3.
 
 - `access_level="authenticated"` is **"Everyone except external users"** —
   it does not grant to an external principal, org-scoped or global.

@@ -209,3 +209,24 @@ class TestNonPermissionClasses:
         )
         assert decide(external, _perm_entry("agents.readbasic"), HOME).allowed
         assert not decide(external, _perm_entry("agents.readwrite"), HOME).allowed
+
+
+class TestPolicyDataReach:
+    def test_managed_organization_boundary_reaches_cross_org_policy_data(self) -> None:
+        grant = RoleGrant(
+            uuid4(),
+            frozenset(),
+            (Boundary(BoundaryKind.MANAGED_ORGANIZATIONS),),
+        )
+        entry = _entry(AccessClass.TABLE_POLICY)
+
+        decision = decide(_ctx(grant, home=PROVIDER_ORG_ID), entry, cross_org(CUSTOMER_A))
+
+        assert decision.allowed
+
+    def test_policy_data_stays_denied_outside_role_reach(self) -> None:
+        entry = _entry(AccessClass.TABLE_POLICY)
+
+        decision = decide(_ctx(home=PROVIDER_ORG_ID), entry, cross_org(CUSTOMER_A))
+
+        assert (decision.allowed, decision.rule) == (False, "denied:beyond_own_org_requires_role")

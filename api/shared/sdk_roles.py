@@ -672,13 +672,16 @@ async def assign_users_to_role(
             check_boundaries(caller, reach, role, boundaries)
         except RoleAssignmentError as exc:
             raise RoleServiceError(exc.status_code, exc.detail) from None
-        await insert_assignment(
-            session,
-            user_id=user_uuid,
-            role_id=role_id,
-            boundaries=boundaries,
-            assigned_by=caller.principal.email,
-        )
+        try:
+            await insert_assignment(
+                session,
+                user_id=user_uuid,
+                role_id=role_id,
+                boundaries=boundaries,
+                assigned_by=caller.principal.email,
+            )
+        except RoleAssignmentError as exc:
+            raise RoleServiceError(exc.status_code, exc.detail) from None
         affected_user_ids.append(user_uuid)
 
     await session.flush()
@@ -721,6 +724,7 @@ async def remove_users_from_role(
     """
     from src.core.cache import invalidate_role_users
     from shared.role_cache import invalidate_user as invalidate_user_role_cache
+    from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
     from src.models import UserRole as UserRoleORM
     from src.services.authorization.enforce import operation_reach
 
@@ -739,6 +743,17 @@ async def remove_users_from_role(
     role = await _load_role_info(session, role_id)
     for user_id in holders:
         await _require_assignment_target(session, caller, operation, role, user_id)
+
+    if role_id == PLATFORM_ADMIN_ROLE_ID:
+        from shared.account_guards import (
+            AccountGuardError,
+            refuse_last_active_platform_admin_removal,
+        )
+
+        try:
+            await refuse_last_active_platform_admin_removal(session, holders)
+        except AccountGuardError as exc:
+            raise RoleServiceError(exc.status_code, exc.detail) from None
 
     await session.execute(
         delete(UserRoleORM).where(

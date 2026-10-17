@@ -13841,7 +13841,7 @@ export interface components {
             operation_id?: string | null;
             /**
              * Surface
-             * @description Transport the request came in over: 'web', 'cli', 'mcp', 'embed', 'workflow', 'service'
+             * @description Transport the request came in over: 'web', 'cli', 'mcp', 'embed', 'workflow', 'agent', 'service'
              */
             surface?: string | null;
             /**

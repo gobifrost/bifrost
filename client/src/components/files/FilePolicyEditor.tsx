@@ -491,10 +491,17 @@ function summarizePredicate(when: unknown) {
 	if (when === null || when === undefined) return "Applies to everyone.";
 	if (
 		typeof when === "object" &&
+		"authority" in when &&
+		(when as { authority?: unknown }).authority === "platform_admin"
+	) {
+		return "Requires Platform Admin Access.";
+	}
+	if (
+		typeof when === "object" &&
 		"user" in when &&
 		(when as { user?: unknown }).user === "is_platform_admin"
 	) {
-		return "Applies to platform admins.";
+		return "Requires the Platform Admin role.";
 	}
 	if (
 		typeof when === "object" &&
@@ -635,7 +642,7 @@ function ReadablePolicyRules({
 }
 
 function readableRuleName(name: string) {
-	if (name === "admin_bypass") return "Administrator Access";
+	if (name === "admin_bypass") return "Platform Admin Access";
 	return name
 		.split(/[_-]+/)
 		.filter(Boolean)

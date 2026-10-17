@@ -109,7 +109,7 @@ async def rerun(db: AsyncSession, row: AuditLog) -> tuple[Trace | None, NowUnava
             return None, "rows_not_stored"
         if "solution_id" not in facts:
             return None, "solution_not_recorded"
-        principal = await load_policy_principal(db, row.user_id, workflow_id)
+        principal = await load_policy_principal(db, row.user_id, row.execution_id)
         if principal is None:
             return None, "run_user_missing"
         organization_id = note.target if isinstance(note.target, UUID) else None

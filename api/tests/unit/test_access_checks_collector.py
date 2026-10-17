@@ -143,5 +143,27 @@ def test_a_persons_own_bridge_call_is_collected_as_theirs() -> None:
     try:
         collector = access_checks.current()
         assert collector is not None and collector.direct and collector.run_user_id == person
+        assert collector.is_run is True
+    finally:
+        access_checks.stop_collecting(token)
+
+
+def test_agent_attribution_survives_renew_without_changing_the_caller() -> None:
+    person, run = uuid4(), uuid4()
+    token = access_checks.start_collecting(
+        {"sub": str(person), "engine_run_user_id": str(person), "engine_agent_run_id": str(run)},
+        surface="mcp",
+    )
+    try:
+        first = access_checks.renew()
+        fresh = access_checks.current()
+        assert first is not None and fresh is not None
+        for collector in (first, fresh):
+            assert collector.run_user_id == person
+            assert collector.direct is True
+            assert collector.is_run is True
+            assert collector.execution_id is None
+            assert collector.surface == "agent"
+            assert collector.agent_run_id == run
     finally:
         access_checks.stop_collecting(token)

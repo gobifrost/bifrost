@@ -15,7 +15,8 @@ unlocks more) and every launch of a workflow, agent or AI also notes the named
 permission that gates it (``note_power``, ``note_launch``). A person's own
 request is collected too, for those notes, the organizations it acts in and
 ``run_as``: their own roles decide, and only would-deny decisions are written,
-except ``run_as``, which is enforced and written in both outcomes.
+except ``run_as``, which is enforced and written in both outcomes, and
+permission passes for non-admin people during observation.
 
 FastAPI-free: imported by shared resolvers that worker closures load.
 """
@@ -76,6 +77,11 @@ class Collector:
     # A person acting directly (no run): only ``_DIRECT_KINDS`` are kept,
     # judged against their own roles.
     direct: bool = False
+    # Request attribution only; an agent bridge still acts directly as its user.
+    surface: str | None = None
+    agent_run_id: UUID | None = None
+    # Some chat bridges have run lineage without a persistent AgentRun.
+    is_run: bool = False
 
 
 _current: ContextVar[Collector | None] = ContextVar("access_check_collector", default=None)
@@ -85,7 +91,9 @@ def _uuid(value: Any) -> UUID | None:
     return UUID(str(value)) if value else None
 
 
-def start_collecting(payload: dict[str, Any] | None) -> Token[Collector | None] | None:
+def start_collecting(
+    payload: dict[str, Any] | None, *, surface: str | None = None
+) -> Token[Collector | None] | None:
     """Start a collector for an authenticated request; None for anyone else.
 
     A run's request: the engine token (superuser with an execution id, as
@@ -105,12 +113,20 @@ def start_collecting(payload: dict[str, Any] | None) -> Token[Collector | None] 
     run_user = payload.get("engine_run_user_id")
     subject = payload.get("sub")
     if engine or (run_user and run_user != subject):
-        return collect_run(
+        token = collect_run(
             _uuid(payload.get("engine_execution_id")) if engine else None,
             _uuid(run_user),
             _uuid(payload.get("engine_workflow_id")),
         )
-    return collect_person(_uuid(subject))
+    else:
+        token = collect_person(_uuid(subject))
+    if token is not None:
+        collector = _current.get()
+        assert collector is not None
+        collector.is_run = engine or bool(run_user)
+        collector.agent_run_id = _uuid(payload.get("engine_agent_run_id"))
+        collector.surface = "agent" if collector.agent_run_id else surface
+    return token
 
 
 def collect_run(
@@ -118,7 +134,7 @@ def collect_run(
 ) -> Token[Collector | None]:
     """Start a collector for a run's request: every note kind, judged
     against ``run_user_id`` with ``workflow_id``'s powers."""
-    return _current.set(Collector(execution_id=execution_id, run_user_id=run_user_id, workflow_id=workflow_id))
+    return _current.set(Collector(execution_id=execution_id, run_user_id=run_user_id, workflow_id=workflow_id, is_run=True))
 
 
 def collect_person(user_id: UUID | None) -> Token[Collector | None] | None:
@@ -151,6 +167,9 @@ def renew() -> Collector | None:
             run_user_id=collector.run_user_id,
             workflow_id=collector.workflow_id,
             direct=collector.direct,
+            surface=collector.surface,
+            agent_run_id=collector.agent_run_id,
+            is_run=collector.is_run,
         )
     )
     return collector

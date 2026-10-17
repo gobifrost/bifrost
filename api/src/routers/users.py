@@ -165,9 +165,12 @@ async def bulk_update_users(
     db: DbSession,
 ) -> BulkUserResponse:
     """Apply a single bulk operation across N users in one transaction."""
-    from shared.sdk_users import bulk_update_users as bulk_update_users_service
+    from shared.sdk_users import UserServiceError, bulk_update_users as bulk_update_users_service
 
-    return await bulk_update_users_service(db, await load_caller(db, actor), request)
+    try:
+        return await bulk_update_users_service(db, await load_caller(db, actor), request)
+    except UserServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
 
 
 @router.post(
