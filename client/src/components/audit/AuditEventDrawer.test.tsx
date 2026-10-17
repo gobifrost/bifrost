@@ -146,7 +146,12 @@ describe("AuditEventDrawer", () => {
 		renderDrawer(accessCheck);
 
 		const dialog = screen.getByRole("dialog", { name: "Access Check" });
-		expect(field("Action")).toHaveTextContent("access.check");
+		expect(within(dialog).getAllByRole("term")[0]).toHaveTextContent(
+			"Organization",
+		);
+		expect(
+			within(dialog).queryByText("Action", { selector: "dt" }),
+		).not.toBeInTheDocument();
 		expect(field("Outcome")).toHaveTextContent("success");
 		expect(field("Organization")).toHaveTextContent("Fabrikam");
 		expect(field("Resource")).toHaveTextContent("Workflow or Agent Access");

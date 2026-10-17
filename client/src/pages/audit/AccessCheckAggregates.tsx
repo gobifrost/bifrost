@@ -1,5 +1,4 @@
-import { Fragment, useId, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 
 import { RunUserLabel } from "@/components/audit/RunUserLabel";
 import {
@@ -23,13 +22,19 @@ function Organization({ entry }: { entry: AuditLogEntry }) {
 	);
 }
 
-function CheckSummary({ entry }: { entry: AuditLogEntry }) {
+function CheckSummary({
+	entry,
+	showWorkflow,
+}: {
+	entry: AuditLogEntry;
+	showWorkflow: boolean;
+}) {
 	return (
 		<div className="min-w-0 space-y-1 [overflow-wrap:anywhere]">
 			<p>
 				{checkResourceTitle(entry.resource_type ?? "", entry.details)}
 			</p>
-			{entry.workflow_name && (
+			{showWorkflow && entry.workflow_name && (
 				<p className="text-xs text-muted-foreground">
 					{entry.workflow_name}
 				</p>
@@ -65,30 +70,28 @@ function LastSeen({ group }: { group: AuditLogGroup }) {
 export function AccessCheckAggregates({
 	groups,
 	desktop,
-	renderChecks,
+	onOpen,
+	showWorkflow = true,
 }: {
 	groups: AuditLogGroup[];
 	desktop: boolean;
-	renderChecks: (group: AuditLogGroup) => ReactNode;
+	onOpen: (group: AuditLogGroup, opener: HTMLElement | null) => void;
+	showWorkflow?: boolean;
 }) {
-	const [expandedKey, setExpandedKey] = useState<string>();
-	const regionId = useId();
-	const toggle = (id: string) =>
-		setExpandedKey((current) => (current === id ? undefined : id));
-	const control = (group: AuditLogGroup, index: number) => {
-		const expanded = expandedKey === group.key!;
-		const Icon = expanded ? ChevronDown : ChevronRight;
+	const control = (group: AuditLogGroup) => {
 		return (
 			<button
 				type="button"
-				aria-expanded={expanded}
-				aria-controls={expanded ? `${regionId}-${index}` : undefined}
-				aria-label={`${expanded ? "Hide" : "Show"} ${group.count} Recorded ${group.count === 1 ? "Check" : "Checks"}`}
-				onClick={() => toggle(group.key!)}
+				aria-haspopup="dialog"
+				aria-label={`Open ${group.count} Recorded ${group.count === 1 ? "Check" : "Checks"}`}
+				onClick={(event) => {
+					event.stopPropagation();
+					onOpen(group, event.currentTarget);
+				}}
 				className="inline-flex min-h-11 min-w-11 items-center justify-end gap-2 rounded-[var(--bf-radius-control)] px-2 font-mono tabular-nums hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
 			>
 				<span>{group.count}</span>
-				<Icon aria-hidden="true" className="size-4" />
+				<ChevronRight aria-hidden="true" className="size-4" />
 			</button>
 		);
 	};
@@ -96,7 +99,7 @@ export function AccessCheckAggregates({
 	if (!desktop)
 		return (
 			<ol aria-label="Check Summaries" className="space-y-3">
-				{groups.map((group, index) => (
+				{groups.map((group) => (
 					<li
 						key={group.key!}
 						className="rounded-[var(--bf-radius-surface)] border bg-card text-sm"
@@ -114,7 +117,7 @@ export function AccessCheckAggregates({
 								<dt className="text-xs text-muted-foreground">
 									# Checks
 								</dt>
-								<dd>{control(group, index)}</dd>
+								<dd>{control(group)}</dd>
 							</div>
 							<div className="col-span-2">
 								<dt className="text-xs text-muted-foreground">
@@ -129,7 +132,10 @@ export function AccessCheckAggregates({
 									Resource Type
 								</dt>
 								<dd className="mt-1">
-									<CheckSummary entry={group.sample} />
+									<CheckSummary
+										entry={group.sample}
+										showWorkflow={showWorkflow}
+									/>
 								</dd>
 							</div>
 							<div>
@@ -141,16 +147,6 @@ export function AccessCheckAggregates({
 								</dd>
 							</div>
 						</dl>
-						{expandedKey === group.key! && (
-							<div
-								id={`${regionId}-${index}`}
-								role="region"
-								aria-label="Recorded Checks"
-								className="space-y-3 border-t p-3"
-							>
-								{renderChecks(group)}
-							</div>
-						)}
 					</li>
 				))}
 			</ol>
@@ -170,46 +166,36 @@ export function AccessCheckAggregates({
 				</DataTableRow>
 			</DataTableHeader>
 			<DataTableBody>
-				{groups.map((group, index) => (
-					<Fragment key={group.key!}>
-						<DataTableRow
-							clickable
-							onClick={() => toggle(group.key!)}
-						>
-							<DataTableCell>
-								<Organization entry={group.sample} />
-							</DataTableCell>
-							<DataTableCell>
-								<LastSeen group={group} />
-							</DataTableCell>
-							<DataTableCell>
-								<RunUserLabel entry={group.sample} />
-							</DataTableCell>
-							<DataTableCell>
-								<CheckSummary entry={group.sample} />
-							</DataTableCell>
-							<DataTableCell className="text-right">
-								{control(group, index)}
-							</DataTableCell>
-						</DataTableRow>
-						{expandedKey === group.key! && (
-							<DataTableRow>
-								<DataTableCell
-									colSpan={5}
-									className="bg-muted/30 p-3"
-								>
-									<div
-										id={`${regionId}-${index}`}
-										role="region"
-										aria-label="Recorded Checks"
-										className="space-y-3"
-									>
-										{renderChecks(group)}
-									</div>
-								</DataTableCell>
-							</DataTableRow>
-						)}
-					</Fragment>
+				{groups.map((group) => (
+					<DataTableRow
+						key={group.key!}
+						clickable
+						onClick={(event) =>
+							onOpen(
+								group,
+								event.currentTarget.querySelector("button"),
+							)
+						}
+					>
+						<DataTableCell>
+							<Organization entry={group.sample} />
+						</DataTableCell>
+						<DataTableCell>
+							<LastSeen group={group} />
+						</DataTableCell>
+						<DataTableCell>
+							<RunUserLabel entry={group.sample} />
+						</DataTableCell>
+						<DataTableCell>
+							<CheckSummary
+								entry={group.sample}
+								showWorkflow={showWorkflow}
+							/>
+						</DataTableCell>
+						<DataTableCell className="text-right">
+							{control(group)}
+						</DataTableCell>
+					</DataTableRow>
 				))}
 			</DataTableBody>
 		</DataTable>

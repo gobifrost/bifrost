@@ -185,21 +185,28 @@ describe("Sidebar structure", () => {
 		).not.toBeInTheDocument();
 	});
 
-	it("shows Access Checks only to holders of roleassignments.read", () => {
-		state.isPlatformAdmin = false;
-		state.authorization = summary(false, ["users.read"]);
-		const { unmount } = renderWithProviders(
+	it("consolidates auditing navigation without narrowing access checks", () => {
+		renderWithProviders(
 			<Sidebar
 				isMobileMenuOpen={false}
 				setIsMobileMenuOpen={vi.fn()}
 				isCollapsed={false}
 			/>,
 		);
+		expect(screen.getByRole("link", { name: "Auditing" })).toHaveAttribute(
+			"href",
+			"/audit",
+		);
+		expect(
+			screen.queryByRole("link", { name: "Audit Log" }),
+		).not.toBeInTheDocument();
 		expect(
 			screen.queryByRole("link", { name: "Access Checks" }),
 		).not.toBeInTheDocument();
-		unmount();
+	});
 
+	it("lands a permitted non-admin on access checks", () => {
+		state.isPlatformAdmin = false;
 		state.authorization = summary(false, ["roleassignments.read"]);
 		renderWithProviders(
 			<Sidebar
@@ -208,32 +215,29 @@ describe("Sidebar structure", () => {
 				isCollapsed={false}
 			/>,
 		);
-		expect(
-			screen.getByRole("link", { name: "Access Checks" }),
-		).toHaveAttribute("href", "/audit/access-checks");
-		expect(
-			screen.queryByRole("link", { name: "Audit Log" }),
-		).not.toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "Auditing" })).toHaveAttribute(
+			"href",
+			"/audit/access-checks",
+		);
 	});
 
-	it("marks only Access Checks current on its page, not the Audit Log", () => {
+	it.each([
+		["/audit", true],
+		["/audit/access-checks", true],
+	])("marks Auditing current on %s", (route) => {
 		renderWithProviders(
 			<Sidebar
 				isMobileMenuOpen={false}
 				setIsMobileMenuOpen={vi.fn()}
 				isCollapsed={false}
 			/>,
-			{ initialEntries: ["/audit/access-checks"] },
+			{ initialEntries: [route] },
 		);
-
-		expect(
-			screen.getByRole("link", { name: "Access Checks" }),
-		).toHaveAttribute("aria-current", "page");
-		expect(
-			screen.getByRole("link", { name: "Audit Log" }),
-		).not.toHaveAttribute("aria-current");
+		expect(screen.getByRole("link", { name: "Auditing" })).toHaveAttribute(
+			"aria-current",
+			"page",
+		);
 	});
-
 	it("shows a platform admin the whole Platform section", () => {
 		renderWithProviders(
 			<Sidebar
