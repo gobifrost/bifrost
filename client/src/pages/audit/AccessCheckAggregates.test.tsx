@@ -56,11 +56,7 @@ const groups: AuditLogGroup[] = [
 describe("AccessCheckAggregates", () => {
 	it("leads with organization and shows the recorded count and decision context", () => {
 		renderWithProviders(
-			<AccessCheckAggregates
-				groups={groups}
-				desktop
-				renderChecks={() => null}
-			/>,
+			<AccessCheckAggregates groups={groups} desktop onOpen={vi.fn()} />,
 		);
 		expect(
 			screen.getAllByRole("columnheader").map((cell) => cell.textContent),
@@ -79,103 +75,53 @@ describe("AccessCheckAggregates", () => {
 		expect(row).toHaveTextContent("Nightly Sync");
 		expect(row).toHaveTextContent("workflows.execute");
 		expect(
-			within(row).getByRole("button", { name: "Show 8 Recorded Checks" }),
-		).toHaveAttribute("aria-expanded", "false");
+			within(row).getByRole("button", { name: "Open 8 Recorded Checks" }),
+		).toHaveAttribute("aria-haspopup", "dialog");
 	});
 
-	it("loads only an opened summary and permits closing it with the keyboard", async () => {
-		const renderChecks = vi.fn((group: AuditLogGroup) => (
-			<p>Original {group.key}</p>
-		));
+	it("opens the inspector with the keyboard without inserting another table", async () => {
+		const onOpen = vi.fn();
 		const { user } = renderWithProviders(
-			<AccessCheckAggregates
-				groups={groups}
-				desktop
-				renderChecks={renderChecks}
-			/>,
+			<AccessCheckAggregates groups={groups} desktop onOpen={onOpen} />,
 		);
-		expect(renderChecks).not.toHaveBeenCalled();
+		expect(onOpen).not.toHaveBeenCalled();
 		const button = screen.getByRole("button", {
-			name: "Show 8 Recorded Checks",
+			name: "Open 8 Recorded Checks",
 		});
 		button.focus();
 		await user.keyboard("{Enter}");
-		expect(button).toHaveAttribute("aria-expanded", "true");
-		expect(
-			screen.getByRole("region", { name: "Recorded Checks" }),
-		).toHaveTextContent("Original first-window");
-		expect(renderChecks).toHaveBeenLastCalledWith(groups[0]);
-		await user.keyboard("{Enter}");
-		expect(
-			screen.queryByRole("region", { name: "Recorded Checks" }),
-		).not.toBeInTheDocument();
-		expect(button).toHaveFocus();
+		expect(onOpen).toHaveBeenCalledExactlyOnceWith(groups[0], button);
+		expect(screen.getAllByRole("table")).toHaveLength(1);
 	});
 
-	it("opens one summary at a time", async () => {
+	it("opens a clicked row and invokes its button only once", async () => {
+		const onOpen = vi.fn();
 		const { user } = renderWithProviders(
-			<AccessCheckAggregates
-				groups={groups}
-				desktop
-				renderChecks={(group) => <p>Original {group.key}</p>}
-			/>,
+			<AccessCheckAggregates groups={groups} desktop onOpen={onOpen} />,
 		);
+		const row = screen.getAllByRole("row")[1];
+		await user.click(within(row).getAllByRole("cell")[0]);
+		expect(onOpen).toHaveBeenCalledExactlyOnceWith(
+			groups[0],
+			within(row).getByRole("button"),
+		);
+		onOpen.mockClear();
 		await user.click(
-			screen.getByRole("button", { name: "Show 8 Recorded Checks" }),
+			screen.getByRole("button", { name: "Open 2 Recorded Checks" }),
 		);
-		await user.click(
-			screen.getByRole("button", { name: "Show 2 Recorded Checks" }),
+		expect(onOpen).toHaveBeenCalledExactlyOnceWith(
+			groups[1],
+			screen.getByRole("button", { name: "Open 2 Recorded Checks" }),
 		);
-		expect(
-			screen.getAllByRole("region", { name: "Recorded Checks" }),
-		).toHaveLength(1);
-		expect(
-			screen.getByRole("region", { name: "Recorded Checks" }),
-		).toHaveTextContent("Original second-window");
-		expect(
-			screen.getByRole("button", { name: "Show 8 Recorded Checks" }),
-		).toHaveAttribute("aria-expanded", "false");
 	});
 
-	it("keeps a summary open when its newest recorded check changes", async () => {
-		const renderChecks = (group: AuditLogGroup) => <p>{group.sample.id}</p>;
-		const { user, rerender } = renderWithProviders(
-			<AccessCheckAggregates
-				groups={[groups[0]]}
-				desktop
-				renderChecks={renderChecks}
-			/>,
-		);
-		await user.click(
-			screen.getByRole("button", { name: "Show 8 Recorded Checks" }),
-		);
-		rerender(
-			<AccessCheckAggregates
-				groups={[
-					{
-						...groups[0],
-						count: 9,
-						sample: { ...entry, id: "newest-check" },
-					},
-				]}
-				desktop
-				renderChecks={renderChecks}
-			/>,
-		);
-		expect(
-			screen.getByRole("button", { name: "Hide 9 Recorded Checks" }),
-		).toHaveAttribute("aria-expanded", "true");
-		expect(
-			screen.getByRole("region", { name: "Recorded Checks" }),
-		).toHaveTextContent("newest-check");
-	});
-
-	it("keeps organization first and the same disclosure on phones", async () => {
+	it("keeps organization first and opens the inspector on phones", async () => {
+		const onOpen = vi.fn();
 		const { user } = renderWithProviders(
 			<AccessCheckAggregates
 				groups={[groups[0]]}
 				desktop={false}
-				renderChecks={() => <p>Original Checks</p>}
+				onOpen={onOpen}
 			/>,
 		);
 		const record = within(
@@ -186,11 +132,13 @@ describe("AccessCheckAggregates", () => {
 		expect(terms[0].nextElementSibling).toHaveTextContent("Fabrikam");
 		await user.click(
 			within(record).getByRole("button", {
-				name: "Show 8 Recorded Checks",
+				name: "Open 8 Recorded Checks",
 			}),
 		);
-		expect(
-			screen.getByRole("region", { name: "Recorded Checks" }),
-		).toHaveTextContent("Original Checks");
+		expect(onOpen).toHaveBeenCalledExactlyOnceWith(
+			groups[0],
+			within(record).getByRole("button"),
+		);
+		expect(screen.queryByRole("table")).not.toBeInTheDocument();
 	});
 });

@@ -32,9 +32,26 @@ import { AuditOutcome } from "@/pages/audit/AuditOutcome";
 
 const ACCESS_CHECK = "access.check";
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({
+	label,
+	children,
+	compact = false,
+	className,
+}: {
+	label: string;
+	children: ReactNode;
+	compact?: boolean;
+	className?: string;
+}) {
 	return (
-		<div className="grid gap-1 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-3">
+		<div
+			className={cn(
+				compact
+					? "min-w-0 space-y-1"
+					: "grid gap-1 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-3",
+				className,
+			)}
+		>
 			<dt className="text-xs font-medium text-muted-foreground sm:pt-0.5">
 				{label}
 			</dt>
@@ -55,6 +72,46 @@ function Summary({ entry }: { entry: AuditLogEntry }) {
 			? checkResourceTitle(entry.resource_type, entry.details)
 			: `${entry.resource_type}${entry.resource_id ? ` / ${entry.resource_id}` : ""}`
 		: "—";
+	if (isCheck) {
+		return (
+			<dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:gap-x-8">
+				<Field label="Organization" compact>
+					{entry.actor.organization_name ??
+						(entry.actor.organization_id ? "—" : "Global")}
+				</Field>
+				<Field label="Actor" compact>
+					<RunUserLabel entry={entry} />
+				</Field>
+				<Field label="Time" compact>
+					<time dateTime={entry.timestamp}>
+						{new Date(entry.timestamp).toLocaleString()}
+					</time>
+				</Field>
+				<Field label="Outcome" compact>
+					<AuditOutcome outcome={entry.outcome} />
+				</Field>
+				{typeof workflowId === "string" && (
+					<Field label="Workflow" compact>
+						{entry.workflow_name ?? (
+							<span className="font-mono text-xs">
+								{workflowId}
+							</span>
+						)}
+					</Field>
+				)}
+				<Field label="Resource" compact>
+					{resource}
+				</Field>
+				{entry.operation_id && (
+					<Field label="Operation" compact className="col-span-2">
+						<span className="font-mono text-xs">
+							{entry.operation_id}
+						</span>
+					</Field>
+				)}
+			</dl>
+		);
+	}
 
 	return (
 		<dl className="space-y-3 text-sm">
@@ -83,20 +140,6 @@ function Summary({ entry }: { entry: AuditLogEntry }) {
 					(entry.actor.organization_id ? "—" : "Global")}
 			</Field>
 			<Field label="Resource">{resource}</Field>
-			{typeof workflowId === "string" && (
-				<Field label="Workflow">
-					{entry.workflow_name ?? (
-						<span className="font-mono text-xs">{workflowId}</span>
-					)}
-				</Field>
-			)}
-			{isCheck && entry.operation_id && (
-				<Field label="Operation">
-					<span className="font-mono text-xs">
-						{entry.operation_id}
-					</span>
-				</Field>
-			)}
 		</dl>
 	);
 }
@@ -251,11 +294,13 @@ export function AuditEventDrawer({
 	open,
 	onOpenChange,
 	returnFocus,
+	recordNavigation,
 }: {
 	entry: AuditLogEntry | undefined;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	returnFocus?: HTMLElement | null;
+	recordNavigation?: ReactNode;
 }) {
 	const wide = useMediaQuery("(min-width: 640px)");
 	const isCheck = entry?.action === ACCESS_CHECK;
@@ -295,6 +340,11 @@ export function AuditEventDrawer({
 									: "What happened, who did it, and where."}
 							</SheetDescription>
 						</SheetHeader>
+						{recordNavigation && (
+							<div className="shrink-0 border-b px-6 pb-3">
+								{recordNavigation}
+							</div>
+						)}
 						<div className="min-h-0 space-y-6 overflow-auto p-6">
 							<Summary entry={entry} />
 							{isCheck ? (

@@ -169,14 +169,10 @@ describe("AccessChecksPage", () => {
 	it("lists would-deny checks grouped by workflow", () => {
 		renderPage();
 
+		expect(screen.getByRole("heading", { name: "Auditing" })).toBeVisible();
 		expect(
-			screen.getByRole("heading", { name: "Access Checks" }),
-		).toBeVisible();
-		expect(
-			screen.getByText(
-				"Denied checks and report-only checks that would have been denied.",
-			),
-		).toBeVisible();
+			screen.getByRole("tab", { name: "Access Checks" }),
+		).toHaveAttribute("aria-selected", "true");
 		expect(audit.groups).toHaveBeenLastCalledWith("workflow", {
 			action: "access.check",
 			outcome: "failure",
@@ -247,7 +243,7 @@ describe("AccessChecksPage", () => {
 		expect(refetch).toHaveBeenCalled();
 	});
 
-	it("drills into a group's checks and opens one", async () => {
+	it("opens a summary directly in the inspector with compact recorded checks", async () => {
 		const { user } = renderPage();
 
 		await user.click(screen.getByRole("button", { name: "Nightly Sync" }));
@@ -267,9 +263,10 @@ describe("AccessChecksPage", () => {
 			true,
 			{ preservePageData: true },
 		);
-		await user.click(
-			screen.getByRole("button", { name: "Show 12 Recorded Checks" }),
-		);
+		const opener = screen.getByRole("button", {
+			name: "Open 12 Recorded Checks",
+		});
+		await user.click(opener);
 		const checks = within(
 			screen.getByRole("region", { name: "Recorded Checks" }),
 		);
@@ -281,26 +278,13 @@ describe("AccessChecksPage", () => {
 			true,
 			{ preservePageData: true },
 		);
-		expect(
-			checks
-				.getAllByRole("columnheader")
-				.map((header) => header.textContent),
-		).toEqual([
-			"Organization",
-			"Time",
-			"Run User",
-			"Resource Type",
-			"Decision Point",
-		]);
-		const [, row] = checks.getAllByRole("row");
-		const cells = within(row).getAllByRole("cell");
-		expect(cells[0]).toHaveTextContent("Fabrikam");
-		expect(cells[2]).toHaveTextContent("Default Identity · Contoso");
-
-		await user.click(within(row).getByRole("button"));
+		expect(checks.queryByRole("table")).not.toBeInTheDocument();
+		expect(checks.getByRole("list", { name: "Check Times" })).toBeVisible();
 		expect(
 			await screen.findByRole("dialog", { name: "Access Check" }),
 		).toBeVisible();
+		await user.keyboard("{Escape}");
+		await waitFor(() => expect(opener).toHaveFocus());
 	});
 
 	it("filters a group with no value by none, and goes back to the groups", async () => {
@@ -318,20 +302,49 @@ describe("AccessChecksPage", () => {
 		await waitFor(() => expect(search()).toBe("?group_by=organization"));
 	});
 
+	it("selects another recorded check inside the same inspector", async () => {
+		const grouped = audit.list.getMockImplementation()!;
+		const other = {
+			...sample,
+			id: "event-other",
+			timestamp: "2026-10-17T12:30:00Z",
+			operation_id: "tables.query",
+		};
+		audit.list.mockImplementation((params: { aggregate?: string }) =>
+			params.aggregate
+				? grouped(params)
+				: query({ entries: [sample, other], continuation_token: null }),
+		);
+		const { user } = renderPage(
+			"/audit/access-checks?group_by=workflow&key=wf-1",
+		);
+		await user.click(
+			screen.getByRole("button", { name: "Open 12 Recorded Checks" }),
+		);
+		const dialog = within(
+			screen.getByRole("dialog", { name: "Access Check" }),
+		);
+		const times = within(dialog.getByRole("list", { name: "Check Times" }));
+		await user.click(times.getAllByRole("button")[1]);
+		expect(
+			dialog.getByText("Operation", { selector: "dt" })
+				.nextElementSibling,
+		).toHaveTextContent("tables.query");
+		expect(times.getAllByRole("button")[1]).toHaveAttribute(
+			"aria-pressed",
+			"true",
+		);
+		expect(screen.getAllByRole("dialog")).toHaveLength(1);
+	});
+
 	it("names workflows and identities' organizations for someone who can't list either", async () => {
 		lists.readable = false;
 		const { user } = renderPage();
 
 		await user.click(screen.getByRole("button", { name: "Nightly Sync" }));
 		await user.click(
-			screen.getByRole("button", { name: "Show 12 Recorded Checks" }),
+			screen.getByRole("button", { name: "Open 12 Recorded Checks" }),
 		);
-		const [, row] = within(
-			screen.getByRole("region", { name: "Recorded Checks" }),
-		).getAllByRole("row");
-		expect(row).toHaveTextContent("Default Identity · Contoso");
-
-		await user.click(within(row).getByRole("button"));
 		const dialog = await screen.findByRole("dialog", {
 			name: "Access Check",
 		});
@@ -341,35 +354,23 @@ describe("AccessChecksPage", () => {
 		expect(workflow).toHaveTextContent("Nightly Sync");
 	});
 
-	it("leads each check's phone record with its organization", async () => {
+	it("opens the same compact inspector on phones with organization first", async () => {
 		media.desktop = false;
 		const { user } = renderPage(
 			"/audit/access-checks?group_by=workflow&key=wf-1",
 		);
 		await user.click(
-			screen.getByRole("button", { name: "Show 12 Recorded Checks" }),
+			screen.getByRole("button", { name: "Open 12 Recorded Checks" }),
 		);
-
-		const [record] = within(
-			screen.getByRole("list", { name: "Checks" }),
-		).getAllByRole("listitem");
-		const labels = within(record).getAllByRole("term");
-		expect(labels.map((label) => label.textContent)).toEqual([
-			"Organization",
-			"Time",
-			"Run User",
-			"Resource Type",
-		]);
-		expect(labels[0].nextElementSibling).toHaveTextContent("Fabrikam");
-		expect(labels[2].nextElementSibling).toHaveTextContent(
-			"Default Identity · Contoso",
-		);
-		expect(record).toHaveTextContent("Would Stop Here · Target in Reach");
-
-		await user.click(within(record).getByRole("button"));
-		expect(
+		const dialog = within(
 			await screen.findByRole("dialog", { name: "Access Check" }),
-		).toBeVisible();
+		);
+		const labels = dialog.getAllByRole("term");
+		expect(labels[0]).toHaveTextContent("Organization");
+		expect(labels[0].nextElementSibling).toHaveTextContent("Fabrikam");
+		expect(dialog.getByRole("list", { name: "Check Times" })).toBeVisible();
+		expect(dialog.queryByRole("table")).not.toBeInTheDocument();
+		expect(dialog.getByText("Default Identity · Contoso")).toBeVisible();
 	});
 
 	it("changes the aggregation window and can show ungrouped checks", async () => {

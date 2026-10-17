@@ -137,6 +137,7 @@ describe("AuditLogPage policy filters", () => {
 	it("shows denial context and searches it across the API result set", async () => {
 		const { user } = renderWithProviders(<AuditLogPage />);
 
+		expect(screen.getByRole("heading", { name: "Auditing" })).toBeVisible();
 		expect(screen.getByText(`reports / ${filePath}`)).toBeInTheDocument();
 		expect(
 			screen.getByText(

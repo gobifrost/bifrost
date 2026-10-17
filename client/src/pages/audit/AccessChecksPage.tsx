@@ -10,10 +10,7 @@ import {
 
 import { AuditEventDrawer } from "@/components/audit/AuditEventDrawer";
 import { RunUserLabel } from "@/components/audit/RunUserLabel";
-import {
-	PageScrollArea,
-	PageWorkspace,
-} from "@/components/layout/PageWorkspace";
+import { PageScrollArea } from "@/components/layout/PageWorkspace";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -62,11 +59,19 @@ import { useAuthorization } from "@/services/authorization";
 
 import { AuditPagination } from "./AuditPagination";
 import { AccessCheckAggregates } from "./AccessCheckAggregates";
+import { AccessCheckRecords } from "./AccessCheckRecords";
+import { AuditPageLayout } from "./AuditPageLayout";
 
 /** Failed actual and historical report-only checks. */
 const WOULD_DENY = { action: "access.check", outcome: "failure" } as const;
 /** The `key` (and filter value) of a group whose entries have no value. */
 const NONE = "none";
+
+type OpenCheck = (
+	entry: AuditLogEntry,
+	opener: HTMLElement | null,
+	group?: AuditLogGroup,
+) => void;
 
 const GROUPINGS: { value: AuditGroupBy; label: string }[] = [
 	{ value: "workflow", label: "Workflow" },
@@ -397,7 +402,7 @@ function CheckResults({
 	desktop,
 }: {
 	filters: GetAuditLogParams;
-	onOpen: (entry: AuditLogEntry, opener: HTMLElement | null) => void;
+	onOpen: OpenCheck;
 	desktop: boolean;
 }) {
 	const [tokens, setTokens] = useState<string[]>([]);
@@ -439,18 +444,10 @@ function CheckResults({
 				<AccessCheckAggregates
 					groups={groups}
 					desktop={desktop}
-					renderChecks={(group) => (
-						<CheckResults
-							key={group.key}
-							filters={{
-								...filters,
-								aggregate: undefined,
-								aggregate_key: group.key!,
-							}}
-							onOpen={onOpen}
-							desktop={desktop}
-						/>
-					)}
+					showWorkflow={!filters.workflow_id}
+					onOpen={(group, opener) =>
+						onOpen(group.sample, opener, group)
+					}
 				/>
 			) : (
 				<CheckList
@@ -488,7 +485,7 @@ function GroupChecks({
 }: {
 	groupBy: AuditGroupBy;
 	groupKey: string;
-	onOpen: (entry: AuditLogEntry, opener: HTMLElement | null) => void;
+	onOpen: OpenCheck;
 	desktop: boolean;
 }) {
 	const [aggregate, setAggregate] = useState<AggregateWindow | "none">("1h");
@@ -518,7 +515,7 @@ function GroupChecks({
 					</Select>
 				</div>
 				<p className="text-xs text-muted-foreground">
-					Open a summary to see its recorded checks.
+					Open a summary to inspect its recorded checks.
 				</p>
 			</div>
 			<CheckResults
@@ -546,7 +543,7 @@ export function AccessChecksPage() {
 	const current = grouping(params.get("group_by"));
 	const groupBy = current.value;
 	const groupKey = params.get("key");
-	const desktop = useMediaQuery("(min-width: 1024px)");
+	const desktop = useMediaQuery("(min-width: 1280px)");
 	const authorization = useAuthorization();
 
 	const groupsQuery = useAuditGroups(groupBy, WOULD_DENY);
@@ -560,6 +557,7 @@ export function AccessChecksPage() {
 	const [selected, setSelected] = useState<{
 		entry: AuditLogEntry;
 		opener: HTMLElement | null;
+		group?: AuditLogGroup;
 	}>();
 	const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -589,17 +587,8 @@ export function AccessChecksPage() {
 		groupBy === GROUPINGS[0].value ? "" : `?group_by=${groupBy}`;
 
 	return (
-		<PageWorkspace className="mx-auto flex w-full min-w-0 max-w-[1400px] flex-col gap-5">
+		<AuditPageLayout view="access-checks">
 			<div className="shrink-0 space-y-4">
-				<div>
-					<h1 className="font-display text-2xl font-semibold tracking-tight sm:text-3xl">
-						Access Checks
-					</h1>
-					<p className="mt-2 text-sm text-muted-foreground">
-						Denied checks and report-only checks that would have
-						been denied.
-					</p>
-				</div>
 				{groupKey ? (
 					<div className="space-y-1">
 						<Link
@@ -656,15 +645,17 @@ export function AccessChecksPage() {
 				)}
 			</div>
 
-			<PageScrollArea className="lg:overflow-hidden">
+			<PageScrollArea
+				className={desktop ? "lg:overflow-hidden" : undefined}
+			>
 				<div className="flex min-w-0 flex-col gap-4 lg:h-full lg:min-h-0">
 					{groupKey ? (
 						<GroupChecks
 							key={`${groupBy}:${groupKey}`}
 							groupBy={groupBy}
 							groupKey={groupKey}
-							onOpen={(entry, opener) => {
-								setSelected({ entry, opener });
+							onOpen={(entry, opener, group) => {
+								setSelected({ entry, opener, group });
 								setDrawerOpen(true);
 							}}
 							desktop={desktop}
@@ -706,8 +697,30 @@ export function AccessChecksPage() {
 				open={drawerOpen}
 				onOpenChange={setDrawerOpen}
 				returnFocus={selected?.opener}
+				recordNavigation={
+					drawerOpen &&
+					selected?.group &&
+					selected.group.count > 1 &&
+					groupKey ? (
+						<AccessCheckRecords
+							key={selected.group.key}
+							filters={{
+								...groupFilter(groupBy, groupKey),
+								aggregate_key: selected.group.key!,
+							}}
+							count={selected.group.count}
+							selectedId={selected.entry.id}
+							onSelect={(entry) =>
+								setSelected(
+									(current) =>
+										current && { ...current, entry },
+								)
+							}
+						/>
+					) : undefined
+				}
 			/>
-		</PageWorkspace>
+		</AuditPageLayout>
 	);
 }
 

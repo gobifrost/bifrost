@@ -198,7 +198,7 @@ describe("Sidebar structure", () => {
 		).not.toBeInTheDocument();
 	});
 
-	it("shows Audit Log and Access Checks to holders of roleassignments.read", () => {
+	it("shows Auditing to holders of roleassignments.read", () => {
 		state.isPlatformAdmin = false;
 		state.authorization = summary(false, ["users.read"]);
 		const { unmount } = renderWithProviders(
@@ -209,7 +209,7 @@ describe("Sidebar structure", () => {
 			/>,
 		);
 		expect(
-			screen.queryByRole("link", { name: "Access Checks" }),
+			screen.queryByRole("link", { name: "Auditing" }),
 		).not.toBeInTheDocument();
 		unmount();
 
@@ -221,31 +221,29 @@ describe("Sidebar structure", () => {
 				isCollapsed={false}
 			/>,
 		);
-		expect(
-			screen.getByRole("link", { name: "Access Checks" }),
-		).toHaveAttribute("href", "/audit/access-checks");
-		expect(
-			screen.getByRole("link", { name: "Audit Log" }),
-		).toHaveAttribute("href", "/audit");
-	});
-
-	it("marks only Access Checks current on its page, not the Audit Log", () => {
-		renderWithProviders(
-			<Sidebar
-				isMobileMenuOpen={false}
-				setIsMobileMenuOpen={vi.fn()}
-				isCollapsed={false}
-			/>,
-			{ initialEntries: ["/audit/access-checks"] },
+		expect(screen.getByRole("link", { name: "Auditing" })).toHaveAttribute(
+			"href",
+			"/audit",
 		);
-
-		expect(
-			screen.getByRole("link", { name: "Access Checks" }),
-		).toHaveAttribute("aria-current", "page");
-		expect(
-			screen.getByRole("link", { name: "Audit Log" }),
-		).not.toHaveAttribute("aria-current");
 	});
+
+	it.each(["/audit", "/audit/access-checks"])(
+		"marks Auditing current on %s",
+		(route) => {
+			renderWithProviders(
+				<Sidebar
+					isMobileMenuOpen={false}
+					setIsMobileMenuOpen={vi.fn()}
+					isCollapsed={false}
+				/>,
+				{ initialEntries: [route] },
+			);
+
+			expect(
+				screen.getByRole("link", { name: "Auditing" }),
+			).toHaveAttribute("aria-current", "page");
+		},
+	);
 
 	it("shows a platform admin the whole Platform section", () => {
 		renderWithProviders(
@@ -339,10 +337,19 @@ describe("Sidebar structure", () => {
 	it("offers Files for scoped file policy readers", () => {
 		state.authorization = summary(false, ["filepolicies.read"]);
 		renderWithProviders(
-			<Sidebar isMobileMenuOpen={false} setIsMobileMenuOpen={vi.fn()} isCollapsed={false} />,
+			<Sidebar
+				isMobileMenuOpen={false}
+				setIsMobileMenuOpen={vi.fn()}
+				isCollapsed={false}
+			/>,
 		);
-		expect(screen.getByRole("link", { name: "Files" })).toHaveAttribute("href", "/files");
-		expect(screen.queryByRole("link", { name: "Settings" })).not.toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "Files" })).toHaveAttribute(
+			"href",
+			"/files",
+		);
+		expect(
+			screen.queryByRole("link", { name: "Settings" }),
+		).not.toBeInTheDocument();
 	});
 
 	it.each(["/", "/history", "/workflows"])(
