@@ -66,6 +66,8 @@ class FileCaller:
     solution_id: str | None = None
     caller_solution_id: str | None = None
     app_id: str | None = None
+    # Server-validated local-dev provenance.  Never populated from an SDK DTO.
+    dev_solution_id: str | None = None
 
     @classmethod
     def from_context(cls, ctx: Any) -> FileCaller:
@@ -77,6 +79,7 @@ class FileCaller:
             solution_id=ctx.solution_id,
             caller_solution_id=getattr(ctx, "caller_solution_id", None),
             app_id=getattr(ctx, "app_id", None),
+            dev_solution_id=getattr(ctx, "dev_solution_id", None),
         )
 
 

@@ -46,6 +46,7 @@ import yarl
 from aiohttp import web
 
 from bifrost.solution_dev.function_host import LocalWorkflowError
+from bifrost.client import BifrostAPIError
 
 # Headers we must not forward when reverse-proxying: hop-by-hop headers, plus
 # the browser's Accept-Encoding — browsers advertise encodings (br, zstd) that
@@ -59,6 +60,10 @@ _STRIP = {
     "connection",
     "keep-alive",
     "accept-encoding",
+    "authorization",
+    "x-bifrost-app",
+    "x-bifrost-org",
+    "x-bifrost-dev-context",
 }
 
 
@@ -113,7 +118,7 @@ def _join_upstream(base_url: str, rel_url: yarl.URL) -> str:
 class DevProxyConfig:
     upstream_url: str   # the dev API, e.g. http://localhost:37791
     token: str          # CLI access token
-    app_id: str         # chosen app's manifest UUID
+    app_id: str         # chosen app's installed UUID
     org_id: str | None  # bound install org id (or None for a global install)
     solution_id: str | None = None  # bound Solution install id
     # Whether bifrost.solution.yaml sets global_repo_access. Gates whether a
@@ -124,6 +129,7 @@ class DevProxyConfig:
     # start leaves this true so it can keep its local FunctionHost behavior.
     local_workflows: bool = True
     refresh_token: Callable[[str], Awaitable[str | None]] | None = None
+    dev_context_headers: Callable[[], Awaitable[dict[str, str]]] | None = None
     auth_expired: bool = False
     branding: dict[str, Any] | None = None
     branding_loaded: bool = False
@@ -295,19 +301,31 @@ async def _authed_upstream_request(
     cfg: DevProxyConfig = request.app[_CFG]
     http: httpx.AsyncClient = request.app[_HTTP]
 
-    def _headers() -> dict[str, str]:
+    async def _headers() -> dict[str, str]:
         headers = _auth_headers(cfg, request.headers)
+        if cfg.dev_context_headers is not None and (
+            not drop_headers or "x-bifrost-dev-context" not in drop_headers
+        ):
+            headers.update(await cfg.dev_context_headers())
         if drop_headers:
             headers = {k: v for k, v in headers.items() if k.lower() not in drop_headers}
         return headers
 
     observed_access_token = cfg.token
-    resp = await http.request(method, url, headers=_headers(), **kwargs)
+    try:
+        headers = await _headers()
+    except BifrostAPIError as exc:
+        return exc.response
+    resp = await http.request(method, url, headers=headers, **kwargs)
     if resp.status_code != 401:
         return resp
     if not await _refresh_cli_token(cfg, observed_access_token):
         return None
-    retry = await http.request(method, url, headers=_headers(), **kwargs)
+    try:
+        headers = await _headers()
+    except BifrostAPIError as exc:
+        return exc.response
+    retry = await http.request(method, url, headers=headers, **kwargs)
     if retry.status_code == 401:
         cfg.auth_expired = True
         return None
@@ -872,7 +890,7 @@ async def _execute_handler(request: web.Request) -> web.Response:
             "POST",
             f"{cfg.upstream_url}/api/workflows/execute",
             json=fallback_body,
-            drop_headers={"x-bifrost-app"},
+            drop_headers={"x-bifrost-app", "x-bifrost-dev-context"},
         )
     except httpx.HTTPError:
         return web.json_response(

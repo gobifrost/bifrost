@@ -33,6 +33,7 @@ from typing import Any
 from uuid import UUID, uuid5
 
 import click
+import httpx
 import yaml
 
 from bifrost.client import BifrostClient
@@ -2906,6 +2907,23 @@ def _vite_child_env(
     return env
 
 
+async def _bind_dev_app(client, chosen, solution_id):
+    """Resolve portable app identity and establish user-bound install provenance."""
+    from dataclasses import replace
+
+    from bifrost.solution_dev.session import SolutionDevSession
+
+    session = SolutionDevSession(client, solution_id, chosen.app_id)
+    try:
+        await session.headers()
+    except httpx.HTTPError as exc:
+        raise click.ClickException(
+            f"Could not establish Solution development context: {exc}"
+        ) from exc
+    client._solution_dev_session = session
+    return replace(chosen, app_id=session.app_id)
+
+
 @solution_group.command(
     name="start",
     help=(
@@ -2973,6 +2991,8 @@ def start_cmd(
     except AppSelectionError as exc:
         raise click.ClickException(str(exc))
 
+    chosen = asyncio.run(_bind_dev_app(client, chosen, binding.solution_id))
+
     main_tsx = chosen.app_dir / "src" / "main.tsx"
     if main_tsx_needs_dev_fallback(main_tsx):
         click.echo(PATCH_HINT, err=True)
@@ -2987,7 +3007,7 @@ def start_cmd(
         user=client.user, org=org_info, solution_id=binding.solution_id
     )
 
-    host = FunctionHost(workspace)
+    host = FunctionHost(workspace, client=client)
     host.reload()
     refs = host.refs()
     click.echo(f"Discovered {len(refs)} local function(s):")
@@ -3780,6 +3800,11 @@ def _dev_proxy_config(client, chosen, org_info, solution_id, global_repo_access)
         solution_id=solution_id,
         global_repo_access=global_repo_access,
         refresh_token=client.refresh_access_token,
+        dev_context_headers=(
+            client._solution_dev_session.headers
+            if getattr(client, "_solution_dev_session", None) is not None
+            else None
+        ),
     )
 
 

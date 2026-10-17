@@ -512,6 +512,7 @@ async def execute_workflow(
             context_solution_id=ctx.solution_id,
             context_app_id=ctx.app_id,
             context_caller_solution_id=ctx.caller_solution_id,
+            context_dev_solution_id=getattr(ctx, "dev_solution_id", None),
         )
     except SdkWorkflowExecutionError as e:
         raise HTTPException(

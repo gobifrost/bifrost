@@ -55,6 +55,25 @@ bifrost solution sdk update [path] --app <slug>
 
 Do not commit an instance URL or authentication token to `package.json`.
 
+`bifrost solution start` resolves the selected app's portable manifest ID to its
+installed ID before starting Vite. Local Python functions and browser API calls
+use the CLI user's credentials plus a separate, ten-minute signed development
+context for the bound install. The CLI and local proxy renew that context as
+needed; it stays in memory and is never included in the browser bundle or saved
+credentials. This also works before the selected app's first deployment.
+
+Starting a Solution preview requires current Platform Admin membership, checked
+against stored role grants. The context establishes the caller's install and
+does not grant workflow powers or bypass table policies, ownership, organization
+scope, or another install's inbound rules. An inactive install, changed install
+organization, revoked admin grant, or mismatched app context stops access. Use
+matching current CLI and server builds for this development path.
+
+In local Python, a table query or count that receives a not-found response raises
+an explained error instead of appearing empty. The response does not distinguish
+a missing table from a protected one. Individual document reads retain their
+normal not-found behavior, and a successful query with no matching rows is empty.
+
 ## Deployed Apps
 
 Server-side independent-App and Solution builds do not call the public SDK

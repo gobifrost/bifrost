@@ -31,6 +31,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from bifrost.contract_version import CONTRACT_VERSION as CLI_CONTRACT_VERSION  # noqa: E402
 from shared.contract_version import CONTRACT_VERSION as SERVER_CONTRACT_VERSION  # noqa: E402
+from shared.models import SolutionDevContextRequest, SolutionDevContextResponse  # noqa: E402
 
 # DTOs the CLI sends/receives. Server-canonical classes (the wire truth).
 from src.models.contracts.agent_runs import (  # noqa: E402
@@ -175,6 +176,7 @@ _SDK_DTOS: list[type] = [
 #: ones are auto-covered). A field removed/renamed/retyped here is exactly what
 #: silently corrupts a stale CLI, and it is caught completely and automatically.
 CONTRACT_FINGERPRINT_MODELS: list[type] = _COMMAND_DTOS + _SDK_DTOS
+CONTRACT_FINGERPRINT_MODELS += [SolutionDevContextRequest, SolutionDevContextResponse]
 
 #: We deliberately do NOT fingerprint the full route list. Route strings are a
 #: weak, noisy proxy: hand-listing ~100 `/api/*` paths is perpetually incomplete
@@ -375,7 +377,9 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # AgentRunEnqueueResponse (which echoes `run_as_user_id`), and
     # AgentRunCreateRequest is the /execute body. ADDITIVE: old clients omit
     # `run_as` and ignore the echo. Fingerprint refreshed only.
-    "8af658bc3908620526f16736393dff529c5d12e4cf36a5a113303809a178395e"
+    # Solution local development context request/response (2026-10-16).
+    # ADDITIVE: new capability endpoint; existing DTOs are unchanged.
+    "ae7ca09d8ae214ad7c8caea128a1f8a05bbd23f9670a9f722e97a1115eba18de"
 )
 
 

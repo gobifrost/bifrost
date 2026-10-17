@@ -86,6 +86,8 @@ class EventEmissionCaller:
     solution_id: str | None = None
     caller_solution_id: str | None = None
     app_id: str | None = None
+    # Server-validated local-dev provenance.  Never populated from an emit DTO.
+    dev_solution_id: str | None = None
 
     @classmethod
     def from_context(cls, ctx: Any, principal: UserPrincipal) -> EventEmissionCaller:
@@ -96,6 +98,7 @@ class EventEmissionCaller:
             solution_id=getattr(ctx, "solution_id", None),
             caller_solution_id=getattr(ctx, "caller_solution_id", None),
             app_id=getattr(ctx, "app_id", None),
+            dev_solution_id=getattr(ctx, "dev_solution_id", None),
         )
 
 

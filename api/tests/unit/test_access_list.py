@@ -1863,6 +1863,8 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "bifrost._context.resolve_scope": (1, "cutover"),
     "bifrost.cli._run_direct": (2, "cutover"),
     "bifrost.solution_dev.function_host.set_dev_execution_context": (2, "cutover"),
+    # Canonical Platform Admin admission/revalidation, not an added SDK power.
+    "shared.solution_dev.require_solution_developer": (1, "route"),
     "shared.claims.preresolve._load_source_policies": (1, "system"),
     "shared.event_emission.emit_topic_event": (3, "reach"),
     "shared.execution_timeseries.get_execution_time_series": (1, "reach"),

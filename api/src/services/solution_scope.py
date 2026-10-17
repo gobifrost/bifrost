@@ -79,8 +79,8 @@ async def resolve_trustworthy_caller(db: AsyncSession, ctx) -> UUID | None:
 
     Precedence: the SIGNED engine claims on the execution-scoped token
     (mint_engine_token — unforgeable without SECRET_KEY; None solution =
-    _repo execution, i.e. outside) > the DB-backed app-header install >
-    the SDK-attested ``?caller_solution=``/body value on engine-sub
+    _repo execution, i.e. outside) > validated local-dev context > the
+    DB-backed app-header install > the SDK-attested ``?caller_solution=``/body value on engine-sub
     requests. Everyone else → None (outside any install). Used for the
     inbound own-call bypass. Request-supplied caller ids are NEVER trusted
     on their own — Codex review P1.
@@ -92,6 +92,12 @@ async def resolve_trustworthy_caller(db: AsyncSession, ctx) -> UUID | None:
             return None
         try:
             return UUID(str(raw))
+        except (ValueError, AttributeError, TypeError):
+            return None
+    dev_solution_id = getattr(ctx, "dev_solution_id", None)
+    if dev_solution_id is not None:
+        try:
+            return UUID(str(dev_solution_id))
         except (ValueError, AttributeError, TypeError):
             return None
     if getattr(ctx, "app_id", None):
