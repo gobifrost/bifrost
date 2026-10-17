@@ -5,10 +5,10 @@
     "fc05e97f-84df-4355-a3c3-81314fee7db5"
   ],
   "review": {
-    "status": "draft",
+    "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/995",
-      "Product review: awaiting Jack's approval of the copy."
+      "Security and copy review: verified privileged role-edit authority, role locking, organization boundaries, and notification owner/admin visibility against implementation and regression tests. Maintainer authorized merge and rollout on 2026-10-17."
     ]
   }
 }
