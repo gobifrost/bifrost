@@ -5,10 +5,10 @@
     "ac0cc537-02ca-4357-849f-3e8ece879782"
   ],
   "review": {
-    "status": "draft",
+    "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/994",
-      "Product review: awaiting Jack's approval of the copy and UX."
+      "Release review: verified Auditing tabs, report-only wording, compact record selection, Aggregate Off behavior, retention defaults, linked screenshot, and passing UI coverage. Maintainer authorized merge and rollout on 2026-10-17."
     ]
   }
 }
