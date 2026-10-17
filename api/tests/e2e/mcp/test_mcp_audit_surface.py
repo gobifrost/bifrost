@@ -32,6 +32,7 @@ class MockMCPContext:
         self.session = None
         # Mirrors MCPContext: a person's own MCP call carries no agent-run user.
         self.run_user_id = None
+        self.agent_run_id = None
 
 
 @pytest_asyncio.fixture
