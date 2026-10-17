@@ -208,7 +208,7 @@ def scenario_world(
             {
                 "name": "admin_bypass",
                 "actions": ALL_ACTIONS,
-                "when": {"user": "is_platform_admin"},
+                "when": {"authority": "platform_admin"},
             },
             {"name": "everyone_reads", "actions": ["read"], "when": {"eq": [1, 1]}},
         ]
