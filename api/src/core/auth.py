@@ -61,6 +61,11 @@ class ExecutionContext:
     # format only; malformed values are ignored (caller treated as outside).
     # Trusted on engine requests only — resolvers decide via is_engine_user.
     caller_solution_id: str | None = None
+    # A server-validated local Solution preview context.  This is never read
+    # from a client-supplied app header and is set only after its signed token,
+    # human subject, canonical Platform Admin grant, and install membership are
+    # revalidated for this request.
+    dev_solution_id: str | None = None
 
     @property
     def scope(self) -> str:
@@ -399,6 +404,13 @@ async def get_execution_context(
             if mode is WorkflowPermissionMode.FULL:
                 user.policy_authorities = user.policy_authorities | {"platform_admin"}
 
+    dev_context = None
+    raw_dev_context = request.headers.get("X-Bifrost-Dev-Context")
+    if raw_dev_context:
+        from shared.solution_dev import validate_solution_dev_context
+
+        dev_context = await validate_solution_dev_context(db, user, raw_dev_context)
+
     # Appended by the SDK (?solution=<install_id>) when a solution workflow is
     # executing.  Before forwarding it to the context, load the Solution row and
     # refuse execution for any install that has been uninstalled (status !=
@@ -429,7 +441,15 @@ async def get_execution_context(
     # with its install.  Fail closed only when the app DOES resolve to a known
     # inactive solution; a missing/unknown app_id leaves existing behaviour
     # unchanged (no 500 on a bad header value).
-    app_id_header = request.headers.get("X-Bifrost-App")
+    requested_app_id = request.headers.get("X-Bifrost-App")
+    if dev_context is not None and requested_app_id not in (None, str(dev_context.app_id)):
+        from shared.solution_dev import INVALID_DEV_CONTEXT_DETAIL
+
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=INVALID_DEV_CONTEXT_DETAIL)
+    # For local Python workflows there is no browser app header.  The validated
+    # context still supplies the app/install identity to the normal resolution
+    # path, without treating the capability token as bearer authentication.
+    app_id_header = str(dev_context.app_id) if dev_context is not None else requested_app_id
     app_solution_id: UUID | None = None
     if app_id_header is not None:
         from src.models.orm.applications import Application as ApplicationORM
@@ -445,7 +465,7 @@ async def get_execution_context(
                 sol_row = await db.get(SolutionORM, app_row.solution_id)
                 if sol_row is not None:
                     await _refuse_if_solution_inactive(sol_row)
-    if solution_id_param is not None and app_solution_id is not None:
+    if solution_id_param is not None and app_solution_id is not None and dev_context is None:
         try:
             if UUID(solution_id_param) != app_solution_id:
                 raise HTTPException(
@@ -457,7 +477,9 @@ async def get_execution_context(
             pass
 
     effective_solution_id = solution_id_param or (
-        str(app_solution_id) if app_solution_id is not None else None
+        str(dev_context.solution_id)
+        if dev_context is not None
+        else str(app_solution_id) if app_solution_id is not None else None
     )
 
     # SPIKE: per-call caller attestation (see field docs). Format-gated only;
@@ -479,6 +501,7 @@ async def get_execution_context(
         app_id=app_id_header,
         solution_id=effective_solution_id,
         caller_solution_id=caller_solution_id,
+        dev_solution_id=str(dev_context.solution_id) if dev_context is not None else None,
     )
 
 

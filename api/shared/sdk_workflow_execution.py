@@ -136,6 +136,7 @@ def _server_caller_context(
     context_solution_id: str | None,
     context_app_id: str | None,
     context_caller_solution_id: str | None,
+    context_dev_solution_id: str | None = None,
 ) -> SimpleNamespace:
     """Trusted request-context shim for Solution scope derivation.
 
@@ -148,6 +149,7 @@ def _server_caller_context(
         solution_id=context_solution_id,
         app_id=context_app_id,
         caller_solution_id=context_caller_solution_id,
+        dev_solution_id=context_dev_solution_id,
     )
 
 
@@ -182,6 +184,7 @@ async def execute_sdk_workflow(
     context_solution_id: str | None = None,
     context_app_id: str | None = None,
     context_caller_solution_id: str | None = None,
+    context_dev_solution_id: str | None = None,
 ) -> WorkflowExecutionResponse:
     """Execute a workflow, data provider, or inline script.
 
@@ -244,7 +247,11 @@ async def execute_sdk_workflow(
     # WITHOUT shared fallback (a denied install must never execute a loose
     # same-path workflow).
     server_ctx = _server_caller_context(
-        principal, context_solution_id, context_app_id, context_caller_solution_id
+        principal,
+        context_solution_id,
+        context_app_id,
+        context_caller_solution_id,
+        context_dev_solution_id,
     )
     try:
         solution_scope = await derive_execution_solution_scope(

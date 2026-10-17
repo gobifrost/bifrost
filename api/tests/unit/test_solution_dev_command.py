@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 import yaml
 from click.testing import CliRunner
 
@@ -21,6 +22,18 @@ class _SolutionListResponse:
 async def _get_bound_solution(_self, path, **_kwargs):
     assert path == "/api/solutions"
     return _SolutionListResponse()
+
+
+@pytest.fixture(autouse=True)
+def _stub_dev_app_binding(monkeypatch):
+    """Keep unrelated ``solution start`` tests independent of session minting."""
+
+    async def _identity_binding(_client, chosen, _solution_id):
+        return chosen
+
+    monkeypatch.setattr(
+        "bifrost.commands.solution._bind_dev_app", _identity_binding
+    )
 
 
 def test_solution_init_creates_remote_install_without_binding(tmp_path, monkeypatch):
@@ -548,7 +561,7 @@ def test_start_spawns_npm_via_resolved_path(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(function_host, "set_dev_execution_context", lambda **k: None)
 
     class _FakeHost:
-        def __init__(self, workspace):
+        def __init__(self, workspace, *, client):
             pass
 
         def reload(self):
@@ -636,12 +649,17 @@ def test_start_public_url_does_not_change_same_origin_browser_transport(tmp_path
         user = {"id": "u", "is_superuser": True}
         _access_token = "tok"
 
-    monkeypatch.setattr(client_mod.BifrostClient, "get_instance", staticmethod(lambda **k: _FakeClient()))
+    fake_client = _FakeClient()
+    monkeypatch.setattr(
+        client_mod.BifrostClient,
+        "get_instance",
+        staticmethod(lambda **k: fake_client),
+    )
     monkeypatch.setattr(function_host, "set_dev_execution_context", lambda **k: None)
 
     class _FakeHost:
-        def __init__(self, workspace):
-            pass
+        def __init__(self, workspace, *, client):
+            self.client = client
 
         def reload(self):
             pass
@@ -652,7 +670,25 @@ def test_start_public_url_does_not_change_same_origin_browser_transport(tmp_path
         def failures(self):
             return {}
 
-    monkeypatch.setattr(function_host, "FunctionHost", _FakeHost)
+    hosts: list[_FakeHost] = []
+
+    def _make_host(workspace, *, client):
+        host = _FakeHost(workspace, client=client)
+        hosts.append(host)
+        return host
+
+    monkeypatch.setattr(function_host, "FunctionHost", _make_host)
+
+    async def _bind_to_installed_app(client, chosen, solution_id):
+        from dataclasses import replace
+
+        assert client is fake_client
+        assert solution_id == "11111111-1111-1111-1111-111111111111"
+        return replace(chosen, app_id="installed-app-id")
+
+    monkeypatch.setattr(
+        "bifrost.commands.solution._bind_dev_app", _bind_to_installed_app
+    )
     monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/npm" if name == "npm" else None)
 
     popen_envs: list[dict[str, str]] = []
@@ -719,6 +755,8 @@ def test_start_public_url_does_not_change_same_origin_browser_transport(tmp_path
     # transport stays relative so a second forwarding proxy may rewrite that
     # origin again without breaking API calls.
     assert popen_envs[0]["BIFROST_API_URL"] == "/"
+    assert popen_envs[0]["VITE_BIFROST_APP_ID"] == "installed-app-id"
+    assert [host.client for host in hosts] == [fake_client]
 
 
 def test_handle_solution_renders_clickexception_not_traceback(tmp_path, monkeypatch, capsys):
@@ -841,8 +879,9 @@ def test_start_finds_solution_root_from_subdirectory(tmp_path, monkeypatch):
     monkeypatch.setattr(function_host, "set_dev_execution_context", lambda **k: None)
 
     class _FakeHost:
-        def __init__(self, workspace):
+        def __init__(self, workspace, *, client):
             self.workspace = workspace
+            self.client = client
 
         def reload(self):
             pass
@@ -854,8 +893,8 @@ def test_start_finds_solution_root_from_subdirectory(tmp_path, monkeypatch):
             return {}
 
     hosts: list[object] = []
-    def _make_host(workspace):
-        host = _FakeHost(workspace)
+    def _make_host(workspace, *, client):
+        host = _FakeHost(workspace, client=client)
         hosts.append(host)
         return host
 
@@ -936,7 +975,7 @@ def _start_workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(function_host, "set_dev_execution_context", lambda **k: None)
 
     class _FakeHost:
-        def __init__(self, workspace):
+        def __init__(self, workspace, *, client):
             pass
 
         def reload(self):

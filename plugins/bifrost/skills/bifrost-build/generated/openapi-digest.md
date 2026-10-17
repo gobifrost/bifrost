@@ -544,6 +544,7 @@
 | POST | `/api/solutions/{solution_id}/capture/preview` |
 | GET | `/api/solutions/{solution_id}/deletion-summary` |
 | POST | `/api/solutions/{solution_id}/deploy` |
+| POST | `/api/solutions/{solution_id}/dev-context` |
 | GET | `/api/solutions/{solution_id}/entities` |
 | POST | `/api/solutions/{solution_id}/export` |
 | GET | `/api/solutions/{solution_id}/export-jobs` |

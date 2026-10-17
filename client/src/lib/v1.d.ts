@@ -9029,6 +9029,29 @@ export interface paths {
         patch: operations["claims.update"];
         trace?: never;
     };
+    "/api/solutions/{solution_id}/dev-context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a local Solution development context
+         * @description Issue a ten-minute, app-bound context for ``bifrost solution start``.
+         *
+         *     The shared service deliberately checks current canonical Platform Admin
+         *     authority rather than the access-token's legacy ``is_superuser`` claim.
+         */
+        post: operations["create_solution_dev_context_api_solutions__solution_id__dev_context_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/solutions/import-workspace/preview": {
         parameters: {
             query?: never;
@@ -27507,6 +27530,39 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /**
+         * SolutionDevContextRequest
+         * @description The selected portable app identity for a local Solution preview.
+         */
+        SolutionDevContextRequest: {
+            /**
+             * App Id
+             * Format: uuid
+             */
+            app_id: string;
+        };
+        /**
+         * SolutionDevContextResponse
+         * @description Short-lived, app-bound context accepted only as a supplemental header.
+         */
+        SolutionDevContextResponse: {
+            /** Token */
+            token: string;
+            /** Expires At */
+            expires_at: number;
+            /**
+             * Solution Id
+             * Format: uuid
+             */
+            solution_id: string;
+            /** Organization Id */
+            organization_id: string | null;
+            /**
+             * App Id
+             * Format: uuid
+             */
+            app_id: string;
         };
         /**
          * SolutionEntities
@@ -47102,6 +47158,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CustomClaim"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_solution_dev_context_api_solutions__solution_id__dev_context_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SolutionDevContextRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionDevContextResponse"];
                 };
             };
             /** @description Validation Error */

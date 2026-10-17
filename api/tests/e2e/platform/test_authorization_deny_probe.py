@@ -58,6 +58,7 @@ INCONCLUSIVE: dict[tuple[str, str], str] = {
 # would let it through, which is the finding this probe exists to report.
 _PROBE_ID = str(uuid4())
 VALID_BODIES: dict[tuple[str, str], dict] = {
+    ("POST", "/api/solutions/{solution_id}/dev-context"): {"app_id": _PROBE_ID},
     ("POST", "/api/audit/exports"): {
         "start_date": "2026-01-01T00:00:00Z",
         "end_date": "2026-01-02T00:00:00Z",

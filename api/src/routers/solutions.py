@@ -37,7 +37,8 @@ from bifrost.solution_jobs import (
     DEPLOY_JOB_TIMEOUT_SECONDS,
 )
 from shared.logo_processing import is_logo_thumbnail_version
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context, CurrentActiveUser, CurrentSuperuser
+from shared.models import SolutionDevContextRequest, SolutionDevContextResponse
 from src.models.contracts.applications import (
     ApplicationSdkUpdateSkipped,
 )
@@ -167,6 +168,27 @@ router = APIRouter(prefix="/api/solutions", tags=["Solutions"])
 
 UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024
 _ZIP_FILENAME_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+@router.post(
+    "/{solution_id}/dev-context",
+    response_model=SolutionDevContextResponse,
+    summary="Create a local Solution development context",
+)
+async def create_solution_dev_context(
+    solution_id: UUID,
+    body: SolutionDevContextRequest,
+    ctx: Context,
+    user: CurrentActiveUser,
+) -> SolutionDevContextResponse:
+    """Issue a ten-minute, app-bound context for ``bifrost solution start``.
+
+    The shared service deliberately checks current canonical Platform Admin
+    authority rather than the access-token's legacy ``is_superuser`` claim.
+    """
+    from shared.solution_dev import issue_solution_dev_context
+
+    return await issue_solution_dev_context(ctx.db, user, solution_id, body.app_id)
 
 
 def _cleanup_file(path: str | Path) -> None:

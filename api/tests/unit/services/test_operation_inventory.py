@@ -21,7 +21,7 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
         "cli": 171,
         "manifest": 16,
         "mcp": 94,
-        "rest": 677,
+        "rest": 678,
         "sdk": 21,
     }
     for surface, rows in inventory["uncataloged"].items():
@@ -29,6 +29,20 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
         for row in rows:
             assert row["status"]
             assert row["reason"]
+
+
+def test_solution_dev_context_is_authentication_transport() -> None:
+    inventory = build_operation_inventory(app, REPO_ROOT)
+    row = next(
+        row for row in inventory["uncataloged"]["rest"]
+        if row["path"] == "/api/solutions/{solution_id}/dev-context"
+    )
+
+    assert row["method"] == "POST"
+    assert row["status"] == "transport_only"
+    assert row["reason"] == (
+        "Issues user-bound context for local Solution development; owns no entity state."
+    )
 
 
 def test_organization_listing_is_available_to_application_sdks() -> None:

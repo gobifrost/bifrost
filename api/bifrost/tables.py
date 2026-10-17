@@ -24,7 +24,7 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urlencode
 
-from .client import get_client, raise_for_status_with_detail
+from .client import BifrostAPIError, get_client, raise_for_status_with_detail
 from .models import (
     TableInfo,
     DocumentData,
@@ -39,6 +39,25 @@ from ._context import resolve_scope, _execution_context, get_effective_solution
 def _current_context():
     """Return the active ExecutionContext, or None if not in a workflow execution."""
     return _execution_context.get()
+
+
+def _raise_unresolved_dev_table(response, client) -> None:
+    """Do not turn an unresolved local data-plane request into an empty table.
+
+    The server deliberately uses the same 404 for missing and inaccessible
+    tables. Keep that distinction private, and retain document-not-found
+    behavior for individual row operations.
+    """
+    from bifrost.solution_dev.session import SolutionDevSession
+
+    if isinstance(getattr(client, "_solution_dev_session", None), SolutionDevSession):
+        raise BifrostAPIError(
+            "404: Local Solution table request could not be resolved or authorized. "
+            "Check the selected install, deployed table definition, and table policies; "
+            "this response is not an empty table.",
+            request=response.request,
+            response=response,
+        )
 
 
 def _scope_query(scope: str | None, solution: str | None = None) -> str:
@@ -843,7 +862,8 @@ class tables:
 
         Returns:
             DocumentList: Query results with documents, total count, and
-            pagination info. Returns an empty list if the table doesn't exist.
+            pagination info. Returns an empty list if the table doesn't exist,
+            except in Solution development where an unresolved table raises.
 
         Example:
             >>> results = await tables.query("customers", where={"status": "active"})
@@ -872,6 +892,7 @@ class tables:
             retry_transient=True,
         )
         if response.status_code == 404:
+            _raise_unresolved_dev_table(response, client)
             return DocumentList(documents=[], total=0, limit=limit, offset=offset)
         raise_for_status_with_detail(response)
         return DocumentList.model_validate(response.json())
@@ -911,6 +932,7 @@ class tables:
                 f"/api/tables/{table}/documents/count{_scope_query(effective_scope)}",
             )
             if response.status_code == 404:
+                _raise_unresolved_dev_table(response, client)
                 return 0
             raise_for_status_with_detail(response)
             return response.json()["count"]

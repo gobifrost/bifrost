@@ -445,10 +445,15 @@ async def test_unknown_ref_with_global_access_proxies_without_scope_signals():
     up_port, dev_port = _free_port(), _free_port()
     up_runner = await _serve(_make_upstream(record), up_port)
     host = _StubHost(set())
+
+    async def dev_headers():
+        raise AssertionError("Shared workflow fallback must not use install provenance")
+
     cfg = DevProxyConfig(
         upstream_url=f"http://127.0.0.1:{up_port}",
         token="t", app_id="A", org_id="O", solution_id="S",
         global_repo_access=True,
+        dev_context_headers=dev_headers,
     )
     dev_runner = await _serve(build_dev_app(cfg, host, vite_url="http://127.0.0.1:1"), dev_port)
     try:
@@ -475,6 +480,7 @@ async def test_unknown_ref_with_global_access_proxies_without_scope_signals():
         assert "form_id" not in body
         headers = {k.lower(): v for k, v in record["execute_headers"].items()}
         assert "x-bifrost-app" not in headers
+        assert "x-bifrost-dev-context" not in headers
         assert headers["x-bifrost-org"] == "O"          # org scope stays
         assert headers["authorization"] == "Bearer t"   # auth stays
     finally:
@@ -970,10 +976,15 @@ async def test_code_only_request_forwards_upstream_with_scope():
     up_port, dev_port = _free_port(), _free_port()
     up_runner = await _serve(_make_upstream(record), up_port)
     host = _StubHost(set())
+
+    async def dev_headers():
+        return {"X-Bifrost-Dev-Context": "server-signed-context"}
+
     cfg = DevProxyConfig(
         upstream_url=f"http://127.0.0.1:{up_port}",
         token="t", app_id="A", org_id="O", solution_id="S",
         global_repo_access=False,
+        dev_context_headers=dev_headers,
     )
     dev_runner = await _serve(build_dev_app(cfg, host, vite_url="http://127.0.0.1:1"), dev_port)
     try:
@@ -981,10 +992,19 @@ async def test_code_only_request_forwards_upstream_with_scope():
             r = await c.post(
                 f"http://127.0.0.1:{dev_port}/api/workflows/execute",
                 json={"code": "print('hi')", "input_data": {}},
+                headers={
+                    "Authorization": "Bearer forged-user",
+                    "X-Bifrost-App": "forged-app",
+                    "X-Bifrost-Dev-Context": "forged-context",
+                },
             )
         assert r.status_code == 200
         assert r.json()["ran_upstream"] is True
         assert record["execute_body"]["solution_id"] == "S"
+        headers = {key.lower(): value for key, value in record["execute_headers"].items()}
+        assert headers["authorization"] == "Bearer t"
+        assert headers["x-bifrost-app"] == "A"
+        assert headers["x-bifrost-dev-context"] == "server-signed-context"
     finally:
         await dev_runner.cleanup()
         await up_runner.cleanup()
