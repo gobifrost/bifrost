@@ -1,0 +1,14 @@
+{
+  "key": "pr:993",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Local Solution previews use the signed-in user's permissions to access sealed install data. Unresolved table queries report an error instead of appearing empty.",
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/993",
+      "Product review: awaiting Jack's approval of the summary."
+    ]
+  }
+}
