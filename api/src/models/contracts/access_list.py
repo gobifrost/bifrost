@@ -93,6 +93,8 @@ class InlineEffect(StrEnum):
     WIDENS_FOR_SUPERUSER = "widens_for_superuser"
     # Same, for a superuser or a provider-org member.
     WIDENS_FOR_BYPASS = "widens_for_bypass"
+    # Named permissions widen own-data access within original-user reach.
+    WIDENS_FOR_PERMISSION = "widens_for_permission"
     # The token is present but does not gate the caller (for example it is
     # copied into a claim or a response).
     NO_CALLER_EFFECT = "no_caller_effect"
@@ -113,7 +115,7 @@ INLINE_CHECK_TOKENS = (
 
 
 _PERMISSION_BOUNDARIES = ("organization", "managed_organizations", "platform")
-_WIDENING_EFFECTS = (InlineEffect.WIDENS_FOR_SUPERUSER, InlineEffect.WIDENS_FOR_BYPASS)
+_WIDENING_EFFECTS = (InlineEffect.WIDENS_FOR_SUPERUSER, InlineEffect.WIDENS_FOR_BYPASS, InlineEffect.WIDENS_FOR_PERMISSION)
 
 
 class AccessEntry(BaseModel):
@@ -201,7 +203,7 @@ class AccessEntry(BaseModel):
         if self.access_class != AccessClass.PERMISSION and self.inline_effect not in _WIDENING_EFFECTS:
             raise ValueError(
                 "a permission on a class other than 'permission' gates only the elevated "
-                "branch: inline_effect must be widens_for_superuser or widens_for_bypass"
+                "branch: inline_effect must describe a widening branch"
             )
         return self
 

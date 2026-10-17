@@ -23,12 +23,25 @@ import pytest
 from shared.sdk_ai import SdkAIError
 
 
+@pytest.fixture(autouse=True)
+def _authorize_sdk_ai(monkeypatch):
+    """Keep AI transport tests focused while the caller gate is unit-tested elsewhere."""
+    from shared import sdk_ai
+    from shared import sdk_config
+
+    caller = SimpleNamespace(principal=SimpleNamespace(runtime_authority=None, embed=False), ctx=None)
+    monkeypatch.setattr(sdk_ai, "load_caller", AsyncMock(return_value=caller))
+    monkeypatch.setattr(sdk_ai, "require_permission", lambda *args: None)
+    monkeypatch.setattr(sdk_config, "resolve_sdk_scope", AsyncMock(return_value=None))
+
+
 def _principal(**kwargs):
     return SimpleNamespace(
         user_id=kwargs.get("user_id", uuid4()),
         organization_id=kwargs.get("organization_id", uuid4()),
         is_superuser=kwargs.get("is_superuser", False),
         email=kwargs.get("email", "ai-test@example.com"),
+        embed=kwargs.get("embed", False),
     )
 
 
@@ -310,7 +323,7 @@ async def test_complete_generic_error_is_sanitized_500():
 
 
 @pytest.mark.asyncio
-async def test_complete_usage_scope_422_never_fails_request():
+async def test_complete_rejects_an_invalid_scope_before_calling_the_provider():
     from shared import sdk_ai
     from shared.sdk_config import ScopeResolutionError
 
@@ -330,14 +343,15 @@ async def test_complete_usage_scope_422_never_fails_request():
             new=AsyncMock(side_effect=ScopeResolutionError(422, "bad scope")),
         ),
     ):
-        result = await sdk_ai.complete_sdk_ai(
-            session,
-            principal,
-            messages=[{"role": "user", "content": "hi"}],
-            scope="not-a-uuid",
-        )
+        with pytest.raises(SdkAIError) as exc_info:
+            await sdk_ai.complete_sdk_ai(
+                session,
+                principal,
+                messages=[{"role": "user", "content": "hi"}],
+                scope="not-a-uuid",
+            )
 
-    assert result["content"] == "Hello"
+    assert exc_info.value.status_code == 422
     assert record.await_count == 0
 
 
@@ -406,7 +420,9 @@ async def test_resolve_sdk_org_id_preserves_422_and_403():
     org_id = uuid4()
 
     # 422 for a malformed scope.
-    caller = SimpleNamespace(organization_id=org_id, is_superuser=False)
+    from src.core.principal import UserPrincipal
+
+    caller = UserPrincipal(user_id=uuid4(), email="ai-scope@contoso.example", organization_id=org_id)
     with pytest.raises(HTTPException) as exc_info:
         await _resolve_sdk_org_id(caller, "not-a-uuid", AsyncMock())
     assert exc_info.value.status_code == 422

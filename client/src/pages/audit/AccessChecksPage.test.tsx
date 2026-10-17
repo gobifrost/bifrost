@@ -174,7 +174,7 @@ describe("AccessChecksPage", () => {
 		).toBeVisible();
 		expect(
 			screen.getByText(
-				"Checks that would have been denied if enforcement were on. Nothing is blocked yet.",
+				"Denied checks and report-only checks that would have been denied.",
 			),
 		).toBeVisible();
 		expect(audit.groups).toHaveBeenLastCalledWith("workflow", {
@@ -189,7 +189,7 @@ describe("AccessChecksPage", () => {
 		expect(second).toHaveTextContent("No Workflow");
 		expect(second).toHaveTextContent("Permission");
 		expect(
-			screen.getByRole("columnheader", { name: "Would Stop Here" }),
+			screen.getByRole("columnheader", { name: "Decision Point" }),
 		).toBeVisible();
 	});
 
@@ -212,9 +212,11 @@ describe("AccessChecksPage", () => {
 		audit.groups.mockReturnValue(query({ entries: [], groups: [] }));
 		renderPage();
 
-		expect(screen.getByText("No Would-Deny Checks")).toBeVisible();
+		expect(screen.getByText("No Failed Access Checks")).toBeVisible();
 		expect(
-			screen.getByText("Every recorded check would have been allowed."),
+			screen.getByText(
+				"No denied or report-only failed checks match these filters.",
+			),
 		).toBeVisible();
 	});
 
@@ -288,7 +290,7 @@ describe("AccessChecksPage", () => {
 			"Time",
 			"Run User",
 			"Resource Type",
-			"Would Stop Here",
+			"Decision Point",
 		]);
 		const [, row] = checks.getAllByRole("row");
 		const cells = within(row).getAllByRole("cell");
@@ -402,7 +404,7 @@ describe("AccessChecksPage", () => {
 			screen.queryByRole("columnheader", { name: "# Checks" }),
 		).not.toBeInTheDocument();
 		expect(
-			screen.getByRole("columnheader", { name: "Would Stop Here" }),
+			screen.getByRole("columnheader", { name: "Decision Point" }),
 		).toBeVisible();
 	});
 });

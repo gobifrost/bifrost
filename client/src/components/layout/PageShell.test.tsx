@@ -36,11 +36,11 @@ describe("PageShell access contract", () => {
 		);
 		expect(screen.queryByText("Page content")).not.toBeInTheDocument();
 	});
-	it("denies access without a platform or organization role", () => {
+	it("lets an authenticated role-only user reach route authorization", () => {
 		auth.isPlatformAdmin = false;
 		renderWithProviders(<PageShell />);
-		expect(screen.getByText("No access")).toBeVisible();
-		expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
+		expect(screen.getByText("Page content")).toBeVisible();
+		expect(screen.getByRole("navigation")).toBeVisible();
 	});
 	it("keeps embed content free of the workspace chrome", () => {
 		auth.isPlatformAdmin = false;

@@ -9,9 +9,14 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared import access_checks
 from src.models.contracts.artifacts import ArtifactRef
 from src.models.orm import Artifact
+from src.services.authorization.enforce import (
+    Caller,
+    PermissionDenied,
+    require_named_permission,
+    user_reach,
+)
 from src.services.file_storage.service import get_file_storage_service
 
 
@@ -46,6 +51,23 @@ class ArtifactAccessError(ValueError):
     """Raised when an artifact reference is missing or outside the caller's scope."""
 
 
+async def refresh_artifact_caller(db: AsyncSession, caller: Caller) -> Caller:
+    """Reload current authority before each private-artifact decision.
+
+    Typed runtime credentials are durable records, so their original role
+    context and workflow powers must be resolved again for every operation.
+    Ordinary callers also reload their current authorization context.  A
+    caller without an original-user context cannot use the private-artifact
+    authority path.
+    """
+    from src.services.authorization.callers import CallerUnavailable, refresh_caller
+
+    try:
+        return await refresh_caller(db, caller)
+    except CallerUnavailable:
+        raise ArtifactAccessError("Artifact not found.")
+
+
 def artifact_ref(artifact: Artifact) -> ArtifactRef:
     """Return the only public identity exposed for a stored artifact."""
     return ArtifactRef(
@@ -73,7 +95,7 @@ class ArtifactService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
-    async def store(
+    async def _store_persist(
         self,
         *,
         filename: str,
@@ -84,29 +106,11 @@ class ArtifactService:
         storage_family: str = "generated",
         workspace_id: UUID | None = None,
         logical_path: str | None = None,
-        bypass: bool = False,
     ) -> Artifact:
         if not filename:
             raise ValueError("Artifact filename is required.")
         if not content:
             raise ValueError(f"{filename} is empty.")
-        if workspace_id is not None and not bypass:
-            existing_owner = (
-                await self.db.execute(
-                    select(Artifact.created_by_user_id)
-                    .where(Artifact.workspace_id == workspace_id)
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
-            if existing_owner is not None and existing_owner != created_by_user_id:
-                raise ArtifactAccessError("Artifact workspace is not accessible.")
-        elif workspace_id is not None:
-            # Whose workspace it is, and where, is read when the note is judged.
-            access_checks.note_power(
-                "artifacts.readwrite.all",
-                access_checks.Owned("artifact_workspace", workspace_id, created_by_user_id),
-                subject=f"artifact_workspace:{workspace_id}",
-            )
         artifact_id = uuid4()
         safe_name = filename.replace("/", "_").replace("\\", "_")
         resolved_path = (
@@ -150,88 +154,214 @@ class ArtifactService:
             raise
         return artifact
 
-    async def list_workspace(
+    @staticmethod
+    def _can_access_artifact(
+        caller: Caller,
+        artifact: Artifact,
+        *,
+        permission: str,
+    ) -> bool:
+        """Require original-user reach and owner-or-named-all authority."""
+        if caller.ctx is None or not user_reach(caller).covers(artifact.organization_id):
+            return False
+        if artifact.created_by_user_id == caller.ctx.user_id:
+            return True
+        try:
+            require_named_permission(caller, permission, artifact.organization_id)
+        except PermissionDenied:
+            return False
+        return True
+
+    async def store_for_caller(
+        self,
+        caller: Caller,
+        *,
+        filename: str,
+        content_type: str,
+        content: bytes,
+        storage_family: str = "generated",
+        workspace_id: UUID | None = None,
+        logical_path: str | None = None,
+    ) -> Artifact:
+        """Store an artifact with original-user authority and actor attribution.
+
+        A new workspace is scoped to the verified effects principal's current
+        execution organization, which must be inside the original caller's
+        reach.  Existing workspaces are accepted only when every persisted
+        row shares one organization and the original caller owns every row or
+        holds scoped ``artifacts.readwrite.all`` for its actual organization.
+        """
+        caller, organization_id = await self._write_target_for_caller(
+            caller, workspace_id=workspace_id
+        )
+        return await self._store_persist(
+            filename=filename,
+            content_type=content_type,
+            content=content,
+            created_by_user_id=caller.principal.user_id,
+            organization_id=organization_id,
+            storage_family=storage_family,
+            workspace_id=workspace_id,
+            logical_path=logical_path,
+        )
+
+    async def authorize_workspace_write_for_caller(
+        self, caller: Caller, *, workspace_id: UUID | None
+    ) -> tuple[Caller, UUID | None]:
+        """Refresh and authorize an SDK write that will persist in a job later.
+
+        The resolved organization is part of the authorization result.  A
+        durable job must retain it rather than substituting the effects
+        actor's current organization when writing into an existing workspace.
+        """
+        return await self._write_target_for_caller(caller, workspace_id=workspace_id)
+
+    async def _write_target_for_caller(
+        self, caller: Caller, *, workspace_id: UUID | None
+    ) -> tuple[Caller, UUID | None]:
+        caller = await refresh_artifact_caller(self.db, caller)
+        organization_id = caller.principal.organization_id
+        if workspace_id is not None:
+            rows = list(
+                (
+                    await self.db.execute(
+                        select(Artifact).where(Artifact.workspace_id == workspace_id)
+                    )
+                ).scalars().all()
+            )
+            if rows:
+                organizations = {row.organization_id for row in rows}
+                if len(organizations) != 1 or any(
+                    not self._can_access_artifact(
+                        caller, row, permission="artifacts.readwrite.all"
+                    )
+                    for row in rows
+                ):
+                    raise ArtifactAccessError("Artifact workspace is not accessible.")
+                organization_id = rows[0].organization_id
+            elif not user_reach(caller).covers(organization_id):
+                raise ArtifactAccessError("Artifact workspace is not accessible.")
+        elif not user_reach(caller).covers(organization_id):
+            raise ArtifactAccessError("Artifact workspace is not accessible.")
+        return caller, organization_id
+
+    async def store_trusted_job(
+        self,
+        *,
+        filename: str,
+        content_type: str,
+        content: bytes,
+        created_by_user_id: UUID,
+        organization_id: UUID | None,
+        workspace_id: UUID | None = None,
+        logical_path: str | None = None,
+    ) -> Artifact:
+        """Persist output after a platform job's enqueue authorization.
+
+        This is intentionally separate from caller-authorized SDK storage.  It
+        is for durable job handlers that have already validated their target
+        and must never become an optional caller/bypass route.
+        """
+        return await self._store_persist(
+            filename=filename,
+            content_type=content_type,
+            content=content,
+            created_by_user_id=created_by_user_id,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            logical_path=logical_path,
+        )
+
+    async def store_conversation_attachment(
+        self,
+        *,
+        filename: str,
+        content_type: str,
+        content: bytes,
+        created_by_user_id: UUID,
+        organization_id: UUID | None,
+        storage_family: str = "generated",
+        workspace_id: UUID,
+        logical_path: str,
+    ) -> Artifact:
+        """Persist a Chat attachment after its conversation boundary checks."""
+        return await self._store_persist(
+            filename=filename,
+            content_type=content_type,
+            content=content,
+            created_by_user_id=created_by_user_id,
+            organization_id=organization_id,
+            storage_family=storage_family,
+            workspace_id=workspace_id,
+            logical_path=logical_path,
+        )
+
+    async def list_workspace_for_caller(
         self,
         workspace_id: UUID,
         *,
-        user_id: UUID,
-        bypass: bool = False,
+        caller: Caller,
     ) -> list[Artifact]:
-        """List the latest version of every logical file in a workspace.
-
-        Regular (non-bypass) callers see only artifacts they created
-        themselves — never another org member's. ``bypass`` (platform admin
-        or provider-org) sees everything in the workspace.
-        """
+        """List the latest accessible version of every logical workspace path."""
+        caller = await refresh_artifact_caller(self.db, caller)
+        reach_filter = user_reach(caller).where(Artifact.organization_id)
         statement = (
             select(Artifact)
             .where(Artifact.workspace_id == workspace_id)
             .order_by(Artifact.created_at.desc(), Artifact.id.desc())
         )
-        if not bypass:
-            statement = statement.where(Artifact.created_by_user_id == user_id)
+        if reach_filter is not None:
+            statement = statement.where(reach_filter)
         artifacts = list((await self.db.execute(statement)).scalars().all())
-        others = next((artifact for artifact in artifacts if artifact.created_by_user_id != user_id), None)
-        if others is not None:
-            access_checks.note_power(
-                "artifacts.read.all", others.organization_id, subject=f"artifact_workspace:{workspace_id}"
-            )
         latest: dict[str, Artifact] = {}
         for artifact in artifacts:
+            if not self._can_access_artifact(
+                caller, artifact, permission="artifacts.read.all"
+            ):
+                continue
             path = artifact.logical_path or artifact.filename
             latest.setdefault(path, artifact)
         return list(latest.values())
 
-    async def resolve_workspace_path(
+    async def resolve_workspace_path_for_caller(
         self,
         workspace_id: UUID,
         path: str,
         *,
-        user_id: UUID,
-        bypass: bool = False,
+        caller: Caller,
     ) -> Artifact:
-        """Resolve the latest authorized artifact at one logical path.
-
-        Regular (non-bypass) callers may only resolve an artifact they
-        created themselves.
-        """
+        """Resolve the latest accessible artifact at one logical workspace path."""
+        caller = await refresh_artifact_caller(self.db, caller)
         normalized = normalize_artifact_path(path)
+        reach_filter = user_reach(caller).where(Artifact.organization_id)
         statement = (
             select(Artifact)
             .where(Artifact.workspace_id == workspace_id)
             .where(Artifact.logical_path == normalized)
             .order_by(Artifact.created_at.desc(), Artifact.id.desc())
-            .limit(1)
         )
-        if not bypass:
-            statement = statement.where(Artifact.created_by_user_id == user_id)
-        artifact = (await self.db.execute(statement)).scalar_one_or_none()
-        if artifact is None:
-            raise ArtifactAccessError(f"Artifact workspace path {normalized} was not found.")
-        if artifact.created_by_user_id != user_id:
-            access_checks.note_power("artifacts.read.all", artifact.organization_id, subject=f"artifact:{artifact.id}")
-        return artifact
+        if reach_filter is not None:
+            statement = statement.where(reach_filter)
+        for artifact in (await self.db.execute(statement)).scalars().all():
+            if self._can_access_artifact(
+                caller, artifact, permission="artifacts.read.all"
+            ):
+                return artifact
+        raise ArtifactAccessError(f"Artifact workspace path {normalized} was not found.")
 
-    async def get_authorized(
+    async def get_for_caller(
         self,
         artifact_id: UUID,
         *,
-        user_id: UUID,
-        bypass: bool = False,
+        caller: Caller,
     ) -> Artifact:
-        """Resolve one artifact by id.
-
-        Regular (non-bypass) callers may only read an artifact they created
-        themselves — never another org member's.
-        """
-        statement = select(Artifact).where(Artifact.id == artifact_id)
-        if not bypass:
-            statement = statement.where(Artifact.created_by_user_id == user_id)
-        artifact = (await self.db.execute(statement)).scalar_one_or_none()
-        if artifact is None:
+        """Resolve one artifact when original-user authority permits it."""
+        caller = await refresh_artifact_caller(self.db, caller)
+        artifact = await self.db.scalar(select(Artifact).where(Artifact.id == artifact_id))
+        if artifact is None or not self._can_access_artifact(
+            caller, artifact, permission="artifacts.read.all"
+        ):
             raise ArtifactAccessError("Artifact not found.")
-        if artifact.created_by_user_id != user_id:
-            access_checks.note_power("artifacts.read.all", artifact.organization_id, subject=f"artifact:{artifact.id}")
         return artifact
 
     async def read(self, artifact: Artifact) -> bytes:

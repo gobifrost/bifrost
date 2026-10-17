@@ -28,7 +28,9 @@ def _compute_hmac(params: dict[str, str], secret: str) -> str:
 @pytest.mark.e2e
 class TestEmbedEntryPoint:
     @pytest.fixture
-    def test_app_with_secret(self, e2e_client, platform_admin):
+    def test_app_with_secret(
+        self, e2e_client, platform_admin, secrets_reader_platform_admin
+    ):
         app = _create_app(e2e_client, platform_admin.headers, "embed-entry-test")
         r = e2e_client.post(
             f"/api/applications/{app['id']}/embed-secrets",

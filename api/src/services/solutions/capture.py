@@ -353,6 +353,7 @@ class SolutionCaptureService:
         *,
         include_imports: bool = False,
         include_values: bool = False,
+        include_secret_values: bool = True,
         include_data: bool = False,
         include_files: bool = False,
     ) -> SolutionBundle:
@@ -372,7 +373,7 @@ class SolutionCaptureService:
         )
         config_values: dict[str, str] = {}
         if include_values:
-            config_values = await self._config_values(solution)
+            config_values = await self._config_values(solution, include_secrets=include_secret_values)
         table_data: dict[str, list[dict[str, Any]]] = {}
         table_document_ids: dict[str, list[str]] = {}
         if include_data:
@@ -760,7 +761,7 @@ class SolutionCaptureService:
                 existing.position = pos
         return entries
 
-    async def _config_values(self, solution: Solution) -> dict[str, str]:
+    async def _config_values(self, solution: Solution, *, include_secrets: bool = True) -> dict[str, str]:
         """Read the plaintext value for each declared config key that has a value set.
 
         Config.value is stored as JSONB ``{"value": <stored_value>}``.  For
@@ -786,6 +787,9 @@ class SolutionCaptureService:
 
         out: dict[str, str] = {}
         for schema in schema_rows:
+            schema_is_secret = bool(schema.type) and schema.type.lower() == ConfigTypeEnum.SECRET.value
+            if schema_is_secret and not include_secrets:
+                continue
             # Look up the Config value in the solution's org scope (no cascade
             # — we want the value actually set for this install's org, not a
             # global fallback that might belong to a different install).
@@ -798,6 +802,9 @@ class SolutionCaptureService:
             config = (await self.db.execute(q)).scalar_one_or_none()
             if config is None:
                 continue  # Not set — skip; install target must supply this key.
+            is_secret = schema_is_secret or config.config_type == ConfigTypeEnum.SECRET
+            if is_secret and not include_secrets:
+                continue
 
             # Extract the scalar from the JSONB envelope {"value": ...}.
             raw = (
@@ -812,8 +819,6 @@ class SolutionCaptureService:
             # SolutionConfigSchema.type is a plain str column; canonicalize case
             # (mirrors zip_install._config_type) so a stored "SECRET" still
             # matches and the secret is never exported still-encrypted.
-            schema_type = schema.type
-            is_secret = bool(schema_type) and schema_type.lower() == ConfigTypeEnum.SECRET.value
             if is_secret:
                 raw = decrypt_secret(str(raw))
 

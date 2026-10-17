@@ -14,8 +14,12 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from src.core.db_deps import DbSession
-from src.core.principal import UserPrincipal, run_lineage_fields
+from src.core.principal import UserPrincipal
 from src.core.security import decode_token
+from src.services.authorization.runtime_auth import (
+    is_runtime_credential_payload,
+    load_runtime_principal,
+)
 from shared.role_cache import get_user_roles
 
 if TYPE_CHECKING:
@@ -142,6 +146,16 @@ async def get_current_user_optional(
     if payload is None:
         return None
 
+    if getattr(request.state, "runtime_token", None) == token:
+        return request.state.runtime_principal
+    runtime_principal = await load_runtime_principal(db, payload)
+    if runtime_principal is not None:
+        return runtime_principal
+    # A legacy engine/service claim, malformed typed credential, or runtime
+    # record that is no longer valid never falls through to human-token auth.
+    if is_runtime_credential_payload(payload):
+        return None
+
     # Extract user ID from token
     user_id_str = payload.get("sub")
     if not user_id_str:
@@ -183,28 +197,6 @@ async def get_current_user_optional(
     # else: superuser with no org = system account (valid)
     # else: embed token without org = valid (HMAC-verified)
 
-    # Execution-scoped engine tokens (mint_engine_token: superuser + an
-    # engine_execution_id claim) stop working once their execution is no
-    # longer running. A supervised-service token (mint_service_token) also
-    # carries engine_execution_id but is never superuser, so it is
-    # unaffected. Liveness is read from the execution row's status in
-    # Postgres, the authoritative source - see shared.execution_liveness
-    # and src.models.enums.LIVE_EXECUTION_STATUSES.
-    engine_execution_id = payload.get("engine_execution_id")
-    if engine_execution_id and is_superuser:
-        from shared.execution_liveness import is_execution_live
-
-        try:
-            live = await is_execution_live(db, engine_execution_id)
-        except Exception:
-            logger.exception(
-                f"Could not verify execution liveness for engine token "
-                f"(execution_id={engine_execution_id}); rejecting"
-            )
-            return None
-        if not live:
-            return None
-
     return UserPrincipal(
         user_id=user_id,
         email=payload.get("email", ""),
@@ -224,13 +216,8 @@ async def get_current_user_optional(
         form_id=payload.get("form_id"),
         verified_params=payload.get("verified_params"),
         verified_context=payload.get("verified_context"),
-        engine_execution_id=payload.get("engine_execution_id"),
-        engine_solution_id=payload.get("engine_solution_id"),
-        service_id=payload.get("service_id"),
-        service_attempt_id=payload.get("service_attempt_id"),
         capability_fingerprint=payload.get("capability_fingerprint"),
         token_exp=payload.get("exp"),
-        **run_lineage_fields(payload),
     )
 
 
@@ -292,61 +279,6 @@ async def get_current_active_user(
     return user
 
 
-async def get_current_superuser(
-    user: Annotated[UserPrincipal, Depends(get_current_active_user)],
-) -> UserPrincipal:
-    """
-    Get the current superuser (platform admin).
-
-    Raises HTTPException if user is not a superuser.
-
-    Args:
-        user: Current active user
-
-    Returns:
-        UserPrincipal for superuser
-
-    Raises:
-        HTTPException: If user is not a superuser
-    """
-    if not user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Superuser privileges required"
-        )
-    return user
-
-
-async def get_current_engine_or_bypass_user(
-    user: Annotated[UserPrincipal, Depends(get_current_user)],
-) -> UserPrincipal:
-    """Admit execution credentials and scope-bypass principals only.
-
-    Execution credentials are the signed engine and service tokens: they
-    carry ``engine_execution_id`` and never an embed claim. Bypass is
-    platform admin OR provider-org member. Every other principal, including
-    an ordinary user's own session token, is refused.
-    """
-    from shared.scope_resolver import has_scope_bypass
-
-    if user.engine_execution_id and not user.embed:
-        return user
-    if has_scope_bypass(
-        is_platform_admin=user.is_platform_admin,
-        is_provider_org=user.is_provider_org,
-    ):
-        return user
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Execution credentials or platform access required",
-    )
-
-
-# Dependency for requiring platform admin access
-# Usage: dependencies=[RequirePlatformAdmin]
-RequirePlatformAdmin = Depends(get_current_superuser)
-
-
 async def get_execution_context(
     request: Request,
     user: Annotated[UserPrincipal, Depends(get_current_active_user)],
@@ -380,29 +312,6 @@ async def get_execution_context(
         role_ids, role_names = await get_user_roles(user.user_id, db)
         user.role_ids = role_ids
         user.role_names = role_names
-
-    # A Full workflow has the built-in policy authority in addition to its
-    # ordinary user facts. Resolve it from the verified live execution row,
-    # never from the attribution-only workflow claim in the engine token.
-    if user.is_superuser and user.engine_execution_id:
-        from src.models.contracts.workflow_permissions import WorkflowPermissionMode
-        from src.models.orm.executions import Execution
-        from src.models.orm.workflows import Workflow
-        from src.services.workflow_permissions import (
-            effective_workflow_permission_mode,
-            get_default_workflow_permission_mode,
-        )
-
-        execution = await db.get(Execution, UUID(user.engine_execution_id))
-        if execution is not None:
-            workflow = None if execution.workflow_id is None else await db.get(Workflow, execution.workflow_id)
-            mode = (
-                await get_default_workflow_permission_mode(db)
-                if workflow is None
-                else await effective_workflow_permission_mode(db, workflow)
-            )
-            if mode is WorkflowPermissionMode.FULL:
-                user.policy_authorities = user.policy_authorities | {"platform_admin"}
 
     dev_context = None
     raw_dev_context = request.headers.get("X-Bifrost-Dev-Context")
@@ -521,8 +430,6 @@ async def _refuse_if_solution_inactive(solution_row: object) -> None:
 # Type aliases for dependency injection
 CurrentUser = Annotated[UserPrincipal, Depends(get_current_user)]
 CurrentActiveUser = Annotated[UserPrincipal, Depends(get_current_active_user)]
-CurrentSuperuser = Annotated[UserPrincipal, Depends(get_current_superuser)]
-CurrentEngineOrBypassUser = Annotated[UserPrincipal, Depends(get_current_engine_or_bypass_user)]
 Context = Annotated[ExecutionContext, Depends(get_execution_context)]
 
 
@@ -603,6 +510,11 @@ async def get_current_user_ws(websocket) -> UserPrincipal | None:
     if payload is None:
         return None
 
+    # WebSockets have no database dependency to resolve typed runtime
+    # credentials. They must not accept them through the ordinary token path.
+    if is_runtime_credential_payload(payload):
+        return None
+
     user_id_str = payload.get("sub")
     if not user_id_str:
         return None
@@ -660,11 +572,6 @@ async def get_current_user_ws(websocket) -> UserPrincipal | None:
         form_id=payload.get("form_id"),
         verified_params=payload.get("verified_params"),
         verified_context=payload.get("verified_context"),
-        engine_execution_id=payload.get("engine_execution_id"),
-        engine_solution_id=payload.get("engine_solution_id"),
-        service_id=payload.get("service_id"),
-        service_attempt_id=payload.get("service_attempt_id"),
         capability_fingerprint=payload.get("capability_fingerprint"),
         token_exp=payload.get("exp"),
-        **run_lineage_fields(payload),
     )

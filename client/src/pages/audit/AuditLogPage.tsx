@@ -8,7 +8,8 @@ import { AuditPagination } from "./AuditPagination";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorization } from "@/services/authorization";
+import { PageLoader } from "@/components/PageLoader";
 import { useAuditLog } from "@/hooks/useAuditLog";
 import type { AuditLogEntry, GetAuditLogParams } from "@/hooks/useAuditLog";
 import { getErrorMessage } from "@/lib/api-error";
@@ -49,7 +50,8 @@ function auditContext(entry: AuditLogEntry): string {
 }
 
 export function AuditLogPage() {
-	const { isPlatformAdmin } = useAuth();
+	const { canAnywhere, isLoading: authorizationLoading } = useAuthorization();
+	const canReadAudit = canAnywhere("roleassignments.read");
 	const navigate = useNavigate();
 	const desktop = useMediaQuery("(min-width: 1024px)");
 
@@ -107,7 +109,7 @@ export function AuditLogPage() {
 	);
 	const { data, isLoading, isFetching, error, refetch } = useAuditLog(
 		queryParams,
-		!invalidDateRange,
+		canReadAudit && !invalidDateRange,
 		{ preservePageData: true },
 	);
 
@@ -139,14 +141,15 @@ export function AuditLogPage() {
 		if (currentPage > 0) setCurrentPage(currentPage - 1);
 	};
 
-	if (!isPlatformAdmin) {
+	if (authorizationLoading)
+		return <PageLoader message="Loading audit log…" />;
+	if (!canReadAudit) {
 		return (
 			<div className="container mx-auto py-8">
 				<Alert variant="destructive">
 					<AlertCircle className="h-4 w-4" />
 					<AlertDescription>
 						You do not have permission to view the audit log.
-						Platform administrator access is required.
 					</AlertDescription>
 				</Alert>
 				<Button onClick={() => navigate("/")} className="mt-4">

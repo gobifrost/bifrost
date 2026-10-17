@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from uuid import UUID, uuid4
 
+import pytest
+
 from shared.builtin_roles import (
     PLATFORM_OPERATOR_PERMISSIONS,
     PLATFORM_OPERATOR_ROLE_ID,
@@ -167,7 +169,7 @@ def test_restricted_without_grants_uses_only_the_users_own_roles() -> None:
 def test_restricted_grants_add_permissions_within_reach() -> None:
     granted = Powers(
         WorkflowPermissionMode.RESTRICTED,
-        (WorkflowGrant(permission="tables.readwrite", boundary="managed_organizations"),),
+        (WorkflowGrant(permission="tables.readwrite"),),
     )
 
     assert check_target(_operator(), granted, CONTOSO, WRITE_TABLES).outcome == "success"
@@ -421,3 +423,27 @@ def test_a_run_adds_the_workflows_powers() -> None:
     assert _stopped_at(check_permission(_user(), RESTRICTED, "agents.read", CONTOSO)) == "permission"
     granted = Powers(WorkflowPermissionMode.RESTRICTED, (grant,))
     assert check_permission(_user(), granted, "agents.read", CONTOSO).outcome == "success"
+
+
+@pytest.mark.parametrize("powers", [None, RESTRICTED])
+def test_global_table_policy_data_needs_reach_without_an_operation_permission(powers) -> None:
+    entry = AccessEntry(
+        method="GET", path="/api/test/policy-data", access_class=AccessClass.TABLE_POLICY,
+        current_gate=CurrentGate.AUTHENTICATED, reason="Data policy decides rows",
+    )
+    trace = check_target(_user(), powers, None, entry)
+    assert trace.outcome == "success"
+    assert trace.steps[-1].status == "passed"
+
+
+@pytest.mark.parametrize("powers", [FULL, Powers(WorkflowPermissionMode.RESTRICTED, (WorkflowGrant(permission="secrets.read"),)), None])
+def test_secret_power_never_widens_original_user_reach(powers) -> None:
+    trace = check_secret(_user(), powers, FABRIKAM, kind="config", name="api_key")
+    assert trace.outcome == "failure"
+    assert _stopped_at(trace) == "target"
+
+
+def test_inline_secret_check_has_no_implicit_full_workflow_power() -> None:
+    trace = check_secret(_user(), None, CONTOSO, kind="config", name="api_key")
+    assert trace.outcome == "failure"
+    assert trace.steps[1].reason == "no_workflow"

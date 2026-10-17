@@ -45,9 +45,13 @@ const mockUseAuth = vi.fn();
 vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockUseAuth(),
 }));
+const mockAuthorization = vi.fn();
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockAuthorization(),
+}));
 
 vi.mock("@/components/agents/SummaryBackfillButton", () => ({
-	SummaryBackfillButton: () => null,
+	SummaryBackfillButton: () => <div data-testid="summary-backfill" />,
 }));
 
 const mockToastSuccess = vi.fn();
@@ -104,6 +108,10 @@ beforeEach(() => {
 	mockUseAgents.mockReturnValue({ data: [], isLoading: false });
 	mockUseFleetStats.mockReturnValue({ data: fleetStats, isLoading: false });
 	mockUseAuth.mockReturnValue({ isPlatformAdmin: false });
+	mockAuthorization.mockReturnValue({
+		canAt: () => true,
+		canAnywhere: () => true,
+	});
 });
 
 async function renderPage() {
@@ -130,6 +138,25 @@ describe("FleetPage — header + fleet stats", () => {
 		expect(
 			screen.getByRole("heading", { name: /^agents$/i }),
 		).toBeInTheDocument();
+	});
+
+	it("shows fleet backfill only with a named run-write grant", async () => {
+		mockAuthorization.mockReturnValue({
+			canAt: () => true,
+			canAnywhere: () => false,
+		});
+		await renderPage();
+		expect(
+			screen.queryByTestId("summary-backfill"),
+		).not.toBeInTheDocument();
+
+		mockAuthorization.mockReturnValue({
+			canAt: () => true,
+			canAnywhere: (permission: string) =>
+				permission === "agentruns.readwrite.all",
+		});
+		await renderPage();
+		expect(screen.getByTestId("summary-backfill")).toBeInTheDocument();
 	});
 
 	it("renders fleet stats once loaded", async () => {

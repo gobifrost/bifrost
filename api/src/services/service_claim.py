@@ -405,31 +405,14 @@ class ServiceClaimLoop:
         from src.core.cache import get_redis
         from src.core.security import mint_service_token
         from src.models.orm.services import ServiceDefinition
-        from src.models.orm.solutions import Solution
 
         if definition is None:
             definition = await db.get(ServiceDefinition, owned.service_id)
         if definition is None or not definition.organization_id:
             return
-        solution = (
-            await db.get(Solution, definition.solution_id)
-            if definition.solution_id
-            else None
-        )
         token, expires_at = mint_service_token(
             service_id=str(owned.service_id),
             attempt_id=str(owned.attempt_id),
-            organization_id=str(definition.organization_id),
-            solution_id=(
-                str(definition.solution_id)
-                if definition.solution_id
-                else None
-            ),
-            global_repo_access=bool(
-                solution
-                and solution.status == "active"
-                and solution.allow_outbound_access
-            ),
             lifetime_seconds=self.token_lifetime_seconds,
         )
         try:
@@ -610,21 +593,18 @@ class ServiceClaimLoop:
             if org
             else None
         )
-        from src.core.security import service_sdk_actor_email
+        from src.models.orm.users import User
+        from src.services.authorization.runtime import load_runtime_authority
 
-        short_id = str(definition.id).replace("-", "")[:12]
+        authority = await load_runtime_authority(
+            db, "service_attempt", attempt.id, service_id=definition.id
+        )
+        actor = await db.get(User, authority.acting_user_id)
+        if actor is None:
+            raise RuntimeError("Service attempt has no current acting user")
         token, expires_at = mint_service_token(
             service_id=str(definition.id),
             attempt_id=str(attempt.id),
-            organization_id=str(definition.organization_id),
-            solution_id=(
-                str(definition.solution_id)
-                if definition.solution_id
-                else None
-            ),
-            global_repo_access=bool(
-                workflow_data.get("can_access_global_repo", False)
-            ),
             lifetime_seconds=self.token_lifetime_seconds,
         )
         context = {
@@ -634,10 +614,11 @@ class ServiceClaimLoop:
             "file_path": workflow_data["path"],
             "content_hash": definition.current_revision,
             "caller": {
-                "user_id": "00000000-0000-0000-0000-000000000001",
-                "email": service_sdk_actor_email(str(definition.id)),
-                "name": f"service-{short_id}",
+                "user_id": str(actor.id),
+                "email": actor.email,
+                "name": actor.name or actor.email,
             },
+            "is_platform_admin": authority.run_user.is_platform_admin,
             "organization": org_data,
             "timeout_seconds": 0,
             "solution_id": workflow_data.get("solution_id"),

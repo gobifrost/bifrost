@@ -102,12 +102,11 @@ class ManifestRole(EntityCodec, BaseModel):
 
 
 class ManifestWorkflowPermissionGrant(BaseModel):
-    """A permission a Solution workflow requests (portable: a boundary is a kind, never an org id)."""
+    """A permission a Solution workflow requests."""
+
+    model_config = ConfigDict(extra="forbid")
+
     permission: str = Field(description="Permission, '<domain>.<read|readwrite|execute>'", **classify(FieldClass.CONTENT))
-    boundary: Literal["organization", "managed_organizations", "platform"] | None = Field(
-        default=None, description="Cross-org boundary; null = the run's own organization",
-        **classify(FieldClass.CONTENT),
-    )
 
 
 class ManifestRequestedPermissions(BaseModel):

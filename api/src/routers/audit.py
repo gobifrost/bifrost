@@ -4,7 +4,7 @@ Audit log router.
 Read-only API over the audit_logs table, and exports of archived and current
 events to a file. Platform Admins read everything. Anyone else holding
 ``roleassignments.read`` (who may see who has what access, e.g. Platform
-Operators) reads only report-only access checks (``access.check*``) in the
+Operators) reads only access checks (``access.check*``) in the
 organizations that permission reaches (decision R3b P2).
 """
 

@@ -6,7 +6,6 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID, uuid5
 
@@ -14,23 +13,17 @@ import pydantic_core
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from shared import access_checks
-from shared.execution_visibility import is_own_execution, is_own_pending_execution
 from shared.run_lineage import RunLineage
-from shared.scope_resolver import has_scope_bypass
-from src.core.org_filter import OrgFilterType
 from src.models.orm.agents import Agent
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.executions import Execution
 from src.models.orm.external_mcp import MCPConnection, MCPServer
-from src.repositories.agents import AgentRepository
 from src.services.execution.agent_helpers import (
     find_delegated_agent,
     parse_mcp_tool_name,
     resolve_agent_tools,
 )
 from src.services.execution.agent_workflow_tools import (
-    AgentWorkflowCaller,
     execute_agent_workflow_tool,
 )
 from src.services.llm import ToolDefinition
@@ -243,61 +236,43 @@ class MCPAgentGatewayService:
     def __init__(self, context: MCPContext):
         self.context = context
 
-    @property
-    def _has_scope_bypass(self) -> bool:
-        return has_scope_bypass(
-            is_platform_admin=self.context.is_platform_admin,
-            is_provider_org=self.context.is_provider_org,
-        )
+    async def _caller(self, db):
+        from src.services.mcp_server.authorization import MCPAuthorizationError, load_mcp_caller
 
-    @property
-    def _caller_org(self) -> UUID | None:
-        org_id = self.context.org_id
-        return None if org_id is None else UUID(str(org_id))
+        try:
+            return await load_mcp_caller(db, self.context)
+        except MCPAuthorizationError as exc:
+            raise GatewayError("AUTHENTICATION_REQUIRED", "Authentication required") from exc
 
-    def _agent_repo(self, session: Any) -> AgentRepository:
-        return AgentRepository(
-            session,
-            org_id=self.context.org_id,
-            user_id=self.context.user_id,
-            is_superuser=self._has_scope_bypass,
-            is_external=self.context.is_external,
-        )
-
-    def _authorize_discovery_scope(self, discovery_scope: DiscoveryScope) -> None:
-        if discovery_scope == "all" and not self._has_scope_bypass:
-            raise GatewayError(
-                "IMPERSONATION_FORBIDDEN",
-                "Cross-organization discovery requires platform/provider impersonation authority.",
-            )
-
-    async def _list_accessible_agents(self) -> list[Agent]:
+    async def _list_agents(self, *, all_scopes: bool) -> list[Agent]:
+        from sqlalchemy import or_
+        from shared.scope_resolver import resolve_effective_scope
         from src.core.database import get_db_context
+        from src.services.agent_write_policy import agent_query_in_reach, can_read_agent, caller_user_id
 
         async with get_db_context() as db:
-            repo = AgentRepository(
-                db,
-                org_id=self.context.org_id,
-                user_id=self.context.user_id,
-                is_superuser=False,
-                is_external=self.context.is_external,
-            )
-            return await repo.list_agents(active_only=True)
+            caller = await self._caller(db)
+            query = agent_query_in_reach(caller).options(
+                selectinload(Agent.roles), selectinload(Agent.tools),
+                selectinload(Agent.delegated_agents),
+            ).where(Agent.is_active.is_(True))
+            if not all_scopes:
+                selected_org = resolve_effective_scope(caller=caller)
+                query = query.where(or_(
+                    Agent.organization_id == selected_org,
+                    Agent.organization_id.is_(None),
+                    Agent.owner_user_id == caller_user_id(caller),
+                ))
+            candidates = (await db.execute(query)).scalars().unique().all()
+            return [agent for agent in candidates if await can_read_agent(db, caller, agent)]
+
+    async def _list_accessible_agents(self) -> list[Agent]:
+        return await self._list_agents(all_scopes=False)
 
     async def _list_discovery_agents(
         self, discovery_scope: DiscoveryScope
     ) -> list[Agent]:
-        self._authorize_discovery_scope(discovery_scope)
-        if discovery_scope == "accessible":
-            return await self._list_accessible_agents()
-
-        from src.core.database import get_db_context
-
-        async with get_db_context() as db:
-            return await self._agent_repo(db).list_all_in_scope(
-                OrgFilterType.ALL,
-                active_only=True,
-            )
+        return await self._list_agents(all_scopes=discovery_scope == "all")
 
     async def accessible_agent_count(self) -> int:
         """Return the caller's live accessible-agent count."""
@@ -313,11 +288,9 @@ class MCPAgentGatewayService:
         limit: int = 10,
     ) -> dict[str, Any]:
         """Search agents and tools, then progressively hydrate one selection."""
-        self._authorize_discovery_scope(discovery_scope)
         bounded_limit = min(max(limit, 1), MAX_CAPABILITY_RESULTS)
         if agent_id is not None:
             snapshot = await self.get_agent_snapshot(agent_id)
-            access_checks.note_launch("agents.readbasic", snapshot.agent.organization_id, self._caller_org, subject=f"agent:{snapshot.agent.id}")
             return self._search_agent_snapshot(
                 snapshot,
                 query=query,
@@ -333,7 +306,6 @@ class MCPAgentGatewayService:
                 retryable=True,
             )
 
-        access_checks.note_launch("agents.readbasic", None, self._caller_org, subject="agents")
         snapshots: list[AgentToolSnapshot] = []
         for agent in await self._list_discovery_agents(discovery_scope):
             snapshots.append(await self.get_agent_snapshot(str(agent.id)))
@@ -586,9 +558,17 @@ class MCPAgentGatewayService:
             ) from exc
 
         async with get_db_context() as db:
-            repo = self._agent_repo(db)
-            agent = await repo.get_agent_with_access_check(parsed_agent_id)
-            if agent is None or not agent.is_active:
+            from src.services.agent_write_policy import agent_query_in_reach, can_read_agent
+
+            caller = await self._caller(db)
+            result = await db.execute(
+                agent_query_in_reach(caller).options(
+                    selectinload(Agent.roles), selectinload(Agent.tools),
+                    selectinload(Agent.delegated_agents),
+                ).where(Agent.id == parsed_agent_id)
+            )
+            agent = result.scalars().unique().first()
+            if agent is None or not agent.is_active or not await can_read_agent(db, caller, agent):
                 raise GatewayError(
                     "AGENT_NOT_FOUND_OR_FORBIDDEN",
                     "Agent not found or you do not have access.",
@@ -620,7 +600,21 @@ class MCPAgentGatewayService:
         """
         snapshot = await self.get_agent_snapshot(agent_id)
         tool = self.find_tool(snapshot, tool_ref)
-        access_checks.note_launch("agents.execute", snapshot.agent.organization_id, self._caller_org, subject=f"agent:{snapshot.agent.id}")
+        from shared.scope_resolver import shared_read_organization
+        from src.core.database import get_db_context
+        from src.services.authorization.enforce import require_named_permission
+
+        async with get_db_context() as db:
+            caller = await self._caller(db)
+            from src.services.authorization.enforce import PermissionDenied
+
+            try:
+                require_named_permission(
+                    caller, "agents.execute",
+                    shared_read_organization(caller, snapshot.agent.organization_id),
+                )
+            except PermissionDenied as exc:
+                raise GatewayError("AUTHORIZATION_FORBIDDEN", exc.detail) from exc
         return await self.execute_tool(
             snapshot,
             tool,
@@ -639,7 +633,9 @@ class MCPAgentGatewayService:
     ) -> dict[str, Any]:
         """Return compact status for an execution owned by the caller."""
         from src.core.database import get_db_context
-        from src.core.redis_client import get_redis_client
+        from shared.pending_execution import get_pending_execution_fallback
+        from src.services.authorization.execution_access import execution_read_access
+        from src.services.execution.agent_run_access import agent_run_visibility_conditions
 
         try:
             parsed_execution_id = UUID(execution_id)
@@ -649,7 +645,9 @@ class MCPAgentGatewayService:
                 "Execution not found or you do not have access.",
             ) from exc
 
+        pending = None
         async with get_db_context() as db:
+            caller = await self._caller(db)
             result = await db.execute(
                 select(Execution).where(Execution.id == parsed_execution_id)
             )
@@ -657,25 +655,21 @@ class MCPAgentGatewayService:
             agent_run = None
             if execution is None:
                 agent_result = await db.execute(
-                    select(AgentRun).where(AgentRun.id == parsed_execution_id)
+                    select(AgentRun).options(selectinload(AgentRun.agent)).where(
+                        AgentRun.id == parsed_execution_id,
+                        *agent_run_visibility_conditions(caller),
+                    )
                 )
                 agent_run = agent_result.scalar_one_or_none()
 
+            if execution is None and agent_run is None:
+                pending, _ = await get_pending_execution_fallback(parsed_execution_id, caller, db)
+
         if execution is not None:
-            if not is_own_execution(
-                self.context.user_id,
-                execution_id=execution.id,
-                executed_by=execution.executed_by,
-                started_by_user_id=execution.started_by_user_id,
-                root_execution_id=execution.root_execution_id,
-            ):
-                if not self.context.is_platform_admin:
-                    raise GatewayError(
-                        "EXECUTION_NOT_FOUND_OR_FORBIDDEN",
-                        "Execution not found or you do not have access.",
-                    )
-                access_checks.note_power(
-                    "executions.read.all", execution.organization_id, subject=f"execution:{execution.id}"
+            if not execution_read_access(caller, execution).visible:
+                raise GatewayError(
+                    "EXECUTION_NOT_FOUND_OR_FORBIDDEN",
+                    "Execution not found or you do not have access.",
                 )
             result_available = execution.result is not None
             result_value = None
@@ -708,13 +702,6 @@ class MCPAgentGatewayService:
             }
 
         if agent_run is not None:
-            if agent_run.caller_user_id != str(self.context.user_id):
-                if not self.context.is_platform_admin:
-                    raise GatewayError(
-                        "EXECUTION_NOT_FOUND_OR_FORBIDDEN",
-                        "Execution not found or you do not have access.",
-                    )
-                access_checks.note_power("agentruns.read.all", agent_run.org_id, subject=f"agent_run:{agent_run.id}")
             result_available = agent_run.output is not None
             result_value = None
             result_page = None
@@ -743,35 +730,16 @@ class MCPAgentGatewayService:
                 "result_page": result_page,
             }
 
-        pending = await get_redis_client().get_pending_execution(execution_id)
         if pending is not None:
-            if not is_own_pending_execution(self.context.user_id, execution_id, pending):
-                if not self.context.is_platform_admin:
-                    raise GatewayError(
-                        "EXECUTION_NOT_FOUND_OR_FORBIDDEN",
-                        "Execution not found or you do not have access.",
-                    )
-                pending_org = pending.get("org_id")
-                try:
-                    target = UUID(pending_org) if pending_org else None
-                except (AttributeError, TypeError, ValueError) as exc:
-                    # A malformed org id (not a string, or not a UUID) is
-                    # recorded as a gap; it never fails the request.
-                    access_checks.note_failure("permission", None, exc)
-                else:
-                    access_checks.note_power("executions.read.all", target, subject=f"execution:{execution_id}")
-            created_at = pending.get("created_at")
             return {
                 "execution_id": execution_id,
                 "execution_type": "workflow",
-                "workflow_id": pending.get("workflow_id"),
-                "workflow_name": pending.get("script_name"),
+                "workflow_id": pending.workflow_id,
+                "workflow_name": pending.workflow_name,
                 "agent_id": None,
                 "agent_name": None,
-                "status": "Pending",
-                "created_at": (
-                    datetime.fromisoformat(created_at) if created_at else None
-                ),
+                "status": pending.status.value,
+                "created_at": pending.created_at,
                 "started_at": None,
                 "completed_at": None,
                 "duration_ms": None,
@@ -1178,10 +1146,10 @@ class MCPAgentGatewayService:
             return await self._dispatch_system_tool(agent, tool, arguments)
         if tool.source == "workflow":
             return await self._dispatch_workflow(
+                agent,
                 tool,
                 arguments,
                 async_execution=async_execution,
-                lineage=lineage,
             )
         if tool.source == "delegation":
             return await self._dispatch_delegation(
@@ -1205,9 +1173,10 @@ class MCPAgentGatewayService:
         arguments: dict[str, Any],
     ) -> Any:
         from src.services.mcp_server.server import (
-            MCPContext,
+            context_from_principal,
             get_system_tool_function,
         )
+        from src.core.database import get_db_context
 
         func = get_system_tool_function(tool.definition.name)
         if func is None:
@@ -1217,16 +1186,10 @@ class MCPAgentGatewayService:
                 retryable=True,
             )
 
-        context = MCPContext(
-            user_id=self.context.user_id,
-            org_id=self.context.org_id,
-            is_platform_admin=self.context.is_platform_admin,
-            is_provider_org=self.context.is_provider_org,
-            is_external=self.context.is_external,
-            user_email=self.context.user_email,
-            user_name=self.context.user_name,
-            accessible_namespaces=list(agent.knowledge_sources or []),
-        )
+        async with get_db_context() as db:
+            caller = await self._caller(db)
+        context = context_from_principal(caller.principal)
+        context.accessible_namespaces = list(agent.knowledge_sources or [])
         result = await func(context, **arguments)
         structured = getattr(result, "structured_content", None)
         if isinstance(structured, dict) and structured.get("error"):
@@ -1245,31 +1208,39 @@ class MCPAgentGatewayService:
 
     async def _dispatch_workflow(
         self,
+        agent: Agent,
         tool: ResolvedGatewayTool,
         arguments: dict[str, Any],
         *,
         async_execution: bool = False,
-        lineage: RunLineage | None,
     ) -> Any:
         if tool.source_id is None:
             raise GatewayError(
                 "TOOL_EXECUTION_FAILED",
                 "Workflow identity is missing.",
             )
-        response = await execute_agent_workflow_tool(
-            workflow_id=tool.source_id,
-            workflow_name=tool.definition.name,
-            parameters=arguments,
-            caller=AgentWorkflowCaller(
-                user_id=str(self.context.user_id),
-                email=self.context.user_email,
-                name=self.context.user_name or "MCP User",
-                organization_id=self.context.org_id,
-                is_platform_admin=self.context.is_platform_admin,
-            ),
-            sync=not async_execution,
-            lineage=lineage,
-        )
+        from src.core.database import get_db_context
+
+        async with get_db_context() as db:
+            caller = await self._caller(db)
+        from fastapi import HTTPException
+        from src.services.execution.agent_workflow_tools import AgentWorkflowAuthorizationError
+        from src.services.authorization.callers import CallerUnavailable
+
+        try:
+            response = await execute_agent_workflow_tool(
+                agent_id=agent.id,
+                workflow_id=tool.source_id,
+                parameters=arguments,
+                caller=caller,
+                sync=not async_execution,
+            )
+        except HTTPException as exc:
+            raise GatewayError("AUTHORIZATION_FORBIDDEN", str(exc.detail)) from exc
+        except AgentWorkflowAuthorizationError as exc:
+            raise GatewayError("TOOL_NOT_FOUND_OR_FORBIDDEN", str(exc)) from exc
+        except CallerUnavailable as exc:
+            raise GatewayError("AUTHENTICATION_REQUIRED", str(exc)) from exc
         data = {
             "execution_id": response.execution_id,
             "status": response.status.value,
@@ -1321,13 +1292,23 @@ class MCPAgentGatewayService:
             )
 
         async with get_db_context() as db:
-            delegated = await AgentRepository(
-                db,
-                org_id=agent.organization_id,
-                user_id=self.context.user_id,
-                is_superuser=True,
-                is_external=False,
-            ).get_agent(tool.source_id)
+            from shared.scope_resolver import shared_read_organization
+            from src.services.agent_write_policy import agent_query_in_reach
+            from src.services.authorization.enforce import PermissionDenied, require_named_permission
+
+            caller = await self._caller(db)
+            result = await db.execute(
+                agent_query_in_reach(caller).where(Agent.id == tool.source_id)
+            )
+            delegated = result.scalar_one_or_none()
+            if delegated is not None:
+                try:
+                    require_named_permission(
+                        caller, "agents.execute",
+                        shared_read_organization(caller, delegated.organization_id),
+                    )
+                except PermissionDenied as exc:
+                    raise GatewayError("AUTHORIZATION_FORBIDDEN", exc.detail) from exc
         if delegated is None or not delegated.is_active:
             raise GatewayError(
                 "TOOL_NOT_FOUND_OR_FORBIDDEN",
@@ -1393,8 +1374,15 @@ class MCPAgentGatewayService:
             )
         try:
             async with get_db_context() as db:
+                from src.services.authorization.enforce import user_reach
+
+                caller = await self._caller(db)
+                query = select(MCPConnection)
+                reach = user_reach(caller).where(MCPConnection.organization_id)
+                if reach is not None:
+                    query = query.where(reach)
                 result = await db.execute(
-                    select(MCPConnection)
+                    query
                     .where(MCPConnection.id == tool.source_id)
                     .options(
                         selectinload(MCPConnection.server).selectinload(
@@ -1414,7 +1402,7 @@ class MCPAgentGatewayService:
                     connection=connection,
                     tool_name=tool.remote_tool_name,
                     arguments=arguments,
-                    caller_user_id=UUID(str(self.context.user_id)),
+                    caller_user_id=caller.principal.user_id,
                     db=db,
                 )
                 return self.unwrap_external_result(result)

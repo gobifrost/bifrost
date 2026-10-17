@@ -12,11 +12,13 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
+from src.core.principal import UserPrincipal
 from src.models.contracts.agents import ToolResult
 from src.models.contracts.artifacts import ModelCapabilities
 from src.models.enums import MessageRole
 from src.models.orm.ai_models import AIModelProfile
 from src.services.agent_executor import AgentExecutor
+from src.services.authorization.enforce import Caller
 from src.services.llm import LLMMessage, ToolDefinition
 from src.services.llm.base import LLMConfig
 from src.services.llm.pydantic_client import PydanticAIClient
@@ -84,6 +86,10 @@ def configured_chat_model():
             new=AsyncMock(return_value=False),
         ),
         patch("src.services.agent_executor.store_chat_context_usage", new=AsyncMock()),
+        patch(
+            "src.services.agent_executor.authorize_agentless_ai",
+            new=AsyncMock(side_effect=lambda _session, caller: caller),
+        ),
     ):
         yield
 
@@ -96,6 +102,19 @@ def conversation():
     return value
 
 
+@pytest.fixture
+def caller() -> Caller:
+    return Caller(
+        UserPrincipal(
+            user_id=uuid4(),
+            email="chat.operator@contoso.example",
+            organization_id=uuid4(),
+            is_active=True,
+        ),
+        None,
+    )
+
+
 def _saved_message(*args, **kwargs):
     return MagicMock(id=kwargs.get("message_id") or uuid4())
 
@@ -104,6 +123,7 @@ def _saved_message(*args, **kwargs):
 async def test_chat_stream_contract_is_driven_by_pydantic_runtime(
     executor: AgentExecutor,
     conversation,
+    caller: Caller,
 ) -> None:
     executor._save_message = AsyncMock(side_effect=_saved_message)
     executor._record_ai_usage = AsyncMock()
@@ -133,6 +153,7 @@ async def test_chat_stream_contract_is_driven_by_pydantic_runtime(
                 "Hello",
                 stream=True,
                 enable_routing=False,
+                caller=caller,
                 run_user_id=None,
             )
         ]
@@ -149,6 +170,7 @@ async def test_chat_stream_contract_is_driven_by_pydantic_runtime(
 async def test_chat_context_uses_serving_model_capacity_and_per_request_cache(
     executor: AgentExecutor,
     conversation,
+    caller: Caller,
 ) -> None:
     executor._save_message = AsyncMock(side_effect=_saved_message)
     executor._record_ai_usage = AsyncMock()
@@ -176,7 +198,7 @@ async def test_chat_context_uses_serving_model_capacity_and_per_request_cache(
         )),
     ):
         chunks = [chunk async for chunk in executor.chat(
-            None, conversation, "Hello", stream=True, enable_routing=False, run_user_id=None
+            None, conversation, "Hello", stream=True, enable_routing=False, caller=caller, run_user_id=None
         )]
 
     context = next(chunk.context_usage for chunk in chunks if chunk.type == "context_usage")
@@ -192,6 +214,7 @@ async def test_chat_context_uses_serving_model_capacity_and_per_request_cache(
 async def test_chat_resolves_explicit_model_profile_id(
     executor: AgentExecutor,
     conversation,
+    caller: Caller,
 ) -> None:
     profile_id = uuid4()
     profile = MagicMock(spec=AIModelProfile)
@@ -226,6 +249,7 @@ async def test_chat_resolves_explicit_model_profile_id(
                 stream=False,
                 enable_routing=False,
                 model_profile_id=profile_id,
+                caller=caller,
                 run_user_id=None,
             )
         ]
@@ -239,6 +263,7 @@ async def test_chat_resolves_explicit_model_profile_id(
 async def test_chat_omitted_model_profile_uses_default_resolution(
     executor: AgentExecutor,
     conversation,
+    caller: Caller,
 ) -> None:
     profile = MagicMock(spec=AIModelProfile)
     profile.id = uuid4()
@@ -273,6 +298,7 @@ async def test_chat_omitted_model_profile_uses_default_resolution(
                 "Hello",
                 stream=False,
                 enable_routing=False,
+                caller=caller,
                 run_user_id=None,
             )
         ]
@@ -284,6 +310,7 @@ async def test_chat_omitted_model_profile_uses_default_resolution(
 async def test_chat_reapplies_agent_instructions_when_stored_history_exists(
     executor: AgentExecutor,
     conversation,
+    caller: Caller,
 ) -> None:
     executor._save_message = AsyncMock(side_effect=_saved_message)
     executor._record_ai_usage = AsyncMock()
@@ -316,6 +343,7 @@ async def test_chat_reapplies_agent_instructions_when_stored_history_exists(
                 "Current ticket",
                 stream=False,
                 enable_routing=False,
+                caller=caller,
                 run_user_id=None,
             )
         ]
@@ -334,6 +362,7 @@ async def test_chat_reapplies_agent_instructions_when_stored_history_exists(
 async def test_unknown_capabilities_still_offer_agent_tools(
     executor: AgentExecutor,
     conversation,
+    caller: Caller,
 ) -> None:
     captured: dict[str, Any] = {}
 
@@ -408,6 +437,9 @@ async def test_unknown_capabilities_still_offer_agent_tools(
     ), patch(
         "src.services.agent_executor.PydanticAgent",
         new=FakePydanticAgent,
+    ), patch(
+        "src.services.agent_executor.authorize_agent_execution",
+        new=AsyncMock(return_value=(caller, agent)),
     ):
         chunks = [
             chunk
@@ -417,6 +449,7 @@ async def test_unknown_capabilities_still_offer_agent_tools(
                 "Hello",
                 stream=False,
                 enable_routing=False,
+                caller=caller,
                 run_user_id=None,
             )
         ]
@@ -431,6 +464,7 @@ async def test_unknown_capabilities_still_offer_agent_tools(
 async def test_chat_maps_pydantic_tool_events_to_existing_bifrost_contract(
     executor: AgentExecutor,
     conversation,
+    caller: Caller,
 ) -> None:
     agent = MagicMock()
     agent.id = uuid4()
@@ -485,6 +519,9 @@ async def test_chat_maps_pydantic_tool_events_to_existing_bifrost_contract(
             call_tools=["get_ticket"],
             custom_output_text="Ticket checked",
         ),
+    ), patch(
+        "src.services.agent_executor.authorize_agent_execution",
+        new=AsyncMock(return_value=(caller, agent)),
     ):
         chunks = [
             chunk
@@ -494,6 +531,7 @@ async def test_chat_maps_pydantic_tool_events_to_existing_bifrost_contract(
                 "Check the ticket",
                 stream=True,
                 enable_routing=False,
+                caller=caller,
                 run_user_id=None,
             )
         ]
@@ -519,6 +557,7 @@ async def test_chat_maps_pydantic_tool_events_to_existing_bifrost_contract(
 async def test_chat_uses_persisted_user_message_without_duplication(
     executor: AgentExecutor,
     conversation,
+    caller: Caller,
 ) -> None:
     user_message_id = uuid4()
 
@@ -559,6 +598,7 @@ async def test_chat_uses_persisted_user_message_without_duplication(
                 stream=True,
                 enable_routing=True,
                 user_message_id=user_message_id,
+                caller=caller,
                 run_user_id=None,
             )
         ]

@@ -6,7 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { MessageSquare, Search } from "lucide-react";
 import { $api } from "@/lib/api-client";
 import { getErrorMessage } from "@/lib/api-error";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorization } from "@/services/authorization";
 import { useCreateConversation } from "@/hooks/useChat";
 import {
 	PageWorkspace,
@@ -34,7 +34,7 @@ const NO_RESOURCES: HomeResource[] = [];
 
 /** Home launches work using existing resource grants. Collections organize; they never authorize. */
 export function Home() {
-	const { isPlatformAdmin } = useAuth();
+	const { canAnywhere } = useAuthorization();
 	const navigate = useNavigate();
 	const [params, setParams] = useSearchParams();
 	const queryClient = useQueryClient();
@@ -263,7 +263,9 @@ export function Home() {
 						<Button asChild>
 							<Link to="/chat" aria-label="New chat">
 								<MessageSquare className="size-4" />
-								<span className="hidden sm:inline">New chat</span>
+								<span className="hidden sm:inline">
+									New chat
+								</span>
 							</Link>
 						</Button>
 					}
@@ -315,7 +317,7 @@ export function Home() {
 								resources={ordered.filter(inScope)}
 								onChange={(value) => updateParam("type", value)}
 							/>{" "}
-							{isPlatformAdmin && (
+							{canAnywhere("organizations.read") && (
 								<OrganizationSelect
 									aria-label="Organization filter"
 									value={
@@ -374,7 +376,6 @@ export function Home() {
 					}
 					resources={resources}
 					initialConfirmDelete={deleteRequested}
-					isAdmin={isPlatformAdmin}
 					onClose={closeEditor}
 					onSave={saveCollection}
 					onDelete={deleteCollection}

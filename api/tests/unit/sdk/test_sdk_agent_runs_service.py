@@ -30,8 +30,51 @@ from shared.sdk_agent_runs import (
 )
 from src.core.principal import UserPrincipal
 from src.models.contracts.agent_runs import AgentRunEnqueueResponse, PausedResponse
+from src.services.authorization.context import AuthorizationContext, Boundary, BoundaryKind, RoleGrant
+from src.services.authorization.enforce import Caller
 from src.services.authorization.explain import RunAsTarget
 from src.services.authorization.impersonation import RunAsError
+
+
+@pytest.fixture(autouse=True)
+def _canonical_agent_run_caller(monkeypatch):
+    async def load(_session, principal):
+        base_permissions = frozenset({"agents.read", "agents.execute"})
+        role_grants = ()
+        if principal.is_superuser:
+            # Tests that intentionally exercise a fleet/admin operation hold
+            # its explicit powers; ordinary callers retain own-run visibility.
+            role_grants = (
+                RoleGrant(
+                    uuid4(),
+                    frozenset({"agents.read", "agents.execute", "agentruns.read.all"}),
+                    (Boundary(BoundaryKind.PLATFORM),),
+                ),
+            )
+        if principal.is_provider_org:
+            role_grants += (
+                RoleGrant(
+                    uuid4(),
+                    frozenset({"agents.read", "agents.execute"}),
+                    (Boundary(BoundaryKind.MANAGED_ORGANIZATIONS),),
+                ),
+            )
+        return Caller(
+            principal,
+            AuthorizationContext(
+                user_id=principal.user_id,
+                home_organization_id=principal.organization_id,
+                base_role_id=uuid4(),
+                is_external=False,
+                base_permissions=base_permissions,
+                role_grants=role_grants,
+            ),
+        )
+
+    mock = AsyncMock(side_effect=load)
+    monkeypatch.setattr("shared.sdk_agent_runs.load_caller", mock)
+    monkeypatch.setattr("src.routers.agent_runs.load_caller", mock)
+
 
 
 def _principal(org_id=None, **kwargs) -> UserPrincipal:

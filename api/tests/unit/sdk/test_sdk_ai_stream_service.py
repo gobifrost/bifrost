@@ -26,16 +26,39 @@ from uuid import UUID, uuid4
 
 from contextlib import asynccontextmanager
 
+from src.core.principal import UserPrincipal
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
+
 import pytest
 
 
 def _principal(**kwargs):
-    return SimpleNamespace(
+    return UserPrincipal(
         user_id=kwargs.get("user_id", uuid4()),
         organization_id=kwargs.get("organization_id", uuid4()),
         is_superuser=kwargs.get("is_superuser", False),
         email=kwargs.get("email", "ai-stream-test@example.com"),
+        embed=kwargs.get("embed", False),
+        runtime_authority=kwargs.get("runtime_authority", None),
     )
+
+
+@pytest.fixture(autouse=True)
+def _stream_caller(monkeypatch):
+    async def load(_db, principal):
+        return Caller(
+            principal,
+            AuthorizationContext(
+                user_id=principal.user_id,
+                home_organization_id=principal.organization_id,
+                base_role_id=uuid4(),
+                is_external=False,
+                base_permissions=frozenset({"ai.execute"}),
+            ),
+        )
+
+    monkeypatch.setattr("src.services.authorization.enforce.load_caller", AsyncMock(side_effect=load))
 
 
 def _delta(content):

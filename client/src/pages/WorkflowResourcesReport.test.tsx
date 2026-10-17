@@ -13,6 +13,10 @@ function LocationProbe() {
 	);
 }
 
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => ({ canAnywhere: () => true, canAt: () => true }),
+}));
+
 const mockUseWorkflowResourceReport = vi.fn();
 let mockTotal: number | null = null;
 vi.mock("@/services/workflow-resources", () => ({
@@ -197,3 +201,8 @@ describe("WorkflowResourcesReport", () => {
 		);
 	});
 });
+
+ it("keeps explicit Global distinct from the all-permitted-organizations view", () => {
+    renderWithProviders(<WorkflowResourcesReport reportSwitch={null} />, { initialEntries: ["/usage?workflow_org=global"] });
+    expect(mockUseWorkflowResourceReport).toHaveBeenLastCalledWith(expect.objectContaining({ orgId: "global" }));
+ });

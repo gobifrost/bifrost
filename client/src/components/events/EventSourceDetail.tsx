@@ -39,7 +39,6 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { toast } from "sonner";
-import { useAuth } from "@/contexts/AuthContext";
 import {
 	useEventSource,
 	useDeleteEventSource,
@@ -60,6 +59,8 @@ import {
 	isMicrosoftGraphSource,
 } from "@/lib/graph-source";
 import { formatDistanceToNow } from "date-fns";
+import { orgTarget } from "@/lib/authorization";
+import { useAuthorization } from "@/services/authorization";
 
 interface EventSourceDetailProps {
 	sourceId: string;
@@ -128,7 +129,7 @@ export function EventSourceDetail({
 	sourceId,
 	onClose,
 }: EventSourceDetailProps) {
-	const { isPlatformAdmin } = useAuth();
+	const authorization = useAuthorization();
 	const { eventId } = useParams<{ eventId?: string }>();
 	const queryClient = useQueryClient();
 	const [copied, setCopied] = useState(false);
@@ -159,6 +160,12 @@ export function EventSourceDetail({
 	const updateMutation = useUpdateEventSource();
 	const resubscribeMutation = useResubscribeEventSource();
 	const rotateMutation = useRotateWebhookSecret();
+	const canManageSource = source
+		? authorization.canAt(
+				"events.readwrite",
+				orgTarget(source.organization_id),
+			)
+		: false;
 
 	// Toggle active status
 	const handleToggleActive = async () => {
@@ -390,7 +397,7 @@ export function EventSourceDetail({
 					</div>
 				</div>
 				<div className="flex shrink-0 flex-wrap items-center gap-3">
-					{isPlatformAdmin && (
+					{canManageSource && (
 						<Tooltip>
 							<TooltipTrigger asChild>
 								<div className="flex items-center gap-2">
@@ -432,7 +439,7 @@ export function EventSourceDetail({
 					>
 						<RefreshCw className="h-4 w-4" />
 					</Button>
-					{isPlatformAdmin && (
+					{canManageSource && (
 						<EventSourceActions
 							source={source}
 							onEdit={() => setEditDialogOpen(true)}
@@ -631,7 +638,7 @@ export function EventSourceDetail({
 							</dl>
 						</div>
 
-						{isPlatformAdmin && (
+						{canManageSource && (
 							<Button
 								variant="outline"
 								onClick={() => setResubscribeDialogOpen(true)}
@@ -677,7 +684,10 @@ export function EventSourceDetail({
 					className="mt-4 flex min-h-0 flex-1 flex-col"
 				>
 					<PageScrollArea className="lg:flex lg:flex-col">
-						<SubscriptionsTable sourceId={sourceId} />
+							<SubscriptionsTable
+								sourceId={sourceId}
+								canManage={canManageSource}
+							/>
 					</PageScrollArea>
 				</TabsContent>
 
@@ -690,6 +700,7 @@ export function EventSourceDetail({
 							sourceId={sourceId}
 							source={source}
 							initialEventId={eventId}
+								canManage={canManageSource}
 						/>
 					</PageScrollArea>
 				</TabsContent>

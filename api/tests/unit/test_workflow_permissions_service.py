@@ -10,16 +10,16 @@ from src.models.contracts.workflow_permissions import (
 from src.services.workflow_permissions import request_digest
 
 
-def _restricted(*grants: tuple[str, str | None]) -> RequestedWorkflowPermissions:
+def _restricted(*permissions: str) -> RequestedWorkflowPermissions:
     return RequestedWorkflowPermissions(
         mode="restricted",
-        grants=[WorkflowPermissionGrantSpec(permission=p, boundary=b) for p, b in grants],
+        grants=[WorkflowPermissionGrantSpec(permission=permission) for permission in permissions],
     )
 
 
 def test_digest_ignores_grant_order():
-    a = _restricted(("tables.read", None), ("workflows.execute", "platform"))
-    b = _restricted(("workflows.execute", "platform"), ("tables.read", None))
+    a = _restricted("tables.read", "workflows.execute")
+    b = _restricted("workflows.execute", "tables.read")
     assert request_digest(a) == request_digest(b)
 
 
@@ -29,15 +29,14 @@ def test_digest_changes_with_mode():
 
 
 def test_digest_changes_with_grants():
-    assert request_digest(_restricted(("tables.read", None))) != request_digest(
-        _restricted(("tables.readwrite", None))
-    )
+    assert request_digest(_restricted("tables.read")) != request_digest(_restricted("tables.readwrite"))
 
 
-def test_digest_changes_with_boundary():
-    assert request_digest(_restricted(("tables.read", None))) != request_digest(
-        _restricted(("tables.read", "platform"))
-    )
+def test_rejects_obsolete_placement_fields():
+    with pytest.raises(ValidationError, match="boundary"):
+        WorkflowPermissionGrantSpec.model_validate(
+            {"permission": "tables.read", "boundary": "platform"}
+        )
 
 
 def test_rejects_unknown_permission_domain():
@@ -50,11 +49,6 @@ def test_rejects_bad_permission_suffix():
         WorkflowPermissionGrantSpec(permission="tables.write")
 
 
-def test_rejects_unknown_boundary():
-    with pytest.raises(ValidationError):
-        WorkflowPermissionGrantSpec(permission="tables.read", boundary="everywhere")
-
-
 def test_full_mode_rejects_grants():
     with pytest.raises(ValidationError, match="empty when mode is 'full'"):
         RequestedWorkflowPermissions(
@@ -64,4 +58,4 @@ def test_full_mode_rejects_grants():
 
 def test_rejects_duplicate_grants():
     with pytest.raises(ValidationError, match="duplicate grants"):
-        _restricted(("tables.read", None), ("tables.read", None))
+        _restricted("tables.read", "tables.read")

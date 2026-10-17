@@ -121,6 +121,11 @@ vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockUseAuth(),
 }));
 
+const mockUseAuthorization = vi.fn();
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockUseAuthorization(),
+}));
+
 vi.mock("@/hooks/useOrganizations", () => ({
 	useOrganizations: () => ({ data: [] }),
 }));
@@ -131,6 +136,10 @@ vi.mock("@/hooks/useMediaQuery", () => ({
 
 beforeEach(() => {
 	mockUseAuth.mockReturnValue({ isPlatformAdmin: true });
+	mockUseAuthorization.mockReturnValue({
+		canAnywhere: () => true,
+		canAt: () => true,
+	});
 	vi.clearAllMocks();
 	mocks.listServices.mockResolvedValue({
 		items: liveServices,
@@ -260,6 +269,48 @@ describe("Services page (live)", () => {
 		);
 		expect(
 			screen.queryByText("Start nightly_digest?"),
+		).not.toBeInTheDocument();
+	});
+
+	it("shows service controls only for the organization granted platform write access", async () => {
+		mockUseAuth.mockReturnValue({ isPlatformAdmin: false });
+		mockUseAuthorization.mockReturnValue({
+			canAnywhere: (permission: string) =>
+				permission === "platform.read" ||
+				permission === "platform.readwrite",
+			canAt: (
+				permission: string,
+				target: { kind: string; id?: string },
+			) =>
+				permission === "platform.readwrite" &&
+				target.kind === "org" &&
+				target.id === "org-allowed",
+		});
+		mocks.listServices.mockResolvedValue({
+			items: [
+				{
+					...liveServices[0],
+					organization_id: "org-allowed",
+				},
+				{
+					...liveServices[1],
+					organization_id: "org-blocked",
+				},
+			],
+			total: 2,
+		});
+
+		await renderServicesPage();
+
+		expect(
+			await screen.findByRole("button", {
+				name: "telegram_bridge actions",
+			}),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", {
+				name: "discord_gateway actions",
+			}),
 		).not.toBeInTheDocument();
 	});
 

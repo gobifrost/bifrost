@@ -54,6 +54,7 @@ def _mint_app_embed_session(e2e_client, platform_admin) -> dict:
 
 
 @pytest.mark.e2e
+@pytest.mark.usefixtures("secrets_reader_platform_admin")
 class TestEmbedWorkflowExecution:
     """Test that embed tokens can authenticate workflow execution."""
 
@@ -126,6 +127,7 @@ class TestEmbedWorkflowExecution:
 
 
 @pytest.mark.e2e
+@pytest.mark.usefixtures("secrets_reader_platform_admin")
 class TestEmbedWorkflowExecutionCanReadItsOwnResult:
     """An app-embed token that starts a workflow execution must be able to
     read that execution back with the SAME token (the V2 app SDK always

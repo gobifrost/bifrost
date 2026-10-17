@@ -98,6 +98,8 @@ class ConnectionManager:
             websocket: FastAPI WebSocket connection
             channels: List of channels to subscribe to
         """
+        if getattr(websocket, "_delivery_dispatcher", None) is None:
+            raise RuntimeError("WebSocket connection lacks delivery authorization")
         await websocket.accept()
 
         # Ensure Redis listener is running for cross-container messages
@@ -162,25 +164,12 @@ class ConnectionManager:
             return
 
         dead_connections = set()
-        is_table_channel = channel.startswith("table:")
-        is_file_channel = channel.startswith("files:")
-        message_json = json.dumps(message) if not (is_table_channel or is_file_channel) else None
-
         for websocket in self.connections[channel]:
             try:
-                if is_table_channel:
-                    dispatcher = getattr(websocket, "_table_dispatcher", None)
-                    if dispatcher is None:
-                        continue
-                    await dispatcher(channel, message)
-                elif is_file_channel:
-                    dispatcher = getattr(websocket, "_file_dispatcher", None)
-                    if dispatcher is None:
-                        continue
-                    await dispatcher(channel, message)
-                else:
-                    assert message_json is not None
-                    await websocket.send_text(message_json)
+                dispatcher = getattr(websocket, "_delivery_dispatcher", None)
+                if dispatcher is None:
+                    raise RuntimeError("WebSocket connection lacks delivery authorization")
+                await dispatcher(channel, message)
             except Exception:
                 dead_connections.add(websocket)
 
@@ -547,25 +536,6 @@ async def publish_user_notification(
     await manager.broadcast(f"user:{user_id}", notification)
 
 
-async def publish_system_event(
-    event_type: str,
-    data: dict[str, Any]
-) -> None:
-    """
-    Publish system-wide event.
-
-    Args:
-        event_type: Event type
-        data: Event data
-    """
-    event = {
-        "type": "system_event",
-        "eventType": event_type,
-        **data
-    }
-    await manager.broadcast("system", event)
-
-
 # =============================================================================
 # App Builder Pub/Sub
 # =============================================================================
@@ -848,16 +818,12 @@ async def publish_pool_progress(
 async def publish_file_activity(
     user_id: str,
     user_name: str,
-    activity_type: str,  # "file_push" | "file_delete" | "entity_change" | "watch_start" | "watch_stop"
+    activity_type: str,  # "file_push" | "file_delete" | "watch_start" | "watch_stop"
     prefix: str = "",
     file_count: int = 0,
     is_watch: bool = False,
     paths: list[str] | None = None,
     session_id: str | None = None,
-    entity_type: str | None = None,
-    entity_id: str | None = None,
-    action: str | None = None,
-    data: dict | None = None,
 ) -> None:
     """Broadcast file activity to admin-only file-activity channel."""
     payload: dict = {
@@ -873,14 +839,6 @@ async def publish_file_activity(
         payload["paths"] = paths
     if session_id is not None:
         payload["session_id"] = session_id
-    if entity_type is not None:
-        payload["entity_type"] = entity_type
-    if entity_id is not None:
-        payload["entity_id"] = entity_id
-    if action is not None:
-        payload["action"] = action
-    if data is not None:
-        payload["data"] = data
     await manager.broadcast("file-activity", payload)
 
 

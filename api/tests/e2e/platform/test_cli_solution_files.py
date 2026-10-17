@@ -106,7 +106,8 @@ def _invoke_cli(group, args: list):
 
 @pytest.mark.e2e
 def test_solution_export_full_contains_secrets_enc_with_file(
-    e2e_client, platform_admin, cli_client, tmp_path, db_session
+    e2e_client, platform_admin, cli_client, tmp_path, db_session,
+    secrets_reader_platform_admin,
 ):
     """``bifrost solution export <slug> --mode full --password pw`` → zip with
     ``.bifrost/secrets.enc`` (no plaintext files/ members)."""
@@ -153,7 +154,8 @@ def test_solution_export_full_contains_secrets_enc_with_file(
 
 @pytest.mark.e2e
 def test_solution_install_restores_files(
-    e2e_client, platform_admin, cli_client, tmp_path, db_session
+    e2e_client, platform_admin, cli_client, tmp_path, db_session,
+    secrets_reader_platform_admin,
 ):
     """Install a full-backup zip → file is readable on the new install."""
 

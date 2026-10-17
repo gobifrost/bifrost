@@ -5,10 +5,10 @@ manifest-friendly). Per-org connections that carry the OAuth client secret
 live on ``mcp_connections`` and are managed by ``mcp_connections.py``.
 
 Authorization model:
-- List: any authenticated user — platform admins see ALL templates,
-  regular users see platform-level (org_id NULL) + their own org's.
-- Create / update / delete: platform admin only.
-- Discover: platform admin only (admin operation, drives the new-server form).
+- Reads require the catalog's ``mcp.readbasic`` at the selected or persisted
+  organization. Global templates are shared defaults for an authorized org.
+- Create / update / delete and discovery require ``mcp.readwrite`` at the
+  actual destination or persisted server organization.
 """
 
 from __future__ import annotations
@@ -22,10 +22,9 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 
-from shared.scope_resolver import has_scope_bypass
-from src.core.auth import Context, CurrentSuperuser
+from shared.scope_resolver import UNSET, RequestedScope, shared_read_organization
+from src.core.auth import Context, CurrentActiveUser
 from src.core.log_safety import log_safe
-from src.core.org_filter import resolve_org_filter
 from src.core.security import encrypt_secret
 from src.models.contracts.external_mcp import (
     MCPConnectionPublic,
@@ -39,6 +38,13 @@ from src.models.orm.external_mcp import MCPConnection, MCPServer
 from src.models.orm.oauth import OAuthProvider
 from src.repositories.external_mcp import MCPServerRepository
 from src.services.mcp_client.discovery import discover_oauth_metadata
+from src.services.authorization.enforce import (
+    load_caller,
+    operation_reach,
+    org_target,
+    require_operation,
+)
+from src.services.authorization.reach import NOWHERE
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +127,37 @@ async def _resolve_flow_type(
     return result.scalar_one_or_none()
 
 
+def _requested_scope(scope: str | None) -> RequestedScope:
+    if scope is None or scope == "":
+        return UNSET
+    if scope == "global":
+        return None
+    try:
+        return UUID(scope)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid scope value: {scope}",
+        ) from exc
+
+
+async def _readable_server(
+    ctx: Context, user: CurrentActiveUser, server_id: UUID
+) -> MCPServer:
+    """Load a template and authorize its actual/shared read target."""
+    caller = await load_caller(ctx.db, user)
+    connection_reach = operation_reach(caller, "GET /api/mcp-servers/{server_id}")
+    repo = MCPServerRepository(session=ctx.db, org_id=None)
+    server = await repo.get_server(server_id, connection_reach=connection_reach)
+    if server is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="MCP server not found")
+    target_org = shared_read_organization(caller, server.organization_id)
+    require_operation(
+        caller, "GET /api/mcp-servers/{server_id}", org_target(target_org)
+    )
+    return server
+
+
 # =============================================================================
 # Endpoints — list / detail
 # =============================================================================
@@ -138,6 +175,7 @@ async def _resolve_flow_type(
 )
 async def list_mcp_servers(
     ctx: Context,
+    user: CurrentActiveUser,
     scope: str | None = Query(
         default=None,
         description=(
@@ -152,27 +190,16 @@ async def list_mcp_servers(
     ),
 ) -> list[MCPServerSummary]:
     """List MCP server templates."""
-    try:
-        filter_type, filter_org_id = resolve_org_filter(ctx.user, scope)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        )
+    caller = await load_caller(ctx.db, user)
+    reach = operation_reach(caller, "GET /api/mcp-servers")
+    selected_scope = _requested_scope(scope)
+    if selected_scope is not UNSET:
+        require_operation(caller, "GET /api/mcp-servers", org_target(selected_scope))
 
-    is_admin = ctx.user.is_platform_admin
-    repo = MCPServerRepository(
-        session=ctx.db,
-        org_id=filter_org_id if not is_admin else (filter_org_id or ctx.org_id),
-        user_id=ctx.user.user_id,
-        is_superuser=is_admin,
-        is_external=ctx.user.is_external,
+    repo = MCPServerRepository(session=ctx.db, org_id=None)
+    servers = await repo.list_servers(
+        reach, selected_organization_id=selected_scope, active_only=active_only
     )
-
-    if is_admin:
-        servers = await repo.list_all_in_scope(filter_type, active_only=active_only)
-    else:
-        servers = await repo.list_servers(active_only=active_only)
 
     return [MCPServerSummary.model_validate(s) for s in servers]
 
@@ -189,54 +216,17 @@ async def list_mcp_servers(
 async def get_mcp_server(
     server_id: UUID,
     ctx: Context,
+    user: CurrentActiveUser,
 ) -> MCPServerPublic:
     """Get a server template with connections + tools."""
-    repo = MCPServerRepository(
-        session=ctx.db,
-        org_id=ctx.org_id,
-        user_id=ctx.user.user_id,
-        is_superuser=ctx.user.is_platform_admin,
-        is_external=ctx.user.is_external,
-    )
-    server = await repo.get_server(server_id)
-    if server is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="MCP server not found",
-        )
-
-    # Org-scope check for non-admins: they may see platform-level templates
-    # (org_id NULL) and their own org's templates only.
-    if not ctx.user.is_platform_admin:
-        if server.organization_id is not None and server.organization_id != ctx.org_id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="MCP server not found",
-            )
-
-    # Connections are per-org secrets-bearing rows with no global fallback
-    # (see MCPServerRepository docstring). `get_server` eager-loads every
-    # org's connections for the shared template; a non-bypass caller must
-    # only ever see their own org's connections here, never another org's.
-    # Filter for the RESPONSE ONLY — never assign to `server.connections`,
-    # which cascades ("all, delete-orphan") and would delete another org's
-    # connection row on flush.
-    bypass = has_scope_bypass(
-        is_platform_admin=ctx.user.is_superuser,
-        is_provider_org=ctx.user.is_provider_org,
-    )
-    visible_connections = (
-        list(server.connections)
-        if bypass
-        else [conn for conn in server.connections if conn.organization_id == ctx.org_id]
-    )
+    server = await _readable_server(ctx, user, server_id)
 
     flow_type = await _resolve_flow_type(ctx, server)
-    return _server_to_public(server, oauth_flow_type=flow_type, connections=visible_connections)
+    return _server_to_public(server, oauth_flow_type=flow_type)
 
 
 # =============================================================================
-# Endpoints — create / update / delete (platform admin only)
+# Endpoints — create / update / delete
 # =============================================================================
 
 
@@ -244,14 +234,14 @@ async def get_mcp_server(
     "",
     response_model=MCPServerPublic,
     status_code=status.HTTP_201_CREATED,
-    summary="Create MCP server template (platform admin)",
+    summary="Create MCP server template",
 )
 async def create_mcp_server(
     request: MCPServerCreate,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> MCPServerPublic:
-    """Create a new server template. Platform admin only.
+    """Create a new server template.
 
     If ``oauth_provider`` is set on the request, this also creates an
     ``OAuthProvider`` row and links it on the new server. The provider
@@ -260,6 +250,8 @@ async def create_mcp_server(
     each org registers its own OAuth app with the vendor — the provider's
     ``encrypted_client_secret`` is a non-authoritative placeholder.
     """
+    caller = await load_caller(ctx.db, user)
+    require_operation(caller, "POST /api/mcp-servers", org_target(request.organization_id))
     oauth_provider_id: UUID | None = None
 
     if request.oauth_provider is not None:
@@ -327,27 +319,24 @@ async def create_mcp_server(
 @router.patch(
     "/{server_id}",
     response_model=MCPServerPublic,
-    summary="Update MCP server template (platform admin)",
+    summary="Update MCP server template",
 )
 async def update_mcp_server(
     server_id: UUID,
     request: MCPServerUpdate,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> MCPServerPublic:
-    """Update a server template. Platform admin only."""
-    repo = MCPServerRepository(
-        session=ctx.db,
-        org_id=None,
-        user_id=user.user_id,
-        is_superuser=True,
-    )
-    server = await repo.get_server(server_id)
+    """Update a server template."""
+    repo = MCPServerRepository(session=ctx.db, org_id=None)
+    server = await repo.get_server(server_id, connection_reach=NOWHERE)
     if server is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="MCP server not found",
         )
+    caller = await load_caller(ctx.db, user)
+    require_operation(caller, "PATCH /api/mcp-servers/{server_id}", org_target(server.organization_id))
 
     update_fields = request.model_dump(exclude_unset=True)
     for key, value in update_fields.items():
@@ -355,21 +344,23 @@ async def update_mcp_server(
     server.updated_at = datetime.now(timezone.utc)
 
     await ctx.db.flush()
-    await ctx.db.refresh(server, ["connections"])
+    connection_reach = operation_reach(caller, "GET /api/mcp-servers/{server_id}")
+    visible_server = await repo.get_server(server.id, connection_reach=connection_reach)
+    assert visible_server is not None
 
     logger.info(
         "Updated MCP server template: %s (%s)",
         log_safe(server.name),
         log_safe(str(server.id)),
     )
-    flow_type = await _resolve_flow_type(ctx, server)
-    return _server_to_public(server, oauth_flow_type=flow_type)
+    flow_type = await _resolve_flow_type(ctx, visible_server)
+    return _server_to_public(visible_server, oauth_flow_type=flow_type)
 
 
 @router.delete(
     "/{server_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete MCP server template (platform admin)",
+    summary="Delete MCP server template",
     description=(
         "Soft delete (set ``is_active=False``) by default. Pass "
         "``?hard=true`` to cascade-delete the row, its connections, tools, "
@@ -381,22 +372,19 @@ async def update_mcp_server(
 async def delete_mcp_server(
     server_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     hard: bool = Query(default=False, description="Hard-delete via cascade if true."),
 ) -> None:
     """Soft-delete (default) or hard-delete an MCP server template."""
-    repo = MCPServerRepository(
-        session=ctx.db,
-        org_id=None,
-        user_id=user.user_id,
-        is_superuser=True,
-    )
-    server = await repo.get_server(server_id)
+    repo = MCPServerRepository(session=ctx.db, org_id=None)
+    server = await repo.get_server(server_id, connection_reach=NOWHERE)
     if server is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="MCP server not found",
         )
+    caller = await load_caller(ctx.db, user)
+    require_operation(caller, "DELETE /api/mcp-servers/{server_id}", org_target(server.organization_id))
 
     if hard:
         await ctx.db.execute(delete(MCPServer).where(MCPServer.id == server_id))
@@ -418,14 +406,14 @@ async def delete_mcp_server(
 
 
 # =============================================================================
-# Endpoints — discover OAuth metadata (platform admin only)
+# Endpoints — discover OAuth metadata
 # =============================================================================
 
 
 @router.post(
     "/discover",
     response_model=MCPServerDiscoverResponse,
-    summary="Discover OAuth metadata (platform admin)",
+    summary="Discover OAuth metadata",
     description=(
         "Fetch ``/.well-known/oauth-authorization-server`` and "
         "``/.well-known/oauth-protected-resource`` from the server's host and "
@@ -437,8 +425,10 @@ async def delete_mcp_server(
 async def discover_mcp_server(
     request: MCPServerDiscoverRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> MCPServerDiscoverResponse:
     """Discover OAuth metadata for a candidate MCP server URL."""
+    caller = await load_caller(ctx.db, user)
+    require_operation(caller, "POST /api/mcp-servers/discover", org_target(ctx.org_id))
     metadata = await discover_oauth_metadata(request.server_url)
     return MCPServerDiscoverResponse(metadata=metadata)

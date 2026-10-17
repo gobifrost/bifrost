@@ -1,7 +1,7 @@
-"""Workflow permission mode and Solution permission requests.
+"""Workflow capabilities and versioned Solution permission requests.
 
-Data only: nothing reads the effective mode or the grants at run time until
-delegated execution. See ``src.models.contracts.workflow_permissions``.
+Runtime authority loads the effective mode and permission-only capabilities
+from the exact durable workflow. Solution approvals bind their canonical digest.
 """
 
 from __future__ import annotations
@@ -71,20 +71,16 @@ async def list_workflow_grants(db: AsyncSession, workflow_id: UUID) -> list[Work
         )
     ).scalars().all()
     return [
-        WorkflowGrant(
-            permission=row.permission,
-            boundary=row.boundary_kind,  # type: ignore[arg-type]
-            organization_id=row.organization_id,
-        )
+        WorkflowGrant(permission=row.permission)
         for row in rows
     ]
 
 
-def _grants_json(requested: RequestedWorkflowPermissions) -> list[dict[str, str | None]]:
+def _grants_json(requested: RequestedWorkflowPermissions) -> list[dict[str, str]]:
     """Grants as stored JSON, sorted so manifest order never matters."""
     return sorted(
-        ({"permission": g.permission, "boundary": g.boundary} for g in requested.grants),
-        key=lambda g: (g["permission"], g["boundary"] or ""),
+        ({"permission": grant.permission} for grant in requested.grants),
+        key=lambda grant: grant["permission"],
     )
 
 

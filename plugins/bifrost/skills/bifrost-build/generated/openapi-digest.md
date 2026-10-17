@@ -498,6 +498,11 @@
 | GET | `/api/sdk/modules-resolve` |
 | GET | `/api/sdk/modules/{path}` |
 | GET | `/api/sdk/requirements` |
+| POST | `/api/sdk/runtime/data-provider-cache/read` |
+| POST | `/api/sdk/runtime/data-provider-cache/write` |
+| POST | `/api/sdk/runtime/logs` |
+| GET | `/api/sdk/runtime/logs/{execution_id}` |
+| POST | `/api/sdk/runtime/service-control` |
 | POST | `/api/sdk/tables/create` |
 | POST | `/api/sdk/tables/list` |
 | GET | `/api/services` |

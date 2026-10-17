@@ -23,11 +23,25 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from src.core.principal import UserPrincipal
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
 from src.services.mcp_server.server import MCPContext
 from src.services.mcp_server.tools.knowledge import search_knowledge
 
 
 # ==================== Fixtures ====================
+
+
+@pytest.fixture(autouse=True)
+def _mcp_caller(monkeypatch):
+    async def load(_db, context):
+        return Caller(
+            UserPrincipal(user_id=context.user_id, email=context.user_email, organization_id=context.org_id),
+            AuthorizationContext(user_id=context.user_id, home_organization_id=context.org_id, base_role_id=uuid4(), is_external=False, base_permissions=frozenset({"knowledge.read"})),
+        )
+
+    monkeypatch.setattr("src.services.mcp_server.authorization.load_mcp_caller", AsyncMock(side_effect=load))
 
 
 @pytest.fixture
@@ -92,7 +106,7 @@ class TestSearchKnowledge:
             mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
 
             with patch(
-                "src.services.embeddings.get_embedding_client"
+                "src.services.embeddings.get_embedding_client", new_callable=AsyncMock
             ) as mock_embed_client:
                 mock_client = AsyncMock()
                 mock_client.embed_single = AsyncMock(return_value=[0.1, 0.2, 0.3])
@@ -135,7 +149,7 @@ class TestSearchKnowledge:
             mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
 
             with patch(
-                "src.services.embeddings.get_embedding_client"
+                "src.services.embeddings.get_embedding_client", new_callable=AsyncMock
             ) as mock_embed_client:
                 mock_client = AsyncMock()
                 mock_client.embed_single = AsyncMock(return_value=[0.1, 0.2, 0.3])
@@ -169,7 +183,7 @@ class TestSearchKnowledge:
             mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
 
             with patch(
-                "src.services.embeddings.get_embedding_client"
+                "src.services.embeddings.get_embedding_client", new_callable=AsyncMock
             ) as mock_embed_client:
                 mock_client = AsyncMock()
                 mock_client.embed_single = AsyncMock(return_value=[0.1, 0.2, 0.3])
@@ -211,7 +225,7 @@ class TestSearchKnowledge:
             mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
 
             with patch(
-                "src.services.embeddings.get_embedding_client"
+                "src.services.embeddings.get_embedding_client", new_callable=AsyncMock
             ) as mock_embed_client:
                 mock_embed_client.side_effect = Exception("Embedding service error")
 

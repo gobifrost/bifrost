@@ -30,13 +30,17 @@ function okNoContent() {
 
 describe("files web SDK", () => {
 	it("uses the provider's runtime organization when scope is omitted", async () => {
-		const fetchMock = vi.fn().mockResolvedValue(okJson({ content: "hello", binary: false }));
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValue(okJson({ content: "hello", binary: false }));
 		vi.stubGlobal("fetch", fetchMock);
 		setDefaultFileScope("runtime-org");
 
 		await files.read("docs/readme.txt");
 
-		expect(JSON.parse(fetchMock.mock.calls[0][1].body).scope).toBe("runtime-org");
+		expect(JSON.parse(fetchMock.mock.calls[0][1].body).scope).toBe(
+			"runtime-org",
+		);
 	});
 	it("read posts to /api/files/read with workspace defaults", async () => {
 		const fetchMock = vi
@@ -55,6 +59,33 @@ describe("files web SDK", () => {
 			binary: false,
 			scope: null,
 		});
+	});
+
+	it("uses an explicit solution query for reads and signed downloads", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(okJson({ content: "hello", binary: false }))
+			.mockResolvedValueOnce(
+				okJson({
+					url: "https://s3/x",
+					path: "_repo/x",
+					expires_in: 600,
+				}),
+			)
+			.mockResolvedValueOnce(
+				new Response(new Blob(["hello"]), { status: 200 }),
+			);
+		vi.stubGlobal("fetch", fetchMock);
+
+		await files.read("docs/readme.txt", { solution: "solution-1" });
+		await files.download("x.txt", { solution: "solution-1" });
+
+		expect(fetchMock.mock.calls[0][0]).toBe(
+			"/api/files/read?solution=solution-1",
+		);
+		expect(fetchMock.mock.calls[1][0]).toBe(
+			"/api/files/signed-url?solution=solution-1",
+		);
 	});
 
 	it("readBytes decodes base64 content from /api/files/read", async () => {
@@ -143,9 +174,13 @@ describe("files web SDK", () => {
 	});
 
 	it("signedUrl posts to /api/files/signed-url with workspace defaults", async () => {
-		const fetchMock = vi
-			.fn()
-			.mockResolvedValue(okJson({ url: "https://s3/x", path: "_repo/x", expires_in: 600 }));
+		const fetchMock = vi.fn().mockResolvedValue(
+			okJson({
+				url: "https://s3/x",
+				path: "_repo/x",
+				expires_in: 600,
+			}),
+		);
 		vi.stubGlobal("fetch", fetchMock);
 
 		const result = await files.signedUrl("x.txt", { method: "GET" });
@@ -163,9 +198,13 @@ describe("files web SDK", () => {
 	});
 
 	it("signedUrl forwards a custom expiration", async () => {
-		const fetchMock = vi
-			.fn()
-			.mockResolvedValue(okJson({ url: "https://s3/x", path: "_repo/x", expires_in: 604800 }));
+		const fetchMock = vi.fn().mockResolvedValue(
+			okJson({
+				url: "https://s3/x",
+				path: "_repo/x",
+				expires_in: 604800,
+			}),
+		);
 		vi.stubGlobal("fetch", fetchMock);
 
 		const result = await files.signedUrl("x.txt", {
@@ -199,59 +238,98 @@ describe("files web SDK", () => {
 	});
 
 	it("signedUrls uses the batch endpoint without workflow endpoints", async () => {
-		const fetchMock = vi
-			.fn()
-			.mockResolvedValueOnce(okJson({
+		const fetchMock = vi.fn().mockResolvedValueOnce(
+			okJson({
 				results: [
-					{ path: "a.txt", resolved_path: "_repo/a", method: "GET", url: "https://s3/a", expires_in: 600, status_code: 200 },
-					{ path: "b.txt", resolved_path: "_repo/b", method: "GET", url: "https://s3/b", expires_in: 600, status_code: 200 },
+					{
+						path: "a.txt",
+						resolved_path: "_repo/a",
+						method: "GET",
+						url: "https://s3/a",
+						expires_in: 600,
+						status_code: 200,
+					},
+					{
+						path: "b.txt",
+						resolved_path: "_repo/b",
+						method: "GET",
+						url: "https://s3/b",
+						expires_in: 600,
+						status_code: 200,
+					},
 				],
-			}));
+			}),
+		);
 		vi.stubGlobal("fetch", fetchMock);
 
 		const result = await files.signedUrls(["a.txt", "b.txt"], {
 			method: "GET",
 		});
 
-		expect(result.map((r) => r.url)).toEqual(["https://s3/a", "https://s3/b"]);
+		expect(result.map((r) => r.url)).toEqual([
+			"https://s3/a",
+			"https://s3/b",
+		]);
 		expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
 			"/api/files/signed-urls",
 		]);
-		expect(JSON.parse(fetchMock.mock.calls[0][1].body).requests).toHaveLength(2);
-		expect(fetchMock.mock.calls.map((call) => String(call[0]).includes("workflow"))).toEqual([
-			false,
-		]);
+		expect(
+			JSON.parse(fetchMock.mock.calls[0][1].body).requests,
+		).toHaveLength(2);
+		expect(
+			fetchMock.mock.calls.map((call) =>
+				String(call[0]).includes("workflow"),
+			),
+		).toEqual([false]);
 	});
 
 	it("upload uses a signed PUT URL and does not call workflow endpoints", async () => {
-			const fetchMock = vi
-				.fn()
-				.mockResolvedValueOnce(okJson({ url: "https://s3/upload", path: "_repo/report.pdf", expires_in: 600 }))
-				.mockResolvedValueOnce(new Response(null, { status: 200 }))
-				.mockResolvedValueOnce(new Response(null, { status: 204 }));
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				okJson({
+					url: "https://s3/upload",
+					path: "_repo/report.pdf",
+					expires_in: 600,
+				}),
+			)
+			.mockResolvedValueOnce(new Response(null, { status: 200 }))
+			.mockResolvedValueOnce(new Response(null, { status: 204 }));
 		vi.stubGlobal("fetch", fetchMock);
 
-			const result = await files.upload("report.pdf", "pdf", { contentType: "application/pdf" });
-
-			expect(result.path).toBe("_repo/report.pdf");
-			expect(fetchMock.mock.calls[0][0]).toBe("/api/files/signed-url");
-			expect(fetchMock.mock.calls[1][0]).toBe("https://s3/upload");
-			expect(fetchMock.mock.calls[1][1].method).toBe("PUT");
-			expect(await (fetchMock.mock.calls[1][1].body as Blob).text()).toBe("pdf");
-			expect(fetchMock.mock.calls[2][0]).toBe("/api/files/complete-upload");
-			expect(JSON.parse(fetchMock.mock.calls[2][1].body).content_type).toBe("application/pdf");
-			expect(fetchMock.mock.calls.map((call) => String(call[0]).includes("workflow"))).toEqual([
-				false,
-				false,
-				false,
-			]);
+		const result = await files.upload("report.pdf", "pdf", {
+			contentType: "application/pdf",
 		});
+
+		expect(result.path).toBe("_repo/report.pdf");
+		expect(fetchMock.mock.calls[0][0]).toBe("/api/files/signed-url");
+		expect(fetchMock.mock.calls[1][0]).toBe("https://s3/upload");
+		expect(fetchMock.mock.calls[1][1].method).toBe("PUT");
+		expect(await (fetchMock.mock.calls[1][1].body as Blob).text()).toBe(
+			"pdf",
+		);
+		expect(fetchMock.mock.calls[2][0]).toBe("/api/files/complete-upload");
+		expect(JSON.parse(fetchMock.mock.calls[2][1].body).content_type).toBe(
+			"application/pdf",
+		);
+		expect(
+			fetchMock.mock.calls.map((call) =>
+				String(call[0]).includes("workflow"),
+			),
+		).toEqual([false, false, false]);
+	});
 
 	it("download uses a signed GET URL and returns a Blob", async () => {
 		const blob = new Blob(["hello"], { type: "text/plain" });
 		const fetchMock = vi
 			.fn()
-			.mockResolvedValueOnce(okJson({ url: "https://s3/download", path: "_repo/a.txt", expires_in: 600 }))
+			.mockResolvedValueOnce(
+				okJson({
+					url: "https://s3/download",
+					path: "_repo/a.txt",
+					expires_in: 600,
+				}),
+			)
 			.mockResolvedValueOnce(new Response(blob, { status: 200 }));
 		vi.stubGlobal("fetch", fetchMock);
 
@@ -281,7 +359,9 @@ describe("files web SDK", () => {
 
 		vi.stubGlobal(
 			"fetch",
-			vi.fn().mockResolvedValue(new Response("bad policy", { status: 400 })),
+			vi
+				.fn()
+				.mockResolvedValue(new Response("bad policy", { status: 400 })),
 		);
 		await expect(files.read("a.txt")).rejects.toBeInstanceOf(
 			FilePolicyError,
@@ -289,9 +369,7 @@ describe("files web SDK", () => {
 	});
 
 	it("uses provider transport baseUrl and headers when installed", async () => {
-		const fetchMock = vi
-			.fn()
-			.mockResolvedValue(okJson({ exists: false }));
+		const fetchMock = vi.fn().mockResolvedValue(okJson({ exists: false }));
 		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("unused")));
 		restoreTransport = setBifrostTransport({
 			baseUrl: "https://api.example",
@@ -304,7 +382,9 @@ describe("files web SDK", () => {
 
 		await files.exists("a.txt");
 
-		expect(fetchMock.mock.calls[0][0]).toBe("https://api.example/api/files/exists");
+		expect(fetchMock.mock.calls[0][0]).toBe(
+			"https://api.example/api/files/exists",
+		);
 		expect(fetchMock.mock.calls[0][1].credentials).toBe("omit");
 		expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe(
 			"Bearer token",

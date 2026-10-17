@@ -52,7 +52,7 @@ function runUserId(trace: AccessTrace): string | undefined {
 
 /**
  * An access trace, step by step: what each check decided and why, the step
- * that would stop it in amber, and the report-only outcome. Steps in
+ * that stopped it (or would stop it) in amber, and its actual or predicted outcome. Steps in
  * `changed` (keys) are ringed and marked Changed. Steps reveal in sequence
  * on the feedback token's stagger; reduced motion shows them at once.
  */
@@ -139,7 +139,10 @@ export function AccessTraceStrip({
 											data-testid="step-status"
 											className={status.badge}
 										>
-											{status.label}
+											{step.status === "stopped" &&
+											trace.enforced
+												? "Stopped Here"
+												: status.label}
 										</span>
 									</span>
 								</div>
@@ -169,9 +172,13 @@ export function AccessTraceStrip({
 				}}
 			>
 				<Outcome aria-hidden="true" className="size-4 shrink-0" />
-				{allowed
-					? "Would Be Allowed"
-					: "Would Be Blocked — Not Enforced Yet"}
+				{trace.enforced
+					? allowed
+						? "Allowed"
+						: "Blocked"
+					: allowed
+						? "Would Be Allowed"
+						: "Would Be Blocked"}
 			</motion.p>
 		</div>
 	);

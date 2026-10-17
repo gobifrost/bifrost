@@ -40,6 +40,10 @@ class AgentRun(Base):
     run_as_user_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), default=None
     )
+    # The actor selected at launch. NULL cannot be rebound after deletion.
+    acting_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
     iterations_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tokens_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     budget_max_iterations: Mapped[int | None] = mapped_column(Integer, default=None)
@@ -139,6 +143,7 @@ class AgentRun(Base):
         Index("ix_agent_runs_parent_run_id", "parent_run_id"),
         Index("ix_agent_runs_agent_verdict_status", "agent_id", "verdict", "status"),
         Index("ix_agent_runs_run_user_id", "run_user_id", postgresql_where=run_user_id.isnot(None)),
+        Index("ix_agent_runs_acting_user_id", "acting_user_id", postgresql_where=acting_user_id.isnot(None)),
     )
 
 

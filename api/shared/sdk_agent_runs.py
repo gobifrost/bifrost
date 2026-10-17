@@ -47,7 +47,6 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from typing import TYPE_CHECKING
 
-from shared import access_checks
 from src.core.cache.keys import agent_run_steps_stream_key
 from src.core.cache.redis_client import get_redis
 from src.core.log_safety import log_safe
@@ -60,6 +59,11 @@ from src.models.contracts.agent_runs import (
     PausedResponse,
 )
 from src.models.contracts.executions import AIUsagePublicSimple, AIUsageTotalsSimple
+from src.services.agent_write_policy import can_read_agent
+from src.services.authorization.enforce import (
+    load_caller,
+    require_permission,
+)
 from src.services.execution.agent_run_access import agent_run_visibility_conditions
 
 if TYPE_CHECKING:
@@ -112,10 +116,8 @@ async def resolve_executable_agent(
             accessible to ``principal``; 409 when the agent belongs to an
             inactive Solution.
     """
-    from shared.scope_resolver import has_scope_bypass
     from src.models.orm.agents import Agent
     from src.models.orm.solutions import Solution
-    from src.repositories.agents import AgentRepository
 
     result = await session.execute(select(Agent.id).where(Agent.name.ilike(agent_name)))
     agent_id = result.scalar_one_or_none()
@@ -123,18 +125,9 @@ async def resolve_executable_agent(
     if agent_id is None:
         raise SdkAgentRunError(404, f"Agent '{agent_name}' not found")
 
-    repo = AgentRepository(
-        session,
-        org_id=principal.organization_id,
-        user_id=principal.user_id,
-        is_superuser=has_scope_bypass(
-            is_platform_admin=principal.is_platform_admin,
-            is_provider_org=principal.is_provider_org,
-        ),
-        is_external=principal.is_external,
-    )
-    agent = await repo.get_agent_with_access_check(agent_id)
-    if agent is None:
+    agent = (await session.execute(select(Agent).where(Agent.id == agent_id))).scalar_one_or_none()
+    caller = await load_caller(session, principal)
+    if agent is None or not await can_read_agent(session, caller, agent):
         raise SdkAgentRunError(404, f"Agent '{agent_name}' not found")
 
     if agent.solution_id is not None:
@@ -147,8 +140,6 @@ async def resolve_executable_agent(
                 f"Agent '{agent.name}' belongs to an inactive solution. "
                 "Reinstall the solution to execute this agent.",
             )
-    access_checks.note_launch("agents.execute", agent.organization_id, principal.organization_id, subject=f"agent:{agent.id}")
-
     return agent
 
 
@@ -208,7 +199,11 @@ async def resolve_agent_run_actor(
         SdkAgentRunError: as ``authorize_agent_run_as``; 400 when an
             org-scoped agent's organization is not the user's.
     """
-    caller_acts = AgentRunActor(principal.organization_id, None)
+    caller = await load_caller(session, principal)
+    caller_acts = AgentRunActor(
+        None if caller.ctx is None else caller.ctx.home_organization_id,
+        None,
+    )
     if run_as is None:
         return caller_acts
     target = await authorize_agent_run_as(session, principal, run_as)
@@ -296,6 +291,8 @@ async def enqueue_sdk_agent_run(
     from src.services.execution.agent_run_service import enqueue_agent_run
 
     actor = await resolve_agent_run_actor(session, principal, agent, run_as)
+    caller = await load_caller(session, principal)
+    require_permission(caller, "agents.execute", actor.org_id)
     run_id = await enqueue_agent_run(
         agent_id=str(agent.id),
         trigger_type="api",
@@ -348,7 +345,8 @@ async def get_sdk_agent_run(
         .where(AgentRun.id == run_id)
     )
 
-    query = query.where(*agent_run_visibility_conditions(principal))
+    caller = await load_caller(session, principal)
+    query = query.where(*agent_run_visibility_conditions(caller))
 
     result = await session.execute(query)
     run = result.scalar_one_or_none()

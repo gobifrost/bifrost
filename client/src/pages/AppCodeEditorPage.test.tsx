@@ -37,6 +37,13 @@ vi.mock("@/contexts/AuthContext", () => ({
 	}),
 }));
 
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => ({
+		canAnywhere: () => true,
+		canAt: () => true,
+	}),
+}));
+
 vi.mock("react-router-dom", async () => {
 	const actual =
 		await vi.importActual<typeof import("react-router-dom")>(

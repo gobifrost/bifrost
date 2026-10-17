@@ -78,7 +78,7 @@ async def _custom_identity(db_session, organization_id):
 
     identity = User(
         email=f"nightly-{uuid4().hex}@identities.example",
-        name="Nightly",
+        name=f"Nightly {uuid4().hex[:8]}",
         organization_id=organization_id,
         identity_kind="custom",
     )
@@ -377,6 +377,7 @@ async def test_concurrent_claims_yield_single_attempt(async_session_factory):
         from src.models.orm.organizations import Organization
         from src.models.orm.workflows import Workflow
         from src.models.orm.services import ServiceDefinition
+        from src.models.orm.users import User
 
         async with async_session_factory() as cleanup:
             await cleanup.execute(
@@ -393,6 +394,9 @@ async def test_concurrent_claims_yield_single_attempt(async_session_factory):
                 sa_delete(Workflow).where(Workflow.id == workflow_id)
             )
             if org_id is not None:
+                await cleanup.execute(
+                    sa_delete(User).where(User.organization_id == org_id, User.identity_kind.is_not(None))
+                )
                 await cleanup.execute(
                     sa_delete(Organization).where(Organization.id == org_id)
                 )

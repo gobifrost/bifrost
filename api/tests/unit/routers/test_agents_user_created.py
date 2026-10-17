@@ -271,3 +271,79 @@ class TestPromoteAgentPermission:
             ),
         )
         assert _may_promote_agent(caller, make_agent(organization_id=agent_org))
+
+
+class TestAgentConfigurationPermission:
+    """Privileged Agent fields follow original scoped permissions."""
+
+    @staticmethod
+    def _caller(*, user_id: UUID, organization_id: UUID, permissions: set[str], actor_admin: bool = False):
+        from src.core.principal import UserPrincipal
+        from src.services.authorization.context import AuthorizationContext, Boundary, BoundaryKind, RoleGrant
+        from src.services.authorization.enforce import Caller
+
+        return Caller(
+            UserPrincipal(
+                user_id=uuid4(),
+                email="actor@contoso.example",
+                organization_id=organization_id,
+                is_superuser=actor_admin,
+            ),
+            AuthorizationContext(
+                user_id=user_id,
+                home_organization_id=organization_id,
+                base_role_id=uuid4(),
+                is_external=False,
+                base_permissions=frozenset(),
+                role_grants=(
+                    RoleGrant(
+                        uuid4(),
+                        frozenset(permissions),
+                        (Boundary(BoundaryKind.ORGANIZATION, organization_id),),
+                    ),
+                ) if permissions else (),
+            ),
+        )
+
+    def test_actor_platform_flag_cannot_configure_private_agent(self):
+        from src.services.agent_write_policy import can_configure_agent
+
+        organization_id, owner = uuid4(), uuid4()
+        caller = self._caller(
+            user_id=owner,
+            organization_id=organization_id,
+            permissions=set(),
+            actor_admin=True,
+        )
+
+        assert not can_configure_agent(
+            caller,
+            make_agent(
+                access_level=AgentAccessLevel.PRIVATE,
+                owner_user_id=owner,
+                organization_id=organization_id,
+            ),
+        )
+
+    def test_private_other_requires_write_and_private_all(self):
+        from src.services.agent_write_policy import can_configure_agent
+
+        organization_id, owner = uuid4(), uuid4()
+        agent = make_agent(
+            access_level=AgentAccessLevel.PRIVATE,
+            owner_user_id=owner,
+            organization_id=organization_id,
+        )
+        writer_only = self._caller(
+            user_id=uuid4(),
+            organization_id=organization_id,
+            permissions={"agents.readwrite"},
+        )
+        writer_with_private_access = self._caller(
+            user_id=uuid4(),
+            organization_id=organization_id,
+            permissions={"agents.readwrite", "agents.readwrite.all"},
+        )
+
+        assert not can_configure_agent(writer_only, agent)
+        assert can_configure_agent(writer_with_private_access, agent)

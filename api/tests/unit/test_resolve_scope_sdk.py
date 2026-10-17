@@ -1,17 +1,4 @@
-"""SDK-side ``resolve_scope`` C2 gate tests.
-
-The SDK runs inside the workflow process and resolves scope locally before
-making API calls. This is the *engine-side* security boundary — the API
-trusts the resolved scope because the engine authenticates as the sentinel
-superuser identity. So whatever rule applies here must match the API-side
-``_resolve_sdk_org_id`` rule exactly:
-
-    bypass = is_platform_admin OR ctx.organization.is_provider
-
-Pre-overhaul, this function only checked ``is_provider``, ignoring the
-``is_platform_admin`` flag the engine already plumbs onto ``ExecutionContext``.
-Codex finding (2026-05-26) flagged the inconsistency.
-"""
+"""SDK scope selection is forwarded; the API owns current permission checks."""
 
 from __future__ import annotations
 
@@ -86,18 +73,9 @@ def test_platform_admin_bypass():
     )
 
 
-def test_non_admin_non_provider_blocked():
+def test_ordinary_runtime_forwards_explicit_scope_for_server_admission():
     set_execution_context(_make_ctx(is_provider=False, is_platform_admin=False))
-    with pytest.raises(PermissionError):
-        resolve_scope("99999999-9999-9999-9999-999999999999")
-
-
-# ---------------------------------------------------------------------------
-# ExecutionContext.set_scope() — must apply the same C2 rule as resolve_scope.
-# Pre-Codex hardening, set_scope gated on is_provider only and platform
-# admins inside a non-provider org could not use it ambient — a second
-# resolver-shaped surface that diverged from the canonical rule.
-# ---------------------------------------------------------------------------
+    assert resolve_scope("99999999-9999-9999-9999-999999999999") == "99999999-9999-9999-9999-999999999999"
 
 
 def test_set_scope_platform_admin_in_non_provider_org_allowed():
@@ -112,10 +90,10 @@ def test_set_scope_provider_org_member_allowed():
     assert ctx.org_id == "99999999-9999-9999-9999-999999999999"
 
 
-def test_set_scope_non_admin_non_provider_blocked():
+def test_ordinary_runtime_can_select_scope_for_server_admission():
     ctx = _make_ctx(is_provider=False, is_platform_admin=False)
-    with pytest.raises(PermissionError):
-        ctx.set_scope("99999999-9999-9999-9999-999999999999")
+    ctx.set_scope("99999999-9999-9999-9999-999999999999")
+    assert ctx.org_id == "99999999-9999-9999-9999-999999999999"
 
 
 def test_set_scope_to_own_org_is_noop():

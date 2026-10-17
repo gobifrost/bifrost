@@ -280,7 +280,7 @@ async def _require_invite_target(
             return None
         raise HTTPException(status_code=404, detail="User not found")
     require_operation(caller, operation, org_target(target.organization_id))
-    require_unprotected(caller, target.id in await privileged_user_ids(db, [target.id]))
+    require_unprotected(caller, target.id in await privileged_user_ids(db, [target.id]), target.organization_id)
     return target
 
 
@@ -493,8 +493,11 @@ async def get_user_forms(
     caller = await load_caller(db, user)
     db_user = await _require_assignment_reader(db, caller, user_id, operation="users.forms.list")
 
-    # Platform admins have access to all forms
-    if db_user.is_superuser:
+    from src.services.authorization.context import build_authorization_context
+
+    target_context = await build_authorization_context(db, db_user.id)
+    # The role wildcard is a current authorization fact for the target user.
+    if target_context.is_platform_admin:
         access_checks.note_power("forms.read", db_user.organization_id, subject=f"user:{db_user.id}")
         return UserFormsResponse(
             is_superuser=True,

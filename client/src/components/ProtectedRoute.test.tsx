@@ -69,17 +69,6 @@ describe("ProtectedRoute", () => {
 		expect(screen.getByText("Private content")).toBeInTheDocument();
 	});
 
-	it("shows no access for platform-admin-only routes", () => {
-		renderWithProviders(
-			<ProtectedRoute requirePlatformAdmin>
-				<div>Private content</div>
-			</ProtectedRoute>,
-		);
-
-		expect(screen.getByText("No access")).toBeInTheDocument();
-		expect(screen.queryByText("Private content")).not.toBeInTheDocument();
-	});
-
 	it("allows org users and embed users into org routes", () => {
 		auth.hasRole.mockReturnValue(true);
 
@@ -112,7 +101,7 @@ it("does not show permission denial while signed out", () => {
 	auth.isAuthenticated = false;
 	auth.isPlatformAdmin = false;
 	renderWithProviders(
-		<ProtectedRoute requirePlatformAdmin>
+		<ProtectedRoute requirePermission={{ permission: "users.read" }}>
 			<p>Private content</p>
 		</ProtectedRoute>,
 	);

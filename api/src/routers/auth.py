@@ -1162,7 +1162,7 @@ async def admin_revoke_user_sessions(
             detail="User not found",
         )
     require_operation(caller, operation, org_target(target_user.organization_id))
-    require_unprotected(caller, target_user.id in await privileged_user_ids(db, [target_user.id]))
+    require_unprotected(caller, target_user.id in await privileged_user_ids(db, [target_user.id]), target_user.organization_id)
 
     # Revoke all sessions for target user
     count = await revoke_all_user_refresh_tokens(revoke_data.user_id)

@@ -25,6 +25,8 @@ from src.core.principal import UserPrincipal
 from src.models.orm.agents import Agent, AgentDelegation, Conversation
 from src.models.orm.agent_runs import AgentRun
 from src.services.agent_executor import AgentExecutor
+from src.services.authorization.callers import load_human_caller
+from src.services.authorization.enforce import load_caller
 from src.services.execution.agent_helpers import agent_delegation_slug
 from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
 from src.services.llm.base import LLMConfig, ToolCallRequest
@@ -150,12 +152,8 @@ async def test_chat_delegation_creates_terminal_run_with_conversation_and_caller
             parent_agent = parent_result.scalar_one()
 
         executor = AutonomousAgentExecutor(session_factory)
-        caller = {
-            "user_id": str(alice_user.user_id),
-            "email": alice_user.email,
-            "name": alice_user.name,
-            "organization_id": str(alice_user.organization_id),
-        }
+        async with session_factory() as session:
+            caller = await load_human_caller(session, alice_user.user_id)
         child_run_kwargs: dict = {}
 
         async def child_run(child_executor, **kwargs):
@@ -206,9 +204,9 @@ async def test_chat_delegation_creates_terminal_run_with_conversation_and_caller
             assert persisted.parent_run_id is None
             assert persisted.conversation_id == conversation_id
             assert persisted.org_id == alice_user.organization_id
-            assert persisted.caller_user_id == caller["user_id"]
-            assert persisted.caller_email == caller["email"]
-            assert persisted.caller_name == caller["name"]
+            assert persisted.caller_user_id == str(caller.principal.user_id)
+            assert persisted.caller_email == caller.principal.email
+            assert persisted.caller_name == caller.principal.name
             assert persisted.output == {"text": "Durable answer"}
             assert persisted.iterations_used == 2
             assert persisted.tokens_used == 42
@@ -303,6 +301,7 @@ async def test_delegation_timeout_persists_sanitized_partial_evidence(
             .where(Agent.id == UUID(parent["id"]))
         )
         parent_agent = parent_result.scalar_one()
+        caller = await load_human_caller(db_session, platform_admin.user_id)
 
         async def block_after_completed_tool(child_executor, **_kwargs):
             child_executor._current_run_id = _kwargs["run_id"]
@@ -357,6 +356,7 @@ async def test_delegation_timeout_persists_sanitized_partial_evidence(
                     name=f"delegate_to_{child['name'].lower().replace(' ', '_')}",
                     arguments={"task": "Check the service"},
                 ),
+                caller=caller,
                 run_user_id=None,
                 run_as=None,
             )
@@ -498,6 +498,7 @@ async def test_chat_executor_receives_durable_child_callback(
                 is_superuser=platform_admin.is_superuser,
             )
             executor = AgentExecutor(session_factory)
+            caller = await load_caller(db_session, principal)
             final_content = ""
             async for chunk in executor.chat(
                 agent=conversation.agent,
@@ -505,7 +506,7 @@ async def test_chat_executor_receives_durable_child_callback(
                 user_message="Delegate this request.",
                 stream=False,
                 enable_routing=False,
-                user=principal,
+                caller=caller,
                 run_user_id=None,
             ):
                 if chunk.type == "done":

@@ -7,8 +7,6 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import case, func, or_, select
 
-from shared import access_checks
-from shared.access_checks import ALL_ORGS
 from src.core.auth import Context, CurrentUser
 from src.models.contracts.platform_jobs import (
     PlatformJobCancelResponse,
@@ -23,6 +21,12 @@ from src.services.platform_jobs import (
     request_platform_job_cancel,
 )
 from src.services.operation_catalog import operation_route
+from src.services.authorization.enforce import load_caller
+from src.services.platform_job_access import (
+    PlatformJobAccessDenied,
+    platform_job_visibility_filter,
+    require_platform_job_access,
+)
 
 router = APIRouter(prefix="/api/platform-jobs", tags=["Platform Jobs"])
 
@@ -34,15 +38,15 @@ async def _get_visible_job(
     *,
     cancel: bool = False,
 ) -> PlatformJob:
-    from shared.sdk_video import SdkVideoJobError, get_visible_platform_job
-
+    job = await ctx.db.get(PlatformJob, job_id)
+    caller = await load_caller(ctx.db, user)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Platform job not found")
     try:
-        return await get_visible_platform_job(ctx.db, user, job_id, cancel=cancel)
-    except SdkVideoJobError as exc:
-        raise HTTPException(
-            status_code=exc.status_code,
-            detail=exc.detail,
-        ) from exc
+        require_platform_job_access(caller, job, cancel=cancel)
+    except PlatformJobAccessDenied:
+        raise HTTPException(status_code=404, detail="Platform job not found") from None
+    return job
 
 
 @router.get(
@@ -59,13 +63,8 @@ async def list_platform_jobs(
     job_status: PlatformJobStatus | None = Query(default=None, alias="status"),
     search: str | None = Query(default=None, min_length=1, max_length=200),
 ) -> PlatformJobListResponse:
-    filters = []
-    if not user.is_platform_admin:
-        filters.append(
-            PlatformJob.requested_by_user_id == str(user.user_id)
-        )
-    else:
-        access_checks.note_power("platformjobs.read.all", ALL_ORGS, subject="platform_jobs")
+    caller = await load_caller(ctx.db, user)
+    filters = [platform_job_visibility_filter(caller)]
     if job_status is not None:
         filters.append(PlatformJob.status == job_status.value)
     elif active_only:
@@ -116,15 +115,7 @@ async def get_platform_job_status(
     ctx: Context,
     user: CurrentUser,
 ) -> PlatformJobPublic:
-    from shared.sdk_video import SdkVideoJobError, get_platform_job_status as get_status
-
-    try:
-        return await get_status(ctx.db, user, job_id)
-    except SdkVideoJobError as exc:
-        raise HTTPException(
-            status_code=exc.status_code,
-            detail=exc.detail,
-        ) from exc
+    return platform_job_to_public(await _get_visible_job(ctx, user, job_id))
 
 
 @router.post(

@@ -1,5 +1,6 @@
 """Application create responses are not sent before their row is durable."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -29,19 +30,26 @@ async def test_create_application_commits_before_returning_response() -> None:
     user.email = "admin@example.com"
     user.is_platform_admin = True
     user.is_external = False
+    caller = MagicMock()
 
     async def to_public(*_args, **_kwargs):
         events.append("serialize")
         return response
 
     with (
-        patch("src.routers.applications.ApplicationRepository") as repo_type,
+        patch("src.routers.applications.load_caller", new=AsyncMock(return_value=caller)),
+        patch(
+            "src.routers.applications.user_reach",
+            return_value=SimpleNamespace(covers=lambda _org: True),
+        ),
+        patch("src.routers.applications.require_named_permission"),
+        patch("src.routers.applications._application_repository", new=AsyncMock()) as repo_factory,
         patch(
             "src.routers.applications.application_to_public",
             new=AsyncMock(side_effect=to_public),
         ),
     ):
-        repo_type.return_value.create_application = AsyncMock(
+        repo_factory.return_value.create_application = AsyncMock(
             return_value=application
         )
         result = await create_application(

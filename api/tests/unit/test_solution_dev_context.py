@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException, Request
 
+import shared.solution_dev as solution_dev
 from shared.sdk_users import set_platform_admin
 from shared.solution_dev import (
     DEV_CONTEXT_HEADER,
@@ -23,6 +24,8 @@ from src.models.orm.organizations import Organization
 from src.models.orm.solutions import Solution
 from src.services.solution_scope import check_inbound_allowed, resolve_trustworthy_caller
 from src.services.solutions.deploy import solution_entity_id
+from src.services.authorization.context import AuthorizationContext, Boundary, BoundaryKind, RoleGrant
+from src.services.authorization.enforce import Caller
 
 
 def _request(*, headers: dict[str, str] | None = None, query: bytes = b"") -> Request:
@@ -99,6 +102,36 @@ async def test_claim_only_superuser_cannot_issue_context(db_session) -> None:
 
 
 @pytest.mark.asyncio
+async def test_solutions_write_holder_can_issue_context_without_platform_admin(
+    db_session, monkeypatch
+) -> None:
+    principal = await _admin(db_session, stored_admin=False)
+    solution = await _active_solution(db_session, principal.organization_id)
+    caller = Caller(
+        principal,
+        AuthorizationContext(
+            user_id=principal.user_id,
+            home_organization_id=principal.organization_id,
+            base_role_id=uuid4(),
+            is_external=False,
+            base_permissions=frozenset(),
+            role_grants=(
+                RoleGrant(
+                    uuid4(),
+                    frozenset({"solutions.readwrite"}),
+                    (Boundary(BoundaryKind.ORGANIZATION, principal.organization_id),),
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(solution_dev, "load_caller", AsyncMock(return_value=caller))
+
+    response = await issue_solution_dev_context(db_session, principal, solution.id, uuid4())
+
+    assert response.solution_id == solution.id
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("credential", ["embed", "engine_execution_id", "service_id"])
 async def test_non_human_credentials_cannot_issue_development_context(db_session, credential) -> None:
     principal = await _admin(db_session, stored_admin=True, token_admin=True)
@@ -106,6 +139,20 @@ async def test_non_human_credentials_cannot_issue_development_context(db_session
     setattr(principal, credential, True if credential == "embed" else str(uuid4()))
     with pytest.raises(HTTPException) as raised:
         await issue_solution_dev_context(db_session, principal, solution.id, uuid4())
+    assert raised.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_runtime_authority_cannot_issue_development_context(db_session) -> None:
+    principal = await _admin(db_session, stored_admin=True)
+    solution = await _active_solution(db_session, principal.organization_id)
+    # A typed execution credential may carry Full workflow powers, but local
+    # solution development is an unelevated human-only admission path.
+    principal.runtime_authority = object()
+
+    with pytest.raises(HTTPException) as raised:
+        await issue_solution_dev_context(db_session, principal, solution.id, uuid4())
+
     assert raised.value.status_code == 403
 
 

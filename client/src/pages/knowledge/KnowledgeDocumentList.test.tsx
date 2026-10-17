@@ -21,6 +21,7 @@ it("keeps scope and Markdown preview readable while separating open from bulk se
 		isPlatformAdmin: true,
 		selectedIds: new Set<string>(),
 		allVisibleSelected: false,
+		canManageDocument: () => true,
 		getOrgName: () => "A long customer organization name",
 		busy: false,
 		onToggleSelect,
@@ -44,4 +45,41 @@ it("keeps scope and Markdown preview readable while separating open from bulk se
 	await user.click(screen.getByRole("button", { name: "Runbook" }));
 	expect(onToggleSelect).toHaveBeenCalledWith("doc-1");
 	expect(onOpen).toHaveBeenCalledTimes(1);
+});
+
+it("keeps a readable document available while withholding its destructive action without write permission", () => {
+	const doc = {
+		id: "doc-read-only",
+		namespace: "support",
+		key: "Read-only runbook",
+		content_preview: "Reference material",
+		metadata: {},
+		organization_id: "org-other",
+		created_at: null,
+	};
+	renderWithProviders(
+		<KnowledgeDocumentList
+			documents={[doc]}
+			selectedDocId={null}
+			selectionMode={false}
+			canManageDocument={() => false}
+			selectedIds={new Set<string>()}
+			allVisibleSelected={false}
+			getOrgName={() => "Other organization"}
+			busy={false}
+			onToggleSelect={vi.fn()}
+			onToggleSelectAll={vi.fn()}
+			onOpen={vi.fn()}
+			onDelete={vi.fn()}
+		/>,
+	);
+
+	expect(
+		screen.getByRole("button", { name: "Read-only runbook" }),
+	).toBeEnabled();
+	expect(
+		screen.queryByRole("button", {
+			name: "More actions for Read-only runbook",
+		}),
+	).not.toBeInTheDocument();
 });

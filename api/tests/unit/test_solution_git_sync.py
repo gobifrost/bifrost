@@ -36,7 +36,7 @@ def _reset_redis_singleton():
 @pytest.mark.e2e
 class TestDeployFromWorkspace:
     async def test_reads_workspace_and_deploys(self, db_session, tmp_path) -> None:
-        from sqlalchemy import select
+        from sqlalchemy import false, select
 
         db = db_session
         sol = Solution(
@@ -356,7 +356,7 @@ class TestDeletionSweepSparesSolutionManaged:
     lifecycle and are out of scope here.)
     """
 
-    async def test_sweep_spares_managed_entities(self, db_session) -> None:
+    async def test_sweep_spares_managed_entities(self, db_session, monkeypatch) -> None:
         from sqlalchemy import select
 
         from bifrost.manifest import Manifest
@@ -425,7 +425,30 @@ class TestDeletionSweepSparesSolutionManaged:
         db.add_all([*managed.values(), *repo.values()])
         await db.flush()
 
-        # Empty manifest => nothing is "present" => everything looks stale.
+        # Restrict the exporter query to this fixture. The shared unit DB
+        # includes unrelated workflows with dependent service rows; they are
+        # not part of this manifest-sweep contract.
+        from sqlalchemy import false
+        from src.services.manifest_generator import export_criteria as real_export_criteria
+
+        fixture_ids = {
+            Workflow: {row.id for row in (managed["wf"], repo["wf"])},
+            Form: {row.id for row in (managed["form"], repo["form"])},
+            Agent: {row.id for row in (managed["agent"], repo["agent"])},
+            Application: {row.id for row in (managed["app"], repo["app"])},
+            CustomClaim: {row.id for row in (managed["claim"], repo["claim"])},
+        }
+
+        def fixture_export_criteria(model):
+            criteria = real_export_criteria(model)
+            ids = fixture_ids.get(model)
+            # Other exported models are outside this fixture. Returning false
+            # prevents the empty manifest from sweeping shared seeded rows.
+            return [*criteria, model.id.in_(ids)] if ids is not None else [false()]
+
+        monkeypatch.setattr("src.services.manifest_generator.export_criteria", fixture_export_criteria)
+
+        # Empty manifest => fixture rows look stale.
         resolver = ManifestResolver(db)
         await resolver._resolve_deletions(manifest=Manifest(), dry_run=False)
         await db.flush()

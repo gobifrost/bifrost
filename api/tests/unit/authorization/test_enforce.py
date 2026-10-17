@@ -42,7 +42,6 @@ from src.services.authorization.enforce import (
     require_unprotected,
 )
 from src.services.authorization.evaluator import GLOBAL, HOME, TargetKind, cross_org, decide
-from src.services.authorization.reach import EVERYTHING
 
 ORG_A = UUID("00000000-0000-0000-0000-00000000a001")
 ORG_B = UUID("00000000-0000-0000-0000-00000000a002")
@@ -109,39 +108,67 @@ TARGETS = (HOME, cross_org(ORG_A), cross_org(ORG_B), cross_org(PROVIDER_ORG_ID),
 
 
 class TestExecutionCredentials:
-    """Engine and service tokens are decided by ``is_superuser``, exactly as
-    the superuser dependency decided them."""
+    """Untyped legacy fields cannot establish runtime authority."""
 
     @pytest.mark.parametrize("entry", EVALUATOR_ENTRIES, ids=operation_key)
-    def test_engine_token_is_allowed_everywhere(self, entry) -> None:
-        for target in TARGETS:
-            decision = decide_for(_engine(), entry, target)
-            assert decision.allowed, (target, decision.rule)
-            assert decision.rule == "execution_credential:superuser"
+    def test_unbound_execution_is_refused(self, entry) -> None:
+        for caller in (_engine(), _service()):
+            for target in TARGETS:
+                assert not decide_for(caller, entry, target).allowed
 
-    @pytest.mark.parametrize("entry", EVALUATOR_ENTRIES, ids=operation_key)
-    def test_service_token_is_refused_everywhere(self, entry) -> None:
-        for target in TARGETS:
-            assert not decide_for(_service(), entry, target).allowed
-
-    def test_engine_token_reaches_every_org_and_is_an_admin(self) -> None:
-        assert permitted_organizations(_engine(), "users.read") == EVERYTHING
-        assert _engine().is_platform_admin
-
-    def test_service_token_reaches_nowhere(self) -> None:
-        assert permitted_organizations(_service(), "users.read").is_empty
-        assert not _service().is_platform_admin
-        with pytest.raises(HTTPException) as exc_info:
-            operation_reach(_service(), "users.list")
-        assert exc_info.value.status_code == 403
-
-    def test_embed_session_is_refused(self) -> None:
-        embed = Caller(_principal(embed=True, is_superuser=True), None)
-        assert not decide_for(embed, entry_for_operation("users.list"), HOME).allowed
-        assert not embed.is_platform_admin
+    def test_unbound_execution_has_no_permissions_or_admin_fact(self) -> None:
+        assert permitted_organizations(_engine(), "users.read").is_empty
+        assert not _engine().is_platform_admin
 
 
-@pytest.mark.asyncio
+class TestRuntimePowers:
+    def _caller(self, *, mode="full", grants=(), reach_to_b=False) -> Caller:
+        from src.models.contracts.workflow_permissions import WorkflowGrant, WorkflowPermissionMode
+        from src.services.authorization.explain import Powers, RunUser
+        from src.services.authorization.runtime import RuntimeAuthority
+
+        roles = () if not reach_to_b else (
+            RoleGrant(uuid4(), frozenset(), (Boundary(BoundaryKind.ORGANIZATION, ORG_B),)),
+        )
+        ctx = _ctx(*roles)
+        principal = _principal(user_id=uuid4())
+        principal.runtime_authority = RuntimeAuthority(
+            kind="workflow_execution", credential_id=uuid4(),
+            run_user=RunUser(ctx.user_id, ctx, None, is_active=True),
+            powers=Powers(WorkflowPermissionMode(mode), tuple(WorkflowGrant(permission=p) for p in grants)),
+            acting_user_id=principal.user_id, organization_id=ORG_A, workflow_id=uuid4(),
+            started_by_user_id=ctx.user_id, root_execution_id=uuid4(),
+        )
+        return Caller(principal, ctx)
+
+    def test_full_has_secret_power_within_original_reach(self) -> None:
+        from src.services.authorization.enforce import allows_permission
+
+        caller = self._caller()
+        assert allows_permission(caller, "secrets.read", ORG_A)
+        assert allows_permission(caller, "secrets.read", None)
+        assert not allows_permission(caller, "secrets.read", ORG_B)
+        assert not caller.is_platform_admin
+        reach = permitted_organizations(caller, "secrets.read")
+        assert reach.covers(ORG_A) and reach.covers(None)
+        assert not reach.covers(ORG_B)
+
+    def test_capability_adds_power_at_existing_role_reach(self) -> None:
+        from src.services.authorization.enforce import allows_permission
+
+        caller = self._caller(mode="restricted", grants=("secrets.read",), reach_to_b=True)
+        assert allows_permission(caller, "secrets.read", ORG_B)
+        assert not allows_permission(caller, "users.readwrite", ORG_B)
+        assert permitted_organizations(caller, "secrets.read").covers(ORG_B)
+
+    def test_restricted_does_not_inherit_the_acting_users_power(self) -> None:
+        from src.services.authorization.enforce import allows_permission
+
+        caller = self._caller(mode="restricted")
+        caller.principal.is_superuser = True
+        assert not allows_permission(caller, "users.readwrite", ORG_A)
+        assert not caller.is_platform_admin
+
 class TestPlatformAdminFromTheDatabase:
     async def _user(self, db_session, *, admin: bool):
         from shared.sdk_users import set_platform_admin
@@ -269,10 +296,10 @@ class TestPermittedOrganizations:
 class TestProtectedTargets:
     def test_only_an_admin_changes_a_privileged_user(self) -> None:
         admin = _person(_ctx(admin=True))
-        require_unprotected(admin, True)
-        require_unprotected(_operator(), False)
+        require_unprotected(admin, True, None)
+        require_unprotected(_operator(), False, None)
         with pytest.raises(HTTPException) as exc_info:
-            require_unprotected(_operator(), True)
+            require_unprotected(_operator(), True, None)
         assert exc_info.value.status_code == 403
 
 

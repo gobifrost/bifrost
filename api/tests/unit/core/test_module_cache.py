@@ -274,6 +274,18 @@ class TestModuleCacheSync:
         # Should not raise
         reset_sync_redis()
 
+    def test_reset_sync_redis_closes_cached_client(self):
+        """A cached parent client cannot cross a later execution fork."""
+        import src.core.module_cache_sync as module_cache_sync
+
+        client = MagicMock()
+        module_cache_sync._sync_redis_client = client
+        try:
+            module_cache_sync.reset_sync_redis()
+            client.close.assert_called_once_with()
+        finally:
+            module_cache_sync.reset_sync_redis()
+
 
 class TestCachedModuleTypedDict:
     """Tests for the CachedModule TypedDict."""

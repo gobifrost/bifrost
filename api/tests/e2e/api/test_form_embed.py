@@ -16,6 +16,7 @@ def _compute_hmac(params: dict, secret: str) -> str:
 
 
 @pytest.mark.e2e
+@pytest.mark.usefixtures("secrets_reader_platform_admin")
 class TestFormEmbed:
     @pytest.fixture
     def form_with_secret(self, e2e_client, platform_admin):
@@ -343,6 +344,7 @@ def _mint_app_embed_token(e2e_client, platform_admin, *, organization_id=None):
 
 
 @pytest.mark.e2e
+@pytest.mark.usefixtures("secrets_reader_platform_admin")
 class TestEmbedFormCrossTenantBinding:
     """EXT-1 NEW-I (HIGH, cross-tenant code execution): the embed short-circuits
     in get_form / execute_form / execute_startup_workflow / generate_upload_url

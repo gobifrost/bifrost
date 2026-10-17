@@ -13,6 +13,7 @@ from src.models.contracts.solutions import SolutionUpdate
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solutions import Solution
 from src.routers import solutions
+from tests.helpers.authorization import admin_caller
 
 
 class _NoRows:
@@ -62,17 +63,15 @@ async def test_git_connected_solution_sync_enqueues_one_notified_solution_job(
     monkeypatch.setattr(solutions, "enqueue_platform_job", enqueue)
     monkeypatch.setattr(solutions, "ensure_platform_job_notification", notification)
     monkeypatch.setattr(solutions, "publish_platform_job_update", publish)
+    caller = admin_caller(email="admin@example.test", user_id=requested_by)
+    monkeypatch.setattr(solutions, "authorize_solution", AsyncMock(return_value=caller))
 
     response = Response()
     accepted = await solutions.sync_solution(
         solution_id,
         response,
         SimpleNamespace(db=db),
-        SimpleNamespace(
-            user_id=requested_by,
-            email="admin@example.test",
-            name="Admin",
-        ),
+        caller.principal,
     )
 
     assert accepted == PlatformJobAccepted(
@@ -131,13 +130,15 @@ async def test_git_sync_refuses_when_an_owned_app_sdk_update_is_active(
     queued_job = SimpleNamespace(id=uuid4(), status="queued", notification_id=uuid4())
     enqueue = AsyncMock(return_value=(queued_job, False))
     monkeypatch.setattr(solutions, "enqueue_platform_job", enqueue)
+    caller = admin_caller(email="admin@example.test")
+    monkeypatch.setattr(solutions, "authorize_solution", AsyncMock(return_value=caller))
 
     with pytest.raises(HTTPException) as error:
         await solutions.sync_solution(
             solution.id,
             Response(),
             SimpleNamespace(db=db),
-            SimpleNamespace(user_id=uuid4(), email="admin@example.test", name="Admin"),
+            caller.principal,
         )
 
     assert error.value.status_code == 409
@@ -184,6 +185,8 @@ async def test_connect_refuses_an_active_queued_manual_deploy(
         yield
 
     monkeypatch.setattr("src.services.solutions.write_lock.solution_write_lock", lock)
+    caller = admin_caller(email="admin@example.test")
+    monkeypatch.setattr(solutions, "authorize_solution", AsyncMock(return_value=caller))
 
     with pytest.raises(HTTPException) as error:
         await solutions.update_solution(
@@ -195,7 +198,7 @@ async def test_connect_refuses_an_active_queued_manual_deploy(
                 git_ref="main",
             ),
             SimpleNamespace(db=db),
-            SimpleNamespace(),
+            caller.principal,
         )
 
     assert error.value.status_code == 409
@@ -253,6 +256,8 @@ async def test_connect_refuses_an_active_owned_app_sdk_update(
 
     monkeypatch.setattr("src.services.solutions.write_lock.solution_write_lock", lock)
     monkeypatch.setattr(solutions, "_validate_solution_git_connection_source", AsyncMock())
+    caller = admin_caller(email="admin@example.test")
+    monkeypatch.setattr(solutions, "authorize_solution", AsyncMock(return_value=caller))
 
     with pytest.raises(HTTPException) as error:
         await solutions.update_solution(
@@ -264,7 +269,7 @@ async def test_connect_refuses_an_active_owned_app_sdk_update(
                 git_ref="main",
             ),
             SimpleNamespace(db=db),
-            SimpleNamespace(),
+            caller.principal,
         )
 
     assert error.value.status_code == 409
@@ -309,6 +314,8 @@ async def test_connect_keeps_install_disconnected_when_git_source_cannot_be_clon
         "src.services.solutions.git_sync.clone_repo_to_dir",
         AsyncMock(side_effect=RuntimeError("network unavailable")),
     )
+    caller = admin_caller(email="admin@example.test")
+    monkeypatch.setattr(solutions, "authorize_solution", AsyncMock(return_value=caller))
 
     with pytest.raises(HTTPException) as error:
         await solutions.update_solution(
@@ -320,7 +327,7 @@ async def test_connect_keeps_install_disconnected_when_git_source_cannot_be_clon
                 git_ref="main",
             ),
             SimpleNamespace(db=db),
-            SimpleNamespace(),
+            caller.principal,
         )
 
     assert error.value.status_code == 422

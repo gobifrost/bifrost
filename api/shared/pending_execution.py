@@ -1,19 +1,22 @@
 """Read-through representation for executions awaiting worker persistence."""
 
 import logging
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import select
 
-from shared import access_checks
-from shared.execution_visibility import is_own_pending_execution
 from src.core.log_safety import log_safe
-from src.core.principal import UserPrincipal
 from src.core.redis_client import get_redis_client
 from src.models import WorkflowExecution
 from src.models.enums import ExecutionStatus
 from src.models.orm.workflows import Workflow
+from src.services.authorization.enforce import Caller
+from src.services.authorization.execution_access import (
+    execution_cancel_allowed,
+    current_execution_read_access,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 async def get_pending_execution_fallback(
     execution_id: UUID,
-    user: UserPrincipal,
+    caller: Caller,
     db: "AsyncSession",
 ) -> tuple[WorkflowExecution | None, str | None]:
     """Return an owned Redis-pending execution after PostgreSQL misses."""
@@ -44,16 +47,22 @@ async def get_pending_execution_fallback(
     if isinstance(org_id, str) and org_id.startswith("ORG:"):
         org_id = org_id.removeprefix("ORG:")
 
+    try:
+        organization_id = UUID(org_id) if org_id else None
+    except (TypeError, ValueError, AttributeError):
+        return None, "Forbidden"
+    lineage = pending.get("lineage") or {}
+    subject = SimpleNamespace(
+        id=execution_id,
+        organization_id=organization_id,
+        executed_by=pending.get("user_id"),
+        started_by_user_id=lineage.get("started_by_user_id"),
+        root_execution_id=lineage.get("root_execution_id"),
+    )
+    if not (await current_execution_read_access(caller, subject)).visible:
+        return None, "Forbidden"
+
     pending_user_id = pending.get("user_id")
-    if not is_own_pending_execution(user.user_id, execution_id, pending):
-        if not user.is_superuser:
-            return None, "Forbidden"
-        try:
-            target = UUID(org_id) if org_id else None
-        except ValueError as exc:
-            access_checks.note_failure("permission", None, exc)
-        else:
-            access_checks.note_power("executions.read.all", target, subject=f"execution:{execution_id}")
 
     workflow_id = pending.get("workflow_id")
     workflow_name = pending.get("script_name")
@@ -74,6 +83,7 @@ async def get_pending_execution_fallback(
             executed_by=pending_user_id,
             executed_by_name=pending.get("user_name") or pending_user_id,
             executed_by_email=pending.get("user_email"),
+            created_at=pending.get("created_at"),
             status=(
                 ExecutionStatus.CANCELLED
                 if pending.get("cancelled")
@@ -86,4 +96,30 @@ async def get_pending_execution_fallback(
             completed_at=None,
         ),
         None,
+    )
+
+
+def pending_execution_cancel_allowed(
+    caller: Caller,
+    execution_id: UUID,
+    pending: dict,
+) -> bool:
+    """Authorize a Redis-pending cancellation before mutating its record."""
+    raw_org_id = pending.get("org_id")
+    if isinstance(raw_org_id, str) and raw_org_id.startswith("ORG:"):
+        raw_org_id = raw_org_id.removeprefix("ORG:")
+    try:
+        organization_id = UUID(raw_org_id) if raw_org_id else None
+    except (TypeError, ValueError, AttributeError):
+        return False
+    lineage = pending.get("lineage") or {}
+    return execution_cancel_allowed(
+        caller,
+        SimpleNamespace(
+            id=execution_id,
+            organization_id=organization_id,
+            executed_by=pending.get("user_id"),
+            started_by_user_id=lineage.get("started_by_user_id"),
+            root_execution_id=lineage.get("root_execution_id"),
+        ),
     )

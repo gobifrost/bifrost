@@ -94,6 +94,7 @@ _CROSS_ORG_EFFECTS = frozenset(
         InlineEffect.DENY_UNLESS_BYPASS,
         InlineEffect.WIDENS_FOR_SUPERUSER,
         InlineEffect.WIDENS_FOR_BYPASS,
+        InlineEffect.WIDENS_FOR_PERMISSION,
     }
 )
 
@@ -123,7 +124,7 @@ def _covers(boundary: Boundary, entry: AccessEntry, ctx: AuthorizationContext, t
         return org is not None and boundary.organization_id == org
     if boundary.kind == BoundaryKind.MANAGED_ORGANIZATIONS:
         return org is not None and org != PROVIDER_ORG_ID
-    return target.kind == TargetKind.CROSS and target.organization_id is None
+    return org is None
 
 
 def decide(ctx: AuthorizationContext | None, entry: AccessEntry, target: Target) -> Decision:
@@ -138,8 +139,8 @@ def decide(ctx: AuthorizationContext | None, entry: AccessEntry, target: Target)
 
     if (
         target.kind == TargetKind.CROSS
-        and target.organization_id is not None
         and target.organization_id == ctx.home_organization_id
+        and entry.boundary != "platform"
     ):
         target = HOME
 
@@ -149,6 +150,10 @@ def decide(ctx: AuthorizationContext | None, entry: AccessEntry, target: Target)
         return Decision(False, "denied:operation_confined_to_own_org")
 
     if entry.access_class != AccessClass.PERMISSION:
+        if entry.access_class == AccessClass.TABLE_POLICY and (
+            target.kind == TargetKind.HOME or target.organization_id is None
+        ):
+            return Decision(True, "reach:home_or_global")
         if target.kind == TargetKind.CROSS:
             if entry.access_class == AccessClass.TABLE_POLICY:
                 for grant in ctx.role_grants:

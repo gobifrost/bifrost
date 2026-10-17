@@ -3,10 +3,16 @@
 import uuid
 from uuid import UUID
 
+from sqlalchemy import select
+
 import altcha
 import pytest
 
 from src.core.security import decode_token
+from src.models.enums import IdentityKind
+from src.models.orm.executions import Execution
+from src.models.orm.forms import Form
+from src.models.orm.users import User
 from src.services.solutions.deploy import solution_entity_id
 from tests.e2e.conftest import poll_until, write_and_register
 from tests.e2e.platform.conftest import deploy_solution
@@ -295,8 +301,8 @@ async def e2e_public_form_submit(
         assert body["status"] == "published"
         assert body["iframe_path"].endswith(body["public_key"])
 
-    def test_public_session_is_exact_form_confirmation_only_and_revocable(
-        self, e2e_client, platform_admin, publishable_form
+    async def test_public_session_is_exact_form_confirmation_only_and_revocable(
+        self, e2e_client, platform_admin, publishable_form, db_session
     ):
         form_id = publishable_form["id"]
         review = e2e_client.get(
@@ -442,8 +448,30 @@ async def e2e_public_form_submit(
             interval=0.2,
         )
         assert history_execution is not None
-        assert history_execution["executed_by_name"] == (
-            "Public Form · Public form lifecycle"
+        persisted_form = await db_session.get(Form, UUID(form_id))
+        assert persisted_form is not None
+        identity_query = select(User.id, User.name).where(
+            User.identity_kind == (
+                IdentityKind.GLOBAL_DEFAULT
+                if persisted_form.organization_id is None
+                else IdentityKind.ORG_DEFAULT
+            )
+        )
+        if persisted_form.organization_id is not None:
+            identity_query = identity_query.where(
+                User.organization_id == persisted_form.organization_id
+            )
+        default_identity = (await db_session.execute(identity_query)).one()
+        db_session.expire_all()
+        execution = await db_session.get(
+            Execution, UUID(history_execution["execution_id"])
+        )
+        assert execution is not None
+        assert history_execution["executed_by"] == str(default_identity.id)
+        assert history_execution["executed_by_name"] == default_identity.name
+        assert (execution.run_user_id, execution.executed_by) == (
+            default_identity.id,
+            default_identity.id,
         )
 
         duplicate = e2e_client.post(

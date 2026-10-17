@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.access_trace_storage import compact_access_check_details
 from src.models.orm.audit import AuditLog
 from src.models.orm.organizations import Organization
-from src.models.orm.users import User
+from src.models.orm.users import Role, RolePermission, User, UserRole, UserRoleBoundary
 from src.services.access_explain import rerun, stored_note, stored_trace
 
 _TRACE = {
@@ -108,6 +108,15 @@ async def test_an_older_run_as_check_is_judged_against_the_user_it_named(db_sess
     person = User(email=f"{uuid4()}@contoso.example", name="Contoso Person", organization_id=org.id)
     colleague = User(email=f"{uuid4()}@contoso.example", name="Contoso Colleague", organization_id=org.id)
     db_session.add_all([person, colleague])
+    await db_session.flush()
+    role = Role(name=f"Contoso Impersonation {uuid4().hex[:8]}", created_by="explain-test")
+    db_session.add(role)
+    await db_session.flush()
+    db_session.add_all([
+        RolePermission(role_id=role.id, permission="users.impersonate"),
+        UserRole(user_id=person.id, role_id=role.id, assigned_by="explain-test"),
+        UserRoleBoundary(user_id=person.id, role_id=role.id, kind="organization", organization_id=org.id),
+    ])
     await db_session.flush()
 
     now, unavailable = await rerun(db_session, _run_as_row(person.id, colleague.id))

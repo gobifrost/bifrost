@@ -21,6 +21,7 @@ import { InlineLoader } from "./InlineLoader";
 interface EffectiveAccessPanelProps {
 	location: string;
 	scope: string | null;
+	solution?: string;
 	path: string | null;
 	readOnly?: boolean;
 	managedBySolution?: boolean;
@@ -33,6 +34,7 @@ interface EffectiveAccessPanelProps {
 export function EffectiveAccessPanel({
 	location,
 	scope,
+	solution,
 	path,
 	readOnly = false,
 	managedBySolution = false,
@@ -42,8 +44,11 @@ export function EffectiveAccessPanel({
 	onOpenPolicy,
 }: EffectiveAccessPanelProps) {
 	const accessQuery = useQuery({
-		queryKey: ["effective-access", location, scope, path],
-		queryFn: () => effectiveAccess(location, path ?? "", scope),
+		queryKey: ["effective-access", location, scope, solution, path],
+		queryFn: () =>
+			solution
+				? effectiveAccess(location, path ?? "", scope, solution)
+				: effectiveAccess(location, path ?? "", scope),
 		enabled: path !== null,
 		retry: false,
 	});

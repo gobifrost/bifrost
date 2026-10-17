@@ -5,10 +5,32 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
+from shared.builtin_roles import USER_ROLE_ID
+from src.core.principal import UserPrincipal
 from src.models.contracts.agents import ChatArtifactUpdate
 from src.models.enums import MessageRole
 from src.models.orm import Artifact, MessageAttachment
 from src.routers.chat import delete_chat_artifact, list_chat_artifacts, rename_chat_artifact
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
+
+
+def _owner(artifact: Artifact) -> UserPrincipal:
+    return UserPrincipal(user_id=artifact.created_by_user_id, email="owner@contoso.example", organization_id=None)
+
+
+@pytest.fixture(autouse=True)
+def current_caller(monkeypatch):
+    async def load(_db, principal):
+        return Caller(principal, AuthorizationContext(
+            user_id=principal.user_id,
+            home_organization_id=principal.organization_id,
+            base_role_id=USER_ROLE_ID,
+            is_external=False,
+            base_permissions=frozenset(),
+        ))
+
+    monkeypatch.setattr("src.routers.chat.load_caller", load)
 
 
 def _artifact() -> Artifact:
@@ -51,7 +73,7 @@ async def test_list_chat_artifacts_returns_user_owned_file_context() -> None:
     ]
     db = MagicMock()
     db.execute = AsyncMock(side_effect=[artifact_result, binding_result])
-    user = MagicMock(user_id=artifact.created_by_user_id)
+    user = _owner(artifact)
 
     files = await list_chat_artifacts(db=db, user=user)
 
@@ -85,7 +107,7 @@ async def test_rename_chat_artifact_updates_only_display_metadata() -> None:
         attachment_id=artifact.id,
         request=ChatArtifactUpdate(filename="Executive Summary.pdf"),
         db=db,
-        user=MagicMock(user_id=uuid4()),
+        user=_owner(artifact),
     )
 
     assert renamed.filename == "Executive Summary.pdf"
@@ -106,7 +128,7 @@ async def test_rename_chat_artifact_rejects_extension_changes() -> None:
             attachment_id=artifact.id,
             request=ChatArtifactUpdate(filename="Quarterly Report.html"),
             db=db,
-            user=MagicMock(user_id=uuid4()),
+            user=_owner(artifact),
         )
 
 
@@ -126,7 +148,7 @@ async def test_delete_chat_artifact_removes_object_and_metadata() -> None:
         response = await delete_chat_artifact(
             attachment_id=artifact.id,
             db=db,
-            user=MagicMock(user_id=uuid4()),
+            user=_owner(artifact),
         )
 
     assert response.status_code == 204

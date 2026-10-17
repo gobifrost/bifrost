@@ -78,33 +78,24 @@ class ToolFilterMiddleware(Middleware):
             )
             return filtered_tools
 
-        user_roles = token.claims.get("roles", [])
-        is_superuser = token.claims.get("is_superuser", False)
-        is_provider_org = token.claims.get("is_provider_org", False)
-        is_external = token.claims.get("is_external", False)
-        user_id = token.claims.get("user_id")
-        org_id = token.claims.get("org_id")
         logger.info(
             f"MCP tools/list: Filtering for user {user_email}, "
-            f"roles={user_roles}, is_superuser={is_superuser}, agent_id={agent_id}"
+            f"agent_id={agent_id}"
         )
 
         # Get accessible tool IDs from service
         try:
             from src.core.database import get_db_context
             from src.services.mcp_server.tool_access import MCPToolAccessService
+            from src.services.mcp_server.authorization import load_mcp_caller
+            from src.services.mcp_server.server import _get_context_from_token
 
             async with get_db_context() as db:
                 service = MCPToolAccessService(db)
 
                 agent_result = await service.get_tools_for_agent(
                     agent_id=agent_id,
-                    user_roles=user_roles,
-                    is_superuser=is_superuser,
-                    is_provider_org=is_provider_org,
-                    user_id=user_id,
-                    org_id=org_id,
-                    is_external=is_external,
+                    caller=await load_mcp_caller(db, _get_context_from_token()),
                 )
                 if agent_result is None:
                     logger.warning(
@@ -180,29 +171,21 @@ class ToolFilterMiddleware(Middleware):
             )
             return await call_next(context)
 
-        user_roles = token.claims.get("roles", [])
-        is_superuser = token.claims.get("is_superuser", False)
-        is_provider_org = token.claims.get("is_provider_org", False)
-        is_external = token.claims.get("is_external", False)
-        user_id = token.claims.get("user_id")
-        org_id = token.claims.get("org_id")
 
         # Check if user has access to this tool
         try:
             from src.core.database import get_db_context
             from src.services.mcp_server.tool_access import MCPToolAccessService
+            from src.services.mcp_server.authorization import load_mcp_caller
+            from src.services.mcp_server.server import _get_context_from_token
 
             async with get_db_context() as db:
                 service = MCPToolAccessService(db)
 
                 agent_result = await service.get_tools_for_agent(
                     agent_id=agent_id,
-                    user_roles=user_roles,
-                    is_superuser=is_superuser,
-                    is_provider_org=is_provider_org,
-                    user_id=user_id,
-                    org_id=org_id,
-                    is_external=is_external,
+                    caller=await load_mcp_caller(db, _get_context_from_token()),
+                    for_execution=True,
                 )
                 if agent_result is None:
                     raise ToolError(

@@ -28,7 +28,7 @@ class SolutionWorkflowPermissionRequest(Base):
         ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False
     )
     requested_mode: Mapped[str] = mapped_column(String(16), nullable=False)
-    # List of {"permission": str, "boundary": str | None}
+    # List of {"permission": str}; workflow requests carry no org placement.
     requested_grants: Mapped[list] = mapped_column(
         JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
     )

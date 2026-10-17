@@ -72,6 +72,19 @@ def _token_from_context(context: "MCPContext") -> str:
 
     from src.core.security import create_access_token
 
+    if context.runtime_credential_kind is not None:
+        if context.runtime_credential_id is None:
+            raise ValueError("Runtime MCP context requires a credential ID")
+        claims: dict[str, Any] = {
+            "sub": str(context.runtime_credential_id),
+            "credential_kind": context.runtime_credential_kind,
+        }
+        if context.runtime_credential_kind == "service_attempt":
+            if context.runtime_service_id is None:
+                raise ValueError("Service runtime MCP context requires a service ID")
+            claims["service_id"] = str(context.runtime_service_id)
+        return create_access_token(data=claims)
+
     claims: dict[str, Any] = {
         "sub": str(context.user_id) if context.user_id else "",
         "email": context.user_email or "",

@@ -20,7 +20,6 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from src.core.constants import SYSTEM_USER_ID, SYSTEM_USER_EMAIL
 from src.core.log_safety import log_safe
 from src.core.redis_client import get_redis_client
 from src.jobs.rabbitmq import publish_message
@@ -286,7 +285,7 @@ async def enqueue_system_workflow_execution(
     Enqueue a system-triggered workflow execution.
 
     Handles execution_id generation internally - callers don't need to pre-generate.
-    Uses the system user for executions not triggered by a real user
+    Uses the selected workflow identity for unattended effects
     (webhooks, schedules, topic events).
 
     Args:
@@ -303,21 +302,13 @@ async def enqueue_system_workflow_execution(
     # Generate execution_id once - used for both context and Redis
     execution_id = str(uuid.uuid4())
 
-    from src.config import get_settings
+    from src.core.database import get_session_factory
+    from shared.unattended_execution import create_unattended_context
 
-    context = ExecutionContext(
-        user_id=SYSTEM_USER_ID,
-        email=SYSTEM_USER_EMAIL,
-        name=source,
-        scope=f"ORG:{org_id}" if org_id else "GLOBAL",
-        organization=None,
-        is_platform_admin=True,
-        is_function_key=False,
-        execution_id=execution_id,
-        workflow_name="",  # Will be set by worker when loading workflow
-        public_url=get_settings().public_url,
-        event=event,
-    )
+    async with get_session_factory()() as db:
+        context = await create_unattended_context(
+            db, lineage=lineage, execution_id=execution_id, org_id=org_id, event=event,
+        )
 
     return await enqueue_workflow_execution(
         context=context,

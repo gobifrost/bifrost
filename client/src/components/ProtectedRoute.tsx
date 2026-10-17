@@ -8,7 +8,6 @@ import { useAuthorization } from "@/services/authorization";
 
 interface ProtectedRouteProps {
 	children: React.ReactNode;
-	requirePlatformAdmin?: boolean;
 	requireOrgUser?: boolean;
 	requirePermission?: PermissionRequirement;
 }
@@ -16,14 +15,12 @@ interface ProtectedRouteProps {
 /**
  * Protected route component that checks user roles
  *
- * @param requirePlatformAdmin - Route requires PlatformAdmin role
  * @param requireOrgUser - Route requires OrgUser role (or PlatformAdmin)
  * @param requirePermission - Route requires a permission (held anywhere,
  *   or platform-wide with `at: "global"`), from the caller's authorization
  */
 export function ProtectedRoute({
 	children,
-	requirePlatformAdmin = false,
 	requireOrgUser = false,
 	requirePermission,
 }: ProtectedRouteProps) {
@@ -39,16 +36,6 @@ export function ProtectedRoute({
 	// Authentication recovery belongs to AuthProvider, not the role-denied view.
 	if (!isAuthenticated)
 		return <PageLoader message="Opening sign in…" size="sm" />;
-
-	// Check for PlatformAdmin requirement
-	if (requirePlatformAdmin && !isPlatformAdmin) {
-		return (
-			<NoAccess
-				embedded
-				message="You need platform administrator access to view this page. Contact your administrator if you need access."
-			/>
-		);
-	}
 
 	if (requirePermission) {
 		if (authorization.isLoading) {

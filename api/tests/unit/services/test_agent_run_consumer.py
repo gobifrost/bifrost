@@ -12,13 +12,20 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import select
 
-from src.jobs.consumers.agent_run import RUN_AS_INACTIVE_ERROR, AgentRunConsumer
+from src.core.principal import UserPrincipal
+from src.jobs.consumers.agent_run import (
+    ACTING_USER_UNAVAILABLE_ERROR,
+    RUN_AS_INACTIVE_ERROR,
+    AgentRunConsumer,
+)
 from src.models.contracts.agents import ChatStreamChunk
 from src.models.enums import MessageRole
 from src.models.orm.agents import Conversation
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.organizations import Organization
 from src.models.orm.users import User
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
 from src.services.execution.autonomous_agent_executor import ActingUser
 
 
@@ -60,6 +67,36 @@ class FakeLateExecutor:
 
     async def flush_to_db(self, db):
         return None
+
+
+def _chat_caller(user_id: UUID) -> Caller:
+    return Caller(
+        UserPrincipal(
+            user_id=user_id,
+            email="caller@example.com",
+            organization_id=None,
+            name="Caller",
+            is_active=True,
+            is_superuser=False,
+            is_verified=True,
+            is_external=False,
+            is_provider_org=False,
+        ),
+        None,
+    )
+
+
+def _loaded_actor() -> ActingUser:
+    user_id = uuid4()
+    return ActingUser(
+        user_id=str(user_id),
+        email="actor@example.com",
+        name="Actor",
+        organization_id=None,
+        is_platform_admin=False,
+        is_external=False,
+        is_provider_org=False,
+    )
 
 
 async def _load_run(async_session_factory, run_id):
@@ -168,9 +205,15 @@ async def test_agent_not_found_returns_early(consumer):
 
     # get_redis is called multiple times (initial context read, then inside finally block)
     # We need it to work for both calls
-    with patch(
-        "src.jobs.consumers.agent_run.get_redis",
-        return_value=FakeRedisCtx(redis_mock),
+    with (
+        patch(
+            "src.jobs.consumers.agent_run.get_redis",
+            return_value=FakeRedisCtx(redis_mock),
+        ),
+        patch(
+            "src.jobs.consumers.agent_run._load_acting_user",
+            new=AsyncMock(return_value=_loaded_actor()),
+        ),
     ):
         await consumer.process_message(
             {
@@ -221,6 +264,38 @@ async def test_pre_cancel_updates_existing_queued_run(consumer):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("acting_user_id", [None, uuid4()], ids=["unbound", "deleted"])
+async def test_unavailable_actor_fails_before_agent_execution(consumer, acting_user_id):
+    run_id = str(uuid4())
+    queued_run = MagicMock(status="queued", acting_user_id=acting_user_id)
+    mock_session = AsyncMock()
+    mock_session.get.return_value = queued_run
+    mock_session_ctx = AsyncMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+    consumer._session_factory = MagicMock(return_value=mock_session_ctx)
+
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = json.dumps({"input": {}})
+
+    with (
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
+        patch(
+            "src.jobs.consumers.agent_run._load_acting_user",
+            new=AsyncMock(return_value=None),
+        ) as load_actor,
+    ):
+        await consumer.process_message(
+            {"run_id": run_id, "agent_id": str(uuid4()), "trigger_type": "api"}
+        )
+
+    load_actor.assert_awaited_once_with(mock_session, acting_user_id)
+    assert queued_run.status == "failed"
+    assert queued_run.error == ACTING_USER_UNAVAILABLE_ERROR
+    assert queued_run.completed_at is not None
+
+
+@pytest.mark.asyncio
 async def test_late_terminalized_run_is_not_overwritten(
     consumer,
     db_session,
@@ -228,13 +303,25 @@ async def test_late_terminalized_run_is_not_overwritten(
     seed_agent,
 ):
     run_id = uuid4()
+    org = Organization(name=f"late-terminal-{uuid4().hex}", created_by="agent-run-test")
+    db_session.add(org)
+    await db_session.flush()
+    actor = User(
+        email=f"actor-{uuid4().hex}@example.com",
+        organization_id=org.id,
+    )
+    db_session.add(actor)
+    await db_session.flush()
     run = AgentRun(
         id=run_id,
         agent_id=seed_agent.id,
         trigger_type="manual",
         status="queued",
+        org_id=org.id,
+        run_user_id=actor.id,
         iterations_used=0,
         tokens_used=0,
+        acting_user_id=actor.id,
         created_at=datetime.now(timezone.utc),
     )
     db_session.add(run)
@@ -255,34 +342,41 @@ async def test_late_terminalized_run_is_not_overwritten(
 
     redis_mock.get.side_effect = _redis_get
 
-    with (
-        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
-        patch(
-            "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor",
-            FakeLateExecutor,
-        ),
-        patch("src.jobs.consumers.agent_run.publish_agent_run_update", AsyncMock()) as publish_mock,
-        patch("src.jobs.consumers.agent_run._publish_sync_result", AsyncMock()) as sync_mock,
-    ):
-        await consumer.process_message(
-            {
-                "run_id": str(run_id),
-                "agent_id": str(seed_agent.id),
-                "trigger_type": "manual",
-                "sync": True,
-            }
-        )
+    try:
+        with (
+            patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
+            patch(
+                "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor",
+                FakeLateExecutor,
+            ),
+            patch("src.jobs.consumers.agent_run.publish_agent_run_update", AsyncMock()) as publish_mock,
+            patch("src.jobs.consumers.agent_run._publish_sync_result", AsyncMock()) as sync_mock,
+        ):
+            await consumer.process_message(
+                {
+                    "run_id": str(run_id),
+                    "agent_id": str(seed_agent.id),
+                    "trigger_type": "manual",
+                    "sync": True,
+                }
+            )
 
-    refreshed = await _load_run(async_session_factory, run_id)
-    assert refreshed.status == "timeout"
-    assert refreshed.error == "scheduler terminalized the run"
-    assert refreshed.completed_at is not None
-    assert publish_mock.await_count == 2
-    assert publish_mock.await_args_list[0].args[0].status == "running"
-    assert publish_mock.await_args_list[1].args[0].status == "timeout"
-    sync_payload = sync_mock.await_args.args[1]
-    assert sync_payload["status"] == "timeout"
-    assert sync_payload["error"] == "scheduler terminalized the run"
+        refreshed = await _load_run(async_session_factory, run_id)
+        assert refreshed.status == "timeout"
+        assert refreshed.error == "scheduler terminalized the run"
+        assert refreshed.completed_at is not None
+        assert publish_mock.await_count == 2
+        assert publish_mock.await_args_list[0].args[0].status == "running"
+        assert publish_mock.await_args_list[1].args[0].status == "timeout"
+        sync_payload = sync_mock.await_args.args[1]
+        assert sync_payload["status"] == "timeout"
+        assert sync_payload["error"] == "scheduler terminalized the run"
+    finally:
+        async with async_session_factory() as cleanup:
+            await cleanup.execute(AgentRun.__table__.delete().where(AgentRun.id == run_id))
+            await cleanup.execute(User.__table__.delete().where(User.id == actor.id))
+            await cleanup.execute(Organization.__table__.delete().where(Organization.id == org.id))
+            await cleanup.commit()
 
 
 @pytest.mark.asyncio
@@ -399,6 +493,7 @@ async def test_chat_run_publishes_stream_chunks_and_terminal_completion(
             },
             agent_run=queued_run,
             agent=None,
+            caller=_chat_caller(user_id),
             sync=False,
             start_time=time.time(),
         )
@@ -545,6 +640,7 @@ async def test_chat_run_interruption_persists_partial_output_and_terminal_event(
             },
             agent_run=queued_run,
             agent=None,
+            caller=_chat_caller(user_id),
             sync=False,
             start_time=time.time(),
         )
@@ -576,7 +672,16 @@ async def test_agentless_chat_skips_agent_lookup_and_socket_dependencies(
     consumer,
 ):
     run_id = str(uuid4())
-    queued_run = MagicMock(status="queued")
+    original_user_id = uuid4()
+    actor_user_id = uuid4()
+    org_id = uuid4()
+    queued_run = MagicMock(
+        id=UUID(run_id),
+        status="queued",
+        conversation_id=uuid4(),
+        run_user_id=original_user_id,
+        acting_user_id=actor_user_id,
+    )
     mock_session = AsyncMock()
     mock_session.get.return_value = queued_run
     mock_session.execute = AsyncMock(side_effect=AssertionError("agent lookup should be skipped for chat"))
@@ -604,10 +709,38 @@ async def test_agentless_chat_skips_agent_lookup_and_socket_dependencies(
     )
 
     process_chat = AsyncMock()
+    runtime_principal = UserPrincipal(
+        user_id=actor_user_id,
+        email="actor@example.com",
+        organization_id=org_id,
+        name="Actor",
+    )
+    runtime_caller = Caller(
+        runtime_principal,
+        AuthorizationContext(
+            user_id=original_user_id,
+            home_organization_id=org_id,
+            base_role_id=uuid4(),
+            is_external=False,
+            base_permissions=frozenset(),
+        ),
+    )
 
     publish_chat = AsyncMock()
     with (
         patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
+        patch(
+            "src.jobs.consumers.agent_run._load_acting_user",
+            new=AsyncMock(return_value=_loaded_actor()),
+        ),
+        patch(
+            "src.jobs.consumers.agent_run.load_runtime_principal",
+            new=AsyncMock(return_value=runtime_principal),
+        ) as load_runtime,
+        patch(
+            "src.jobs.consumers.agent_run.load_caller",
+            new=AsyncMock(return_value=runtime_caller),
+        ) as load_caller,
         patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat),
         patch("src.jobs.consumers.agent_run.publish_agent_run_update", AsyncMock()),
         patch.object(consumer, "_process_chat_run", process_chat),
@@ -621,6 +754,11 @@ async def test_agentless_chat_skips_agent_lookup_and_socket_dependencies(
         )
 
     mock_session.execute.assert_not_called()
+    load_runtime.assert_awaited_once_with(
+        mock_session,
+        {"credential_kind": "agent_run", "sub": run_id},
+    )
+    load_caller.assert_awaited_once_with(mock_session, runtime_principal)
     process_chat.assert_awaited_once()
     assert process_chat.await_args.kwargs["agent"] is None
     assert queued_run.status == "running"
@@ -667,6 +805,10 @@ async def test_chat_outer_failure_publishes_terminal_error_envelope(
 
     with (
         patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
+        patch(
+            "src.jobs.consumers.agent_run._load_acting_user",
+            new=AsyncMock(return_value=_loaded_actor()),
+        ),
         patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat),
         patch("src.jobs.consumers.agent_run.publish_agent_run_update", publish_run),
         patch.object(
@@ -720,14 +862,20 @@ def _recording_executor(runs: list[dict[str, Any]]):
             input_data=None,
             output_schema=None,
             run_id=None,
-            _caller=None,
+            caller,
             _shared_usage=None,
             _shared_budget=None,
             run_user_id,
             run_as,
+            acting=None,
         ):
             runs.append(
-                {"_caller": _caller, "run_user_id": run_user_id, "run_as": run_as}
+                {
+                    "caller": caller,
+                    "run_user_id": run_user_id,
+                    "run_as": run_as,
+                    "acting": acting,
+                }
             )
             return {
                 "output": {"text": "done"},
@@ -773,6 +921,7 @@ async def _run_as_fixture(db_session, seed_agent, *, target_active=True, with_ru
         caller_name=lead.name,
         run_user_id=lead.id,
         run_as_user_id=target.id if with_run_as else None,
+        acting_user_id=target.id if with_run_as else lead.id,
         iterations_used=0,
         tokens_used=0,
         created_at=datetime.now(timezone.utc),
@@ -780,6 +929,15 @@ async def _run_as_fixture(db_session, seed_agent, *, target_active=True, with_ru
     db_session.add(run)
     await db_session.commit()
     return contoso, lead, target, run
+
+
+async def _cleanup_run_as_fixture(async_session_factory, contoso, lead, target, run):
+    """Remove rows committed for a cross-session consumer test."""
+    async with async_session_factory() as cleanup:
+        await cleanup.execute(AgentRun.__table__.delete().where(AgentRun.id == run.id))
+        await cleanup.execute(User.__table__.delete().where(User.id.in_([lead.id, target.id])))
+        await cleanup.execute(Organization.__table__.delete().where(Organization.id == contoso.id))
+        await cleanup.commit()
 
 
 async def _consume(consumer, run, context, runs):
@@ -830,56 +988,91 @@ async def test_run_as_user_comes_from_the_database_not_the_redis_context(
     consumer._session_factory = async_session_factory
     runs: list[dict[str, Any]] = []
 
-    await _consume(consumer, run, {"input": "hello", "caller": redis_caller}, runs)
+    try:
+        await _consume(consumer, run, {"input": "hello", "caller": redis_caller}, runs)
 
-    expected_run_as = ActingUser(
-        user_id=str(target.id),
-        email=target.email,
-        name="Contoso Portal User",
-        organization_id=contoso.id,
-        is_platform_admin=False,
-        is_external=True,
-        is_provider_org=False,
-    )
-    assert runs == [
-        {"_caller": redis_caller, "run_user_id": lead.id, "run_as": expected_run_as}
-    ]
-    refreshed = await _load_run(async_session_factory, run.id)
-    assert refreshed.status == "completed"
+        expected_run_as = ActingUser(
+            user_id=str(target.id),
+            email=target.email,
+            name="Contoso Portal User",
+            organization_id=contoso.id,
+            is_platform_admin=False,
+            is_external=True,
+            is_provider_org=False,
+        )
+        assert len(runs) == 1
+        runtime_caller = runs[0]["caller"]
+        assert runtime_caller.principal.user_id == target.id
+        assert runtime_caller.principal.runtime_authority is not None
+        assert runtime_caller.principal.runtime_authority.kind == "agent_run"
+        assert runtime_caller.ctx.user_id == lead.id
+        assert runs[0]["run_user_id"] == lead.id
+        assert runs[0]["run_as"] == expected_run_as
+        assert runs[0]["acting"] == expected_run_as
+        refreshed = await _load_run(async_session_factory, run.id)
+        assert refreshed.status == "completed"
+    finally:
+        await _cleanup_run_as_fixture(async_session_factory, contoso, lead, target, run)
 
 
 @pytest.mark.asyncio
 async def test_inactive_run_as_user_fails_the_run_without_executing(
     consumer, db_session, async_session_factory, seed_agent
 ):
-    _, lead, _, run = await _run_as_fixture(db_session, seed_agent, target_active=False)
+    contoso, lead, target, run = await _run_as_fixture(
+        db_session, seed_agent, target_active=False
+    )
     consumer._session_factory = async_session_factory
     runs: list[dict[str, Any]] = []
 
-    sync_mock = await _consume(
-        consumer, run, {"input": "hello", "caller": {"user_id": str(lead.id)}}, runs
-    )
+    try:
+        sync_mock = await _consume(
+            consumer, run, {"input": "hello", "caller": {"user_id": str(lead.id)}}, runs
+        )
 
-    assert runs == []
-    refreshed = await _load_run(async_session_factory, run.id)
-    assert refreshed.status == "failed"
-    assert refreshed.error == RUN_AS_INACTIVE_ERROR
-    assert refreshed.completed_at is not None
-    sync_mock.assert_awaited_once_with(
-        str(run.id),
-        {"output": None, "status": "failed", "error": RUN_AS_INACTIVE_ERROR},
-    )
+        assert runs == []
+        refreshed = await _load_run(async_session_factory, run.id)
+        assert refreshed.status == "failed"
+        assert refreshed.error == RUN_AS_INACTIVE_ERROR
+        assert refreshed.completed_at is not None
+        sync_mock.assert_awaited_once_with(
+            str(run.id),
+            {"output": None, "status": "failed", "error": RUN_AS_INACTIVE_ERROR},
+        )
+    finally:
+        await _cleanup_run_as_fixture(async_session_factory, contoso, lead, target, run)
 
 
 @pytest.mark.asyncio
-async def test_run_without_run_as_passes_no_acting_user(
+async def test_run_without_run_as_passes_the_persisted_actor(
     consumer, db_session, async_session_factory, seed_agent
 ):
-    _, lead, _, run = await _run_as_fixture(db_session, seed_agent, with_run_as=False)
+    contoso, lead, target, run = await _run_as_fixture(
+        db_session, seed_agent, with_run_as=False
+    )
     caller = {"user_id": str(lead.id), "email": lead.email, "name": lead.name}
     consumer._session_factory = async_session_factory
     runs: list[dict[str, Any]] = []
 
-    await _consume(consumer, run, {"input": "hello", "caller": caller}, runs)
+    try:
+        await _consume(consumer, run, {"input": "hello", "caller": caller}, runs)
 
-    assert runs == [{"_caller": caller, "run_user_id": lead.id, "run_as": None}]
+        assert len(runs) == 1
+        runtime_caller = runs[0]["caller"]
+        assert runtime_caller.principal.user_id == lead.id
+        assert runtime_caller.principal.runtime_authority is not None
+        assert runtime_caller.principal.runtime_authority.kind == "agent_run"
+        assert runtime_caller.ctx.user_id == lead.id
+        assert runs[0]["run_user_id"] == lead.id
+        assert runs[0]["run_as"] is None
+        assert runs[0]["acting"] == ActingUser(
+            user_id=str(lead.id),
+            email=lead.email,
+            name=lead.name,
+            organization_id=lead.organization_id,
+            is_platform_admin=False,
+            is_external=False,
+            is_provider_org=False,
+        )
+    finally:
+        await _cleanup_run_as_fixture(async_session_factory, contoso, lead, target, run)

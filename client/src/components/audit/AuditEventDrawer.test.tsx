@@ -157,6 +157,15 @@ describe("AuditEventDrawer", () => {
 		expect(explain.calls.every(([, enabled]) => !enabled)).toBe(true);
 	});
 
+	it("identifies an enforced check without describing it as report-only", () => {
+		renderDrawer({
+			...accessCheck,
+			details: { ...accessCheck.details, trace: { ...then, enforced: true } },
+		});
+		expect(screen.getByText("The access decision enforced for this request.")).toBeVisible();
+		expect(screen.queryByText(/Nothing was blocked/)).not.toBeInTheDocument();
+	});
+
 	it("names the permission a permission check needed, even where the trace stopped first", () => {
 		const stoppedAtTarget: AccessTrace = {
 			outcome: "failure",

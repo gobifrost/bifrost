@@ -238,7 +238,7 @@ class TestGetV2DistAsset:
             return fake_app
 
         monkeypatch.setattr(
-            "src.routers.app_code_files.get_application_or_404", _fake_get_app
+            "src.routers.app_code_files._get_application_by_id_or_404", _fake_get_app
         )
 
         class _FakeBuilder:

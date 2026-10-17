@@ -85,9 +85,9 @@ describe("FolderListing", () => {
 			"alpha.txt",
 			"zeta.txt",
 		]);
-		expect(
-			screen.getByRole("listitem", { name: "alpha.txt" }),
-		).toHaveClass("tree-row-selected");
+		expect(screen.getByRole("listitem", { name: "alpha.txt" })).toHaveClass(
+			"tree-row-selected",
+		);
 
 		await user.click(screen.getByLabelText("Search this folder"));
 		await user.keyboard("zeta");
@@ -173,7 +173,7 @@ describe("FolderListing", () => {
 		).not.toBeInTheDocument();
 	});
 
-	it("hides policy and delete mutation actions when read-only", async () => {
+	it("keeps policy management separate from read-only file data", async () => {
 		const onRowAction = vi.fn();
 		const onFolderAction = vi.fn();
 		render(
@@ -191,11 +191,11 @@ describe("FolderListing", () => {
 		);
 
 		fireEvent.contextMenu(await screen.findByText("a.png"));
-		expect(screen.queryByText("Manage Policy")).not.toBeInTheDocument();
+		expect(screen.getByText("Manage Policy")).toBeInTheDocument();
 		expect(screen.queryByText("Delete")).not.toBeInTheDocument();
 
 		fireEvent.contextMenu(await screen.findByText("team"));
-		expect(screen.queryByText("New Policy")).not.toBeInTheDocument();
+		expect(screen.getByText("New Policy")).toBeInTheDocument();
 		expect(screen.queryByText("Upload")).not.toBeInTheDocument();
 	});
 
@@ -478,9 +478,7 @@ describe("FolderListing", () => {
 		await user.click(
 			await screen.findByRole("button", { name: "Actions for a.png" }),
 		);
-		await user.click(
-			screen.getByRole("menuitem", { name: "Download" }),
-		);
+		await user.click(screen.getByRole("menuitem", { name: "Download" }));
 		expect(await screen.findByRole("alert")).toHaveTextContent(
 			"Download unavailable",
 		);
@@ -500,7 +498,7 @@ describe("FolderListing", () => {
 		anchorClick.mockRestore();
 	});
 	it.each([true, false])(
-		"keeps read-only menus free of mutation actions (compact=%s)",
+		"keeps read-only data actions out of menus while retaining policy management (compact=%s)",
 		async (compact) => {
 			mockMedia.mockReturnValue(compact);
 			const { user } = render(
@@ -531,8 +529,8 @@ describe("FolderListing", () => {
 				screen.queryByRole("menuitem", { name: "Delete" }),
 			).not.toBeInTheDocument();
 			expect(
-				screen.queryByRole("menuitem", { name: "Manage Policy" }),
-			).not.toBeInTheDocument();
+				screen.getByRole("menuitem", { name: "Manage Policy" }),
+			).toBeVisible();
 			await user.keyboard("{Escape}");
 			await user.click(
 				screen.getByRole("button", { name: "Actions for team" }),
@@ -544,8 +542,8 @@ describe("FolderListing", () => {
 				screen.queryByRole("menuitem", { name: "Upload" }),
 			).not.toBeInTheDocument();
 			expect(
-				screen.queryByRole("menuitem", { name: "New Policy" }),
-			).not.toBeInTheDocument();
+				screen.getByRole("menuitem", { name: "New Policy" }),
+			).toBeVisible();
 		},
 	);
 });

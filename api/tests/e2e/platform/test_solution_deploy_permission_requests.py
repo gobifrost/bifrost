@@ -17,7 +17,7 @@ pytestmark = pytest.mark.e2e
 WF_ID = "33333333-3333-3333-3333-333333333333"
 REQUEST = {
     "mode": "restricted",
-    "grants": [{"permission": "tables.read", "boundary": "managed_organizations"}],
+    "grants": [{"permission": "tables.read"}],
 }
 
 

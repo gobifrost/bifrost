@@ -206,6 +206,16 @@ async function chooseIdentity(
 }
 
 describe("WorkflowAccessPanel", () => {
+	it("explains that Full adds permissions within existing reach", () => {
+		render(<WorkflowAccessPanel workflow={makeWorkflow()} />);
+		expect(screen.getByText("Full adds every permission, including Secrets, within the run user's organization reach.")).toBeVisible();
+	});
+
+	it("explains Restricted capabilities without promising a later release", () => {
+		render(<WorkflowAccessPanel workflow={makeWorkflow({ permission_mode: "restricted" })} />);
+		expect(screen.getByText("Restricted adds its configured permissions to the run user's own roles. It does not add organizations to their reach.")).toBeVisible();
+	});
+
 	it("runs as its organization's default identity when it names none, saying where it belongs", () => {
 		render(<WorkflowAccessPanel workflow={makeWorkflow()} />);
 

@@ -14,7 +14,9 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from websockets.asyncio.client import connect
 
+from src.models.enums import EventSourceType
 from src.models.orm.agent_runs import AgentRun
+from src.models.orm.events import EventSource
 
 pytestmark = pytest.mark.asyncio
 
@@ -79,7 +81,7 @@ class TestAgentRunChannelVisibility:
             await db_session.execute(delete(AgentRun).where(AgentRun.id == run_id))
             await db_session.commit()
 
-    async def test_shared_agent_runs_channel_is_bypass_only(
+    async def test_shared_agent_runs_channel_uses_per_message_visibility(
         self,
         e2e_ws_url,
         platform_admin,
@@ -93,7 +95,7 @@ class TestAgentRunChannelVisibility:
         ) as ws:
             await asyncio.wait_for(ws.recv(), timeout=5)
             resp = await _subscribe(ws, "agent-runs")
-            assert resp["type"] == "error", resp
+            assert resp["type"] == "subscribed", resp
 
         async with connect(
             ws_url,
@@ -106,30 +108,42 @@ class TestAgentRunChannelVisibility:
 
 @pytest.mark.e2e
 class TestEventSourceChannelVisibility:
-    async def test_regular_user_denied_platform_admin_allowed(
+    async def test_regular_user_denied_platform_admin_allowed_for_real_source(
         self,
         e2e_ws_url,
         platform_admin,
         org1_user,
+        db_session: AsyncSession,
     ):
         ws_url = f"{e2e_ws_url}/ws/connect"
-        source_id = uuid4()
+        source = EventSource(
+            name=f"ws-source-{uuid4().hex}",
+            source_type=EventSourceType.WEBHOOK,
+            organization_id=org1_user.organization_id,
+            created_by=str(platform_admin.user_id),
+        )
+        db_session.add(source)
+        await db_session.commit()
 
-        async with connect(
-            ws_url,
-            additional_headers={"Authorization": f"Bearer {org1_user.access_token}"},
-        ) as ws:
-            await asyncio.wait_for(ws.recv(), timeout=5)
-            resp = await _subscribe(ws, f"event-source:{source_id}")
-            assert resp["type"] == "error", resp
+        try:
+            async with connect(
+                ws_url,
+                additional_headers={"Authorization": f"Bearer {org1_user.access_token}"},
+            ) as ws:
+                await asyncio.wait_for(ws.recv(), timeout=5)
+                resp = await _subscribe(ws, f"event-source:{source.id}")
+                assert resp["type"] == "error", resp
 
-        async with connect(
-            ws_url,
-            additional_headers={"Authorization": f"Bearer {platform_admin.access_token}"},
-        ) as ws:
-            await asyncio.wait_for(ws.recv(), timeout=5)
-            resp = await _subscribe(ws, f"event-source:{source_id}")
-            assert resp["type"] == "subscribed", resp
+            async with connect(
+                ws_url,
+                additional_headers={"Authorization": f"Bearer {platform_admin.access_token}"},
+            ) as ws:
+                await asyncio.wait_for(ws.recv(), timeout=5)
+                resp = await _subscribe(ws, f"event-source:{source.id}")
+                assert resp["type"] == "subscribed", resp
+        finally:
+            await db_session.delete(source)
+            await db_session.commit()
 
 
 @pytest.mark.e2e

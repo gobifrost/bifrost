@@ -17,13 +17,16 @@ from src.config import get_settings
 from src.core.cache.keys import agent_run_steps_stream_key
 from src.core.cache.redis_client import get_redis
 from src.core.database import get_session_factory
-from src.core.principal import UserPrincipal
+from src.services.authorization.enforce import Caller, load_caller
+from src.services.authorization.runtime_auth import load_runtime_principal
 from src.core.pubsub import publish_agent_run_update, publish_chat_run_event
 from src.jobs.rabbitmq import BaseConsumer
 from src.models.contracts.agents import ChatStreamChunk
 from src.models.enums import MessageRole
 from src.models.orm.agents import Agent, Conversation
 from src.models.orm.agent_runs import AgentRun
+from src.models.orm.organizations import Organization
+from src.models.orm.users import User
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,6 +40,7 @@ REDIS_PREFIX = "bifrost:agent_run"
 DEFAULT_RUN_TIMEOUT = 1800  # 30 minutes
 CANCEL_CHECK_INTERVAL = 2  # seconds between cancel flag checks
 RUN_AS_INACTIVE_ERROR = "The user this run acts as is no longer active"
+ACTING_USER_UNAVAILABLE_ERROR = "Agent run actor is unavailable"
 
 
 async def _publish_sync_result(run_id: str, result: dict) -> None:
@@ -72,25 +76,38 @@ def _chat_chunk_status(chunk_type: str) -> str:
     return "failed"
 
 
-def _caller_to_principal(caller: dict[str, Any]) -> UserPrincipal:
-    user_id_raw = caller.get("user_id")
-    email = caller.get("email")
-    if not user_id_raw or not email:
-        raise ValueError("Chat caller context is incomplete")
 
-    organization_id = caller.get("organization_id")
-    return UserPrincipal(
-        user_id=UUID(str(user_id_raw)),
-        email=str(email),
-        organization_id=UUID(str(organization_id)) if organization_id else None,
-        name=str(caller.get("name") or ""),
-        is_active=True,
-        is_superuser=bool(caller.get("is_platform_admin", caller.get("is_superuser", False))),
-        is_verified=True,
-        is_external=bool(caller.get("is_external", False)),
-        is_provider_org=bool(caller.get("is_provider_org", False)),
-        roles=list(caller.get("roles") or []),
+async def _load_acting_user(
+    db: AsyncSession,
+    acting_user_id: UUID | None,
+) -> ActingUser | None:
+    """Load the persisted actor's current facts, or fail closed if absent."""
+    if acting_user_id is None:
+        return None
+
+    row = (
+        await db.execute(
+            select(User, Organization.is_provider)
+            .outerjoin(Organization, Organization.id == User.organization_id)
+            .where(User.id == acting_user_id)
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+
+    user, is_provider_org = row
+    from src.services.execution.autonomous_agent_executor import ActingUser
+
+    acting = ActingUser(
+        user_id=str(user.id),
+        email=user.email,
+        name=user.name or user.email,
+        organization_id=user.organization_id,
+        is_platform_admin=user.is_superuser,
+        is_external=user.is_external,
+        is_provider_org=bool(is_provider_org),
     )
+    return acting
 
 
 async def _load_run_as(
@@ -207,6 +224,8 @@ class AgentRunConsumer(BaseConsumer):
         agent_run: AgentRun | None = None
         agent: Agent | None = None
         executor = None
+        acting: ActingUser | None = None
+        runtime_caller: Caller | None = None
 
         try:
             # Atomically claim the durable queued row and load the agent.
@@ -244,6 +263,25 @@ class AgentRunConsumer(BaseConsumer):
                         )
                     return
 
+                loaded_actor = await _load_acting_user(db, agent_run.acting_user_id)
+                if loaded_actor is None:
+                    logger.info("Agent run %s: its persisted actor is unavailable", run_id)
+                    agent_run.status = "failed"
+                    agent_run.error = ACTING_USER_UNAVAILABLE_ERROR
+                    agent_run.completed_at = datetime.now(timezone.utc)
+                    await db.commit()
+                    if sync:
+                        await _publish_sync_result(
+                            run_id,
+                            {
+                                "output": None,
+                                "status": "failed",
+                                "error": ACTING_USER_UNAVAILABLE_ERROR,
+                            },
+                        )
+                    return
+                acting = loaded_actor
+
                 is_chat_trigger = trigger_type == "chat" or context.get("trigger_type") == "chat"
                 if is_chat_trigger:
                     agent_run.status = "running"
@@ -262,12 +300,25 @@ class AgentRunConsumer(BaseConsumer):
                             run_status="running",
                         ),
                     )
+                    runtime_principal = await load_runtime_principal(
+                        db,
+                        {
+                            "credential_kind": "agent_run",
+                            "sub": str(agent_run.id),
+                        },
+                    )
+                    if runtime_principal is None:
+                        raise ValueError("Chat run runtime authority is unavailable")
+                    chat_caller = await load_caller(db, runtime_principal)
+                    if chat_caller.ctx is None:
+                        raise ValueError("Chat run caller is unavailable")
                     await publish_agent_run_update(agent_run, "Unknown")
                     await self._process_chat_run(
                         run_id=run_id,
                         context=context,
                         agent_run=agent_run,
                         agent=None,
+                        caller=chat_caller,
                         sync=sync,
                         start_time=start_time,
                     )
@@ -347,19 +398,20 @@ class AgentRunConsumer(BaseConsumer):
                 agent_run.budget_max_tokens = agent.max_token_budget
                 agent_run.started_at = datetime.now(timezone.utc)
                 await db.commit()
+                runtime_principal = await load_runtime_principal(
+                    db,
+                    {
+                        "credential_kind": "agent_run",
+                        "sub": str(agent_run.id),
+                    },
+                )
+                if runtime_principal is None:
+                    raise ValueError("Agent run runtime authority is unavailable")
+                runtime_caller = await load_caller(db, runtime_principal)
+                if runtime_caller.ctx is None:
+                    raise ValueError("Agent run caller is unavailable")
 
             await publish_agent_run_update(agent_run, agent.name if agent else "Unknown")
-
-            if trigger_type == "chat" or context.get("trigger_type") == "chat":
-                await self._process_chat_run(
-                    run_id=run_id,
-                    context=context,
-                    agent_run=agent_run,
-                    agent=agent,
-                    sync=sync,
-                    start_time=start_time,
-                )
-                return
 
             # Run the agent with timeout (Layer 1: hard safety net)
             run_timeout = agent.max_run_timeout or DEFAULT_RUN_TIMEOUT
@@ -383,9 +435,10 @@ class AgentRunConsumer(BaseConsumer):
                     input_data=context.get("input"),
                     output_schema=context.get("output_schema"),
                     run_id=run_id,
-                    _caller=context.get("caller"),
+                    caller=runtime_caller,
                     run_user_id=agent_run.run_user_id,
                     run_as=run_as,
+                    acting=acting,
                 ))
 
                 # Cancel watcher: polls Redis flag, force-cancels task if stuck
@@ -636,6 +689,7 @@ class AgentRunConsumer(BaseConsumer):
         context: dict[str, Any],
         agent_run: AgentRun,
         agent: Agent | None,
+        caller: Caller,
         sync: bool,
         start_time: float,
     ) -> None:
@@ -663,8 +717,6 @@ class AgentRunConsumer(BaseConsumer):
             UUID(str(attachment_id))
             for attachment_id in (input_data.get("attachment_ids") or [])
         ]
-        caller = _caller_to_principal(context.get("caller") or {})
-
         from src.services.ai_model_service import AIModelService
 
         async with self._session_factory() as db:
@@ -752,7 +804,7 @@ class AgentRunConsumer(BaseConsumer):
                             user_message,
                             stream=True,
                             local_id=local_id,
-                            user=caller,
+                            caller=caller,
                             attachment_ids=attachment_ids or None,
                             model_profile_id=model_profile_id,
                             user_message_id=persisted_user_message_id,

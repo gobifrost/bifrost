@@ -38,6 +38,8 @@ from shared.sdk_execution_reads import (
 )
 from src.core.principal import UserPrincipal
 from src.models.enums import ExecutionStatus
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
 
 
 def _admin(org_id=None, **kwargs) -> UserPrincipal:
@@ -76,7 +78,9 @@ async def _seed_org(db_session):
 
 
 async def _seed_user(db_session, *, org_id=None, is_superuser=False):
+    from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
     from src.models import User as UserORM
+    from src.models.orm.users import UserRole, UserRoleBoundary
 
     row = UserORM(
         email=f"sdk-reads-{uuid4().hex[:8]}@example.com",
@@ -86,6 +90,24 @@ async def _seed_user(db_session, *, org_id=None, is_superuser=False):
     )
     db_session.add(row)
     await db_session.flush()
+    if is_superuser:
+        # The execution reader derives authority from current role grants;
+        # the legacy ORM flag is deliberately not an authorization input.
+        db_session.add_all(
+            [
+                UserRole(
+                    user_id=row.id,
+                    role_id=PLATFORM_ADMIN_ROLE_ID,
+                    assigned_by="sdk-reads-test",
+                ),
+                UserRoleBoundary(
+                    user_id=row.id,
+                    role_id=PLATFORM_ADMIN_ROLE_ID,
+                    kind="platform",
+                ),
+            ]
+        )
+        await db_session.flush()
     return row
 
 
@@ -128,47 +150,94 @@ async def _seed_execution(
     return row
 
 
+def _workflow_reader(org_id) -> Caller:
+    principal = _user(org_id)
+    return Caller(
+        principal,
+        AuthorizationContext(
+            user_id=principal.user_id,
+            home_organization_id=org_id,
+            base_role_id=uuid4(),
+            is_external=False,
+            base_permissions=frozenset({"workflows.read"}),
+        ),
+    )
+
+
 @pytest.mark.asyncio
 class TestListSdkWorkflows:
+    async def test_omitted_scope_lists_current_named_role_placements(self, db_session):
+        from sqlalchemy import delete
+
+        from src.models.orm.users import Role, RolePermission, UserRole, UserRoleBoundary
+
+        home, allowed, excluded = [await _seed_org(db_session) for _ in range(3)]
+        person = await _seed_user(db_session, org_id=home.id)
+        role = Role(name=f"Workflow reader {uuid4().hex}", created_by="test")
+        db_session.add(role)
+        await db_session.flush()
+        db_session.add_all([
+            UserRole(user_id=person.id, role_id=role.id, assigned_by="test"),
+            RolePermission(role_id=role.id, permission="workflows.read"),
+            UserRoleBoundary(user_id=person.id, role_id=role.id, kind="organization", organization_id=allowed.id),
+        ])
+        await _seed_workflow(db_session, "reads-placed-Fabrikam", org_id=allowed.id)
+        await _seed_workflow(db_session, "reads-excluded-Fabrikam", org_id=excluded.id)
+        await db_session.flush()
+        # Actor flags cannot widen the current database role placement.
+        principal = _admin(home.id, user_id=person.id)
+
+        rows = await list_sdk_workflows(db_session, principal)
+        assert "reads-placed-Fabrikam" in {row.name for row in rows}
+        assert "reads-excluded-Fabrikam" not in {row.name for row in rows}
+
+        await db_session.execute(delete(UserRole).where(UserRole.user_id == person.id, UserRole.role_id == role.id))
+        await db_session.flush()
+        rows = await list_sdk_workflows(db_session, principal)
+        assert "reads-placed-Fabrikam" not in {row.name for row in rows}
+
     async def test_superuser_sees_all_active(self, db_session):
+        admin = await _seed_user(db_session, is_superuser=True)
         org = await _seed_org(db_session)
         await _seed_workflow(db_session, "reads-global-wf")
         await _seed_workflow(db_session, "reads-org-wf", org_id=org.id)
         await _seed_workflow(db_session, "reads-inactive-wf", is_active=False)
 
-        result = await list_sdk_workflows(db_session, _admin(), scope=None)
+        result = await list_sdk_workflows(db_session, _admin(user_id=admin.id), scope=None)
 
         names = {w.name for w in result}
         assert {"reads-global-wf", "reads-org-wf"} <= names
         assert "reads-inactive-wf" not in names
 
     async def test_global_scope_hides_org_workflows(self, db_session):
+        admin = await _seed_user(db_session, is_superuser=True)
         org = await _seed_org(db_session)
         await _seed_workflow(db_session, "reads-scope-global")
         await _seed_workflow(db_session, "reads-scope-org", org_id=org.id)
 
-        result = await list_sdk_workflows(db_session, _admin(), scope="global")
+        result = await list_sdk_workflows(db_session, _admin(user_id=admin.id), scope="global")
 
         assert [w.name for w in result if w.name.startswith("reads-scope-")] == [
             "reads-scope-global"
         ]
 
     async def test_org_scope_pins_to_org(self, db_session):
+        admin = await _seed_user(db_session, is_superuser=True)
         org = await _seed_org(db_session)
         await _seed_workflow(db_session, "reads-pin-global")
         await _seed_workflow(db_session, "reads-pin-org", org_id=org.id)
 
         result = await list_sdk_workflows(
-            db_session, _admin(), scope=str(org.id)
+            db_session, _admin(user_id=admin.id), scope=str(org.id)
         )
 
         names = [w.name for w in result if w.name.startswith("reads-pin-")]
         assert names == ["reads-pin-org"]
 
-    async def test_invalid_scope_raises_400(self, db_session):
+    async def test_invalid_scope_raises_422(self, db_session):
         with pytest.raises(SdkExecutionReadError) as exc_info:
             await list_sdk_workflows(db_session, _admin(), scope="nope")
-        assert exc_info.value.status_code == 400
+        assert exc_info.value.status_code == 422
 
     async def test_non_superuser_denied(self, db_session):
         org = await _seed_org(db_session)
@@ -179,14 +248,15 @@ class TestListSdkWorkflows:
         assert exc_info.value.status_code == 403
 
     async def test_type_and_legacy_is_tool_filters(self, db_session):
+        admin = await _seed_user(db_session, is_superuser=True)
         await _seed_workflow(db_session, "reads-tool-wf", type="tool")
         await _seed_workflow(db_session, "reads-plain-wf", type="workflow")
 
-        by_type = await list_sdk_workflows(db_session, _admin(), type="tool")
+        by_type = await list_sdk_workflows(db_session, _admin(user_id=admin.id), type="tool")
         assert "reads-tool-wf" in {w.name for w in by_type}
         assert "reads-plain-wf" not in {w.name for w in by_type}
 
-        by_legacy = await list_sdk_workflows(db_session, _admin(), is_tool=True)
+        by_legacy = await list_sdk_workflows(db_session, _admin(user_id=admin.id), is_tool=True)
         assert "reads-tool-wf" in {w.name for w in by_legacy}
         assert "reads-plain-wf" not in {w.name for w in by_legacy}
 
@@ -195,6 +265,7 @@ class TestListSdkWorkflows:
         from src.models.orm.users import Role as RoleModel
         from src.models.orm.workflow_roles import WorkflowRole as WorkflowRoleModel
 
+        admin = await _seed_user(db_session, is_superuser=True)
         wf = await _seed_workflow(db_session, "reads-used-wf")
         form = FormModel(
             name="reads-used-form",
@@ -213,20 +284,45 @@ class TestListSdkWorkflows:
         )
         await db_session.flush()
 
-        result = await list_sdk_workflows(db_session, _admin(), scope=None)
+        result = await list_sdk_workflows(db_session, _admin(user_id=admin.id), scope=None)
 
         match = next(w for w in result if w.name == "reads-used-wf")
         assert match.used_by_count >= 1
         assert str(role.id) in match.role_ids
 
     async def test_filter_by_form_empty_returns_empty(self, db_session):
+        admin = await _seed_user(db_session, is_superuser=True)
         await _seed_workflow(db_session, "reads-unrelated-wf")
 
         result = await list_sdk_workflows(
-            db_session, _admin(), filter_by_form=uuid4()
+            db_session, _admin(user_id=admin.id), filter_by_form=uuid4()
         )
 
         assert result == []
+
+    async def test_default_global_fallback_uses_selected_org_permission(self, db_session):
+        org = await _seed_org(db_session)
+        await _seed_workflow(db_session, "reads-home-workflow", org_id=org.id)
+        await _seed_workflow(db_session, "reads-shared-global-workflow")
+        caller = _workflow_reader(org.id)
+
+        with patch(
+            "shared.sdk_execution_reads.load_caller", new=AsyncMock(return_value=caller)
+        ):
+            default_rows = await list_sdk_workflows(
+                db_session, caller.principal, scope=None
+            )
+            explicit_global_rows = await list_sdk_workflows(
+                db_session, caller.principal, scope="global"
+            )
+
+        assert {row.name for row in default_rows} >= {
+            "reads-home-workflow",
+            "reads-shared-global-workflow",
+        }
+        assert "reads-shared-global-workflow" not in {
+            row.name for row in explicit_global_rows
+        }
 
 
 @pytest.mark.asyncio
@@ -327,6 +423,47 @@ class TestListSdkExecutions:
         )
 
         assert [e.execution_id for e in result] == [str(own.id)]
+
+    async def test_visibility_filter_runs_before_history_limit(self, db_session):
+        visible_org = await _seed_org(db_session)
+        hidden_org = await _seed_org(db_session)
+        owner = await _seed_user(db_session, org_id=visible_org.id)
+        other = await _seed_user(db_session, org_id=hidden_org.id)
+        visible = await _seed_execution(
+            db_session,
+            "reads-visible-before-limit",
+            user_id=owner.id,
+            org_id=visible_org.id,
+            started_at=datetime(2026, 8, 27, 18, 0),
+        )
+        await _seed_execution(
+            db_session,
+            "reads-hidden-before-limit",
+            user_id=other.id,
+            org_id=hidden_org.id,
+            started_at=datetime(2026, 8, 27, 19, 0),
+        )
+        principal = _user(visible_org.id, user_id=owner.id)
+        caller = Caller(
+            principal=principal,
+            ctx=AuthorizationContext(
+                user_id=owner.id,
+                home_organization_id=visible_org.id,
+                base_role_id=uuid4(),
+                is_external=False,
+                base_permissions=frozenset(),
+            ),
+        )
+
+        with patch("shared.sdk_execution_reads.load_caller", new=AsyncMock(return_value=caller)):
+            page, next_token = await list_sdk_executions(
+                db_session,
+                principal,
+                limit=1,
+            )
+
+        assert [item.execution_id for item in page] == [str(visible.id)]
+        assert next_token is None
 
     async def test_invalid_scope_raises_422(self, db_session):
         with pytest.raises(SdkExecutionReadError) as exc_info:

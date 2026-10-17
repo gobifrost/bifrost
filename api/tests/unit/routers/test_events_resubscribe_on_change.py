@@ -81,6 +81,9 @@ async def test_resubscribe_success_subscribes_new_then_unsubscribes_old(monkeypa
     ws = _fake_webhook_source(adapter_name="old_adapter")
     source = _fake_source(ws)
     db = _fake_db(source)
+    monkeypatch.setattr(
+        "src.routers.events._require_event_source", AsyncMock(return_value=MagicMock())
+    )
 
     calls: list[str] = []
 
@@ -124,6 +127,9 @@ async def test_resubscribe_new_failure_leaves_webhook_source_untouched(monkeypat
     ws = _fake_webhook_source(adapter_name="old_adapter")
     source = _fake_source(ws)
     db = _fake_db(source)
+    monkeypatch.setattr(
+        "src.routers.events._require_event_source", AsyncMock(return_value=MagicMock())
+    )
 
     old_adapter = SimpleNamespace(
         requires_integration=False, config_schema={}, unsubscribe=AsyncMock()
@@ -161,6 +167,9 @@ async def test_resubscribe_old_unsubscribe_failure_is_logged_and_request_still_s
     ws = _fake_webhook_source(adapter_name="old_adapter")
     source = _fake_source(ws)
     db = _fake_db(source)
+    monkeypatch.setattr(
+        "src.routers.events._require_event_source", AsyncMock(return_value=MagicMock())
+    )
 
     old_adapter = SimpleNamespace(
         requires_integration=False,

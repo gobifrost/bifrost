@@ -29,7 +29,7 @@ const mockOrgs = [
 const useOrganizationsMock = vi.fn();
 
 vi.mock("@/hooks/useOrganizations", () => ({
-	useOrganizations: () => useOrganizationsMock(),
+	useOrganizations: (...args: unknown[]) => useOrganizationsMock(...args),
 }));
 
 beforeEach(() => {
@@ -46,6 +46,19 @@ async function renderSelect(overrides: Record<string, unknown> = {}) {
 }
 
 describe("OrganizationSelect", () => {
+	it("selects a known resource scope while organization discovery is disabled", async () => {
+		const { user, onChange } = await renderSelect({
+			loadOrganizations: false,
+			knownOrganizations: [{ id: "contoso", name: "Contoso" }],
+			showGlobal: false,
+		});
+		expect(useOrganizationsMock).toHaveBeenCalledWith({ enabled: false });
+		await user.click(screen.getByRole("combobox"));
+		expect(screen.queryByRole("option", { name: /^Global/ })).not.toBeInTheDocument();
+		expect(screen.getAllByRole("option")).toHaveLength(1);
+		await user.click(screen.getByRole("option", { name: "Contoso" }));
+		expect(onChange).toHaveBeenCalledWith("contoso");
+	});
 	it("shows 'Global' when value is null", async () => {
 		await renderSelect({ value: null });
 

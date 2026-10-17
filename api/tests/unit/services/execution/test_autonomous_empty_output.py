@@ -11,6 +11,9 @@ from uuid import uuid4
 import pytest
 
 from tests.unit.services.agent_runtime_fakes import LegacyMockModel
+from src.core.principal import UserPrincipal
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
 from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
 from src.services.llm.base import LLMConfig, LLMResponse
 
@@ -48,6 +51,27 @@ def mock_agent():
     agent.llm_max_tokens = None
     agent.organization_id = uuid4()
     return agent
+
+
+def _caller(organization_id):
+    user_id = uuid4()
+    return Caller(
+        UserPrincipal(user_id=user_id, email="agent@contoso.example", organization_id=organization_id),
+        AuthorizationContext(user_id=user_id, home_organization_id=organization_id, base_role_id=uuid4(), is_external=False, base_permissions=frozenset()),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _authorize_agent(mock_agent):
+    async def authorize(_db, caller, agent_id):
+        assert agent_id == mock_agent.id
+        return caller, mock_agent
+
+    with patch(
+        "src.services.execution.autonomous_agent_executor.authorize_agent_execution",
+        new=AsyncMock(side_effect=authorize),
+    ):
+        yield
 
 
 def _blank(output_tokens: int = 50) -> LLMResponse:
@@ -91,7 +115,7 @@ async def test_blank_responses_fallback_once_then_hand_off_with_usage(
         ],
     ):
         executor = AutonomousAgentExecutor(mock_session)
-        result = await executor.run(agent=mock_agent, run_id=str(uuid4()), run_user_id=None, run_as=None)
+        result = await executor.run(agent=mock_agent, run_id=str(uuid4()), caller=_caller(mock_agent.organization_id), run_user_id=None, run_as=None)
 
     # One bounded fallback happened (two billed attempts), then a handoff —
     # the run completes durably instead of stalling with empty output.
@@ -138,7 +162,7 @@ async def test_incident_shaped_blank_ends_durably_over_budget(
         ],
     ):
         executor = AutonomousAgentExecutor(mock_session)
-        result = await executor.run(agent=mock_agent, run_id=str(uuid4()), run_user_id=None, run_as=None)
+        result = await executor.run(agent=mock_agent, run_id=str(uuid4()), caller=_caller(mock_agent.organization_id), run_user_id=None, run_as=None)
 
     assert mock_llm.complete.call_count == 1  # no second 131K call
     assert result["status"] == "budget_exceeded"
@@ -186,7 +210,7 @@ async def test_repetitive_no_tool_output_hands_off_after_one_retry(
         ],
     ):
         executor = AutonomousAgentExecutor(mock_session)
-        result = await executor.run(agent=mock_agent, run_id=str(uuid4()), run_user_id=None, run_as=None)
+        result = await executor.run(agent=mock_agent, run_id=str(uuid4()), caller=_caller(mock_agent.organization_id), run_user_id=None, run_as=None)
 
     assert mock_llm.complete.call_count == 2
     assert result["status"] == "completed"

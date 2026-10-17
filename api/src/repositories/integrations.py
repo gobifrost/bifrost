@@ -626,7 +626,7 @@ class IntegrationsRepository(BaseRepository[Integration]):
         return config
 
     async def get_config_for_mapping(
-        self, integration_id: UUID, org_id: UUID, *, external: bool
+        self, integration_id: UUID, org_id: UUID, *, external: bool, reveal_secrets: bool
     ) -> dict:
         """
         Get merged configuration for an integration mapping.
@@ -688,12 +688,16 @@ class IntegrationsRepository(BaseRepository[Integration]):
             else:
                 val = value
 
-            if entry.config_type == ConfigType.SECRET and isinstance(val, str):
+            if entry.config_type == ConfigType.SECRET and isinstance(val, str) and reveal_secrets:
                 try:
                     val = decrypt_secret(val)
                 except Exception:
                     logger.warning(f"Failed to decrypt config '{entry.key}'")
                     val = None
+            elif entry.config_type == ConfigType.SECRET:
+                from src.core.security import SECRET_PLACEHOLDER
+
+                val = SECRET_PLACEHOLDER
 
             if entry.organization_id is None:
                 defaults[entry.key] = val
@@ -706,7 +710,7 @@ class IntegrationsRepository(BaseRepository[Integration]):
         return config
 
     async def get_integration_defaults(
-        self, integration_id: UUID, *, external: bool
+        self, integration_id: UUID, *, external: bool, reveal_secrets: bool
     ) -> dict[str, Any]:
         """
         Get integration-level config defaults (org_id=NULL).
@@ -748,12 +752,16 @@ class IntegrationsRepository(BaseRepository[Integration]):
             else:
                 val = value
 
-            if entry.config_type == ConfigType.SECRET and isinstance(val, str):
+            if entry.config_type == ConfigType.SECRET and isinstance(val, str) and reveal_secrets:
                 try:
                     val = decrypt_secret(val)
                 except Exception:
                     logger.warning(f"Failed to decrypt config '{entry.key}'")
                     val = None
+            elif entry.config_type == ConfigType.SECRET:
+                from src.core.security import SECRET_PLACEHOLDER
+
+                val = SECRET_PLACEHOLDER
 
             config[entry.key] = val
 

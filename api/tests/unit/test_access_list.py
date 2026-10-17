@@ -59,8 +59,6 @@ _GATE_FUNCS = {
     auth_mod.get_current_user: CurrentGate.AUTHENTICATED,
     auth_mod.get_current_active_user: CurrentGate.AUTHENTICATED,
     auth_mod.get_execution_context: CurrentGate.AUTHENTICATED,
-    auth_mod.get_current_superuser: CurrentGate.SUPERUSER,
-    auth_mod.get_current_engine_or_bypass_user: CurrentGate.ENGINE_OR_BYPASS,
 }
 
 # JWT/token-minting helpers embed principal fields (is_superuser, ...) as
@@ -125,10 +123,6 @@ def _dependency_gate(route: APIRoute) -> CurrentGate:
             walk(sub)
 
     walk(route.dependant)
-    if CurrentGate.SUPERUSER in found:
-        return CurrentGate.SUPERUSER
-    if CurrentGate.ENGINE_OR_BYPASS in found:
-        return CurrentGate.ENGINE_OR_BYPASS
     if CurrentGate.AUTHENTICATED in found:
         return CurrentGate.AUTHENTICATED
     return CurrentGate.NONE
@@ -299,6 +293,7 @@ def _called_class(call: ast.expr, resolve) -> type | None:
     return _returned_class(target) if inspect.isfunction(target) else None
 
 
+@functools.cache
 def _call_targets(func: object, tree: ast.AST) -> list[object]:
     """The in-scope functions a function calls, by these call shapes:
     ``f()``; ``module.f()``; ``Cls()`` (its ``__init__``); ``Cls.m()``,
@@ -362,6 +357,7 @@ def _call_targets(func: object, tree: ast.AST) -> list[object]:
     return [found[key] for key in sorted(found)]
 
 
+@functools.cache
 def _parse_source(source: str) -> ast.Module:
     """Parse a function's source. ``dedent`` cannot strip a method whose
     multi-line string runs left of its body, so that one is parsed inside a
@@ -433,12 +429,6 @@ _ELEVATED_ATTRS = {
 _ELEVATED_NAMES = {
     "has_scope_bypass",  # platform admin OR provider-org member
     "mcp_write_scope_bypass",  # the MCP-tool analog of has_scope_bypass
-    "CurrentSuperuser",  # superuser-only dependency (Annotated alias)
-    "RequirePlatformAdmin",  # superuser-only dependency (Depends alias)
-    "get_current_superuser",  # the superuser-only resolver itself
-    "CurrentEngineOrBypassUser",  # engine credentials or scope-bypass human
-    "get_current_engine_or_bypass_user",  # the engine-or-bypass resolver itself
-    "PLATFORM_ADMIN_ROLE_NAMES",  # role names read as platform admin (B8)
 }
 # Keywords that elevate a repository, principal or service unless passed a
 # literal False (blind spot B4: a computed value elevates as surely as True).
@@ -460,19 +450,10 @@ _PRINCIPAL_CLASSES = (
     "src.services.mcp_server.server.MCPContext",
     "src.services.authorization.explain.RunUser",
 )
-# Using one of these is the route's dependency gate: the resolver is the
-# check site, and the route's own permission is what replaces it.
-_ELEVATED_DEPENDENCY_NAMES = {
-    "CurrentSuperuser",
-    "RequirePlatformAdmin",
-    "get_current_superuser",
-    "CurrentEngineOrBypassUser",
-    "get_current_engine_or_bypass_user",
-}
-_GATE_RESOLVERS = {
-    CurrentGate.SUPERUSER: auth_mod.get_current_superuser,
-    CurrentGate.ENGINE_OR_BYPASS: auth_mod.get_current_engine_or_bypass_user,
-}
+# Legacy elevated dependencies no longer exist: elevated route decisions are
+# evaluator calls in the handler/service, so there is no resolver body to
+# suppress from the scanner.
+_ELEVATED_DEPENDENCY_NAMES: set[str] = set()
 
 
 def _qualname(func: object) -> str:
@@ -1066,14 +1047,11 @@ def _is_pure_echo(node: ast.AST, parent: ast.AST | None) -> bool:
 
 def _route_functions(route: APIRoute | WebSocketRoute, visited: set[int]) -> list[tuple[object, str]]:
     """A REST or WebSocket route's handler and non-canonical dependencies,
-    transitively, plus its gate resolver when the dependency gate is
-    elevated (the resolver alone: its own callees are authentication)."""
+    transitively. Authorization now happens in evaluator calls reached from
+    that graph, not in a legacy elevated dependency resolver."""
     found: list[tuple[object, str]] = []
     for root in [route.endpoint, *_custom_dependency_callables(route)]:
         found.extend(_reachable_functions(root, None, visited))
-    resolver = _GATE_RESOLVERS.get(_dependency_gate(route))
-    if resolver is not None:
-        found.extend(_reachable_functions(resolver, 0, visited))
     return found
 
 
@@ -1502,7 +1480,11 @@ class TestConsistency:
         # AccessEntry's own validator already enforces this at construction
         # time; re-assert here so a future relaxation of the model doesn't
         # silently drop the guarantee.
-        widening = {InlineEffect.WIDENS_FOR_SUPERUSER, InlineEffect.WIDENS_FOR_BYPASS}
+        widening = {
+            InlineEffect.WIDENS_FOR_SUPERUSER,
+            InlineEffect.WIDENS_FOR_BYPASS,
+            InlineEffect.WIDENS_FOR_PERMISSION,
+        }
         for entry in ACCESS_LIST:
             if entry.access_class == AccessClass.PERMISSION:
                 assert entry.permission, entry
@@ -1552,13 +1534,32 @@ class TestConsistency:
         # pricing, branding), others inherently per-org (OAuth SSO config,
         # embed secrets, workflow signing keys) — see the domain description.
         ("settings", CurrentGate.SUPERUSER),
+        # The same settings vocabulary covers Global platform settings and
+        # organization-backed settings such as workflow keys.
+        ("settings", CurrentGate.EVALUATOR),
+        ("settings", CurrentGate.AUTHENTICATED),
         # Metrics bucket: ROI reports are per-org; the rest (audit,
         # cross-org dashboards, scheduler diagnostics) are platform-wide.
         ("metrics", CurrentGate.SUPERUSER),
+        # Report aggregates are organization-backed; scheduler diagnostics
+        # remain Global under the metrics vocabulary.
+        ("metrics", CurrentGate.EVALUATOR),
         # Platform bucket: the org-scoped external-service registry
         # (/api/services/*) sits alongside genuinely global maintenance/
         # packages/github/kubernetes/worker admin.
         ("platform", CurrentGate.SUPERUSER),
+        # Services are organization-backed platform resources, while queue
+        # and maintenance operations are Global.
+        ("platform", CurrentGate.AUTHENTICATED),
+        # Execution cleanup spans Global worker state, while diagnostics and
+        # retained runs are organization-backed.
+        ("executions", CurrentGate.EVALUATOR),
+        # MCP connection definitions can be Global, while gateway resources
+        # are organization-backed.
+        ("mcp", CurrentGate.AUTHENTICATED),
+        # Solution deployment is Global; Solution-owned resources are scoped
+        # to the installation organization.
+        ("solutions", CurrentGate.AUTHENTICATED),
         # Organizations domain: creating an organization has no existing
         # organization to apply to, so it is Platform-boundary; reading,
         # updating and disabling one apply to that organization. The MCP
@@ -1596,6 +1597,19 @@ class TestConsistency:
 # ``*_OPERATION`` name or a local ``operation`` variable (how a handler names
 # the key it passes along to a helper).
 _ENFORCE_CALLS = {"require_operation", "authorize_operation", "operation_reach", "allows_operation"}
+_REPORT_SCOPE_HELPER = "report_scope"
+
+
+def _uses_request_operation_key(source: str) -> bool:
+    """Recognize the exact method + matched route key passed to enforcement."""
+    expected = ast.parse('f"{request.method} {request.scope[\'route\'].path}"', mode="eval").body
+    return any(
+        isinstance(node, ast.Call)
+        and _terminal_name(node.func) == "authorize_operation"
+        and len(node.args) >= 3
+        and ast.dump(node.args[2]) == ast.dump(expected)
+        for node in ast.walk(_parse_source(source))
+    )
 
 
 def _enforced_operation_keys() -> set[str]:
@@ -1610,7 +1624,12 @@ def _enforced_operation_keys() -> set[str]:
                 and (node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", None))
                 in _ENFORCE_CALLS
             ]
-            if not calls or path.name == "enforce.py":
+            report_scope_calls = [
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call) and _terminal_name(node.func) == _REPORT_SCOPE_HELPER
+            ]
+            if (not calls and not report_scope_calls) or path.name == "enforce.py":
                 continue
             for call in calls:
                 keys |= {
@@ -1618,6 +1637,20 @@ def _enforced_operation_keys() -> set[str]:
                     for arg in call.args
                     if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
                 }
+            # ``report_scope`` is a shared exact-operation adapter: it first
+            # obtains ``operation_reach`` and then calls
+            # ``require_operation`` for a selected org or Global target.
+            # A literal second argument is therefore the same exact-key
+            # proof as a direct enforcement call, not a loose helper match.
+            keys |= {
+                call.args[1].value
+                for call in ast.walk(tree)
+                if isinstance(call, ast.Call)
+                and _terminal_name(call.func) == _REPORT_SCOPE_HELPER
+                and len(call.args) >= 2
+                and isinstance(call.args[1], ast.Constant)
+                and isinstance(call.args[1].value, str)
+            }
             for node in ast.walk(tree):
                 if isinstance(node, ast.Call):
                     keys |= {
@@ -1639,6 +1672,15 @@ def _enforced_operation_keys() -> set[str]:
                         target.id == "operation" or target.id.endswith("_OPERATION")
                     ):
                         keys.add(node.value.value)
+    # Router-level dependencies authorize using the matched route, avoiding
+    # a second hand-maintained list of operations in each router. Inspect
+    # the live dependency tree, so a detached helper cannot satisfy this.
+    for method, path, route in _rest_routes():
+        if any(
+            _uses_request_operation_key(inspect.getsource(call))
+            for call in _custom_dependency_callables(route)
+        ):
+            keys.add(f"{method} {path}")
     return keys
 
 
@@ -1646,7 +1688,20 @@ class TestEvaluatorEnforcement:
     """An ``evaluator`` entry is a route cut over to the R3 evaluator: the
     code must decide it through the enforcement helper, by the entry's
     operation key, and every key the code decides by must be an evaluator
-    entry."""
+    entry. The helpers must also record the decision; matching a helper name
+    or a loose permission string is not evidence of an enforced judgment."""
+
+    @pytest.mark.parametrize(
+        ("key", "recognized"),
+        [
+            ('f"{request.method} {request.scope[\'route\'].path}"', True),
+            ('f"{request.method} {request.url.path}"', False),
+            ('"settings.read"', False),
+        ],
+    )
+    def test_dynamic_dependency_requires_the_matched_operation_key(self, key, recognized):
+        source = f"async def gate(request, db, user):\n    await authorize_operation(db, user, {key}, GLOBAL)\n"
+        assert _uses_request_operation_key(source) is recognized
 
     def test_every_evaluator_entry_is_enforced(self) -> None:
         from src.services.authorization.enforce import operation_key
@@ -1658,6 +1713,24 @@ class TestEvaluatorEnforcement:
             if entry.current_gate == CurrentGate.EVALUATOR and operation_key(entry) not in enforced
         ]
         assert not missing, f"evaluator entries no handler or service decides: {missing}"
+
+    def test_operation_enforcement_records_the_matched_decision(self) -> None:
+        """The exact-key proof above reaches ``require_operation`` (directly
+        or through ``authorize_operation``). Keep the recording contract
+        explicit so a future refactor cannot retain route-shaped strings but
+        silently turn enforcement into a report-only predicate."""
+        import src.services.authorization.enforce as enforce
+
+        def records_decision(func: object) -> bool:
+            return any(
+                isinstance(node, ast.Call)
+                and _terminal_name(node.func) == "_note_enforced_decision"
+                and [_terminal_name(arg) for arg in node.args] == ["caller", "entry", "target"]
+                for node in ast.walk(_parse_source(inspect.getsource(func)))
+            )
+
+        assert records_decision(enforce.require_operation)
+        assert records_decision(enforce.require_named_permission)
 
     def test_every_enforced_key_is_an_evaluator_entry(self) -> None:
         from src.services.authorization.enforce import operation_key
@@ -1859,6 +1932,12 @@ def scanned_functions(entry_functions) -> dict[str, list[tuple[str, str]]]:
 #   "system": internal work on an object an entry already authorized (a
 #            platform job, an import); it moves to the platform service
 #            principal at the cutover.
+#   "actor_facts": copies current persisted actor facts into a bounded
+#            runtime context; it cannot grant an authority.
+#   "current_role_derivation": builds the current role/reach facts that
+#            named permission enforcement consumes.
+#   "internal_authorized_resource": reads state named by a previously
+#            verified runtime authority, with no caller-selected target.
 #   a permission string: the power the flag unlocks. No such permission is
 #            held by the User or Platform Operator role.
 # A site with several checks maps to a tuple of these. Each entry is
@@ -1866,307 +1945,111 @@ def scanned_functions(entry_functions) -> dict[str, list[tuple[str, str]]]:
 # function holds (``_elevated_site_nodes``), so a new elevated branch in a
 # registered function fails until it is counted and its replacement named.
 _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
-    "shared.sdk_agent_runs.enqueue_sdk_agent_run": (2, "cutover"),
-    "src.routers.agent_runs.execute_agent_run": (2, "cutover"),
-    "src.routers.agent_runs.rerun_agent_run": (2, "cutover"),
-    "bifrost._context.resolve_scope": (1, "cutover"),
-    # Full execution powers remain until delegated execution cutover.
-    "src.core.auth.get_execution_context": (1, "cutover"),
-    "bifrost.cli._run_direct": (2, "cutover"),
-    "bifrost.solution_dev.function_host.set_dev_execution_context": (2, "cutover"),
-    # Canonical Platform Admin admission/revalidation, not an added SDK power.
-    "shared.solution_dev.require_solution_developer": (1, "route"),
-    "shared.claims.preresolve._load_source_policies": (1, "system"),
-    "shared.event_emission.emit_topic_event": (3, "reach"),
-    "shared.execution_timeseries.get_execution_time_series": (1, "reach"),
-    "shared.file_access.authorize_file_policy": (1, ("repository.read", "repository.readwrite")),
-    "shared.form_provider.execute_form_field_provider": (3, "reach"),
-    "shared.form_publication._resolve_form_workflow": (1, "reach"),
-    "shared.home.can_edit_collection": (1, ("home.readwrite", "home.readwrite.all")),
-    "shared.home.can_read_collection": (1, "home.read.all"),
-    "shared.home.catalog": (7, "reach"),
-    "shared.home.get_home": (2, "home.readwrite"),
-    "shared.home.save_collection": (1, "home.readwrite"),
-    "shared.pending_execution.get_pending_execution_fallback": (1, ("executions.read.all", "reach")),
-    "shared.scope_resolver.has_scope_bypass": (2, "reach"),
-    "shared.scope_resolver.resolve_effective_scope": (2, "reach"),
-    "shared.sdk_agent_runs.resolve_executable_agent": (5, "reach"),
-    "shared.sdk_ai.complete_sdk_ai": (2, "reach"),
-    "shared.sdk_artifact_generation.sdk_generate_image_artifact": (5, "artifacts.readwrite.all"),
-    "shared.sdk_artifact_generation.sdk_render_document_artifact": (10, "artifacts.readwrite.all"),
-    "shared.sdk_artifact_generation.sdk_render_spreadsheet_artifact": (5, "artifacts.readwrite.all"),
-    "shared.sdk_artifact_generation.sdk_render_text_artifact": (5, "artifacts.readwrite.all"),
-    "shared.sdk_artifacts.sdk_artifact_download_url": (5, "artifacts.read.all"),
-    "shared.sdk_artifacts.sdk_list_artifacts": (5, "artifacts.read.all"),
-    "shared.sdk_artifacts.sdk_read_artifact": (5, "artifacts.read.all"),
-    "shared.sdk_artifacts.sdk_store_artifact": (5, "artifacts.readwrite.all"),
-    "shared.sdk_config.get_sdk_config_value": (1, "reach"),
-    "shared.sdk_config.list_sdk_config_values": (1, "reach"),
-    "shared.sdk_config.resolve_sdk_scope": (3, "reach"),
-    "shared.sdk_context.get_sdk_context": (2, "reach"),
-    "shared.sdk_execution_reads.get_sdk_execution": (9, ("executions.read.all", "executions.read")),
-    "shared.sdk_execution_reads.list_sdk_executions": (1, ("executions.read.all", "reach")),
-    "shared.sdk_execution_reads.list_sdk_workflows": (1, "reach"),
-    "shared.sdk_forms.check_form_access": (1, "reach"),
-    "shared.sdk_forms.get_sdk_form": (5, ("reach", "forms.read")),
-    "shared.sdk_forms.list_sdk_forms": (4, ("reach", "forms.read")),
-    "shared.sdk_integrations.delete_sdk_integration_mapping": (1, "reach"),
-    "shared.sdk_integrations.get_sdk_integration_dict": (2, "reach"),
-    "shared.sdk_integrations.get_sdk_integration_mapping_dict": (1, "reach"),
-    "shared.sdk_integrations.list_sdk_integration_mappings": (1, "reach"),
-    "shared.sdk_integrations.refresh_sdk_oauth_token": (3, "reach"),
-    "shared.sdk_integrations.upsert_sdk_integration_mapping": (1, "reach"),
-    "shared.sdk_table_metadata.delete_sdk_table": (1, "reach"),
-    "shared.sdk_table_metadata.list_sdk_tables": (1, "reach"),
-    "shared.sdk_users._authorize_update": (1, "privilegedaccess.readwrite"),
-    "shared.sdk_users.bulk_update_users": (2, ("privilegedaccess.readwrite", "userlifecycle.readwrite")),
-    "shared.sdk_users.create_user": (4, "privilegedaccess.readwrite"),
-    "shared.sdk_users.list_users": (2, "cutover"),
-    "shared.sdk_users.update_user": (8, "privilegedaccess.readwrite"),
-    "shared.sdk_video.can_read_platform_job": (1, ("platformjobs.read.all", "platformjobs.readwrite.all")),
-    "shared.sdk_workflow_execution.cancel_scheduled_sdk_execution": (2, "executions.readwrite.all"),
-    "shared.sdk_workflow_execution.execute_sdk_workflow": (8, ("repository.readwrite", "reach")),
-    "shared.system_account_guard.is_system_account": (1, "cutover"),
-    "shared.table_document_writes.resolve_attribution": (2, "tableattribution.readwrite"),
-    "shared.table_resolution.assert_explicit_scope_targets_table": (2, "reach"),
-    # Live table organization path: deleted at cutover (d).
-    "shared.table_resolution.get_table_or_404": (2, "reach"),
-    "src.core.auth.get_current_engine_or_bypass_user": (4, "route"),
-    "src.core.auth.get_current_superuser": (1, "route"),
-    "src.core.auth.get_current_user_optional": (3, "cutover"),
-    "src.core.auth.get_current_user_ws": (3, "cutover"),
-    "src.core.org_filter.resolve_org_filter": (1, "reach"),
-    "src.core.org_filter.resolve_target_org": (2, "reach"),
-    "src.core.principal.UserPrincipal.has_platform_admin_grant": (1, "delete"),
-    "src.jobs.consumers.agent_run._caller_to_principal": (4, "cutover"),
-    "src.jobs.consumers.agent_run._load_run_as": (3, "cutover"),
-    "src.jobs.platform.application_publish.run_application_publish": (1, "system"),
-    "src.jobs.schedulers.deferred_execution_promoter.promote_due_executions": (2, "reach"),
-    "src.repositories.applications.ApplicationRepository.update_application": (2, "apps.readwrite"),
-    "src.repositories.oauth.OAuthTokenRepository.get_org_level_for_provider": (1, "reach"),
-    "src.repositories.org_scoped.OrgScopedRepository._authenticated_tier_grants": (1, "reach"),
-    "src.repositories.users.UserRepository.has_any_users": (1, "cutover"),
-    "src.routers.agent_runs._is_platform_admin": (1, "agentruns.readwrite.all"),
-    "src.routers.agent_runs._require_own_private_agent_run": (4, "agentruns.readwrite.all"),
-    "src.routers.agent_tuning._load_agent_with_access": (4, ("agents.readwrite", "agents.readwrite.all")),
-    "src.routers.agents.create_agent": (1, "agents.readwrite"),
-    "src.routers.agents.delete_agent": (1, ("agents.readwrite", "agents.readwrite.all")),
-    "src.routers.agents.delete_agent_logo": (2, ("agents.readwrite", "agents.readwrite.all")),
-    "src.routers.agents.get_accessible_tools": (4, "reach"),
-    "src.routers.agents.get_agent": (6, ("reach", "agents.read", "agents.read.all")),
-    "src.routers.agents.get_agent_delegations": (2, ("reach", "agents.read", "agents.read.all")),
-    "src.routers.agents.get_agent_logo": (2, ("reach", "agents.read", "agents.read.all")),
-    "src.routers.agents.get_agent_stats_endpoint": (3, ("reach", "agents.read", "agents.read.all")),
-    "src.routers.agents.get_agent_tools": (2, ("reach", "agents.read", "agents.read.all")),
-    "src.routers.agents.get_fleet_stats_endpoint": (4, "reach"),
-    "src.routers.agents.list_agents": (2, ("reach", "agents.read", "agents.read.all")),
-    "src.routers.agents.promote_agent": (1, ("agents.readwrite", "agents.readwrite.all")),
-    "src.routers.agents.update_agent": (2, ("agents.readwrite", "agents.readwrite.all")),
-    "src.routers.agents.upload_agent_logo": (2, ("agents.readwrite", "agents.readwrite.all")),
-    "src.routers.app_code_files.get_application_for_write_or_404": (1, ("reach", "apps.readwrite")),
-    "src.routers.app_code_files.get_application_or_404": (3, ("reach", "apps.read")),
-    "src.routers.app_code_files.get_bundle_manifest": (1, "apps.read"),
-    "src.routers.applications.batch_update_application_sdks": (2, "reach"),
-    "src.routers.applications.create_application": (3, "reach"),
-    "src.routers.applications.delete_application": (3, ("reach", "apps.readwrite")),
-    "src.routers.applications.export_application": (3, ("reach", "apps.read")),
-    "src.routers.applications.get_application": (3, ("reach", "apps.read")),
-    "src.routers.applications.get_application_by_id_or_404": (3, ("reach", "apps.read")),
-    "src.routers.applications.get_application_for_write_or_404": (1, ("reach", "apps.readwrite")),
-    "src.routers.applications.get_application_or_404": (3, ("reach", "apps.read")),
-    "src.routers.applications.get_draft": (3, ("reach", "apps.read")),
-    "src.routers.applications.list_applications": (3, ("reach", "apps.read")),
-    "src.routers.applications.replace_application_endpoint": (3, ("reach", "apps.readwrite")),
-    "src.routers.applications.rollback_application": (3, ("reach", "apps.readwrite")),
-    "src.routers.applications.save_draft": (3, ("reach", "apps.readwrite")),
-    "src.routers.applications.swap_application_slugs": (3, ("reach", "apps.readwrite")),
-    "src.routers.applications.update_application": (5, ("reach", "apps.readwrite")),
-    "src.routers.auth.get_current_user_info": (2, "cutover"),
-    "src.routers.auth.register_user": (4, "cutover"),
-    "src.routers.chat._check_agent_access": (5, "reach"),
-    "src.routers.cli._resolve_sdk_org_id": (2, "reach"),
-    "src.routers.cli.cli_create_table": (2, "reach"),
-    "src.routers.cli.cli_delete_config": (2, "reach"),
-    "src.routers.cli.cli_get_config": (2, "reach"),
-    "src.routers.cli.cli_list_config": (2, "reach"),
-    "src.routers.cli.cli_list_tables": (2, "reach"),
-    "src.routers.cli.cli_set_config": (2, "reach"),
-    "src.routers.cli.sdk_integrations_delete_mapping": (2, "reach"),
-    "src.routers.cli.sdk_integrations_get": (2, "reach"),
-    "src.routers.cli.sdk_integrations_get_mapping": (2, "reach"),
-    "src.routers.cli.sdk_integrations_list_mappings": (2, "reach"),
-    "src.routers.cli.sdk_integrations_refresh_token": (2, "reach"),
-    "src.routers.cli.sdk_integrations_upsert_mapping": (2, "reach"),
-    "src.routers.config.delete_config": (1, "reach"),
-    "src.routers.config.get_config": (1, "reach"),
-    "src.routers.config.get_config_by_id": (1, "reach"),
-    "src.routers.config.set_config": (1, "reach"),
-    "src.routers.config.update_config": (1, "reach"),
-    "src.routers.endpoints._execute_sync": (2, "reach"),
-    "src.routers.endpoints.execute_endpoint": (1, "reach"),
-    "src.routers.executions.ExecutionReadAdapter._to_pydantic": (1, "executions.read"),
-    "src.routers.executions.ExecutionReadAdapter.cancel_execution": (1, "executions.readwrite.all"),
-    "src.routers.executions.ExecutionReadAdapter.get_execution_logs": (4, ("executions.read.all", "executions.read")),
-    "src.routers.executions.ExecutionReadAdapter.get_execution_result": (1, "executions.read.all"),
-    "src.routers.executions.ExecutionReadAdapter.get_execution_variables": (1, "executions.read"),
-    "src.routers.files._test_principal": (3, "filepolicies.read"),
-    "src.routers.files.set_file_policy": (1, "reach"),
-    "src.routers.files.test_file_policy_access": (1, "filepolicies.read"),
-    "src.routers.forms._authorize_form_runtime": (2, ("reach", "forms.read")),
-    "src.routers.forms.execute_startup_workflow": (3, "reach"),
-    "src.routers.forms.get_form_field_options": (1, "forms.read"),
-    "src.routers.forms.get_form_logo": (2, ("reach", "forms.read")),
-    "src.routers.forms.get_form_runtime": (4, ("reach", "forms.read")),
-    "src.routers.forms.submit_form": (5, "reach"),
-    "src.routers.integrations.test_integration_connection": (2, "reach"),
-    "src.routers.knowledge_sources.get_document": (4, "reach"),
-    "src.routers.mcp._gateway_service": (3, "reach"),
-    "src.routers.mcp.delete_mcp_config": (1, "route"),
-    "src.routers.mcp.get_mcp_asgi_app": (1, "cutover"),
-    "src.routers.mcp.get_mcp_config": (1, "route"),
-    "src.routers.mcp.list_mcp_tools": (4, "route"),
-    "src.routers.mcp.update_mcp_config": (1, "route"),
-    "src.routers.mcp_connections._enforce_can_write_org": (4, "reach"),
-    "src.routers.mcp_connections._get_connection_or_404": (3, "reach"),
-    "src.routers.mcp_connections.create_mcp_connection": (5, "reach"),
-    "src.routers.mcp_connections.list_mcp_connections": (1, "reach"),
-    "src.routers.mcp_servers.delete_mcp_server": (1, "reach"),
-    "src.routers.mcp_servers.get_mcp_server": (7, "reach"),
-    "src.routers.mcp_servers.list_mcp_servers": (2, "reach"),
-    "src.routers.mcp_servers.update_mcp_server": (1, "reach"),
-    "src.routers.metrics._compute_metrics_directly": (5, "reach"),
-    "src.routers.metrics._get_recent_failures": (1, "reach"),
-    "src.routers.metrics.get_metrics": (5, "reach"),
-    "src.routers.notifications.dismiss_notification": (2, "platform.readwrite"),
-    "src.routers.notifications.get_notification": (1, "platform.read"),
-    "src.routers.notifications.list_notifications": (2, "platform.read"),
-    "src.routers.oauth_connections.authorize_connection": (1, "reach"),
-    "src.routers.oauth_connections.cancel_authorization": (1, "reach"),
-    "src.routers.oauth_connections.create_connection": (1, "reach"),
-    "src.routers.oauth_connections.delete_connection": (1, "reach"),
-    "src.routers.oauth_connections.get_connection": (1, "reach"),
-    "src.routers.oauth_connections.get_credentials": (1, "reach"),
-    "src.routers.oauth_connections.oauth_callback": (1, "reach"),
-    "src.routers.oauth_connections.refresh_token": (2, "reach"),
-    "src.routers.oauth_connections.update_connection": (1, "reach"),
-    "src.routers.platform_jobs.list_platform_jobs": (1, "platformjobs.read.all"),
-    "src.routers.policy_rules.list_policy_rules": (1, "reach"),
-    "src.routers.profile.delete_avatar": (2, "cutover"),
-    "src.routers.profile.get_profile": (2, "cutover"),
-    "src.routers.profile.update_profile": (2, "cutover"),
-    "src.routers.profile.upload_avatar": (2, "cutover"),
-    "src.routers.roles.get_role": (1, "route"),
-    "src.routers.roles.list_roles": (1, "route"),
-    "src.routers.sdk_modules._engine_module_scope": (1, "cutover"),
-    "src.routers.sdk_modules._module_source_caller": (2, "route"),
-    "src.routers.tables.create_table": (1, "reach"),
-    "src.routers.tables.list_tables": (1, "reach"),
-    "src.routers.tables.update_table": (1, "reach"),
-    "src.routers.tables.validate_policies": (1, "reach"),
-    "src.routers.tools.list_tools": (2, "reach"),
-    "src.routers.users.create_user": (2, "privilegedaccess.readwrite"),
-    "src.routers.users.get_user_forms": (2, ("reach", "forms.read")),
-    "src.routers.users.update_user": (2, "privilegedaccess.readwrite"),
-    "src.routers.websocket._file_org_and_scope": (2, "reach"),
-    "src.routers.websocket._load_policies_for_table": (1, "system"),
-    "src.routers.websocket._resolve_table_id": (1, "reach"),
-    "src.routers.websocket.can_access_agent_run": (4, ("agentruns.read.all", "reach")),
-    "src.routers.websocket.can_access_app": (3, ("reach", "apps.read")),
-    "src.routers.websocket.can_access_execution": (1, ("executions.read.all", "reach")),
-    "src.routers.websocket.can_access_service": (1, "platform.read"),
-    "src.routers.websocket.websocket_connect": (37, ("reach", "platform.read")),
-    "src.services.access_check_entry.run_user_may_open": (2, "route"),
-    "src.services.access_check_policies.load_policy_principal": (1, "reach"),
-    "src.services.agent_executor.AgentExecutor._execute_knowledge_search": (1, "reach"),
-    "src.services.agent_executor.AgentExecutor._execute_system_tool": (2, "reach"),
-    "src.services.agent_executor.AgentExecutor._execute_tool": (3, "reach"),
-    "src.services.agent_executor.AgentExecutor._switch_agent": (5, "reach"),
-    "src.services.artifacts.ArtifactService.get_authorized": (1, "artifacts.read.all"),
-    "src.services.artifacts.ArtifactService.list_workspace": (1, "artifacts.read.all"),
-    "src.services.artifacts.ArtifactService.resolve_workspace_path": (1, "artifacts.read.all"),
-    "src.services.artifacts.ArtifactService.store": (2, "artifacts.readwrite.all"),
-    "src.services.authorization.enforce.Caller.is_platform_admin": (2, "reach"),
-    "src.services.authorization.enforce.decide_for": (1, "route"),
-    "src.services.authorization.enforce.permitted_organizations": (2, "reach"),
-    "src.services.authorization.enforce.require_unprotected": (1, "privilegedaccess.readwrite"),
-    "src.services.authorization.evaluator.decide": (1, "route"),
-    "src.services.authorization.explain.RunUser.is_platform_admin": (1, "reach"),
-    "src.services.authorization.explain.in_reach": (1, "reach"),
-    "src.services.authorization.explain.load_run_as_target": (3, "cutover"),
-    "src.services.authorization.impersonation.authorize_run_as": (1, "cutover"),
-    "src.services.authorization.privilege.may_change_role_assignment": (3, "privilegedaccess.readwrite"),
-    "src.services.chat_artifacts.execute_artifact_tool": (4, "artifacts.read.all"),
-    "src.services.chat_runs._load_authorized_agent": (5, "reach"),
-    "src.services.chat_runs.create_chat_run": (2, "reach"),
-    "src.services.docs_indexer.index_platform_docs": (2, "route"),
-    "src.services.embeddings.reindex.run_reindex_for_group": (1, "system"),
-    "src.services.execution.agent_run_access.agent_run_visibility_conditions": (4, ("agentruns.read.all", "reach")),
-    "src.services.execution.agent_workflow_tools.execute_agent_workflow_tool": (2, "reach"),
-    "src.services.execution.async_executor._publish_pending": (1, "reach"),
-    "src.services.execution.async_executor.enqueue_code_execution": (2, "reach"),
-    "src.services.execution.async_executor.enqueue_system_workflow_execution": (1, "reach"),
-    "src.services.execution.async_executor.enqueue_workflow_execution": (2, "reach"),
-    "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor._execute_knowledge_search": (1, "reach"),
-    "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor._execute_system_tool": (3, "reach"),
-    "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor._execute_tool": (2, "reach"),
-    "src.services.execution.autonomous_agent_executor._acting_user_from_caller": (3, "reach"),
-    "src.services.execution.engine.execute": (2, "cutover"),
-    "src.services.execution.service.execute_tool": (1, "reach"),
-    "src.services.execution.worker.run_execution": (2, "cutover"),
-    # Live provider-org path: deleted at cutover (d).
-    "src.services.file_policy_service.FilePolicyService._principal_matches_org": (2, "reach"),
-    "src.services.file_policy_service.FilePolicyService.is_allowed": (1, "reach"),
-    "src.services.identities.require_delegation": (1, "delete"),
-    "src.services.manifest_import.ManifestResolver._index_agents_from_manifest": (1, "system"),
-    "src.services.manifest_import.ManifestResolver._resolve_file_policy": (1, "system"),
-    "src.services.manifest_import.ManifestResolver._resolve_table": (1, "system"),
-    "src.services.mcp_server.gateway.MCPAgentGatewayService._agent_repo": (2, "reach"),
-    "src.services.mcp_server.gateway.MCPAgentGatewayService._authorize_discovery_scope": (1, "reach"),
-    "src.services.mcp_server.gateway.MCPAgentGatewayService._dispatch_delegation": (3, "reach"),
-    "src.services.mcp_server.gateway.MCPAgentGatewayService._dispatch_system_tool": (3, "reach"),
-    "src.services.mcp_server.gateway.MCPAgentGatewayService._dispatch_workflow": (2, "reach"),
-    "src.services.mcp_server.gateway.MCPAgentGatewayService._has_scope_bypass": (4, "reach"),
-    "src.services.mcp_server.gateway.MCPAgentGatewayService.get_execution": (3, ("executions.read.all", "agentruns.read.all", "reach")),
-    "src.services.mcp_server.middleware.ToolFilterMiddleware.on_call_tool": (3, "cutover"),
-    "src.services.mcp_server.middleware.ToolFilterMiddleware.on_list_tools": (3, "cutover"),
-    "src.services.mcp_server.server.MCPContext.has_scope_bypass": (2, "reach"),
-    "src.services.mcp_server.server.WorkflowTool.run": (2, "artifacts.read.all"),
-    "src.services.mcp_server.server._execute_workflow_tool_impl": (4, "reach"),
-    "src.services.mcp_server.server._get_context_from_token": (3, "cutover"),
-    "src.services.mcp_server.server._get_runtime_context": (4, "cutover"),
-    "src.services.mcp_server.tool_access.MCPToolAccessService._build_workflow_repo": (1, "reach"),
-    "src.services.mcp_server.tool_access.MCPToolAccessService._check_agent_access": (2, "reach"),
-    "src.services.mcp_server.tool_access.MCPToolAccessService._get_accessible_agents": (6, "reach"),
-    "src.services.mcp_server.tool_access.MCPToolAccessService.get_accessible_tools": (4, "reach"),
-    "src.services.mcp_server.tool_access.MCPToolAccessService.get_tools_for_agent": (3, "reach"),
-    "src.services.mcp_server.tools._org_scope.mcp_write_scope_bypass": (4, "reach"),
-    "src.services.mcp_server.tools.apps.push_files": (1, "repository.readwrite"),
-    "src.services.mcp_server.tools.code_editor._check_read_scope": (1, "repository.read"),
-    "src.services.mcp_server.tools.code_editor._check_write_scope": (1, "repository.readwrite"),
-    "src.services.mcp_server.tools.knowledge.search_knowledge": (1, "reach"),
-    "src.services.policy_rule_service.PolicyRuleService._get": (1, "reach"),
-    "src.services.role_permissions.replace_identity_permissions": (1, "privilegedaccess.readwrite"),
-    "src.services.solution_scope.derive_execution_solution_scope": (1, "cutover"),
-    "src.services.solution_scope.is_engine_user": (1, "cutover"),
-    "src.services.solution_scope.is_service_principal": (2, "reach"),
-    "src.services.solution_scope.resolve_solution_table_by_name": (4, "reach"),
-    "src.services.solution_scope.resolve_trustworthy_caller": (1, "cutover"),
-    "src.services.solutions.deploy.SolutionDeployer._upsert_file_policies": (1, "system"),
-    "src.services.solutions.deploy.SolutionDeployer._upsert_tables": (1, "system"),
-    "src.services.solutions.workspace_bundle_import.WorkspaceBundleImporter._set_config_values": (1, "system"),
-    "src.services.solutions.zip_install._apply_config_values": (1, "system"),
-    "src.services.table_policy_loader.load_resolved_table_policies": (1, "system"),
-    "src.services.user_access_map._place_for": (1, "reach"),
-    "src.services.user_access_map.build_access_map": (2, "cutover"),
-    "src.services.user_provisioning.ensure_user_provisioned": (4, "cutover"),
-    "src.services.user_role_assignments._assignable_roles": (1, "privilegedaccess.readwrite"),
-    "src.services.user_role_assignments.authorization_summary": (2, "cutover"),
-    "src.services.user_role_assignments.boundary_placement": (1, "reach"),
-    "src.services.user_role_assignments.check_boundaries": (1, "reach"),
-    "src.services.user_role_assignments.check_role_change": (1, "privilegedaccess.readwrite"),
-    "src.services.user_role_assignments.replace_role_assignments": (1, "privilegedaccess.readwrite"),
+    # Every current site is a verified fact copy, role/reach derivation, or a
+    # post-gate internal load. None grants caller-selected authority.
+    "bifrost.cli._run_direct": (2, "actor_facts"),
+    "bifrost.solution_dev.function_host.set_dev_execution_context": (2, "actor_facts"),
+    "shared.claims.preresolve._load_source_policies": (1, "internal_authorized_resource"),
+    "shared.event_emission.emit_topic_event": (1, "current_role_derivation"),
+    "shared.form_provider.execute_form_field_provider": (3, "internal_authorized_resource"),
+    "shared.form_execution.create_form_execution_context": (1, "actor_facts"),
+    "shared.form_publication._resolve_form_workflow": (1, "internal_authorized_resource"),
+    "shared.sdk_agent_runs.enqueue_sdk_agent_run": (2, "actor_facts"),
+    "shared.sdk_config.get_sdk_config_value": (1, "internal_authorized_resource"),
+    "shared.sdk_config.list_sdk_config_values": (1, "internal_authorized_resource"),
+    "shared.sdk_integrations.get_sdk_integration_dict": (2, "internal_authorized_resource"),
+    "shared.sdk_integrations.refresh_sdk_oauth_token": (2, "current_role_derivation"),
+    "shared.sdk_table_metadata.delete_sdk_table": (1, "internal_authorized_resource"),
+    "shared.sdk_table_metadata.list_sdk_tables": (1, "internal_authorized_resource"),
+    "shared.sdk_users.bulk_update_users": (1, "current_role_derivation"),
+    "shared.sdk_users.create_user": (4, "current_role_derivation"),
+    "shared.sdk_users.list_users": (2, "current_role_derivation"),
+    "shared.sdk_users.update_user": (8, "current_role_derivation"),
+    "shared.sdk_workflow_execution.execute_sdk_workflow": (5, "current_role_derivation"),
+    "shared.system_account_guard.is_system_account": (1, "actor_facts"),
+    "shared.unattended_execution.create_unattended_context": (2, "actor_facts"),
+    "src.core.auth.get_current_user_optional": (3, "actor_facts"),
+    "src.core.auth.get_current_user_ws": (3, "actor_facts"),
+    "src.jobs.consumers.agent_run._load_acting_user": (2, "actor_facts"),
+    "src.jobs.consumers.agent_run._load_run_as": (3, "actor_facts"),
+    "src.jobs.platform.application_publish.run_application_publish": (1, "internal_authorized_resource"),
+    "src.jobs.schedulers.deferred_execution_promoter.promote_due_executions": (2, "actor_facts"),
+    "src.repositories.oauth.OAuthTokenRepository.get_org_level_for_provider": (1, "internal_authorized_resource"),
+    "src.repositories.org_scoped.OrgScopedRepository._authenticated_tier_grants": (1, "internal_authorized_resource"),
+    "src.repositories.users.UserRepository.has_any_users": (1, "internal_authorized_resource"),
+    "src.routers.agent_runs.execute_agent_run": (2, "actor_facts"),
+    "src.routers.agent_runs.rerun_agent_run": (2, "actor_facts"),
+    "src.routers.auth.get_current_user_info": (2, "actor_facts"),
+    "src.routers.auth.register_user": (4, "actor_facts"),
+    "src.routers.endpoints._execute_sync": (2, "actor_facts"),
+    "src.routers.endpoints.execute_endpoint": (1, "internal_authorized_resource"),
+    "src.routers.files._test_principal": (2, "actor_facts"),
+    "src.routers.forms.execute_startup_workflow": (3, "internal_authorized_resource"),
+    "src.routers.forms.submit_form": (5, "internal_authorized_resource"),
+    "src.routers.integrations.test_integration_connection": (2, "actor_facts"),
+    "src.routers.mcp.get_mcp_asgi_app": (1, "internal_authorized_resource"),
+    "src.routers.policy_rules.list_policy_rules": (1, "internal_authorized_resource"),
+    "src.routers.profile.delete_avatar": (2, "actor_facts"),
+    "src.routers.profile.get_profile": (2, "actor_facts"),
+    "src.routers.profile.update_profile": (2, "actor_facts"),
+    "src.routers.profile.upload_avatar": (2, "actor_facts"),
+    "src.routers.tables.create_table": (1, "internal_authorized_resource"),
+    "src.routers.tables.update_table": (1, "internal_authorized_resource"),
+    "src.routers.tables.validate_policies": (1, "internal_authorized_resource"),
+    "src.routers.users.create_user": (2, "actor_facts"),
+    "src.routers.users.get_user_forms": (2, "internal_authorized_resource"),
+    "src.routers.users.update_user": (2, "actor_facts"),
+    "src.routers.websocket._load_policies_for_table": (1, "internal_authorized_resource"),
+    "src.services.access_check_policies.enforced_policy_principal": (1, "actor_facts"),
+    "src.services.access_check_policies.load_policy_principal": (1, "actor_facts"),
+    "src.services.authorization.callers.load_human_caller": (2, "current_role_derivation"),
+    "src.services.authorization.enforce.permitted_organizations": (1, "current_role_derivation"),
+    "src.services.authorization.enforce.user_reach": (1, "current_role_derivation"),
+    "src.services.authorization.evaluator.decide": (1, "current_role_derivation"),
+    "src.services.authorization.explain.RunUser.is_platform_admin": (1, "current_role_derivation"),
+    "src.services.authorization.explain.in_reach": (1, "current_role_derivation"),
+    "src.services.authorization.explain.load_run_as_target": (3, "current_role_derivation"),
+    "src.services.authorization.runtime_auth._principal_from_authority": (1, "actor_facts"),
+    "src.services.chat_runs.create_chat_run": (2, "actor_facts"),
+    "src.services.docs_indexer.index_platform_docs": (2, "internal_authorized_resource"),
+    "src.services.embeddings.reindex.run_reindex_for_group": (1, "internal_authorized_resource"),
+    "src.services.execution.agent_workflow_tools.execute_agent_workflow_tool": (2, "actor_facts"),
+    "src.services.execution.async_executor._publish_pending": (1, "actor_facts"),
+    "src.services.execution.async_executor.enqueue_code_execution": (2, "actor_facts"),
+    "src.services.execution.async_executor.enqueue_workflow_execution": (2, "actor_facts"),
+    "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor.run": (3, "actor_facts"),
+    "src.services.execution.engine.execute": (2, "actor_facts"),
+    "src.services.execution.service.execute_tool": (1, "actor_facts"),
+    "src.services.execution.worker.run_execution": (2, "actor_facts"),
+    "src.services.manifest_import.ManifestResolver._resolve_file_policy": (1, "internal_authorized_resource"),
+    "src.services.manifest_import.ManifestResolver._resolve_table": (1, "internal_authorized_resource"),
+    "src.services.mcp_server.auth.BifrostAuthProvider.verify_token": (4, "actor_facts"),
+    "src.services.mcp_server.gateway.MCPAgentGatewayService._dispatch_delegation": (2, "actor_facts"),
+    "src.services.mcp_server.server._get_context_from_token": (3, "actor_facts"),
+    "src.services.mcp_server.server._get_runtime_context": (3, "actor_facts"),
+    "src.services.mcp_server.server.context_from_principal": (3, "actor_facts"),
+    "src.services.policy_rule_service.PolicyRuleService._get": (1, "internal_authorized_resource"),
+    "src.services.solutions.deploy.SolutionDeployer._upsert_file_policies": (1, "internal_authorized_resource"),
+    "src.services.solutions.deploy.SolutionDeployer._upsert_tables": (1, "internal_authorized_resource"),
+    "src.services.solutions.workspace_bundle_import.WorkspaceBundleImporter._set_config_values": (1, "internal_authorized_resource"),
+    "src.services.solutions.zip_install._apply_config_values": (1, "internal_authorized_resource"),
+    "src.services.table_policy_loader.load_resolved_table_policies": (1, "internal_authorized_resource"),
+    "src.services.user_access_map._place_for": (1, "current_role_derivation"),
+    "src.services.user_access_map.build_access_map": (2, "current_role_derivation"),
+    "src.services.user_provisioning.ensure_user_provisioned": (4, "internal_authorized_resource"),
+    "src.services.user_role_assignments.authorization_summary": (2, "current_role_derivation"),
 }
-_SITE_KINDS = {"reach", "route", "delete", "cutover", "system"}
+
+_SITE_KINDS = {
+    "reach",
+    "route",
+    "delete",
+    "cutover",
+    "system",
+    "actor_facts",
+    "current_role_derivation",
+    "internal_authorized_resource",
+}
 
 # Where a token is minted or a principal is handed on (blind spot B2), and
 # what replaces the flag claim: "cutover" (the claim or hand-off goes with
@@ -2174,7 +2057,6 @@ _SITE_KINDS = {"reach", "route", "delete", "cutover", "system"}
 _TOKEN_MINTING_SITES: dict[str, str] = {
     "shared.sdk_workflow_execution.insert_scheduled_execution": "cutover",
     "src.core.redis_client.RedisClient.set_pending_execution": "cutover",
-    "src.core.security.authenticate_engine": "cutover",
     "src.core.security.create_embed_access_token": "route",
     "src.core.security.mint_engine_token": "cutover",
     "src.core.security.mint_service_token": "route",
@@ -2186,7 +2068,6 @@ _TOKEN_MINTING_SITES: dict[str, str] = {
     "src.routers.auth.setup_passkey_verify": "cutover",
     "src.routers.mfa.verify_mfa": "cutover",
     "src.routers.oauth_sso.oauth_callback": "cutover",
-    "src.services.agent_executor.AgentExecutor.chat": "cutover",
     "src.services.execution.agent_run_service.enqueue_agent_run": "cutover",
     "src.services.mcp_server.auth.BifrostAuthProvider._callback": "cutover",
     "src.services.mcp_server.auth.BifrostAuthProvider._token": "cutover",
@@ -2225,7 +2106,7 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "shared.form_runtime.validate_embed_upload_references": (1, "cutover"),
     "shared.role_cache.get_user_roles": (1, "cutover"),
     "shared.sdk_agent_runs.get_sdk_agent_run": (1, "cutover"),
-    "src.core.embed_middleware.EmbedScopeMiddleware.dispatch": (1, "cutover"),
+    "src.core.embed_middleware.embed_session_owns_execution": (1, "cutover"),
     "src.core.locks.DistributedLockService.extend_lock": (1, "cutover"),
     "src.core.locks.DistributedLockService.release_lock": (1, "cutover"),
     "src.core.module_cache.get_module": (1, "cutover"),
@@ -2246,13 +2127,12 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "src.routers.auth.authorize_device": (2, "cutover"),
     "src.routers.auth.exchange_device_token": (1, "cutover"),
     "src.routers.oauth_sso.oauth_callback": (1, "cutover"),
-    "src.routers.websocket.can_access_execution": (1, "cutover"),
     "src.services.app_storage.AppStorageService.get_render_cache": (1, "cutover"),
     "src.services.execution.agent_run_service.wait_for_agent_run_result": (1, "cutover"),
-    "src.services.execution.engine._service_supervisor": (2, "cutover"),
     "src.services.github_sync.GitHubSyncService.load_connect_preview": (1, "cutover"),
     "src.services.mcp_server.auth.BifrostAuthProvider._callback": (1, "cutover"),
     "src.services.mcp_server.auth.BifrostAuthProvider._token": (1, "cutover"),
+    "shared.runtime_io.service_control": (2, "internal_authorized_resource"),
     "src.services.notification_service.NotificationService._is_admin_notification": (1, "cutover"),
     "src.services.notification_service.NotificationService.dismiss_notification": (1, "cutover"),
     "src.services.notification_service.NotificationService.get_notification": (1, "cutover"),
@@ -2462,52 +2342,25 @@ class TestEveryElevatedCheckHasAScope:
 # Entries that launch or open something shared (a workflow, an agent, an AI
 # call, an app or a form), with the launch permissions their call chain
 # notes (``note_launch``) where the launched or opened object's organization
-# is known. The entry's own permission is always among them; a chat without
-# an agent spends AI directly.
+# is known. A nested launch can record a stronger capability after the route
+# has already authorized the caller; a chat without an agent spends AI directly.
 _CHAT_LAUNCH = frozenset({"agents.execute", "ai.execute"})
 _LAUNCH_ENTRIES: dict[tuple[str, str] | str, frozenset[str]] = {
-    ("GET", "/api/applications/{app_id}/bundle-asset/{filename}"): frozenset({"apps.readbasic"}),
-    ("GET", "/api/applications/{app_id}/dist/{path}"): frozenset({"apps.readbasic"}),
-    ("GET", "/api/applications/{app_id}/render"): frozenset({"apps.readbasic"}),
-    ("GET", "/api/forms/{form_id}/logo"): frozenset({"forms.readbasic"}),
-    ("GET", "/api/forms/{form_id}/runtime"): frozenset({"forms.readbasic"}),
+    ("GET", "/api/forms/{form_id}/logo"): frozenset({"forms.read", "forms.readbasic"}),
+    ("GET", "/api/forms/{form_id}/runtime"): frozenset({"forms.read", "forms.readbasic"}),
     ("GET", "/api/sdk/ai/info"): frozenset({"ai.read"}),
-    ("POST", "/api/agent-runs/enqueue"): frozenset({"agents.execute"}),
-    ("POST", "/api/agent-runs/execute"): frozenset({"agents.execute"}),
-    ("POST", "/api/agent-runs/{run_id}/dry-run"): frozenset({"agents.execute"}),
-    ("POST", "/api/agent-runs/{run_id}/rerun"): frozenset({"agents.execute"}),
     ("POST", "/api/chat/conversations/{conversation_id}/messages"): _CHAT_LAUNCH,
     ("POST", "/api/chat/runs"): _CHAT_LAUNCH,
-    ("POST", "/api/forms/{form_id}/captcha/challenge"): frozenset({"forms.readbasic"}),
-    ("POST", "/api/forms/{form_id}/fields/{field_name}/options"): frozenset({"workflows.execute"}),
-    ("POST", "/api/forms/{form_id}/startup"): frozenset({"workflows.execute"}),
-    ("POST", "/api/forms/{form_id}/submissions"): frozenset({"workflows.execute"}),
-    ("POST", "/api/forms/{form_id}/upload"): frozenset({"forms.readbasic"}),
-    ("POST", "/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}/execute"): frozenset({"agents.execute"}),
-    ("POST", "/api/mcp/gateway/capabilities/search"): frozenset({"agents.readbasic"}),
+    ("POST", "/api/forms/{form_id}/captcha/challenge"): frozenset({"forms.read", "forms.readbasic"}),
+    ("POST", "/api/forms/{form_id}/fields/{field_name}/options"): frozenset({"forms.read", "forms.readbasic", "workflows.execute"}),
+    ("POST", "/api/forms/{form_id}/startup"): frozenset({"forms.read", "forms.readbasic", "workflows.execute"}),
+    ("POST", "/api/forms/{form_id}/submissions"): frozenset({"forms.read", "forms.readbasic", "workflows.execute"}),
+    ("POST", "/api/forms/{form_id}/upload"): frozenset({"forms.read", "forms.readbasic"}),
     ("POST", "/api/sdk/ai/complete"): frozenset({"ai.execute"}),
     ("POST", "/api/sdk/ai/stream"): frozenset({"ai.execute"}),
     ("POST", "/api/sdk/artifacts/image"): frozenset({"ai.execute"}),
     ("POST", "/api/workflows/execute"): frozenset({"workflows.execute"}),
     "bifrost_workflow_execute": frozenset({"workflows.execute"}),
-}
-
-
-# Power sites that only compute the flag and hand it to a registered callee,
-# where the branch is decided and the permission noted: the site cannot see
-# what decides it (whose artifact workspace it writes into; whether the role
-# is one an operator could assign; which organization the user is in).
-_FLAG_HANDOFFS: dict[str, str] = {
-    "shared.sdk_artifact_generation.sdk_generate_image_artifact": "src.services.artifacts.ArtifactService.store",
-    "shared.sdk_artifact_generation.sdk_render_document_artifact": "src.services.artifacts.ArtifactService.store",
-    "shared.sdk_artifact_generation.sdk_render_spreadsheet_artifact": "src.services.artifacts.ArtifactService.store",
-    "shared.sdk_artifact_generation.sdk_render_text_artifact": "src.services.artifacts.ArtifactService.store",
-    "shared.sdk_artifacts.sdk_store_artifact": "src.services.artifacts.ArtifactService.store",
-    "src.routers.users.create_user": "shared.sdk_users.create_user",
-    "src.routers.users.update_user": "shared.sdk_users.update_user",
-    "src.services.user_role_assignments.check_role_change": (
-        "src.services.authorization.privilege.may_change_role_assignment"
-    ),
 }
 
 
@@ -2532,92 +2385,133 @@ def _noted_powers(source: str, helper: str = "note_power") -> set[str]:
     }
 
 
-def _site_permissions(replacement: str | tuple[str, ...]) -> set[str]:
-    items = (replacement,) if isinstance(replacement, str) else replacement
-    return {item for item in items if item not in _SITE_KINDS}
-
-
 class TestEveryPowerIsNoted:
-    """Report-only recording: every elevated branch that a named permission
-    replaces notes that permission (``shared.access_checks.note_power``), or
-    hands the flag to the registered site that does (``_FLAG_HANDOFFS``),
-    and every launch entry's chain notes its launch permissions
-    (``note_launch``), so the registry and the code cannot drift apart.
+    """A named replacement must be an enforced judgment, not report-only
+    telemetry. ``require_permission`` and ``require_named_permission`` both
+    record through ``_note_enforced_decision``; the evaluator tripwire above
+    proves that recording contract. Launch notes remain separate telemetry."""
 
-    These are presence checks over source: they prove each site names its
-    permissions and nothing else, not that every note sits on the exact
-    branch the flag unlocks (static analysis cannot prove that in general).
-    Branch precision is covered by the unit tests of each site."""
+    def test_named_permission_entry_points_record_enforced_judgments(self) -> None:
+        import src.services.authorization.enforce as enforce
 
-    def test_every_power_site_notes_exactly_its_permissions(self) -> None:
-        problems = []
-        for qualname, (_count, replacement) in sorted(_ELEVATED_SITES.items()):
-            func = _resolve_qualname(qualname)
-            assert func is not None, f"{qualname}: no such function"
-            if isinstance(func, property):
-                func = func.fget
-            source = inspect.getsource(_unbound(func))
-            noted = _noted_powers(source)
-            expected = _site_permissions(replacement)
-            if qualname in _FLAG_HANDOFFS:
-                callee = _FLAG_HANDOFFS[qualname]
-                tree = _parse_source(source)
-                imported = _local_imports(tree)
-                calls = {
-                    imported[name][1] if name in imported else name
-                    for node in ast.walk(tree)
-                    if isinstance(node, ast.Call) and (name := _terminal_name(node.func))
-                }
-                if (
-                    noted
-                    or callee.rsplit(".", 1)[-1] not in calls
-                    or callee not in _ELEVATED_SITES
-                    or not expected <= _site_permissions(_ELEVATED_SITES[callee][1])
-                ):
-                    problems.append(f"{qualname}: hands off to {callee}, which must note {sorted(expected)}")
-                continue
-            if noted != expected:
-                problems.append(f"{qualname}: registered {sorted(expected)}, notes {sorted(noted)}")
-        assert not problems, "power sites whose note_power calls differ from _ELEVATED_SITES:\n" + "\n".join(
-            problems
-        )
-
-    def test_launch_entries_name_their_own_permission(self) -> None:
-        by_key = {entry.key: entry for entry in ACCESS_LIST}
-        problems = sorted(
-            str(key)
-            for key, launched in _LAUNCH_ENTRIES.items()
-            if key not in by_key
-            or by_key[key].access_class is not AccessClass.PERMISSION
-            or by_key[key].permission not in launched
-        )
-        assert not problems, f"_LAUNCH_ENTRIES that are not permission entries launching their permission: {problems}"
-
-    def test_every_launch_entry_notes_its_launch_permissions(self, entry_functions) -> None:
-        missing = []
-        for entry in ACCESS_LIST:
-            launched = _LAUNCH_ENTRIES.get(entry.key)
-            if launched is None:
-                continue
-            noted = set().union(
-                *(_noted_powers(source, "note_launch") for _where, source in entry_functions[entry.key])
+        def records_decision(func: object) -> bool:
+            return any(
+                isinstance(node, ast.Call)
+                and _terminal_name(node.func) == "_note_enforced_decision"
+                and [_terminal_name(arg) for arg in node.args] == ["caller", "entry", "target"]
+                for node in ast.walk(_parse_source(inspect.getsource(func)))
             )
-            missing += [f"{_entry_target(entry)}: {permission}" for permission in sorted(launched - noted)]
-        assert not missing, "launch entries whose call chain never notes a launch permission:\n" + "\n".join(
-            sorted(missing)
+
+        assert records_decision(enforce.require_named_permission)
+        assert "require_named_permission" in {
+            _terminal_name(node.func)
+            for node in ast.walk(_parse_source(inspect.getsource(enforce.require_permission)))
+            if isinstance(node, ast.Call)
+        }
+
+    def test_launch_entries_are_permission_routes(self) -> None:
+        by_key = {entry.key: entry for entry in ACCESS_LIST}
+        wrong = sorted(
+            str(key)
+            for key in _LAUNCH_ENTRIES
+            if key not in by_key or by_key[key].access_class is not AccessClass.PERMISSION
+        )
+        assert not wrong, f"_LAUNCH_ENTRIES that are not permission routes: {wrong}"
+
+    def test_launch_notes_match_the_registered_permissions(self, entry_functions) -> None:
+        """Launch telemetry records a post-authorization capability.
+
+        Some form launches record ``forms.read`` when the caller holds that
+        stronger permission and ``forms.readbasic`` otherwise.  It reports the
+        capability used; it does not grant either permission."""
+        actual = {
+            key: set().union(*(_noted_powers(source, "note_launch") for _where, source in functions))
+            for key, functions in entry_functions.items()
+        }
+        mismatches = {
+            key: (sorted(_LAUNCH_ENTRIES.get(key, ())), sorted(notified))
+            for key, notified in actual.items()
+            if notified or key in _LAUNCH_ENTRIES
+            if notified != _LAUNCH_ENTRIES.get(key, frozenset())
+        }
+        assert not mismatches, f"launch-note registry differs from source:\n{mismatches}"
+
+    def test_app_and_agent_launches_keep_named_resource_judgments(self) -> None:
+        """App and Agent launches stopped using report-only ``note_launch``.
+
+        Preserve their useful authorization signal by proving the live
+        resource loaders and execution routes require the named permission at
+        the persisted resource organization.  This deliberately inspects the
+        enforcement call and its target rather than treating a permission
+        string or helper name as proof.
+        """
+        from shared import sdk_agent_runs
+        from src.routers import agent_runs, app_code_files, applications
+
+        by_key = {entry.key: entry for entry in ACCESS_LIST}
+        app_routes = {
+            ("GET", "/api/applications/{app_id}/render"): (
+                app_code_files.render_app,
+                "apps.readbasic",
+            ),
+            ("GET", "/api/applications/{app_id}/bundle-manifest"): (
+                app_code_files.get_bundle_manifest,
+                "apps.read",
+            ),
+            ("GET", "/api/applications/{app_id}/bundle-asset/{filename}"): (
+                app_code_files.get_bundle_asset,
+                "apps.readbasic",
+            ),
+        }
+        for key, (route, permission) in app_routes.items():
+            entry = by_key[key]
+            assert (entry.permission, entry.boundary) == (permission, "organization")
+            loader_calls = {
+                _terminal_name(node.func)
+                for node in ast.walk(_parse_source(inspect.getsource(route)))
+                if isinstance(node, ast.Call)
+            }
+            assert loader_calls & {"get_application_or_404", "_get_application_by_id_or_404"}
+
+        application_source = _parse_source(inspect.getsource(applications.get_application_by_id_or_404))
+        require_calls = [
+            node
+            for node in ast.walk(application_source)
+            if isinstance(node, ast.Call) and _terminal_name(node.func) == "require_named_permission"
+        ]
+        assert any(
+            [_terminal_name(arg) for arg in call.args] == ["caller", "permission", "target_org"]
+            for call in require_calls
+        )
+        assert any(
+            isinstance(node, ast.Attribute)
+            and node.attr == "organization_id"
+            and _terminal_name(node.value) == "application"
+            for node in ast.walk(application_source)
         )
 
-    def test_launch_notes_name_only_everyday_permissions(self, scanned_functions) -> None:
-        """``note_launch`` is for what the User role holds; an elevated
-        permission noted as a launch would dodge the site registry."""
-        noted = {
-            (where, permission)
-            for functions in scanned_functions.values()
-            for where, source in functions
-            for permission in _noted_powers(source, "note_launch")
+        agent_routes = {
+            ("POST", "/api/agent-runs/enqueue"): sdk_agent_runs.enqueue_sdk_agent_run,
+            ("POST", "/api/agent-runs/execute"): agent_runs.execute_agent_run,
+            ("POST", "/api/agent-runs/{run_id}/dry-run"): agent_runs.dry_run_agent_run,
+            ("POST", "/api/agent-runs/{run_id}/rerun"): agent_runs.rerun_agent_run,
         }
-        elevated = sorted(f"{where}: {permission}" for where, permission in noted if permission not in USER_BASE_PERMISSIONS)
-        assert not elevated, "note_launch with a permission the User role does not hold:\n" + "\n".join(elevated)
+        for key, route in agent_routes.items():
+            entry = by_key[key]
+            assert (entry.permission, entry.boundary) == ("agents.execute", "organization")
+            calls = [
+                node
+                for node in ast.walk(_parse_source(inspect.getsource(route)))
+                if isinstance(node, ast.Call) and _terminal_name(node.func) == "require_permission"
+            ]
+            assert any(
+                len(call.args) >= 3
+                and isinstance(call.args[1], ast.Constant)
+                and call.args[1].value == "agents.execute"
+                and isinstance(call.args[2], ast.Attribute)
+                and call.args[2].attr == "org_id"
+                for call in calls
+            ), key
 
 
 def _redis_registry_problems(
@@ -2625,12 +2519,16 @@ def _redis_registry_problems(
     authority: dict[str, tuple[int, str]],
     plain: dict[str, tuple[int, str]],
 ) -> list[str]:
-    """Unclassified, stale, double-classified, non-cutover authority and
+    """Unclassified, stale, double-classified, invalid authority kind and
     miscounted owners: a registered function with a new read fails, named."""
     registered = {**authority, **plain}
     problems = _registry_drift(set(found), set(registered))
     problems += [f"in both: {name}" for name in sorted(set(authority) & set(plain))]
-    problems += [f"not cutover: {name}" for name, (_count, kind) in sorted(authority.items()) if kind != "cutover"]
+    problems += [
+        f"invalid authority kind: {name} ({kind})"
+        for name, (_count, kind) in sorted(authority.items())
+        if kind not in {"cutover", "internal_authorized_resource"}
+    ]
     problems += [
         f"{owner}: registered {registered[owner][0]} read(s), found {len(reads)} ({', '.join(reads)})"
         for owner, reads in sorted(found.items())
@@ -2801,18 +2699,29 @@ class TestScannerBlindSpots:
             "is_engine_user()",
         }
 
-    def test_b8_flag_reading_members_are_tokens_and_properties_are_followed(self) -> None:
-        assert {"has_platform_admin_grant", "_has_scope_bypass"} <= _principal_token_members()
-        source = """
-            def gate(self, user):
-                return self._has_scope_bypass or user.has_platform_admin_grant() or self.is_superuser
-        """
-        assert _elevated_tokens_in(textwrap.dedent(source)) == {"_has_scope_bypass", "has_platform_admin_grant"}
-        from src.services.mcp_server.gateway import MCPAgentGatewayService
+    def test_b8_flag_reading_properties_are_transitively_tokens(self, monkeypatch) -> None:
+        """A property can hide a principal flag read from its call site.
 
-        method = MCPAgentGatewayService._authorize_discovery_scope
-        targets = {_qualname(t) for t in _call_targets(method, _parse_source(inspect.getsource(method)))}
-        assert "src.services.mcp_server.gateway.MCPAgentGatewayService._has_scope_bypass" in targets
+        Keep this edge self-contained: production helpers are intentionally
+        deleted when their authority path is retired, while this synthetic
+        graph proves the scanner still follows a two-property chain.
+        """
+        tree = _parse_source(textwrap.dedent("""
+            class SyntheticPrincipal:
+                @property
+                def current_role(self):
+                    return self.is_superuser
+
+                @property
+                def can_manage(self):
+                    return self.current_role
+        """))
+        monkeypatch.setattr(sys.modules[__name__], "_source_modules", lambda: (("src.synthetic", tree),))
+        _principal_token_members.cache_clear()
+        try:
+            assert {"current_role", "can_manage"} <= _principal_token_members()
+        finally:
+            _principal_token_members.cache_clear()
 
     def test_b9_flag_conditioned_policy_bodies_are_inventoried(self) -> None:
         seeded = {t for n in self._nodes("P = {'when': {'user': 'is_provider_org'}}") if (t := _flag_policy_seed(n))}
@@ -3142,6 +3051,10 @@ _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/api/sdk/artifacts/document"): "Own execution-workspace artifact.",
     ("POST", "/api/sdk/artifacts/spreadsheet"): "Own execution-workspace artifact.",
     ("POST", "/api/sdk/artifacts/text"): "Own execution-workspace artifact.",
+    ("POST", "/api/sdk/runtime/logs"): "Own runtime log stream, keyed by server-derived execution authority.",
+    ("POST", "/api/sdk/runtime/data-provider-cache/read"): "Own server-derived data-provider cache partition.",
+    ("POST", "/api/sdk/runtime/data-provider-cache/write"): "Own server-derived data-provider cache partition.",
+    ("POST", "/api/sdk/runtime/service-control"): "Own parent-bound service control state.",
     ("DELETE", "/api/notifications/{notification_id}"): "Own notification.",
     ("PATCH", "/api/profile"): "Own profile.",
     ("POST", "/api/profile/avatar"): "Own profile.",

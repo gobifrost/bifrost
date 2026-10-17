@@ -1,44 +1,8 @@
-"""Shared application service for topic event emission (``bifrost.events.emit``).
+"""Emit topic events after current operation permission and scope admission.
 
-Single implementation of the fixed emission behavior used by the HTTP
-handler (``api/src/routers/events.py::emit_topic_event``), reached both
-by external callers and by workflow children over the worker-local
-engine socket. All callers share authorization, topic validation, scope
-parsing, service-org confinement, target Solution resolution, the inbound
-gate, and trustworthy caller resolution — so results are identical by
-construction.
-
-All failures raise :class:`EventEmissionError` (transport-neutral); the
-HTTP adapter maps them to ``HTTPException``, and worker-local calls read
-the same status/detail.
-
-Trust model (read carefully):
-
-- The service takes a trusted explicit principal plus trusted context —
-  :class:`EventEmissionCaller` — and a validated request
-  (``EmitEventRequest``). It never takes a raw child actor/caller claim.
-  The caller identity used for the inbound own-call bypass is derived
-  internally via ``resolve_trustworthy_caller``.
-- Trustworthy caller precedence (existing behavior, preserved): the SIGNED
-  engine claims on the execution-scoped token (``engine_execution_id`` /
-  ``engine_solution_id`` — unforgeable without ``SECRET_KEY``) beat the
-  DB-backed app-header install (``app_id``), which beats the SDK-attested
-  ``caller_solution`` value, and then only on engine requests
-  (``is_engine_user``). Everyone else resolves to ``None`` (outside any
-  install).
-- The constrained ``request.caller_solution`` case is preserved exactly:
-  it is consulted only when the internally resolved caller is ``None``
-  AND the principal is an engine user; malformed values resolve to
-  ``None``. A worker-local caller must therefore supply a token-equivalent
-  principal carrying the engine claims (``engine_execution_id`` /
-  ``engine_solution_id``) from verified parent metadata — never from child
-  frame fields — for the bypass to apply. Child-supplied
-  ``caller_solution`` strings without that engine proof are ignored by
-  construction.
-
-Parent-side only: touches the database (Solution resolution, inbound
-gate) and the durable emitter. A workflow child never imports this
-module.
+HTTP and worker-local callers share the same typed runtime boundary. Solution
+provenance comes from durable runtime state or validated local development,
+never from the emission request's claimed caller install.
 """
 
 from __future__ import annotations
@@ -47,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.principal import UserPrincipal
@@ -70,22 +35,11 @@ class EventEmissionError(Exception):
 
 @dataclass
 class EventEmissionCaller:
-    """Trusted caller for topic event emission.
-
-    Carries the auth-verified ``UserPrincipal``, the database session, and
-    the authenticated context ids (``solution_id`` from ``?solution=`` /
-    ``X-Bifrost-App``, ``caller_solution_id`` from the format-gated
-    ``?caller_solution=`` param, ``app_id`` from the app header). Built by
-    the HTTP adapter from its authenticated context; a future parent
-    caller constructs the token-equivalent principal from trusted parent
-    metadata. Never derive authority from child-supplied fields.
-    """
+    """Authenticated principal, session, and selected Solution context."""
 
     user: UserPrincipal
     db: AsyncSession
     solution_id: str | None = None
-    caller_solution_id: str | None = None
-    app_id: str | None = None
     # Server-validated local-dev provenance.  Never populated from an emit DTO.
     dev_solution_id: str | None = None
 
@@ -96,8 +50,6 @@ class EventEmissionCaller:
             user=principal,
             db=ctx.db,
             solution_id=getattr(ctx, "solution_id", None),
-            caller_solution_id=getattr(ctx, "caller_solution_id", None),
-            app_id=getattr(ctx, "app_id", None),
             dev_solution_id=getattr(ctx, "dev_solution_id", None),
         )
 
@@ -106,59 +58,31 @@ async def emit_topic_event(
     caller: EventEmissionCaller,
     request: EmitEventRequest,
 ) -> EmitEventResponse:
-    """Emit a topic event with the historical handler semantics.
-
-    Preserves the exact status/error precedence, response DTO, subscriber
-    count, event actor (``triggered_by=str(principal.user_id)``), and
-    transaction/delivery behavior of
-    ``api/src/routers/events.py::emit_topic_event``: durable emission and
-    delivery go through ``src.services.events.emit_event`` (own session,
-    commit, queue), which the service reuses rather than re-implements.
-
-    Order: authorization (superuser or service principal, else 403) >
-    topic validation (400) > scope parsing (400) > service-org
-    confinement (403) > target Solution resolution + inbound gate (404)
-    > durable emit.
-
-    Args:
-        caller: Trusted principal plus authenticated context ids.
-        request: Validated emit request (topic, data, scope, solution,
-            caller_solution).
-
-    Returns:
-        ``EmitEventResponse`` with the created event id and the number of
-        subscriptions that will receive the event.
-
-    Raises:
-        EventEmissionError: 403/400/404 per the preserved precedence.
-    """
+    """Authorize the actual target before Solution resolution or durable IO."""
+    from shared.sdk_config import ScopeResolutionError, resolve_sdk_scope
+    from src.services.authorization.enforce import load_caller, require_operation, org_target
     from src.services.solution_scope import (
         check_inbound_allowed,
-        is_engine_user,
         is_service_principal,
         resolve_solution_ref,
         resolve_trustworthy_caller,
     )
     from src.services.events.validation import validate_topic
 
-    service_caller = is_service_principal(caller.user)
-    if not caller.user.is_superuser and not service_caller:
-        raise EventEmissionError(403, "Not authorized to emit events")
+    try:
+        authority = await load_caller(caller.db, caller.user)
+        organization_id = await resolve_sdk_scope("global" if request.scope == "GLOBAL" else request.scope, caller=authority)
+        require_operation(authority, "POST /api/events/emit", org_target(organization_id))
+    except ScopeResolutionError as exc:
+        raise EventEmissionError(400 if exc.status_code == 422 else exc.status_code, exc.detail) from exc
+    except HTTPException as exc:
+        raise EventEmissionError(exc.status_code, str(exc.detail)) from exc
 
+    service_caller = is_service_principal(caller.user)
     try:
         validate_topic(request.topic)
     except ValueError as exc:
         raise EventEmissionError(400, str(exc)) from exc
-
-    organization_id: UUID | None = None
-    if request.scope and request.scope != "GLOBAL":
-        try:
-            organization_id = UUID(request.scope)
-        except ValueError:
-            raise EventEmissionError(
-                400,
-                f"Invalid scope: must be a UUID or 'GLOBAL', got '{request.scope}'",
-            ) from None
 
     if service_caller:
         # Services emit org-scoped only, into their own org: the token's
@@ -177,15 +101,6 @@ async def emit_topic_event(
         if solution_id is None:
             raise EventEmissionError(404, "Solution not found")
         resolved_caller = await resolve_trustworthy_caller(caller.db, caller)
-        if (
-            resolved_caller is None
-            and request.caller_solution
-            and is_engine_user(caller.user)
-        ):
-            try:
-                resolved_caller = UUID(str(request.caller_solution))
-            except ValueError:
-                resolved_caller = None
         if not await check_inbound_allowed(caller.db, solution_id, resolved_caller):
             raise EventEmissionError(404, "Solution not found")
 

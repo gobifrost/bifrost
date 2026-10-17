@@ -5,7 +5,7 @@ File operations with two storage modes:
 - local: Local filesystem (CWD, /tmp/bifrost/temp, /tmp/bifrost/uploads)
 - cloud: S3 storage (default)
 
-Auth: CurrentSuperuser (platform admins and workflow engine)
+Auth: named workspace permissions and scoped file policy management.
 """
 
 import asyncio
@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.auth import Context, CurrentActiveUser, CurrentSuperuser
+from src.core.auth import Context, CurrentActiveUser
 from src.core.principal import UserPrincipal
 from src.models.contracts.files import (
     FilePullRequest,
@@ -49,7 +49,6 @@ from src.models import (
     WorkflowIdConflict,
 )
 from src.services.file_storage import FileStorageService
-from shared import access_checks
 from shared.role_cache import get_user_roles
 from shared.file_access import (
     FileCaller,
@@ -67,6 +66,7 @@ from shared.file_access import (
     tiers_for_backend_mode as _tiers_for_backend_mode,
 )
 from src.services.operation_catalog import operation_route
+from src.services.authorization.enforce import Caller, load_caller, require_permission, require_operation, authorize_operation, org_target, GLOBAL, allows_permission, user_reach
 
 # Watch session TTL — must be > CLI heartbeat interval (WATCH_HEARTBEAT_SECONDS in bifrost.cli)
 WATCH_SESSION_TTL_SECONDS = 120
@@ -285,21 +285,10 @@ class FilePolicyAccessTestResponse(BaseModel):
 # service share one implementation.
 
 
-def _organization_id_for_policy(location: str, scope: str | None) -> UUID | None:
-    """Parse a scope string to the policy org key — `None`/`"global"` → None,
-    a UUID string → that org. Parse-only (no targeting decision): used by the
-    SUPERUSER-only policy-management endpoints, where an admin may legitimately
-    address any org/global. App-facing file ops use `_file_org_id` instead,
-    which pins non-superusers to their own org."""
-    if scope is None or scope == "global":
-        return None
-    return UUID(scope)
-
-
 def _parse_solution_param(solution: str | None) -> UUID | None:
     """Parse the admin ``solution`` query param (an install UUID) or None.
 
-    Used by the SUPERUSER-only policy-management endpoints to address an
+    Used by the policy-management endpoints to address an
     install's deploy-owned solution tier explicitly (reads only — writes are
     refused as deploy-owned)."""
     if solution is None or solution == "":
@@ -344,6 +333,19 @@ def _policy_document(raw: FilePolicies | list[dict]) -> FilePolicies:
     return FilePolicies.model_validate({"policies": raw})
 
 
+async def _authorize_solution_policy(
+    db: AsyncSession, caller: Caller, solution_id: UUID, operation: str
+) -> None:
+    from src.models.orm.solutions import Solution
+
+    scope = (await db.execute(
+        select(Solution.organization_id).where(Solution.id == solution_id)
+    )).one_or_none()
+    if scope is None or not user_reach(caller).covers(scope.organization_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Solution file context not found")
+    require_operation(caller, operation, org_target(scope.organization_id))
+
+
 async def _test_principal(
     ctx: Context,
     db: AsyncSession,
@@ -351,12 +353,6 @@ async def _test_principal(
 ) -> UserPrincipal:
     if not user_id:
         return ctx.user
-
-    if not ctx.user.is_platform_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Testing another user requires platform admin privileges",
-        )
 
     from src.models.orm.users import User
 
@@ -367,7 +363,7 @@ async def _test_principal(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"User not found: {user_id}",
         )
-    access_checks.note_power("filepolicies.read", target.organization_id, subject=f"user:{target.id}")
+    require_permission(await load_caller(db, ctx.user), "filepolicies.read", target.organization_id)
     role_ids, role_names = await get_user_roles(target.id, db)
     return UserPrincipal(
         user_id=target.id,
@@ -391,7 +387,7 @@ async def _test_principal(
 @router.get("/policies", response_model=FilePolicyListResponse, **operation_route("files.policies.list"))
 async def list_file_policies(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     location: str | None = Query(default=None),
     scope: str | None = Query(default=None),
     organization_id: str | None = Query(default=None),
@@ -404,8 +400,11 @@ async def list_file_policies(
     tier — admins may SEE these; edits stay blocked (deploy-owned)."""
     from src.services.file_policy_service import FilePolicyService
 
+    caller = await load_caller(db, ctx.user)
+
     solution_id = _parse_solution_param(solution)
     if solution_id is not None:
+        await _authorize_solution_policy(db, caller, solution_id, "files.policies.list")
         rows = await FilePolicyService(db).list_policies(
             organization_id=None,
             location=location,
@@ -415,9 +414,10 @@ async def list_file_policies(
 
     target_scope = organization_id if organization_id is not None else scope
     try:
-        org_id = _organization_id_for_policy(location or "workspace", target_scope)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        org_id = await _file_org_id(ctx, location or "files", target_scope)
+    except FileServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    require_operation(caller, "files.policies.list", org_target(org_id))
 
     rows = await FilePolicyService(db).list_policies(
         organization_id=org_id,
@@ -430,7 +430,7 @@ async def list_file_policies(
 async def test_file_policy_access(
     request: FilePolicyAccessTestRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FilePolicyAccessTestResponse:
     """Evaluate effective access for a path using the real file policy service."""
@@ -438,26 +438,38 @@ async def test_file_policy_access(
 
     try:
         solution_id = _ctx_solution_id(ctx, request.location)
-        org_id = await _install_org_id(ctx, solution_id) if solution_id is not None else _file_org_id(ctx, request.location, request.scope)
+        org_id = (
+            await _install_org_id(ctx, solution_id)
+            if solution_id is not None
+            else await _file_org_id(ctx, request.location, request.scope)
+        )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except FileServiceError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from exc
 
+    caller = await load_caller(db, ctx.user)
+    require_operation(caller, "files.policies.test", org_target(org_id))
     principal = await _test_principal(ctx, db, request.user_id)
-    access_checks.note_power("filepolicies.read", org_id, subject=f"file:{request.location}:{request.path}")
 
-    # workspace is superuser-only and never policy-governed — mirror the real
-    # enforcement in _authorize_file_policy so Test Access reports what actually
-    # happens, not a stale policy-service evaluation.
+    # Workspace uses the same named repository gate as file reads and writes.
     if request.location == "workspace":
-        allowed = principal.is_superuser
+        permission = "repository.read" if request.action in {"read", "list"} else "repository.readwrite"
+        allowed = allows_permission(await load_caller(db, principal), permission, None)
         return FilePolicyAccessTestResponse(
             allowed=allowed,
             path=request.path,
             location=request.location,
             action=request.action,
             matched_policy=None,
-            matched_rule="superuser (workspace is not policy-governed)" if allowed else None,
-            denial_reason=None if allowed else "workspace is superuser-only",
+            matched_rule=permission if allowed else None,
+            denial_reason=None if allowed else "The user does not have the required workspace permission",
+        )
+
+    if not user_reach(await load_caller(db, principal)).covers(org_id):
+        return FilePolicyAccessTestResponse(
+            allowed=False, path=request.path, location=request.location,
+            action=request.action, denial_reason="The user's access does not reach this organization",
         )
 
     service = FilePolicyService(db)
@@ -490,7 +502,7 @@ async def test_file_policy_access(
 async def list_file_structure(
     request: FileStructureRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FileStructureResponse:
     """Admin-only STRUCTURAL listing (not policy-gated): what physically exists
@@ -499,19 +511,29 @@ async def list_file_structure(
     from src.services.file_structure_service import FileStructureService
 
     try:
-        org_id = _organization_id_for_policy(request.location or "workspace", request.scope)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        solution_id = _ctx_solution_id(ctx, request.location or "files")
+        org_id = (
+            await _install_org_id(ctx, solution_id)
+            if solution_id is not None
+            else await _file_org_id(ctx, request.location or "files", request.scope)
+        )
+    except FileServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
+    caller = await load_caller(db, user)
+    if solution_id is not None and not user_reach(caller).covers(org_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Solution file context not found")
+    require_operation(caller, "files.structure.list", org_target(org_id))
     svc = FileStructureService(db)
     if request.location is None:
-        shares = await svc.list_shares(org_id=org_id)
+        shares = await svc.list_shares(org_id=org_id, solution_id=solution_id)
         return FileStructureResponse(shares=[s.model_dump() for s in shares])
     if request.location in {"workspace", "temp"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reserved location")
     try:
         entries = await svc.list_prefix(
-            org_id=org_id, location=request.location, prefix=request.prefix
+            org_id=org_id, location=request.location, prefix=request.prefix,
+            solution_id=solution_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -522,7 +544,7 @@ async def list_file_structure(
 async def get_file_policy(
     policy_path: str,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     location: str = Query(default="workspace"),
     scope: str | None = Query(default=None),
     solution: str | None = Query(default=None),
@@ -533,8 +555,11 @@ async def get_file_policy(
     ``solution`` reads the install's deploy-owned solution tier (read-only)."""
     from src.services.file_policy_service import FilePolicyService
 
+    caller = await load_caller(db, ctx.user)
+
     solution_id = _parse_solution_param(solution)
     if solution_id is not None:
+        await _authorize_solution_policy(db, caller, solution_id, "files.policies.get")
         row = await FilePolicyService(db).get_solution_policy_exact(
             solution_id=solution_id,
             location=location,
@@ -545,9 +570,10 @@ async def get_file_policy(
         return _policy_public(row)
 
     try:
-        org_id = _organization_id_for_policy(location, scope)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        org_id = await _file_org_id(ctx, location, scope)
+    except FileServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    require_operation(caller, "files.policies.get", org_target(org_id))
     row = await FilePolicyService(db).get_policy_exact(
         organization_id=org_id,
         location=location,
@@ -563,7 +589,7 @@ async def set_file_policy(
     policy_path: str,
     request: FilePolicySetRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     location: str = Query(default="workspace"),
     scope: str | None = Query(default=None),
     solution: str | None = Query(default=None),
@@ -581,14 +607,15 @@ async def set_file_policy(
         )
 
     try:
-        org_id = _organization_id_for_policy(location, scope)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        org_id = await _file_org_id(ctx, location, scope)
+    except FileServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    await authorize_operation(db, user, "files.policies.set", org_target(org_id))
     # Validate policy refs before persisting — raises 422 for unresolvable $ref names.
     parsed_doc = _policy_document(request.policies)
     from shared.policy_rules import PolicyRuleDomainMismatch, PolicyRuleNotFound, resolve_policy_refs
     from src.repositories.policy_rule import PolicyRuleRepository
-    ref_repo = PolicyRuleRepository(db, org_id=org_id, is_superuser=True)
+    ref_repo = PolicyRuleRepository(db, org_id=org_id)
     try:
         await resolve_policy_refs(parsed_doc.model_copy(deep=True), repo=ref_repo, action_domain="file")
     except (PolicyRuleNotFound, PolicyRuleDomainMismatch) as exc:
@@ -619,7 +646,7 @@ async def set_file_policy(
 async def delete_file_policy(
     policy_path: str,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     location: str = Query(default="workspace"),
     scope: str | None = Query(default=None),
     solution: str | None = Query(default=None),
@@ -637,9 +664,10 @@ async def delete_file_policy(
         )
 
     try:
-        org_id = _organization_id_for_policy(location, scope)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        org_id = await _file_org_id(ctx, location, scope)
+    except FileServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    await authorize_operation(db, user, "files.policies.delete", org_target(org_id))
     deleted = await FilePolicyService(db).delete_policy(
         organization_id=org_id,
         location=location,
@@ -693,7 +721,7 @@ async def _record_completed_signed_upload(
     from shared.file_paths import resolve_s3_key
 
     try:
-        effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
+        effective_scope = await _resolve_effective_scope(ctx, request.location, request.scope)
         solution_id = _ctx_solution_id(ctx, request.location)
         await _require_declared_solution_file_location(
             ctx,
@@ -1059,7 +1087,7 @@ async def get_signed_urls(
 async def pull_files(
     request: FilePullRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FilePullResponse:
     """
@@ -1068,6 +1096,7 @@ async def pull_files(
     Only returns regenerated .bifrost/*.yaml from DB state.
     Code file reconciliation is handled by git, not by this endpoint.
     """
+    await authorize_operation(db, user, "workspace.files.pull", GLOBAL)
     from src.services.manifest_generator import generate_manifest
     from bifrost.manifest import serialize_manifest_dir
 
@@ -1101,10 +1130,11 @@ async def pull_files(
 @router.get("/manifest", **operation_route("workspace.files.manifest"))
 async def get_manifest(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict[str, str]:
     """Return regenerated manifest files from DB state."""
+    await authorize_operation(db, user, "workspace.files.manifest", GLOBAL)
     from src.services.manifest_generator import generate_manifest
     from bifrost.manifest import serialize_manifest_dir
 
@@ -1120,9 +1150,11 @@ async def get_manifest(
 @router.post("/watch", **operation_route("workspace.files.watch"))
 async def manage_watch_session(
     request: WatchSessionRequest,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict:
     """Register, heartbeat, or deregister a CLI watch session."""
+    await authorize_operation(db, user, "workspace.files.watch", GLOBAL)
     from src.core.cache.redis_client import get_shared_redis
     from src.core.pubsub import publish_file_activity
 
@@ -1159,8 +1191,12 @@ async def manage_watch_session(
 
 
 @router.get("/watchers", **operation_route("workspace.files.watchers"))
-async def list_active_watchers(user: CurrentSuperuser) -> dict:
+async def list_active_watchers(
+    user: CurrentActiveUser,
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> dict:
     """List active CLI watch sessions."""
+    await authorize_operation(db, user, "workspace.files.watchers", GLOBAL)
     from src.core.cache.redis_client import get_shared_redis
 
     r = await get_shared_redis()
@@ -1188,7 +1224,7 @@ async def list_active_watchers(user: CurrentSuperuser) -> dict:
 **operation_route("workspace.files.editor.list"))
 async def list_files_editor(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     path: str = Query(..., description="Directory path relative to workspace root"),
     recursive: bool = Query(default=False, description="If true, return all files recursively"),
     db: AsyncSession = Depends(get_db, scope="function"),
@@ -1199,6 +1235,7 @@ async def list_files_editor(
     Cloud mode only - used by browser editor.
     Lists directly from S3 via RepoStorage (source of truth).
     """
+    await authorize_operation(db, user, "workspace.files.editor.list", GLOBAL)
     from src.services.repo_storage import RepoStorage
 
     try:
@@ -1271,7 +1308,7 @@ async def list_files_editor(
 **operation_route("workspace.files.editor.read"))
 async def get_file_content_editor(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     path: str = Query(..., description="File path relative to workspace root"),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FileContentResponse:
@@ -1280,6 +1317,7 @@ async def get_file_content_editor(
 
     Cloud mode only - used by browser editor.
     """
+    await authorize_operation(db, user, "workspace.files.editor.read", GLOBAL)
     try:
         storage = FileStorageService(db)
         content, _ = await storage.read_file(path)
@@ -1318,7 +1356,7 @@ async def get_file_content_editor(
 async def put_file_content_editor(
     request: FileContentRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FileContentResponse:
     """
@@ -1326,6 +1364,7 @@ async def put_file_content_editor(
 
     Cloud mode only - used by browser editor.
     """
+    await authorize_operation(db, user, "workspace.files.editor.write", GLOBAL)
     try:
         storage = FileStorageService(db)
         await _lock_file_mutation(
@@ -1482,7 +1521,7 @@ async def put_file_content_editor(
 **operation_route("workspace.files.editor.folder.create"))
 async def create_folder_editor(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     path: str = Query(..., description="Folder path relative to workspace root"),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FileMetadata:
@@ -1491,6 +1530,7 @@ async def create_folder_editor(
 
     Cloud mode only - used by browser editor.
     """
+    await authorize_operation(db, user, "workspace.files.editor.folder.create", GLOBAL)
     try:
         storage = FileStorageService(db)
         updated_by = user.email if user else "system"
@@ -1517,7 +1557,7 @@ async def create_folder_editor(
 **operation_route("workspace.files.editor.delete"))
 async def delete_file_editor(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     path: str = Query(..., description="File or folder path"),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
@@ -1527,6 +1567,7 @@ async def delete_file_editor(
     Cloud mode only - used by browser editor.
     Uses S3 prefix listing to detect folders (no file_index markers needed).
     """
+    await authorize_operation(db, user, "workspace.files.editor.delete", GLOBAL)
     from src.services.repo_storage import RepoStorage
 
     try:
@@ -1576,7 +1617,7 @@ async def delete_file_editor(
 **operation_route("workspace.files.editor.rename"))
 async def rename_file_editor(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     old_path: str = Query(..., description="Current path"),
     new_path: str = Query(..., description="New path"),
     db: AsyncSession = Depends(get_db, scope="function"),
@@ -1591,6 +1632,7 @@ async def rename_file_editor(
 
     Cloud mode only - used by browser editor.
     """
+    await authorize_operation(db, user, "workspace.files.editor.rename", GLOBAL)
     try:
         storage = FileStorageService(db)
 
@@ -1623,13 +1665,14 @@ async def rename_file_editor(
 async def search_file_contents(
     request: SearchRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> SearchResponse:
     """Search workspace and Solution source like grep, one bounded page at a time.
 
     Follow ``next_cursor`` (or the ``guidance`` sentence) for more results.
     """
+    await authorize_operation(db, user, "workspace.files.search", GLOBAL)
     from src.services.source_search import InvalidSearchRequest, search_source
 
     try:

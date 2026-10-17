@@ -18,7 +18,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { toast } from "sonner";
-import { useAuth } from "@/contexts/AuthContext";
 import {
 	useRetryDelivery,
 	useCreateDelivery,
@@ -28,6 +27,7 @@ import {
 interface DeliveriesTableProps {
 	deliveries: EventDelivery[];
 	eventId?: string;
+	canManage?: boolean;
 }
 
 const deliveryStates = {
@@ -265,8 +265,11 @@ function DeliveryRecord({
 	);
 }
 
-export function DeliveriesTable({ deliveries, eventId }: DeliveriesTableProps) {
-	const { isPlatformAdmin } = useAuth();
+export function DeliveriesTable({
+	deliveries,
+	eventId,
+	canManage = false,
+}: DeliveriesTableProps) {
 	if (!deliveries.length)
 		return (
 			<div className="py-6 text-center text-sm leading-6 text-muted-foreground">
@@ -280,7 +283,7 @@ export function DeliveriesTable({ deliveries, eventId }: DeliveriesTableProps) {
 					key={delivery.id || `sub-${delivery.event_subscription_id}`}
 					delivery={delivery}
 					eventId={eventId}
-					isAdmin={isPlatformAdmin}
+					isAdmin={canManage}
 				/>
 			))}
 		</div>

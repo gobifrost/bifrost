@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.core.security import encrypt_secret, decrypt_secret
+from tests.helpers.authorization import admin_caller
 
 
 class TestConfigGetDecryptsSecrets:
@@ -23,15 +24,13 @@ class TestConfigGetDecryptsSecrets:
             "test_secret": {"value": encrypted, "type": "secret"},
         })
 
-        mock_user = MagicMock()
-        mock_user.user_id = "test-user-id"
-        mock_user.email = "test@example.com"
+        caller = admin_caller()
 
         request = CLIConfigGetRequest(key="test_secret")
 
-        with patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value="11111111-1111-1111-1111-111111111111"), \
+        with patch("src.services.authorization.enforce.load_caller", new=AsyncMock(return_value=caller)), \
              patch("src.repositories.config.ConfigRepository", return_value=mock_resolver):
-            result = await cli_get_config(request=request, current_user=mock_user, db=AsyncMock())
+            result = await cli_get_config(request=request, current_user=caller.principal, db=AsyncMock())
 
         assert isinstance(result, CLIConfigValue)
         assert result.value == plaintext, (
@@ -50,14 +49,13 @@ class TestConfigGetDecryptsSecrets:
             "bad_secret": {"value": "not-valid-encrypted-data", "type": "secret"},
         })
 
-        mock_user = MagicMock()
-        mock_user.user_id = "test-user-id"
+        caller = admin_caller()
 
         request = CLIConfigGetRequest(key="bad_secret")
 
-        with patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value="11111111-1111-1111-1111-111111111111"), \
+        with patch("src.services.authorization.enforce.load_caller", new=AsyncMock(return_value=caller)), \
              patch("src.repositories.config.ConfigRepository", return_value=mock_resolver):
-            result = await cli_get_config(request=request, current_user=mock_user, db=AsyncMock())
+            result = await cli_get_config(request=request, current_user=caller.principal, db=AsyncMock())
 
         assert isinstance(result, CLIConfigValue)
         assert result.value is None, "Corrupt secret should decrypt to None, not raise"
@@ -75,14 +73,13 @@ class TestConfigGetDecryptsSecrets:
             "normal_key": {"value": plain_value, "type": "string"},
         })
 
-        mock_user = MagicMock()
-        mock_user.user_id = "test-user-id"
+        caller = admin_caller()
 
         request = CLIConfigGetRequest(key="normal_key")
 
-        with patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value="11111111-1111-1111-1111-111111111111"), \
+        with patch("src.services.authorization.enforce.load_caller", new=AsyncMock(return_value=caller)), \
              patch("src.repositories.config.ConfigRepository", return_value=mock_resolver):
-            result = await cli_get_config(request=request, current_user=mock_user, db=AsyncMock())
+            result = await cli_get_config(request=request, current_user=caller.principal, db=AsyncMock())
 
         assert isinstance(result, CLIConfigValue)
         assert result.value == plain_value
@@ -107,14 +104,13 @@ class TestConfigListMasksSecrets:
             "secret_key": {"value": encrypted, "type": "secret"},
         })
 
-        mock_user = MagicMock()
-        mock_user.user_id = "test-user-id"
+        caller = admin_caller()
 
         request = CLIConfigListRequest()
 
-        with patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value="11111111-1111-1111-1111-111111111111"), \
+        with patch("src.services.authorization.enforce.load_caller", new=AsyncMock(return_value=caller)), \
              patch("src.repositories.config.ConfigRepository", return_value=mock_resolver):
-            result = await cli_list_config(request=request, current_user=mock_user, db=AsyncMock())
+            result = await cli_list_config(request=request, current_user=caller.principal, db=AsyncMock())
 
         assert result["normal_key"] == "normal_value"
         assert result["secret_key"] == "[SECRET]", (
@@ -134,14 +130,13 @@ class TestConfigListMasksSecrets:
             "empty_secret": {"value": None, "type": "secret"},
         })
 
-        mock_user = MagicMock()
-        mock_user.user_id = "test-user-id"
+        caller = admin_caller()
 
         request = CLIConfigListRequest()
 
-        with patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value="11111111-1111-1111-1111-111111111111"), \
+        with patch("src.services.authorization.enforce.load_caller", new=AsyncMock(return_value=caller)), \
              patch("src.repositories.config.ConfigRepository", return_value=mock_resolver):
-            result = await cli_list_config(request=request, current_user=mock_user, db=AsyncMock())
+            result = await cli_list_config(request=request, current_user=caller.principal, db=AsyncMock())
 
         assert result["empty_secret"] == "[SECRET]"
 

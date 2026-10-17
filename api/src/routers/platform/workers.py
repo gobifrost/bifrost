@@ -1,8 +1,8 @@
 """
-Platform Admin Workers Router
+Platform Workers Router
 
 API endpoints for managing process pools, viewing queue status, and handling
-stuck executions. All endpoints require platform admin privileges.
+stuck executions. Each endpoint requires the matching global Platform permission.
 
 The on-demand model uses ProcessPoolManager with one-shot workers, which
 only ever report two states in their heartbeat:
@@ -15,12 +15,13 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import redis.asyncio as aioredis
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.auth import CurrentSuperuser, get_current_superuser
+from src.core.auth import CurrentActiveUser
 from src.core.database import get_db
+from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.models import Execution, Workflow
 from src.models.contracts.platform import (
@@ -40,13 +41,46 @@ from src.models.contracts.platform import (
     WorkerMetricPoint,
     WorkerMetricsResponse,
 )
+from src.services.authorization.enforce import authorize_operation
+from src.services.authorization.evaluator import GLOBAL
 
 logger = logging.getLogger(__name__)
+
+WORKER_METRICS_OPERATION = "GET /api/platform/workers/metrics"
+WORKER_STATS_OPERATION = "GET /api/platform/workers/stats"
+WORKERS_LIST_OPERATION = "GET /api/platform/workers"
+WORKER_GET_OPERATION = "GET /api/platform/workers/{worker_id}"
+WORKER_PROCESS_RECYCLE_OPERATION = "POST /api/platform/workers/{worker_id}/processes/{pid}/recycle"
+WORKER_RECYCLE_ALL_OPERATION = "POST /api/platform/workers/{worker_id}/recycle-all"
+PLATFORM_QUEUE_OPERATION = "GET /api/platform/queue"
+PLATFORM_STUCK_HISTORY_OPERATION = "GET /api/platform/stuck-history"
+_PLATFORM_OPERATION_BY_ROUTE = {
+    WORKER_METRICS_OPERATION: WORKER_METRICS_OPERATION,
+    WORKER_STATS_OPERATION: WORKER_STATS_OPERATION,
+    WORKERS_LIST_OPERATION: WORKERS_LIST_OPERATION,
+    WORKER_GET_OPERATION: WORKER_GET_OPERATION,
+    WORKER_PROCESS_RECYCLE_OPERATION: WORKER_PROCESS_RECYCLE_OPERATION,
+    WORKER_RECYCLE_ALL_OPERATION: WORKER_RECYCLE_ALL_OPERATION,
+    PLATFORM_QUEUE_OPERATION: PLATFORM_QUEUE_OPERATION,
+    PLATFORM_STUCK_HISTORY_OPERATION: PLATFORM_STUCK_HISTORY_OPERATION,
+}
+
+
+async def _authorize_platform_operation(
+    request: Request,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> None:
+    operation = _PLATFORM_OPERATION_BY_ROUTE[
+        f"{request.method} {request.scope['route'].path}"
+    ]
+    await authorize_operation(db, user, operation, GLOBAL)
+
 
 router = APIRouter(
     prefix="/api/platform/workers",
     tags=["Platform Admin - Workers"],
-    dependencies=[Depends(get_current_superuser)],
+    dependencies=[Depends(_authorize_platform_operation)],
 )
 
 
@@ -80,7 +114,7 @@ async def _get_redis() -> aioredis.Redis:
     "Downsampled for longer ranges.",
 )
 async def get_worker_metrics(
-    _admin: CurrentSuperuser,
+    _user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
     range: str = Query(
         default="1h",
@@ -159,7 +193,7 @@ async def get_worker_metrics(
     description="Get aggregated statistics across all process pools",
 )
 async def get_pool_stats(
-    _admin: CurrentSuperuser,
+    _user: CurrentActiveUser,
 ) -> PoolStatsResponse:
     """
     Get aggregated pool statistics.
@@ -227,7 +261,7 @@ async def get_pool_stats(
     description="Get a list of all registered process pools and their current status",
 )
 async def list_pools(
-    _admin: CurrentSuperuser,
+    _user: CurrentActiveUser,
 ) -> PoolsListResponse:
     """
     List all registered process pools from Redis.
@@ -298,7 +332,7 @@ async def list_pools(
 )
 async def get_pool(
     worker_id: str,
-    _admin: CurrentSuperuser,
+    _user: CurrentActiveUser,
 ) -> PoolDetail:
     """
     Get detailed pool information.
@@ -371,7 +405,7 @@ async def get_pool(
 async def recycle_process(
     worker_id: str,
     pid: int,
-    admin: CurrentSuperuser,
+    user: CurrentActiveUser,
     request: RecycleProcessRequest | None = None,
 ) -> RecycleProcessResponse:
     """
@@ -403,7 +437,7 @@ async def recycle_process(
         "action": "recycle_process",
         "pid": pid,
         "reason": request.reason if request else "manual_recycle",
-        "requested_by": str(admin.user_id),
+        "requested_by": str(user.user_id),
         "requested_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -411,7 +445,7 @@ async def recycle_process(
 
     logger.info(
         f"Published recycle command for pool {log_safe(worker_id)} process PID={log_safe(pid)} "
-        f"by user {admin.user_id}"
+        f"by user {user.user_id}"
     )
 
     return RecycleProcessResponse(
@@ -430,7 +464,7 @@ async def recycle_process(
 )
 async def recycle_all_processes(
     worker_id: str,
-    admin: CurrentSuperuser,
+    user: CurrentActiveUser,
     request: RecycleAllRequest | None = None,
 ) -> RecycleAllResponse:
     """
@@ -473,7 +507,7 @@ async def recycle_all_processes(
     command = {
         "action": "recycle_all",
         "reason": request.reason if request else "Manual recycle from Diagnostics UI",
-        "requested_by": str(admin.user_id),
+        "requested_by": str(user.user_id),
         "requested_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -481,7 +515,7 @@ async def recycle_all_processes(
 
     logger.info(
         f"Published recycle_all command for pool {log_safe(worker_id)} "
-        f"({processes_affected} processes) by user {admin.user_id}"
+        f"({processes_affected} processes) by user {user.user_id}"
     )
 
     return RecycleAllResponse(
@@ -500,7 +534,7 @@ async def recycle_all_processes(
 queue_router = APIRouter(
     prefix="/api/platform/queue",
     tags=["Platform Admin - Queue"],
-    dependencies=[Depends(get_current_superuser)],
+    dependencies=[Depends(_authorize_platform_operation)],
 )
 
 
@@ -511,7 +545,7 @@ queue_router = APIRouter(
     description="Get pending executions in the queue",
 )
 async def get_queue(
-    _admin: CurrentSuperuser,
+    _user: CurrentActiveUser,
     limit: int = Query(50, ge=1, le=500, description="Maximum number of items"),
     offset: int = Query(0, ge=0, description="Number of items to skip"),
 ) -> QueueStatusResponse:
@@ -548,7 +582,7 @@ async def get_queue(
 stuck_router = APIRouter(
     prefix="/api/platform/stuck-history",
     tags=["Platform Admin - Stuck History"],
-    dependencies=[Depends(get_current_superuser)],
+    dependencies=[Depends(_authorize_platform_operation)],
 )
 
 
@@ -559,7 +593,7 @@ stuck_router = APIRouter(
     description="Get aggregated stuck workflow statistics",
 )
 async def get_stuck_history(
-    _admin: CurrentSuperuser,
+    _user: CurrentActiveUser,
     hours: int = Query(24, ge=1, le=720, description="Time window in hours"),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> StuckHistoryResponse:

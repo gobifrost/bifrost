@@ -10,12 +10,14 @@ from src.services.webhooks.auth import (
     build_webhook_integration_credentials,
     resolve_webhook_integration_auth,
 )
+from src.services.authorization.enforce import Caller
 from src.services.webhooks.registry import get_adapter_registry
 from src.services.webhooks.signing_secret import carry_signing_secret
 
 
 async def _resolve_integration(
     db: AsyncSession,
+    caller: Caller,
     source: EventSource,
     webhook: WebhookSource,
     adapter: Any,
@@ -28,6 +30,7 @@ async def _resolve_integration(
         )
     credentials = await build_webhook_integration_credentials(
         db,
+        caller,
         webhook.integration_id,
         source.organization_id,
     )
@@ -36,6 +39,7 @@ async def _resolve_integration(
 
 async def unsubscribe_provider(
     db: AsyncSession,
+    caller: Caller,
     source: EventSource,
 ) -> None:
     """Confirm a provider subscription is gone before local deletion."""
@@ -45,7 +49,7 @@ async def unsubscribe_provider(
     adapter = get_adapter_registry().get(webhook.adapter_name)
     if adapter is None:
         raise ValueError(f"Unknown webhook adapter: {webhook.adapter_name}")
-    integration = await _resolve_integration(db, source, webhook, adapter)
+    integration = await _resolve_integration(db, caller, source, webhook, adapter)
     await adapter.unsubscribe(
         external_id=webhook.external_id,
         state=webhook.state or {},
@@ -55,6 +59,7 @@ async def unsubscribe_provider(
 
 async def resubscribe_provider(
     db: AsyncSession,
+    caller: Caller,
     source: EventSource,
     callback_url: str,
 ) -> None:
@@ -65,7 +70,7 @@ async def resubscribe_provider(
     adapter = get_adapter_registry().get(webhook.adapter_name)
     if adapter is None:
         raise ValueError(f"Unknown webhook adapter: {webhook.adapter_name}")
-    integration = await _resolve_integration(db, source, webhook, adapter)
+    integration = await _resolve_integration(db, caller, source, webhook, adapter)
 
     try:
         await adapter.unsubscribe(

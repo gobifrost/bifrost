@@ -1406,7 +1406,7 @@
       },
       "operation": {
         "action_scopes": [
-          "apps.readbasic"
+          "apps.read"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
@@ -10080,7 +10080,7 @@
     "cli": 171,
     "manifest": 16,
     "mcp": 94,
-    "rest": 678,
+    "rest": 683,
     "sdk": 21
   },
   "schema_version": 1,
@@ -13681,6 +13681,41 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/sdk/requirements",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/sdk/runtime/data-provider-cache/read",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/sdk/runtime/data-provider-cache/write",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/sdk/runtime/logs",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/sdk/runtime/logs/{execution_id}",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/sdk/runtime/service-control",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

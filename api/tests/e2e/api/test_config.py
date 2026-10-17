@@ -291,7 +291,9 @@ class TestConfigAccess:
 class TestConfigPartialUpdate:
     """Test partial update (PUT) for config entries, especially secrets."""
 
-    def test_update_secret_without_value_preserves_existing(self, e2e_client, platform_admin):
+    def test_update_secret_without_value_preserves_existing(
+        self, e2e_client, platform_admin, secrets_reader_platform_admin
+    ):
         """Updating a secret config without providing a value keeps the existing encrypted value."""
         key = f"e2e_secret_partial_{uuid4().hex[:8]}"
         created = _create_config(
@@ -317,7 +319,9 @@ class TestConfigPartialUpdate:
         # Cleanup
         _delete_config(e2e_client, platform_admin.headers, config_id)
 
-    def test_update_secret_with_empty_string_preserves_existing(self, e2e_client, platform_admin):
+    def test_update_secret_with_empty_string_preserves_existing(
+        self, e2e_client, platform_admin, secrets_reader_platform_admin
+    ):
         """Sending empty string for secret value keeps existing value."""
         key = f"e2e_secret_empty_{uuid4().hex[:8]}"
         created = _create_config(
@@ -339,7 +343,9 @@ class TestConfigPartialUpdate:
         # Cleanup
         _delete_config(e2e_client, platform_admin.headers, config_id)
 
-    def test_update_secret_with_new_value_re_encrypts(self, e2e_client, platform_admin):
+    def test_update_secret_with_new_value_re_encrypts(
+        self, e2e_client, platform_admin, secrets_reader_platform_admin
+    ):
         """Providing a new value for a secret config re-encrypts it."""
         key = f"e2e_secret_reencrypt_{uuid4().hex[:8]}"
         created = _create_config(
@@ -361,7 +367,9 @@ class TestConfigPartialUpdate:
         # Cleanup
         _delete_config(e2e_client, platform_admin.headers, config_id)
 
-    def test_secret_write_echoes_are_redacted(self, e2e_client, platform_admin):
+    def test_secret_write_echoes_are_redacted(
+        self, e2e_client, platform_admin, secrets_reader_platform_admin
+    ):
         """POST and PUT echo a masked value — neither plaintext nor ciphertext —
         while the engine-facing SDK read still decrypts the stored value.
 

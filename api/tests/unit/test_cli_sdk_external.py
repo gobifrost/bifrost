@@ -1,16 +1,7 @@
-"""
-External principals on the /api/sdk direct-token surfaces.
+"""External SDK callers retain the shared metadata cascade.
 
-Knowledge (the OPEN-A surface): the store has NO grant axis (no roles, no
-access_level, no row policies), so its direct endpoints are implicitly
-internal-only — an external (portal/guest) principal is 403'd outright.
-Externals reach KB content only THROUGH workflows/agents they were granted
-(the engine sentinel keeps the full cascade).
-
-Tables (the OPEN-B surface): an external principal gets the NORMAL user
-cascade — org + global table names/schemas (row data is policy-gated,
-default deny). What OPEN-B keeps fixed is sentinel trust: an external must
-not inherit ``is_superuser=True`` from the legacy hardcoding.
+Knowledge's direct external restriction is separate from parent-authorized
+workflow and Agent access. Table rows remain subject to table policies.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -19,7 +10,10 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
+from shared.builtin_roles import USER_ROLE_ID
 from src.core.auth import UserPrincipal
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
 from src.models.contracts.cli import CLIKnowledgeSearchRequest, SDKTableListRequest
 from src.routers.cli import cli_knowledge_search, cli_list_tables
 
@@ -70,6 +64,9 @@ class TestCLIKnowledgeSearchExternal:
         with patch(
             "src.services.embeddings.factory.get_embedding_client",
             AsyncMock(return_value=_embedding_client()),
+        ), patch(
+            "src.routers.cli._authorize_sdk_knowledge",
+            AsyncMock(return_value=(MagicMock(), user.organization_id)),
         ):
             await cli_knowledge_search(
                 CLIKnowledgeSearchRequest(query="q", fallback=fallback),
@@ -93,10 +90,7 @@ class TestCLIKnowledgeSearchExternal:
         sql = await self._search(_principal(is_external=False))
         assert "organization_id IS NULL" in sql
 
-    async def test_sentinel_search_unchanged(self):
-        # The engine sentinel (superuser, is_external=False at mint) keeps the
-        # full cascade — workflow runtime resolution is intentionally NOT
-        # external-restricted (a workflow is an API endpoint to its caller).
+    async def test_internal_search_keeps_global_fallback_with_actor_flag(self):
         sql = await self._search(
             _principal(is_external=False, is_superuser=True)
         )
@@ -109,7 +103,13 @@ class TestCLIListTablesExternal:
 
     async def _list(self, user):
         session = _session()
-        await cli_list_tables(SDKTableListRequest(), user, session)
+        caller = Caller(user, AuthorizationContext(
+            user_id=user.user_id, home_organization_id=user.organization_id,
+            base_role_id=USER_ROLE_ID, is_external=user.is_external,
+            base_permissions=frozenset({"tables.read"}),
+        ))
+        with patch("src.services.authorization.enforce.load_caller", AsyncMock(return_value=caller)):
+            await cli_list_tables(SDKTableListRequest(), user, session)
         return _executed_sql(session)
 
     async def test_external_list_gets_normal_cascade(self):
@@ -122,7 +122,7 @@ class TestCLIListTablesExternal:
         sql = await self._list(_principal(is_external=False))
         assert "organization_id IS NULL" in sql
 
-    async def test_sentinel_list_unchanged(self):
+    async def test_actor_flag_does_not_change_the_authorized_cascade(self):
         sql = await self._list(
             _principal(is_external=False, is_superuser=True)
         )

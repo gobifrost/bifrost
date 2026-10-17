@@ -340,7 +340,7 @@ async def sdk_write_file(
     from src.services.file_backend import get_backend
 
     try:
-        effective_scope = resolve_effective_scope(caller, location, scope)
+        effective_scope = await resolve_effective_scope(caller, location, scope)
         solution_id = ctx_solution_id(caller, location)
         await require_declared_solution_file_location(
             caller,
@@ -484,7 +484,7 @@ async def sdk_delete_file(
     from src.services.file_backend import get_backend
 
     try:
-        effective_scope = resolve_effective_scope(caller, location, scope)
+        effective_scope = await resolve_effective_scope(caller, location, scope)
         solution_id = ctx_solution_id(caller, location)
         await require_declared_solution_file_location(
             caller,
@@ -674,7 +674,7 @@ async def sdk_signed_url(
             # ValueError from scope resolution propagates raw (the router
             # historically let it reach the 422 middleware); only resolver
             # rejections become 400 — mirroring the previous handler.
-            effective_scope = resolve_effective_scope(caller, location, scope)
+            effective_scope = await resolve_effective_scope(caller, location, scope)
             solution_id = ctx_solution_id(caller, location)
             await require_declared_solution_file_location(
                 caller,

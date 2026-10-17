@@ -39,6 +39,11 @@ vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockAuth(),
 }));
 
+const mockAuthorization = vi.fn();
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockAuthorization(),
+}));
+
 vi.mock("@/hooks/useExecutionStream", () => ({
 	useExecutionStream: (...args: unknown[]) => mockUseExecutionStream(...args),
 }));
@@ -84,8 +89,19 @@ vi.mock("@/components/execution", () => ({
 	ExecutionResultPanel: () => (
 		<div data-testid="result-panel">Result body</div>
 	),
-	ExecutionLogsPanel: ({ logs }: { logs?: unknown[] }) => (
-		<div data-testid="logs-panel">Logs {logs?.length ?? 0}</div>
+	ExecutionLogsPanel: ({
+		logs,
+		canReadDiagnostics,
+	}: {
+		logs?: unknown[];
+		canReadDiagnostics?: boolean;
+	}) => (
+		<div
+			data-testid="logs-panel"
+			data-diagnostics={String(canReadDiagnostics)}
+		>
+			Logs {logs?.length ?? 0}
+		</div>
 	),
 	ExecutionSidebar: () => <aside>Sidebar</aside>,
 	ExecutionCancelDialog: () => null,
@@ -141,7 +157,12 @@ beforeEach(() => {
 	mockAuth.mockReturnValue({
 		isPlatformAdmin: false,
 		hasRole: () => false,
+		user: { id: "user-1" },
 	});
+	mockAuthorization.mockImplementation(() => ({
+		canAt: () => mockAuth().isPlatformAdmin,
+		canAnywhere: () => mockAuth().isPlatformAdmin,
+	}));
 	mockUseExecution.mockReturnValue({
 		data: execution,
 		isLoading: false,
@@ -186,6 +207,50 @@ describe("ExecutionDetails — rerun visibility", () => {
 		expect(mockUseWorkflowsMetadata).toHaveBeenCalledWith({
 			enabled: true,
 		});
+	});
+
+	it("shows rerun for workflows.execute at the execution organization", async () => {
+		mockAuthorization.mockReturnValue({
+			canAnywhere: () => false,
+			canAt: (permission: string, target: { id?: string }) =>
+				permission === "workflows.execute" && target.id === "org-1",
+		});
+
+		await renderPage();
+
+		expect(
+			screen.getByRole("button", { name: /rerun/i }),
+		).toBeInTheDocument();
+	});
+
+	it("does not offer rerun when the role is scoped to another organization", async () => {
+		mockAuthorization.mockReturnValue({
+			canAnywhere: () => false,
+			canAt: (permission: string, target: { id?: string }) =>
+				permission === "workflows.execute" && target.id === "org-other",
+		});
+
+		await renderPage();
+
+		expect(
+			screen.queryByRole("button", { name: /rerun/i }),
+		).not.toBeInTheDocument();
+	});
+
+	it("shows diagnostics for an own run with executions.read at its organization", async () => {
+		mockAuthorization.mockReturnValue({
+			canAnywhere: () => false,
+			canAt: (permission: string, target: { id?: string }) =>
+				permission === "executions.read" && target.id === "org-1",
+		});
+
+		const { user } = await renderPage();
+		await user.click(screen.getByRole("tab", { name: "Logs" }));
+
+		expect(screen.getByTestId("logs-panel")).toHaveAttribute(
+			"data-diagnostics",
+			"true",
+		);
 	});
 });
 

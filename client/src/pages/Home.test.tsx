@@ -5,7 +5,7 @@ import type { HomeCollection, HomeResource } from "@/services/home";
 import { Home } from "./Home";
 
 const state = vi.hoisted(() => ({
-	isPlatformAdmin: false,
+	canManageShared: false,
 	home: {
 		data: undefined as
 			| { resources: HomeResource[]; collections: HomeCollection[] }
@@ -29,8 +29,15 @@ const state = vi.hoisted(() => ({
 	createConversation: { mutateAsync: vi.fn() },
 }));
 
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => ({
+		canAnywhere: () => state.canManageShared,
+		canAt: () => state.canManageShared,
+	}),
+}));
+
 vi.mock("@/contexts/AuthContext", () => ({
-	useAuth: () => ({ isPlatformAdmin: state.isPlatformAdmin }),
+	useAuth: () => ({ user: { id: "contoso-person" } }),
 }));
 
 vi.mock("@tanstack/react-query", async (importOriginal) => {
@@ -162,7 +169,7 @@ function renderHome(initialEntries = ["/"]) {
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	state.isPlatformAdmin = false;
+	state.canManageShared = false;
 	Object.assign(state.home, {
 		data: { resources, collections },
 		isLoading: false,
@@ -202,7 +209,7 @@ beforeEach(() => {
 
 describe("Home", () => {
 	it("filters by search, resource type, organization, and selected collection", async () => {
-		state.isPlatformAdmin = true;
+		state.canManageShared = true;
 		const { user } = renderHome(["/?collection=col-1"]);
 
 		expect(
@@ -248,7 +255,7 @@ describe("Home", () => {
 	});
 
 	it("clears the selected collection when organization scope changes", async () => {
-		state.isPlatformAdmin = true;
+		state.canManageShared = true;
 		const { user } = renderHome(["/?collection=col-1"]);
 
 		expect(screen.getByTestId("location-probe")).toHaveTextContent(
@@ -447,7 +454,7 @@ it("uses a plain Workspace title for users and title navigation for admins", () 
 	).not.toBeInTheDocument();
 	ordinary.unmount();
 
-	state.isPlatformAdmin = true;
+	state.canManageShared = true;
 	renderHome();
 	const navigation = screen.getByRole("navigation", {
 		name: "Workspace views",

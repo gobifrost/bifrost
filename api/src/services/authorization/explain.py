@@ -1,21 +1,13 @@
-"""What the managed-identity model would decide, step by step (report-only).
+"""Explain and enforce original-user reach plus configured workflow powers.
 
-Every run has a user: the person who started it, or the identity it runs as.
-The model allows an action when the target is in that user's reach and the
-power is held: the user's own roles plus what the workflow adds (Full: every
-permission, secrets included; Restricted: the workflow's grants). A person
-acting directly is judged on their own roles, with no workflow powers.
+Every run keeps its original user. Reach includes that user's home, placed
+roles, and Global. A real Platform Admin reaches every organization. Full
+workflows add every named power, including Secrets; Restricted workflows add
+only their configured permission capabilities. Agents and inline executions
+add no workflow powers. Acting identity remains separate.
 
-Reach is the user's home organization, every organization a role of theirs
-is placed on, and Global, which is in everyone's reach. A Platform Admin
-reaches every organization (the evaluator's rule 1). The global identity has
-no home, so it reaches Global only.
-
-Each check returns a ``Trace``: the outcome and the steps that led to it.
-Phase 1 records traces (``enforced`` is False) and today's code still decides
-every request, except a person's ``run_as``: ``check_run_as`` decides that
-request too, and its row is written as enforced. The decision itself comes
-from the evaluator (``decide``); nothing here re-implements a rule.
+Each check returns a Trace with its outcome and decision steps. Enforcement
+and the Access Checks view share these rules and the native role evaluator.
 """
 
 from __future__ import annotations
@@ -40,9 +32,7 @@ from src.models.orm.users import User
 from src.models.orm.workflows import Workflow
 from src.services.authorization.context import (
     AuthorizationContext,
-    Boundary,
     BoundaryKind,
-    RoleGrant,
     build_authorization_context,
 )
 from src.services.authorization.enforce import privileged_user_ids
@@ -185,58 +175,22 @@ def _trace(steps: list[Step]) -> Trace:
     return Trace(outcome="failure" if stopped else "success", enforced=False, steps=tuple(finished))
 
 
-def _restricted_context(run_user: RunUser, powers: Powers) -> AuthorizationContext:
-    """The run user's context plus the workflow's grants as additional roles.
-
-    A grant without a boundary applies at the run user's home organization
-    (Global for the global identity).
-    """
-    home = (
-        Boundary(BoundaryKind.PLATFORM)
-        if run_user.home is None
-        else Boundary(BoundaryKind.ORGANIZATION, run_user.home)
-    )
-    grants = tuple(
-        RoleGrant(
-            role_id=run_user.user_id,
-            permissions=frozenset({grant.permission}),
-            boundaries=(
-                home
-                if grant.boundary is None
-                else Boundary(BoundaryKind(grant.boundary), grant.organization_id),
-            ),
-        )
-        for grant in powers.grants
-    )
-    ctx = run_user.ctx
-    return AuthorizationContext(
-        user_id=ctx.user_id,
-        home_organization_id=ctx.home_organization_id,
-        base_role_id=ctx.base_role_id,
-        is_external=ctx.is_external,
-        base_permissions=ctx.base_permissions,
-        role_grants=(*ctx.role_grants, *grants),
-    )
-
-
-def _evaluator_target(run_user: RunUser, target: UUID | None) -> Target:
-    if target is not None and target == run_user.home:
+def _evaluator_target(run_user: RunUser, target: UUID | None, entry: AccessEntry) -> Target:
+    if target == run_user.home and entry.boundary != "platform":
         return HOME
     return GLOBAL if target is None else cross_org(target)
 
 
-def _permission_entry(permission: str) -> AccessEntry:
-    """An organization-boundary entry for a power the access list does not
-    route (secret decryption and elevated branches happen inside many
-    routes)."""
+def permission_entry(permission: str) -> AccessEntry:
+    """An organization-boundary check for a named power inside an operation."""
     return AccessEntry(
         method="GET",
-        path="(report-only access check)",
+        path="(named permission check)",
         access_class=AccessClass.PERMISSION,
         current_gate=CurrentGate.EVALUATOR,
         permission=permission,
         boundary="organization",
-        reason="Report-only access check",
+        reason="Named permission check",
     )
 
 
@@ -252,7 +206,12 @@ def _permission_step(
             "not_applicable",
             "no_access_list_entry",
         )
-    decision = decide(_restricted_context(run_user, powers), entry, _evaluator_target(run_user, target))
+    if entry.permission is not None and any(grant.permission == entry.permission for grant in powers.grants):
+        return Step(
+            "permission", CANONICAL_TRACE_STEP_LABELS["permission"], "passed", "workflow_capability",
+            {"permission": entry.permission},
+        )
+    decision = decide(run_user.ctx, entry, _evaluator_target(run_user, target, entry))
     return Step(
         "permission",
         CANONICAL_TRACE_STEP_LABELS["permission"],
@@ -264,7 +223,7 @@ def _permission_step(
 
 def _direct_permission_step(run_user: RunUser, target: UUID | None, entry: AccessEntry) -> Step:
     """The permission held by the person's own roles at ``target``."""
-    decision = decide(run_user.ctx, entry, _evaluator_target(run_user, target))
+    decision = decide(run_user.ctx, entry, _evaluator_target(run_user, target, entry))
     return Step(
         "permission",
         "Permission",
@@ -368,7 +327,7 @@ def check_permission(
 def _held_step(run_user: RunUser, powers: Powers | None, target: UUID | None, permission: str) -> Step:
     """``permission`` held at ``target``: by the person's own roles
     (``powers`` None), or by the run user's roles plus the workflow's powers."""
-    entry = _permission_entry(permission)
+    entry = permission_entry(permission)
     if powers is None:
         return _direct_permission_step(run_user, target, entry)
     return _permission_step(run_user, powers, target, entry)
@@ -463,7 +422,7 @@ def check_entry(run_user: RunUser, *, allowed: bool, subject: str) -> Trace:
 
 
 def check_policy(
-    run_user: RunUser, powers: Powers, *, today: bool, model: bool, missing: list[str]
+    run_user: RunUser, powers: Powers | None, *, today: bool, model: bool, missing: list[str]
 ) -> Trace:
     """A table or file policy evaluated against the run user."""
     step = Step(
@@ -473,14 +432,17 @@ def check_policy(
         "allowed" if model else "denied",
         {"today": today, "missing": missing},
     )
-    return _trace([_run_user_step(run_user), _powers_step(powers), step])
+    return _trace([_run_user_step(run_user), _NO_WORKFLOW if powers is None else _powers_step(powers), step])
 
 
-def check_secret(run_user: RunUser, powers: Powers, target: UUID | None, *, kind: str, name: str) -> Trace:
-    """Decrypting a secret: Full adds it; otherwise the run user or a grant must hold it."""
-    step = _permission_step(run_user, powers, target, _permission_entry(_SECRETS_PERMISSION))
-    step = Step(step.key, "Read secret", step.status, step.reason, {**step.facts, "kind": kind, "name": name})
-    return _trace([_run_user_step(run_user), _powers_step(powers), step])
+def check_secret(run_user: RunUser, powers: Powers | None, target: UUID | None, *, kind: str, name: str) -> Trace:
+    """Decrypt a secret only with its named power inside original-user reach."""
+    trace = check_permission(run_user, powers, _SECRETS_PERMISSION, target)
+    permission = trace.steps[-1]
+    secret = replace(
+        permission, label="Read secret", facts={**permission.facts, "kind": kind, "name": name},
+    )
+    return replace(trace, steps=(*trace.steps[:-1], secret))
 
 
 async def load_run_user(db: AsyncSession, user_id: UUID) -> RunUser | None:
@@ -536,7 +498,7 @@ async def load_run_as_target(db: AsyncSession, user_id: UUID) -> RunAsTarget | N
 
 async def load_powers(db: AsyncSession, workflow_id: UUID | None) -> Powers:
     """The workflow's mode and grants; the platform default for no workflow."""
-    workflow = None if workflow_id is None else await db.get(Workflow, workflow_id)
+    workflow = None if workflow_id is None else await db.get(Workflow, workflow_id, populate_existing=True)
     if workflow is None:
         return Powers(await get_default_workflow_permission_mode(db), ())
     mode = await effective_workflow_permission_mode(db, workflow)

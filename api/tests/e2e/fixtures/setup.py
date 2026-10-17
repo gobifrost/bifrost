@@ -499,6 +499,68 @@ def second_platform_admin(
 
 
 @pytest.fixture
+def secrets_reader_platform_admin(
+    e2e_client: httpx.Client,
+    platform_admin: E2EUser,
+    second_platform_admin: E2EUser,
+):
+    """Temporarily grant the explicit Secrets Reader role to the test admin."""
+    from shared.builtin_roles import DECRYPTION_ROLE_ID
+
+    assignments_url = f"/api/users/{platform_admin.user_id}/role-assignments"
+    response = e2e_client.get(assignments_url, headers=second_platform_admin.headers)
+    assert response.status_code == 200, response.text
+    original = response.json()
+    original_additional = [
+        {
+            "role_id": assignment["role_id"],
+            "boundaries": [
+                {
+                    "kind": boundary["kind"],
+                    "organization_id": boundary["organization_id"],
+                }
+                for boundary in assignment["boundaries"]
+            ],
+        }
+        for assignment in original["additional"]
+    ]
+    already_granted = any(
+        assignment["role_id"] == str(DECRYPTION_ROLE_ID)
+        for assignment in original_additional
+    )
+    if not already_granted:
+        response = e2e_client.put(
+            assignments_url,
+            headers=second_platform_admin.headers,
+            json={
+                "base_role_id": original["base_role"]["id"],
+                "additional": [
+                    *original_additional,
+                    {"role_id": str(DECRYPTION_ROLE_ID)},
+                ],
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert str(DECRYPTION_ROLE_ID) in {
+            assignment["role_id"] for assignment in response.json()["additional"]
+        }
+
+    try:
+        yield platform_admin
+    finally:
+        if not already_granted:
+            response = e2e_client.put(
+                assignments_url,
+                headers=second_platform_admin.headers,
+                json={
+                    "base_role_id": original["base_role"]["id"],
+                    "additional": original_additional,
+                },
+            )
+            assert response.status_code == 200, response.text
+
+
+@pytest.fixture
 def refresh_user_tokens():
     """
     Function fixture to refresh a user's tokens mid-test.

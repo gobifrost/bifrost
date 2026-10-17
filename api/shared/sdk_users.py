@@ -408,7 +408,7 @@ async def create_user(
         require_operation(
             caller, "users.create", GLOBAL, permission="userlifecycle.readwrite"
         )
-        require_unprotected(caller, is_superuser)
+        require_unprotected(caller, is_superuser, organization_id)
     else:
         require_operation(caller, "users.create", cross_org(organization_id))
     if is_superuser:
@@ -504,7 +504,7 @@ async def get_user(
 # Platform Admin flag, which adds or removes the Platform Admin role and so
 # takes a Platform Admin. Every supplied field is authorized,
 # including explicit nulls and false.
-PLATFORM_ADMIN_ONLY = "platform_admin"
+PRIVILEGED_ACCESS = "privilegedaccess.readwrite"
 UPDATE_FIELD_PERMISSIONS: dict[str, str] = {
     "name": "users.readwrite",
     "is_active": "users.readwrite",
@@ -516,7 +516,7 @@ UPDATE_FIELD_PERMISSIONS: dict[str, str] = {
     "is_external": "userlifecycle.readwrite",
     # A move: authority at the source and at the destination.
     "organization_id": "userlifecycle.readwrite",
-    "is_superuser": PLATFORM_ADMIN_ONLY,
+    "is_superuser": PRIVILEGED_ACCESS,
 }
 
 
@@ -546,12 +546,11 @@ def _authorize_update(
 
     source = org_target(db_user.organization_id)
     for field, permission in sorted(update_field_permissions(fields).items()):
-        if permission == PLATFORM_ADMIN_ONLY:
+        if permission == PRIVILEGED_ACCESS:
             require_operation(caller, "users.update", source)
-            if not caller.is_platform_admin:
-                raise UserServiceError(
-                    403, "Only a Platform Admin can change whether a user is a Platform Admin"
-                )
+            from src.services.authorization.enforce import require_permission
+
+            require_permission(caller, PRIVILEGED_ACCESS, db_user.organization_id)
             access_checks.note_power(
                 "privilegedaccess.readwrite", db_user.organization_id, subject=f"user:{db_user.id}"
             )
@@ -559,7 +558,7 @@ def _authorize_update(
         require_operation(caller, "users.update", source, permission=permission)
         if field == "organization_id" and organization_id is not None:
             require_operation(caller, "users.update", org_target(organization_id))
-    require_unprotected(caller, target_is_privileged)
+    require_unprotected(caller, target_is_privileged, db_user.organization_id)
 
 
 async def update_user(
@@ -603,7 +602,7 @@ async def update_user(
         privileged_user_ids,
     )
 
-    for permission in set(update_field_permissions(fields).values()) - {PLATFORM_ADMIN_ONLY}:
+    for permission in set(update_field_permissions(fields).values()) - {PRIVILEGED_ACCESS}:
         operation_reach(caller, "users.update", permission=permission)
     db_user = await _resolve_user(session, user_id)
     if not db_user:
@@ -757,7 +756,7 @@ async def delete_user(
         raise UserServiceError(403, "System user cannot be deleted")
     refuse_identity_management(db_user)
     require_operation(caller, "users.delete", org_target(db_user.organization_id))
-    require_unprotected(caller, db_user.id in await privileged_user_ids(session, [db_user.id]))
+    require_unprotected(caller, db_user.id in await privileged_user_ids(session, [db_user.id]), db_user.organization_id)
 
     from shared.account_guards import (
         AccountGuardError,
@@ -914,7 +913,9 @@ async def bulk_update_users(
             continue
         user_held = held.get(uid, frozenset())
         if is_privileged_principal(user_held):
-            if not caller.is_platform_admin:
+            from src.services.authorization.enforce import allows_permission
+
+            if not allows_permission(caller, PRIVILEGED_ACCESS, u.organization_id):
                 fail(uid, PROTECTED_TARGET_MESSAGE)
                 continue
             access_checks.note_power("privilegedaccess.readwrite", u.organization_id, subject=f"user:{uid}")
@@ -950,7 +951,7 @@ async def bulk_update_users(
                 continue
             try:
                 for role_id in added | removed:
-                    check_role_change(caller, roles[role_id], user_held)
+                    check_role_change(caller, roles[role_id], user_held, u.organization_id)
                 for role_id in added:
                     check_boundaries(
                         caller, reach, roles[role_id], default_boundaries(u.organization_id)

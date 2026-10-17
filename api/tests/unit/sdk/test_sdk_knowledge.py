@@ -34,6 +34,7 @@ from shared.sdk_knowledge import (
     store_many_knowledge_documents,
 )
 from src.core.auth import UserPrincipal
+from src.services.authorization.enforce import Caller
 from src.models.contracts.cli import (
     CLIKnowledgeDeleteRequest,
     CLIKnowledgeSearchRequest,
@@ -556,6 +557,17 @@ class TestListAndGetServices:
 
 @pytest.mark.asyncio
 class TestHandlerAdapters:
+    @pytest.fixture(autouse=True)
+    def _authorize_handler(self, monkeypatch, request):
+        if request.function.__name__ == "test_external_denial_before_any_service_call":
+            return
+        import src.routers.cli as cli_module
+
+        async def authorize(_db, user, _operation, _scope):
+            return Caller(user, None), user.organization_id
+
+        monkeypatch.setattr(cli_module, "_authorize_sdk_knowledge", AsyncMock(side_effect=authorize))
+
     async def test_store_handler_passes_scalars_and_returns_id(self):
         from src.routers.cli import cli_knowledge_store
 

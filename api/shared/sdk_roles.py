@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from sqlalchemy import delete, func, select, union
@@ -70,55 +70,149 @@ class RoleServiceError(Exception):
 
 
 async def get_consumer_counts(
-    session: AsyncSession, role_ids: list[UUID]
+    session: AsyncSession, role_ids: list[UUID], caller: "Caller"
 ) -> dict[UUID, RoleConsumerCounts]:
-    """Inline consumer counts (users/forms/agents/apps/workflows/knowledge)."""
-    from src.models import RoleConsumerCounts
+    """Count only role consumers within the original caller's reach."""
     from src.models import AgentRole as AgentRoleORM
     from src.models import FormRole as FormRoleORM
+    from src.models import RoleConsumerCounts
+    from src.models import User as UserORM
     from src.models import UserRole as UserRoleORM
+    from src.models.orm.agents import Agent
     from src.models.orm.app_roles import AppRole as AppRoleORM
+    from src.models.orm.applications import Application
+    from src.models.orm.forms import Form
     from src.models.orm.workflow_roles import WorkflowRole as WorkflowRoleORM
+    from src.models.orm.workflows import Workflow
 
     counts_by_role = {role_id: RoleConsumerCounts() for role_id in role_ids}
     if not counts_by_role:
         return counts_by_role
+    from src.services.authorization.enforce import user_reach
 
-    aggregates: list[tuple[str, object]] = [
-        ("users", UserRoleORM),
-        ("forms", FormRoleORM),
-        ("agents", AgentRoleORM),
-        ("apps", AppRoleORM),
-        ("workflows", WorkflowRoleORM),
+    reach = user_reach(caller)
+    aggregates: list[tuple[str, object, object, object]] = [
+        ("forms", FormRoleORM, FormRoleORM.form_id, Form),
+        ("agents", AgentRoleORM, AgentRoleORM.agent_id, Agent),
+        ("apps", AppRoleORM, AppRoleORM.app_id, Application),
+        ("workflows", WorkflowRoleORM, WorkflowRoleORM.workflow_id, Workflow),
     ]
-    for field, orm in aggregates:
-        aggregate = await session.execute(
-            select(orm.role_id, func.count())  # type: ignore[attr-defined]
-            .where(orm.role_id.in_(counts_by_role))  # type: ignore[attr-defined]
-            .group_by(orm.role_id)  # type: ignore[attr-defined]
+    for field, binding, resource_id, resource in aggregates:
+        query = (
+            select(binding.role_id, func.count())  # type: ignore[attr-defined]
+            .join(resource, resource.id == resource_id)  # type: ignore[attr-defined]
+            .where(binding.role_id.in_(counts_by_role))  # type: ignore[attr-defined]
+            .group_by(binding.role_id)  # type: ignore[attr-defined]
         )
+        reach_filter = reach.where(resource.organization_id)  # type: ignore[attr-defined]
+        if reach_filter is not None:
+            query = query.where(reach_filter)
+        aggregate = await session.execute(query)
         for role_id, count in aggregate.all():
             entry = counts_by_role.get(role_id)
             if entry is not None:
                 setattr(entry, field, int(count))
+
+    base_holders = select(
+        UserORM.base_role_id.label("role_id"), UserORM.id.label("user_id")
+    ).where(UserORM.base_role_id.in_(counts_by_role))
+    additional_holders = (
+        select(UserRoleORM.role_id.label("role_id"), UserRoleORM.user_id.label("user_id"))
+        .join(UserORM, UserORM.id == UserRoleORM.user_id)
+        .where(UserRoleORM.role_id.in_(counts_by_role))
+    )
+    reach_filter = reach.where(UserORM.organization_id)
+    if reach_filter is not None:
+        base_holders = base_holders.where(reach_filter)
+        additional_holders = additional_holders.where(reach_filter)
+    holders = union(base_holders, additional_holders).subquery()
+    holder_rows = await session.execute(
+        select(holders.c.role_id, func.count()).group_by(holders.c.role_id)
+    )
+    for role_id, count in holder_rows.all():
+        entry = counts_by_role.get(role_id)
+        if entry is not None:
+            entry.users = int(count)
     return counts_by_role
 
 
+async def list_role_bound_resource_ids(
+    session: AsyncSession,
+    caller: "Caller",
+    *,
+    role_id: UUID,
+    binding_model: Any,
+    resource_model: Any,
+    binding_resource_id: Any,
+) -> list[str]:
+    """List resources shared by a role inside original-user reach.
+
+    The predicate remains in SQL before rows are returned, so callers cannot
+    infer out-of-reach bindings through a role's global definition.
+    """
+    from src.services.authorization.enforce import user_reach
+
+    query = (
+        select(binding_resource_id)
+        .join(resource_model, resource_model.id == binding_resource_id)
+        .where(binding_model.role_id == role_id)
+    )
+    reach_filter = user_reach(caller).where(resource_model.organization_id)
+    if reach_filter is not None:
+        query = query.where(reach_filter)
+    return [str(resource_id) for resource_id in (await session.execute(query)).scalars()]
+
+
+async def require_role_binding_target(
+    session: AsyncSession,
+    caller: "Caller",
+    *,
+    operation: str,
+    resource_model: Any,
+    resource_id: UUID,
+    agent_configuration: bool = False,
+) -> Any:
+    """Load a share target and authorize its persisted organization.
+
+    Agent role sharing changes privileged Agent configuration, so private
+    agents owned by another user additionally require ``agents.readwrite.all``.
+    """
+    from src.services.agent_write_policy import can_configure_agent
+    from src.services.authorization.enforce import org_target, require_operation
+
+    resource = await session.get(resource_model, resource_id)
+    if resource is None:
+        raise RoleServiceError(404, "Resource not found")
+    require_operation(caller, operation, org_target(resource.organization_id))
+    if agent_configuration and not can_configure_agent(caller, resource):
+        raise RoleServiceError(403, "You don't have permission to manage agents")
+    return resource
+
+
 async def get_role_holders(
-    session: AsyncSession, role_ids: list[UUID]
+    session: AsyncSession, role_ids: list[UUID], caller: "Caller"
 ) -> dict[UUID, int]:
-    """Distinct users holding each role as their base role or an additional role."""
+    """Count holders only in the original caller's reach."""
     from src.models import User as UserORM
     from src.models import UserRole as UserRoleORM
+    from src.services.authorization.enforce import user_reach
 
-    held = union(
-        select(UserORM.base_role_id.label("role_id"), UserORM.id.label("user_id")),
-        select(UserRoleORM.role_id, UserRoleORM.user_id),
-    ).subquery()
+    reach = user_reach(caller)
+    base = select(UserORM.base_role_id.label("role_id"), UserORM.id.label("user_id")).where(
+        UserORM.base_role_id.in_(role_ids)
+    )
+    additional = (
+        select(UserRoleORM.role_id.label("role_id"), UserRoleORM.user_id.label("user_id"))
+        .join(UserORM, UserORM.id == UserRoleORM.user_id)
+        .where(UserRoleORM.role_id.in_(role_ids))
+    )
+    reach_filter = reach.where(UserORM.organization_id)
+    if reach_filter is not None:
+        base = base.where(reach_filter)
+        additional = additional.where(reach_filter)
+    held = union(base, additional).subquery()
     rows = await session.execute(
-        select(held.c.role_id, func.count())
-        .where(held.c.role_id.in_(role_ids))
-        .group_by(held.c.role_id)
+        select(held.c.role_id, func.count()).group_by(held.c.role_id)
     )
     return {role_id: int(count) for role_id, count in rows.all()}
 
@@ -126,7 +220,7 @@ async def get_role_holders(
 async def get_role_permissions(
     session: AsyncSession, role_ids: list[UUID]
 ) -> dict[UUID, list[str]]:
-    """Each role's granted permissions, sorted."""
+    """Each global role definition's granted permissions, sorted."""
     from src.models.orm.users import RolePermission as RolePermissionORM
 
     rows = await session.execute(
@@ -141,22 +235,28 @@ async def get_role_permissions(
 
 
 async def get_role_placements(
-    session: AsyncSession, role_ids: list[UUID]
+    session: AsyncSession, role_ids: list[UUID], caller: "Caller"
 ) -> dict[UUID, RolePlacementSummary]:
-    """Where each role's assignments are placed, from its assignment boundaries."""
+    """Summarize placements only for users inside original reach."""
     from src.models import RolePlacementSummary
-    from src.models.orm.users import UserRoleBoundary
+    from src.models.orm.users import User, UserRoleBoundary
+    from src.services.authorization.enforce import user_reach
 
-    rows = await session.execute(
+    query = (
         select(
             UserRoleBoundary.role_id,
             func.count(func.distinct(UserRoleBoundary.organization_id)),
             func.bool_or(UserRoleBoundary.kind == "managed_organizations"),
             func.bool_or(UserRoleBoundary.kind == "platform"),
         )
+        .join(User, User.id == UserRoleBoundary.user_id)
         .where(UserRoleBoundary.role_id.in_(role_ids))
         .group_by(UserRoleBoundary.role_id)
     )
+    reach_filter = user_reach(caller).where(User.organization_id)
+    if reach_filter is not None:
+        query = query.where(reach_filter)
+    rows = await session.execute(query)
     placements = {
         role_id: RolePlacementSummary(organizations=0, managed=False, platform=False)
         for role_id in role_ids
@@ -168,15 +268,17 @@ async def get_role_placements(
     return placements
 
 
-async def attach_role_summaries(session: AsyncSession, roles: list[RolePublic]) -> None:
-    """Fill the consumer counts, holders, grants and placements of ``roles``."""
+async def attach_role_summaries(
+    session: AsyncSession, roles: list[RolePublic], caller: "Caller"
+) -> None:
+    """Fill role summaries with original-reach SQL predicates before aggregation."""
     if not roles:
         return
     role_ids = [role.id for role in roles]
-    counts = await get_consumer_counts(session, role_ids)
-    holders = await get_role_holders(session, role_ids)
+    counts = await get_consumer_counts(session, role_ids, caller)
+    holders = await get_role_holders(session, role_ids, caller)
     permissions = await get_role_permissions(session, role_ids)
-    placements = await get_role_placements(session, role_ids)
+    placements = await get_role_placements(session, role_ids, caller)
     for role in roles:
         role.consumer_counts = counts[role.id]
         role.holders = holders.get(role.id, 0)
@@ -187,6 +289,7 @@ async def attach_role_summaries(session: AsyncSession, roles: list[RolePublic]) 
 async def create_role(
     session: AsyncSession,
     *,
+    caller: "Caller",
     name: str,
     description: str | None,
     actor_email: str,
@@ -225,13 +328,14 @@ async def create_role(
         details={"name": role.name},
     )
     public = RolePublic.model_validate(role)
-    await attach_role_summaries(session, [public])
+    await attach_role_summaries(session, [public], caller)
     return public
 
 
 async def get_role(
     session: AsyncSession,
     *,
+    caller: "Caller",
     role_id: UUID,
     include_counts: bool = True,
     include_builtin: bool = False,
@@ -243,8 +347,7 @@ async def get_role(
     are hidden from this surface unless asked for (the Roles UI shows them
     read-only) — see `shared.builtin_roles`; their permission sets are
     readable at ``/api/roles/{role_id}/permissions``.
-    ``include_counts=False`` omits the consumer counts (they count users in
-    every organization, which only a Platform Admin may see).
+    ``include_counts=False`` omits reach-scoped consumer and holder summaries.
     """
     from src.models import Role as RoleORM
     from src.models import RolePublic
@@ -257,13 +360,14 @@ async def get_role(
 
     public = RolePublic.model_validate(role)
     if include_counts:
-        await attach_role_summaries(session, [public])
+        await attach_role_summaries(session, [public], caller)
     return public
 
 
 async def list_roles(
     session: AsyncSession,
     *,
+    caller: "Caller",
     search: str | None = None,
     sort_by: Literal["name", "created"] = "name",
     sort_direction: Literal["asc", "desc"] = "asc",
@@ -279,7 +383,7 @@ async def list_roles(
     name ascending, unbounded when ``limit`` is None, builtin roles hidden).
     ``include_builtin`` adds Platform Admin, User, Platform Operator and
     Secrets Reader (read-only; for the roles UI). ``include_counts=False``
-    omits the consumer counts (see ``get_role``).
+    omits reach-scoped summaries (see ``get_role``).
     """
     from src.models import Role as RoleORM
     from src.models import RolePublic
@@ -310,7 +414,7 @@ async def list_roles(
 
     out = [RolePublic.model_validate(r) for r in roles]
     if include_counts:
-        await attach_role_summaries(session, out)
+        await attach_role_summaries(session, out, caller)
     return out, total or 0
 
 
@@ -577,9 +681,9 @@ async def _require_assignment_target(
         return None
     require_operation(caller, operation, org_target(user.organization_id))
     held = (await held_permissions_by_user(session, [user_id])).get(user_id, frozenset())
-    require_unprotected(caller, is_privileged_principal(held))
+    require_unprotected(caller, is_privileged_principal(held), user.organization_id)
     try:
-        check_role_change(caller, role, held)
+        check_role_change(caller, role, held, user.organization_id)
     except RoleAssignmentError as exc:
         raise RoleServiceError(exc.status_code, exc.detail) from None
     return user

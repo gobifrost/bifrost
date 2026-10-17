@@ -12,10 +12,10 @@ from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import joinedload
 
-from src.core.auth import Context, CurrentActiveUser, CurrentSuperuser
+from src.core.auth import Context, CurrentActiveUser
 from src.core.db_deps import DbSession
 from src.core.error_messages import format_exception_message
 from src.core.log_safety import log_safe
@@ -93,10 +93,50 @@ from src.services.webhooks.signing_secret import (
     with_signing_secret,
 )
 from src.services.operation_catalog import operation_route
+from shared.scope_resolver import UNSET, resolve_effective_scope
+from src.services.authorization.enforce import (
+    Caller,
+    load_caller,
+    permitted_organizations,
+    require_permission,
+    user_reach,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/events", tags=["Events"])
+
+
+async def _require_event_source(
+    db: DbSession,
+    user: CurrentActiveUser,
+    source: EventSource,
+    permission: str,
+) -> Caller:
+    """Authorize an EventSource at its persisted organization.
+
+    Object lookup intentionally stays separate from admission so callers
+    outside original reach receive the same neutral source result as a miss.
+    """
+    caller = await load_caller(db, user)
+    if not user_reach(caller).covers(source.organization_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Event source not found")
+    require_permission(caller, permission, source.organization_id)
+    return caller
+
+
+async def _require_event_target(
+    db: DbSession,
+    user: CurrentActiveUser,
+    organization_id: UUID | None,
+    permission: str,
+) -> Caller:
+    """Authorize an explicit event target before creation or lookup."""
+    caller = await load_caller(db, user)
+    if not user_reach(caller).covers(organization_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Organization not found")
+    require_permission(caller, permission, organization_id)
+    return caller
 
 
 def _build_callback_url(source_id: UUID) -> str:
@@ -402,6 +442,7 @@ def _validate_schedule_config(cron_expression: str, timezone_name: str) -> None:
 
 async def _resolve_webhook_integration(
     db: DbSession,
+    caller: Caller,
     source: EventSource,
     adapter: Any,
     integration_id: UUID | None,
@@ -410,13 +451,14 @@ async def _resolve_webhook_integration(
     if integration_id is None:
         return None
     credentials = await build_webhook_integration_credentials(
-        db, integration_id, source.organization_id
+        db, caller, integration_id, source.organization_id
     )
     return await resolve_webhook_integration_auth(credentials)
 
 
 async def _resubscribe_webhook_on_change(
     db: DbSession,
+    caller: Caller,
     source: EventSource,
     ws: WebhookSource,
     adapter: Any,
@@ -433,7 +475,9 @@ async def _resubscribe_webhook_on_change(
     matching the existing ``resubscribe_provider`` lifecycle helper's
     tolerance for a provider that already dropped the old registration.
     """
-    new_integration = await _resolve_webhook_integration(db, source, adapter, new_integration_id)
+    new_integration = await _resolve_webhook_integration(
+        db, caller, source, adapter, new_integration_id
+    )
     try:
         subscribe_result = await adapter.subscribe(
             callback_url=_build_public_callback_url(source.id),
@@ -450,7 +494,7 @@ async def _resubscribe_webhook_on_change(
     if old_adapter is not None and ws.external_id:
         try:
             old_integration = await _resolve_webhook_integration(
-                db, source, old_adapter, ws.integration_id
+                db, caller, source, old_adapter, ws.integration_id
             )
             await old_adapter.unsubscribe(
                 external_id=ws.external_id,
@@ -482,9 +526,11 @@ async def _resubscribe_webhook_on_change(
 **operation_route("events.webhook_adapters.list"))
 async def list_adapters(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
+    db: DbSession,
 ) -> WebhookAdapterListResponse:
     """List all available webhook adapters."""
+    await _require_event_target(db, user, None, "events.read")
     registry = get_adapter_registry()
     adapters_info = registry.list_adapters()
 
@@ -503,7 +549,7 @@ async def get_dynamic_values(
     adapter_name: str,
     request: DynamicValuesRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> DynamicValuesResponse:
     """
@@ -520,6 +566,9 @@ async def get_dynamic_values(
 
     Returns a list of option objects that the UI uses to populate dropdowns.
     """
+    caller = await _require_event_target(
+        db, user, request.organization_id, "events.readwrite"
+    )
     # Get adapter
     registry = get_adapter_registry()
     adapter = registry.get(adapter_name)
@@ -536,6 +585,7 @@ async def get_dynamic_values(
         try:
             credentials = await build_webhook_integration_credentials(
                 db,
+                caller,
                 request.integration_id,
                 request.organization_id,
             )
@@ -584,7 +634,7 @@ async def get_dynamic_values(
 **operation_route("events.sources.list"))
 async def list_sources(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
     source_type: EventSourceType | None = Query(
         None, description="Filter by source type"
@@ -602,46 +652,39 @@ async def list_sources(
     - scope=global: show only global (no org) sources
     - organization_id=<uuid>: show that org's sources + global
     """
-    repo = EventSourceRepository(db)
-
+    caller = await load_caller(db, user)
+    conditions = []
     if scope == "global":
-        # Global-only: filter to org_id IS NULL
-        sources = await repo.get_by_organization(
-            organization_id=None,
-            source_type=source_type,
-            include_global=True,
-            limit=limit,
-            offset=offset,
-        )
-        total = await repo.count_by_organization(
-            organization_id=None,
-            source_type=source_type,
-            include_global=True,
-        )
+        if not user_reach(caller).covers(None):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Organization not found")
+        require_permission(caller, "events.read", None)
+        conditions.append(EventSource.organization_id.is_(None))
     elif organization_id:
-        # Specific org + global
-        sources = await repo.get_by_organization(
-            organization_id=organization_id,
-            source_type=source_type,
-            include_global=True,
-            limit=limit,
-            offset=offset,
-        )
-        total = await repo.count_by_organization(
-            organization_id=organization_id,
-            source_type=source_type,
-            include_global=True,
-        )
+        if not user_reach(caller).covers(organization_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Organization not found")
+        require_permission(caller, "events.read", organization_id)
+        conditions.append(EventSource.organization_id == organization_id)
     else:
-        # No filter: show everything
-        sources = await repo.get_all_sources(
-            source_type=source_type,
-            limit=limit,
-            offset=offset,
+        reach_filter = user_reach(caller).where(EventSource.organization_id)
+        if reach_filter is not None:
+            conditions.append(reach_filter)
+        permission_filter = permitted_organizations(caller, "events.read").where(
+            EventSource.organization_id
         )
-        total = await repo.count_all_sources(
-            source_type=source_type,
-        )
+        if permission_filter is not None:
+            conditions.append(permission_filter)
+
+    if source_type is not None:
+        conditions.append(EventSource.source_type == source_type)
+    statement = select(EventSource).options(
+        joinedload(EventSource.webhook_source),
+        joinedload(EventSource.schedule_source),
+        joinedload(EventSource.organization),
+    ).where(*conditions)
+    sources = (
+        await db.execute(statement.order_by(EventSource.name).limit(limit).offset(offset))
+    ).unique().scalars().all()
+    total = await db.scalar(select(func.count(EventSource.id)).where(*conditions)) or 0
 
     items = [await _build_event_source_response(s, db) for s in sources]
 
@@ -661,7 +704,7 @@ async def list_sources(
 async def create_source(
     request: EventSourceCreate,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> EventSourceSecretResponse:
     """
@@ -709,14 +752,18 @@ async def create_source(
             detail="Schedule sources cannot include webhook configuration",
         )
 
-    # Org targeting follows the unified --org standard: an OMITTED
-    # organization_id (HOME) defaults to the caller's org, so a bare create
-    # never silently writes a global row. Explicit null still means global.
+    # Org targeting follows the unified --org standard. An omitted scope uses
+    # verified runtime scope when present, otherwise the original user's home;
+    # it never derives authority from the effect actor in ``ctx``.
+    caller = await load_caller(db, user)
     if "organization_id" in request.model_fields_set:
         target_org_id = request.organization_id
     else:
-        target_org_id = ctx.org_id
+        target_org_id = resolve_effective_scope(caller=caller, requested_scope=UNSET)
     await _validate_target_organization(db, target_org_id)
+    if not user_reach(caller).covers(target_org_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Organization not found")
+    require_permission(caller, "events.readwrite", target_org_id)
 
     # Create base event source
     source = EventSource(
@@ -769,6 +816,7 @@ async def create_source(
             try:
                 credentials = await build_webhook_integration_credentials(
                     db,
+                    caller,
                     request.webhook.integration_id,
                     target_org_id,
                 )
@@ -889,7 +937,7 @@ async def create_source(
 async def get_source(
     source_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> EventSourceResponse:
     """Get event source by ID (Platform admin only)."""
@@ -901,6 +949,7 @@ async def get_source(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event source not found",
         )
+    await _require_event_source(db, user, source, "events.read")
 
     return await _build_event_source_response(source, db)
 
@@ -915,7 +964,7 @@ async def update_source(
     source_id: UUID,
     request: EventSourceUpdate,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> EventSourceResponse:
     """Update an event source."""
@@ -927,6 +976,7 @@ async def update_source(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event source not found",
         )
+    caller = await _require_event_source(db, user, source, "events.readwrite")
 
     # Solution-managed triggers are deploy-owned and read-only on the platform
     # (the deploy path is the only writer). Refuse with a clean 409 before
@@ -955,6 +1005,7 @@ async def update_source(
 
     if "organization_id" in request.model_fields_set:
         await _validate_target_organization(db, request.organization_id)
+        await _require_event_target(db, user, request.organization_id, "events.readwrite")
         await _validate_rescoped_subscriptions(source, request.organization_id)
         source.organization_id = request.organization_id
 
@@ -1009,7 +1060,9 @@ async def update_source(
             # ``_resubscribe_webhook_on_change`` for why this order matters:
             # a provider failure on the new subscribe leaves the DB
             # untouched (no ORM attribute is mutated before that call).
-            await _resubscribe_webhook_on_change(db, source, ws, adapter, desired_integration_id)
+            await _resubscribe_webhook_on_change(
+                db, caller, source, ws, adapter, desired_integration_id
+            )
             if secret_sent:
                 ws.state = with_signing_secret(ws.state, signing_secret)
 
@@ -1077,7 +1130,7 @@ async def update_source(
 async def resubscribe_source(
     source_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> EventSourceResponse:
     """Replace an external provider subscription for a webhook source."""
@@ -1088,6 +1141,7 @@ async def resubscribe_source(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event source not found",
         )
+    caller = await _require_event_source(db, user, source, "events.readwrite")
 
     from src.services.solutions.guard import assert_not_solution_managed
 
@@ -1101,6 +1155,7 @@ async def resubscribe_source(
     try:
         await resubscribe_provider(
             db,
+            caller,
             source,
             _build_public_callback_url(source.id),
         )
@@ -1139,7 +1194,7 @@ async def rotate_source_secret(
     source_id: UUID,
     request: WebhookSecretRotate,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> EventSourceSecretResponse:
     """Set a new signing secret on a webhook source.
@@ -1154,6 +1209,7 @@ async def rotate_source_secret(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event source not found",
         )
+    await _require_event_source(db, user, source, "events.readwrite")
     ws = source.webhook_source
     adapter = get_adapter_registry().get(ws.adapter_name) if ws else None
     if ws is None or adapter is None or not uses_signing_secret(adapter):
@@ -1187,7 +1243,7 @@ async def rotate_source_secret(
 async def delete_source(
     source_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> None:
     """
@@ -1205,6 +1261,7 @@ async def delete_source(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event source not found",
         )
+    caller = await _require_event_source(db, user, source, "events.readwrite")
 
     # Solution-managed triggers are deploy-owned — uninstall removes them, not
     # this endpoint. Refuse with a clean 409 (the DELETE cascade would otherwise
@@ -1215,7 +1272,7 @@ async def delete_source(
     # local record on failure keeps the orphan visible and retryable.
     if source.source_type == EventSourceType.WEBHOOK and source.webhook_source:
         try:
-            await unsubscribe_provider(db, source)
+            await unsubscribe_provider(db, caller, source)
         except Exception as exc:
             error_message = format_exception_message(
                 exc,
@@ -1267,7 +1324,7 @@ async def delete_source(
 async def list_subscriptions(
     source_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
     limit: int = Query(100, ge=1, le=1000, description="Max results"),
     offset: int = Query(0, ge=0, description="Skip results"),
@@ -1282,6 +1339,7 @@ async def list_subscriptions(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event source not found",
         )
+    await _require_event_source(db, user, source, "events.read")
 
     # Get subscriptions
     sub_repo = EventSubscriptionRepository(db)
@@ -1305,7 +1363,7 @@ async def create_subscription(
     source_id: UUID,
     request: EventSubscriptionCreate,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> EventSubscriptionResponse:
     """Create a subscription to an event source."""
@@ -1320,9 +1378,36 @@ async def create_subscription(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event source not found",
         )
+    caller = await _require_event_source(db, user, source, "events.readwrite")
 
     # Target existence, active/type, cross-org scope, and duplicate checks.
-    await _validate_subscription_target(db, source, request)
+    _, target = await _validate_subscription_target(db, source, request)
+    if not user_reach(caller).covers(target.organization_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Subscription target not found")
+    if request.target_type == "workflow":
+        from dataclasses import replace
+        from src.repositories.workflows import WorkflowRepository
+
+        unelevated = Caller(replace(caller.principal, runtime_authority=None), caller.ctx)
+        if await WorkflowRepository(
+            db, unelevated.ctx.home_organization_id if unelevated.ctx else None, caller=unelevated
+        ).get(id=target.id) is None:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Workflow is not available")
+        if target.run_identity_id is not None:
+            from src.services.identities import require_delegation
+            from shared.run_lineage import identity_lineage
+
+            if target.run_identity_id != (
+                await identity_lineage(db, target.organization_id)
+            ).run_user_id:
+                await require_delegation(db, unelevated, target.run_identity_id)
+    else:
+        from src.services.authorization.agent_runtime import authorize_agent_execution
+
+        try:
+            await authorize_agent_execution(db, caller, target.id)
+        except Exception as exc:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Agent is not available") from exc
 
     subscription = EventSubscription(
         event_source_id=source_id,
@@ -1375,7 +1460,7 @@ async def update_subscription(
     subscription_id: UUID,
     request: EventSubscriptionUpdate,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> EventSubscriptionResponse:
     """Update an event subscription."""
@@ -1388,6 +1473,7 @@ async def update_subscription(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event source not found",
         )
+    await _require_event_source(db, user, source, "events.readwrite")
 
     # Get subscription
     result = await db.execute(
@@ -1446,7 +1532,7 @@ async def delete_subscription(
     source_id: UUID,
     subscription_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> None:
     """Permanently delete an event subscription."""
@@ -1459,6 +1545,7 @@ async def delete_subscription(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event source not found",
         )
+    await _require_event_source(db, user, source, "events.readwrite")
 
     # Get subscription
     result = await db.execute(
@@ -1502,7 +1589,7 @@ async def get_subscription(
     source_id: UUID,
     subscription_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> EventSubscriptionResponse:
     """Get a single Event Subscription by ID (platform admin only)."""
@@ -1513,6 +1600,7 @@ async def get_subscription(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event source not found",
         )
+    await _require_event_source(db, user, source, "events.read")
 
     result = await db.execute(
         select(EventSubscription)
@@ -1546,7 +1634,7 @@ async def get_subscription(
 async def list_events(
     source_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
     event_status: str | None = Query(
         None,
@@ -1575,6 +1663,7 @@ async def list_events(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event source not found",
         )
+    await _require_event_source(db, user, source, "events.read")
 
     # Parse status filter
     status_enum = None
@@ -1680,9 +1769,10 @@ async def emit_topic_event(
 )
 async def list_topics(
     db: DbSession,
-    _user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> TopicsRegistryResponse:
     """Return the curated topic registry plus topics currently in use."""
+    await _require_event_target(db, user, None, "events.read")
     source_repo = EventSourceRepository(db)
     in_use = await source_repo.get_distinct_topic_types()
     return TopicsRegistryResponse(
@@ -1700,7 +1790,7 @@ async def list_topics(
 async def get_event(
     event_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> EventResponse:
     """Get event by ID (Platform admin only)."""
@@ -1719,6 +1809,9 @@ async def get_event(
         )
 
     source = event.event_source
+    if source is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
+    await _require_event_source(db, user, source, "events.read")
 
     # Get delivery counts
     delivery_repo = EventDeliveryRepository(db)
@@ -1760,7 +1853,7 @@ async def get_event(
 async def list_deliveries(
     event_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> EventDeliveryListResponse:
     """
@@ -1782,6 +1875,9 @@ async def list_deliveries(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event not found",
         )
+    if event.event_source is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
+    await _require_event_source(db, user, event.event_source, "events.read")
 
     # Get existing deliveries
     delivery_repo = EventDeliveryRepository(db)
@@ -1869,7 +1965,7 @@ async def create_delivery(
     event_id: UUID,
     request: CreateDeliveryRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> EventDeliveryResponse:
     """
@@ -1894,6 +1990,9 @@ async def create_delivery(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event not found",
         )
+    if event.event_source is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
+    await _require_event_source(db, user, event.event_source, "events.readwrite")
 
     # Get subscription and verify it belongs to the same event source
     result = await db.execute(
@@ -1988,7 +2087,7 @@ async def create_delivery(
 async def retry_delivery(
     delivery_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
     request: RetryDeliveryRequest | None = None,
 ) -> RetryDeliveryResponse:
@@ -2015,6 +2114,9 @@ async def retry_delivery(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Delivery not found",
         )
+    if delivery.event is None or delivery.event.event_source is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Delivery not found")
+    await _require_event_source(db, user, delivery.event.event_source, "events.readwrite")
 
     # Only retry failed deliveries
     if not can_retry_delivery_status(delivery.status):

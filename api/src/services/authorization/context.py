@@ -166,10 +166,7 @@ async def build_authorization_context(
         user_id=user_id,
         home_organization_id=home_organization_id,
         base_role_id=base_role_id,
-        is_external=bool(is_external)
-        and not _holds_platform_wildcard(
-            _effective_grants(home_organization_id, base_permissions, role_grants)
-        ),
+        is_external=bool(is_external),
         base_permissions=base_permissions,
         role_grants=role_grants,
     )

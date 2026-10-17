@@ -17,7 +17,7 @@ no is_external claim, re-opening the global tier to external MCP principals on
 the executor/test path.
 """
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -114,7 +114,7 @@ class TestIntegrationsConfigExternal:
         session = _session()
         session.execute.return_value = _result([])
         repo = IntegrationsRepository(session)
-        await repo.get_config_for_mapping(uuid4(), uuid4(), external=True)
+        await repo.get_config_for_mapping(uuid4(), uuid4(), external=True, reveal_secrets=False)
         sql = _all_sql(session)
         assert "organization_id IS NULL" not in sql, (
             "external mapping config must not include global integration defaults"
@@ -126,14 +126,14 @@ class TestIntegrationsConfigExternal:
         repo = IntegrationsRepository(session)
         # external is now a REQUIRED kwarg (NEW-G defense in depth) — the
         # normal/sentinel caller passes False explicitly.
-        await repo.get_config_for_mapping(uuid4(), uuid4(), external=False)
+        await repo.get_config_for_mapping(uuid4(), uuid4(), external=False, reveal_secrets=False)
         sql = _all_sql(session)
         assert "organization_id IS NULL" in sql
 
     async def test_integration_defaults_external_returns_empty_no_query(self):
         session = _session()
         repo = IntegrationsRepository(session)
-        result = await repo.get_integration_defaults(uuid4(), external=True)
+        result = await repo.get_integration_defaults(uuid4(), external=True, reveal_secrets=False)
         assert result == {}
         # The defaults ARE the global tier — an external must not even query it.
         session.execute.assert_not_awaited()
@@ -142,7 +142,7 @@ class TestIntegrationsConfigExternal:
         session = _session()
         session.execute.return_value = _result([])
         repo = IntegrationsRepository(session)
-        await repo.get_integration_defaults(uuid4(), external=False)
+        await repo.get_integration_defaults(uuid4(), external=False, reveal_secrets=False)
         sql = _all_sql(session)
         assert "organization_id IS NULL" in sql
 
@@ -152,40 +152,35 @@ class TestIntegrationsConfigExternal:
 # =============================================================================
 
 
-class TestHttpBridgeMintCarriesExternal:
-    def _claims(self, token: str) -> dict:
-        import base64
-        import json
+class TestHttpBridgeTypedRuntimeMint:
+    def _ctx(self, credential_id):
+        from src.services.mcp_server.server import MCPContext
 
-        payload = token.split(".")[1]
-        payload += "=" * (-len(payload) % 4)
-        return json.loads(base64.urlsafe_b64decode(payload))
-
-    def _ctx(self, *, is_external, is_platform_admin=False):
-        return MagicMock(
+        return MCPContext(
             user_id=uuid4(),
-            user_email="x@y.z",
-            user_name="X",
-            is_platform_admin=is_platform_admin,
-            is_external=is_external,
             org_id=uuid4(),
+            # Runtime authority is resolved from this durable identity at the
+            # HTTP boundary; no caller claims are trusted from the bridge.
+            runtime_credential_kind="agent_run",
+            runtime_credential_id=credential_id,
         )
 
-    def test_external_context_mints_is_external_true(self):
+    def test_agent_runtime_mint_carries_only_the_durable_credential(self):
         from src.services.mcp_server.tools._http_bridge import _token_from_context
 
-        token = _token_from_context(self._ctx(is_external=True))
-        claims = self._claims(token)
-        assert claims.get("is_external") is True, (
-            "fallback mint must carry is_external from the MCP context (OPEN-F)"
-        )
+        credential_id = uuid4()
+        with patch("src.core.security.create_access_token", side_effect=lambda *, data: data):
+            claims = _token_from_context(self._ctx(credential_id))
+        assert claims == {"sub": str(credential_id), "credential_kind": "agent_run"}
 
-    def test_non_external_context_mints_is_external_false(self):
+    def test_typed_agent_runtime_mint_omits_external_caller_claims(self):
         from src.services.mcp_server.tools._http_bridge import _token_from_context
 
-        token = _token_from_context(self._ctx(is_external=False))
-        claims = self._claims(token)
-        assert claims.get("is_external") is False
+        credential_id = uuid4()
+        with patch("src.core.security.create_access_token", side_effect=lambda *, data: data):
+            claims = _token_from_context(self._ctx(credential_id))
+        assert "is_external" not in claims
+        assert "org_id" not in claims
 
 
 class TestHttpBridgeMintCarriesTheAgentRunUser:

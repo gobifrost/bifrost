@@ -30,7 +30,6 @@ import {
 	Radio,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useAuth } from "@/contexts/AuthContext";
 import { Logo } from "@/components/branding/Logo";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -44,7 +43,6 @@ interface NavItem {
 	termKey?: ProductTermKey;
 	href: string;
 	icon: React.ElementType;
-	requiresPlatformAdmin?: boolean;
 	requiresPermission?: PermissionRequirement;
 	dividerBefore?: boolean;
 	/** Active only on this exact path, not on the pages below it. */
@@ -54,7 +52,6 @@ interface NavItem {
 interface NavSection {
 	title: string;
 	items: NavItem[];
-	requiresPlatformAdmin?: boolean;
 }
 
 const navSections: NavSection[] = [
@@ -76,94 +73,103 @@ const navSections: NavSection[] = [
 	},
 	{
 		title: "Management",
-		requiresPlatformAdmin: true,
 		items: [
 			{
 				title: "Apps",
 				termKey: "app",
 				href: "/apps",
 				icon: AppWindow,
-				requiresPlatformAdmin: true,
+				requiresPermission: { permission: "apps.readbasic" },
 			},
 			{
 				title: "Forms",
 				termKey: "form",
 				href: "/forms",
 				icon: FileCode,
-				requiresPlatformAdmin: true,
+				requiresPermission: { permission: "forms.readbasic" },
 			},
 			{
 				title: "Agents",
 				termKey: "agent",
 				href: "/agents",
 				icon: Bot,
-				requiresPlatformAdmin: true,
+				requiresPermission: { permission: "agents.readbasic" },
 			},
 			{
 				title: "Workflows",
 				href: "/workflows",
 				icon: Workflow,
-				requiresPlatformAdmin: true,
+				requiresPermission: { permission: "workflows.read" },
 			},
 			{
 				title: "Services",
 				href: "/services",
 				icon: Radio,
-				requiresPlatformAdmin: true,
+				requiresPermission: { permission: "platform.read" },
 			},
 		],
 	},
 	{
 		title: "Data",
-		requiresPlatformAdmin: true,
 		items: [
 			{
 				title: "Config",
 				href: "/config",
 				icon: Key,
-				requiresPlatformAdmin: true,
+				requiresPermission: { permission: "configs.read" },
 			},
 			{
 				title: "Tables",
 				href: "/tables",
 				icon: Database,
-				requiresPlatformAdmin: true,
+				requiresPermission: { permission: "tables.read" },
 			},
 			{
 				title: "Files",
 				href: "/files",
 				icon: FolderOpen,
-				requiresPlatformAdmin: true,
+				requiresPermission: {
+					permission: "filepolicies.read",
+				},
 			},
 			{
 				title: "Knowledge",
 				href: "/knowledge",
 				icon: BookOpen,
-				requiresPlatformAdmin: true,
+				requiresPermission: { permission: "knowledge.read" },
 			},
 			{
 				title: "Integrations",
 				href: "/integrations",
 				icon: Plug,
-				requiresPlatformAdmin: true,
+				requiresPermission: { permission: "integrations.read" },
 			},
 			{
 				title: "MCP Servers",
 				href: "/mcp-servers",
 				icon: ServerCog,
-				requiresPlatformAdmin: true,
+				requiresPermission: { permission: "mcp.readbasic" },
 			},
 			{
 				title: "Events",
 				href: "/event-sources",
 				icon: Webhook,
-				requiresPlatformAdmin: true,
+				requiresPermission: { permission: "events.read" },
 			},
 			{
 				title: "Entity Management",
 				href: "/entity-management",
 				icon: Network,
-				requiresPlatformAdmin: true,
+				requiresPermission: {
+					allOf: [
+						{ permission: "workflows.read" },
+						{ permission: "forms.readbasic" },
+						{ permission: "agents.readbasic" },
+						{ permission: "apps.readbasic" },
+						{ permission: "organizations.read" },
+						{ permission: "roles.read", at: "global" },
+					],
+				},
 			},
 		],
 	},
@@ -192,25 +198,33 @@ const navSections: NavSection[] = [
 				title: "Solutions",
 				href: "/solutions",
 				icon: Boxes,
-				requiresPlatformAdmin: true,
+				requiresPermission: { permission: "solutions.read" },
 			},
 			{
 				title: "Settings",
 				href: "/settings",
 				icon: SettingsIcon,
-				requiresPlatformAdmin: true,
+				requiresPermission: {
+					permission: "settings.read",
+					at: "global",
+				},
 			},
 			{
 				title: "Diagnostics",
 				href: "/diagnostics",
 				icon: Stethoscope,
-				requiresPlatformAdmin: true,
+				requiresPermission: {
+					allOf: [
+						{ permission: "metrics.read", at: "global" },
+						{ permission: "platform.read", at: "global" },
+					],
+				},
 			},
 			{
 				title: "Audit Log",
 				href: "/audit",
 				icon: ShieldCheck,
-				requiresPlatformAdmin: true,
+				requiresPermission: { permission: "roleassignments.read" },
 				end: true,
 			},
 			{
@@ -223,19 +237,21 @@ const navSections: NavSection[] = [
 	},
 	{
 		title: "Reports",
-		requiresPlatformAdmin: true,
 		items: [
 			{
 				title: "ROI",
 				href: "/reports/roi",
 				icon: DollarSign,
-				requiresPlatformAdmin: true,
+				requiresPermission: { permission: "reports.read" },
 			},
 			{
 				title: "Usage",
 				href: "/reports/usage",
 				icon: Activity,
-				requiresPlatformAdmin: true,
+				requiresPermission: {
+					permission: "metrics.read",
+					at: "global",
+				},
 			},
 		],
 	},
@@ -252,7 +268,6 @@ export function Sidebar({
 	setIsMobileMenuOpen,
 	isCollapsed,
 }: SidebarProps) {
-	const { isPlatformAdmin } = useAuth();
 	const { meets } = useAuthorization();
 	const terminology = useTerminology();
 	const location = useLocation();
@@ -273,14 +288,11 @@ export function Sidebar({
 
 	// Filter sections and items based on user permissions
 	const visibleSections = navSections
-		.filter((section) => !section.requiresPlatformAdmin || isPlatformAdmin)
 		.map((section) => ({
 			...section,
 			items: section.items.filter(
 				(item) =>
-					(!item.requiresPlatformAdmin || isPlatformAdmin) &&
-					(!item.requiresPermission ||
-						meets(item.requiresPermission)),
+					!item.requiresPermission || meets(item.requiresPermission),
 			),
 		}))
 		.filter((section) => section.items.length > 0); // Remove empty sections

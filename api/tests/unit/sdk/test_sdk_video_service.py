@@ -16,14 +16,13 @@ from __future__ import annotations
 
 import inspect
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
 import shared.sdk_video as sdk_video
 from shared.sdk_video import (
     SdkVideoJobError,
-    can_read_platform_job,
     enqueue_sdk_video_job,
     finalize_sdk_video_job,
     get_platform_job_status,
@@ -33,6 +32,10 @@ from shared.sdk_video import (
 from src.core.principal import UserPrincipal
 from src.jobs.platform.video_generation import SDK_VIDEO_GENERATION_DEFINITION
 from src.models.contracts.artifacts import VideoArtifactSpec
+from src.services.artifacts import ArtifactService
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
+from tests.helpers.authorization import admin_caller
 
 
 def _user(**kwargs) -> UserPrincipal:
@@ -51,6 +54,33 @@ def _spec() -> VideoArtifactSpec:
     return VideoArtifactSpec(filename="launch.mp4", prompt="A launch video")
 
 
+def _caller(user: UserPrincipal) -> Caller:
+    return Caller(
+        user,
+        AuthorizationContext(
+            user_id=user.user_id,
+            home_organization_id=user.organization_id,
+            base_role_id=uuid4(),
+            is_external=False,
+            base_permissions=frozenset(),
+        ),
+    )
+
+
+@pytest.fixture(autouse=True)
+def allow_workspace_write(monkeypatch) -> None:
+    async def authorize(
+        _service, caller: Caller, *, workspace_id
+    ) -> tuple[Caller, UUID | None]:
+        return caller, caller.principal.organization_id
+
+    monkeypatch.setattr(
+        ArtifactService,
+        "authorize_workspace_write_for_caller",
+        authorize,
+    )
+
+
 @pytest.mark.asyncio
 async def test_enqueue_persists_canonical_metadata(db_session) -> None:
     user = _user()
@@ -58,7 +88,7 @@ async def test_enqueue_persists_canonical_metadata(db_session) -> None:
     execution_id = uuid4()
     job, reused = await enqueue_sdk_video_job(
         db_session,
-        user,
+        _caller(user),
         spec=_spec(),
         workspace_id=workspace_id,
         execution_id=execution_id,
@@ -80,8 +110,40 @@ async def test_enqueue_persists_canonical_metadata(db_session) -> None:
 @pytest.mark.asyncio
 async def test_enqueue_uses_name_fallback_for_requester_name(db_session) -> None:
     user = _user(name="")
-    job, _ = await enqueue_sdk_video_job(db_session, user, spec=_spec())
+    job, _ = await enqueue_sdk_video_job(db_session, _caller(user), spec=_spec())
     assert job.requested_by_name == user.email
+
+
+@pytest.mark.asyncio
+async def test_enqueue_uses_existing_workspace_organization_not_effects_actor_org(
+    db_session, monkeypatch
+) -> None:
+    actor = _user(organization_id=uuid4())
+    from src.models.orm.organizations import Organization
+    workspace_organization = Organization(name="Fabrikam", created_by="test")
+    db_session.add(workspace_organization)
+    await db_session.flush()
+    workspace_organization_id = workspace_organization.id
+
+    async def authorize(_service, caller: Caller, *, workspace_id):
+        assert workspace_id is not None
+        return caller, workspace_organization_id
+
+    monkeypatch.setattr(
+        ArtifactService,
+        "authorize_workspace_write_for_caller",
+        authorize,
+    )
+
+    job, _ = await enqueue_sdk_video_job(
+        db_session,
+        _caller(actor),
+        spec=_spec(),
+        workspace_id=uuid4(),
+    )
+
+    assert job.organization_id == workspace_organization_id
+    assert job.requested_by_user_id == str(actor.user_id)
 
 
 @pytest.mark.asyncio
@@ -157,11 +219,11 @@ def test_accepted_payload_mirrors_committed_job() -> None:
 async def test_status_visibility_owner_admin_and_stranger(db_session) -> None:
     owner = _user()
     stranger = _user()
-    admin = _user(is_superuser=True)
-    job, _ = await enqueue_sdk_video_job(db_session, owner, spec=_spec())
+    admin = admin_caller()
+    job, _ = await enqueue_sdk_video_job(db_session, _caller(owner), spec=_spec())
     await db_session.commit()
 
-    seen = await get_platform_job_status(db_session, owner, job.id)
+    seen = await get_platform_job_status(db_session, _caller(owner), job.id)
     assert seen.id == job.id
     assert seen.job_type == SDK_VIDEO_GENERATION_DEFINITION.job_type
 
@@ -169,14 +231,14 @@ async def test_status_visibility_owner_admin_and_stranger(db_session) -> None:
     assert seen_admin.id == job.id
 
     with pytest.raises(SdkVideoJobError) as exc:
-        await get_platform_job_status(db_session, stranger, job.id)
+        await get_platform_job_status(db_session, _caller(stranger), job.id)
     assert exc.value.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_status_missing_job_is_404(db_session) -> None:
     with pytest.raises(SdkVideoJobError) as exc:
-        await get_platform_job_status(db_session, _user(), uuid4())
+        await get_platform_job_status(db_session, _caller(_user()), uuid4())
     assert exc.value.status_code == 404
 
 
@@ -185,10 +247,10 @@ async def test_status_serialization_matches_shared_contract(db_session) -> None:
     from src.services.platform_jobs import platform_job_to_public
 
     owner = _user()
-    job, _ = await enqueue_sdk_video_job(db_session, owner, spec=_spec())
+    job, _ = await enqueue_sdk_video_job(db_session, _caller(owner), spec=_spec())
     await db_session.commit()
     await db_session.refresh(job)
-    assert (await get_platform_job_status(db_session, owner, job.id)).model_dump(
+    assert (await get_platform_job_status(db_session, _caller(owner), job.id)).model_dump(
         mode="json"
     ) == platform_job_to_public(job).model_dump(mode="json")
 
@@ -212,37 +274,32 @@ async def test_local_status_rejects_non_video_jobs(db_session) -> None:
     await db_session.commit()
 
     with pytest.raises(SdkVideoJobError) as exc:
-        await get_sdk_video_job_status(db_session, owner, other.id)
+        await get_sdk_video_job_status(db_session, _caller(owner), other.id)
     assert exc.value.status_code == 404
 
-    video, _ = await enqueue_sdk_video_job(db_session, owner, spec=_spec())
+    video, _ = await enqueue_sdk_video_job(db_session, _caller(owner), spec=_spec())
     await db_session.commit()
-    seen = await get_sdk_video_job_status(db_session, owner, video.id)
+    seen = await get_sdk_video_job_status(db_session, _caller(owner), video.id)
     assert seen.id == video.id
 
 
-def test_can_read_rule_matches_historical_router() -> None:
-    owner_id = uuid4()
-    job = MagicMock()
-    job.requested_by_user_id = str(owner_id)
-    owner = _user(user_id=owner_id)
-    assert can_read_platform_job(job, owner) is True
-    assert can_read_platform_job(job, _user()) is False
-    assert can_read_platform_job(job, _user(is_superuser=True)) is True
-
-
-def test_service_takes_explicit_principal_never_a_request() -> None:
-    assert "fastapi" not in sdk_video.__name__
-    for name in ("enqueue_sdk_video_job", "finalize_sdk_video_job"):
-        params = set(inspect.signature(getattr(sdk_video, name)).parameters)
-        assert "request" not in params, name
+def test_status_readers_require_a_caller() -> None:
     for name in (
         "get_visible_platform_job",
         "get_platform_job_status",
         "get_sdk_video_job_status",
     ):
         params = set(inspect.signature(getattr(sdk_video, name)).parameters)
-        assert "user" in params, name
+        assert "caller" in params, name
+        assert "user" not in params, name
+
+
+def test_service_takes_explicit_caller_never_a_request() -> None:
+    assert "fastapi" not in sdk_video.__name__
+    for name in ("enqueue_sdk_video_job", "finalize_sdk_video_job"):
+        params = set(inspect.signature(getattr(sdk_video, name)).parameters)
+        assert "request" not in params, name
+    assert "caller" in inspect.signature(enqueue_sdk_video_job).parameters
     source = inspect.getsource(sdk_video)
     assert "from fastapi" not in source
     assert "import fastapi" not in source

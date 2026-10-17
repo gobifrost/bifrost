@@ -36,6 +36,7 @@ interface EventsTableProps {
 	sourceId: string;
 	source?: EventSource;
 	initialEventId?: string;
+	canManage?: boolean;
 }
 type StatusFilter = "all" | EventStatus;
 type DateRangeFilter = "1h" | "24h" | "7d" | "30d" | "all";
@@ -116,6 +117,7 @@ export function EventsTable({
 	sourceId,
 	source,
 	initialEventId,
+	canManage = false,
 }: EventsTableProps) {
 	const navigate = useNavigate();
 	const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -369,6 +371,7 @@ export function EventsTable({
 			<EventDetailDialog
 				event={selectedEvent}
 				eventId={initialEventId}
+				canManage={canManage}
 				onClose={() => navigate(`/event-sources/${sourceId}`)}
 			/>
 		</div>

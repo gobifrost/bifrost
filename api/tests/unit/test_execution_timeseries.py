@@ -61,3 +61,51 @@ def test_empty_series_has_no_success_rate() -> None:
 
     assert series.total_count == 0
     assert series.success_rate is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("read_all,expected", [(False, 1), (True, 2)])
+async def test_chart_uses_original_execution_visibility_before_aggregation(db_session, monkeypatch, read_all, expected):
+    from uuid import uuid4
+    from shared.builtin_roles import USER_ROLE_ID
+    from shared.execution_timeseries import get_execution_time_series
+    from src.core.principal import UserPrincipal
+    from src.models.enums import ExecutionStatus
+    from src.models.orm.executions import Execution
+    from src.models.orm.organizations import Organization
+    from src.models.orm.users import User
+    from src.services.authorization.context import AuthorizationContext
+    from src.services.authorization.enforce import Caller
+
+    home, foreign = Organization(name="Contoso", created_by="test"), Organization(name="Fabrikam", created_by="test")
+    db_session.add_all([home, foreign])
+    await db_session.flush()
+    original = User(email=f"chart-{uuid4().hex}@contoso.example", organization_id=home.id)
+    other = User(email=f"chart-{uuid4().hex}@fabrikam.example", organization_id=foreign.id)
+    db_session.add_all([original, other])
+    await db_session.flush()
+    principal = UserPrincipal(user_id=original.id, email=original.email, organization_id=home.id, is_superuser=True, is_provider_org=True)
+    permissions = {"metrics.read"}
+    if read_all:
+        permissions.add("executions.read.all")
+    caller = Caller(principal, AuthorizationContext(
+        user_id=original.id, home_organization_id=home.id, base_role_id=USER_ROLE_ID,
+        is_external=False, base_permissions=frozenset(permissions),
+    ))
+
+    async def current_caller(_db, _principal):
+        return caller
+
+    monkeypatch.setattr("shared.execution_timeseries.load_caller", current_caller)
+    now = datetime(2026, 10, 17, 12, tzinfo=timezone.utc)
+    for organization_id, owner in [(home.id, original.id), (home.id, other.id), (foreign.id, original.id), (foreign.id, other.id)]:
+        db_session.add(Execution(
+            workflow_name="Contoso Chart", organization_id=organization_id,
+            executed_by=owner, executed_by_name="Contoso User", status=ExecutionStatus.SUCCESS,
+            started_at=now,
+        ))
+    await db_session.flush()
+
+    series = await get_execution_time_series(db_session, principal, "24h", "UTC", now=now)
+    assert series.success_count == expected
+    assert series.failed_count == 0

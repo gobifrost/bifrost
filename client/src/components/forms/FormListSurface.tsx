@@ -62,6 +62,7 @@ export interface FormListSurfaceProps {
 	isLoading?: boolean;
 	isPlatformAdmin: boolean;
 	canManageForms: boolean;
+	canManageForm?: (form: FormListItem) => boolean;
 	getOrgName: (orgId: string | null | undefined) => string;
 	formValidation: Map<string, FormValidationState>;
 	onLaunch: (form: FormListItem) => void;
@@ -80,6 +81,7 @@ export function FormListSurface({
 	isLoading = false,
 	isPlatformAdmin,
 	canManageForms,
+	canManageForm: canManageFormAt,
 	getOrgName,
 	formValidation,
 	onLaunch,
@@ -91,6 +93,8 @@ export function FormListSurface({
 	emptySearchActive = false,
 }: FormListSurfaceProps) {
 	const terminology = useTerminology();
+	const canManageForm = (form: FormListItem) =>
+		canManageFormAt?.(form) ?? canManageForms;
 
 	if (isLoading) {
 		return viewMode === "grid" || !canManageForms ? (
@@ -162,14 +166,15 @@ export function FormListSurface({
 					</DataTableHeader>
 					<DataTableBody>
 						{forms.map((form) => {
+							const canManage = canManageForm(form);
 							const validation = formValidation.get(form.id);
 							const launchHref = `/execute/${form.id}${navigationSearch}`;
 							const canLaunch =
-								(form.is_active || canManageForms) &&
+								(form.is_active || canManage) &&
 								validation?.valid;
 							const unavailableReason = !validation?.valid
 								? `Cannot launch: Missing ${validation?.missingParams.join(", ")}`
-								: !form.is_active && !canManageForms
+								: !form.is_active && !canManage
 									? `${term(terminology, "form", "singular")} is disabled`
 									: undefined;
 							return (
@@ -246,7 +251,7 @@ export function FormListSurface({
 										)}
 									</DataTableCell>
 									<DataTableCell className="w-0 whitespace-nowrap">
-										{canManageForms && onToggleActive ? (
+										{canManage && onToggleActive ? (
 											<Tooltip>
 												<TooltipTrigger asChild>
 													<div
@@ -302,7 +307,7 @@ export function FormListSurface({
 													}
 												/>
 											)}
-											{canManageForms &&
+											{canManage &&
 												(onShare ||
 													onEdit ||
 													onDelete) && (
@@ -386,10 +391,11 @@ export function FormListSurface({
 	return (
 		<div className="grid grid-cols-1 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))]">
 			{forms.map((form) => {
+				const canManage = canManageForm(form);
 				const validation = formValidation.get(form.id);
 				const launchHref = `/execute/${form.id}${navigationSearch}`;
 				const canLaunch =
-					(form.is_active || canManageForms) && validation?.valid;
+					(form.is_active || canManage) && validation?.valid;
 				return (
 					<ResourceCatalogCard
 						key={form.id}
@@ -425,7 +431,7 @@ export function FormListSurface({
 										solutionId={form.solution_id}
 									/>
 								)}
-								{canManageForms &&
+								{canManage &&
 									(onShare ||
 										onEdit ||
 										onDelete ||
@@ -516,7 +522,7 @@ export function FormListSurface({
 						href={canLaunch ? launchHref : undefined}
 						disabled={!canLaunch}
 					>
-						{!validation?.valid && canManageForms && (
+						{!validation?.valid && canManage && (
 							<div className="space-y-3 border-t pt-3">
 								<Badge variant="destructive" className="gap-1">
 									<AlertTriangle className="h-3 w-3" />

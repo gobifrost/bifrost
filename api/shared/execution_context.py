@@ -99,19 +99,18 @@ def _validate_global_repo_access(raw: Any) -> None:
 def _validate_service(service_raw: Any) -> None:
     """Validate the parent-owned service identity block.
 
-    A non-mapping block fails closed, and ``service_id`` must satisfy
-    ``service_sdk_actor_email`` (a valid UUID) so a service write is never
-    attributed to a forged or blank value.
+    A non-mapping block or invalid service UUID fails closed before dispatch.
     """
-    from src.core.security import service_sdk_actor_email
-
     if not isinstance(service_raw, Mapping):
         raise ExecutionContextError(
             "execution context: service identity is not a mapping; refusing "
             "to dispatch"
         )
     try:
-        service_sdk_actor_email(service_raw.get("service_id"))
+        service_id = service_raw.get("service_id")
+        if not isinstance(service_id, str) or not service_id.strip():
+            raise ValueError("service id must be a UUID string")
+        UUID(service_id)
     except ValueError as e:
         raise ExecutionContextError(
             f"execution context: malformed service identity ({e}); refusing "

@@ -29,7 +29,7 @@ caller's own items.
 | `apps.create` | `bifrost apps create` | `bifrost_app_create` | `apps.readwrite` |
 | `apps.update` | `bifrost apps update` | `bifrost_app_update` | `apps.readwrite` |
 | `apps.delete` | `bifrost apps delete` | `bifrost_app_delete` | `apps.readwrite` |
-| `apps.dependencies.get` | `bifrost apps get-dependencies` | `bifrost_app_dependencies_get` | `apps.readbasic` |
+| `apps.dependencies.get` | `bifrost apps get-dependencies` | `bifrost_app_dependencies_get` | `apps.read` |
 | `apps.dependencies.update` | `bifrost apps update-dependencies` | `bifrost_app_dependencies_update` | `apps.readwrite` |
 | `apps.validate` | `bifrost apps validate` | `bifrost_app_validate` | `apps.readbasic` |
 | `apps.publish` | `bifrost apps publish` | `bifrost_app_publish` | `apps.publish` |

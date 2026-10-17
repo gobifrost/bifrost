@@ -259,6 +259,7 @@ export function AuditEventDrawer({
 }) {
 	const wide = useMediaQuery("(min-width: 640px)");
 	const isCheck = entry?.action === ACCESS_CHECK;
+	const enforced = isCheck && storedTrace(entry?.details)?.enforced === true;
 	const { names } = useTraceNames(
 		isCheck ? (entry?.actor.user_id ?? undefined) : undefined,
 	);
@@ -288,7 +289,9 @@ export function AuditEventDrawer({
 							</SheetTitle>
 							<SheetDescription>
 								{isCheck
-									? "A report-only check of what the access model decides. Nothing was blocked."
+									? enforced
+										? "The access decision enforced for this request."
+										: "A report-only check of what the access model decides. Nothing was blocked."
 									: "What happened, who did it, and where."}
 							</SheetDescription>
 						</SheetHeader>

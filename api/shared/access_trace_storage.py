@@ -1,4 +1,4 @@
-"""Compact, versioned storage for report-only access-check traces.
+"""Compact, versioned storage for recorded access-check traces.
 
 The audit API and re-judging path consume the expanded details shape.  New
 rows store only data that cannot be reconstructed from the trace order, audit

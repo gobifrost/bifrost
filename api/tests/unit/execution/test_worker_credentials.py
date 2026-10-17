@@ -51,16 +51,12 @@ def test_missing_handed_down_token_does_not_create_process_credentials(
 def test_engine_token_carries_signed_execution_module_scope() -> None:
     from src.core.security import decode_token, mint_engine_token
 
-    solution_id = "12345678-1234-5678-1234-567812345678"
     token, _expires_at = mint_engine_token(
         execution_id="execution-1",
-        solution_id=solution_id,
-        global_repo_access=True,
         timeout_seconds=120,
     )
 
     claims = decode_token(token, expected_type="access")
     assert claims is not None
-    assert claims["engine_execution_id"] == "execution-1"
-    assert claims["engine_solution_id"] == solution_id
-    assert claims["engine_global_repo_access"] is True
+    assert claims["sub"] == "execution-1"
+    assert claims["credential_kind"] == "workflow_execution"

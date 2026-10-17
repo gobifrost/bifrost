@@ -21,11 +21,15 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
+from fastapi import HTTPException
 
 from src.core.auth import ExecutionContext
 from src.core.principal import UserPrincipal
 from src.models.orm.oauth import OAuthProvider, OAuthToken
+from src.models.orm.integrations import Integration
 from src.models.orm.organizations import Organization
+from src.models.orm.users import Role, RolePermission, User, UserRole, UserRoleBoundary
+from shared.builtin_roles import USER_ROLE_ID
 
 
 async def _make_org(db_session, name: str) -> Organization:
@@ -40,13 +44,52 @@ async def _make_org(db_session, name: str) -> Organization:
     return org
 
 
-def _principal(org_id):
-    return UserPrincipal(
-        user_id=uuid4(),
-        email="admin@gobifrost.com",
+async def _principal(db_session, org_id):
+    """An original caller with the two persisted OAuth refresh permissions."""
+    person = User(
+        email=f"oauth-{uuid4().hex}@contoso.example",
         organization_id=org_id,
-        is_superuser=True,
+        base_role_id=USER_ROLE_ID,
     )
+    role = Role(name=f"OAuth refresh {uuid4().hex}", created_by="test")
+    db_session.add_all([person, role])
+    await db_session.flush()
+    db_session.add_all([
+        UserRole(user_id=person.id, role_id=role.id, assigned_by="test"),
+        UserRoleBoundary(user_id=person.id, role_id=role.id, kind="platform"),
+        UserRoleBoundary(
+            user_id=person.id,
+            role_id=role.id,
+            kind="organization",
+            organization_id=org_id,
+        ),
+        RolePermission(role_id=role.id, permission="integrations.readwrite"),
+        RolePermission(role_id=role.id, permission="secrets.read"),
+    ])
+    await db_session.flush()
+    return UserPrincipal(
+        user_id=person.id,
+        email=person.email,
+        organization_id=org_id,
+    )
+
+
+async def _principal_without_secrets(db_session, org_id):
+    person = User(
+        email=f"oauth-no-secrets-{uuid4().hex}@contoso.example",
+        organization_id=org_id,
+        base_role_id=USER_ROLE_ID,
+    )
+    role = Role(name=f"OAuth no secrets {uuid4().hex}", created_by="test")
+    db_session.add_all([person, role])
+    await db_session.flush()
+    db_session.add_all([
+        UserRole(user_id=person.id, role_id=role.id, assigned_by="test"),
+        UserRoleBoundary(user_id=person.id, role_id=role.id, kind="platform"),
+        RolePermission(role_id=role.id, permission="integrations.readwrite"),
+    ])
+    await db_session.flush()
+    return UserPrincipal(user_id=person.id, email=person.email, organization_id=org_id)
 
 
 async def _make_global_cc_provider(db_session, *, connection_name: str) -> OAuthProvider:
@@ -80,7 +123,9 @@ async def test_refresh_of_global_connection_stores_token_as_global(db_session):
     # Caller is a platform admin whose home org is a concrete (non-global) org —
     # this is the Covi-admin scenario that caused the re-stamp.
     caller = await _make_org(db_session, f"Provider Org {uuid4().hex[:6]}")
-    ctx = ExecutionContext(user=_principal(caller.id), org_id=caller.id, db=db_session)
+    ctx = ExecutionContext(
+        user=await _principal(db_session, caller.id), org_id=caller.id, db=db_session
+    )
 
     outcome = {
         "success": True,
@@ -136,7 +181,9 @@ async def test_refresh_updates_existing_global_token_in_place(db_session):
     await db_session.flush()
 
     caller = await _make_org(db_session, f"Provider Org {uuid4().hex[:6]}")
-    ctx = ExecutionContext(user=_principal(caller.id), org_id=caller.id, db=db_session)
+    ctx = ExecutionContext(
+        user=await _principal(db_session, caller.id), org_id=caller.id, db=db_session
+    )
 
     outcome = {
         "success": True,
@@ -188,7 +235,9 @@ async def test_refresh_of_org_specific_connection_stays_org_scoped(db_session):
     db_session.add(provider)
     await db_session.flush()
 
-    ctx = ExecutionContext(user=_principal(org.id), org_id=org.id, db=db_session)
+    ctx = ExecutionContext(
+        user=await _principal(db_session, org.id), org_id=org.id, db=db_session
+    )
 
     outcome = {
         "success": True,
@@ -216,3 +265,65 @@ async def test_refresh_of_org_specific_connection_stays_org_scoped(db_session):
     assert rows[0].organization_id == org.id, (
         "org-specific connection's token must stay scoped to its own org"
     )
+
+
+@pytest.mark.asyncio
+async def test_refresh_requires_secrets_before_token_or_provider_io(db_session, monkeypatch):
+    """A role with integrations write alone cannot start a refresh or decrypt."""
+    from src.routers.oauth_connections import refresh_token
+
+    home = await _make_org(db_session, f"Contoso {uuid4().hex[:6]}")
+    provider = await _make_global_cc_provider(
+        db_session, connection_name=f"oauth_{uuid4().hex[:8]}"
+    )
+    ctx = ExecutionContext(
+        user=await _principal_without_secrets(db_session, home.id),
+        org_id=home.id,
+        db=db_session,
+    )
+    token_lookup = AsyncMock(side_effect=AssertionError("token lookup ran"))
+    context_builder = AsyncMock(side_effect=AssertionError("token context ran"))
+    provider_io = AsyncMock(side_effect=AssertionError("provider I/O ran"))
+    monkeypatch.setattr("src.repositories.oauth.OAuthProviderRepository.get_token", token_lookup)
+    monkeypatch.setattr("src.routers.oauth_connections.build_token_refresh_context", context_builder)
+    monkeypatch.setattr("src.routers.oauth_connections.refresh_oauth_token_http", provider_io)
+
+    with pytest.raises(HTTPException) as error:
+        await refresh_token(provider.provider_name, ctx, ctx.user)
+
+    assert error.value.status_code == 403
+    token_lookup.assert_not_awaited()
+    context_builder.assert_not_awaited()
+    provider_io.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_uuid_connection_lookup_refuses_foreign_organization(db_session):
+    """The repository UUID shortcut cannot disclose a provider outside reach."""
+    from src.routers.oauth_connections import get_connection
+
+    home = await _make_org(db_session, f"Contoso {uuid4().hex[:6]}")
+    foreign = await _make_org(db_session, f"Fabrikam {uuid4().hex[:6]}")
+    integration = Integration(name=f"Foreign integration {uuid4().hex}")
+    db_session.add(integration)
+    await db_session.flush()
+    provider = OAuthProvider(
+        provider_name=f"foreign_{uuid4().hex[:8]}",
+        display_name="Foreign",
+        oauth_flow_type="client_credentials",
+        client_id="client",
+        encrypted_client_secret=b"",
+        token_url="https://login.example.com/oauth/token",
+        organization_id=foreign.id,
+        integration_id=integration.id,
+    )
+    db_session.add(provider)
+    await db_session.flush()
+    ctx = ExecutionContext(
+        user=await _principal(db_session, home.id), org_id=home.id, db=db_session
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await get_connection(str(integration.id), ctx, ctx.user)
+
+    assert error.value.status_code == 404

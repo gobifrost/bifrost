@@ -619,7 +619,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         cli=CliOperationBinding(path=("apps", "get-dependencies")),
         mcp=McpOperationBinding(name="bifrost_app_dependencies_get"),
         native_builder=True,
-        action_scopes=("apps.readbasic",),
+        action_scopes=("apps.read",),
         authorization_resolver="ApplicationRepository access check",
         exclusions={
             "manifest": "The read does not mutate the Application manifest.",

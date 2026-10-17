@@ -1,22 +1,9 @@
-"""Report-only access checks: what a request did, noted for the model to judge.
+"""Collect authorization decisions for the Access Checks audit view.
 
-Runs act through the API with execution credentials (the engine token, or the
-MCP bridge token of an agent run), which today's code treats as a platform
-superuser. The managed-identity model judges the same actions against the
-run's user instead. Shared code notes each decision-relevant input (a target
-organization, a child run, ``run_as``, a policy or secret decision) into the
-request's collector; after the response, the request middleware judges every
-note (``src.services.access_check_writer``) and writes the differences that
-matter to the audit log as ``access.check`` events. Nothing here changes what
-a request does.
-
-Every elevated branch (a superuser, platform-admin or provider-org check that
-unlocks more) and every launch of a workflow, agent or AI also notes the named
-permission that gates it (``note_power``, ``note_launch``). A person's own
-request is collected too, for those notes, the organizations it acts in and
-``run_as``: their own roles decide, and only would-deny decisions are written,
-except ``run_as``, which is enforced and written in both outcomes, and
-permission passes for non-admin people during observation.
+Verified runtime credentials retain the original user and exact workflow.
+Enforcement helpers capture their actual judgment before mutations change role
+facts. Other notes retain policy, secret, scope, and object inputs for the
+writer. Permission successes are not sampled. Run As is recorded on every call.
 
 FastAPI-free: imported by shared resolvers that worker closures load.
 """
@@ -26,10 +13,13 @@ from __future__ import annotations
 import logging
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from shared.system_account_guard import is_system_account
+
+if TYPE_CHECKING:
+    from src.services.authorization.explain import RunUser, Trace
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +52,7 @@ class Note:
     kind: NoteKind
     target: NoteTarget
     facts: dict[str, Any] = field(default_factory=dict)
+    decision: tuple[RunUser, Trace] | None = None
 
 
 @dataclass
@@ -92,40 +83,30 @@ def _uuid(value: Any) -> UUID | None:
 
 
 def start_collecting(
-    payload: dict[str, Any] | None, *, surface: str | None = None
+    payload: dict[str, Any] | None, *, surface: str | None = None, principal=None,
 ) -> Token[Collector | None] | None:
-    """Start a collector for an authenticated request; None for anyone else.
-
-    A run's request: the engine token (superuser with an execution id, as
-    ``src.core.auth`` treats it) and any token acting for a run user other
-    than its own subject (the MCP bridge for an agent run nobody started).
-    Every note kind is collected, judged against the run user.
-
-    A person's request (their own token, or the bridge for an agent they
-    started): collected with the person as run user, for named permissions,
-    organization switches and ``run_as`` only (``direct``). The system subject (supervised services, embedded
-    sessions, the legacy engine credential) is not a person and is not
-    collected.
-    """
+    """Collect verified runtime facts or an ordinary person's request."""
     if not payload:
         return None
-    engine = bool(payload.get("engine_execution_id")) and bool(payload.get("is_superuser"))
-    run_user = payload.get("engine_run_user_id")
-    subject = payload.get("sub")
-    if engine or (run_user and run_user != subject):
+    runtime = None if principal is None else principal.runtime_authority
+    if runtime is not None:
         token = collect_run(
-            _uuid(payload.get("engine_execution_id")) if engine else None,
-            _uuid(run_user),
-            _uuid(payload.get("engine_workflow_id")),
+            runtime.credential_id if runtime.kind == "workflow_execution" else None,
+            runtime.run_user.user_id, runtime.workflow_id,
         )
-    else:
-        token = collect_person(_uuid(subject))
-    if token is not None:
         collector = _current.get()
         assert collector is not None
-        collector.is_run = engine or bool(run_user)
-        collector.agent_run_id = _uuid(payload.get("engine_agent_run_id"))
+        collector.agent_run_id = runtime.credential_id if runtime.kind == "agent_run" else None
         collector.surface = "agent" if collector.agent_run_id else surface
+        # An agent adds no workflow power; it is judged on its original user.
+        collector.direct = runtime.powers is None
+        return token
+    if any(key in payload for key in ("credential_kind", "engine_execution_id", "service_id", "engine_agent_run_id")):
+        return None
+    token = collect_person(_uuid(payload.get("sub")))
+    collector = _current.get()
+    if token is not None and collector is not None:
+        collector.surface = surface
     return token
 
 
@@ -178,15 +159,25 @@ def renew() -> Collector | None:
 def note(kind: NoteKind, target: NoteTarget, /, **facts: Any) -> None:
     """Note one decision-relevant input for the current request.
 
-    ``enforced=True`` marks a decision the request also enforces (a person's
-    ``run_as``); its row is written as enforced."""
+    ``enforced=True`` marks a decision the request enforces; its row is
+    written as enforced. Use ``note_decision`` to preserve the actual judgment."""
+    _append_note(Note(kind, target, facts))
+
+
+def note_decision(kind: NoteKind, target: NoteTarget, *, run_user: RunUser, trace: Trace, **facts: Any) -> None:
+    """Retain the actual enforced judgment before a mutation changes its role facts."""
+    _append_note(Note(kind, target, {**facts, "enforced": True}, (run_user, trace)))
+
+
+def _append_note(noted: Note) -> None:
     collector = _current.get()
+    kind = noted.kind
     if collector is None or (collector.direct and kind not in _DIRECT_KINDS):
         return
     if collector.closed:
         logger.warning("access check noted after the request was judged; dropped (kind=%s)", kind)
         return
-    collector.notes.append(Note(kind, target, facts))
+    collector.notes.append(noted)
 
 
 def note_power(permission: str, target: NoteTarget | Owned, *, subject: str) -> None:

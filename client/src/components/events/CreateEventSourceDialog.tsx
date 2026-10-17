@@ -39,7 +39,6 @@ import {
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
-import { useAuth } from "@/contexts/AuthContext";
 import {
 	useCreateEventSource,
 	useWebhookAdapters,
@@ -50,6 +49,8 @@ import { useIntegrations } from "@/services/integrations";
 import { DynamicConfigForm, type ConfigSchema } from "./DynamicConfigForm";
 import { EventTopicReferencePanel } from "./EventTopicReferencePanel";
 import { authFetch } from "@/lib/api-client";
+import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
+import { useAuthorization } from "@/services/authorization";
 
 import type { components } from "@/lib/v1";
 type CronValidationResult = components["schemas"]["CronValidationResponse"];
@@ -128,16 +129,19 @@ interface CreateEventSourceDialogProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	onSuccess?: () => void;
+	knownOrganizations?: readonly { id: string; name: string }[];
 }
 
 function CreateEventSourceDialogContent({
 	onOpenChange,
 	onSuccess,
 	createMutation,
+	knownOrganizations,
 }: Omit<CreateEventSourceDialogProps, "open"> & {
 	createMutation: ReturnType<typeof useCreateEventSource>;
 }) {
-	const { isPlatformAdmin } = useAuth();
+	const authorization = useAuthorization();
+	const canCreateAnySource = authorization.canAnywhere("events.readwrite");
 	const formId = useId();
 
 	// Form state
@@ -326,10 +330,21 @@ function CreateEventSourceDialogContent({
 		if (
 			sourceType === "webhook" &&
 			selectedAdapterRequiresOrganization &&
-			isPlatformAdmin &&
+			canCreateAnySource &&
 			!organizationId
 		) {
 			newErrors.push("Please select an organization for this adapter");
+		}
+		if (
+			canCreateAnySource &&
+			!authorization.canAt(
+				"events.readwrite",
+				orgTarget(organizationId),
+			)
+		) {
+			newErrors.push(
+				"Select an organization where you can create event sources",
+			);
 		}
 
 		if (sourceType === "schedule") {
@@ -364,7 +379,7 @@ function CreateEventSourceDialogContent({
 				body: {
 					name: resolvedName,
 					source_type: sourceType,
-					organization_id: organizationId || undefined,
+						organization_id: organizationId,
 					event_type:
 						sourceType === "topic" ? effectiveTopic : undefined,
 					webhook:
@@ -449,7 +464,7 @@ function CreateEventSourceDialogContent({
 						title="Scope"
 						description="Choose where this event source is available."
 					>
-						{isPlatformAdmin && (
+							{canCreateAnySource && (
 							<div className="min-w-0 space-y-2">
 								<Label htmlFor={`${formId}-organization`}>
 									Organization
@@ -462,7 +477,20 @@ function CreateEventSourceDialogContent({
 									onChange={(value) =>
 										setOrganizationId(value ?? null)
 									}
-									showGlobal
+									showGlobal={authorization.canAt(
+										"events.readwrite",
+										GLOBAL_TARGET,
+									)}
+									knownOrganizations={knownOrganizations}
+									loadOrganizations={authorization.canAnywhere(
+										"organizations.read",
+									)}
+									filterOrganizations={(organization) =>
+										authorization.canAt(
+											"events.readwrite",
+											orgTarget(organization.id),
+										)
+									}
 								/>
 								<p className="text-sm leading-6 [overflow-wrap:anywhere] text-muted-foreground">
 									Leave as Global to make this source
@@ -1068,6 +1096,7 @@ export function CreateEventSourceDialog({
 	open,
 	onOpenChange,
 	onSuccess,
+	knownOrganizations,
 }: CreateEventSourceDialogProps) {
 	const createMutation = useCreateEventSource();
 	return (
@@ -1083,6 +1112,7 @@ export function CreateEventSourceDialog({
 						createMutation={createMutation}
 						onOpenChange={onOpenChange}
 						onSuccess={onSuccess}
+						knownOrganizations={knownOrganizations}
 					/>
 				)}
 			</DialogContent>

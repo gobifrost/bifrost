@@ -67,7 +67,7 @@ async def test_html_artifacts_are_stored_with_inert_object_content_type(monkeypa
         lambda _db: storage,
     )
 
-    artifact = await ArtifactService(_FakeDB()).store(
+    artifact = await ArtifactService(_FakeDB()).store_trusted_job(
         filename="Unsafe.html",
         content_type="text/html; charset=utf-8",
         content=b"<script>alert(document.domain)</script>",
@@ -102,7 +102,7 @@ async def test_browser_active_declared_or_inferred_types_use_inert_storage(
         lambda _db: storage,
     )
 
-    await ArtifactService(_FakeDB()).store(
+    await ArtifactService(_FakeDB()).store_trusted_job(
         filename=filename,
         content_type=content_type,
         content=b"<svg xmlns='http://www.w3.org/2000/svg'></svg>",
@@ -123,7 +123,7 @@ async def test_non_html_artifacts_keep_existing_storage_path(monkeypatch):
         lambda _db: storage,
     )
 
-    await ArtifactService(_FakeDB()).store(
+    await ArtifactService(_FakeDB()).store_trusted_job(
         filename="Notes.md",
         content_type="text/markdown",
         content=b"# Safe",

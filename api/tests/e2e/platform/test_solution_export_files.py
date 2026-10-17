@@ -57,7 +57,8 @@ async def _read_payload(zf: zipfile.ZipFile, tmp_path: Path, payload: str, passw
 
 
 async def test_full_export_files_in_encrypted_tier(
-    e2e_client, platform_admin, make_solution_with_files, tmp_path
+    e2e_client, platform_admin, make_solution_with_files, tmp_path,
+    secrets_reader_platform_admin,
 ):
     """M7: include_files must put file bytes in encrypted payload members."""
     content_a = b"secret file alpha e2e"
@@ -103,7 +104,8 @@ async def test_full_export_files_in_encrypted_tier(
 
 
 async def test_full_export_no_files_omits_file_section(
-    e2e_client, platform_admin, make_solution_with_files
+    e2e_client, platform_admin, make_solution_with_files,
+    secrets_reader_platform_admin,
 ):
     """A solution with no files must not put a solution_files key in secrets.enc."""
     sol = await make_solution_with_files({})  # no files

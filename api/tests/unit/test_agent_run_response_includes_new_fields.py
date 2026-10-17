@@ -59,17 +59,16 @@ def test_run_as_fields_on_list_and_detail_contracts():
         assert "run_as_user_email" in fields
 
 
-def _superuser() -> UserPrincipal:
+def _principal(user: User) -> UserPrincipal:
     return UserPrincipal(
-        user_id=uuid4(),
-        email="admin@contoso.example",
-        organization_id=None,
-        name="Contoso Admin",
-        is_superuser=True,
+        user_id=user.id,
+        email=user.email,
+        organization_id=user.organization_id,
+        name=user.name or "",
     )
 
 
-async def _seed_run(db_session, *, run_as_user_id=None) -> AgentRun:
+async def _seed_run(db_session, user: User, *, run_as_user_id=None) -> AgentRun:
     agent = Agent(
         name=f"Contoso Helpdesk {uuid4().hex[:8]}",
         system_prompt="Answer helpdesk questions.",
@@ -83,6 +82,7 @@ async def _seed_run(db_session, *, run_as_user_id=None) -> AgentRun:
         trigger_type="api",
         status="completed",
         run_as_user_id=run_as_user_id,
+        caller_user_id=str(user.id),
     )
     db_session.add(run)
     await db_session.flush()
@@ -90,10 +90,10 @@ async def _seed_run(db_session, *, run_as_user_id=None) -> AgentRun:
     return run
 
 
-async def _list_runs(db_session, agent_id: UUID):
+async def _list_runs(db_session, agent_id: UUID, user: User):
     return await list_agent_runs(
         db=db_session,
-        user=_superuser(),
+        user=_principal(user),
         agent_id=agent_id,
         status_filter=None,
         trigger_type=None,
@@ -110,11 +110,11 @@ async def _list_runs(db_session, agent_id: UUID):
 
 
 @pytest.mark.asyncio
-async def test_ordinary_run_has_no_run_as_user(db_session):
-    run = await _seed_run(db_session)
+async def test_ordinary_run_has_no_run_as_user(db_session, seed_user):
+    run = await _seed_run(db_session, seed_user)
 
-    detail = await get_sdk_agent_run(db_session, _superuser(), run_id=run.id)
-    listed = await _list_runs(db_session, run.agent_id)
+    detail = await get_sdk_agent_run(db_session, _principal(seed_user), run_id=run.id)
+    listed = await _list_runs(db_session, run.agent_id, seed_user)
 
     assert detail.run_as_user_id is None
     assert detail.run_as_user_name is None
@@ -125,7 +125,7 @@ async def test_ordinary_run_has_no_run_as_user(db_session):
 
 
 @pytest.mark.asyncio
-async def test_run_as_user_is_named_from_the_users_row(db_session):
+async def test_run_as_user_is_named_from_the_users_row(db_session, seed_user):
     fabrikam = Organization(name=f"Fabrikam {uuid4().hex[:8]}", created_by="run-as-test")
     db_session.add(fabrikam)
     await db_session.flush()
@@ -137,10 +137,10 @@ async def test_run_as_user_is_named_from_the_users_row(db_session):
     )
     db_session.add(target)
     await db_session.flush()
-    run = await _seed_run(db_session, run_as_user_id=target.id)
+    run = await _seed_run(db_session, seed_user, run_as_user_id=target.id)
 
-    detail = await get_sdk_agent_run(db_session, _superuser(), run_id=run.id)
-    listed = await _list_runs(db_session, run.agent_id)
+    detail = await get_sdk_agent_run(db_session, _principal(seed_user), run_id=run.id)
+    listed = await _list_runs(db_session, run.agent_id, seed_user)
 
     assert detail.run_as_user_id == target.id
     assert detail.run_as_user_name == "Fabrikam Technician"

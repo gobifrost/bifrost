@@ -17,7 +17,7 @@ rows.
 import asyncio
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -79,6 +79,31 @@ def _patch_embedder(embedder=None):
     return patch(
         "src.services.embeddings.factory.get_embedding_client",
         AsyncMock(return_value=embedder or _FakeEmbedder()),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _bypass_authorization_for_document_storage_regressions(monkeypatch):
+    """Keep these chunking regressions focused on storage, not route policy."""
+    import src.routers.knowledge_sources as knowledge_router
+
+    caller = MagicMock()
+
+    async def authorize_scope(_db, _user, _operation, scope):
+        if scope in (None, "", "global"):
+            return caller, None
+        return caller, UUID(scope)
+
+    async def knowledge_caller(_db, _user):
+        return caller
+
+    monkeypatch.setattr(knowledge_router, "_authorize_knowledge_scope", authorize_scope)
+    monkeypatch.setattr(knowledge_router, "_knowledge_caller", knowledge_caller)
+    monkeypatch.setattr(knowledge_router, "require_operation", lambda *_args: None)
+    monkeypatch.setattr(
+        knowledge_router,
+        "resolve_knowledge_scope",
+        lambda scope, *, caller: None if scope in (None, "", "global") else UUID(scope),
     )
 
 

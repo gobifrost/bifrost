@@ -18,14 +18,11 @@ Generation routes (``document``, ``spreadsheet``, ``text``, ``image``)
 live in ``shared.sdk_artifact_generation``; ``video`` and AI routes stay
 in the router.
 
-The caller passes an explicit trusted actor (the auth-verified
-``UserPrincipal``) plus the DB session — never a FastAPI Request and
-never a child-provided actor claim. The HTTP engine token arrives as a
-global superuser (``is_superuser=True``, no org); supervised service
-tokens arrive with their service org (``is_superuser=False`` plus
-``organization_id``). Both flow through unchanged: ``ArtifactService``
-applies the platform-admin bypass internally, so the engine sees global
-scope while a service token stays org-scoped.
+The caller passes an explicit, verified :class:`Caller` plus the DB session
+— never a FastAPI Request or child-provided actor claim. ``ArtifactService``
+refreshes that caller at each private-artifact boundary, authorizes with the
+original user's current reach and permissions, and records the effects actor
+on new rows.
 
 Storage behavior is not duplicated here: validation delegates to
 ``shared.artifact_generation.validate_artifact_content``, persistence
@@ -53,10 +50,9 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared import access_checks
-from shared.scope_resolver import has_scope_bypass
-from src.core.principal import UserPrincipal
 from src.models.contracts.artifacts import ArtifactDownloadResponse, ArtifactRef
+from src.services.authorization.enforce import Caller
+
 
 class SdkArtifactError(Exception):
     """SDK artifact failure with an HTTP-style status.
@@ -79,20 +75,12 @@ class SdkArtifactError(Exception):
 class ArtifactCaller:
     """Trusted caller for SDK artifact operations.
 
-    Carries the auth-verified ``UserPrincipal`` and the DB session.
-    Built by the HTTP adapter from its authenticated ``CurrentUser``;
-    a future parent caller constructs the token-equivalent principal
-    from trusted parent metadata. Never derive authority from
-    child-supplied fields.
+    Carries the verified original-user authority and DB session.  The effects
+    principal remains on ``caller.principal`` for persisted attribution.
     """
 
-    user: UserPrincipal
+    caller: Caller
     db: AsyncSession
-
-    @classmethod
-    def from_context(cls, ctx: Any) -> ArtifactCaller:
-        """Build a trusted caller from an authenticated execution context."""
-        return cls(user=ctx.user, db=ctx.db)
 
 
 @dataclass
@@ -130,26 +118,24 @@ async def sdk_store_artifact(
     versioning keys on it, exactly as the historical handler did.
     """
     from shared.artifact_generation import validate_artifact_content
-    from src.services.artifacts import ArtifactService, artifact_ref
+    from src.services.artifacts import ArtifactAccessError, ArtifactService, artifact_ref
 
     validate_artifact_content(
         filename=filename,
         content_type=content_type,
         content=content,
     )
-    artifact = await ArtifactService(caller.db).store(
-        filename=filename,
-        content_type=content_type,
-        content=content,
-        created_by_user_id=caller.user.user_id,
-        organization_id=caller.user.organization_id,
-        workspace_id=workspace_id,
-        logical_path=filename,
-        bypass=has_scope_bypass(
-            is_platform_admin=caller.user.is_superuser,
-            is_provider_org=caller.user.is_provider_org,
-        ),
-    )
+    try:
+        artifact = await ArtifactService(caller.db).store_for_caller(
+            caller.caller,
+            filename=filename,
+            content_type=content_type,
+            content=content,
+            workspace_id=workspace_id,
+            logical_path=filename,
+        )
+    except ArtifactAccessError as exc:
+        raise SdkArtifactError(404, str(exc)) from exc
     return artifact_ref(artifact)
 
 
@@ -161,25 +147,18 @@ async def sdk_list_artifacts(
     """List the latest logical file in one authorized execution workspace.
 
     Versioning (latest per ``logical_path``) lives in
-    ``ArtifactService.list_workspace``. Scope filtering there is owner-only
-    for regular callers; ``has_scope_bypass`` callers (platform admin or
-    provider org) see every artifact in the workspace.
+    ``ArtifactService.list_workspace_for_caller`` applies original-user reach
+    and owner-or-named-power filtering for every persisted row.
     """
-    from src.services.artifacts import ArtifactService, artifact_ref
+    from src.services.artifacts import ArtifactAccessError, ArtifactService, artifact_ref
 
-    stored = await ArtifactService(caller.db).list_workspace(
-        workspace_id,
-        user_id=caller.user.user_id,
-        bypass=has_scope_bypass(
-            is_platform_admin=caller.user.is_superuser,
-            is_provider_org=caller.user.is_provider_org,
-        ),
-    )
-    others = next((item for item in stored if item.created_by_user_id != caller.user.user_id), None)
-    if others is not None:
-        access_checks.note_power(
-            "artifacts.read.all", others.organization_id, subject=f"artifact_workspace:{workspace_id}"
+    try:
+        stored = await ArtifactService(caller.db).list_workspace_for_caller(
+            workspace_id,
+            caller=caller.caller,
         )
+    except ArtifactAccessError as exc:
+        raise SdkArtifactError(404, str(exc)) from exc
     return [artifact_ref(item) for item in stored]
 
 
@@ -193,7 +172,7 @@ async def sdk_read_artifact(
 
     Raises:
         SdkArtifactError: 404 when the id is missing or outside the
-            caller's (owner-or-org, admin-bypass) scope.
+            caller's original-user owner-or-named-power scope.
     """
     from src.services.artifacts import (
         ArtifactAccessError,
@@ -203,18 +182,12 @@ async def sdk_read_artifact(
 
     service = ArtifactService(caller.db)
     try:
-        artifact = await service.get_authorized(
+        artifact = await service.get_for_caller(
             artifact_id,
-            user_id=caller.user.user_id,
-            bypass=has_scope_bypass(
-                is_platform_admin=caller.user.is_superuser,
-                is_provider_org=caller.user.is_provider_org,
-            ),
+            caller=caller.caller,
         )
     except ArtifactAccessError as exc:
         raise SdkArtifactError(404, str(exc)) from exc
-    if artifact.created_by_user_id != caller.user.user_id:
-        access_checks.note_power("artifacts.read.all", artifact.organization_id, subject=f"artifact:{artifact.id}")
     content = await service.read(artifact)
     if preview:
         from shared.artifact_preview import preview_office_artifact
@@ -262,18 +235,12 @@ async def sdk_artifact_download_url(
 
     service = ArtifactService(caller.db)
     try:
-        artifact = await service.get_authorized(
+        artifact = await service.get_for_caller(
             artifact_id,
-            user_id=caller.user.user_id,
-            bypass=has_scope_bypass(
-                is_platform_admin=caller.user.is_superuser,
-                is_provider_org=caller.user.is_provider_org,
-            ),
+            caller=caller.caller,
         )
     except ArtifactAccessError as exc:
         raise SdkArtifactError(404, str(exc)) from exc
-    if artifact.created_by_user_id != caller.user.user_id:
-        access_checks.note_power("artifacts.read.all", artifact.organization_id, subject=f"artifact:{artifact.id}")
     url = await service.generate_download_url(artifact)
     return ArtifactDownloadResponse(url=url)
 

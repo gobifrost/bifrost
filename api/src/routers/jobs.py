@@ -8,16 +8,18 @@ Primary use case: E2E tests and fallback when WebSockets unavailable.
 import json
 import logging
 from typing import Any
-
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
-
-from src.core.auth import CurrentSuperuser
-from src.core.log_safety import log_safe
-from src.core.database import get_db
-from src.models.orm.platform_jobs import PlatformJob
-from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.core.auth import CurrentActiveUser
+from src.core.database import get_db
+from src.core.log_safety import log_safe
+from src.models.orm.platform_jobs import PlatformJob
+from src.services.authorization.enforce import load_caller, require_permission
+from src.services.platform_job_access import PlatformJobAccessDenied, require_platform_job_access
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +58,7 @@ async def get_job_status(
     job_id: str,
     db: AsyncSession = Depends(get_db, scope="function"),
     *,
-    _user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> JobStatusResponse:
     """
     Get the status of a job by ID.
@@ -68,6 +70,7 @@ async def get_job_status(
     - E2E tests that can't use WebSockets
     - Fallback when WebSocket connection fails
     """
+    caller = await load_caller(db, user)
     try:
         platform_job_id = UUID(job_id)
     except ValueError:
@@ -75,6 +78,10 @@ async def get_job_status(
     if platform_job_id is not None:
         platform_job = await db.get(PlatformJob, platform_job_id)
         if platform_job is not None:
+            try:
+                require_platform_job_access(caller, platform_job)
+            except PlatformJobAccessDenied:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found") from None
             status_map = {
                 "queued": "pending",
                 "running": "running",
@@ -103,6 +110,7 @@ async def get_job_status(
                 conflicts=result.get("conflicts"),
             )
 
+    require_permission(caller, "platform.read", None)
     from src.core.redis_client import get_redis_client
 
     try:

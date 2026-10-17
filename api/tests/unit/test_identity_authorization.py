@@ -1,6 +1,6 @@
 """R3a identity rules in the services: per-field user updates, bulk per-user
-outcomes, the base-role writer, role assignments with boundaries and the
-grant ceiling, and role permission editing."""
+outcomes, the base-role writer, role assignments with boundaries and named
+privileged access, and role permission editing."""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ from src.services.authorization.context import (
     RoleGrant,
 )
 from src.services.authorization.enforce import Caller
+from src.services.user_role_assignments import RoleAssignmentError
 from tests.helpers.authorization import admin_caller
 
 pytestmark = pytest.mark.asyncio
@@ -122,7 +123,7 @@ class TestUpdateFieldClassification:
         assert update_field_permissions(set(request.model_fields_set)) == {
             "name": "users.readwrite",
             "email": "userlifecycle.readwrite",
-            "is_superuser": "platform_admin",
+            "is_superuser": "privilegedaccess.readwrite",
         }
 
     async def test_an_empty_update_still_needs_user_support(self) -> None:
@@ -147,8 +148,6 @@ class TestUpdateUser:
         assert updated.name == "After"
 
     async def test_support_does_not_reach_lifecycle_fields(self, db_session) -> None:
-        from shared.sdk_users import UserServiceError
-
         org = await _org(db_session)
         user = await _user(db_session, org.id)
         support = _delegate(({"users.readwrite"}, _at(org.id)))
@@ -157,7 +156,7 @@ class TestUpdateUser:
                 await self._update(db_session, support, user, **fields)
             assert exc_info.value.status_code == 403, fields
         lifecycle = _delegate(({"users.readwrite", "userlifecycle.readwrite"}, _at(org.id)))
-        with pytest.raises(UserServiceError) as exc_info:
+        with pytest.raises(HTTPException) as exc_info:
             await self._update(db_session, lifecycle, user, is_superuser=False)
         assert exc_info.value.status_code == 403
 
@@ -347,7 +346,7 @@ class TestBulk:
         assert result.succeeded == [ordinary.id]
         reasons = {f.user_id: f.reason for f in result.failed}
         assert reasons[elsewhere.id] == "You don't have permission to manage users"
-        assert "Only a Platform Admin" in reasons[admin.id]
+        assert reasons[admin.id] == "You need Read and Write Privileged Access to change this account"
         assert reasons[missing] == "User not found"
         assert ordinary.is_active is False and elsewhere.is_active is True
 
@@ -460,8 +459,9 @@ class TestBulk:
                 user_ids=[user.id], operation="replace_roles", role_ids=[kept.id, plain.id, with_permission.id]
             ),
         )
-        assert result.succeeded == []
-        assert "carry no permissions" in result.failed[0].reason
+        assert result.succeeded == [user.id]
+        for role in (kept, plain, with_permission):
+            assert await _boundaries(db_session, user.id, role.id) == {("organization", org.id)}
 
         result = await bulk_update_users(
             db_session,
@@ -826,7 +826,12 @@ class TestRoleAssignments:
                 await get_role_assignments(db_session, assigner, user_id=user.id)
             ).assignable_roles
         }
-        assert as_delegate[plain.id].boundary_kinds == ["organization"]
+        assert as_delegate[plain.id].boundary_kinds == [
+            "organization",
+            "managed_organizations",
+            "platform",
+        ]
+        assert as_delegate[plain.id].provider_organization_allowed is True
 
     async def test_operator_boundaries_and_base_are_limited(self, db_session) -> None:
         from src.services.user_role_assignments import RoleAssignmentError
@@ -966,19 +971,32 @@ class TestRoleAssignments:
                 SECRETS_READER_BOUNDARY_MESSAGE,
             )
 
-    async def test_only_a_platform_admin_grants_or_removes_secrets_reader(self, db_session) -> None:
-        from src.services.user_role_assignments import CEILING_MESSAGE, RoleAssignmentError
+    async def test_privileged_access_grants_or_removes_secrets_reader(self, db_session) -> None:
 
         assigner = _delegate(({"roleassignments.readwrite", "roleassignments.read"}, _at(PROVIDER_ORG_ID)))
         plain = await _user(db_session, PROVIDER_ORG_ID)
-        with pytest.raises(RoleAssignmentError) as exc_info:
+        with pytest.raises(HTTPException) as exc_info:
             await self._put(
                 db_session,
                 assigner,
                 plain,
                 additional=[{"role_id": DECRYPTION_ROLE_ID}],
             )
-        assert (exc_info.value.status_code, exc_info.value.detail) == (403, CEILING_MESSAGE)
+        assert exc_info.value.status_code == 403
+
+        privileged_assigner = _delegate(
+            (
+                {"roleassignments.readwrite", "roleassignments.read", "privilegedaccess.readwrite"},
+                _at(PROVIDER_ORG_ID),
+            )
+        )
+        response = await self._put(
+            db_session,
+            privileged_assigner,
+            plain,
+            additional=[{"role_id": DECRYPTION_ROLE_ID}],
+        )
+        assert [assignment.role_id for assignment in response.additional] == [DECRYPTION_ROLE_ID]
 
         holder = await _user(db_session, PROVIDER_ORG_ID)
         await self._put(
@@ -1071,14 +1089,13 @@ class TestRoleAssignments:
         view = await get_role_assignments(db_session, admin_caller(), user_id=global_admin.id)
         assert PLATFORM_ADMIN_ROLE_ID not in {r.id for r in view.assignable_roles}
 
-    async def test_only_a_platform_admin_grants_or_removes_platform_admin(self, db_session) -> None:
-        from src.services.user_role_assignments import ADMIN_ROLE_MESSAGE, RoleAssignmentError
+    async def test_platform_admin_assignment_requires_privileged_access(self, db_session) -> None:
 
         assigner = _delegate(({"roleassignments.readwrite", "roleassignments.read"}, _at(PROVIDER_ORG_ID)))
         plain = await _user(db_session, PROVIDER_ORG_ID)
-        with pytest.raises(RoleAssignmentError) as exc_info:
+        with pytest.raises(HTTPException) as exc_info:
             await self._put(db_session, assigner, plain, additional=[{"role_id": PLATFORM_ADMIN_ROLE_ID}])
-        assert (exc_info.value.status_code, exc_info.value.detail) == (403, ADMIN_ROLE_MESSAGE)
+        assert exc_info.value.status_code == 403
         assert plain.is_superuser is False
 
         admin = await _user(db_session, PROVIDER_ORG_ID, admin=True)
@@ -1095,19 +1112,21 @@ class TestRoleAssignments:
         plain, with_permission = await _role(db_session), await _role(db_session, "forms.read")
         assigner = _delegate(({"roleassignments.readwrite", "roleassignments.read"}, _at(org_a.id)))
 
-        response = await self._put(db_session, assigner, user, additional=[{"role_id": plain.id}])
+        response = await self._put(
+            db_session, assigner, user, additional=[{"role_id": plain.id}, {"role_id": with_permission.id}]
+        )
         assert await _boundaries(db_session, user.id, plain.id) == {("organization", org_a.id)}
         assignable = {r.id: r for r in response.assignable_roles}
-        assert plain.id in assignable and with_permission.id not in assignable
-        assert all(not r.permissions and not r.is_builtin for r in assignable.values())
+        assert plain.id in assignable and with_permission.id in assignable
         assert not any(r.can_be_base for r in assignable.values())
 
-        with pytest.raises(RoleAssignmentError) as exc_info:
+        privileged = await _role(db_session, "users.readwrite")
+        with pytest.raises(HTTPException) as exc_info:
             await self._put(
                 db_session,
                 assigner,
                 user,
-                additional=[{"role_id": plain.id}, {"role_id": with_permission.id}],
+                additional=[{"role_id": plain.id}, {"role_id": with_permission.id}, {"role_id": privileged.id}],
             )
         assert exc_info.value.status_code == 403
         with pytest.raises(RoleAssignmentError) as exc_info:

@@ -1,37 +1,28 @@
 """Shared visibility policy for agent-run records."""
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, true
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import ColumnElement
 
-from shared import access_checks
-from shared.access_checks import ALL_ORGS
-from shared.scope_resolver import has_scope_bypass
-from src.core.principal import UserPrincipal
 from src.models.orm.agent_runs import AgentRun
+from src.services.agent_write_policy import caller_user_id
+from src.services.authorization.enforce import Caller, permitted_organizations, user_reach
 
 
 def agent_run_visibility_conditions(
-    user: UserPrincipal,
+    caller: Caller,
 ) -> tuple[ColumnElement[bool], ...]:
-    """Return SQL conditions limiting runs to those visible to ``user``.
+    """Return SQL conditions limiting runs to those visible to ``caller``.
 
-    A non-bypass caller sees only runs they started — mirroring how
-    ``executions.py`` restricts to ``executed_by == user`` — never another
-    user's runs in the same org. A delegated child run (``trigger_type ==
-    "delegation"``, has a ``parent_run_id``) is visible only when the
-    PARENT run's own caller is this user (a correlated subquery against the
-    parent row), not merely because some ``parent_run_id`` is set.
+    A caller always sees their own run history.  Other callers' history
+    requires ``agentruns.read.all`` at the run's actual organization.  The
+    original run user drives both decisions for a typed runtime credential;
+    the worker/actor identity never broadens history.
     """
-    if has_scope_bypass(
-        is_platform_admin=user.is_platform_admin,
-        is_provider_org=user.is_provider_org,
-    ):
-        # No filter: every user's runs in every organization.
-        access_checks.note_power("agentruns.read.all", ALL_ORGS, subject="agent_runs")
-        return ()
-
-    caller_id = str(user.user_id)
+    original_user_id = caller_user_id(caller)
+    if original_user_id is None:
+        return (AgentRun.id.is_(None),)
+    caller_id = str(original_user_id)
     ParentRun = aliased(AgentRun)
     parent_is_caller = (
         select(1)
@@ -40,13 +31,17 @@ def agent_run_visibility_conditions(
         .exists()
     )
 
-    conditions: list[ColumnElement[bool]] = []
-    if user.organization_id is not None:
-        conditions.append(AgentRun.org_id == user.organization_id)
-    conditions.append(
-        or_(
-            AgentRun.caller_user_id == caller_id,
-            and_(AgentRun.parent_run_id.is_not(None), parent_is_caller),
-        )
+    own = or_(
+        AgentRun.caller_user_id == caller_id,
+        and_(AgentRun.parent_run_id.is_not(None), parent_is_caller),
     )
-    return tuple(conditions)
+    original_reach = user_reach(caller).where(AgentRun.org_id)
+    other_reach = permitted_organizations(caller, "agentruns.read.all").where(
+        AgentRun.org_id
+    )
+    # ``None`` means unrestricted, not absent.  The named-power branch is
+    # still intersected with original reach below, so Full/runtime power and
+    # a platform admin never make a row outside original reach visible.
+    other = true() if other_reach is None else other_reach
+    within_original_reach = true() if original_reach is None else original_reach
+    return (and_(within_original_reach, or_(own, other)),)

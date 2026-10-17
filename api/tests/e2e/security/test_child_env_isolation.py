@@ -102,8 +102,8 @@ class TestChildEnvIsolation:
     ):
         """The child env must contain no SECRET_KEY / DB / RabbitMQ / S3 vars.
 
-        BIFROST_REDIS_URL must remain — the child reads execution context,
-        streams logs, and buffers SDK writes through Redis.
+        BIFROST_REDIS_URL must be absent. Execution context, module source,
+        logs, and SDK buffering are parent-mediated or worker-UDS operations.
         """
         data = execute_workflow_sync(
             e2e_client,
@@ -131,9 +131,8 @@ class TestChildEnvIsolation:
         assert probe.get("s3_vars") == [], (
             f"S3 credentials present in execution child env: {probe.get('s3_vars')}"
         )
-        assert probe.get("redis_url_present") is True, (
-            "BIFROST_REDIS_URL is absent from the child env — "
-            "engine Redis I/O would be broken."
+        assert probe.get("redis_url_present") is False, (
+            "BIFROST_REDIS_URL is present in the execution child env."
         )
 
     def test_sdk_authenticated_call_works_post_scrub(

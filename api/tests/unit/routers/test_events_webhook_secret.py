@@ -23,6 +23,7 @@ from src.services.webhooks.signing_secret import (
     read_signing_secret,
     with_signing_secret,
 )
+from tests.helpers.authorization import admin_caller
 
 
 def _generic_source(secret: str | None):
@@ -85,6 +86,10 @@ def registry(monkeypatch):
         AsyncMock(return_value="response"),
     )
     monkeypatch.setattr("src.routers.events.emit_audit", AsyncMock())
+    monkeypatch.setattr(
+        "src.routers.events._require_event_source",
+        AsyncMock(return_value=admin_caller()),
+    )
     return fake
 
 

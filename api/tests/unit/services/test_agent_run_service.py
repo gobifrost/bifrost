@@ -163,6 +163,43 @@ class TestEnqueueAgentRun:
     @pytest.mark.asyncio
     @patch("src.services.execution.agent_run_service.publish_message")
     @patch("src.services.execution.agent_run_service.get_redis")
+    async def test_enqueue_binds_the_callers_actor_id(
+        self, mock_get_redis, _mock_publish, db_session
+    ):
+        _redis_context(mock_get_redis)
+        caller_id = uuid4()
+
+        await enqueue_agent_run(
+            agent_id=str(uuid4()),
+            trigger_type="api",
+            caller_user_id=str(caller_id),
+            lineage=None,
+        )
+
+        assert db_session.add.call_args.args[0].acting_user_id == caller_id
+
+    @pytest.mark.asyncio
+    @patch("src.services.execution.agent_run_service.publish_message")
+    @patch("src.services.execution.agent_run_service.get_redis")
+    async def test_enqueue_binds_the_authorized_run_as_actor_id(
+        self, mock_get_redis, _mock_publish, db_session
+    ):
+        _redis_context(mock_get_redis)
+        run_as_user_id = uuid4()
+
+        await enqueue_agent_run(
+            agent_id=str(uuid4()),
+            trigger_type="api",
+            caller_user_id=str(uuid4()),
+            run_as_user_id=run_as_user_id,
+            lineage=None,
+        )
+
+        assert db_session.add.call_args.args[0].acting_user_id == run_as_user_id
+
+    @pytest.mark.asyncio
+    @patch("src.services.execution.agent_run_service.publish_message")
+    @patch("src.services.execution.agent_run_service.get_redis")
     async def test_enqueue_supports_agentless_conversation_runs(
         self, mock_get_redis, mock_publish, db_session
     ):
@@ -266,4 +303,6 @@ async def test_queued_run_records_its_run_user(mock_get_redis, mock_publish, db_
         lineage=person_lineage(person),
     )
 
-    assert db_session.add.call_args.args[0].run_user_id == person
+    queued_run = db_session.add.call_args.args[0]
+    assert queued_run.run_user_id == person
+    assert queued_run.acting_user_id == person

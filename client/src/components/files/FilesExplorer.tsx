@@ -27,8 +27,9 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
+import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
 import { type FilePolicy } from "@/services/filePolicies";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorization } from "@/services/authorization";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { Breadcrumbs } from "./Breadcrumbs";
@@ -67,7 +68,7 @@ export function FilesExplorer({
 	installName,
 	embedded = false,
 }: FilesExplorerProps = {}) {
-	const { isPlatformAdmin } = useAuth();
+	const authorization = useAuthorization();
 	const explorerRef = useRef<HTMLDivElement>(null);
 	const detailTriggerRef = useRef<HTMLElement | null>(null);
 	const [deleteTarget, setDeleteTarget] = useState<FileDeleteTarget | null>(
@@ -80,7 +81,10 @@ export function FilesExplorer({
 		setRefreshKey((key) => key + 1);
 	}
 	const { data: organizations = [] } = useOrganizations({
-		enabled: isPlatformAdmin && !install,
+		enabled:
+			!install &&
+			!authorization.isLoading &&
+			authorization.canAnywhere("filepolicies.read"),
 	});
 	const isWide = useMediaQuery("(min-width: 1024px)");
 	const isThreePane = useMediaQuery("(min-width: 1280px)");
@@ -93,7 +97,51 @@ export function FilesExplorer({
 	// would resolve to the caller's own org on the write path while the explorer
 	// means literal global.
 	const [selectorScope, setSelectorScope] = useState<string | null>(null);
-	const scope = install ?? selectorScope ?? "global";
+	const canReadGlobal = authorization.canAt(
+		"filepolicies.read",
+		GLOBAL_TARGET,
+	);
+	const homeOrganizationId =
+		authorization.authorization?.home_organization_id;
+	const explicitOrganizationId = authorization.authorization?.grants.find(
+		(grant) =>
+			grant.permission === "filepolicies.read" &&
+			grant.boundary.kind === "organization",
+	)?.boundary.organization_id;
+	const defaultScope = canReadGlobal
+		? null
+		: homeOrganizationId &&
+			  authorization.canAt(
+					"filepolicies.read",
+					orgTarget(homeOrganizationId),
+			  )
+			? homeOrganizationId
+			: (explicitOrganizationId ??
+				organizations.find((organization) =>
+					authorization.canAt(
+						"filepolicies.read",
+						orgTarget(organization.id),
+					),
+				)?.id);
+	const activeSelectorScope = selectorScope ?? defaultScope;
+	const activeTarget =
+		activeSelectorScope === null
+			? GLOBAL_TARGET
+			: activeSelectorScope
+				? orgTarget(activeSelectorScope)
+				: undefined;
+	const scope = activeSelectorScope ?? "global";
+	const scopeReady = Boolean(
+		authorization.authorization &&
+		!authorization.isLoading &&
+		(install ||
+			(activeTarget &&
+				authorization.canAt("filepolicies.read", activeTarget))),
+	);
+	const policyReadOnly =
+		Boolean(install) ||
+		!activeTarget ||
+		!authorization.canAt("filepolicies.readwrite", activeTarget);
 	const [location, setLocation] = useState<string | null>(null);
 	const [prefix, setPrefix] = useState("");
 	const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -131,12 +179,12 @@ export function FilesExplorer({
 	} = useFileUpload(canUpload ? location : null, scope, prefix, refreshFiles);
 	const scopeLabel = useMemo(() => {
 		if (install) return "Solution";
-		if (selectorScope === null) return "Global";
+		if (activeSelectorScope === null) return "Global";
 		return (
-			organizations.find((o) => o.id === selectorScope)?.name ??
+			organizations.find((o) => o.id === activeSelectorScope)?.name ??
 			"Organization"
 		);
-	}, [install, selectorScope, organizations]);
+	}, [install, activeSelectorScope, organizations]);
 	const segments = prefix ? prefix.replace(/\/$/, "").split("/") : [];
 
 	function openDetails() {
@@ -207,7 +255,7 @@ export function FilesExplorer({
 	}
 
 	function openPolicy(loc: string, path: string, exact = false) {
-		if (solutionReadOnly) return;
+		if (policyReadOnly) return;
 		if (!policyOpen) returnToDetails.current = detailOpen && !testOpen;
 		setTestOpen(false);
 		openDetails();
@@ -220,7 +268,7 @@ export function FilesExplorer({
 	}
 
 	function handleDeletePolicy(policy: FilePolicy) {
-		if (solutionReadOnly) return;
+		if (policyReadOnly) return;
 		setDeleteTarget({ kind: "policy", policy });
 	}
 
@@ -235,14 +283,14 @@ export function FilesExplorer({
 		} else if (action === "test") {
 			openTest(loc, treePrefix);
 		} else if (action === "newPolicy") {
-			if (solutionReadOnly) return;
+			if (policyReadOnly) return;
 			openPolicy(
 				loc,
 				treePrefix ? `${treePrefix.replace(/\/+$/, "")}/` : "",
 				true,
 			);
 		} else if (action === "upload") {
-			if (solutionReadOnly || READ_ONLY_LOCATIONS.has(loc)) return;
+			if (READ_ONLY_LOCATIONS.has(loc)) return;
 			// Commit the destination before invoking the browser file chooser.
 			flushSync(() => {
 				setView("browse");
@@ -254,7 +302,11 @@ export function FilesExplorer({
 
 	function handleRowAction(action: ListingRowAction, path: string) {
 		if (location === null) return;
-		if (readOnly && (action === "policy" || action === "delete")) return;
+		if (
+			(action === "policy" && policyReadOnly) ||
+			(action === "delete" && readOnly)
+		)
+			return;
 		if (action === "preview") {
 			setSelectedFile(path);
 			setDetailTab("preview");
@@ -274,13 +326,29 @@ export function FilesExplorer({
 		openDetails();
 	}
 
+	if (!scopeReady) {
+		return (
+			<div
+				role="region"
+				aria-label="Files explorer"
+				className="flex h-full min-h-0 items-center justify-center rounded-[var(--bf-radius-surface)] border bg-card p-6 text-sm text-muted-foreground"
+			>
+				{authorization.isLoading
+					? "Loading file access…"
+					: "You do not have access to files in an available scope."}
+			</div>
+		);
+	}
+
 	const tree = (
 		<ShareTree
-			key={`tree-${scope}-${refreshKey}`}
+			key={`tree-${scope}-${install ?? ""}-${refreshKey}`}
 			scope={scope}
+			solution={install}
 			selectedLocation={location}
 			selectedPrefix={prefix}
 			readOnly={solutionReadOnly}
+			policyReadOnly={policyReadOnly}
 			onSelect={handleSelect}
 			onContextAction={handleTreeAction}
 		/>
@@ -290,21 +358,23 @@ export function FilesExplorer({
 		<FilePreview
 			location={location ?? ""}
 			scope={scope}
+			solution={install}
 			path={selectedFile}
 		/>
 	);
-	const access = readOnly ? (
+	const access = policyReadOnly ? (
 		<EffectiveAccessPanel
 			key={refreshKey}
 			location={location ?? ""}
 			scope={scope}
+			solution={install}
 			path={selectedFile ?? (location ? prefix : null)}
-			readOnly={readOnly}
+			readOnly={policyReadOnly}
 			managedBySolution={solutionReadOnly}
 			solutionId={install}
 			onOpenTest={() => openTest(location ?? "", selectedFile ?? prefix)}
 			onOpenPolicy={
-				readOnly
+				policyReadOnly
 					? undefined
 					: (policy) => openPolicy(policy.location, policy.path, true)
 			}
@@ -381,6 +451,7 @@ export function FilesExplorer({
 					scopeLabel={scopeLabel}
 					location={location ?? ""}
 					scope={scope}
+					solution={install}
 					path={selectedFile ?? prefix}
 				/>
 			</TabsContent>
@@ -433,6 +504,7 @@ export function FilesExplorer({
 			scopeLabel={scopeLabel}
 			location={modalTarget.location}
 			scope={scope}
+			solution={install}
 			path={modalTarget.path}
 		/>
 	) : (
@@ -457,7 +529,7 @@ export function FilesExplorer({
 			>
 				<TabsTrigger
 					value="access"
-					disabled={readOnly}
+					disabled={policyReadOnly}
 					className="min-h-11"
 				>
 					Access
@@ -512,15 +584,21 @@ export function FilesExplorer({
 						</span>
 					</div>
 				)}
-				{isPlatformAdmin && !install && (
+				{!install && (
 					<div className="flex min-w-0 w-full items-stretch border-b sm:w-[17rem] sm:shrink-0 sm:self-stretch sm:border-b-0 sm:border-r">
 						<OrganizationSelect
 							aria-label="File scope"
 							triggerClassName="h-full min-h-14 rounded-none border-0 bg-transparent px-4 py-3 shadow-none hover:bg-muted/50 focus-visible:ring-inset lg:min-h-14"
-							value={selectorScope}
+							value={activeSelectorScope}
 							onChange={handleScopeChange}
-							showGlobal
+							showGlobal={canReadGlobal}
 							showAll={false}
+							filterOrganizations={(organization) =>
+								authorization.canAt(
+									"filepolicies.read",
+									orgTarget(organization.id),
+								)
+							}
 						/>
 					</div>
 				)}
@@ -556,15 +634,19 @@ export function FilesExplorer({
 								</TabsTrigger>
 							</TabsList>
 						</Tabs>
-						<WorkspacePrimaryAction
-							type="button"
-							aria-label="New Share"
-							className="ml-auto"
-							onClick={() => setNewShareOpen(true)}
-						>
-							<Plus className="size-4" />
-							<span className="hidden sm:inline">New Share</span>
-						</WorkspacePrimaryAction>
+						{!policyReadOnly && (
+							<WorkspacePrimaryAction
+								type="button"
+								aria-label="New Share"
+								className="ml-auto"
+								onClick={() => setNewShareOpen(true)}
+							>
+								<Plus className="size-4" />
+								<span className="hidden sm:inline">
+									New Share
+								</span>
+							</WorkspacePrimaryAction>
+						)}
 					</div>
 				)}
 			</header>
@@ -707,6 +789,7 @@ export function FilesExplorer({
 						{view === "policies" && !install ? (
 							<PoliciesView
 								scope={scope}
+								readOnly={policyReadOnly}
 								refreshKey={refreshKey}
 								location={location}
 								prefix={prefix}
@@ -722,16 +805,19 @@ export function FilesExplorer({
 						) : location === null ? (
 							<SharesOverview
 								scope={scope}
+								solution={install}
 								readOnly={solutionReadOnly}
 								onSelect={handleSelect}
 							/>
 						) : (
 							<FolderListing
-								key={`listing-${scope}-${location}-${prefix}`}
+								key={`listing-${scope}-${install ?? ""}-${location}-${prefix}`}
 								scope={scope}
+								solution={install}
 								location={location}
 								prefix={prefix}
 								readOnly={readOnly}
+								policyReadOnly={policyReadOnly}
 								managedBySolution={solutionReadOnly}
 								solutionId={install}
 								selectedPath={detailOpen ? selectedFile : null}

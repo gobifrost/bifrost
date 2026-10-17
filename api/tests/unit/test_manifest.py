@@ -2621,11 +2621,30 @@ def test_manifest_workflow_requested_permissions_round_trip():
         "function_name": "x",
         "requested_permissions": {
             "mode": "restricted",
-            "grants": [{"permission": "tables.read", "boundary": "platform"}],
+            "grants": [{"permission": "tables.read"}],
         },
     }
     dumped = ManifestWorkflow.model_validate(data).model_dump(mode="json")
     assert dumped["requested_permissions"] == data["requested_permissions"]
+
+
+def test_manifest_workflow_rejects_obsolete_permission_placement():
+    from pydantic import ValidationError
+
+    from bifrost.manifest import ManifestWorkflow
+
+    with pytest.raises(ValidationError, match="boundary"):
+        ManifestWorkflow.model_validate(
+            {
+                "id": "55555555-5555-5555-5555-555555555555",
+                "path": "workflows/x.py",
+                "function_name": "x",
+                "requested_permissions": {
+                    "mode": "restricted",
+                    "grants": [{"permission": "tables.read", "boundary": "platform"}],
+                },
+            }
+        )
 
 
 def test_manifest_workflow_requested_permissions_absent_stays_absent():

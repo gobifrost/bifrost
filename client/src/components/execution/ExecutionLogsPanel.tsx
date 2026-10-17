@@ -7,7 +7,15 @@ import {
 	useState,
 	type ReactNode,
 } from "react";
-import { ArrowDown, ArrowUp, Check, Copy, Download, Search, X } from "lucide-react";
+import {
+	ArrowDown,
+	ArrowUp,
+	Check,
+	Copy,
+	Download,
+	Search,
+	X,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -46,7 +54,7 @@ interface ExecutionLogsPanelProps {
 	/** Whether logs are still loading from API */
 	isLoading?: boolean;
 	/** Whether the user is a platform admin (shows DEBUG logs) */
-	isPlatformAdmin?: boolean;
+	canReadDiagnostics?: boolean;
 	/** Optional className for the panel */
 	className?: string;
 	/** Maximum height for the logs container */
@@ -124,7 +132,7 @@ export function ExecutionLogsPanel({
 	status,
 	isConnected,
 	isLoading = false,
-	isPlatformAdmin = false,
+	canReadDiagnostics = false,
 	className,
 	maxHeight = "600px",
 	variant = "default",
@@ -174,8 +182,7 @@ export function ExecutionLogsPanel({
 	}, [logs, query, levelFilter, dateRange]);
 
 	const orderedLogs = useMemo(
-		() =>
-			sortOrder === "desc" ? [...visibleLogs].reverse() : visibleLogs,
+		() => (sortOrder === "desc" ? [...visibleLogs].reverse() : visibleLogs),
 		[visibleLogs, sortOrder],
 	);
 
@@ -418,7 +425,7 @@ export function ExecutionLogsPanel({
 								{countLabel}
 								{visibleCount !== lineCount &&
 									` · ${visibleCount} visible`}
-								{!isPlatformAdmin && " · INFO and above"}
+								{!canReadDiagnostics && " · INFO and above"}
 							</span>
 						)}
 						{isConnected && isRunning && (
@@ -502,9 +509,9 @@ export function ExecutionLogsPanel({
 								<SelectItem value="traceback">
 									Traceback
 								</SelectItem>
-							{isPlatformAdmin && (
-								<SelectItem value="debug">Debug</SelectItem>
-							)}
+								{canReadDiagnostics && (
+									<SelectItem value="debug">Debug</SelectItem>
+								)}
 							</SelectContent>
 						</Select>
 						{showDateFilter && onDateRangeChange && (

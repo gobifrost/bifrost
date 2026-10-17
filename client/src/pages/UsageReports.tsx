@@ -17,7 +17,8 @@ import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useUsageReport, type UsageSource } from "@/services/usage";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorization } from "@/services/authorization";
+import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { UsageSummaryCards } from "@/components/reports/UsageSummaryCards";
@@ -76,7 +77,17 @@ export function UsageReports() {
 }
 
 function AIUsageReport({ reportSwitch }: { reportSwitch: ReactNode }) {
-	const { isPlatformAdmin } = useAuth();
+	const { authorization, canAt, canAnywhere } = useAuthorization();
+	const canReadReport = canAnywhere("metrics.read");
+	const canDiscoverOrganizations = canAnywhere("organizations.read");
+	const knownOrganizations = authorization?.home_organization_id
+		? [
+				{
+					id: authorization.home_organization_id,
+					name: "Home organization",
+				},
+			]
+		: [];
 	const [searchParams, setSearchParams] = useSearchParams();
 	useEffect(() => {
 		if (
@@ -115,7 +126,7 @@ function AIUsageReport({ reportSwitch }: { reportSwitch: ReactNode }) {
 		);
 	};
 
-	// Organization filter state (platform admins only)
+	// Organization filters are constrained to the report permission.
 	// undefined = all, null = global only, UUID string = specific org
 	const selectedOrg = searchParams.get("ai_org");
 	const filterOrgId =
@@ -125,7 +136,9 @@ function AIUsageReport({ reportSwitch }: { reportSwitch: ReactNode }) {
 	const isGlobalScope = filterOrgId === undefined || filterOrgId === null;
 
 	// Fetch real organizations for demo data generation
-	const { data: orgsData } = useOrganizations({ enabled: isPlatformAdmin });
+	const { data: orgsData } = useOrganizations({
+		enabled: canDiscoverOrganizations,
+	});
 
 	// Demo mode state
 	const showDemoData = searchParams.get("ai_demo") === "1";
@@ -207,7 +220,7 @@ function AIUsageReport({ reportSwitch }: { reportSwitch: ReactNode }) {
 					titleAccessory={reportSwitch}
 					description="Review AI spend, tokens, and storage across the platform."
 					actions={
-						isPlatformAdmin && (
+						canReadReport && (
 							<div className="flex min-h-11 flex-wrap items-center gap-3">
 								{showDemoData && (
 									<Badge variant="outline">Demo Mode</Badge>
@@ -267,7 +280,7 @@ function AIUsageReport({ reportSwitch }: { reportSwitch: ReactNode }) {
 								<TabsTrigger value="agents">Agents</TabsTrigger>
 							</TabsList>
 						</Tabs>
-						{isPlatformAdmin && (
+						{canReadReport && (
 							<div className="w-full sm:ml-auto sm:w-56">
 								<OrganizationSelect
 									value={filterOrgId}
@@ -280,7 +293,18 @@ function AIUsageReport({ reportSwitch }: { reportSwitch: ReactNode }) {
 										})
 									}
 									showAll={true}
-									showGlobal={true}
+									showGlobal={canAt(
+										"metrics.read",
+										GLOBAL_TARGET,
+									)}
+									loadOrganizations={canDiscoverOrganizations}
+									knownOrganizations={knownOrganizations}
+									filterOrganizations={(organization) =>
+										canAt(
+											"metrics.read",
+											orgTarget(organization.id),
+										)
+									}
 									placeholder="All organizations"
 								/>
 							</div>

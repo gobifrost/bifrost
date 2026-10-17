@@ -35,9 +35,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from shared.scope_resolver import has_scope_bypass
 from shared.chat_context import store_chat_context_usage
-from src.core.principal import UserPrincipal
+from src.services.authorization.enforce import Caller
 from src.models.contracts.agents import (
     AgentSwitch,
     ChatContextUsage,
@@ -48,8 +47,7 @@ from src.models.contracts.agents import (
     ToolResult,
 )
 from src.models.enums import MessageRole
-from src.models.orm import Agent, Conversation, Message, MessageAttachment, Workflow
-from src.repositories.agents import AgentRepository
+from src.models.orm import Agent, Conversation, Message, MessageAttachment
 from src.services.ai_model_service import AIModelService
 from src.services.llm import (
     LLMMessage,
@@ -78,10 +76,12 @@ from src.services.execution.agent_helpers import (
     parse_mcp_tool_name,
     resolve_agent_tools,
 )
-from shared.run_lineage import run_user_lineage
-from src.services.execution.agent_workflow_tools import (
-    AgentWorkflowCaller,
-    execute_agent_workflow_tool,
+from src.services.execution.agent_workflow_tools import execute_agent_workflow_tool
+from src.services.authorization.callers import refresh_caller
+from src.services.authorization.agent_runtime import (
+    AgentRuntimeAuthorizationError,
+    authorize_agent_execution,
+    authorize_agentless_ai,
 )
 from src.services.execution.autonomous_agent_executor import (
     AutonomousAgentExecutor,
@@ -170,7 +170,7 @@ class AgentExecutor:
         new_agent: Agent,
         reason: str,
         *,
-        user: UserPrincipal | None,
+        caller: Caller,
     ) -> tuple[ChatStreamChunk | None, Agent | None]:
         """
         Centralized agent switching with all rule checks.
@@ -182,39 +182,19 @@ class AgentExecutor:
             conversation: The conversation to update
             new_agent: The agent to switch to
             reason: Why the switch happened ("@mention", "routed", etc.)
-            user: Current user whose agent access must authorize the switch
+            caller: Current original user whose authority must authorize the switch
 
         Returns:
             Tuple of optional agent_switch event and the access-checked agent.
         """
-        if user is None:
-            logger.warning(
-                "Denied agent switch without user context: conversation_id=%s agent_id=%s reason=%s",
-                conversation.id,
-                new_agent.id,
-                reason,
-            )
-            return None, None
-
-        # Persist only after reloading the target through the repository access
-        # boundary. This prevents high-level routing or mention logic from
-        # binding a conversation to an otherwise inaccessible agent.
         async with self._db() as session:
-            repo = AgentRepository(
-                session,
-                org_id=user.organization_id,
-                user_id=user.user_id,
-                is_superuser=has_scope_bypass(
-                    is_platform_admin=user.is_platform_admin,
-                    is_provider_org=user.is_provider_org,
-                ),
-                is_external=user.is_external,
-            )
-            accessible_agent = await repo.get_agent_with_access_check(new_agent.id)
-            if accessible_agent is None:
+            try:
+                _, accessible_agent = await authorize_agent_execution(
+                    session, caller, new_agent.id
+                )
+            except AgentRuntimeAuthorizationError:
                 logger.warning(
-                    "Denied agent switch because user lacks access: user_id=%s conversation_id=%s agent_id=%s reason=%s",
-                    user.user_id,
+                    "Denied agent switch because original caller lacks current access: conversation_id=%s agent_id=%s reason=%s",
                     conversation.id,
                     new_agent.id,
                     reason,
@@ -246,7 +226,7 @@ class AgentExecutor:
         stream: bool = True,
         enable_routing: bool = True,
         local_id: str | None = None,
-        user: UserPrincipal | None = None,
+        caller: Caller,
         attachment_ids: list[UUID] | None = None,
         model_profile_id: UUID | None = None,
         user_message_id: UUID | None = None,
@@ -264,7 +244,7 @@ class AgentExecutor:
             user_message: The user's message text
             stream: Whether to stream the response (default True)
             enable_routing: Whether to enable @mention and AI routing (default True)
-            user: Current user for permission-aware agent routing
+            caller: Canonical caller for authorization and effect attribution
             user_message_id: Persisted user message id when the caller already
                 inserted the user row before invoking chat.
             run_user_id: Who the chat run is for (shared.run_lineage); its tool
@@ -278,11 +258,14 @@ class AgentExecutor:
         start_time = time.time()
         self._knowledge_search_budget.reset()
         self._run_user_id = run_user_id
+        async with self._db() as session:
+            if agent is None:
+                caller = await authorize_agentless_ai(session, caller)
+            else:
+                caller, agent = await authorize_agent_execution(session, caller, agent.id)
         router = AgentRouter(
             self._session_factory,
-            user_id=user.user_id if user else None,
-            org_id=user.organization_id if user else None,
-            is_external=user.is_external if user else False,
+            caller=caller,
         )
 
         try:
@@ -334,7 +317,7 @@ class AgentExecutor:
                         conversation,
                         mentioned_agent,
                         "@mention",
-                        user=user,
+                        caller=caller,
                     )
                     if switch_chunk and switched_agent:
                         # Strip @mention from message for cleaner processing
@@ -362,7 +345,7 @@ class AgentExecutor:
                             conversation,
                             routed_agent,
                             "routed",
-                            user=user,
+                            caller=caller,
                         )
                         if switch_chunk and switched_agent:
                             yield switch_chunk
@@ -397,27 +380,9 @@ class AgentExecutor:
             # have a user — the conversation owner. The caller threads
             # all the way through to ``mcp_dispatch.invoke`` so the
             # auth-resolution layer makes the user-vs-service decision
-            # exactly once per call.
-            caller_user_id: UUID | None = conversation.user_id
-            caller = (
-                {
-                    "user_id": str(user.user_id),
-                    "email": user.email,
-                    "name": user.name,
-                    "organization_id": (
-                        str(user.organization_id)
-                        if user.organization_id
-                        else None
-                    ),
-                    "is_platform_admin": user.is_superuser,
-                }
-                if user
-                else (
-                    {"user_id": str(caller_user_id)}
-                    if caller_user_id
-                    else None
-                )
-            )
+            # Tool selection may use the effect actor for per-user OAuth, but
+            # authorization at every dispatch refreshes the canonical Caller.
+            caller_user_id = caller.principal.user_id
             tool_definitions = (
                 await self._get_agent_tools(agent, caller_user_id=caller_user_id)
                 if agent
@@ -575,7 +540,6 @@ class AgentExecutor:
                     conversation,
                     execution_id=execution_id,
                     tool_message_id=message_id,
-                    caller_user_id=caller_user_id,
                     caller=caller,
                 )
                 promoted_artifacts = []
@@ -594,13 +558,10 @@ class AgentExecutor:
                         async with self._db() as session:
                             promoted_artifacts = await promote_artifact_refs(
                                 session,
+                                caller=caller,
                                 result=tool_result.result,
                                 conversation_id=conversation.id,
-                                conversation_user_id=conversation.user_id,
                                 message_id=message_id,
-                                agent_organization_id=(
-                                    agent.organization_id if agent else None
-                                ),
                             )
                     except Exception as exc:
                         tool_result = ToolResult(
@@ -1344,8 +1305,7 @@ class AgentExecutor:
         execution_id: str | None = None,
         tool_message_id: UUID | None = None,
         *,
-        caller_user_id: UUID | None = None,
-        caller: dict[str, Any] | None = None,
+        caller: Caller,
     ) -> ToolResult:
         """
         Execute a tool (workflow, delegation, system tool, knowledge search,
@@ -1359,6 +1319,19 @@ class AgentExecutor:
 
         from src.models.contracts.artifacts import ArtifactRef
         from src.services.chat_artifacts import BUILTIN_ARTIFACT_TOOL_NAMES
+
+        if agent is not None:
+            try:
+                async with self._db() as session:
+                    caller, agent = await authorize_agent_execution(session, caller, agent.id)
+            except AgentRuntimeAuthorizationError as exc:
+                return ToolResult(
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_call.name,
+                    result=None,
+                    error=str(exc),
+                    duration_ms=int((time.time() - start_time) * 1000),
+                )
 
         if tool_call.name in BUILTIN_ARTIFACT_TOOL_NAMES:
             if conversation is None or tool_message_id is None:
@@ -1375,6 +1348,7 @@ class AgentExecutor:
                 async with self._db() as session:
                     _, artifact = await execute_artifact_tool(
                         session,
+                        caller=caller,
                         tool_name=tool_call.name,
                         arguments=tool_call.arguments or {},
                         conversation_id=conversation.id,
@@ -1415,7 +1389,7 @@ class AgentExecutor:
 
         # Check if this is a system tool call
         if agent and tool_call.name in (agent.system_tools or []):
-            return await self._execute_system_tool(tool_call, agent, conversation)
+            return await self._execute_system_tool(tool_call, caller)
 
         # External MCP tools — namespaced ``mcp__<connection_id>__<tool>``.
         # MCP tools are routed BEFORE workflow tools because workflow lookup
@@ -1423,39 +1397,27 @@ class AgentExecutor:
         mcp_route = parse_mcp_tool_name(tool_call.name)
         if mcp_route is not None:
             connection_id, remote_tool_name = mcp_route
+            if agent is None or connection_id not in {
+                connection.id for connection in agent.mcp_connections
+            }:
+                return ToolResult(
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_call.name,
+                    result=None,
+                    error="MCP tool is no longer bound to this agent",
+                    duration_ms=int((time.time() - start_time) * 1000),
+                )
             return await self._execute_mcp_tool(
                 tool_call,
                 connection_id=connection_id,
                 remote_tool_name=remote_tool_name,
-                caller_user_id=caller_user_id,
+                caller_user_id=caller.principal.user_id,
                 start_time=start_time,
             )
 
         try:
-            # Get the workflow for this tool — prefer ID lookup (handles normalized names)
             workflow_id = self._tool_workflow_id_map.get(tool_call.name)
-            resolved_workflow: tuple[str, str] | None = None
-            async with self._db() as session:
-                if workflow_id:
-                    result = await session.execute(
-                        select(Workflow).where(Workflow.id == workflow_id)
-                    )
-                else:
-                    # Fallback: try by name (for non-prefixed tools or edge cases)
-                    result = await session.execute(
-                        select(Workflow)
-                        .where(Workflow.name == tool_call.name)
-                        .where(Workflow.type == "tool")
-                        .where(Workflow.is_active.is_(True))
-                    )
-                workflow = result.scalar_one_or_none()
-                if workflow is not None:
-                    # Keep ORM access inside the owning async session. Session exit
-                    # may expire attributes, and later implicit IO would fail with
-                    # MissingGreenlet outside SQLAlchemy's async bridge.
-                    resolved_workflow = (str(workflow.id), workflow.name)
-
-            if resolved_workflow is None:
+            if workflow_id is None or agent is None:
                 return ToolResult(
                     tool_call_id=tool_call.id,
                     tool_name=tool_call.name,
@@ -1463,52 +1425,14 @@ class AgentExecutor:
                     error=f"Tool '{tool_call.name}' not found",
                     duration_ms=int((time.time() - start_time) * 1000),
                 )
-            resolved_workflow_id, resolved_workflow_name = resolved_workflow
-
-            # Chat constructs the authenticated caller once at entry and passes
-            # it through every dispatch path. Prefer that canonical context so
-            # workflow execution does not depend on a lazily loaded ORM user.
-            # The conversation fallback preserves direct/internal callers that
-            # predate the shared caller context.
-            user = conversation.user if conversation and not caller else None
-            caller_has_scope = caller is not None and "organization_id" in caller
 
             execution_response = await execute_agent_workflow_tool(
-                workflow_id=resolved_workflow_id,
-                workflow_name=resolved_workflow_name,
+                agent_id=agent.id,
+                workflow_id=workflow_id,
                 parameters=tool_call.arguments or {},
-                caller=AgentWorkflowCaller(
-                    user_id=(
-                        str(caller.get("user_id"))
-                        if caller and caller.get("user_id")
-                        else str(user.id) if user else "system"
-                    ),
-                    email=(
-                        str(caller.get("email"))
-                        if caller and caller.get("email")
-                        else user.email if user else "system@internal.gobifrost.com"
-                    ),
-                    name=(
-                        str(caller.get("name"))
-                        if caller and caller.get("name")
-                        else user.name if user else "System"
-                    ),
-                    organization_id=(
-                        caller.get("organization_id")
-                        if caller_has_scope and caller
-                        else user.organization_id
-                        if user is not None
-                        else agent.organization_id if agent else None
-                    ),
-                    is_platform_admin=(
-                        bool(caller.get("is_platform_admin", False))
-                        if caller
-                        else user.is_superuser if user else False
-                    ),
-                ),
+                caller=caller,
                 execution_id=execution_id,
                 artifact_workspace_id=str(conversation.id) if conversation else None,
-                lineage=run_user_lineage(self._run_user_id),
             )
 
             duration_ms = int((time.time() - start_time) * 1000)
@@ -1745,7 +1669,11 @@ class AgentExecutor:
 
             if doc_id:
                 cached = self._knowledge_search_budget.cached_document(doc_id)
-                if cached is None:
+                if (
+                    cached is None
+                    or cached["namespace"] not in namespaces
+                    or cached["organization_id"] not in {None, str(agent.organization_id)}
+                ):
                     return ToolResult(
                         tool_call_id=tool_call.id,
                         tool_name=tool_call.name,
@@ -1875,7 +1803,7 @@ class AgentExecutor:
             # Search knowledge store
             async with self._db() as session:
                 repo = KnowledgeRepository(
-                    session, org_id=agent.organization_id, is_superuser=True
+                    session, org_id=agent.organization_id
                 )
                 results = await repo.search(
                     query_embedding=query_embedding,
@@ -1895,6 +1823,7 @@ class AgentExecutor:
                 self._knowledge_search_budget.cache_document(doc.id, {
                     "content": doc.content,
                     "namespace": doc.namespace,
+                    "organization_id": doc.organization_id,
                     "score": score,
                     "key": doc.key,
                     "metadata": metadata,
@@ -1953,7 +1882,7 @@ class AgentExecutor:
         agent: Agent,
         *,
         conversation: Conversation | None = None,
-        caller: dict[str, Any] | None = None,
+        caller: Caller,
     ) -> ToolResult:
         """Execute a delegation to another agent via AutonomousAgentExecutor."""
         start_time = time.time()
@@ -2058,11 +1987,10 @@ class AgentExecutor:
     async def _execute_system_tool(
         self,
         tool_call: ToolCallRequest,
-        agent: Agent,
-        conversation: Conversation | None,
+        caller: Caller,
     ) -> ToolResult:
         """Execute a system tool and return the result."""
-        from src.services.mcp_server.server import MCPContext, get_system_tool_function
+        from src.services.mcp_server.server import get_system_tool_function
 
         start_time = time.time()
 
@@ -2077,28 +2005,12 @@ class AgentExecutor:
             )
 
         try:
-            # Get user from conversation (same pattern as workflow tool execution)
-            user = conversation.user if conversation else None
+            async with self._db() as session:
+                refreshed = await refresh_caller(session, caller)
+            from src.services.mcp_server.server import context_from_principal
 
-            # Create context from agent/conversation/user
-            # session=None: system tools create their own short-lived sessions
-            # via get_tool_db() fallback, avoiding long-lived connection holds
-            context = MCPContext(
-                user_id=str(user.id) if user else "",
-                org_id=(
-                    str(user.organization_id)
-                    if user and user.organization_id
-                    else str(agent.organization_id)
-                    if not user and agent.organization_id
-                    else None
-                ),
-                is_platform_admin=user.is_superuser if user else False,
-                is_external=user.is_external if user else False,
-                user_email=user.email if user else "",
-                user_name=user.name if user else "",
-                run_user_id=self._run_user_id,
-                session=None,
-            )
+            context = context_from_principal(refreshed.principal)
+            context.session = None
 
             # Call the tool function
             result = await func(context, **tool_call.arguments)

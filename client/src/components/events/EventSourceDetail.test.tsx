@@ -15,10 +15,13 @@ const mockUpdate = vi.fn();
 const mockResubscribe = vi.fn();
 const mockRotate = vi.fn();
 const mockRotateReset = vi.fn();
-let mockIsPlatformAdmin = true;
+let mockCanManage = true;
 
-vi.mock("@/contexts/AuthContext", () => ({
-	useAuth: () => ({ isPlatformAdmin: mockIsPlatformAdmin }),
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => ({
+		canAt: () => mockCanManage,
+		canAnywhere: () => mockCanManage,
+	}),
 }));
 
 vi.mock("@/services/events", async () => {
@@ -91,7 +94,7 @@ beforeEach(() => {
 	mockRotate.mockReset();
 	mockRotateReset.mockReset();
 	useEventSourceMock.mockReset();
-	mockIsPlatformAdmin = true;
+	mockCanManage = true;
 });
 
 describe("EventSourceDetail — empty/error branches", () => {
@@ -270,7 +273,7 @@ describe("EventSourceDetail — populated", () => {
 	});
 
 	it("hides admin-only controls for non-admin viewers", () => {
-		mockIsPlatformAdmin = false;
+		mockCanManage = false;
 		useEventSourceMock.mockReturnValue({
 			data: makeSource(),
 			isLoading: false,

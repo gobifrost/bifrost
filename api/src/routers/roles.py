@@ -14,7 +14,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import select, delete
 
-from src.core.auth import CurrentActiveUser, CurrentSuperuser
+from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
 from src.models.contracts.role_assignments import (
     RolePermissionsResponse,
@@ -22,6 +22,7 @@ from src.models.contracts.role_assignments import (
 )
 from src.services.authorization.enforce import (
     GLOBAL,
+    Caller,
     authorize_operation,
     load_caller,
     operation_reach,
@@ -81,6 +82,53 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/roles", tags=["Roles"])
 
 
+async def _role_bound_resource_ids(
+    db: DbSession,
+    caller: Caller,
+    *,
+    role_id: UUID,
+    binding_model: object,
+    resource_model: object,
+    binding_resource_id: object,
+) -> list[str]:
+    """Delegate reach-filtered binding lists to the shared roles service."""
+    from shared.sdk_roles import list_role_bound_resource_ids
+
+    return await list_role_bound_resource_ids(
+        db,
+        caller,
+        role_id=role_id,
+        binding_model=binding_model,
+        resource_model=resource_model,
+        binding_resource_id=binding_resource_id,
+    )
+
+
+async def _role_binding_target(
+    db: DbSession,
+    caller: Caller,
+    *,
+    operation: str,
+    resource_model: object,
+    resource_id: UUID,
+    agent_configuration: bool = False,
+) -> object:
+    """Map the shared role target policy error to the HTTP boundary."""
+    from shared.sdk_roles import RoleServiceError, require_role_binding_target
+
+    try:
+        return await require_role_binding_target(
+            db,
+            caller,
+            operation=operation,
+            resource_model=resource_model,
+            resource_id=resource_id,
+            agent_configuration=agent_configuration,
+        )
+    except RoleServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+
+
 @router.get(
     "",
     response_model=list[RolePublic],
@@ -106,22 +154,20 @@ async def list_roles(
     ),
     offset: int = Query(0, ge=0, description="Rows to skip when limit is set"),
 ) -> list[RolePublic]:
-    """List all roles with inline consumer counts (users/forms/agents/apps/workflows/knowledge).
-
-    Consumer counts span every organization, so only a Platform Admin gets them.
-    """
+    """List role definitions with summaries scoped to the original caller's reach."""
     from shared.sdk_roles import list_roles as list_roles_service
 
     caller = await authorize_operation(db, user, "roles.list", GLOBAL)
     items, total = await list_roles_service(
         db,
+        caller=caller,
         search=search,
         sort_by=sort_by,
         sort_direction=sort_direction,
         limit=limit,
         offset=offset,
         include_builtin=include_builtin,
-        include_counts=caller.is_platform_admin,
+        include_counts=True,
     )
     response.headers["X-Total-Count"] = str(total)
     return items
@@ -142,11 +188,12 @@ async def create_role(
     """Create a new role."""
     from shared.sdk_roles import RoleServiceError, create_role as create_role_service
 
-    await authorize_operation(db, user, "roles.create", GLOBAL)
+    caller = await authorize_operation(db, user, "roles.create", GLOBAL)
 
     try:
         return await create_role_service(
             db,
+            caller=caller,
             name=request.name,
             description=request.description,
             actor_email=user.email,
@@ -170,15 +217,16 @@ async def get_role(
         description="Also find the builtin roles (Platform Admin, User, Platform Operator, Secrets Reader)",
     ),
 ) -> RolePublic:
-    """Get a role by ID (consumer counts for a Platform Admin only)."""
+    """Get a global role definition with reach-scoped placement summaries."""
     from shared.sdk_roles import RoleServiceError, get_role as get_role_service
 
     caller = await authorize_operation(db, user, "roles.get", GLOBAL)
     try:
         return await get_role_service(
             db,
+            caller=caller,
             role_id=role_id,
-            include_counts=caller.is_platform_admin,
+            include_counts=True,
             include_builtin=include_builtin,
         )
     except RoleServiceError as e:
@@ -391,13 +439,17 @@ async def remove_user_from_role(
 **operation_route("roles.forms.list"))
 async def get_role_forms(
     role_id: UUID,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> RoleFormsResponse:
     """Get all forms assigned to a role."""
-    from shared.sdk_roles import list_role_forms as list_role_forms_service
-
-    return await list_role_forms_service(db, role_id=role_id)
+    caller = await authorize_operation(db, user, "roles.forms.list", GLOBAL)
+    return RoleFormsResponse(
+        form_ids=await _role_bound_resource_ids(
+            db, caller, role_id=role_id, binding_model=FormRoleORM,
+            resource_model=FormORM, binding_resource_id=FormRoleORM.form_id,
+        )
+    )
 
 
 @router.post(
@@ -409,7 +461,7 @@ async def get_role_forms(
 async def assign_forms_to_role(
     role_id: UUID,
     request: AssignFormsToRoleRequest,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> None:
     """Assign forms to a role."""
@@ -418,7 +470,13 @@ async def assign_forms_to_role(
         assign_forms_to_role as assign_forms_to_role_service,
     )
 
+    caller = await load_caller(db, user)
     try:
+        for form_id in request.form_ids:
+            await _role_binding_target(
+                db, caller, operation="roles.forms.assign", resource_model=FormORM,
+                resource_id=UUID(form_id),
+            )
         await assign_forms_to_role_service(
             db,
             role_id=role_id,
@@ -438,10 +496,15 @@ async def assign_forms_to_role(
 async def remove_form_from_role(
     role_id: UUID,
     form_id: UUID,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> None:
     """Remove a form from a role."""
+    caller = await load_caller(db, user)
+    await _role_binding_target(
+        db, caller, operation="roles.forms.remove", resource_model=FormORM,
+        resource_id=form_id,
+    )
     await assert_entity_id_not_solution_managed(db, FormORM, form_id)
     result = await db.execute(
         delete(FormRoleORM).where(
@@ -475,15 +538,17 @@ async def remove_form_from_role(
 **operation_route("roles.agents.list"))
 async def get_role_agents(
     role_id: UUID,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> RoleAgentsResponse:
     """Get all agents assigned to a role."""
-    result = await db.execute(
-        select(AgentRoleORM.agent_id).where(AgentRoleORM.role_id == role_id)
+    caller = await authorize_operation(db, user, "roles.agents.list", GLOBAL)
+    return RoleAgentsResponse(
+        agent_ids=await _role_bound_resource_ids(
+            db, caller, role_id=role_id, binding_model=AgentRoleORM,
+            resource_model=AgentORM, binding_resource_id=AgentRoleORM.agent_id,
+        )
     )
-    agent_ids = [str(aid) for aid in result.scalars().all()]
-    return RoleAgentsResponse(agent_ids=agent_ids)
 
 
 @router.post(
@@ -495,7 +560,7 @@ async def get_role_agents(
 async def assign_agents_to_role(
     role_id: UUID,
     request: AssignAgentsToRoleRequest,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> None:
     """Assign agents to a role."""
@@ -505,9 +570,15 @@ async def assign_agents_to_role(
         raise HTTPException(status.HTTP_409_CONFLICT, "Builtin roles cannot be assigned entities")
 
     now = datetime.now(timezone.utc)
+    caller = await load_caller(db, user)
 
     for agent_id_str in request.agent_ids:
         agent_uuid = UUID(agent_id_str)
+
+        await _role_binding_target(
+            db, caller, operation="roles.agents.assign", resource_model=AgentORM,
+            resource_id=agent_uuid, agent_configuration=True,
+        )
 
         # Verify agent exists before creating assignment
         agent_result = await db.execute(
@@ -555,10 +626,15 @@ async def assign_agents_to_role(
 async def remove_agent_from_role(
     role_id: UUID,
     agent_id: UUID,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> None:
     """Remove an agent from a role."""
+    caller = await load_caller(db, user)
+    await _role_binding_target(
+        db, caller, operation="roles.agents.remove", resource_model=AgentORM,
+        resource_id=agent_id, agent_configuration=True,
+    )
     await assert_entity_id_not_solution_managed(db, AgentORM, agent_id)
     result = await db.execute(
         delete(AgentRoleORM).where(
@@ -642,12 +718,17 @@ async def bulk_unassign_users(
 async def bulk_unassign_forms(
     role_id: UUID,
     request: UnassignFormsFromRoleRequest,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> None:
     """Remove multiple forms from a role in one statement."""
     uuids = [UUID(fid) for fid in request.form_ids]
+    caller = await load_caller(db, user)
     for fid in uuids:
+        await _role_binding_target(
+            db, caller, operation="roles.forms.bulk_remove", resource_model=FormORM,
+            resource_id=fid,
+        )
         await assert_entity_id_not_solution_managed(db, FormORM, fid)
     await db.execute(
         delete(FormRoleORM).where(
@@ -677,12 +758,17 @@ async def bulk_unassign_forms(
 async def bulk_unassign_agents(
     role_id: UUID,
     request: UnassignAgentsFromRoleRequest,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> None:
     """Remove multiple agents from a role in one statement."""
     uuids = [UUID(aid) for aid in request.agent_ids]
+    caller = await load_caller(db, user)
     for aid in uuids:
+        await _role_binding_target(
+            db, caller, operation="roles.agents.bulk_remove", resource_model=AgentORM,
+            resource_id=aid, agent_configuration=True,
+        )
         await assert_entity_id_not_solution_managed(db, AgentORM, aid)
     await db.execute(
         delete(AgentRoleORM).where(
@@ -717,13 +803,16 @@ async def bulk_unassign_agents(
 **operation_route("roles.apps.list"))
 async def get_role_apps(
     role_id: UUID,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> RoleAppsResponse:
-    result = await db.execute(
-        select(AppRoleORM.app_id).where(AppRoleORM.role_id == role_id)
+    caller = await authorize_operation(db, user, "roles.apps.list", GLOBAL)
+    return RoleAppsResponse(
+        app_ids=await _role_bound_resource_ids(
+            db, caller, role_id=role_id, binding_model=AppRoleORM,
+            resource_model=ApplicationORM, binding_resource_id=AppRoleORM.app_id,
+        )
     )
-    return RoleAppsResponse(app_ids=[str(aid) for aid in result.scalars().all()])
 
 
 @router.post(
@@ -734,7 +823,7 @@ async def get_role_apps(
 async def assign_apps_to_role(
     role_id: UUID,
     request: AssignAppsToRoleRequest,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> None:
     from shared.builtin_roles import is_builtin_role_id
@@ -743,8 +832,13 @@ async def assign_apps_to_role(
         raise HTTPException(status.HTTP_409_CONFLICT, "Builtin roles cannot be assigned entities")
 
     now = datetime.now(timezone.utc)
+    caller = await load_caller(db, user)
     for app_id_str in request.app_ids:
         app_uuid = UUID(app_id_str)
+        await _role_binding_target(
+            db, caller, operation="roles.apps.assign", resource_model=ApplicationORM,
+            resource_id=app_uuid,
+        )
         app_exists = await db.execute(
             select(ApplicationORM.id).where(ApplicationORM.id == app_uuid)
         )
@@ -787,11 +881,16 @@ async def assign_apps_to_role(
 async def bulk_unassign_apps(
     role_id: UUID,
     request: UnassignAppsFromRoleRequest,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> None:
     uuids = [UUID(aid) for aid in request.app_ids]
+    caller = await load_caller(db, user)
     for aid in uuids:
+        await _role_binding_target(
+            db, caller, operation="roles.apps.bulk_remove", resource_model=ApplicationORM,
+            resource_id=aid,
+        )
         await assert_entity_id_not_solution_managed(db, ApplicationORM, aid)
     await db.execute(
         delete(AppRoleORM).where(
@@ -822,14 +921,15 @@ async def bulk_unassign_apps(
 **operation_route("roles.workflows.list"))
 async def get_role_workflows(
     role_id: UUID,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> RoleWorkflowsResponse:
-    result = await db.execute(
-        select(WorkflowRoleORM.workflow_id).where(WorkflowRoleORM.role_id == role_id)
-    )
+    caller = await authorize_operation(db, user, "roles.workflows.list", GLOBAL)
     return RoleWorkflowsResponse(
-        workflow_ids=[str(wid) for wid in result.scalars().all()]
+        workflow_ids=await _role_bound_resource_ids(
+            db, caller, role_id=role_id, binding_model=WorkflowRoleORM,
+            resource_model=WorkflowORM, binding_resource_id=WorkflowRoleORM.workflow_id,
+        )
     )
 
 
@@ -841,7 +941,7 @@ async def get_role_workflows(
 async def assign_workflows_to_role(
     role_id: UUID,
     request: AssignWorkflowsToRoleRequest,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> None:
     from shared.builtin_roles import is_builtin_role_id
@@ -850,8 +950,13 @@ async def assign_workflows_to_role(
         raise HTTPException(status.HTTP_409_CONFLICT, "Builtin roles cannot be assigned entities")
 
     now = datetime.now(timezone.utc)
+    caller = await load_caller(db, user)
     for wf_id_str in request.workflow_ids:
         wf_uuid = UUID(wf_id_str)
+        await _role_binding_target(
+            db, caller, operation="roles.workflows.assign", resource_model=WorkflowORM,
+            resource_id=wf_uuid,
+        )
         wf_exists = await db.execute(
             select(WorkflowORM.id).where(WorkflowORM.id == wf_uuid)
         )
@@ -894,11 +999,16 @@ async def assign_workflows_to_role(
 async def bulk_unassign_workflows(
     role_id: UUID,
     request: UnassignWorkflowsFromRoleRequest,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> None:
     uuids = [UUID(wid) for wid in request.workflow_ids]
+    caller = await load_caller(db, user)
     for wid in uuids:
+        await _role_binding_target(
+            db, caller, operation="roles.workflows.bulk_remove", resource_model=WorkflowORM,
+            resource_id=wid,
+        )
         await assert_entity_id_not_solution_managed(db, WorkflowORM, wid)
     await db.execute(
         delete(WorkflowRoleORM).where(

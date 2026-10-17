@@ -12,18 +12,25 @@ import { Label } from "@/components/ui/label";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { useDialogReturnFocus } from "@/hooks/useDialogReturnFocus";
 import { authFetch } from "@/lib/api-client";
+import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorization } from "@/services/authorization";
+import { orgTarget } from "@/lib/authorization";
 
 export function KnowledgeScopeDialog({
 	documentIds,
+	sourceOrganizationIds,
 	onClose,
 	onSaved,
 	returnFocusRef,
 }: {
 	documentIds: string[];
+	sourceOrganizationIds: Array<string | null>;
 	onClose: () => void;
 	onSaved: (updated: number) => void;
 	returnFocusRef?: RefObject<HTMLElement | null>;
 }) {
+	const { user } = useAuth();
+	const authorization = useAuthorization();
 	const [scope, setScope] = useState<string | null | undefined>(null);
 	const [conflict, setConflict] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
@@ -31,6 +38,21 @@ export function KnowledgeScopeDialog({
 	const busy = useRef(false);
 	const errorRef = useRef<HTMLParagraphElement>(null);
 	const returnFocus = useDialogReturnFocus(returnFocusRef, true);
+	const canManageSourceScopes = sourceOrganizationIds.every(
+		(organizationId) =>
+			authorization.canAt(
+				"knowledge.readwrite",
+				orgTarget(organizationId),
+			),
+	);
+	const canManageTargetScope = authorization.canAt(
+		"knowledge.readwrite",
+		orgTarget(scope),
+	);
+	const canSave = canManageSourceScopes && canManageTargetScope;
+	const knownOrganizations = user?.organizationId
+		? [{ id: user.organizationId, name: "Your organization" }]
+		: [];
 	useEffect(() => {
 		if (error) {
 			errorRef.current?.focus();
@@ -38,7 +60,13 @@ export function KnowledgeScopeDialog({
 		}
 	}, [error]);
 	async function save(replace: boolean) {
-		if (busy.current || !documentIds.length || scope === undefined) return;
+		if (
+			busy.current ||
+			!documentIds.length ||
+			scope === undefined ||
+			!canSave
+		)
+			return;
 		busy.current = true;
 		setPending(true);
 		setError(null);
@@ -119,6 +147,10 @@ export function KnowledgeScopeDialog({
 						value={scope}
 						onChange={setScope}
 						showGlobal
+						knownOrganizations={knownOrganizations}
+						loadOrganizations={authorization.canAnywhere(
+							"organizations.read",
+						)}
 						disabled={pending || !!conflict}
 					/>
 				</div>
@@ -145,7 +177,7 @@ export function KnowledgeScopeDialog({
 					</Button>
 					<Button
 						variant={conflict ? "destructive" : "default"}
-						disabled={pending || scope === undefined}
+						disabled={pending || scope === undefined || !canSave}
 						className="min-h-11"
 						onClick={() => void save(!!conflict)}
 					>

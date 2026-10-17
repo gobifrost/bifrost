@@ -13,7 +13,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.access_checks import Collector, Note
-from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
 from shared.identities import ensure_default_identity
 from src.core.cache.redis_client import close_shared_redis
 from src.core.constants import PROVIDER_ORG_ID
@@ -21,7 +20,10 @@ from src.models.enums import IdentityKind
 from src.models.orm.audit import AuditLog
 from src.models.orm.organizations import Organization
 from src.models.orm.users import Role, RolePermission, User, UserRole, UserRoleBoundary
+from src.models.orm.workflows import Workflow
 from src.services.access_check_writer import flush, flush_detached
+
+_WORKFLOW_ID = UUID("00000000-0000-0000-0000-00000000f001")
 
 ROUTE = {"operation": "POST /api/tables/{name}/documents", "route": ("POST", "/api/tables/{name}/documents")}
 
@@ -46,6 +48,11 @@ async def db_session(async_engine):
             bind=connection, expire_on_commit=False, join_transaction_mode="create_savepoint"
         ) as session:
             try:
+                session.add(Workflow(
+                    id=_WORKFLOW_ID, name="audit-test", function_name="audit_test",
+                    path="workflows/audit_test.py", permission_mode="full",
+                ))
+                await session.flush()
                 yield session
             finally:
                 await session.rollback()
@@ -78,7 +85,7 @@ async def _provider_identity(session: AsyncSession) -> UUID:
 
 
 def _collector(run_user_id: UUID | None, *notes: Note) -> Collector:
-    return Collector(execution_id=uuid4(), run_user_id=run_user_id, workflow_id=None, notes=list(notes))
+    return Collector(execution_id=uuid4(), run_user_id=run_user_id, workflow_id=_WORKFLOW_ID, notes=list(notes))
 
 
 async def _rows(session: AsyncSession, collector: Collector) -> list[AuditLog]:
@@ -302,7 +309,7 @@ async def test_a_persons_elevated_branch_without_the_permission_is_a_would_deny(
     }
 
 
-async def test_a_permission_the_person_holds_is_written_once_per_day(db_session: AsyncSession) -> None:
+async def test_permission_successes_are_not_sampled(db_session: AsyncSession) -> None:
     home = await _org(db_session)
     person = await _person(db_session, home)
     for _ in range(2):
@@ -310,10 +317,7 @@ async def test_a_permission_the_person_holds_is_written_once_per_day(db_session:
         collector.surface = "cli"
         await flush(db_session, collector, **ROUTE)
 
-    [row] = await _person_rows(db_session, person.id)
-    assert (row.resource_type, row.outcome, row.surface) == ("permission", "success", "cli")
-    assert row.details["direct"] is True
-    assert row.details["enforced"] is False
+    assert await _person_rows(db_session, person.id) == []
 
 
 async def test_a_persons_decision_is_written_once_a_day(db_session: AsyncSession) -> None:
@@ -762,27 +766,6 @@ async def test_a_held_claim_is_kept_for_the_day_or_released(db_session: AsyncSes
     assert await redis.exists(released.key) == 0
 
 
-@pytest.mark.parametrize("boundary", ["organization", "platform"])
-async def test_platform_admin_role_holders_do_not_write_permission_passes(db_session: AsyncSession, boundary: str) -> None:
-    home = await _org(db_session)
-    person = await _person(db_session, home)
-    db_session.add_all([
-        UserRole(user_id=person.id, role_id=PLATFORM_ADMIN_ROLE_ID, assigned_by="test"),
-        UserRoleBoundary(user_id=person.id, role_id=PLATFORM_ADMIN_ROLE_ID, kind=boundary,
-                         organization_id=home.id if boundary == "organization" else None),
-    ])
-    await db_session.flush()
-    await flush(db_session, _person_collector(person.id, _power("workflows.execute", home.id)), **ROUTE)
-    assert await _person_rows(db_session, person.id) == []
-
-
-async def test_identity_direct_requests_do_not_write_permission_passes(db_session: AsyncSession) -> None:
-    home = await _org(db_session)
-    identity = await ensure_default_identity(db_session, home)
-    await flush(db_session, _person_collector(identity.id, _power("workflows.execute", home.id)), **ROUTE)
-    assert await _person_rows(db_session, identity.id) == []
-
-
 async def test_agent_checks_keep_the_person_and_run_without_permission_passes(db_session: AsyncSession) -> None:
     home = await _org(db_session)
     person = await _person(db_session, home)
@@ -798,10 +781,10 @@ async def test_agent_checks_keep_the_person_and_run_without_permission_passes(db
     assert row.details["direct"] is True
     assert row.details["agent_run_id"] == str(run)
     assert row.execution_id is None
-    # A person's own permission pass is still recorded after the same agent decision.
+    # Direct requests use the same rule after the agent decision.
     await flush(db_session, _person_collector(person.id, _power("workflows.execute", home.id)), **ROUTE)
     rows = await _person_rows(db_session, person.id)
-    assert sorted(row.outcome for row in rows) == ["failure", "success"]
+    assert [row.outcome for row in rows] == ["failure"]
 
 
 async def test_chat_bridges_without_an_agent_run_id_do_not_write_permission_passes(db_session: AsyncSession) -> None:
@@ -812,4 +795,72 @@ async def test_chat_bridges_without_an_agent_run_id_do_not_write_permission_pass
     await flush(db_session, collector, **ROUTE)
     assert await _person_rows(db_session, person.id) == []
     await flush(db_session, _person_collector(person.id, _power("workflows.execute", home.id)), **ROUTE)
-    assert len(await _person_rows(db_session, person.id)) == 1
+    assert await _person_rows(db_session, person.id) == []
+
+
+async def test_enforced_denial_keeps_the_roles_that_decided_the_request(db_session: AsyncSession) -> None:
+    from shared import access_checks
+    from fastapi import HTTPException
+    from src.core.principal import UserPrincipal
+    from src.services.authorization.enforce import load_caller, require_permission
+
+    home = await _org(db_session)
+    person = await _person(db_session, home)
+    token = access_checks.collect_person(person.id)
+    try:
+        caller = await load_caller(db_session, UserPrincipal(
+            user_id=person.id, email=person.email, organization_id=home.id,
+        ))
+        with pytest.raises(HTTPException) as denied:
+            require_permission(caller, "users.impersonate", home.id)
+        assert denied.value.status_code == 403
+        collector = access_checks.current()
+    finally:
+        access_checks.stop_collecting(token)
+    assert collector is not None
+    role = Role(name=f"Later permission {uuid4().hex[:8]}", created_by="test")
+    db_session.add(role)
+    await db_session.flush()
+    db_session.add_all([
+        RolePermission(role_id=role.id, permission="users.impersonate"),
+        UserRole(user_id=person.id, role_id=role.id, assigned_by="test"),
+        UserRoleBoundary(user_id=person.id, role_id=role.id, kind="organization", organization_id=home.id),
+    ])
+    await db_session.flush()
+
+    await flush(db_session, collector, **ROUTE)
+
+    [row] = await _person_rows(db_session, person.id)
+    assert row.outcome == "failure"
+    assert row.details["enforced"] is True
+    assert row.details["trace"]["steps"][-1]["status"] == "stopped"
+
+
+async def test_deleted_original_user_does_not_erase_an_enforced_decision(db_session: AsyncSession) -> None:
+    from shared import access_checks
+    from fastapi import HTTPException
+    from src.core.principal import UserPrincipal
+    from src.services.authorization.enforce import load_caller, require_permission
+
+    home = await _org(db_session)
+    person = await _person(db_session, home)
+    original_id = person.id
+    token = access_checks.collect_run(uuid4(), original_id, _WORKFLOW_ID)
+    try:
+        caller = await load_caller(db_session, UserPrincipal(
+            user_id=person.id, email=person.email, organization_id=home.id,
+        ))
+        with pytest.raises(HTTPException):
+            require_permission(caller, "users.impersonate", home.id)
+        collector = access_checks.current()
+    finally:
+        access_checks.stop_collecting(token)
+    assert collector is not None
+    await db_session.delete(person)
+    await db_session.flush()
+
+    await flush(db_session, collector, **ROUTE)
+
+    [row] = await _rows(db_session, collector)
+    assert (row.action, row.outcome, row.user_id) == ("access.check", "failure", None)
+    assert row.details["trace"]["steps"][0]["facts"]["user_id"] == str(original_id)

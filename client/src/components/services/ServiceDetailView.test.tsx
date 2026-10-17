@@ -290,6 +290,8 @@ describe("ServiceDetailView", () => {
 			},
 		],
 		isStreamConnected: true,
+		canManageService: true,
+		canReadService: true,
 		onRefresh: () => {},
 		isRefreshing: false,
 	};

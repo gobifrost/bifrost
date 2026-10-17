@@ -28,8 +28,7 @@ from src.models import (
     ROITrendsResponse,
     ROITrendEntry,
 )
-from uuid import UUID
-from src.core.auth import CurrentActiveUser, RequirePlatformAdmin
+from src.core.auth import CurrentActiveUser
 from src.models.orm import (
     ExecutionMetricsDaily,
     WorkflowROIDaily,
@@ -37,6 +36,8 @@ from src.models.orm import (
     Workflow,
 )
 from src.services.roi_settings_service import ROISettingsService
+from src.services.authorization.enforce import load_caller
+from src.services.authorization.report_scope import report_scope
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +53,7 @@ router = APIRouter(prefix="/api/reports/roi", tags=["ROI Reports"])
     "/summary",
     response_model=ROISummaryResponse,
     summary="Get ROI summary",
-    description="Get overall ROI summary for a date range. Platform admin only.",
-    dependencies=[RequirePlatformAdmin],
+    description="Get overall ROI summary for a date range.",
 )
 async def get_roi_summary(
     user: CurrentActiveUser,
@@ -85,20 +85,8 @@ async def get_roi_summary(
     Returns:
         ROI summary including total executions, time saved, and value
     """
-    # Parse scope parameter
-    org_uuid: UUID | None = None
-    global_only = False
-    if scope:
-        if scope == "global":
-            global_only = True
-        else:
-            try:
-                org_uuid = UUID(scope)
-            except ValueError:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Invalid scope value: {scope}",
-                )
+    caller = await load_caller(db, user)
+    reach = report_scope(caller, "GET /api/reports/roi/summary", scope)
 
     try:
         # Get ROI settings for units
@@ -115,13 +103,9 @@ async def get_roi_summary(
             ExecutionMetricsDaily.date >= start_date,
             ExecutionMetricsDaily.date <= end_date,
         )
-
-        # Apply organization filter from scope param
-        if global_only:
-            query = query.where(ExecutionMetricsDaily.organization_id.is_(None))
-        elif org_uuid:
-            query = query.where(ExecutionMetricsDaily.organization_id == org_uuid)
-        # If no filter, return all metrics (platform admins see everything)
+        predicate = reach.where(ExecutionMetricsDaily.organization_id)
+        if predicate is not None:
+            query = query.where(predicate)
 
         result = await db.execute(query)
         row = result.one()
@@ -149,8 +133,7 @@ async def get_roi_summary(
     "/by-workflow",
     response_model=ROIByWorkflowResponse,
     summary="Get ROI by workflow",
-    description="Get workflow breakdown of ROI for a date range. Platform admin only.",
-    dependencies=[RequirePlatformAdmin],
+    description="Get workflow breakdown of ROI for a date range.",
 )
 async def get_roi_by_workflow(
     user: CurrentActiveUser,
@@ -179,20 +162,8 @@ async def get_roi_by_workflow(
     Returns:
         Workflow ROI breakdown sorted by total value (descending)
     """
-    # Parse scope parameter
-    org_uuid: UUID | None = None
-    global_only = False
-    if scope:
-        if scope == "global":
-            global_only = True
-        else:
-            try:
-                org_uuid = UUID(scope)
-            except ValueError:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Invalid scope value: {scope}",
-                )
+    caller = await load_caller(db, user)
+    reach = report_scope(caller, "GET /api/reports/roi/by-workflow", scope)
 
     try:
         # Get ROI settings for units
@@ -226,11 +197,9 @@ async def get_roi_by_workflow(
             .limit(limit)
         )
 
-        # Apply organization filter from scope param
-        if global_only:
-            query = query.where(WorkflowROIDaily.organization_id.is_(None))
-        elif org_uuid:
-            query = query.where(WorkflowROIDaily.organization_id == org_uuid)
+        predicate = reach.where(WorkflowROIDaily.organization_id)
+        if predicate is not None:
+            query = query.where(predicate)
 
         result = await db.execute(query)
         rows = result.all()
@@ -268,8 +237,7 @@ async def get_roi_by_workflow(
     "/by-organization",
     response_model=ROIByOrganizationResponse,
     summary="Get ROI by organization",
-    description="Get organization breakdown of ROI for a date range. Platform admin only.",
-    dependencies=[RequirePlatformAdmin],
+    description="Get organization breakdown of ROI for a date range.",
 )
 async def get_roi_by_organization(
     user: CurrentActiveUser,
@@ -292,6 +260,9 @@ async def get_roi_by_organization(
     Returns:
         Organization ROI breakdown sorted by total value (descending)
     """
+    caller = await load_caller(db, user)
+    reach = report_scope(caller, "GET /api/reports/roi/by-organization", None)
+
     try:
         # Get ROI settings for units
         settings_service = ROISettingsService(db)
@@ -320,6 +291,9 @@ async def get_roi_by_organization(
             .order_by(func.sum(ExecutionMetricsDaily.total_value).desc())
             .limit(limit)
         )
+        predicate = reach.where(ExecutionMetricsDaily.organization_id)
+        if predicate is not None:
+            query = query.where(predicate)
 
         result = await db.execute(query)
         rows = result.all()
@@ -354,8 +328,7 @@ async def get_roi_by_organization(
     "/trends",
     response_model=ROITrendsResponse,
     summary="Get ROI trends",
-    description="Get ROI trends over time. Platform admin only.",
-    dependencies=[RequirePlatformAdmin],
+    description="Get ROI trends over time.",
 )
 async def get_roi_trends(
     user: CurrentActiveUser,
@@ -384,20 +357,8 @@ async def get_roi_trends(
     Returns:
         Time series ROI data with the specified granularity
     """
-    # Parse scope parameter
-    org_uuid: UUID | None = None
-    global_only = False
-    if scope:
-        if scope == "global":
-            global_only = True
-        else:
-            try:
-                org_uuid = UUID(scope)
-            except ValueError:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Invalid scope value: {scope}",
-                )
+    caller = await load_caller(db, user)
+    reach = report_scope(caller, "GET /api/reports/roi/trends", scope)
 
     try:
         # Get ROI settings for units
@@ -431,12 +392,9 @@ async def get_roi_trends(
             .order_by(date_group)
         )
 
-        # Apply organization filter from scope param
-        if global_only:
-            query = query.where(ExecutionMetricsDaily.organization_id.is_(None))
-        elif org_uuid:
-            query = query.where(ExecutionMetricsDaily.organization_id == org_uuid)
-        # If no filter, return all metrics (platform admins see everything)
+        predicate = reach.where(ExecutionMetricsDaily.organization_id)
+        if predicate is not None:
+            query = query.where(predicate)
 
         result = await db.execute(query)
         rows = result.all()

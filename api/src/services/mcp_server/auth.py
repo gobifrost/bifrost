@@ -650,14 +650,24 @@ class BifrostAuthProvider:
         Returns:
             AccessToken if valid, None otherwise
         """
+        from src.core.database import get_db_context
         from src.core.security import decode_token
-
-        logger.info(f"MCP auth: verify_token called with token prefix: {token[:20]}...")
+        from src.services.authorization.runtime_auth import (
+            is_runtime_credential_payload,
+            load_runtime_principal,
+        )
 
         payload = decode_token(token, expected_type="access")
         if payload is None:
             logger.info("MCP auth: decode_token returned None (invalid/expired JWT)")
             return None
+
+        runtime_principal = None
+        if is_runtime_credential_payload(payload):
+            async with get_db_context() as db:
+                runtime_principal = await load_runtime_principal(db, payload)
+            if runtime_principal is None:
+                return None
 
         logger.info(f"MCP auth: Token decoded for user {payload.get('email')}, checking access...")
 
@@ -666,25 +676,47 @@ class BifrostAuthProvider:
             logger.info(f"MCP auth: _check_mcp_access returned False for user {payload.get('email')}")
             return None
 
-        # Fetch user's role names from database for tool filtering
-        role_names = await self._get_user_roles(payload.get("sub"))
+        principal = runtime_principal
+        role_user_id = (
+            str(principal.runtime_authority.run_user.user_id)
+            if principal is not None and principal.runtime_authority is not None
+            else payload.get("sub")
+        )
+        # Runtime tool filtering follows the original run user's current
+        # roles, while effects keep the separately resolved acting identity.
+        role_names = await self._get_user_roles(role_user_id)
 
         logger.info(f"MCP auth: Token valid for user {payload.get('email')}, roles={role_names}")
 
         return AccessToken(
             token=token,  # FastMCP requires this field
-            client_id=str(payload.get("sub")),
+            client_id=str(principal.user_id if principal is not None else payload.get("sub")),
             scopes=["mcp:access"],
             expires_at=payload.get("exp"),
             claims={
-                "user_id": payload.get("sub"),
-                "email": payload.get("email"),
-                "name": payload.get("name"),
-                "is_superuser": payload.get("is_superuser", False),
-                "is_provider_org": payload.get("is_provider_org", False),
-                "is_external": payload.get("is_external", False),
-                "org_id": payload.get("org_id"),
+                "user_id": str(principal.user_id) if principal is not None else payload.get("sub"),
+                "email": principal.email if principal is not None else payload.get("email"),
+                "name": principal.name if principal is not None else payload.get("name"),
+                "is_superuser": principal.is_superuser if principal is not None else payload.get("is_superuser", False),
+                "is_provider_org": principal.is_provider_org if principal is not None else payload.get("is_provider_org", False),
+                "is_external": principal.is_external if principal is not None else payload.get("is_external", False),
+                "org_id": str(principal.organization_id) if principal is not None and principal.organization_id else payload.get("org_id"),
                 "roles": role_names,  # Role names for MCP tool filtering
+                "runtime_credential_kind": (
+                    principal.runtime_authority.kind
+                    if principal is not None and principal.runtime_authority is not None
+                    else None
+                ),
+                "runtime_credential_id": (
+                    str(principal.runtime_authority.credential_id)
+                    if principal is not None and principal.runtime_authority is not None
+                    else None
+                ),
+                "runtime_service_id": (
+                    str(principal.runtime_authority.service_id)
+                    if principal is not None and principal.runtime_authority is not None and principal.runtime_authority.service_id
+                    else None
+                ),
             },
         )
 

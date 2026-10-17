@@ -7,31 +7,11 @@ tests/unit/test_import_hygiene.py enforces this.
 """
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 from uuid import UUID
 
-_LINEAGE_CLAIMS = {
-    "run_user_id": "engine_run_user_id",
-    "started_by_user_id": "engine_started_by_user_id",
-    "root_execution_id": "engine_root_execution_id",
-    "workflow_id": "engine_workflow_id",
-}
-
-
-def run_lineage_fields(payload: dict) -> dict[str, UUID | None]:
-    """The principal's run lineage fields from a decoded token payload."""
-    return {
-        field: UUID(value) if (value := payload.get(claim)) else None
-        for field, claim in _LINEAGE_CLAIMS.items()
-    }
-
-
-# Role names that grant platform-admin-equivalent privileges to a non-superuser
-# user. Used by the agents domain (agent_runs/agents/agent_tuning) to admit
-# role-based admins in addition to token superusers. The canonical
-# ``is_platform_admin`` property stays narrower (superuser-only) on purpose —
-# see api/src/repositories/README.md.
-PLATFORM_ADMIN_ROLE_NAMES = ("Platform Admin", "Platform Owner")
-
+if TYPE_CHECKING:
+    from src.services.authorization.runtime import RuntimeAuthority
 
 @dataclass
 class UserPrincipal:
@@ -39,13 +19,9 @@ class UserPrincipal:
     Authenticated user principal.
 
     Represents an authenticated user with their identity and permissions.
-    All user info is extracted from JWT claims (no database lookup required).
-
-    Auth model:
-    - is_superuser=true, org_id=UUID: Platform admin in an org
-    - is_superuser=false, org_id=UUID: Regular org user
-    - is_superuser=true, org_id=None: System account (global scope)
-    - is_superuser=false, org_id=None: INVALID (rejected at token parsing)
+    Human sessions carry identity claims. Runtime sessions are resolved from
+    current durable records. Authorization uses the canonical Caller context;
+    actor flags on this object describe the acting user.
     """
     user_id: UUID
     email: str
@@ -57,14 +33,8 @@ class UserPrincipal:
     # External (portal/guest) principal. Enforced at the access-level gate
     # only: excluded from access_level="authenticated" entities, admitted by
     # "everyone" and by explicit role grants. Org→global cascade is unchanged.
-    # The claim is minted already neutralized for bypass callers (platform
-    # admin / provider org) — see shared/external_access.py.
     is_external: bool = False
-    # Provider-org (platform-org staff) principal. The non-admin half of the
-    # canonical bypass rule (bypass = is_platform_admin OR is_provider_org):
-    # grants cross-org / global scope on files/tables/workflow execution to
-    # portal-hopping provider-org members who are not platform admins. Minted
-    # from Organization.is_provider — see shared/external_access.py.
+    # Acting user's home-organization fact; it grants no permissions or reach.
     is_provider_org: bool = False
     roles: list[str] = field(default_factory=list)
     # Role identity used by table-policy `has_role` evaluator. Populated by
@@ -104,6 +74,9 @@ class UserPrincipal:
     started_by_user_id: UUID | None = None
     root_execution_id: UUID | None = None
     workflow_id: UUID | None = None
+    # Verified only by the runtime credential resolver. Transport claims do
+    # not populate this field.
+    runtime_authority: "RuntimeAuthority | None" = None
 
     @property
     def is_platform_admin(self) -> bool:
@@ -114,20 +87,3 @@ class UserPrincipal:
     def is_system_account(self) -> bool:
         """Check if this is a system account (superuser with no org)."""
         return self.is_superuser and self.organization_id is None
-
-    def has_role(self, role: str) -> bool:
-        """Check if user has a specific role."""
-        return role in self.roles
-
-    def has_any_role(self, *roles: str) -> bool:
-        """Check if user has any of the specified roles."""
-        return any(role in self.roles for role in roles)
-
-    def has_platform_admin_grant(self) -> bool:
-        """True if a token superuser OR a holder of a platform-admin role.
-
-        Broader than ``is_platform_admin`` (which is superuser-only): this
-        also admits users granted a ``PLATFORM_ADMIN_ROLE_NAMES`` role. Used
-        by the agents domain for its admin gates.
-        """
-        return bool(self.is_superuser) or self.has_any_role(*PLATFORM_ADMIN_ROLE_NAMES)

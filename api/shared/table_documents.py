@@ -31,7 +31,10 @@ from src.models.contracts.tables import (
     DocumentQuery,
 )
 from src.models.orm.tables import Document, Table
-from src.services.access_check_policies import check_table_rows, check_table_write
+from src.services.access_check_policies import (
+    enforced_policy_principal,
+    record_table_policy,
+)
 from src.services.audit import emit_table_policy_deny
 from src.services.table_policy_loader import load_resolved_table_policies
 
@@ -57,6 +60,7 @@ async def check_table_action_or_403(
     of the deny. All current call sites either run this before any
     mutation or only after read-only operations.
     """
+    user = await enforced_policy_principal(db, user)
     policies = await load_resolved_table_policies(table, db)
     await preresolve_for_policies(
         user,
@@ -66,7 +70,9 @@ async def check_table_action_or_403(
         table.solution_id,
     )
     allowed = evaluate_action(action, policies, row, user)
-    await check_table_write(db, action, table, [row], policies, allowed_today=allowed)
+    await record_table_policy(
+        db, table, policies, user, action=action, allowed=allowed
+    )
     if allowed:
         return
 
@@ -480,6 +486,7 @@ async def query_table_documents(
     Returns an empty result when no read policy grants access (avoids
     leaking the table's existence to unauthorized callers).
     """
+    user = await enforced_policy_principal(db, user)
     policies = await load_resolved_table_policies(table, db)
     await preresolve_for_policies(
         user,
@@ -492,6 +499,9 @@ async def query_table_documents(
     if read_filter is None:
         # No rule grants read → empty result. Don't 403 to avoid leaking
         # the table's existence to unauthorized callers.
+        await record_table_policy(
+            db, table, policies, user, action="read", allowed=False, hidden=0, returned=0
+        )
         return DocumentListResponse(
             table_id=table.id,
             documents=[],
@@ -502,7 +512,16 @@ async def query_table_documents(
 
     repo = DocumentRepository(db, table)
     documents, total = await repo.query(query_params, extra_where=read_filter)
-    await check_table_rows(db, table, policies, [_row_from_doc(d) for d in documents])
+    await record_table_policy(
+        db,
+        table,
+        policies,
+        user,
+        action="read",
+        allowed=True,
+        hidden=0,
+        returned=len(documents),
+    )
     return DocumentListResponse(
         table_id=table.id,
         documents=[DocumentPublic.model_validate(d) for d in documents],
@@ -523,6 +542,7 @@ async def count_table_documents(
     Returns zero when no read policy grants access. Same existence-leak
     rationale as :func:`query_table_documents`.
     """
+    user = await enforced_policy_principal(db, user)
     policies = await load_resolved_table_policies(table, db)
     await preresolve_for_policies(
         user,

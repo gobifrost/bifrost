@@ -9,6 +9,7 @@ export interface FileOptions {
 	location?: string;
 	mode?: FileMode;
 	scope?: string | null;
+	solution?: string;
 }
 
 export interface FileListOptions extends FileOptions {
@@ -32,6 +33,7 @@ export interface SignedUrlOptions {
 	contentType?: string;
 	location?: string;
 	scope?: string | null;
+	solution?: string;
 	expiresIn?: number;
 }
 
@@ -74,6 +76,12 @@ function signedDefaults(options: SignedUrlOptions = {}) {
 		scope: options.scope ?? defaultScope,
 		expires_in: options.expiresIn ?? 600,
 	};
+}
+
+function withSolution(path: string, solution?: string): string {
+	return solution
+		? `${path}${path.includes("?") ? "&" : "?"}${new URLSearchParams({ solution }).toString()}`
+		: path;
 }
 
 async function errorText(response: Response): Promise<string> {
@@ -228,7 +236,7 @@ function normalizeSignedUrl(response: {
 export const files = {
 	async read(path: string, options: FileOptions = {}): Promise<string> {
 		const response = await http<{ content: string; binary: boolean }>(
-			"/api/files/read",
+			withSolution("/api/files/read", options.solution),
 			{
 				method: "POST",
 				body: JSON.stringify({
@@ -246,7 +254,7 @@ export const files = {
 		options: FileOptions = {},
 	): Promise<Uint8Array> {
 		const response = await http<{ content: string; binary: boolean }>(
-			"/api/files/read",
+			withSolution("/api/files/read", options.solution),
 			{
 				method: "POST",
 				body: JSON.stringify({
@@ -264,7 +272,7 @@ export const files = {
 		content: string,
 		options: FileOptions = {},
 	): Promise<void> {
-		await http("/api/files/write", {
+		await http(withSolution("/api/files/write", options.solution), {
 			method: "POST",
 			body: JSON.stringify({
 				path,
@@ -280,7 +288,7 @@ export const files = {
 		content: Uint8Array | ArrayBuffer | Blob,
 		options: FileOptions = {},
 	): Promise<void> {
-		await http("/api/files/write", {
+		await http(withSolution("/api/files/write", options.solution), {
 			method: "POST",
 			body: JSON.stringify({
 				path,
@@ -292,7 +300,7 @@ export const files = {
 	},
 
 	async delete(path: string, options: FileOptions = {}): Promise<void> {
-		await http("/api/files/delete", {
+		await http(withSolution("/api/files/delete", options.solution), {
 			method: "POST",
 			body: JSON.stringify({
 				path,
@@ -313,7 +321,7 @@ export const files = {
 				last_modified: string;
 				updated_by?: string | null;
 			}>;
-		}>("/api/files/list", {
+		}>(withSolution("/api/files/list", options.solution), {
 			method: "POST",
 			body: JSON.stringify({
 				directory,
@@ -325,13 +333,16 @@ export const files = {
 	},
 
 	async exists(path: string, options: FileOptions = {}): Promise<boolean> {
-		const response = await http<{ exists: boolean }>("/api/files/exists", {
-			method: "POST",
-			body: JSON.stringify({
-				path,
-				...requestDefaults(options),
-			}),
-		});
+		const response = await http<{ exists: boolean }>(
+			withSolution("/api/files/exists", options.solution),
+			{
+				method: "POST",
+				body: JSON.stringify({
+					path,
+					...requestDefaults(options),
+				}),
+			},
+		);
 		return response!.exists;
 	},
 
@@ -343,7 +354,7 @@ export const files = {
 			url: string;
 			path: string;
 			expires_in: number;
-		}>("/api/files/signed-url", {
+		}>(withSolution("/api/files/signed-url", options.solution), {
 			method: "POST",
 			body: JSON.stringify({
 				path,
@@ -367,7 +378,7 @@ export const files = {
 				error?: string | null;
 				status_code: number;
 			}>;
-		}>("/api/files/signed-urls", {
+		}>(withSolution("/api/files/signed-urls", options.solution), {
 			method: "POST",
 			body: JSON.stringify({
 				requests: paths.map((path) => ({
@@ -411,12 +422,14 @@ export const files = {
 			headers: { "content-type": contentType },
 			body,
 		});
-			if (!response.ok) {
-				throw new Error(
-					`files.upload: ${response.status} ${await errorText(response)}`,
-				);
-			}
-			await http("/api/files/complete-upload", {
+		if (!response.ok) {
+			throw new Error(
+				`files.upload: ${response.status} ${await errorText(response)}`,
+			);
+		}
+		await http(
+			withSolution("/api/files/complete-upload", options.solution),
+			{
 				method: "POST",
 				body: JSON.stringify({
 					path,
@@ -425,9 +438,10 @@ export const files = {
 					location: options.location ?? "workspace",
 					scope: options.scope ?? null,
 				}),
-			});
-			return signed;
-		},
+			},
+		);
+		return signed;
+	},
 
 	async download(
 		path: string,

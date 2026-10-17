@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any, cast
 from uuid import UUID
 
@@ -23,6 +24,15 @@ from src.models.orm.file_metadata import FileMetadata, FilePolicy
 from src.repositories.policy_rule import PolicyRuleRepository
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class FilePolicyDecision:
+    """The single policy evaluation used for enforcement and Access Checks."""
+
+    allowed: bool
+    principal: Any
+    policies: FilePolicies
 
 
 class FilePolicyService:
@@ -327,7 +337,7 @@ class FilePolicyService:
         global_match = select_longest_prefix(global_rows, location, path)  # type: ignore[arg-type]
         return cast("FilePolicy | None", global_match)
 
-    async def is_allowed(
+    async def evaluate(
         self,
         action: FileAction,
         *,
@@ -336,10 +346,11 @@ class FilePolicyService:
         path: str,
         user: Any,
         solution_id: UUID | None = None,
-    ) -> bool:
-        if not self._principal_matches_org(user, organization_id):
-            return False
+    ) -> FilePolicyDecision:
+        from src.services.access_check_policies import enforced_policy_principal
 
+        user = await enforced_policy_principal(self.db, user)
+        empty_policies = FilePolicies.model_validate({"policies": []})
         policy_row = await self.load_policy(
             organization_id=organization_id,
             location=location,
@@ -347,7 +358,7 @@ class FilePolicyService:
             solution_id=solution_id,
         )
         if policy_row is None:
-            return False
+            return FilePolicyDecision(False, user, empty_policies)
 
         try:
             policies = FilePolicies.model_validate(policy_row.policies)
@@ -356,9 +367,9 @@ class FilePolicyService:
                 "malformed file policies; denying file access: %s",
                 exc.__class__.__name__,
             )
-            return False
+            return FilePolicyDecision(False, user, empty_policies)
 
-        rule_repo = PolicyRuleRepository(self.db, org_id=organization_id, is_superuser=True)
+        rule_repo = PolicyRuleRepository(self.db, org_id=organization_id)
         try:
             await resolve_policy_refs(policies, repo=rule_repo, action_domain="file")
         except (PolicyRuleNotFound, PolicyRuleDomainMismatch) as exc:
@@ -366,7 +377,7 @@ class FilePolicyService:
                 "unresolvable file policy ref; denying file access: %s",
                 exc.__class__.__name__,
             )
-            return False
+            return FilePolicyDecision(False, user, policies)
 
         await preresolve_for_policies(
             user,
@@ -393,7 +404,31 @@ class FilePolicyService:
             created_by=metadata.created_by if metadata is not None else None,
             created_at=metadata.created_at if metadata is not None else None,
         )
-        return evaluate_file_action(action, policies, context, user)
+        return FilePolicyDecision(
+            evaluate_file_action(action, policies, context, user), user, policies
+        )
+
+    async def is_allowed(
+        self,
+        action: FileAction,
+        *,
+        organization_id: UUID | None,
+        location: str,
+        path: str,
+        user: Any,
+        solution_id: UUID | None = None,
+    ) -> bool:
+        """Compatibility boolean view of :meth:`evaluate`."""
+        return (
+            await self.evaluate(
+                action,
+                organization_id=organization_id,
+                location=location,
+                path=path,
+                user=user,
+                solution_id=solution_id,
+            )
+        ).allowed
 
     async def _get_policy_exact(
         self,
@@ -415,24 +450,6 @@ class FilePolicyService:
             FilePolicy.solution_id.is_(None),
         )
         return (await self.db.execute(stmt)).scalar_one_or_none()
-
-    def _principal_matches_org(
-        self,
-        user: Any,
-        organization_id: UUID | None,
-    ) -> bool:
-        if organization_id is None:
-            return True
-        # Bypass = is_platform_admin OR is_provider_org (repositories/README.md):
-        # provider-org members (portal-hopping platform staff) reach any org's
-        # files, same as platform admins.
-        if getattr(user, "is_platform_admin", False) or getattr(
-            user, "is_provider_org", False
-        ):
-            return True
-        user_org = getattr(user, "organization_id", None)
-        return user_org is not None and str(user_org) == str(organization_id)
-
 
 def _coerce_uuid(value: UUID | str | None) -> UUID | None:
     if value is None or isinstance(value, UUID):

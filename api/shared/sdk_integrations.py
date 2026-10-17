@@ -39,7 +39,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared import access_checks
+from src.services.authorization.enforce import external_credential_restrictions
 from src.core.log_safety import log_safe
+from src.services.authorization.enforce import (
+    Caller,
+    allows_permission,
+    require_permission,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +134,7 @@ async def build_oauth_data(
     decrypt_secret: Any,
     oauth_scope: str | None = None,
     external: bool = False,
+    can_read_secrets: bool = False,
 ) -> dict[str, Any]:
     """Build the OAuth data dict from provider and token.
 
@@ -161,8 +168,14 @@ async def build_oauth_data(
     # An external never receives it (global third-party credential — OPEN-E).
     # Secrets this call decrypts, noted once per call for the run's access checks.
     secrets_read: list[str] = []
-    client_secret = None
-    if provider.encrypted_client_secret and not external:
+    from src.core.security import SECRET_PLACEHOLDER
+
+    client_secret = (
+        SECRET_PLACEHOLDER
+        if provider.encrypted_client_secret and not external and not can_read_secrets
+        else None
+    )
+    if provider.encrypted_client_secret and not external and can_read_secrets:
         secrets_read.append("client_secret")
         try:
             raw = provider.encrypted_client_secret
@@ -181,12 +194,40 @@ async def build_oauth_data(
             defaults=provider.token_url_defaults,
         )
 
-    access_token = None
-    refresh_token = None
+    access_token = (
+        SECRET_PLACEHOLDER
+        if token is not None and token.encrypted_access_token and not can_read_secrets
+        else None
+    )
+    refresh_token = (
+        SECRET_PLACEHOLDER
+        if token is not None and token.encrypted_refresh_token and not can_read_secrets
+        else None
+    )
     expires_at = None
 
     # Check if we should auto-fetch a fresh token
     if should_auto_refresh_token(provider, entity_id, oauth_scope):
+        if not can_read_secrets:
+            if oauth_scope:
+                raise IntegrationServiceError(
+                    403, "You don't have permission to read secret values"
+                )
+            return {
+                "connection_name": provider.provider_name,
+                "client_id": provider.client_id,
+                "client_secret": (
+                    SECRET_PLACEHOLDER
+                    if provider.encrypted_client_secret and not external
+                    else None
+                ),
+                "authorization_url": provider.authorization_url,
+                "token_url": resolved_token_url,
+                "scopes": provider.scopes or [],
+                "access_token": None,
+                "refresh_token": None,
+                "expires_at": None,
+            }
         logger.info("Auto-refreshing integration token")
 
         if client_secret and resolved_token_url:
@@ -229,7 +270,7 @@ async def build_oauth_data(
             )
     elif token:
         # Use stored token (existing behavior)
-        if token.encrypted_access_token:
+        if token.encrypted_access_token and can_read_secrets:
             secrets_read.append("access_token")
             try:
                 raw = token.encrypted_access_token
@@ -239,7 +280,7 @@ async def build_oauth_data(
             except Exception:
                 logger.warning("Failed to decrypt access_token")
 
-        if token.encrypted_refresh_token:
+        if token.encrypted_refresh_token and can_read_secrets:
             secrets_read.append("refresh_token")
             try:
                 raw = token.encrypted_refresh_token
@@ -280,7 +321,7 @@ async def get_sdk_integration_dict(
     org_id: UUID | None,
     oauth_scope: str | None = None,
     solution_id: UUID | str | None = None,
-    external: bool = False,
+    caller: Caller,
 ) -> dict[str, Any] | None:
     """Resolve one integration for an SDK caller (shared by both paths).
 
@@ -295,10 +336,9 @@ async def get_sdk_integration_dict(
             :class:`IntegrationServiceError` (424) instead of returning
             None. Malformed values behave as unset (silent None), matching
             the historical handler.
-        external: True for a direct EXTERNAL portal caller — drops the
-            global tier on both the config merge and the OAuth-token
-            cascade. Engine executions always pass False (sentinel path
-            keeps the full org+global merge).
+        caller: Current original-user authority and verified runtime powers.
+            Direct external callers omit the Global config/token cascade;
+            workflow powers retain it, subject to the named permissions.
 
     Returns:
         JSON-serializable dict matching ``SDKIntegrationsGetResponse``,
@@ -313,6 +353,9 @@ async def get_sdk_integration_dict(
     from src.repositories.integrations import IntegrationsRepository
     from src.repositories.oauth import OAuthTokenRepository
 
+    require_permission(caller, "integrations.read", org_id)
+    can_read_secrets = allows_permission(caller, "secrets.read", org_id)
+    external = external_credential_restrictions(caller)
     repo = IntegrationsRepository(session)
 
     # Real helpers for the shared OAuth builder (unit tests inject fakes).
@@ -330,7 +373,10 @@ async def get_sdk_integration_dict(
         # Org-specific mapping found. EXTERNAL callers (OPEN-E) drop the
         # global tier on both the config merge and the OAuth-token cascade.
         config = await repo.get_config_for_mapping(
-            mapping.integration_id, org_id, external=external
+            mapping.integration_id,
+            org_id,
+            external=external,
+            reveal_secrets=can_read_secrets,
         )
         integration = mapping.integration
         entity_id = mapping.entity_id or (
@@ -368,6 +414,7 @@ async def get_sdk_integration_dict(
                 _decrypt_secret,
                 oauth_scope=oauth_scope,
                 external=external,
+                can_read_secrets=can_read_secrets,
             )
 
         logger.info(f"SDK retrieved integration '{log_safe(name)}' (org mapping)")
@@ -402,7 +449,7 @@ async def get_sdk_integration_dict(
     # caller (OPEN-E) reading them would receive decrypted global secrets,
     # so external=True returns no defaults at all.
     config = await repo.get_integration_defaults(
-        integration.id, external=external
+        integration.id, external=external, reveal_secrets=can_read_secrets
     )
 
     secret_keys = [s.key for s in integration.config_schema if s.type == "secret"]
@@ -429,6 +476,7 @@ async def get_sdk_integration_dict(
             _resolve_url_template,
             _decrypt_secret,
             oauth_scope=oauth_scope,
+            can_read_secrets=can_read_secrets,
         )
 
     logger.info(f"SDK retrieved integration '{log_safe(name)}' (defaults)")
@@ -447,7 +495,7 @@ async def _mapping_item_dict(
     integration_id: UUID,
     mapping: Any,
     *,
-    external: bool,
+    caller: Caller,
 ) -> dict[str, Any]:
     """One JSON-serializable mapping dict (merged config + echo fields)."""
     # Get merged config (integration defaults + org overrides).
@@ -455,7 +503,10 @@ async def _mapping_item_dict(
     config = await repo.get_config_for_mapping(
         integration_id,
         mapping.organization_id,
-        external=external,
+        external=external_credential_restrictions(caller),
+        reveal_secrets=allows_permission(
+            caller, "secrets.read", mapping.organization_id
+        ),
     )
     return {
         "id": str(mapping.id),
@@ -477,10 +528,7 @@ async def list_sdk_integration_mappings(
     *,
     name: str,
     scope: str | None,
-    caller_org_id: UUID | None,
-    is_platform_admin: bool,
-    is_provider_org: bool | None = None,
-    external: bool = False,
+    caller: Caller,
 ) -> list[dict[str, Any]] | None:
     """List mappings for an integration (shared by both paths).
 
@@ -500,29 +548,14 @@ async def list_sdk_integration_mappings(
         List of JSON-serializable mapping dicts, ``[]`` for a scopeless
         caller on UNSET, or None if the integration is not found.
     """
-    from src.models import Organization
     from src.repositories.integrations import IntegrationsRepository
-
+    from shared.sdk_config import resolve_sdk_scope
+    org_id = await resolve_sdk_scope(scope, caller=caller)
+    require_permission(caller, "integrations.read", org_id)
     repo = IntegrationsRepository(session)
     integration = await repo.get_integration_by_name(name)
-
     if not integration:
-        logger.warning(
-            f"SDK integrations.list_mappings: integration '{log_safe(name)}' not found"
-        )
         return None
-
-    # Preserve the HTTP contract: an unknown integration returns null before
-    # scope validation. Both transports resolve against the same session.
-    from shared.sdk_config import resolve_sdk_scope
-
-    org_id = await resolve_sdk_scope(
-        scope,
-        caller_org_id=caller_org_id,
-        is_platform_admin=is_platform_admin,
-        is_provider_org=is_provider_org,
-        session=session,
-    )
 
     # Apply the C2 gate outcome: explicit ``scope`` (UUID or "global")
     # required platform-admin or provider-org bypass before this call.
@@ -531,22 +564,11 @@ async def list_sdk_integration_mappings(
     # already enforced). A resolved provider org is also an enumerate-all
     # scope for mapping listing: providers need to see every customer
     # mapping by default.
-    if org_id is None and scope in (None, ""):
-        # Caller has no org — system account on UNSET. Return empty.
-        mappings = []
-    elif org_id is None:
-        # Bypass verified by the resolver — request was "global".
-        mappings = await repo.list_mappings(integration.id)
-    else:
-        org_row = await session.execute(
-            select(Organization.is_provider).where(Organization.id == org_id)
-        )
-        if bool(org_row.scalar_one_or_none()):
-            mappings = await repo.list_mappings(integration.id)
-        else:
-            mappings = await repo.list_mappings(
-                integration.id, organization_id=org_id
-            )
+    mappings = (
+        []
+        if org_id is None
+        else await repo.list_mappings(integration.id, organization_id=org_id)
+    )
 
     logger.info(
         f"SDK listed {len(mappings)} mappings for integration '{log_safe(name)}'"
@@ -554,7 +576,7 @@ async def list_sdk_integration_mappings(
 
     return [
         await _mapping_item_dict(
-            repo, integration.id, mapping, external=external
+            repo, integration.id, mapping, caller=caller
         )
         for mapping in mappings
     ]
@@ -565,11 +587,8 @@ async def get_sdk_integration_mapping_dict(
     *,
     name: str,
     scope: str | None,
-    caller_org_id: UUID | None,
-    is_platform_admin: bool,
-    is_provider_org: bool | None = None,
+    caller: Caller,
     entity_id: str | None = None,
-    external: bool = False,
 ) -> dict[str, Any] | None:
     """Get one mapping by org scope or entity ID (shared by both paths).
 
@@ -592,24 +611,14 @@ async def get_sdk_integration_mapping_dict(
     """
     from src.repositories.integrations import IntegrationsRepository
 
-    repo = IntegrationsRepository(session)
-    integration = await repo.get_integration_by_name(name)
-
-    if not integration:
-        logger.warning(
-            f"SDK integrations.get_mapping: integration '{log_safe(name)}' not found"
-        )
-        return None
-
     from shared.sdk_config import resolve_sdk_scope
 
-    org_id = await resolve_sdk_scope(
-        scope,
-        caller_org_id=caller_org_id,
-        is_platform_admin=is_platform_admin,
-        is_provider_org=is_provider_org,
-        session=session,
-    )
+    org_id = await resolve_sdk_scope(scope, caller=caller)
+    require_permission(caller, "integrations.read", org_id)
+    repo = IntegrationsRepository(session)
+    integration = await repo.get_integration_by_name(name)
+    if not integration:
+        return None
 
     mapping = None
 
@@ -635,7 +644,7 @@ async def get_sdk_integration_mapping_dict(
     # tier (NEW-G).
     logger.info(f"SDK retrieved mapping for integration '{log_safe(name)}'")
     return await _mapping_item_dict(
-        repo, integration.id, mapping, external=external
+        repo, integration.id, mapping, caller=caller
     )
 
 
@@ -644,14 +653,10 @@ async def upsert_sdk_integration_mapping(
     *,
     name: str,
     scope: str | None,
-    caller_org_id: UUID | None,
-    is_platform_admin: bool,
-    is_provider_org: bool | None = None,
-    external: bool = False,
+    caller: Caller,
     entity_id: str,
     entity_name: str | None = None,
     config: dict[str, Any] | None = None,
-    actor_email: str | None = None,
 ) -> dict[str, Any]:
     """Create or update an org mapping for an integration (shared).
 
@@ -697,32 +702,20 @@ async def upsert_sdk_integration_mapping(
     )
     from src.repositories.integrations import IntegrationsRepository
 
-    repo = IntegrationsRepository(session)
-    integration = await repo.get_integration_by_name(name)
-
-    if not integration:
-        raise IntegrationServiceError(404, f"Integration '{name}' not found")
-
-    # Apply the C2 gate before touching another org's mapping row.
     from shared.sdk_config import resolve_sdk_scope
 
-    org_id = await resolve_sdk_scope(
-        scope,
-        caller_org_id=caller_org_id,
-        is_platform_admin=is_platform_admin,
-        is_provider_org=is_provider_org,
-        session=session,
-    )
+    org_id = await resolve_sdk_scope(scope, caller=caller)
+    require_permission(caller, "integrations.readwrite", org_id)
     if org_id is None:
         raise IntegrationServiceError(
             400,
             "upsert_mapping requires an org scope; global is not a valid mapping target",
         )
-    if not actor_email:
-        raise IntegrationServiceError(
-            500,
-            "upsert_mapping failed: parent dispatch identity has no caller email",
-        )
+    actor_email = caller.principal.email
+    repo = IntegrationsRepository(session)
+    integration = await repo.get_integration_by_name(name)
+    if not integration:
+        raise IntegrationServiceError(404, f"Integration '{name}' not found")
 
     existing_mapping = await repo.get_mapping_by_org(integration.id, org_id)
 
@@ -761,7 +754,7 @@ async def upsert_sdk_integration_mapping(
     await session.commit()
 
     return await _mapping_item_dict(
-        repo, integration.id, mapping, external=external
+        repo, integration.id, mapping, caller=caller
     )
 
 
@@ -770,9 +763,7 @@ async def delete_sdk_integration_mapping(
     *,
     name: str,
     scope: str | None,
-    caller_org_id: UUID | None,
-    is_platform_admin: bool,
-    is_provider_org: bool | None = None,
+    caller: Caller,
 ) -> dict[str, bool]:
     """Delete an org mapping for an integration (shared).
 
@@ -800,26 +791,14 @@ async def delete_sdk_integration_mapping(
     """
     from src.repositories.integrations import IntegrationsRepository
 
+    from shared.sdk_config import resolve_sdk_scope
+    org_id = await resolve_sdk_scope(scope, caller=caller)
+    require_permission(caller, "integrations.readwrite", org_id)
+    if org_id is None:
+        return {"deleted": False}
     repo = IntegrationsRepository(session)
     integration = await repo.get_integration_by_name(name)
-
     if not integration:
-        logger.warning(
-            f"SDK integrations.delete_mapping: integration '{log_safe(name)}' not found"
-        )
-        return {"deleted": False}
-
-    # Apply the C2 gate before touching another org's mapping row.
-    from shared.sdk_config import resolve_sdk_scope
-
-    org_id = await resolve_sdk_scope(
-        scope,
-        caller_org_id=caller_org_id,
-        is_platform_admin=is_platform_admin,
-        is_provider_org=is_provider_org,
-        session=session,
-    )
-    if org_id is None:
         return {"deleted": False}
 
     mapping = await repo.get_mapping_by_org(integration.id, org_id)
@@ -845,10 +824,7 @@ async def refresh_sdk_oauth_token(
     *,
     connection_name: str,
     scope: str | None,
-    caller_org_id: UUID | None,
-    is_platform_admin: bool,
-    is_provider_org: bool | None = None,
-    external: bool = False,
+    caller: Caller,
 ) -> dict[str, Any]:
     """Refresh an OAuth token for an integration (shared).
 
@@ -900,13 +876,10 @@ async def refresh_sdk_oauth_token(
     )
     from shared.sdk_config import resolve_sdk_scope
 
-    org_id = await resolve_sdk_scope(
-        scope,
-        caller_org_id=caller_org_id,
-        is_platform_admin=is_platform_admin,
-        is_provider_org=is_provider_org,
-        session=session,
-    )
+    org_id = await resolve_sdk_scope(scope, caller=caller)
+    require_permission(caller, "integrations.readwrite", org_id)
+    require_permission(caller, "secrets.read", org_id)
+    external = external_credential_restrictions(caller)
 
     # Cascade: prefer org-scoped provider, fall back to global.
     # See api/src/repositories/README.md for the pattern.

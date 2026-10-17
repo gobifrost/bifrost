@@ -137,6 +137,8 @@ function permissionSentence(
 		return `Their base role grants ${named("base_role:")}.`;
 	if (reason.startsWith("denied:missing:"))
 		return `No role grants ${named("denied:missing:")} there.`;
+	if (reason === "workflow_capability" && typeof step.facts.permission === "string")
+		return `The workflow adds ${names.permission(step.facts.permission)} within the run user's reach.`;
 	if (reason.startsWith("role:")) {
 		const [roleId, held] = roleParts(reason);
 		const permission = names.permission(held);
@@ -151,6 +153,7 @@ function permissionSentence(
 		full: "Full powers include every permission.",
 		platform_admin: "A Platform Admin holds All Permissions.",
 		public: "Anyone may do this.",
+		"reach:home_or_global": "The data target is in reach. Its policy decides access.",
 		signed_in: "Anyone signed in may do this in their home organization.",
 		"denied:operation_confined_to_own_org":
 			"This operation works only in their home organization.",

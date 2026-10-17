@@ -22,9 +22,14 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import selectinload
 
 from shared import access_checks
-from shared.scope_resolver import has_scope_bypass
 from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
+from src.services.authorization.enforce import Caller, load_caller
+from src.services.authorization.agent_runtime import (
+    AgentRuntimeAuthorizationError,
+    authorize_agent_execution,
+    authorize_agentless_ai,
+)
 from src.models.contracts.agents import (
     ChatRequest,
     ChatResponse,
@@ -62,6 +67,14 @@ from src.services.chat_runs import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
+
+
+async def _chat_caller(db: DbSession, user: CurrentActiveUser) -> tuple[Caller, UUID]:
+    """Load the original caller for ownership; principal remains effects-only."""
+    caller = await load_caller(db, user)
+    if caller.ctx is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Chat caller is unavailable")
+    return caller, caller.ctx.user_id
 
 
 def _chat_file_kind(
@@ -103,6 +116,7 @@ async def create_conversation(
     user: CurrentActiveUser,
 ) -> ConversationPublic:
     """Create a new conversation, optionally with an agent."""
+    caller, owner_id = await _chat_caller(db, user)
     agent = None
     agent_name = None
 
@@ -121,13 +135,10 @@ async def create_conversation(
                 detail=f"Agent {request.agent_id} not found",
             )
 
-        # Check access based on agent's access level
-        has_access = await _check_agent_access(db, user, agent)
-        if not has_access:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have access to this agent",
-            )
+        try:
+            caller, agent = await authorize_agent_execution(db, caller, agent.id)
+        except AgentRuntimeAuthorizationError as exc:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
 
         agent_name = agent.name
 
@@ -138,7 +149,7 @@ async def create_conversation(
     conversation = Conversation(
         id=conversation_id,
         agent_id=agent.id if agent else None,
-        user_id=user.user_id,
+        user_id=owner_id,
         channel=request.channel.value,
         title=request.title,
         is_active=True,
@@ -172,10 +183,11 @@ async def list_conversations(
     offset: int = 0,
 ) -> list[ConversationSummary]:
     """List user's conversations."""
+    _, owner_id = await _chat_caller(db, user)
     stmt = (
         select(Conversation)
         .options(selectinload(Conversation.agent))
-        .where(Conversation.user_id == user.user_id)
+        .where(Conversation.user_id == owner_id)
     )
 
     if active_only:
@@ -219,11 +231,12 @@ async def get_conversation(
     user: CurrentActiveUser,
 ) -> ConversationPublic:
     """Get conversation details."""
+    _, owner_id = await _chat_caller(db, user)
     result = await db.execute(
         select(Conversation)
         .options(selectinload(Conversation.agent), selectinload(Conversation.messages))
         .where(Conversation.id == conversation_id)
-        .where(Conversation.user_id == user.user_id)
+        .where(Conversation.user_id == owner_id)
     )
     conversation = result.scalar_one_or_none()
 
@@ -271,10 +284,11 @@ async def delete_conversation(
     user: CurrentActiveUser,
 ) -> None:
     """Delete a conversation (soft delete)."""
+    _, owner_id = await _chat_caller(db, user)
     result = await db.execute(
         select(Conversation)
         .where(Conversation.id == conversation_id)
-        .where(Conversation.user_id == user.user_id)
+        .where(Conversation.user_id == owner_id)
     )
     conversation = result.scalar_one_or_none()
 
@@ -296,7 +310,8 @@ async def submit_chat_run(
     user: CurrentActiveUser,
 ) -> ChatRunCreateResponse:
     """Persist a user message, queue a durable chat run, and return its snapshot."""
-    return await create_chat_run(db, user, request)
+    caller, _ = await _chat_caller(db, user)
+    return await create_chat_run(db, caller, request)
 
 
 @router.get("/conversations/{conversation_id}/state", response_model=ChatRunStateResponse)
@@ -306,7 +321,8 @@ async def get_chat_conversation_state(
     user: CurrentActiveUser,
 ) -> ChatRunStateResponse:
     """Return the authoritative chat conversation snapshot for reconnects."""
-    return await get_chat_state(db, user, conversation_id)
+    caller, _ = await _chat_caller(db, user)
+    return await get_chat_state(db, caller, conversation_id)
 
 
 @router.post("/runs/{run_id}/cancel", response_model=ChatRunCancelResponse)
@@ -316,7 +332,8 @@ async def cancel_chat_run_route(
     user: CurrentActiveUser,
 ) -> ChatRunCancelResponse:
     """Cancel a durable chat run."""
-    return await cancel_chat_run(db, user, run_id)
+    caller, _ = await _chat_caller(db, user)
+    return await cancel_chat_run(db, caller, run_id)
 
 
 # =============================================================================
@@ -331,10 +348,11 @@ async def list_chat_artifacts(
     limit: int = 200,
 ) -> list[ChatArtifactPublic]:
     """List the current user's durable generated and uploaded Chat files."""
+    _, owner_id = await _chat_caller(db, user)
     bounded_limit = min(max(limit, 1), 500)
     result = await db.execute(
         select(Artifact)
-        .where(Artifact.created_by_user_id == user.user_id)
+        .where(Artifact.created_by_user_id == owner_id)
         .order_by(Artifact.created_at.desc())
         .limit(bounded_limit)
     )
@@ -351,7 +369,7 @@ async def list_chat_artifacts(
                 )
             )
             .where(MessageAttachment.message_id.is_not(None))
-            .where(Conversation.user_id == user.user_id)
+            .where(Conversation.user_id == owner_id)
             .order_by(MessageAttachment.created_at.desc())
         )
         for attachment, title, message_role in binding_result.all():
@@ -393,11 +411,12 @@ async def rename_chat_artifact(
     user: CurrentActiveUser,
 ) -> ChatArtifactPublic:
     """Rename a Chat file without changing its immutable storage object."""
+    _, owner_id = await _chat_caller(db, user)
     artifact = (
         await db.execute(
             select(Artifact)
             .where(Artifact.id == attachment_id)
-            .where(Artifact.created_by_user_id == user.user_id)
+            .where(Artifact.created_by_user_id == owner_id)
         )
     ).scalar_one_or_none()
     if artifact is None:
@@ -420,7 +439,7 @@ async def rename_chat_artifact(
             .join(Conversation, Conversation.id == MessageAttachment.conversation_id)
             .outerjoin(Message, Message.id == MessageAttachment.message_id)
             .where(MessageAttachment.artifact_id == artifact.id)
-            .where(Conversation.user_id == user.user_id)
+            .where(Conversation.user_id == owner_id)
             .limit(1)
         )
     ).one_or_none()
@@ -445,10 +464,11 @@ async def delete_chat_artifact(
     user: CurrentActiveUser,
 ) -> Response:
     """Delete one Chat file owned by the current user."""
+    _, owner_id = await _chat_caller(db, user)
     artifact = await db.scalar(
         select(Artifact)
         .where(Artifact.id == attachment_id)
-        .where(Artifact.created_by_user_id == user.user_id)
+        .where(Artifact.created_by_user_id == owner_id)
     )
     if artifact is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artifact not found")
@@ -467,11 +487,12 @@ async def upload_attachments(
     files: list[UploadFile] = File(...),
 ) -> AttachmentUploadResponse:
     """Validate and store files for the next message in this conversation."""
+    _, owner_id = await _chat_caller(db, user)
     conversation = (
         await db.execute(
             select(Conversation)
             .where(Conversation.id == conversation_id)
-            .where(Conversation.user_id == user.user_id)
+            .where(Conversation.user_id == owner_id)
         )
     ).scalar_one_or_none()
     if conversation is None:
@@ -526,6 +547,7 @@ async def delete_unbound_attachment(
     user: CurrentActiveUser,
 ) -> Response:
     """Delete an uploaded attachment that was never bound to a message."""
+    _, owner_id = await _chat_caller(db, user)
     attachment = (
         await db.execute(
             select(MessageAttachment)
@@ -533,7 +555,7 @@ async def delete_unbound_attachment(
             .where(MessageAttachment.artifact_id == attachment_id)
             .where(MessageAttachment.conversation_id == conversation_id)
             .where(MessageAttachment.message_id.is_(None))
-            .where(Conversation.user_id == user.user_id)
+            .where(Conversation.user_id == owner_id)
         )
     ).scalar_one_or_none()
     if attachment is None:
@@ -560,13 +582,14 @@ async def get_attachment_content(
     preview: bool = False,
 ) -> Response:
     """Preview or download an attachment after enforcing conversation ownership."""
+    _, owner_id = await _chat_caller(db, user)
     attachment = (
         await db.execute(
             select(MessageAttachment)
             .join(Conversation, Conversation.id == MessageAttachment.conversation_id)
             .where(MessageAttachment.artifact_id == attachment_id)
             .where(MessageAttachment.conversation_id == conversation_id)
-            .where(Conversation.user_id == user.user_id)
+            .where(Conversation.user_id == owner_id)
             .limit(1)
         )
     ).scalar_one_or_none()
@@ -625,11 +648,12 @@ async def get_messages(
     before_sequence: int | None = None,
 ) -> list[MessagePublic]:
     """Get messages in a conversation."""
+    _, owner_id = await _chat_caller(db, user)
     # Verify conversation belongs to user
     result = await db.execute(
         select(Conversation)
         .where(Conversation.id == conversation_id)
-        .where(Conversation.user_id == user.user_id)
+        .where(Conversation.user_id == owner_id)
     )
     conversation = result.scalar_one_or_none()
 
@@ -721,6 +745,7 @@ async def send_message(
 
     For streaming responses, use the WebSocket endpoint.
     """
+    caller, owner_id = await _chat_caller(db, user)
     # Verify conversation and optionally get agent
     result = await db.execute(
         select(Conversation)
@@ -729,7 +754,7 @@ async def send_message(
             selectinload(Conversation.agent).selectinload(Agent.delegated_agents),
         )
         .where(Conversation.id == conversation_id)
-        .where(Conversation.user_id == user.user_id)
+        .where(Conversation.user_id == owner_id)
     )
     conversation = result.scalar_one_or_none()
 
@@ -739,21 +764,25 @@ async def send_message(
             detail=f"Conversation {conversation_id} not found",
         )
 
-    if conversation.agent and not await _check_agent_access(db, user, conversation.agent):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have access to this agent",
-        )
     if conversation.agent:
+        try:
+            caller, conversation.agent = await authorize_agent_execution(
+                db, caller, conversation.agent.id
+            )
+        except AgentRuntimeAuthorizationError as exc:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
         access_checks.note_launch(
             "agents.execute",
             conversation.agent.organization_id,
-            user.organization_id,
+            caller.ctx.home_organization_id,
             subject=f"agent:{conversation.agent.id}",
         )
     else:
-        # Chat without an agent spends AI directly.
-        access_checks.note_launch("ai.execute", None, user.organization_id, subject="ai:chat")
+        try:
+            caller = await authorize_agentless_ai(db, caller)
+        except AgentRuntimeAuthorizationError as exc:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
+        access_checks.note_launch("ai.execute", None, caller.ctx.home_organization_id, subject="ai:chat")
 
     # Agent is now optional - agentless chat uses default system prompt
 
@@ -761,7 +790,7 @@ async def send_message(
     from shared.run_lineage import principal_lineage
     from src.core.database import get_session_factory
     executor = AgentExecutor(get_session_factory())
-    lineage = await principal_lineage(db, user)
+    lineage = await principal_lineage(db, caller.principal)
 
     # Collect streaming response into a single response
     final_content = ""
@@ -777,7 +806,7 @@ async def send_message(
         conversation=conversation,
         user_message=request.message,
         stream=False,
-        user=user,
+        caller=caller,
         attachment_ids=request.attachment_ids,
         model_profile_id=request.model_profile_id,
         run_user_id=lineage.run_user_id if lineage else None,
@@ -811,36 +840,3 @@ async def send_message(
         token_count_output=final_output_tokens,
         duration_ms=final_duration_ms,
     )
-
-
-# =============================================================================
-# Helper Functions
-# =============================================================================
-
-
-async def _check_agent_access(db: DbSession, user, agent: Agent) -> bool:
-    """Check if user has access to an agent.
-
-    Delegates to ``AgentRepository.get(id=...)`` — the same gate the UI
-    listing path and MCP tool access service use. Returns True iff the
-    repo finds the agent in the user's scope (org + global cascade) AND
-    the access_level / role check passes.
-
-    Prior to this delegation, the function checked access_level and roles
-    but had no org-scope check, allowing an Org A user with a same-named
-    role to access an Org B agent if they knew its ID.
-    """
-    from src.repositories.agents import AgentRepository
-
-    repo = AgentRepository(
-        db,
-        org_id=user.organization_id,
-        user_id=user.user_id,
-        is_superuser=has_scope_bypass(
-            is_platform_admin=user.is_platform_admin,
-            is_provider_org=user.is_provider_org,
-        ),
-        is_external=user.is_external,
-    )
-    accessible = await repo.get(id=agent.id)
-    return accessible is not None

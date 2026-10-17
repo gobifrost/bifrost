@@ -473,9 +473,18 @@ async def test_a_run_as_still_permitted_is_published_as_the_target(db_session):
     assert kwargs["user_id"] == colleague_id
     await db_session.refresh(row)
     assert row.status == ExecutionStatus.PENDING
-    # Only a refusal is recorded; the decision when it was scheduled already was.
-    audit = await _run_as_audit(db_session, initiator.id)
-    assert audit == []
+    # Promotion rechecks and records the live named decision, including success.
+    [audit] = await _run_as_audit(db_session, initiator.id)
+    assert audit.details is not None
+    assert (audit.action, audit.outcome, audit.organization_id) == (
+        "access.check",
+        "success",
+        colleague.organization_id,
+    )
+    assert (audit.details["enforced"], audit.details["inputs"]["run_as_user_id"]) == (
+        True,
+        colleague_id,
+    )
 
 
 async def _missing_run_as_user_gaps(db_session, requested) -> list:
@@ -522,15 +531,33 @@ async def test_a_run_as_whose_target_was_deleted_fails_and_is_recorded(db_sessio
 
 
 @pytest.mark.asyncio
-async def test_a_workflow_run_as_checks_the_target_only(db_session):
-    from src.core.constants import SYSTEM_USER_UUID
+async def test_a_workflow_run_as_rechecks_original_reach_and_current_workflow_powers(db_session):
+    from src.models.contracts.workflow_permissions import WorkflowPermissionMode
+    from src.models.orm.workflows import Workflow
+    from src.models.orm.users import User
 
-    # The engine account holds no grant; a workflow's Run As is not judged on roles here.
-    _org, colleague = await _contoso_person(db_session)
-    _org2, departed = await _contoso_person(db_session, is_active=False)
-    _org3, run_user = await _contoso_person(db_session)
-    allowed = _acting_as(colleague.id, SYSTEM_USER_UUID, enforced=False, run_user_id=run_user.id)
-    refused = _acting_as(departed.id, SYSTEM_USER_UUID, enforced=False, run_user_id=run_user.id)
+    org, run_user = await _contoso_person(db_session)
+    colleague = User(email=f"{uuid4().hex[:8]}@contoso.example", name="Contoso Colleague", organization_id=org.id)
+    departed = User(
+        email=f"{uuid4().hex[:8]}@contoso.example",
+        name="Departed Contoso Colleague",
+        organization_id=org.id,
+        is_active=False,
+    )
+    workflow = Workflow(
+        id=uuid4(),
+        name=f"run-as-{uuid4().hex[:8]}",
+        function_name="run",
+        path=f"workflows/run_as_{uuid4().hex[:8]}.py",
+        organization_id=org.id,
+        permission_mode=WorkflowPermissionMode.FULL,
+    )
+    db_session.add_all([colleague, departed, workflow])
+    await db_session.flush()
+    allowed = _acting_as(colleague.id, run_user.id, enforced=True)
+    refused = _acting_as(departed.id, run_user.id, enforced=True)
+    for row in (allowed, refused):
+        row.execution_context["run_as"]["workflow_id"] = str(workflow.id)
     db_session.add_all([allowed, refused])
     await db_session.commit()
 
@@ -544,21 +571,26 @@ async def test_a_workflow_run_as_checks_the_target_only(db_session):
     assert refused.status == ExecutionStatus.FAILED
     expected = f"Run As is no longer permitted: Run As user '{departed.id}' is inactive"
     assert refused.error_message == expected
-    # The refusal is recorded report-only for the run that asked.
-    [audit] = await _run_as_audit(db_session, run_user.id)
+    audits = await _run_as_audit(db_session, run_user.id)
+    by_target = {
+        audit.details["inputs"]["run_as_user_id"]: audit
+        for audit in audits
+        if audit.details is not None
+    }
+    assert set(by_target) == {str(colleague.id), str(departed.id)}
+    assert by_target[str(colleague.id)].outcome == "success"
+    audit = by_target[str(departed.id)]
     assert audit.details is not None
     stopped = [(step["key"], step["reason"]) for step in audit.details["trace"]["steps"] if step["status"] == "stopped"]
     recorded = (audit.outcome, audit.details["enforced"], audit.details["inputs"]["run_as_user_id"], stopped)
-    assert recorded == ("failure", False, str(departed.id), [("run_as_user", "inactive")])
+    assert recorded == ("failure", True, str(departed.id), [("run_as_user", "inactive")])
 
 
 @pytest.mark.asyncio
 async def test_a_workflow_run_as_whose_target_was_deleted_is_recorded(db_session):
-    from src.core.constants import SYSTEM_USER_UUID
-
     _org, run_user = await _contoso_person(db_session)
     departed = uuid4()
-    row = _acting_as(departed, SYSTEM_USER_UUID, enforced=False, run_user_id=run_user.id)
+    row = _acting_as(departed, run_user.id, enforced=True)
     row.executed_by = None
     db_session.add(row)
     await db_session.commit()

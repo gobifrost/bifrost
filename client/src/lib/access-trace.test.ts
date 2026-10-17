@@ -51,6 +51,18 @@ describe("stepTitle", () => {
 });
 
 describe("stepSentence", () => {
+	it("explains a workflow capability without inventing a placed role", () => {
+		expect(sentence(step("permission", "workflow_capability", { permission: "tables.read" }))).toBe(
+			"The workflow adds Read Tables within the run user's reach.",
+		);
+	});
+
+	it("keeps data policy separate from target reach", () => {
+		expect(sentence(step("permission", "reach:home_or_global"))).toBe(
+			"The data target is in reach. Its policy decides access.",
+		);
+	});
+
 	it("says whether a person can start the workflow", () => {
 		expect(sentence(step("workflow_access", "access"))).toBe(
 			"They can start this workflow.",

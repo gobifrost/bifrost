@@ -27,6 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared import access_checks
+from src.services.authorization.enforce import external_credential_restrictions
 from src.core.log_safety import log_safe
 from src.models.contracts.cli import CLIConfigValue
 from shared.scope_resolver import (
@@ -35,6 +36,7 @@ from shared.scope_resolver import (
     UNSET,
     resolve_effective_scope,
 )
+from src.services.authorization.enforce import Caller, allows_permission, require_permission
 
 import src.repositories.config as config_repo_module
 
@@ -57,29 +59,17 @@ class ScopeResolutionError(Exception):
 async def resolve_sdk_scope(
     scope: str | None,
     *,
-    caller_org_id: UUID | None,
-    is_platform_admin: bool,
-    is_provider_org: bool | None = None,
-    session: AsyncSession | None = None,
+    caller: Caller,
 ) -> UUID | None:
     """Shared scope grammar + authorization for SDK config reads.
 
-    The C2 gate: platform admins AND provider-org members can bypass scope
-    restrictions. The caller's "own org" comes from the auth-verified
-    principal — never from a mutable per-user default and never from child
-    claims. ``None``/``""`` is UNSET (caller's own org, no bypass check);
-    ``"global"`` is an explicit global request (bypass required); an org
-    UUID is always allowed for the caller's own org, else bypass required.
+    The caller's verified organization reach decides which target can be
+    selected. ``None``/``""`` is UNSET, ``"global"`` is an explicit Global
+    target, and a UUID selects that organization when it is in reach.
 
     Args:
         scope: Requested scope string from the request body / child frame.
-        caller_org_id: The originating caller's organization.
-        is_platform_admin: Whether the caller is a platform admin.
-        is_provider_org: Known provider-org membership, when the caller
-            already resolved it (worker-local call from parent context). When
-            None and a session is given, membership is looked up only when
-            the requested scope actually needs a bypass check.
-        session: Database session for the provider-org lookup (HTTP path).
+        caller: Verified principal plus original-user authorization context.
 
     Returns:
         Organization UUID, or None for global scope.
@@ -110,29 +100,9 @@ async def resolve_sdk_scope(
             f"scope must be 'global', a UUID, or null; got {scope!r}",
         ) from None
 
-    provider = bool(is_provider_org)
-    needs_bypass_check = requested is not UNSET and requested != caller_org_id
-    if (
-        needs_bypass_check
-        and not is_platform_admin
-        and not provider
-        and session is not None
-        and caller_org_id is not None
-    ):
-        from sqlalchemy import select
-
-        from src.models import Organization
-
-        org_row = await session.execute(
-            select(Organization.is_provider).where(Organization.id == caller_org_id)
-        )
-        provider = bool(org_row.scalar_one_or_none())
-
     try:
         return resolve_effective_scope(
-            caller_org_id=caller_org_id,
-            is_platform_admin=is_platform_admin,
-            is_provider_org=provider,
+            caller=caller,
             requested_scope=requested,
         )
     except ScopeNotAllowed as e:
@@ -144,7 +114,7 @@ async def get_sdk_config_value(
     *,
     key: str,
     org_id: UUID | None,
-    external: bool,
+    caller: Caller,
 ) -> CLIConfigValue | None:
     """Resolve one config value for an SDK caller.
 
@@ -152,10 +122,9 @@ async def get_sdk_config_value(
         session: Short-lived parent/HTTP database session.
         key: Configuration key to look up.
         org_id: Already-resolved effective scope (None for global).
-        external: True for a direct EXTERNAL portal caller — drops the
-            global tier so a global secret is never returned nor decrypted.
-            Engine executions always pass False (sentinel path keeps the
-            full org+global merge).
+        caller: Verified current authority. Direct external callers receive
+            only organization values; runtime credentials retain the shared
+            cascade, with named permission and Secrets checks below.
 
     Returns:
         The config value with its type, or None when the key is not set
@@ -167,10 +136,11 @@ async def get_sdk_config_value(
     # NOTE: attribute access at call time (not a top-level from-import) keeps
     # the `src.repositories.config.ConfigRepository` seam patchable for both
     # entry points.
+    require_permission(caller, "configs.read", org_id)
     repo = config_repo_module.ConfigRepository(
         session, org_id=org_id, is_superuser=True
     )
-    all_config = await repo.merged_for_sdk(external=external)
+    all_config = await repo.merged_for_sdk(external=external_credential_restrictions(caller))
 
     if key not in all_config:
         return None
@@ -180,6 +150,14 @@ async def get_sdk_config_value(
     config_type = entry.get("type", "string")
 
     if config_type == "secret" and raw_value:
+        from src.core.security import SECRET_PLACEHOLDER
+
+        if not allows_permission(caller, "secrets.read", org_id):
+            return CLIConfigValue(
+                key=key,
+                value=SECRET_PLACEHOLDER,
+                config_type=config_type,
+            )
         from src.core.security import decrypt_secret
 
         access_checks.note("secret", org_id, kind="config", name=key)
@@ -223,11 +201,11 @@ async def get_sdk_config_dict(
     *,
     key: str,
     org_id: UUID | None,
-    external: bool,
+    caller: Caller,
 ) -> dict[str, Any] | None:
     """JSON-serializable form of :func:`get_sdk_config_value` for transports."""
     value = await get_sdk_config_value(
-        session, key=key, org_id=org_id, external=external
+        session, key=key, org_id=org_id, caller=caller
     )
     if value is None:
         return None
@@ -259,7 +237,7 @@ async def set_sdk_config_value(
     value: Any,
     is_secret: bool,
     org_id: UUID | None,
-    actor_email: str,
+    caller: Caller,
 ) -> None:
     """Upsert one config value (HTTP handler and worker-local calls share this).
 
@@ -277,6 +255,8 @@ async def set_sdk_config_value(
     best-effort cache upsert (org writes drop the merged hash; global
     writes HSET plus bump the global version).
     """
+    require_permission(caller, "configs.readwrite", org_id)
+    actor_email = caller.principal.email
     from src.models import Config as ConfigModel
 
     now = datetime.now(timezone.utc)
@@ -334,7 +314,7 @@ async def list_sdk_config_values(
     session: AsyncSession,
     *,
     org_id: UUID | None,
-    external: bool,
+    caller: Caller,
 ) -> dict[str, Any]:
     """List merged config values with secrets redacted (shared by both paths).
 
@@ -344,10 +324,11 @@ async def list_sdk_config_values(
     ``get_sdk_config_value`` (raw fallback when the stored value does not
     parse).
     """
+    require_permission(caller, "configs.read", org_id)
     repo = config_repo_module.ConfigRepository(
         session, org_id=org_id, is_superuser=True
     )
-    all_config = await repo.merged_for_sdk(external=external)
+    all_config = await repo.merged_for_sdk(external=external_credential_restrictions(caller))
 
     if not all_config:
         return {}
@@ -358,7 +339,9 @@ async def list_sdk_config_values(
         config_type = entry.get("type", "string")
 
         if config_type == "secret":
-            config_dict[config_key] = "[SECRET]"
+            from src.core.security import SECRET_PLACEHOLDER
+
+            config_dict[config_key] = SECRET_PLACEHOLDER
         elif config_type == "json" and isinstance(raw_value, str):
             try:
                 config_dict[config_key] = json.loads(raw_value)
@@ -386,7 +369,7 @@ async def delete_sdk_config_value(
     *,
     key: str,
     org_id: UUID | None,
-    actor_email: str,
+    caller: Caller,
 ) -> bool:
     """Delete one config value (shared by both paths).
 
@@ -394,6 +377,8 @@ async def delete_sdk_config_value(
     data, not an error). DB commit precedes the best-effort cache
     invalidation, matching the historical handler.
     """
+    require_permission(caller, "configs.readwrite", org_id)
+    actor_email = caller.principal.email
     from src.models import Config as ConfigModel
 
     stmt = select(ConfigModel).where(

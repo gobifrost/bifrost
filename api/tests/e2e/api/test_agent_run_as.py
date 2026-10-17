@@ -19,7 +19,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.test import TestModel
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from tests.e2e.conftest import write_and_register
 from tests.e2e.fixtures.run_as import RUN_AS_DENIED, create_person, ok, query, recorded_run_as
@@ -185,11 +185,15 @@ async def _run_agent_tool_as(session_factory, agent_id: str, initiator: E2EUser,
 
     from src.core.database import close_db
     from src.jobs.consumers.agent_run import _load_run_as
+    from src.models.orm.agent_runs import AgentRun
     from src.models.orm.agents import Agent
     from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
+    from src.services.authorization.enforce import load_caller
+    from src.services.authorization.runtime_auth import load_runtime_principal
     from src.services.llm.base import LLMConfig
 
     _reset_loop_singletons()
+    run_id = uuid4()
     try:
         async with session_factory() as session:
             agent = (
@@ -200,6 +204,20 @@ async def _run_agent_tool_as(session_factory, agent_id: str, initiator: E2EUser,
                 )
             ).scalar_one()
             run_as = await _load_run_as(session, target, org_id)
+            # Match the consumer boundary: original authority and the pinned
+            # effects actor both come from the durable run, not a side argument.
+            session.add(AgentRun(
+                id=run_id, agent_id=agent.id, status="running", trigger_type="manual",
+                org_id=org_id, caller_user_id=str(initiator.user_id),
+                run_user_id=initiator.user_id, acting_user_id=target,
+                run_as_user_id=target,
+            ))
+            await session.commit()
+            principal = await load_runtime_principal(
+                session, {"credential_kind": "agent_run", "sub": str(run_id)},
+            )
+            assert principal is not None
+            caller = await load_caller(session, principal)
         executor = AutonomousAgentExecutor(session_factory)
         with (
             patch(
@@ -215,18 +233,16 @@ async def _run_agent_tool_as(session_factory, agent_id: str, initiator: E2EUser,
             await executor.run(
                 agent=agent,
                 input_data={"ticket_id": 42},
-                run_id=str(uuid4()),
-                _caller={
-                    "user_id": str(initiator.user_id),
-                    "email": initiator.email,
-                    "name": initiator.name,
-                    "organization_id": str(org_id),
-                },
+                run_id=str(run_id),
+                caller=caller,
                 run_user_id=initiator.user_id,
                 run_as=run_as,
             )
         return next(step["content"] for step in executor._pending_steps if step["type"] == "tool_result")
     finally:
+        async with session_factory() as cleanup:
+            await cleanup.execute(delete(AgentRun).where(AgentRun.id == run_id))
+            await cleanup.commit()
         await close_db()
         _reset_loop_singletons()
 

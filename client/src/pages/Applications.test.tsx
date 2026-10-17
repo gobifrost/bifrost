@@ -48,6 +48,10 @@ const mockUseAuth = vi.fn();
 vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockUseAuth(),
 }));
+const mockUseAuthorization = vi.fn();
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockUseAuthorization(),
+}));
 
 vi.mock("@/hooks/useOrganizations", () => ({
 	useOrganizations: () => ({ data: [] }),
@@ -111,6 +115,10 @@ function makeApp(overrides: Partial<Record<string, unknown>> = {}) {
 
 beforeEach(() => {
 	mockUseAuth.mockReturnValue({ isPlatformAdmin: true });
+	mockUseAuthorization.mockReturnValue({
+		canAnywhere: () => true,
+		canAt: () => true,
+	});
 	mockUseDeleteApplication.mockReturnValue({
 		mutateAsync: vi.fn(),
 		isPending: false,

@@ -16,7 +16,12 @@ from src.core.security import decode_token
 from src.models.orm.applications import Application
 from src.models.orm.solutions import Solution
 from src.models.orm.users import User
-from src.services.authorization.enforce import load_caller
+from src.services.authorization.enforce import (
+    PermissionDenied,
+    load_caller,
+    require_named_permission,
+    user_reach,
+)
 from src.services.solutions.deploy import solution_entity_id
 
 if TYPE_CHECKING:
@@ -40,22 +45,32 @@ def _invalid_dev_context(status_code: int) -> HTTPException:
     return HTTPException(status_code=status_code, detail=INVALID_DEV_CONTEXT_DETAIL)
 
 
-async def require_solution_developer(db: "AsyncSession", user: UserPrincipal) -> None:
-    """Require a current, canonical Platform Admin human principal.
+async def require_solution_developer(
+    db: "AsyncSession", user: UserPrincipal, organization_id: UUID | None
+) -> None:
+    """Admit an active internal human with Solutions write at an install.
 
-    ``is_superuser`` on the access token is deliberately not authority here:
-    role state can be revoked after a token is minted.  Engine, service, and
-    embedded credentials have no human authorization context and may never
-    obtain or use a local-preview capability.
+    Local development carries a subject-bound install capability, never a
+    data-plane permission. Runtime powers, service credentials, and effects
+    actors therefore cannot obtain or renew it.
     """
-    if user.embed or user.engine_execution_id or user.service_id:
+    if (
+        user.embed
+        or user.runtime_authority is not None
+        or user.engine_execution_id
+        or user.service_id
+    ):
         raise _invalid_dev_context(status.HTTP_403_FORBIDDEN)
     current_user = await db.get(User, user.user_id)
     if current_user is None or not current_user.is_active or current_user.is_external:
         raise _invalid_dev_context(status.HTTP_403_FORBIDDEN)
     caller = await load_caller(db, user)
-    if caller.ctx is None or not caller.ctx.is_platform_admin:
+    if caller.ctx is None or caller.ctx.is_external or not user_reach(caller).covers(organization_id):
         raise _invalid_dev_context(status.HTTP_403_FORBIDDEN)
+    try:
+        require_named_permission(caller, "solutions.readwrite", organization_id)
+    except PermissionDenied:
+        raise _invalid_dev_context(status.HTTP_403_FORBIDDEN) from None
 
 
 async def resolve_solution_dev_app_id(
@@ -117,10 +132,10 @@ async def issue_solution_dev_context(
     expires_delta: timedelta = DEV_CONTEXT_LIFETIME,
 ) -> SolutionDevContextResponse:
     """Mint a short-lived local-preview context for an active install."""
-    await require_solution_developer(db, user)
     solution = await db.get(Solution, solution_id)
     if solution is None or solution.status != "active":
         raise _invalid_dev_context(status.HTTP_403_FORBIDDEN)
+    await require_solution_developer(db, user, solution.organization_id)
     app_id = await resolve_solution_dev_app_id(db, solution.id, manifest_app_id)
     token, expires_at = _mint_solution_dev_token(
         user_id=user.user_id,
@@ -164,7 +179,6 @@ async def validate_solution_dev_context(
     assert subject is not None and solution_id is not None and app_id is not None
     if subject != user.user_id:
         raise _invalid_dev_context(status.HTTP_403_FORBIDDEN)
-    await require_solution_developer(db, user)
     solution = await db.get(Solution, solution_id)
     if (
         solution is None
@@ -172,6 +186,7 @@ async def validate_solution_dev_context(
         or solution.organization_id != organization_id
     ):
         raise _invalid_dev_context(status.HTTP_403_FORBIDDEN)
+    await require_solution_developer(db, user, solution.organization_id)
     # A local, never-deployed app has no row.  Once a row exists, ownership
     # must still match the signed install (including after a deploy/move).
     app = await db.get(Application, app_id)

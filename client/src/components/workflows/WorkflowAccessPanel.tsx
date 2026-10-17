@@ -521,9 +521,9 @@ export function WorkflowAccessPanel({ workflow }: { workflow: Workflow }) {
 					</Badge>
 				</div>
 				<p className="text-xs text-muted-foreground">
-					The workflow can use everything its identity can. Restricted
-					mode, which limits it to what it declares, arrives in a
-					later release.
+					{workflow.permission_mode === "full"
+						? "Full adds every permission, including Secrets, within the run user's organization reach."
+						: "Restricted adds its configured permissions to the run user's own roles. It does not add organizations to their reach."}
 				</p>
 			</Section>
 

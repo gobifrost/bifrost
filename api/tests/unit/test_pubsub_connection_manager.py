@@ -4,9 +4,7 @@ from uuid import uuid4
 
 import pytest
 
-from src.core.auth import UserPrincipal
 from src.core.pubsub import ConnectionManager, service_channel_for_log
-from src.routers import websocket as ws_mod
 
 
 @pytest.mark.asyncio
@@ -32,15 +30,6 @@ async def test_publish_to_redis_uses_per_call_connections():
     assert clients[0] is not clients[1]
     clients[0].publish.assert_awaited_once()
     clients[1].publish.assert_awaited_once()
-
-
-def _principal(is_superuser: bool) -> UserPrincipal:
-    return UserPrincipal(
-        user_id=uuid4(),
-        email="tester@example.com",
-        organization_id=uuid4(),
-        is_superuser=is_superuser,
-    )
 
 
 def test_service_channel_for_log_bridges_attempt_streams():
@@ -73,11 +62,18 @@ def test_service_channel_for_log_ignores_everything_else():
 
 
 @pytest.mark.asyncio
-async def test_can_access_service_is_superuser_plus_uuid():
-    assert await ws_mod.can_access_service(_principal(True), str(uuid4())) is True
-    assert await ws_mod.can_access_service(_principal(False), str(uuid4())) is False
-    assert await ws_mod.can_access_service(_principal(True), "not-a-uuid") is False
-    assert await ws_mod.can_access_service(_principal(False), "not-a-uuid") is False
+async def test_delivery_dispatcher_guards_each_message_before_send():
+    manager = ConnectionManager()
+    websocket = AsyncMock()
+    websocket._delivery_dispatcher = AsyncMock()
+    manager.connections["service:one"] = {websocket}
+
+    await manager._send_local("service:one", {"type": "service_log"})
+
+    websocket._delivery_dispatcher.assert_awaited_once_with(
+        "service:one", {"type": "service_log"}
+    )
+    websocket.send_text.assert_not_awaited()
 
 
 @pytest.mark.asyncio

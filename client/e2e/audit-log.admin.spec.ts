@@ -58,7 +58,7 @@ test("filters policy denials by file path and opens one in the detail drawer", a
 });
 
 /**
- * One real would-deny check: a provider-organization workflow runs unattended
+ * One real denied check: a provider-organization workflow runs unattended
  * (through its API key) as a custom identity whose reach is the provider
  * organization and Global, and switches scope into another organization. The
  * single worker run is the only way to record a check; it proves the recorded
@@ -198,7 +198,7 @@ test.describe("Access Checks on a recorded check", () => {
 		await expect(
 			page.getByRole("heading", { level: 2, name: workflowName }),
 		).toBeVisible();
-		await expect(page.getByText("1 would-deny check")).toBeVisible();
+		await expect(page.getByText("1 failed check")).toBeVisible();
 		await expect(
 			page.getByRole("combobox", { name: "Time Aggregate" }),
 		).toHaveText("1 Hour");
@@ -251,7 +251,7 @@ test.describe("Access Checks on a recorded check", () => {
 						exact: true,
 					}),
 				});
-		await expect(reachStep("Then")).toContainText("Would Stop Here");
+		await expect(reachStep("Then")).toContainText("Stopped Here");
 
 		await drawer.getByRole("button", { name: "Test Again Now" }).click();
 		await expect(
@@ -263,11 +263,29 @@ test.describe("Access Checks on a recorded check", () => {
 				animations: "disabled",
 				path: test.info().outputPath("explanation-desktop-light.png"),
 			});
+			await reachStep("Now").scrollIntoViewIfNeeded();
+			await page.screenshot({
+				animations: "disabled",
+				path: test.info().outputPath("trace-desktop-light.png"),
+			});
 			await page.setViewportSize({ width: 390, height: 844 });
 			await expect(drawer).toBeVisible();
+			await drawer
+				.getByRole("heading", { name: "Access Check", exact: true })
+				.scrollIntoViewIfNeeded();
 			await page.screenshot({
 				animations: "disabled",
 				path: test.info().outputPath("explanation-phone-light.png"),
+			});
+			await reachStep("Then").scrollIntoViewIfNeeded();
+			await page.screenshot({
+				animations: "disabled",
+				path: test.info().outputPath("trace-then-phone-light.png"),
+			});
+			await reachStep("Now").scrollIntoViewIfNeeded();
+			await page.screenshot({
+				animations: "disabled",
+				path: test.info().outputPath("trace-now-phone-light.png"),
 			});
 		}
 	});

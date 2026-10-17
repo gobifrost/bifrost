@@ -7,8 +7,7 @@ Provides Python API for execution history operations (list, get, get_current_log
 ``BifrostClient``: over the worker's private Unix socket when the engine
 injected one, and over the network API otherwise. The worker parent owns the
 pooled database; an engine child holds neither, and a local attempt never
-falls back to the network API. ``get_current_logs`` reads the execution's
-Redis stream directly — it is not an API call.
+falls back to the network API. ``get_current_logs`` uses the same authenticated transport and execution visibility checks.
 """
 
 from __future__ import annotations
@@ -171,9 +170,8 @@ class executions:
         """
         Get logs accumulated so far for the current (or specified) execution.
 
-        This reads logs directly from Redis Stream, allowing workflows to
-        retrieve their own logs accumulated during execution. Useful for
-        debugging, progress tracking, or passing execution context to sub-workflows.
+        The API checks execution visibility and filters diagnostic lines by
+        the caller's named permissions.
 
         Args:
             execution_id: Execution ID to get logs for. If not provided,
@@ -202,16 +200,11 @@ class executions:
             >>> # Get logs for a specific execution
             >>> logs = await executions.get_current_logs(execution_id="exec-123")
         """
-        from ._logging import read_logs_from_stream
-
-        # If no execution_id provided, get from current context
         if execution_id is None:
             from ._context import get_execution_context
-            ctx = get_execution_context()
-            execution_id = ctx.execution_id
-
-        return await read_logs_from_stream(
-            execution_id=execution_id,
-            start=start,
-            count=count,
+            execution_id = get_execution_context().execution_id
+        response = await get_client().engine_request(
+            "GET", f"/api/sdk/runtime/logs/{execution_id}", params={"start": start, "count": count},
         )
+        raise_for_status_with_detail(response)
+        return [ExecutionLog.model_validate(row) for row in response.json()]

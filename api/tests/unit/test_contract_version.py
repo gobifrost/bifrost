@@ -31,7 +31,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from bifrost.contract_version import CONTRACT_VERSION as CLI_CONTRACT_VERSION  # noqa: E402
 from shared.contract_version import CONTRACT_VERSION as SERVER_CONTRACT_VERSION  # noqa: E402
-from shared.models import SolutionDevContextRequest, SolutionDevContextResponse  # noqa: E402
+from shared import models as _shared_contracts  # noqa: E402
 
 # DTOs the CLI sends/receives. Server-canonical classes (the wire truth).
 from src.models.contracts.agent_runs import (  # noqa: E402
@@ -159,15 +159,17 @@ _COMMAND_DTOS: list[type] = [
 
 #: Every request/response DTO the in-workflow SDK sends/parses against
 #: ``/api/sdk/*`` lives in ``src.models.contracts.cli``. We pull them in
-#: programmatically so a NEW SDK DTO is automatically fingerprinted — no manual
+#: programmatically, including shared runtime transport models, so a NEW SDK DTO
+#: is automatically fingerprinted — no manual
 #: list to forget to update. A retype on any of these silently breaks running
 #: workflows on a stale CLI, so they belong in the contract.
 _SDK_DTOS: list[type] = [
     obj
-    for _name, obj in inspect.getmembers(_cli_contracts, inspect.isclass)
+    for module in (_cli_contracts, _shared_contracts)
+    for _name, obj in inspect.getmembers(module, inspect.isclass)
     if issubclass(obj, BaseModel)
     and obj is not BaseModel
-    and obj.__module__ == _cli_contracts.__name__
+    and obj.__module__ == module.__name__
 ]
 
 #: Request/response DTOs the CLI/SDK sends or parses. Type-aware via JSON Schema.
@@ -176,7 +178,6 @@ _SDK_DTOS: list[type] = [
 #: ones are auto-covered). A field removed/renamed/retyped here is exactly what
 #: silently corrupts a stale CLI, and it is caught completely and automatically.
 CONTRACT_FINGERPRINT_MODELS: list[type] = _COMMAND_DTOS + _SDK_DTOS
-CONTRACT_FINGERPRINT_MODELS += [SolutionDevContextRequest, SolutionDevContextResponse]
 
 #: We deliberately do NOT fingerprint the full route list. Route strings are a
 #: weak, noisy proxy: hand-listing ~100 `/api/*` paths is perpetually incomplete
@@ -380,7 +381,12 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # Solution local development context request/response (2026-10-16).
     # ADDITIVE: new capability endpoint; existing DTOs are unchanged.
     # Combined with the compatible audit-surface description in PR #992.
-    "3593209451bb3b84160f29e030ccc61e397146f6c7505e88df9ed79e674c098d"
+    # Shared runtime logging, service control and provider-cache DTOs are now
+    # fingerprinted alongside Solution preview and SDK command contracts.
+    # These transports are additive and ship with the existing 1.4.2 floor;
+    # the legacy contract marker remains frozen. The execution scope description
+    # now documents original reach and the named execution permission.
+    "c1ebda500c77bbc290bf2d707e1ecf8e5151fb8d2875972eeb8079cfda359dfd"
 )
 
 

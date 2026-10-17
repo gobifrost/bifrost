@@ -7,10 +7,8 @@ and runtime code agree on identity without a name lookup:
   permission ``"*"`` as its one ``role_permissions`` row. Held as an
   additional role at the ``platform`` boundary, never as a base role.
 - **User** (base, builtin): the default base role.
-  Its permission set is *derived* from the access list
-  (``src.services.access_list.ACCESS_LIST``) rather than hand-maintained,
-  so it can never silently drift from what an authenticated user can
-  already reach today. See ``derive_user_base_permissions``.
+  Its permission set is fixed by migrations. Changing an endpoint's
+  enforcement metadata never grants or revokes a seeded role permission.
 - **Platform Operator** (builtin, not base): read visibility into managed
   organizations plus user support, role assignment and running workflows
   and agents there (see ``PLATFORM_OPERATOR_PERMISSIONS``). Held as an additional role
@@ -22,20 +20,14 @@ and runtime code agree on identity without a name lookup:
 Migrations must not import live application code (a historical migration
 has to keep producing the same rows regardless of later refactors), so the
 migration that seeds these roles carries a frozen literal copy of
-``USER_BASE_PERMISSIONS`` rather than calling ``derive_user_base_permissions``
-at upgrade time. A unit test asserts the two stay identical; if they ever
-diverge, the fix is either to correct the frozen copy (in a new migration)
-or to reclassify the access-list entry that moved — never to silently
-change history's meaning by pointing the migration at live code.
+``USER_BASE_PERMISSIONS``. A unit test pins this set to the latest migration
+that changes it. Permission changes require a new migration; enforcement
+metadata must not silently change seeded access.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from uuid import UUID
-
-if TYPE_CHECKING:
-    from src.models.contracts.access_list import AccessEntry
 
 # Fixed identities, following the platform's existing well-known-UUID
 # convention (see api/src/core/constants.py: system user = ...0001,
@@ -79,61 +71,8 @@ def is_builtin_role_id(role_id: UUID) -> bool:
     return role_id in BUILTIN_ROLE_IDS
 
 
-# The actions the User base role may hold: reading and launching, never
-# writing.
-_USER_BASE_ACTIONS = frozenset({"read", "readbasic", "execute"})
-
-
-def derive_user_base_permissions(access_list: "list[AccessEntry]") -> frozenset[str]:
-    """The User base role's permission set, derived from the access list.
-
-    Exactly the permissions of every access-list entry whose deciding entry
-    (an MCP tool bound to a REST route through the operation catalog is
-    decided by that route's entry, not by the MCP transport floor) is:
-    - ``access_class == permission``
-    - ``current_gate == authenticated`` (no scope-bypass modifier layered on)
-    - not narrowed by an inline check to superusers or scope-bypass callers
-      (``inline_effect`` is not ``deny_unless_superuser``/``deny_unless_bypass``)
-    - ``intended_change is None`` (a permanent, not a transitional, grant)
-    - ``boundary == "organization"``
-    - action ``read``, ``readbasic`` or ``execute`` (never a write, and
-      never ``.all``: other people's private items)
-
-    These are exactly the reads and launches any authenticated user can
-    already make today with no admin/provider-org bypass involved, so
-    granting them via the User base role changes nothing about who can do
-    what.
-    """
-    from src.models.contracts.access_list import AccessClass, CurrentGate, InlineEffect
-    from src.models.contracts.permissions import parse_permission
-    from src.services.access_list import effective_entries
-
-    narrowed = {InlineEffect.DENY_UNLESS_SUPERUSER, InlineEffect.DENY_UNLESS_BYPASS}
-    permissions: set[str] = set()
-    for entry in effective_entries(access_list):
-        if entry.access_class != AccessClass.PERMISSION:
-            continue
-        if entry.current_gate != CurrentGate.AUTHENTICATED:
-            continue
-        if entry.inline_effect in narrowed:
-            continue
-        if entry.intended_change is not None:
-            continue
-        if entry.boundary != "organization":
-            continue
-        assert entry.permission is not None
-        parsed = parse_permission(entry.permission)
-        if parsed.extended or parsed.action not in _USER_BASE_ACTIONS:
-            continue
-        permissions.add(entry.permission)
-    return frozenset(permissions)
-
-
-# Frozen literal copy of what `derive_user_base_permissions(ACCESS_LIST)`
-# produces as of the latest migration that changes it
-# (20261009_graph_permission_names). See the module docstring for why this
-# is not computed live. `tests/unit/test_builtin_roles.py` asserts the two
-# stay identical.
+# Frozen permission set from 20261009_graph_permission_names. The access
+# list records enforcement; it is not a source of new role grants.
 USER_BASE_PERMISSIONS: frozenset[str] = frozenset(
     {
         "agentruns.read",
