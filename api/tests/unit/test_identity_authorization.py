@@ -11,6 +11,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import delete, select, update
 
+import shared.account_guards as account_guards
 from shared.builtin_roles import (
     DECRYPTION_ROLE_ID,
     PLATFORM_ADMIN_ROLE_ID,
@@ -283,10 +284,6 @@ class TestUpdateUser:
     ) -> None:
         from src.models import User as UserORM
         from src.models import UserRole
-        from shared.account_guards import (
-            AccountGuardError,
-            refuse_last_active_platform_admin_removal,
-        )
 
         first = await _user(db_session, PROVIDER_ORG_ID, admin=True)
         second = await _user(db_session, PROVIDER_ORG_ID, admin=True)
@@ -294,7 +291,7 @@ class TestUpdateUser:
 
         try:
             async with async_session_factory() as deactivate_session, async_session_factory() as remove_session:
-                await refuse_last_active_platform_admin_removal(deactivate_session, {first.id})
+                await account_guards.refuse_last_active_platform_admin_removal(deactivate_session, {first.id})
                 await deactivate_session.execute(
                     update(UserORM).where(UserORM.id == first.id).values(is_active=False)
                 )
@@ -302,8 +299,8 @@ class TestUpdateUser:
 
                 async def remove_second_admin() -> str | None:
                     try:
-                        await refuse_last_active_platform_admin_removal(remove_session, {second.id})
-                    except AccountGuardError as exc:
+                        await account_guards.refuse_last_active_platform_admin_removal(remove_session, {second.id})
+                    except account_guards.AccountGuardError as exc:
                         await remove_session.rollback()
                         return exc.detail
                     await remove_session.execute(
@@ -587,7 +584,6 @@ class TestRolePermissions:
     async def test_permission_elevation_rechecks_an_external_transition_that_commits_while_waiting_for_the_role_lock(
         self, db_session, async_session_factory, monkeypatch
     ) -> None:
-        import shared.account_guards as account_guards
         from shared.sdk_users import set_user_base_role
         from src.models import Role as RoleORM
         from src.models import RolePermission, UserRole
@@ -630,7 +626,7 @@ class TestRolePermissions:
                 await external_session.commit()
 
                 with pytest.raises(RolePermissionError) as exc_info:
-                    await elevation
+                    await asyncio.gather(elevation)
                 assert exc_info.value.status_code == 409
         finally:
             async with async_session_factory() as cleanup:
@@ -644,7 +640,6 @@ class TestRolePermissions:
     async def test_permission_elevation_rechecks_an_external_role_assignment_that_commits_while_waiting_for_the_role_lock(
         self, db_session, async_session_factory, monkeypatch
     ) -> None:
-        import shared.account_guards as account_guards
         from src.models import Role as RoleORM
         from src.models import RolePermission, UserRole
         from src.models import User as UserORM
@@ -687,7 +682,7 @@ class TestRolePermissions:
                 await assignment_session.commit()
 
                 with pytest.raises(RolePermissionError) as exc_info:
-                    await elevation
+                    await asyncio.gather(elevation)
                 assert exc_info.value.status_code == 409
         finally:
             async with async_session_factory() as cleanup:
