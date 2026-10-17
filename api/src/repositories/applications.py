@@ -57,7 +57,7 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         is_superuser: bool = False,
         is_external: bool = False,
         *,
-        caller: "Caller | None" = None,
+        caller: Caller | None = None,
     ) -> None:
         """Build an App repository from a verified caller when available.
 

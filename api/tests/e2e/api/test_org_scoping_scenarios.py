@@ -450,9 +450,8 @@ class TestScenario3_OrgThenGlobalCascade:
 @pytest.mark.e2e
 class TestScenario4_CrossOrgBlocked:
     """A regular org user (not platform admin, not provider-org member)
-    must not be able to surface another org's data — not via explicit
-    scope, not via UNSET (because their resolved org_id is their own,
-    not the other org's), not via explicit global."""
+    cannot read or mutate another organization's data. Internal identities
+    can still read shared Global configuration within their normal reach."""
 
     def test_org_user_explicit_other_org_returns_403(
         self, e2e_client, platform_admin, org2, org1_service_headers
@@ -476,15 +475,22 @@ class TestScenario4_CrossOrgBlocked:
             f"Cross-org explicit scope must be 403, not {r.status_code}: {r.text}"
         )
 
-    def test_org_user_explicit_global_returns_403(
-        self, e2e_client, org1_service_headers
+    def test_org_service_reads_shared_global_config(
+        self, e2e_client, platform_admin, org1_service_headers
     ):
+        key = f"shared_global_{uuid4().hex[:8]}"
+        _seed_config(
+            e2e_client,
+            platform_admin.headers,
+            key=key,
+            value="shared-global-value",
+            org_id=None,
+        )
         r = _get_config_via_sdk(
-            e2e_client, org1_service_headers, key="anything", scope="global"
+            e2e_client, org1_service_headers, key=key, scope="global"
         )
-        assert r.status_code == 403, (
-            f"Org user requesting global must be 403, not {r.status_code}: {r.text}"
-        )
+        assert r.status_code == 200, r.text
+        assert r.json()["value"] == "shared-global-value"
 
     def test_org_user_unset_does_not_leak_other_org(
         self, e2e_client, platform_admin, org2, org1_service_headers
@@ -524,27 +530,10 @@ class TestScenario4_CrossOrgBlocked:
         org2,
         org1_user,
     ):
-        """Regression for Codex round-3 HIGH finding.
+        """The runtime evaluator denies a foreign mapping write over the socket.
 
-        Under workflow execution, the API authenticates the engine
-        sentinel (``is_superuser=True``), so the API-side C2 gate ALWAYS
-        passes. The SDK-side ``resolve_scope`` is the security boundary
-        for workflow callers — it must catch a non-bypass workflow
-        trying to mutate another org's mapping.
-
-        This test:
-          1. Seeds a real integration with an org2 mapping.
-          2. Defines a workflow in org1 (non-provider).
-          3. Executes it as ``org1_user`` (non-admin, non-provider).
-          4. The workflow attempts ``integrations.upsert_mapping``
-             with ``scope=org2_id``.
-          5. Asserts a PermissionError was raised inside the workflow
-             (caught and surfaced via the workflow result).
-
-        Before the fix, the SDK posted the caller-supplied scope raw
-        and the API let it through (engine sentinel is superuser).
-        After the fix the SDK calls ``resolve_scope(scope)`` locally
-        which raises PermissionError under the C2 rule.
+        A real org1 workflow tries to change an org2 mapping. The SDK exposes
+        the HTTP denial, and the mapping keeps its original value.
         """
         integration_name = f"engine_isolation_{uuid4().hex[:8]}"
         integration_resp = e2e_client.post(
@@ -577,7 +566,7 @@ class TestScenario4_CrossOrgBlocked:
             workflow_name = f"e2e_engine_iso_{uuid4().hex[:8]}"
             workflow_path = f"{workflow_name}.py"
             workflow_content = (
-                '"""E2E engine-sentinel isolation regression."""\n'
+                '"""E2E workflow runtime isolation regression."""\n'
                 'from bifrost import workflow, integrations\n'
                 '\n'
                 '@workflow(\n'
@@ -630,14 +619,10 @@ class TestScenario4_CrossOrgBlocked:
                     f"raise inside the try/except. Got: {result}"
                 )
                 payload = result.get("result", {})
-                assert payload.get("raised") is True, (
-                    f"SDK-side resolve_scope must raise PermissionError; "
-                    f"got result {payload!r}"
-                )
-                assert payload.get("error_type") == "PermissionError", (
-                    f"Expected PermissionError, got {payload.get('error_type')!r}: "
-                    f"{payload.get('error')!r}"
-                )
+                assert payload.get("raised") is True, payload
+                assert payload.get("error_type") == "RuntimeError", payload
+                assert "403" in payload.get("error", ""), payload
+                assert "outside the caller's organization reach" in payload["error"], payload
 
                 # Confirm the org2 mapping is unchanged (no forgery side-effect).
                 check = e2e_client.get(

@@ -232,7 +232,7 @@ async def test_platform_job_owner_and_named_read_all_preserve_original_reach_pri
 async def test_product_update_receipt_is_written_for_the_original_caller(db_session, authority, monkeypatch):
     caller, principal, _home, _foreign = await authority("settings.readwrite", global_grant=True)
     entry_id = uuid4()
-    monkeypatch.setattr(product_updates, "get_running_product_updates_bundle", lambda: object())
+    monkeypatch.setattr(product_updates, "get_running_product_updates_bundle", object)
     monkeypatch.setattr(product_updates, "visible_entry_ids", lambda _bundle: {entry_id})
 
     response = await product_updates.create_product_update_receipts(

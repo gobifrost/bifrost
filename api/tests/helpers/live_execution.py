@@ -9,6 +9,7 @@ still-running child the way production does, instead of hitting a false 401.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy import delete
@@ -17,10 +18,20 @@ from src.models.enums import ExecutionStatus
 from src.models.orm.executions import Execution
 
 
+@dataclass(frozen=True)
+class LiveExecution:
+    """Durable identifiers created to back an engine-token test credential."""
+
+    execution_id: UUID
+    actor_id: UUID
+    workflow_id: UUID
+    organization_id: UUID | None
+
+
 async def create_live_execution(
     async_session_factory, execution_id: str, *, organization_id: UUID | None = None,
     platform_admin: bool = True,
-) -> None:
+) -> LiveExecution:
     """Insert a Running execution with durable actor, caller, and Full workflow."""
     from shared.sdk_users import set_platform_admin
     from src.core.constants import PROVIDER_ORG_ID
@@ -30,7 +41,7 @@ async def create_live_execution(
     execution_uuid = UUID(execution_id)
     async with async_session_factory() as session:
         actor = User(
-            email=f"live-execution-{execution_uuid.hex}@example.test",
+            email=f"live-execution-{execution_uuid.hex}@example.com",
             name="Live Execution Test Actor",
             organization_id=organization_id or PROVIDER_ORG_ID,
         )
@@ -64,6 +75,12 @@ async def create_live_execution(
             )
         )
         await session.commit()
+    return LiveExecution(
+        execution_id=execution_uuid,
+        actor_id=actor.id,
+        workflow_id=workflow.id,
+        organization_id=organization_id,
+    )
 
 
 async def delete_live_execution(async_session_factory, execution_id: str) -> None:

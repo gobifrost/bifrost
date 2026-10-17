@@ -10,9 +10,12 @@ All fixtures are session-scoped, meaning they run ONCE per test session
 and the state is shared across all test files.
 """
 
+import asyncio
 import logging
 import os
-from uuid import UUID
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -578,35 +581,86 @@ def refresh_user_tokens():
     return _refresh
 
 
-def _org_service_headers(org_id: str) -> dict[str, str]:
-    """Bearer headers for an org-scoped execution credential.
-
-    The token is not a superuser. The SDK secret routes admit only execution
-    credentials and bypass principals, so tests of the resolver's regular-org
-    rules (scope, cascade, isolation) use a service token rather than a normal
-    user's own login token.
-    """
-    from uuid import uuid4
+@contextmanager
+def _org_service_headers(async_session_factory, org_id: str):
+    """Back an org-scoped service credential with a live, durable attempt."""
+    from sqlalchemy import delete
 
     from src.core.security import mint_service_token
+    from src.models.orm.services import ServiceAttempt, ServiceDefinition
+    from src.models.orm.users import User
+    from src.models.orm.workflows import Workflow
 
-    token, _ = mint_service_token(
-        service_id=str(uuid4()),
-        attempt_id=str(uuid4()),
-        organization_id=org_id,
-        solution_id=None,
-        global_repo_access=True,
-    )
-    return {"Authorization": f"Bearer {token}"}
+    actor_id, workflow_id, service_id, attempt_id = (uuid4() for _ in range(4))
+    organization_id = UUID(org_id)
+
+    async def create() -> None:
+        async with async_session_factory() as session:
+            session.add(User(
+                id=actor_id,
+                email=f"service-fixture-{actor_id.hex}@example.com",
+                name="Org Service Fixture",
+                organization_id=organization_id,
+                identity_kind="custom",
+                is_registered=False,
+            ))
+            await session.flush()
+            session.add(Workflow(
+                id=workflow_id,
+                name=f"service_fixture_{workflow_id.hex}",
+                function_name="service_fixture",
+                path=f"workflows/service_fixture_{workflow_id.hex}.py",
+                type="service",
+                organization_id=organization_id,
+                permission_mode="full",
+                run_identity_id=actor_id,
+            ))
+            await session.flush()
+            session.add(ServiceDefinition(
+                id=service_id,
+                workflow_id=workflow_id,
+                organization_id=organization_id,
+                enabled=False,
+                desired_state="stopped",
+                created_by="service-fixture",
+            ))
+            await session.flush()
+            session.add(ServiceAttempt(
+                id=attempt_id,
+                service_id=service_id,
+                run_user_id=actor_id,
+                state="running",
+                worker_id="service-fixture",
+                lease_token=uuid4().hex,
+                lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
+            ))
+            await session.commit()
+
+    async def cleanup() -> None:
+        async with async_session_factory() as session:
+            await session.execute(delete(ServiceAttempt).where(ServiceAttempt.id == attempt_id))
+            await session.execute(delete(ServiceDefinition).where(ServiceDefinition.id == service_id))
+            await session.execute(delete(Workflow).where(Workflow.id == workflow_id))
+            await session.execute(delete(User).where(User.id == actor_id))
+            await session.commit()
+
+    asyncio.run(create())
+    try:
+        token, _ = mint_service_token(service_id=str(service_id), attempt_id=str(attempt_id))
+        yield {"Authorization": f"Bearer {token}"}
+    finally:
+        asyncio.run(cleanup())
 
 
 @pytest.fixture
-def org1_service_headers(org1: dict) -> dict[str, str]:
+def org1_service_headers(async_session_factory, org1: dict):
     """Org1-scoped execution credential headers."""
-    return _org_service_headers(org1["id"])
+    with _org_service_headers(async_session_factory, org1["id"]) as headers:
+        yield headers
 
 
 @pytest.fixture
-def org2_service_headers(org2: dict) -> dict[str, str]:
+def org2_service_headers(async_session_factory, org2: dict):
     """Org2-scoped execution credential headers."""
-    return _org_service_headers(org2["id"])
+    with _org_service_headers(async_session_factory, org2["id"]) as headers:
+        yield headers

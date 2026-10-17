@@ -20,6 +20,8 @@ Access Control:
 - access_level field: 'authenticated' or 'role_based'
 """
 
+from __future__ import annotations
+
 import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, Sequence
@@ -69,7 +71,7 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
         is_superuser: bool = False,
         is_external: bool = False,
         *,
-        caller: "Caller | None" = None,
+        caller: Caller | None = None,
     ) -> None:
         """Build a workflow repository, optionally from a verified caller.
 

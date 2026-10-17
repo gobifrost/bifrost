@@ -23,16 +23,7 @@ import pytest
 from fastapi import HTTPException
 
 import shared.sdk_knowledge as svc
-from shared.sdk_knowledge import (
-    SDKKnowledgeError,
-    delete_knowledge_document,
-    delete_knowledge_namespace,
-    get_knowledge_document,
-    list_knowledge_namespaces,
-    search_knowledge_documents,
-    store_knowledge_document,
-    store_many_knowledge_documents,
-)
+import src.routers.cli as cli_module
 from src.core.auth import UserPrincipal
 from src.services.authorization.enforce import Caller
 from src.models.contracts.cli import (
@@ -112,7 +103,7 @@ class TestStoreService:
         )
 
         with repo_patch, embed_patch:
-            result = await store_knowledge_document(
+            result = await svc.store_knowledge_document(
                 session,
                 content="hello",
                 namespace="ns",
@@ -151,7 +142,7 @@ class TestStoreService:
         repo_patch, embed_patch, _ = _patch_service(repo=real_repo_class)
 
         with repo_patch, embed_patch:
-            await store_knowledge_document(
+            await svc.store_knowledge_document(
                 session, content="x", org_id=org_id, created_by=uuid4()
             )
 
@@ -170,8 +161,8 @@ class TestStoreService:
                 AsyncMock(side_effect=ValueError("no embedding config")),
             ),
         ):
-            with pytest.raises(SDKKnowledgeError) as exc:
-                await store_knowledge_document(
+            with pytest.raises(svc.SDKKnowledgeError) as exc:
+                await svc.store_knowledge_document(
                     session, content="x", org_id=uuid4(), created_by=uuid4()
                 )
         assert exc.value.status_code == 503
@@ -186,8 +177,8 @@ class TestStoreService:
         repo_patch, embed_patch, _ = _patch_service(repo=MagicMock(return_value=repo))
 
         with repo_patch, embed_patch:
-            with pytest.raises(SDKKnowledgeError) as exc:
-                await store_knowledge_document(
+            with pytest.raises(svc.SDKKnowledgeError) as exc:
+                await svc.store_knowledge_document(
                     session, content="x", org_id=uuid4(), created_by=uuid4()
                 )
         assert exc.value.status_code == 500
@@ -223,7 +214,7 @@ class TestStoreManyService:
                 svc.embeddings_factory_module, "get_embedding_client", factory
             ),
         ):
-            result = await store_many_knowledge_documents(
+            result = await svc.store_many_knowledge_documents(
                 session,
                 documents=[
                     {"content": "one", "key": "k1"},
@@ -250,8 +241,8 @@ class TestStoreManyService:
         repo_patch, embed_patch, _ = _patch_service(repo=MagicMock(return_value=repo))
 
         with repo_patch, embed_patch:
-            with pytest.raises(SDKKnowledgeError) as exc:
-                await store_many_knowledge_documents(
+            with pytest.raises(svc.SDKKnowledgeError) as exc:
+                await svc.store_many_knowledge_documents(
                     session,
                     documents=[{"content": "one"}, {"content": "two"}],
                     namespace="ns",
@@ -272,8 +263,8 @@ class TestStoreManyService:
         repo_patch, embed_patch, _ = _patch_service(repo=MagicMock(return_value=repo))
 
         with repo_patch, embed_patch:
-            with pytest.raises(SDKKnowledgeError) as exc:
-                await store_many_knowledge_documents(
+            with pytest.raises(svc.SDKKnowledgeError) as exc:
+                await svc.store_many_knowledge_documents(
                     session,
                     documents=[{"content": "one"}, {"key": "no-content"}],
                     namespace="ns",
@@ -304,7 +295,7 @@ class TestSearchService:
         )
 
         with repo_patch, embed_patch:
-            items = await search_knowledge_documents(
+            items = await svc.search_knowledge_documents(
                 session,
                 query="my query",
                 namespace=["default"],
@@ -351,8 +342,8 @@ class TestSearchService:
             "get_embedding_client",
             AsyncMock(side_effect=ValueError("no embedding config")),
         ):
-            with pytest.raises(SDKKnowledgeError) as exc:
-                await search_knowledge_documents(
+            with pytest.raises(svc.SDKKnowledgeError) as exc:
+                await svc.search_knowledge_documents(
                     session, query="q", namespace=["default"], org_id=uuid4()
                 )
         assert exc.value.status_code == 503
@@ -365,8 +356,8 @@ class TestSearchService:
         repo_patch, embed_patch, _ = _patch_service(repo=MagicMock(return_value=repo))
 
         with repo_patch, embed_patch:
-            with pytest.raises(SDKKnowledgeError) as exc:
-                await search_knowledge_documents(
+            with pytest.raises(svc.SDKKnowledgeError) as exc:
+                await svc.search_knowledge_documents(
                     session, query="q", namespace=["default"], org_id=uuid4()
                 )
         assert exc.value.status_code == 500
@@ -391,7 +382,7 @@ class TestDeleteServices:
             "KnowledgeRepository",
             MagicMock(side_effect=_factory),
         ):
-            assert await delete_knowledge_document(
+            assert await svc.delete_knowledge_document(
                 session, key="k", namespace="ns", org_id=org_id
             ) == {"deleted": True}
 
@@ -408,7 +399,7 @@ class TestDeleteServices:
             "KnowledgeRepository",
             MagicMock(return_value=repo),
         ):
-            assert await delete_knowledge_document(
+            assert await svc.delete_knowledge_document(
                 session, key="absent", namespace="ns", org_id=uuid4()
             ) == {"deleted": False}
 
@@ -421,8 +412,8 @@ class TestDeleteServices:
             "KnowledgeRepository",
             MagicMock(return_value=repo),
         ):
-            with pytest.raises(SDKKnowledgeError) as exc:
-                await delete_knowledge_document(
+            with pytest.raises(svc.SDKKnowledgeError) as exc:
+                await svc.delete_knowledge_document(
                     session, key="k", namespace="ns", org_id=uuid4()
                 )
         assert exc.value.status_code == 500
@@ -440,7 +431,7 @@ class TestDeleteServices:
             "KnowledgeRepository",
             MagicMock(return_value=repo),
         ):
-            assert await delete_knowledge_namespace(
+            assert await svc.delete_knowledge_namespace(
                 session, namespace="ns", org_id=org_id
             ) == {"deleted_count": 3}
         repo.delete_namespace.assert_awaited_once_with(namespace="ns")
@@ -455,8 +446,8 @@ class TestDeleteServices:
             "KnowledgeRepository",
             MagicMock(return_value=repo),
         ):
-            with pytest.raises(SDKKnowledgeError) as exc:
-                await delete_knowledge_namespace(
+            with pytest.raises(svc.SDKKnowledgeError) as exc:
+                await svc.delete_knowledge_namespace(
                     session, namespace="ns", org_id=uuid4()
                 )
         assert exc.value.status_code == 500
@@ -477,7 +468,7 @@ class TestListAndGetServices:
             "KnowledgeRepository",
             MagicMock(return_value=repo),
         ):
-            items = await list_knowledge_namespaces(
+            items = await svc.list_knowledge_namespaces(
                 session, org_id=uuid4(), include_global=False
             )
         assert items == [{"namespace": "ns", "scopes": {"org": 2}}]
@@ -493,8 +484,8 @@ class TestListAndGetServices:
             "KnowledgeRepository",
             MagicMock(return_value=repo),
         ):
-            with pytest.raises(SDKKnowledgeError) as exc:
-                await list_knowledge_namespaces(session, org_id=uuid4())
+            with pytest.raises(svc.SDKKnowledgeError) as exc:
+                await svc.list_knowledge_namespaces(session, org_id=uuid4())
         assert exc.value.status_code == 500
         assert exc.value.detail == "Knowledge list namespaces failed: bad"
 
@@ -517,7 +508,7 @@ class TestListAndGetServices:
             "KnowledgeRepository",
             MagicMock(side_effect=_factory),
         ):
-            item = await get_knowledge_document(
+            item = await svc.get_knowledge_document(
                 session, key="k", namespace="ns", org_id=org_id
             )
 
@@ -547,8 +538,8 @@ class TestListAndGetServices:
             "KnowledgeRepository",
             MagicMock(return_value=repo),
         ):
-            with pytest.raises(SDKKnowledgeError) as exc:
-                await get_knowledge_document(
+            with pytest.raises(svc.SDKKnowledgeError) as exc:
+                await svc.get_knowledge_document(
                     session, key="absent", namespace="ns", org_id=uuid4()
                 )
         assert exc.value.status_code == 404
@@ -561,16 +552,12 @@ class TestHandlerAdapters:
     def _authorize_handler(self, monkeypatch, request):
         if request.function.__name__ == "test_external_denial_before_any_service_call":
             return
-        import src.routers.cli as cli_module
-
         async def authorize(_db, user, _operation, _scope):
             return Caller(user, None), user.organization_id
 
         monkeypatch.setattr(cli_module, "_authorize_sdk_knowledge", AsyncMock(side_effect=authorize))
 
     async def test_store_handler_passes_scalars_and_returns_id(self):
-        from src.routers.cli import cli_knowledge_store
-
         user = _user()
         session = _session()
         real_store = svc.store_knowledge_document
@@ -589,7 +576,7 @@ class TestHandlerAdapters:
             "get_embedding_client",
             AsyncMock(return_value=_FakeEmbedder()),
         ):
-            result = await cli_knowledge_store(
+            result = await cli_module.cli_knowledge_store(
                 CLIKnowledgeStoreRequest(content="hi", namespace="ns", key="k"),
                 user,
                 session,
@@ -607,8 +594,6 @@ class TestHandlerAdapters:
         }
 
     async def test_search_handler_wraps_dicts_in_dtos(self):
-        from src.routers.cli import cli_knowledge_search
-
         # Bypass principal: this test is about DTO wrapping, not any
         # additional filtering a regular user's own token would apply,
         # which this bare session mock doesn't model.
@@ -628,7 +613,7 @@ class TestHandlerAdapters:
             "get_embedding_client",
             AsyncMock(return_value=_FakeEmbedder()),
         ):
-            items = await cli_knowledge_search(
+            items = await cli_module.cli_knowledge_search(
                 CLIKnowledgeSearchRequest(query="q"), user, session
             )
         assert len(items) == 1
@@ -637,8 +622,6 @@ class TestHandlerAdapters:
         assert items[0].created_at == created.isoformat()
 
     async def test_get_handler_miss_maps_to_404(self):
-        from src.routers.cli import cli_knowledge_get
-
         # Bypass principal: this test is about 404 mapping, not namespace-
         # role filtering (see test_search_handler_wraps_dicts_in_dtos).
         user = _user(is_superuser=True)
@@ -646,25 +629,23 @@ class TestHandlerAdapters:
         with patch.object(
             svc,
             "get_knowledge_document",
-            AsyncMock(side_effect=SDKKnowledgeError(404, "Document not found")),
+            AsyncMock(side_effect=svc.SDKKnowledgeError(404, "Document not found")),
         ):
             with pytest.raises(HTTPException) as exc:
-                await cli_knowledge_get("absent", "ns", None, user, session)
+                await cli_module.cli_knowledge_get("absent", "ns", None, user, session)
         assert exc.value.status_code == 404
         assert exc.value.detail == "Document not found"
 
     async def test_store_many_handler_error_detail_preserved(self):
-        from src.routers.cli import cli_knowledge_store_many
-
         user = _user()
         session = _session()
         with patch.object(
             svc,
             "store_many_knowledge_documents",
-            AsyncMock(side_effect=SDKKnowledgeError(503, "no embedding config")),
+            AsyncMock(side_effect=svc.SDKKnowledgeError(503, "no embedding config")),
         ):
             with pytest.raises(HTTPException) as exc:
-                await cli_knowledge_store_many(
+                await cli_module.cli_knowledge_store_many(
                     CLIKnowledgeStoreManyRequest(documents=[{"content": "x"}]),
                     user,
                     session,
@@ -673,8 +654,6 @@ class TestHandlerAdapters:
         assert exc.value.detail == "no embedding config"
 
     async def test_external_denial_before_any_service_call(self):
-        import src.routers.cli as cli_module
-
         user = _user(is_external=True)
         session = _session()
         cases = [

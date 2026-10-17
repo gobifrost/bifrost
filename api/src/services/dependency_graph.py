@@ -8,6 +8,8 @@ This service is query-time (not precomputed) since the dependency canvas
 is rarely accessed and complexity is bounded by the depth limit.
 """
 
+from __future__ import annotations
+
 import logging
 from collections import deque
 from typing import TYPE_CHECKING, Literal
@@ -161,7 +163,7 @@ class DependencyGraphService:
     in both directions (uses/used_by) up to a configurable depth.
     """
 
-    def __init__(self, db: AsyncSession, *, caller: "Caller | None" = None):
+    def __init__(self, db: AsyncSession, *, caller: Caller | None = None):
         self.db = db
         self.caller = caller
 
@@ -520,7 +522,7 @@ class DependencyGraphService:
 async def compute_relationship_availability(
     db: AsyncSession,
     *,
-    caller: "Caller | None" = None,
+    caller: Caller | None = None,
     workflow_ids: list[UUID] | None = None,
     form_ids: list[UUID] | None = None,
     agent_ids: list[UUID] | None = None,

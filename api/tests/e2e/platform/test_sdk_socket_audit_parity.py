@@ -1,9 +1,8 @@
 """E2E: worker-local socket audit attribution parity (follow-up to #810).
 
-A role created through the worker-local engine SDK app with a signed engine
-token carrying caller claims must produce exactly one ``audit_logs`` row,
-attributed to the signed caller with ``source='workflow'`` and the token's
-execution id — not the engine sentinel, and not a silent skip.
+A role created through the worker-local engine SDK app with a live execution
+token must produce exactly one ``audit_logs`` row, attributed to the durable
+execution actor with ``source='workflow'`` and the execution id.
 """
 
 import uuid
@@ -14,7 +13,7 @@ import pytest
 
 class TestSocketAuditAttribution:
     @pytest.mark.asyncio
-    async def test_role_create_over_socket_audits_signed_caller(
+    async def test_role_create_over_socket_audits_execution_actor(
         self, async_session_factory, org1_user
     ):
         from sqlalchemy import delete, select
@@ -25,23 +24,18 @@ class TestSocketAuditAttribution:
         from src.services.execution.worker_sdk_http import build_worker_sdk_app
         from tests.helpers.live_execution import create_live_execution, delete_live_execution
 
-        caller_id = org1_user.user_id
         org_id = org1_user.organization_id
-        assert caller_id is not None and org_id is not None
+        assert org_id is not None
         execution_id = uuid.uuid4()
         role_name = f"socket-audit-{uuid.uuid4().hex[:8]}"
 
         token, _ = mint_engine_token(
             execution_id=str(execution_id),
-            solution_id=None,
-            global_repo_access=True,
             timeout_seconds=300,
-            caller_user_id=str(caller_id),
-            caller_organization_id=str(org_id),
-            caller_email=org1_user.email,
-            caller_name=org1_user.name,
         )
-        await create_live_execution(async_session_factory, str(execution_id))
+        live_execution = await create_live_execution(
+            async_session_factory, str(execution_id), organization_id=org_id
+        )
 
         app = build_worker_sdk_app()
         transport = httpx.ASGITransport(app=app)
@@ -73,7 +67,7 @@ class TestSocketAuditAttribution:
 
             assert len(rows) == 1, [str(r.id) for r in rows]
             row = rows[0]
-            assert row.user_id == caller_id
+            assert row.user_id == live_execution.actor_id
             assert row.organization_id == org_id
             assert row.source == "workflow"
             assert row.execution_id == execution_id

@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import src.core.module_cache_sync as module_cache_sync
+
 
 class TestModuleCacheAsync:
     """Tests for async module cache functions."""
@@ -235,9 +237,7 @@ class TestModuleCacheSync:
         mock_sync_redis.get.return_value = json.dumps(cached_data)
 
         with patch("src.core.module_cache_sync._get_sync_redis", return_value=mock_sync_redis):
-            from src.core.module_cache_sync import get_module_sync
-
-            result = get_module_sync("shared/test.py")
+            result = module_cache_sync.get_module_sync("shared/test.py")
 
             assert result is not None
             assert result["content"] == "print('hello')"
@@ -248,9 +248,7 @@ class TestModuleCacheSync:
         mock_sync_redis.get.return_value = None
 
         with patch("src.core.module_cache_sync._get_sync_redis", return_value=mock_sync_redis):
-            from src.core.module_cache_sync import get_module_sync
-
-            result = get_module_sync("nonexistent.py")
+            result = module_cache_sync.get_module_sync("nonexistent.py")
 
             assert result is None
 
@@ -261,23 +259,17 @@ class TestModuleCacheSync:
         mock_sync_redis.get.side_effect = redis.RedisError("Connection failed")
 
         with patch("src.core.module_cache_sync._get_sync_redis", return_value=mock_sync_redis):
-            from src.core.module_cache_sync import get_module_sync
-
-            result = get_module_sync("shared/test.py")
+            result = module_cache_sync.get_module_sync("shared/test.py")
 
             assert result is None
 
     def test_reset_sync_redis(self):
         """Test resetting the sync Redis client."""
-        from src.core.module_cache_sync import reset_sync_redis
-
         # Should not raise
-        reset_sync_redis()
+        module_cache_sync.reset_sync_redis()
 
     def test_reset_sync_redis_closes_cached_client(self):
         """A cached parent client cannot cross a later execution fork."""
-        import src.core.module_cache_sync as module_cache_sync
-
         client = MagicMock()
         module_cache_sync._sync_redis_client = client
         try:
@@ -325,12 +317,10 @@ class TestKeyPatterns:
         """Verify async and sync modules use same key patterns."""
         from src.core.module_cache import MODULE_INDEX_KEY as ASYNC_INDEX
         from src.core.module_cache import MODULE_KEY_PREFIX as ASYNC_PREFIX
-        from src.core.module_cache_sync import MODULE_INDEX_KEY as SYNC_INDEX
-        from src.core.module_cache_sync import MODULE_KEY_PREFIX as SYNC_PREFIX
 
         # Both modules should import from module_cache, so these should be identical
-        assert ASYNC_PREFIX == SYNC_PREFIX
-        assert ASYNC_INDEX == SYNC_INDEX
+        assert ASYNC_PREFIX == module_cache_sync.MODULE_KEY_PREFIX
+        assert ASYNC_INDEX == module_cache_sync.MODULE_INDEX_KEY
 
 
 @pytest.mark.asyncio

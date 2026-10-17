@@ -97,7 +97,7 @@ async def test_native_workflow_tool_uses_current_parent_agent_boundary(monkeypat
 @pytest.mark.asyncio
 async def test_native_workflow_tool_preserves_permission_refusal(monkeypatch):
     from fastapi import HTTPException
-    monkeypatch.setattr(server, "_get_agent_id_from_scope", lambda: uuid4())
+    monkeypatch.setattr(server, "_get_agent_id_from_scope", uuid4)
     monkeypatch.setattr("src.services.mcp_server.authorization.load_mcp_caller", AsyncMock(return_value=object()))
     monkeypatch.setattr(
         "src.services.execution.agent_workflow_tools.execute_agent_workflow_tool",

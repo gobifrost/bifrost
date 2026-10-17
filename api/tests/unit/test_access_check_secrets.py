@@ -10,7 +10,6 @@ import pytest
 import src.repositories.config as config_repo_module
 from shared import access_checks
 import shared.sdk_config as sdk_config
-from shared.sdk_config import get_sdk_config_value
 from shared.sdk_integrations import build_oauth_data
 from src.core.security import encrypt_secret
 from src.core.principal import UserPrincipal
@@ -41,8 +40,8 @@ async def test_a_config_secret_read_is_noted_without_its_value(collector, monkey
     caller = Caller(UserPrincipal(user_id=uuid4(), email="reader@contoso.example", organization_id=org), None)
     monkeypatch.setattr(sdk_config, "require_permission", lambda *args: None)
     monkeypatch.setattr(sdk_config, "allows_permission", lambda *args: True)
-    await get_sdk_config_value(None, key="api_key", org_id=org, caller=caller)  # type: ignore[arg-type]
-    await get_sdk_config_value(None, key="plain", org_id=org, caller=caller)  # type: ignore[arg-type]
+    await sdk_config.get_sdk_config_value(None, key="api_key", org_id=org, caller=caller)  # type: ignore[arg-type]
+    await sdk_config.get_sdk_config_value(None, key="plain", org_id=org, caller=caller)  # type: ignore[arg-type]
 
     assert collector.notes == [access_checks.Note("secret", org, {"kind": "config", "name": "api_key"})]
 
@@ -62,7 +61,7 @@ async def test_config_metadata_redacts_a_secret_without_decrypting(monkeypatch) 
     monkeypatch.setattr(sdk_config, "require_permission", lambda *args: None)
     monkeypatch.setattr(sdk_config, "allows_permission", lambda *args: False)
 
-    result = await get_sdk_config_value(None, key="api_key", org_id=org, caller=caller)  # type: ignore[arg-type]
+    result = await sdk_config.get_sdk_config_value(None, key="api_key", org_id=org, caller=caller)  # type: ignore[arg-type]
 
     assert result is not None
     assert result.value == "[SECRET]"

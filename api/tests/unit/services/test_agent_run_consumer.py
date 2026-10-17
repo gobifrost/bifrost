@@ -734,11 +734,11 @@ async def test_agentless_chat_skips_agent_lookup_and_socket_dependencies(
             new=AsyncMock(return_value=_loaded_actor()),
         ),
         patch(
-            "src.jobs.consumers.agent_run.load_runtime_principal",
+            "src.services.authorization.runtime_auth.load_runtime_principal",
             new=AsyncMock(return_value=runtime_principal),
         ) as load_runtime,
         patch(
-            "src.jobs.consumers.agent_run.load_caller",
+            "src.services.authorization.enforce.load_caller",
             new=AsyncMock(return_value=runtime_caller),
         ) as load_caller,
         patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat),

@@ -48,6 +48,7 @@ from src.models.contracts.access_list import (
 )
 from src.models.contracts.permissions import parse_permission
 from src.services.access_list import ACCESS_LIST
+from src.services.authorization import enforce
 from src.services.mcp_server.server import get_system_tools
 from src.services.operation_catalog import OPERATION_CATALOG
 
@@ -1704,13 +1705,11 @@ class TestEvaluatorEnforcement:
         assert _uses_request_operation_key(source) is recognized
 
     def test_every_evaluator_entry_is_enforced(self) -> None:
-        from src.services.authorization.enforce import operation_key
-
         enforced = _enforced_operation_keys()
         missing = [
-            operation_key(entry)
+            enforce.operation_key(entry)
             for entry in ACCESS_LIST
-            if entry.current_gate == CurrentGate.EVALUATOR and operation_key(entry) not in enforced
+            if entry.current_gate == CurrentGate.EVALUATOR and enforce.operation_key(entry) not in enforced
         ]
         assert not missing, f"evaluator entries no handler or service decides: {missing}"
 
@@ -1719,8 +1718,6 @@ class TestEvaluatorEnforcement:
         or through ``authorize_operation``). Keep the recording contract
         explicit so a future refactor cannot retain route-shaped strings but
         silently turn enforcement into a report-only predicate."""
-        import src.services.authorization.enforce as enforce
-
         def records_decision(func: object) -> bool:
             return any(
                 isinstance(node, ast.Call)
@@ -1733,10 +1730,8 @@ class TestEvaluatorEnforcement:
         assert records_decision(enforce.require_named_permission)
 
     def test_every_enforced_key_is_an_evaluator_entry(self) -> None:
-        from src.services.authorization.enforce import operation_key
-
         evaluator_keys = {
-            operation_key(entry)
+            enforce.operation_key(entry)
             for entry in ACCESS_LIST
             if entry.current_gate == CurrentGate.EVALUATOR and entry.mcp_tool is None
         }
@@ -2395,8 +2390,6 @@ class TestEveryPowerIsNoted:
     proves that recording contract. Launch notes remain separate telemetry."""
 
     def test_named_permission_entry_points_record_enforced_judgments(self) -> None:
-        import src.services.authorization.enforce as enforce
-
         def records_decision(func: object) -> bool:
             return any(
                 isinstance(node, ast.Call)

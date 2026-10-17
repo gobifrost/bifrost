@@ -4,6 +4,8 @@ Agent Repository
 Repository for Agent CRUD operations with organization scoping and role-based access.
 """
 
+from __future__ import annotations
+
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -228,7 +230,7 @@ class AgentRepository(OrgScopedRepository[Agent]):
         agent_id: UUID,
         connection_ids: Iterable[UUID],
         *,
-        caller: "Caller",
+        caller: Caller,
         granted_by: UUID | None,
     ) -> list[UUID]:
         """Replace the agent's full set of MCP connection grants.

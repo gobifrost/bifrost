@@ -17,8 +17,6 @@ from src.config import get_settings
 from src.core.cache.keys import agent_run_steps_stream_key
 from src.core.cache.redis_client import get_redis
 from src.core.database import get_session_factory
-from src.services.authorization.enforce import Caller, load_caller
-from src.services.authorization.runtime_auth import load_runtime_principal
 from src.core.pubsub import publish_agent_run_update, publish_chat_run_event
 from src.jobs.rabbitmq import BaseConsumer
 from src.models.contracts.agents import ChatStreamChunk
@@ -31,6 +29,7 @@ from src.models.orm.users import User
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from src.services.authorization.enforce import Caller
     from src.services.execution.autonomous_agent_executor import ActingUser
 
 logger = logging.getLogger(__name__)
@@ -186,6 +185,9 @@ class AgentRunConsumer(BaseConsumer):
         self._session_factory = get_session_factory()
 
     async def process_message(self, body: dict) -> None:
+        from src.services.authorization.enforce import load_caller
+        from src.services.authorization.runtime_auth import load_runtime_principal
+
         run_id = body["run_id"]
         agent_id = body.get("agent_id")
         trigger_type = body["trigger_type"]

@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared import access_checks
 from shared.identities import ensure_default_identity
 import shared.scope_resolver as scope_resolver
-from shared.scope_resolver import UNSET, resolve_effective_scope
 from src.services.authorization.reach import OrgReach
 from src.services.authorization.context import AuthorizationContext
 from src.services.authorization.enforce import Caller
@@ -48,8 +47,8 @@ def test_resolve_effective_scope_notes_the_resolved_scope(collector, monkeypatch
         ),
     )
 
-    resolve_effective_scope(caller=caller, requested_scope=org)
-    resolve_effective_scope(caller=caller, requested_scope=UNSET)
+    scope_resolver.resolve_effective_scope(caller=caller, requested_scope=org)
+    scope_resolver.resolve_effective_scope(caller=caller, requested_scope=scope_resolver.UNSET)
 
     assert _targets(collector) == [("scope_switch", org), ("scope_switch", org)]
 
