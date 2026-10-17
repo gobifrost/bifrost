@@ -2,9 +2,9 @@
   "schema_version": 1,
   "repository": "gobifrost/bifrost",
   "base_ref": "ade714a08b95c84daa285e859ebece55f45c6754",
-  "target_ref": "0423c8836349f79333b6b4f39237bbe657971340",
-  "collected_at": "2026-10-17T19:55:40Z",
-  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...0423c8836349f79333b6b4f39237bbe657971340",
+  "target_ref": "06c2ff8a8bfb0e769c91cbd82d15397c6e7026b1",
+  "collected_at": "2026-10-17T20:56:52Z",
+  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...06c2ff8a8bfb0e769c91cbd82d15397c6e7026b1",
   "commits": [
     {
       "sha": "2399fbb049e6b6c121ca07980ffa649844c0d477",
@@ -1257,6 +1257,20 @@
       "subject": "Zero Trust Automation: enforce current roles and reach (#996)",
       "prs": [
         996
+      ]
+    },
+    {
+      "sha": "7f21e9c4747f12f5cc64350645222c8227bb5bc2",
+      "subject": "chore: activate reviewed access and automation updates (#997)",
+      "prs": [
+        997
+      ]
+    },
+    {
+      "sha": "06c2ff8a8bfb0e769c91cbd82d15397c6e7026b1",
+      "subject": "Harden workflow consent and scoped credential boundaries (#998)",
+      "prs": [
+        998
       ]
     }
   ],
@@ -3596,6 +3610,32 @@
       "merge_commit": "0423c8836349f79333b6b4f39237bbe657971340",
       "body": "Zero Trust Automation checks the original user's current roles and organization reach across platform requests and durable runs. Full Access remains the workflow default; this does not convert workflows to Declared Permissions.\n\nDepends on the merged preparation changes #992, #994 and #995.\n\n## Resulting behavior\n\n- Workflow, Agent and Service credentials identify durable records. Authentication reloads current authority rather than trusting permission or organization claims in a runtime token.\n- Full Access adds all named permissions, including Secrets, inside the original user's reach. Declared Permissions adds only configured permission capabilities. Run As changes the acting identity and attribution; it adds no reach or authority.\n- Platform operations check named permissions at persisted resource organizations. Collections filter reach before paging and counting; moves check both organizations. Table and file policies still decide data access after reach is established.\n- App and Form launches use verified parent capabilities, and result reads remain bound to the accepted embed session. History, diagnostics, notifications and PlatformJob deliveries recheck current visibility.\n- Services pin a run user per attempt. Missing historical bindings fail closed. Legacy placed workflow grants become permission-only capabilities and require renewed Solution consent.\n- OAuth overrides and plaintext credentials require Secrets access. Child processes use authenticated runtime operations instead of Redis authority or deferred SDK writes.\n\n## UX and terminology\n\n**Zero Trust Automation** names the overall model in the security overview, runbook and Product Update. Workflow badges and access traces use **Full Access** and **Declared Permissions**; API/manifest values remain `full` and `restricted`. The reviewed Auditing tabs, compact record selector, drawer and Aggregate Off list are inherited from #994/#995.\n\nThe final integration repairs preserve tool-picker management access, bound Solution preview scope, metadata-only HMAC settings access, private-Agent budget controls, subscriptions after filtered events, and the HMAC form result route for its accepted embed session. Revocation still removes unauthorized deliveries, including individual file prefixes sharing a channel. MCP connection and knowledge document detail reads hide foreign rows before checking the persisted target. Service shutdown commits and closes the claim transaction before waiting for child completion, preventing a reproduced callback/database lock cycle.\n\n## Upgrade and rulings\n\nDrain active work and stop old producers/consumers before upgrading the API and workers. Prior runtime credential formats are rejected. No historical actor or permission binding is guessed. Review affected Solution permission requests again after normalization.\n\n- Original reach stays independent of workflow powers and acting identity. Legitimate automation outside that reach needs an explicit role placement.\n- Consumer sharing and data policies remain authoritative; management permission permits managing reachable workflows without granting new organization reach.\n- Unbound historical work must be restarted with an accepted identity rather than reconstructed automatically.\n- Renewed consent may require repeating an approval that was previously intended.\n\nThe deactivated-user cancellation proposal remains deferred; delete-time cancellation is preserved.\n\n## Verification\n\n- `./test.sh unit --tb=short`: **9,474 passed**, 53 existing slow tests deselected; zero failures, errors or skips; includes authorization, API inventory, DTO/CLI/MCP, generated-type, skill-truth, storage and import tripwires.\n- `./test.sh tests/unit/routers/test_knowledge_update_document.py tests/unit/routers/test_knowledge_document_authorization.py -v --tb=short --durations=0`: **21 passed**, including storage round trips and the real document authorization decisions.\n- `./test.sh quality api`: passed (Pyright zero errors/warnings; Ruff clean).\n- `./test.sh tests/unit/routers/test_mcp_connections_authorization.py tests/unit/routers/test_knowledge_document_authorization.py tests/e2e/api/test_mcp_connections.py tests/e2e/api/test_knowledge.py::TestKnowledgeDocumentByIdOrgScope -v --tb=short --durations=0`: **29 passed**, no skips.\n- `./test.sh tests/unit/test_service_claim.py -v --tb=short --durations=0`: **16 passed**. The new callback regression failed before the fix and passes after it.\n- `./test.sh tests/e2e/platform/test_service_owner_loss.py tests/e2e/platform/test_worker_memory.py -v --tb=short --durations=0`: **4 passed**, including a batch stop of 20 services and 30 subsequent workflow executions. After this validation, the obsolete memory file was removed: its RSS field was absent, so its conditional assertions never ran. Batch shutdown remains covered by the service-owner-loss fixture and callback unit regression; ordinary success/failure worker execution has existing integration coverage.\n- `./test.sh tests/unit/routers/test_websocket_table_messages.py tests/unit/test_solution_dev_proxy.py tests/e2e/platform/test_subscriptions.py tests/e2e/platform/test_solution_dev_context_e2e.py tests/e2e/api/test_integrations.py::TestIntegrationConfigSecrets tests/e2e/test_execution_logs_list_endpoint.py -v --tb=short --durations=0`: **61 passed**, no skips.\n- `./test.sh tests/unit/routers/test_websocket_table_messages.py tests/e2e/platform/test_file_websocket_subscriptions.py tests/e2e/api/test_websocket_read_visibility.py -v --tb=short --durations=0`: **17 passed**, no skips.\n- Targeted tool-picker and Workflow Access panel cases passed, including explicit selected-org management and stronger-identity refusal. Broader focused cohorts also covered MCP parity/discovery/execution, OAuth redaction, scoped lists, form launches, account guards, real worker SDK calls, Solution exports/files/tables, workspace imports and the execution identity matrix. All captured queue failures received source repairs or current-contract fixture corrections; no retries, skips or timeout increases were added.\n- `./test.sh client unit src/components/ProtectedRoute.test.tsx`: **12 passed**, including opt-in HMAC result access and ordinary/public-session denial.\n- `./test.sh tests/e2e/api/test_form_embed.py::TestFormEmbed::test_startup_handle_is_authoritative_bound_and_consumed -v --tb=short --durations=0`: **1 passed**, accepted-session result access and unrelated-execution refusal.\n- `./test.sh client e2e e2e/forms-public.unauth.spec.ts`: **5 passed**, including setup, public submission, dropdowns, signed-session result and disallowed ancestor checks.\n- `(cd client && npm run tsc -- --force)` and `(cd client && npm run lint)` passed; lint has one existing review-seed console warning.\n- Rename coverage: 58 component/formatter tests and 2 Workflow Access browser cases passed, including setup; the rendered panel was inspected.\n\nThe full backend E2E suite and full Playwright suite were not completed locally on this final source. The merge queue is the complete backend E2E/critical-browser gate for the combined candidate; it also reruns the full client unit suite and validates image publication, signing and promotion. Hosted checks on `879faed1d` passed: 9,474 backend units (53 existing slow cases deselected), 3,906 client tests across 597 files, both CodeQL analyses and lint/types. The synthetic merge candidate must also pass its required checks.\n\nThe preceding merge candidate exposed the foreign-row response and service shutdown defects described above. The shutdown lock cycle was reproduced in the original test order and fixed at the transaction/callback boundary; no retries, skips, pool-size changes or timeout increases were used.\n\n## Delivery\n\nRequired hosted and merge-queue checks must pass before merging. After the source stack lands, a content follow-up activates the approved Product Updates through a verified cumulative inventory. The separately requested post-merge Codex Security audit must complete and be reviewed before the coordinated image rollout.\n",
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/996"
+    },
+    {
+      "number": 997,
+      "title": "chore: activate reviewed access and automation updates",
+      "url": "https://github.com/gobifrost/bifrost/pull/997",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-17T20:21:12Z",
+      "merge_commit": "7f21e9c4747f12f5cc64350645222c8227bb5bc2",
+      "body": "Refresh the cumulative verified source inventory through #992, #994, #995 and #996 so the three approved access and automation notices are eligible in built images. Preserve their UUIDs and reviewed prose. Classify the previously missing client dependency patch #921 using the existing maintenance policy, including its required security-review record.\n\nValidation: Product Updates schema/coverage validation passed; image preparation produced all three approved entry UUIDs; added metadata passed the privacy and whitespace checks. The diff is confined to Product Updates metadata. Application tests remain covered by the completed source merge gate, and this PR will pass the normal required checks and merge queue before delivery.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/997"
+    },
+    {
+      "number": 998,
+      "title": "Harden workflow consent and scoped credential boundaries",
+      "url": "https://github.com/gobifrost/bifrost/pull/998",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-17T20:55:45Z",
+      "merge_commit": "06c2ff8a8bfb0e769c91cbd82d15397c6e7026b1",
+      "body": "## Summary\n\nBind installed workflow capabilities to current, digest-bound consent. Explicit Declared Permissions cannot inherit Full Access, and declined approvals stay revoked across bundle changes. Existing Full Access workflows retain their mode, and workflow metadata reports the effective runtime mode.\n\nValidate MCP service-token organization, provider and service identity before binding or use; preserve only signature-covered embed context; conceal documents outside a scoped writer\u2019s reach.\n\n## Validation\n\n- 202 focused unit tests passed, including runtime authorization, SDK metadata/list consumers, OAuth/planner consumers and the authorization inventory.\n- 75 focused E2E tests passed across Solution permission data/deploy/runtime, app/form embeds, Knowledge document authorization and MCP connections. No failures or skips.\n- `./test.sh quality api` passed: pyright and Ruff.\n\nThe consent matrix uses direct durable rows with no worker jobs or builds; existing Solution deploy/export tests retain the deployment boundary. HTTP regressions cover scoped token binding, signed app/form bootstrap and document reach.\n\nFull backend E2E, client and browser suites were not run locally for this follow-up; the merge queue is the complete-suite gate. No client source or API wire schema changed.\n\n## Product Updates\n\n- [x] Highlight \u2014 reuse the reviewed Zero Trust Automation entry `c3e5b1a6-d2a4-49ce-9d25-2d0996382ee4` for this feature follow-up. Canonical attribution and verified author metadata are recorded for this PR.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/998"
     }
   ]
 }
