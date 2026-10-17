@@ -1,0 +1,14 @@
+{
+  "key": "pr:992",
+  "classification": "other",
+  "entry_ids": [],
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/992",
+      "Product review: awaiting Jack's approval of the summary."
+    ]
+  },
+  "summary": "Keep an active human Platform Admin and prevent external accounts from holding privileged roles. Deleting a user cancels their unstarted workflow runs.",
+  "category": "hardening"
+}
