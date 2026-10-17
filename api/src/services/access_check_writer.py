@@ -43,6 +43,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.access_checks import Collector, Note
+from shared.access_trace_storage import compact_access_check_details
 from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
 from src.core.cache.redis_client import get_shared_redis
 from src.core.database import get_db_context
@@ -335,7 +336,6 @@ class _Writer:
 
     async def check(self, note: Note, trace: Trace, run_user: RunUser) -> bool:
         kind, operation, target, subject = self._decision(note)
-        today = note.facts.get("today", True)
         enforced = _enforced(note)
         row = dict(
             action="access.check",
@@ -348,23 +348,20 @@ class _Writer:
             surface=self.collector.surface,
             ip_address=None,
             user_agent=None,
-            details={
-                "enforced": enforced,
-                "direct": self.collector.direct,
-                **({"agent_run_id": str(self.collector.agent_run_id)} if self.collector.agent_run_id else {}),
-                "workflow_id": _plain(self.collector.workflow_id),
-                "trace": replace(trace, enforced=enforced).as_dict(),
-                "inputs": {
-                    "operation": self.operation,
-                    "target": target,
-                    **{key: _plain(value) for key, value in note.facts.items()},
-                },
-                "today": "allowed" if today else "denied",
-                "proposed_attribution": {
-                    "actor_user_id": str(run_user.user_id),
-                    "organization_id": _plain(run_user.home),
-                },
-            },
+            details=compact_access_check_details(
+                {
+                    "enforced": enforced,
+                    "direct": self.collector.direct,
+                    **({"agent_run_id": str(self.collector.agent_run_id)} if self.collector.agent_run_id else {}),
+                    "workflow_id": _plain(self.collector.workflow_id),
+                    "trace": replace(trace, enforced=enforced).as_dict(),
+                    "inputs": {
+                        "operation": self.operation,
+                        "target": target,
+                        **{key: _plain(value) for key, value in note.facts.items()},
+                    },
+                }
+            ),
             execution_id=self.collector.execution_id,
             operation_id=self.operation,
         )

@@ -13893,7 +13893,7 @@ export interface components {
         };
         /**
          * AuditLogGroup
-         * @description Entries sharing one value of the requested ``group_by``.
+         * @description Entries sharing a requested group key or access-check aggregate dimensions.
          */
         AuditLogGroup: {
             /**
@@ -13911,12 +13911,27 @@ export interface components {
              * @description Newest entry's time
              */
             last_seen: string;
+            /**
+             * First Seen
+             * @description Oldest entry's time (access-check aggregates only)
+             */
+            first_seen?: string;
+            /**
+             * Window Start
+             * @description Inclusive UTC aggregate window start
+             */
+            window_start?: string;
+            /**
+             * Window End
+             * @description Exclusive UTC aggregate window end
+             */
+            window_end?: string;
             /** @description Newest entry in the group */
             sample: components["schemas"]["AuditLogEntry"];
         };
         /**
          * AuditLogListResponse
-         * @description Paginated audit log list response, or groups when ``group_by`` is set.
+         * @description Paginated audit log list response, or groups for grouping and aggregation.
          */
         AuditLogListResponse: {
             /**
@@ -13926,7 +13941,7 @@ export interface components {
             entries: components["schemas"]["AuditLogEntry"][];
             /**
              * Groups
-             * @description Groups, largest first (only with group_by; entries is then empty)
+             * @description Groups or aggregates (entries is then empty)
              */
             groups?: components["schemas"]["AuditLogGroup"][] | null;
             /**
@@ -13957,7 +13972,7 @@ export interface components {
             /**
              * Hot Days
              * @description Days events stay in the database before they are archived.
-             * @default 90
+             * @default 30
              */
             hot_days: number;
             /**
@@ -36954,6 +36969,10 @@ export interface operations {
                 search?: string | null;
                 /** @description Group matching entries by this field (counts and newest entry per group) */
                 group_by?: ("workflow" | "action" | "resource_type" | "outcome" | "user" | "organization") | null;
+                /** @description Aggregate exact access checks into fixed UTC windows */
+                aggregate?: ("1h" | "6h" | "24h") | null;
+                /** @description Opaque access-check aggregate selector for raw drill-in */
+                aggregate_key?: string | null;
                 limit?: number;
                 /** @description Pagination cursor */
                 continuation_token?: string | null;

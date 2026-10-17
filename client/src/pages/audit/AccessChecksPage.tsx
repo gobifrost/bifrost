@@ -25,6 +25,14 @@ import {
 	DataTableRow,
 } from "@/components/ui/data-table";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Label } from "@/components/ui/label";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
 	Tooltip,
@@ -53,6 +61,7 @@ import { formatRelativeTime } from "@/lib/utils";
 import { useAuthorization } from "@/services/authorization";
 
 import { AuditPagination } from "./AuditPagination";
+import { AccessCheckAggregates } from "./AccessCheckAggregates";
 
 /** Report-only checks that would have been denied. */
 const WOULD_DENY = { action: "access.check", outcome: "failure" } as const;
@@ -380,15 +389,13 @@ function CheckList({
 	);
 }
 
-/** One group's checks, newest first, a page at a time. */
-function GroupChecks({
-	groupBy,
-	groupKey,
+/** Matching summaries or original checks, newest first, a page at a time. */
+function CheckResults({
+	filters,
 	onOpen,
 	desktop,
 }: {
-	groupBy: AuditGroupBy;
-	groupKey: string;
+	filters: GetAuditLogParams;
 	onOpen: (entry: AuditLogEntry, opener: HTMLElement | null) => void;
 	desktop: boolean;
 }) {
@@ -397,7 +404,7 @@ function GroupChecks({
 	const { data, isLoading, isFetching, error, refetch } = useAuditLog(
 		{
 			...WOULD_DENY,
-			...groupFilter(groupBy, groupKey),
+			...filters,
 			limit: 50,
 			continuation_token: tokens[page],
 		},
@@ -405,6 +412,8 @@ function GroupChecks({
 		{ preservePageData: true },
 	);
 	const entries = data?.entries ?? [];
+	const groups = data?.groups ?? [];
+	const aggregating = !!filters.aggregate;
 
 	if (error || (isLoading && !data))
 		return (
@@ -415,7 +424,7 @@ function GroupChecks({
 				label="Loading checks"
 			/>
 		);
-	if (entries.length === 0)
+	if ((aggregating ? groups : entries).length === 0)
 		return (
 			<EmptyState
 				icon={ShieldCheck}
@@ -425,9 +434,33 @@ function GroupChecks({
 		);
 	return (
 		<>
-			<CheckList entries={entries} onOpen={onOpen} desktop={desktop} />
+			{aggregating ? (
+				<AccessCheckAggregates
+					groups={groups}
+					desktop={desktop}
+					renderChecks={(group) => (
+						<CheckResults
+							key={group.key}
+							filters={{
+								...filters,
+								aggregate: undefined,
+								aggregate_key: group.key!,
+							}}
+							onOpen={onOpen}
+							desktop={desktop}
+						/>
+					)}
+				/>
+			) : (
+				<CheckList
+					entries={entries}
+					onOpen={onOpen}
+					desktop={desktop}
+				/>
+			)}
 			<AuditPagination
-				count={entries.length}
+				count={aggregating ? groups.length : entries.length}
+				kind={aggregating ? "summary" : "event"}
 				page={page}
 				hasNext={!!data?.continuation_token}
 				pending={isFetching}
@@ -439,6 +472,62 @@ function GroupChecks({
 					setTokens(next);
 					setPage(page + 1);
 				}}
+			/>
+		</>
+	);
+}
+
+type AggregateWindow = NonNullable<GetAuditLogParams["aggregate"]>;
+
+function GroupChecks({
+	groupBy,
+	groupKey,
+	onOpen,
+	desktop,
+}: {
+	groupBy: AuditGroupBy;
+	groupKey: string;
+	onOpen: (entry: AuditLogEntry, opener: HTMLElement | null) => void;
+	desktop: boolean;
+}) {
+	const [aggregate, setAggregate] = useState<AggregateWindow | "none">("1h");
+	return (
+		<>
+			<div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2">
+				<div className="flex items-center gap-2">
+					<Label htmlFor="check-time-aggregate">Time Aggregate</Label>
+					<Select
+						value={aggregate}
+						onValueChange={(value) =>
+							setAggregate(value as AggregateWindow | "none")
+						}
+					>
+						<SelectTrigger
+							id="check-time-aggregate"
+							className="min-h-11 w-32 sm:min-h-9"
+						>
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value="1h">1 Hour</SelectItem>
+							<SelectItem value="6h">6 Hours</SelectItem>
+							<SelectItem value="24h">24 Hours</SelectItem>
+							<SelectItem value="none">Off</SelectItem>
+						</SelectContent>
+					</Select>
+				</div>
+				<p className="text-xs text-muted-foreground">
+					Open a summary to see its recorded checks.
+				</p>
+			</div>
+			<CheckResults
+				key={aggregate}
+				filters={{
+					...groupFilter(groupBy, groupKey),
+					...(aggregate === "none" ? {} : { aggregate }),
+				}}
+				onOpen={onOpen}
+				desktop={desktop}
 			/>
 		</>
 	);

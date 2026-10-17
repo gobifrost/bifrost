@@ -380,7 +380,7 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # Solution local development context request/response (2026-10-16).
     # ADDITIVE: new capability endpoint; existing DTOs are unchanged.
     # Combined with the compatible audit-surface description in PR #992.
-    "f125e5eabe3cfa97bdbc32df27de98e6b7afef584de9974fe0753915669b5571"
+    "3593209451bb3b84160f29e030ccc61e397146f6c7505e88df9ed79e674c098d"
 )
 
 

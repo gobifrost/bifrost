@@ -62,24 +62,27 @@ class AuditLogEntry(BaseModel):
 
 
 class AuditLogGroup(BaseModel):
-    """Entries sharing one value of the requested ``group_by``."""
+    """Entries sharing a requested group key or access-check aggregate dimensions."""
 
     key: str | None = Field(None, description="The group's value (null when entries have none)")
     count: int = Field(..., description="Matching entries in the group")
     last_seen: datetime = Field(..., description="Newest entry's time")
+    first_seen: datetime | None = Field(None, description="Oldest entry's time (access-check aggregates only)")
+    window_start: datetime | None = Field(None, description="Inclusive UTC aggregate window start")
+    window_end: datetime | None = Field(None, description="Exclusive UTC aggregate window end")
     sample: AuditLogEntry = Field(..., description="Newest entry in the group")
 
-    @field_serializer("last_seen")
+    @field_serializer("last_seen", "first_seen", "window_start", "window_end", when_used="unless-none")
     def _serialize_ts(self, dt: datetime) -> str:
         return dt.isoformat()
 
 
 class AuditLogListResponse(BaseModel):
-    """Paginated audit log list response, or groups when ``group_by`` is set."""
+    """Paginated audit log list response, or groups for grouping and aggregation."""
 
     entries: list[AuditLogEntry] = Field(..., description="Audit log entries, newest first")
     groups: list[AuditLogGroup] | None = Field(
-        None, description="Groups, largest first (only with group_by; entries is then empty)"
+        None, description="Groups or aggregates (entries is then empty)"
     )
     continuation_token: str | None = Field(
         None, description="Opaque token for next page (null when no more)"

@@ -532,7 +532,7 @@ Options:
 
 Commands:
   explain  Explain a stored access check: how it was decided then, and...
-  list     List audit log entries, or count them with --group-by.
+  list     List audit log entries, group them, or aggregate access checks...
 ```
 
 ### `audit explain`
@@ -553,7 +553,7 @@ Options:
 ```
 Usage: audit list [OPTIONS]
 
-  List audit log entries, or count them with --group-by.
+  List audit log entries, group them, or aggregate access checks by time.
 
 Options:
   --action TEXT                   Action prefix, e.g. 'user.' or
@@ -574,6 +574,8 @@ Options:
   --group-by [workflow|action|resource_type|outcome|user|organization]
                                   Count matching events per value instead of
                                   listing them.
+  --aggregate [1h|6h|24h]         Group exact access checks into fixed UTC
+                                  windows.
   --limit INTEGER RANGE           Maximum entries to return (server default
                                   50).  [1<=x<=500]
   --json                          Emit JSON instead of human-readable output.
