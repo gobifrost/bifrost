@@ -36,7 +36,12 @@ workflows to Declared Permissions.
 
 A Solution declares each workflow's requested mode and permission capabilities.
 An administrator reviews and approves the request for that installation. Changed
-requests require approval again.
+requests require approval again. New explicit requests start with no added
+capabilities until approved. Declared Permissions requests cannot inherit Full
+Access from the platform default. Runtime approval is bound to the current
+installation and request digest; revoked or stale approvals add no capabilities.
+Removing a request keeps its existing restriction. Existing Full Access installs
+retain their mode until explicitly restricted.
 
 The API and manifest values remain `full` and `restricted`; `restricted` is the
 stored value for Declared Permissions. For example, a Solution workflow can

@@ -57,12 +57,21 @@ async def _requests(db, sol: Solution) -> list[SolutionWorkflowPermissionRequest
     )
 
 
-async def test_deploy_records_a_pending_request(db_session):
+@pytest.mark.parametrize("requested", [REQUEST, {"mode": "full", "grants": []}])
+async def test_deploy_records_a_pending_request(db_session, requested):
     sol = await _solution(db_session)
-    await SolutionDeployer(db_session).deploy(_bundle(sol, REQUEST), force=True)
+    await SolutionDeployer(db_session).deploy(_bundle(sol, requested), force=True)
     (row,) = await _requests(db_session, sol)
+    from src.models.orm.workflows import Workflow
+    from src.services.authorization.explain import load_powers
+
+    workflow = await db_session.get(Workflow, row.workflow_id)
+    assert workflow.permission_mode == "restricted"
+    powers = await load_powers(db_session, row.workflow_id)
+    assert powers.mode.value == "restricted"
+    assert powers.grants == ()
     assert (row.status, row.requested_mode, row.requested_grants) == (
-        "pending", "restricted", REQUEST["grants"]
+        "pending", requested["mode"], requested["grants"]
     )
 
 

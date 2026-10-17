@@ -134,6 +134,33 @@ def _decode_access_token(token: OAuthToken) -> str:
     return decrypt_secret(raw.decode() if isinstance(raw, bytes) else raw)
 
 
+def service_token_binding_error(
+    connection: MCPConnection, token: OAuthToken | None
+) -> str | None:
+    """Return why ``token`` cannot back ``connection``'s service identity.
+
+    A service token is scoped to the same organization and OAuth provider as
+    the connection, and must never carry a user identity. A configured
+    per-org endpoint override does not change that ownership. This validates
+    the persisted relationship before any refresh or decryption so stale rows
+    cannot cross a tenant boundary.
+    """
+    if token is None:
+        return "service OAuth token is missing"
+    if token.organization_id != connection.organization_id:
+        return "service OAuth token belongs to a different organization"
+    if token.user_id is not None:
+        return "service OAuth token is user-bound"
+
+    server = connection.server
+    provider_id = server.oauth_provider_id if server is not None else None
+    if provider_id is None:
+        return "connection server has no OAuth provider"
+    if token.provider_id != provider_id:
+        return "service OAuth token uses a different OAuth provider"
+    return None
+
+
 async def _service_token_healthy(
     connection: MCPConnection, db: AsyncSession
 ) -> tuple[OAuthToken, OAuthProvider] | None:
@@ -148,6 +175,12 @@ async def _service_token_healthy(
     """
     token = connection.service_oauth_token
     if token is None:
+        return None
+    if service_token_binding_error(connection, token) is not None:
+        logger.warning(
+            "MCP auth: invalid service OAuth token binding for connection %s",
+            connection.id,
+        )
         return None
 
     # Load the provider so we can refresh if needed. The token's provider

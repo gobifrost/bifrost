@@ -39,8 +39,7 @@ from src.services.authorization.enforce import privileged_user_ids
 from src.services.authorization.evaluator import HOME, GLOBAL, Target, cross_org, decide
 from src.services.workflow_permissions import (
     get_default_workflow_permission_mode,
-    effective_workflow_permission_mode,
-    list_workflow_grants,
+    load_workflow_permissions,
 )
 
 StepStatus = Literal["passed", "stopped", "not_applicable", "not_reached"]
@@ -501,6 +500,5 @@ async def load_powers(db: AsyncSession, workflow_id: UUID | None) -> Powers:
     workflow = None if workflow_id is None else await db.get(Workflow, workflow_id, populate_existing=True)
     if workflow is None:
         return Powers(await get_default_workflow_permission_mode(db), ())
-    mode = await effective_workflow_permission_mode(db, workflow)
-    grants = await list_workflow_grants(db, workflow.id) if mode is WorkflowPermissionMode.RESTRICTED else []
+    mode, grants = await load_workflow_permissions(db, workflow)
     return Powers(mode, tuple(grants))

@@ -27,6 +27,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from shared.scope_resolver import shared_read_organization
@@ -47,6 +48,7 @@ from src.repositories.external_mcp import (
     MCPServerRepository,
 )
 from src.services.mcp_client import catalog_sync
+from src.services.mcp_client.auth_resolution import service_token_binding_error
 from src.services.mcp_client.oauth_state import (
     encode_state,
     generate_pkce_verifier,
@@ -201,6 +203,25 @@ def _build_callback_redirect_uri() -> str:
     return f"{public_url}/api/mcp/oauth/callback"
 
 
+async def _load_service_token_for_connection_or_422(
+    db: AsyncSession, connection: MCPConnection, token_id: UUID
+) -> OAuthToken:
+    """Load a PATCH-supplied service token after enforcing its binding.
+
+    The relation is checked against the connection's persisted organization
+    and server template rather than the caller's selected scope.
+    """
+    result = await db.execute(select(OAuthToken).where(OAuthToken.id == token_id))
+    token = result.scalar_one_or_none()
+    if service_token_binding_error(connection, token) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Service OAuth token is not valid for this connection",
+        )
+    assert token is not None
+    return token
+
+
 async def _load_provider_or_400(
     ctx: Context, connection: MCPConnection
 ) -> OAuthProvider:
@@ -286,6 +307,16 @@ async def _activate_client_credentials(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="OAuth provider missing token_url; cannot exchange",
         )
+
+    if connection.service_oauth_token_id is not None:
+        binding_error = service_token_binding_error(
+            connection, connection.service_oauth_token
+        )
+        if binding_error is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Existing service OAuth token is not valid for this connection",
+            )
 
     # Decrypt the per-org client_secret from the connection row.
     try:
@@ -550,6 +581,12 @@ async def update_mcp_connection(
     )
 
     update_fields = request.model_dump(exclude_unset=True)
+    service_token_id = update_fields.get("service_oauth_token_id")
+    if service_token_id is not None:
+        await _load_service_token_for_connection_or_422(
+            ctx.db, connection, service_token_id
+        )
+
     plaintext_secret = update_fields.pop("client_secret", None)
     if plaintext_secret is not None:
         connection.encrypted_client_secret = encrypt_secret(plaintext_secret)

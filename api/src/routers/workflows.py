@@ -78,7 +78,8 @@ from src.services.authorization.enforce import (
 )
 from src.services.identities import list_run_identities, require_delegation
 from src.services.recommended_access import recommended_access
-from src.services.workflow_permissions import get_default_workflow_permission_mode
+from src.models.orm.solution_workflow_permission_requests import SolutionWorkflowPermissionRequest
+from src.services.workflow_permissions import get_default_workflow_permission_mode, workflow_permission_requests
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,7 @@ def _convert_workflow_orm_to_schema(
     default_permission_mode: WorkflowPermissionMode,
     used_by_count: int = 0,
     role_ids: list[UUID] | None = None,
+    permission_request: SolutionWorkflowPermissionRequest | None = None,
 ) -> WorkflowMetadata:
     """Convert ORM model to Pydantic schema for API response.
 
@@ -104,7 +106,8 @@ def _convert_workflow_orm_to_schema(
     from shared.sdk_execution_reads import convert_workflow_orm_to_schema
 
     return convert_workflow_orm_to_schema(
-        workflow, default_permission_mode, used_by_count=used_by_count, role_ids=role_ids
+        workflow, default_permission_mode, used_by_count=used_by_count, role_ids=role_ids,
+        permission_request=permission_request,
     )
 
 
@@ -1180,7 +1183,8 @@ async def update_workflow(
         )
         role_ids = (await _get_workflow_role_ids(db, [workflow.id])).get(workflow.id, [])
         return _convert_workflow_orm_to_schema(
-            workflow, await get_default_workflow_permission_mode(db), role_ids=role_ids
+            workflow, await get_default_workflow_permission_mode(db), role_ids=role_ids,
+            permission_request=(await workflow_permission_requests(db, [workflow])).get(workflow.id),
         )
 
     except HTTPException:
@@ -1773,6 +1777,7 @@ async def get_workflow(
         await get_default_workflow_permission_mode(db),
         used_by_count=used_by_counts.get(workflow.id, 0),
         role_ids=role_ids,
+        permission_request=(await workflow_permission_requests(db, [workflow])).get(workflow.id),
     )
 
 

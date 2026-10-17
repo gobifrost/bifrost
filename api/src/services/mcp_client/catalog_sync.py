@@ -36,6 +36,7 @@ from src.services.mcp_client.auth_resolution import (
     _decode_access_token,
     _is_token_fresh,
     _refresh_token_in_place,
+    service_token_binding_error,
 )
 from src.services.mcp_client.errors import MisconfigError, ToolDispatchError
 
@@ -57,6 +58,11 @@ async def _resolve_service_token_for_sync(
         raise MisconfigError(
             connection_id=connection.id,
             reason="catalog sync requires a service OAuth token; none configured",
+        )
+    if service_token_binding_error(connection, token) is not None:
+        raise MisconfigError(
+            connection_id=connection.id,
+            reason="catalog sync requires a valid service OAuth token binding",
         )
 
     result = await db.execute(

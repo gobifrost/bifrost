@@ -54,6 +54,7 @@ from src.services.authorization.execution_access import (
 
 if TYPE_CHECKING:
     from src.models.contracts.workflow_permissions import WorkflowPermissionMode
+    from src.models.orm.solution_workflow_permission_requests import SolutionWorkflowPermissionRequest
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,7 @@ def convert_workflow_orm_to_schema(
     default_permission_mode: WorkflowPermissionMode,
     used_by_count: int = 0,
     role_ids: list[UUID] | None = None,
+    permission_request: SolutionWorkflowPermissionRequest | None = None,
 ):
     """Convert ORM model to Pydantic schema for API response.
 
@@ -153,7 +155,7 @@ def convert_workflow_orm_to_schema(
         is_solution_managed=workflow.solution_id is not None,
         solution_id=workflow.solution_id,
         run_identity_id=workflow.run_identity_id,
-        permission_mode=resolve_workflow_permission_mode(workflow, default_permission_mode),
+        permission_mode=resolve_workflow_permission_mode(workflow, default_permission_mode, permission_request),
         access_level=workflow.access_level or "role_based",
         role_ids=[str(role_id) for role_id in (role_ids or [])],
         parameters=parameters,
@@ -363,7 +365,7 @@ async def list_sdk_workflows(
     """
     from src.models import Workflow as WorkflowORM
     from src.models.orm.agents import AgentTool
-    from src.services.workflow_permissions import get_default_workflow_permission_mode
+    from src.services.workflow_permissions import get_default_workflow_permission_mode, workflow_permission_requests
 
     from shared.sdk_config import ScopeResolutionError, resolve_sdk_scope
     from shared.scope_resolver import UNSET, shared_read_organization
@@ -436,6 +438,7 @@ async def list_sdk_workflows(
         role_ids_by_workflow = await get_workflow_role_ids(session, workflow_ids)
 
     default_permission_mode = await get_default_workflow_permission_mode(session)
+    permission_requests = await workflow_permission_requests(session, workflows)
     workflow_list = []
     for w in workflows:
         try:
@@ -445,6 +448,7 @@ async def list_sdk_workflows(
                     default_permission_mode,
                     used_by_count=used_by_counts.get(w.id, 0),
                     role_ids=role_ids_by_workflow.get(w.id, []),
+                    permission_request=permission_requests.get(w.id),
                 )
             )
         except Exception as e:

@@ -94,6 +94,18 @@ def _scope_with_shared_defaults(organization_id: UUID | None):
     )
 
 
+def _conceal_document_outside_reach(
+    reach: OrgReach,
+    *,
+    organization_id: UUID | None,
+    doc_id: UUID,
+    namespace: str,
+) -> None:
+    """Hide foreign organization documents while preserving Global's 403."""
+    if organization_id is not None and not reach.covers(organization_id):
+        raise HTTPException(404, f"Document {doc_id} not found in namespace {namespace}")
+
+
 def _has_organization_overlap(left: OrgReach, right: OrgReach) -> bool:
     """Whether two reaches share at least one organization (not Global)."""
     if left.everything:
@@ -476,6 +488,7 @@ async def update_document(
     unless ``replace=true``.
     """
     caller = await _knowledge_caller(db, user)
+    reach = operation_reach(caller, KNOWLEDGE_DOCUMENTS_UPDATE_OPERATION)
 
     # First resolve the addressed physical chunk without locking it. Every
     # chunk id is an alias for one logical document, so locking this row would
@@ -486,6 +499,12 @@ async def update_document(
     addressed = result.scalar_one_or_none()
     if not addressed or addressed.namespace != namespace:
         raise HTTPException(404, f"Document {doc_id} not found in namespace {namespace}")
+    _conceal_document_outside_reach(
+        reach,
+        organization_id=addressed.organization_id,
+        doc_id=doc_id,
+        namespace=namespace,
+    )
 
     # Resolve every alias to chunk zero and lock that persistent canonical row.
     # This gives concurrent edits one lock order and one stable public id.
@@ -495,6 +514,12 @@ async def update_document(
     )
     if not doc:
         raise HTTPException(404, f"Document {doc_id} not found in namespace {namespace}")
+    _conceal_document_outside_reach(
+        reach,
+        organization_id=doc.organization_id,
+        doc_id=doc_id,
+        namespace=namespace,
+    )
 
     # Snapshot identity/audit fields before sibling replacement.
     doc_key = doc.key
@@ -601,12 +626,19 @@ async def delete_document(
 ) -> None:
     """Delete a document — every chunk row of it, not just the addressed row."""
     caller = await _knowledge_caller(db, user)
+    reach = operation_reach(caller, KNOWLEDGE_DOCUMENTS_DELETE_OPERATION)
     result = await db.execute(
         select(KnowledgeStore).where(KnowledgeStore.id == doc_id)
     )
     doc = result.scalar_one_or_none()
     if not doc or doc.namespace != namespace:
         raise HTTPException(404, f"Document {doc_id} not found in namespace {namespace}")
+    _conceal_document_outside_reach(
+        reach,
+        organization_id=doc.organization_id,
+        doc_id=doc_id,
+        namespace=namespace,
+    )
 
     require_operation(
         caller,

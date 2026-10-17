@@ -3,7 +3,7 @@
 The Solution manifest declares each workflow's requested mode and grants
 (portable). What an admin approved lives here, on the install's record
 (environment-specific): ``approved_digest`` is the digest of the approved
-request. Data only until delegated execution reads it.
+request. Runtime powers require current, digest-bound approval.
 """
 from __future__ import annotations
 

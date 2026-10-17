@@ -324,6 +324,65 @@ class TestListSdkWorkflows:
             row.name for row in explicit_global_rows
         }
 
+    async def test_solution_pending_restricted_request_overrides_default_full_in_list(
+        self, db_session
+    ):
+        from src.models.contracts.workflow_permissions import WorkflowPermissionMode
+        from src.models.orm.solution_workflow_permission_requests import (
+            SolutionWorkflowPermissionRequest,
+        )
+        from src.models.orm.solutions import Solution
+        from src.models.orm.workflows import Workflow
+
+        admin = await _seed_user(db_session, is_superuser=True)
+        org = await _seed_org(db_session)
+        solution = Solution(
+            slug=f"sdk-reads-solution-{uuid4().hex[:8]}",
+            name="SDK Reads Solution",
+            organization_id=org.id,
+        )
+        db_session.add(solution)
+        await db_session.flush()
+
+        pending_restricted = Workflow(
+            name="reads-solution-pending-restricted",
+            function_name="reads_solution_pending_restricted",
+            path="workflows/reads_solution_pending_restricted.py",
+            type="workflow",
+            organization_id=org.id,
+            solution_id=solution.id,
+            is_active=True,
+        )
+        db_session.add(pending_restricted)
+        await db_session.flush()
+        legacy_full = await _seed_workflow(
+            db_session,
+            "reads-legacy-full",
+            org_id=org.id,
+        )
+        legacy_full.permission_mode = WorkflowPermissionMode.FULL.value
+        db_session.add(
+            SolutionWorkflowPermissionRequest(
+                solution_id=solution.id,
+                workflow_id=pending_restricted.id,
+                requested_mode=WorkflowPermissionMode.RESTRICTED.value,
+                requested_grants=[],
+                request_digest="0" * 64,
+                status="pending",
+            )
+        )
+        await db_session.flush()
+
+        rows = await list_sdk_workflows(db_session, _admin(user_id=admin.id))
+        by_name = {row.name: row for row in rows}
+
+        assert pending_restricted.permission_mode is None
+        assert (
+            by_name[pending_restricted.name].permission_mode
+            is WorkflowPermissionMode.RESTRICTED
+        )
+        assert by_name[legacy_full.name].permission_mode is WorkflowPermissionMode.FULL
+
 
 @pytest.mark.asyncio
 class TestListSdkExecutions:

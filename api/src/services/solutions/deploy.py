@@ -1034,6 +1034,12 @@ class SolutionDeployer:
                 "organization_id": solution.organization_id,
                 "solution_id": sid,
             }
+            if mwf_model.requested_permissions is not None and (
+                row is None or mwf_model.requested_permissions.mode == "restricted"
+            ):
+                # New requested powers require consent; explicit restrictions
+                # persist even if a later bundle omits its permission request.
+                values["permission_mode"] = "restricted"
             # Solution rows do not pass through the workspace indexer. Infer the
             # code-owned parameter contract here from the same carried source so
             # installed and _repo tools publish identical schemas.
