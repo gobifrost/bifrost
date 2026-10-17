@@ -105,7 +105,19 @@ async def _visible_agent(
 ) -> Agent:
     """Load an Agent only after the original caller's policy allows it."""
     caller = await load_caller(db, user)
-    agent = (await db.execute(select(Agent).where(Agent.id == agent_id))).scalar_one_or_none()
+    agent = (
+        await db.execute(
+            select(Agent)
+            .options(
+                selectinload(Agent.tools),
+                selectinload(Agent.delegated_agents),
+                selectinload(Agent.roles),
+                selectinload(Agent.owner),
+                selectinload(Agent.mcp_connections),
+            )
+            .where(Agent.id == agent_id)
+        )
+    ).scalar_one_or_none()
     allowed = can_write_agent(caller, agent) if agent is not None and write else (
         await can_read_agent(db, caller, agent) if agent is not None else False
     )
@@ -421,7 +433,10 @@ async def create_agent(
     # independently authorizes the parent Agent and verifies each persisted
     # connection target before replacing association rows.
     if agent_data.mcp_connection_ids:
-        await AgentRepository(session=db).set_mcp_connection_grants(
+        await AgentRepository(
+            session=db,
+            org_id=agent.organization_id,
+        ).set_mcp_connection_grants(
             agent_id,
             agent_data.mcp_connection_ids,
             caller=caller,
@@ -729,6 +744,7 @@ async def update_agent(
     if agent_data.mcp_connection_ids is not None:
         repo = AgentRepository(
             session=db,
+            org_id=agent.organization_id,
         )
         await repo.set_mcp_connection_grants(
             agent_id,

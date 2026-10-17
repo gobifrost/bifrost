@@ -1,4 +1,4 @@
-"""Secret decryption is noted for the run's report-only checks (never the value)."""
+"""Secret authorization is recorded without retaining decrypted values."""
 
 from __future__ import annotations
 
@@ -43,7 +43,9 @@ async def test_a_config_secret_read_is_noted_without_its_value(collector, monkey
     await sdk_config.get_sdk_config_value(None, key="api_key", org_id=org, caller=caller)  # type: ignore[arg-type]
     await sdk_config.get_sdk_config_value(None, key="plain", org_id=org, caller=caller)  # type: ignore[arg-type]
 
-    assert collector.notes == [access_checks.Note("secret", org, {"kind": "config", "name": "api_key"})]
+    assert collector.notes == [
+        access_checks.Note("secret", org, {"kind": "config", "name": "api_key", "enforced": True})
+    ]
 
 
 async def test_config_metadata_redacts_a_secret_without_decrypting(monkeypatch) -> None:

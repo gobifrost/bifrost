@@ -160,7 +160,9 @@ async def get_sdk_config_value(
             )
         from src.core.security import decrypt_secret
 
-        access_checks.note("secret", org_id, kind="config", name=key)
+        # ``allows_permission`` is the authorization gate for plaintext.
+        # Record its successful decision without ever retaining the value.
+        access_checks.note("secret", org_id, kind="config", name=key, enforced=True)
 
         try:
             raw_value = decrypt_secret(raw_value)

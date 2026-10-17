@@ -189,6 +189,7 @@ async def test_chat_delegation_creates_terminal_run_with_conversation_and_caller
                 ),
                 conversation_id=conversation_id,
                 caller=caller,
+                acting_user_id=caller.principal.user_id,
                 run_user_id=alice_user.user_id,
                 run_as=None,
             )
@@ -199,6 +200,7 @@ async def test_chat_delegation_creates_terminal_run_with_conversation_and_caller
             persisted = await session.get(AgentRun, outcome.child_run_id)
             assert persisted is not None
             assert persisted.run_user_id == alice_user.user_id
+            assert persisted.acting_user_id == alice_user.user_id
             assert persisted.status == "completed"
             assert persisted.completed_at is not None
             assert persisted.parent_run_id is None
@@ -302,6 +304,7 @@ async def test_delegation_timeout_persists_sanitized_partial_evidence(
         )
         parent_agent = parent_result.scalar_one()
         caller = await load_human_caller(db_session, platform_admin.user_id)
+        assert caller.ctx is not None
 
         async def block_after_completed_tool(child_executor, **_kwargs):
             child_executor._current_run_id = _kwargs["run_id"]
@@ -357,7 +360,8 @@ async def test_delegation_timeout_persists_sanitized_partial_evidence(
                     arguments={"task": "Check the service"},
                 ),
                 caller=caller,
-                run_user_id=None,
+                acting_user_id=caller.principal.user_id,
+                run_user_id=caller.ctx.user_id,
                 run_as=None,
             )
 
@@ -370,6 +374,7 @@ async def test_delegation_timeout_persists_sanitized_partial_evidence(
         persisted = await db_session.get(AgentRun, outcome.child_run_id)
         assert persisted is not None
         assert persisted.status == "timeout"
+        assert persisted.acting_user_id == caller.principal.user_id
         assert persisted.error == (
             f"Delegation to {child['name']} timed out after 600s"
         )
@@ -507,7 +512,7 @@ async def test_chat_executor_receives_durable_child_callback(
                 stream=False,
                 enable_routing=False,
                 caller=caller,
-                run_user_id=None,
+                run_user_id=platform_admin.user_id,
             ):
                 if chunk.type == "done":
                     final_content = chunk.content or ""
@@ -539,6 +544,8 @@ async def test_chat_executor_receives_durable_child_callback(
         assert child_run.status == "completed"
         assert child_run.output == {"text": "Durable child answer"}
         assert child_run.caller_user_id == str(platform_admin.user_id)
+        assert child_run.run_user_id == platform_admin.user_id
+        assert child_run.acting_user_id == platform_admin.user_id
 
         assert tool_call_messages[0]["tool_result"]["child_run_id"] == str(
             child_run.id

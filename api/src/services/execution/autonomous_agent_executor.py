@@ -1149,6 +1149,7 @@ class AutonomousAgentExecutor:
         parent_run_id: str | None = None,
         conversation_id: UUID | None = None,
         caller: Caller,
+        acting_user_id: UUID,
         _shared_usage: RunUsage | None = None,
         _shared_budget: AgentRunBudget | None = None,
         run_user_id: UUID | None,
@@ -1157,7 +1158,7 @@ class AutonomousAgentExecutor:
         """Run one delegated child with a durable, caller-neutral lifecycle.
 
         The child keeps the delegating run's user (``run_user_id``), Run As
-        user (``run_as``), and persisted acting identity.
+        user (``run_as``), and explicit persisted acting identity.
         """
         if parent_run_id and await self._check_cancelled(parent_run_id):
             raise ToolError("Agent run was cancelled")
@@ -1246,7 +1247,7 @@ class AutonomousAgentExecutor:
                 caller_name=caller.principal.name,
                 run_user_id=run_user_id,
                 run_as_user_id=UUID(run_as.user_id) if run_as else None,
-                acting_user_id=self._acting_user_id,
+                acting_user_id=acting_user_id,
                 parent_run_id=UUID(parent_run_id) if parent_run_id else None,
                 budget_max_iterations=target_agent.max_iterations,
                 budget_max_tokens=target_agent.max_token_budget,
@@ -1477,11 +1478,16 @@ class AutonomousAgentExecutor:
         agent: Agent,
     ) -> str:
         """Execute delegation for an autonomous parent run."""
+        if self._caller is None:
+            raise ToolError("Agent run caller is unavailable")
+        if self._acting_user_id is None:
+            raise ToolError("Agent run acting user is unavailable")
         outcome = await self.run_delegation(
             parent_agent=agent,
             tool_call=tool_call,
             parent_run_id=self._current_run_id,
             caller=self._caller,
+            acting_user_id=self._acting_user_id,
             run_user_id=self._run_user_id,
             run_as=self._run_as,
         )

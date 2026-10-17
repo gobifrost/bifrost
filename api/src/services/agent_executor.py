@@ -1922,6 +1922,7 @@ class AgentExecutor:
                 tool_call=tool_call,
                 conversation_id=conversation.id if conversation else None,
                 caller=caller,
+                acting_user_id=caller.principal.user_id,
                 _shared_usage=self._active_usage,
                 _shared_budget=self._active_budget,
                 run_user_id=self._run_user_id,

@@ -61,6 +61,22 @@ async def _delete(session_factory, ids: list[uuid.UUID]) -> None:
         await close_db()
 
 
+async def _set_role_permissions(session_factory, role_id: str, permissions: frozenset[str]) -> None:
+    from src.core.database import close_db
+    from src.services.role_permissions import set_role_permissions
+
+    try:
+        async with session_factory() as session:
+            await set_role_permissions(
+                session,
+                role_id=uuid.UUID(role_id),
+                permissions=permissions,
+            )
+            await session.commit()
+    finally:
+        await close_db()
+
+
 def _scope_switch(user_id: uuid.UUID | None, home: str, target: str | None) -> dict:
     """An ``access.check`` row as the writer stores a scope switch the model
     refuses: the target is outside the run user's reach."""
@@ -300,11 +316,18 @@ def test_event_names_the_run_user_s_own_organization(e2e_client, platform_admin,
     )
 
 
-def test_role_change_flips_now(e2e_client, platform_admin, world) -> None:
-    """A role placed on Fabrikam brings it into the run user's reach; Full powers hold the permission."""
+def test_role_change_flips_now(e2e_client, platform_admin, world, async_session_factory) -> None:
+    """A role's scoped permission brings Fabrikam into the user's reach."""
     admin = platform_admin.headers
     role = _ok(e2e_client.post("/api/roles", headers=admin, json={"name": f"Explain Tables {world['tag']}"}), 201)
     try:
+        asyncio.run(
+            _set_role_permissions(
+                async_session_factory,
+                role["id"],
+                frozenset({"tables.readwrite"}),
+            )
+        )
         _ok(
             e2e_client.put(
                 f"/api/users/{world['promoted']['id']}/role-assignments",

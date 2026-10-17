@@ -517,6 +517,9 @@ async def test_delegation_task_cannot_name_the_childs_acting_user(
             tool_call=tool_call,
             parent_run_id=str(uuid4()),
             caller=caller,
+            acting_user_id=(
+                UUID(run_as.user_id) if run_as else caller.principal.user_id
+            ),
             run_user_id=run_user_id,
             run_as=run_as,
         )
@@ -526,6 +529,9 @@ async def test_delegation_task_cannot_name_the_childs_acting_user(
     assert child.run_as_user_id == parent_run_as_user_id
     assert child.caller_user_id == str(caller.principal.user_id)
     assert child.run_user_id == run_user_id
+    assert child.acting_user_id == (
+        UUID(run_as.user_id) if run_as else caller.principal.user_id
+    )
     assert child.input == {"task": task, "_delegated_from": mock_agent.name}
     child_run = mock_child_run.await_args
     assert child_run is not None

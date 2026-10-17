@@ -450,6 +450,7 @@ class TestAutonomousAgentExecutor:
                 tool_call=tool_call,
                 conversation_id=conversation_id,
                 caller=_canonical_caller(caller),
+                acting_user_id=UUID(caller["user_id"]),
                 _shared_usage=shared_usage,
                 _shared_budget=shared_budget,
                 run_user_id=run_user_id,
@@ -468,6 +469,7 @@ class TestAutonomousAgentExecutor:
         assert child_run.caller_name == caller["name"]
         # A delegated run keeps the delegating run's user.
         assert child_run.run_user_id == run_user_id
+        assert child_run.acting_user_id == UUID(caller["user_id"])
         assert child_run.status == "completed"
         assert child_run.completed_at is not None
         mock_enqueue_summarize.assert_awaited_once_with(child_run.id)
@@ -721,6 +723,9 @@ class TestAutonomousAgentExecutor:
         )
 
         executor = AutonomousAgentExecutor(mock_session)
+        caller = _canonical_caller(
+            None, fallback_organization_id=mock_agent.organization_id
+        )
         tool_call = ToolCallRequest(
             id="tc1",
             name="delegate_to_lifecycle_specialist",
@@ -742,7 +747,8 @@ class TestAutonomousAgentExecutor:
                 parent_agent=mock_agent,
                 tool_call=tool_call,
                 parent_run_id=str(uuid4()),
-                caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id),
+                caller=caller,
+                acting_user_id=caller.principal.user_id,
                 run_user_id=None,
                 run_as=None,
             )
@@ -784,6 +790,9 @@ class TestAutonomousAgentExecutor:
         )
 
         executor = AutonomousAgentExecutor(mock_session)
+        caller = _canonical_caller(
+            None, fallback_organization_id=mock_agent.organization_id
+        )
         with patch.object(
             AutonomousAgentExecutor,
             "run",
@@ -798,7 +807,8 @@ class TestAutonomousAgentExecutor:
                     arguments={"task": "Crash"},
                 ),
                 parent_run_id=str(uuid4()),
-                caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id),
+                caller=caller,
+                acting_user_id=caller.principal.user_id,
                 run_user_id=None,
                 run_as=None,
             )
@@ -873,6 +883,9 @@ class TestAutonomousAgentExecutor:
             await asyncio.Event().wait()
 
         executor = AutonomousAgentExecutor(mock_session)
+        caller = _canonical_caller(
+            None, fallback_organization_id=mock_agent.organization_id
+        )
         original_wait_for = asyncio.wait_for
 
         async def shortened_deadline(coro, timeout):
@@ -897,7 +910,8 @@ class TestAutonomousAgentExecutor:
                     arguments={"task": "Take too long"},
                 ),
                 parent_run_id=str(uuid4()),
-                caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id),
+                caller=caller,
+                acting_user_id=caller.principal.user_id,
                 run_user_id=None,
                 run_as=None,
             )
@@ -975,6 +989,9 @@ class TestAutonomousAgentExecutor:
         mock_agent.delegated_agents = [delegated]
 
         executor = AutonomousAgentExecutor(mock_session)
+        caller = _canonical_caller(
+            None, fallback_organization_id=mock_agent.organization_id
+        )
         with pytest.raises(ToolError, match="outside the parent agent's organization"):
             await executor.run_delegation(
                 parent_agent=mock_agent,
@@ -984,7 +1001,8 @@ class TestAutonomousAgentExecutor:
                     arguments={"task": "Cross a boundary"},
                 ),
                 parent_run_id=str(uuid4()),
-                caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id),
+                caller=caller,
+                acting_user_id=caller.principal.user_id,
                 run_user_id=None,
                 run_as=None,
             )
@@ -1009,6 +1027,9 @@ class TestAutonomousAgentExecutor:
         mock_session._mock_session.execute = AsyncMock(return_value=query_result)
 
         executor = AutonomousAgentExecutor(mock_session)
+        caller = _canonical_caller(
+            None, fallback_organization_id=mock_agent.organization_id
+        )
         with pytest.raises(
             ToolError,
             match="no longer active, authorized, or in scope",
@@ -1021,7 +1042,8 @@ class TestAutonomousAgentExecutor:
                     arguments={"task": "Use a stale parent relationship"},
                 ),
                 parent_run_id=str(uuid4()),
-                caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id),
+                caller=caller,
+                acting_user_id=caller.principal.user_id,
                 run_user_id=None,
                 run_as=None,
             )
@@ -1080,6 +1102,9 @@ class TestAutonomousAgentExecutor:
             raise asyncio.CancelledError()
 
         executor = AutonomousAgentExecutor(mock_session)
+        caller = _canonical_caller(
+            None, fallback_organization_id=mock_agent.organization_id
+        )
         with patch.object(
             AutonomousAgentExecutor,
             "run",
@@ -1094,7 +1119,8 @@ class TestAutonomousAgentExecutor:
                     arguments={"task": "Wait"},
                 ),
                 parent_run_id=str(uuid4()),
-                caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id),
+                caller=caller,
+                acting_user_id=caller.principal.user_id,
                 run_user_id=None,
                 run_as=None,
             )
@@ -1137,7 +1163,10 @@ class TestAutonomousAgentExecutor:
     ):
         executor = AutonomousAgentExecutor(mock_session)
         executor._current_run_id = str(uuid4())
-        executor._caller = {"user_id": str(uuid4())}
+        executor._caller = _canonical_caller(
+            None, fallback_organization_id=mock_agent.organization_id
+        )
+        executor._acting_user_id = executor._caller.principal.user_id
         failed = DelegationOutcome(
             child_run_id=uuid4(),
             agent_name="Broken Specialist",
@@ -1164,6 +1193,10 @@ class TestAutonomousAgentExecutor:
     ):
         executor = AutonomousAgentExecutor(mock_session)
         executor._current_run_id = str(uuid4())
+        executor._caller = _canonical_caller(
+            None, fallback_organization_id=mock_agent.organization_id
+        )
+        executor._acting_user_id = executor._caller.principal.user_id
         receipt = (
             "Delegation to Slow Specialist timed out after 600s\n"
             "completed step evidence-step (read_device): reachable"
@@ -1188,6 +1221,28 @@ class TestAutonomousAgentExecutor:
                 ),
                 mock_agent,
             )
+
+    @pytest.mark.asyncio
+    async def test_autonomous_delegation_refuses_missing_acting_user(
+        self, mock_session, mock_agent
+    ):
+        executor = AutonomousAgentExecutor(mock_session)
+        executor._caller = _canonical_caller(
+            None, fallback_organization_id=mock_agent.organization_id
+        )
+        executor.run_delegation = AsyncMock()
+
+        with pytest.raises(ToolError, match="acting user is unavailable"):
+            await executor._execute_delegation(
+                ToolCallRequest(
+                    id="tc1",
+                    name="delegate_to_missing_actor",
+                    arguments={"task": "Do work"},
+                ),
+                mock_agent,
+            )
+
+        executor.run_delegation.assert_not_awaited()
 
     @pytest.mark.asyncio
     @patch("src.services.agent_runtime.model_factory.create_agent_model")
@@ -2358,6 +2413,9 @@ class TestRunAsActingUser:
             ),
             parent_run_id=run_id,
             caller=caller,
+            acting_user_id=(
+                UUID(run_as.user_id) if run_as else caller.principal.user_id
+            ),
             run_user_id=run_user_id,
             run_as=run_as,
         )
@@ -2421,7 +2479,10 @@ class TestRunAsActingUser:
                     arguments={"task": "Check the mailbox"},
                 ),
                 parent_run_id=str(uuid4()),
-                caller=_canonical_caller(caller),
+                caller=caller,
+                acting_user_id=(
+                    UUID(run_as.user_id) if run_as else caller.principal.user_id
+                ),
                 run_user_id=run_user_id,
                 run_as=run_as,
             )
@@ -2434,9 +2495,11 @@ class TestRunAsActingUser:
         if run_as is not None:
             target = UUID(run_as.user_id)
             assert child.run_as_user_id == target
+            assert child.acting_user_id == target
             assert child.org_id == contoso
         else:
             assert child.run_as_user_id is None
+            assert child.acting_user_id == caller.principal.user_id
             assert child.org_id == provider
         assert mock_child_run.await_args is not None
         assert mock_child_run.await_args.kwargs["run_as"] == run_as
