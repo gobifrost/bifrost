@@ -1,0 +1,14 @@
+{
+  "key": "pr:996",
+  "classification": "highlight",
+  "entry_ids": [
+    "c3e5b1a6-d2a4-49ce-9d25-2d0996382ee4"
+  ],
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/996",
+      "Product review: awaiting Jack's approval of the copy and security review."
+    ]
+  }
+}
