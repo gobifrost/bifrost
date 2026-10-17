@@ -10080,7 +10080,7 @@
     "cli": 171,
     "manifest": 16,
     "mcp": 94,
-    "rest": 677,
+    "rest": 678,
     "sdk": 21
   },
   "schema_version": 1,
@@ -13949,6 +13949,13 @@
         "path": "/api/solutions/{solution_id}/deletion-summary",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/solutions/{solution_id}/dev-context",
+        "reason": "Issues user-bound context for local Solution development; owns no entity state.",
+        "status": "transport_only"
       },
       {
         "method": "GET",

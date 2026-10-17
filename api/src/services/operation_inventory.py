@@ -66,6 +66,21 @@ def _click_leaf_paths(
 _DOCUMENTATION_MCP_TOOL_IDS = frozenset({"get_docs"})
 
 
+def _rest_disposition(method: str, path: str) -> dict[str, str]:
+    if (method, path) == ("POST", "/api/solutions/{solution_id}/dev-context"):
+        return {
+            "status": OperationSurfaceStatus.TRANSPORT_ONLY.value,
+            "reason": (
+                "Issues user-bound context for local Solution development; "
+                "owns no entity state."
+            ),
+        }
+    return {
+        "status": OperationSurfaceStatus.MISSING.value,
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+    }
+
+
 def _mcp_disposition(name: str) -> dict[str, str]:
     """Classify one MCP tool that has no operation-catalog entry.
 
@@ -295,8 +310,7 @@ def build_operation_inventory(app: FastAPI, repo_root: Path) -> dict[str, Any]:
         "rest": [
             {
                 **row,
-                "status": OperationSurfaceStatus.MISSING.value,
-                "reason": "REST operation has not entered the canonical operation catalog yet.",
+                **_rest_disposition(row["method"], row["path"]),
             }
             for row in surfaces["rest"]
             if (row["method"], row["path"]) not in consumed["rest"]
