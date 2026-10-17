@@ -29,7 +29,7 @@ def test_the_audit_log_filters_by_the_indexed_expression() -> None:
     from src.repositories.audit_logs import _filtered
 
     filters = dict.fromkeys(
-        ("action_prefix", "resource_type", "outcome", "user_id", "execution_id", "organization_id",
+        ("action_prefix", "action_exact", "resource_type", "outcome", "user_id", "execution_id", "organization_id",
          "start_date", "end_date", "search", "organizations"),
     )
     query = _filtered(select(AuditLog.id), **filters, workflow_id=uuid4())
