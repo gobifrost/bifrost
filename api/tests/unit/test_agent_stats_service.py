@@ -386,6 +386,21 @@ async def test_fleet_stats_excludes_other_users_private_agent(db_session):
     caller = caller_user.id
     other_owner = other_user.id
 
+    history_caller = _stats_caller(caller, organization_id=organization.id, read_all=False)
+    all_agents_caller = _stats_caller(
+        caller, organization_id=organization.id, agent_read_all=True,
+    )
+    shared_agent = Agent(
+        id=uuid4(), name=f"Contoso Shared {uuid4().hex[:8]}",
+        system_prompt="test", channels=["chat"],
+        access_level=AgentAccessLevel.AUTHENTICATED,
+        organization_id=None, is_active=True, created_by="stats-test",
+    )
+    db_session.add(shared_agent)
+    await db_session.flush()
+    baseline_history = await get_fleet_stats(db_session, history_caller, window_days=7)
+    baseline_all_agents = await get_fleet_stats(db_session, all_agents_caller, window_days=7)
+
     own_agent = Agent(
         id=uuid4(),
         name=f"fleet-own-{uuid4().hex[:8]}",
@@ -430,33 +445,32 @@ async def test_fleet_stats_excludes_other_users_private_agent(db_session):
     await db_session.commit()
 
     try:
+        # Readable Global agents can already contribute to this fleet. Keep
+        # one present so the privacy contract never relies on an empty DB.
+        assert baseline_history.active_agents >= 1
         history_only = await get_fleet_stats(
             db_session,
-            _stats_caller(caller, organization_id=organization.id, read_all=False),
+            history_caller,
             window_days=7,
         )
-        assert history_only.active_agents == 1
-        assert history_only.total_runs == 0
+        assert history_only.active_agents == baseline_history.active_agents + 1
+        assert history_only.total_runs == baseline_history.total_runs
 
         agent_read_all = await get_fleet_stats(
             db_session,
-            _stats_caller(
-                caller,
-                organization_id=organization.id,
-                agent_read_all=True,
-            ),
+            all_agents_caller,
             window_days=7,
         )
         # Run-history power alone cannot expose someone else's private
         # Agent. The canonical Agent policy admits it only with agents.read.all.
-        assert agent_read_all.active_agents == 2
-        assert agent_read_all.total_runs == 1
+        assert agent_read_all.active_agents == baseline_all_agents.active_agents + 2
+        assert agent_read_all.total_runs == baseline_all_agents.total_runs + 1
     finally:
         from src.models.orm.users import User
 
         await db_session.execute(delete(AgentRun).where(AgentRun.id == other_run.id))
         await db_session.execute(
-            delete(Agent).where(Agent.id.in_([own_agent.id, other_private_agent.id]))
+            delete(Agent).where(Agent.id.in_([own_agent.id, other_private_agent.id, shared_agent.id]))
         )
         await db_session.execute(
             delete(User).where(User.id.in_([caller, other_owner]))
