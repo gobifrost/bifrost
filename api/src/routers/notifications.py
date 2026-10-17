@@ -80,14 +80,17 @@ async def get_notification(
             detail="Notification not found",
         )
 
-    # Verify ownership (unless admin viewing admin notification)
+    if not await service.can_access_notification(
+        notification_id=notification_id,
+        notification=notification,
+        user_id=str(user.user_id),
+        is_admin=user.is_superuser,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Notification not found",
+        )
     if notification.user_id != str(user.user_id):
-        # Allow admins to view admin-scoped notifications
-        if not user.is_superuser:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Notification not found",
-            )
         access_checks.note_power("platform.read", None, subject=f"notification:{notification_id}")
 
     return notification
@@ -126,9 +129,18 @@ async def dismiss_notification(
     # Check if this is a running embedding-reindex BEFORE dismissing —
     # we need the category and status to decide whether to set the cancel flag.
     notification = await service.get_notification(notification_id)
+    if notification is None or not await service.can_access_notification(
+        notification_id=notification_id,
+        notification=notification,
+        user_id=str(user.user_id),
+        is_admin=user.is_superuser,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Notification not found or not owned by you",
+        )
     if (
-        notification is not None
-        and notification.user_id == str(user.user_id)
+        notification.user_id == str(user.user_id)
         and notification.category == NotificationCategory.EMBEDDING_REINDEX
         and notification.status == NotificationStatus.RUNNING
     ):
@@ -138,7 +150,7 @@ async def dismiss_notification(
         # will let the user see the final state in the UI before it disappears.
         return
 
-    if user.is_superuser and notification is not None and notification.user_id != str(user.user_id):
+    if notification.user_id != str(user.user_id):
         access_checks.note_power("platform.readwrite", None, subject=f"notification:{notification_id}")
     dismissed = await service.dismiss_notification(
         notification_id=notification_id,

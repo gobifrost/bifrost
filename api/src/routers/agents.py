@@ -13,6 +13,7 @@ import base64
 import logging
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
@@ -66,6 +67,9 @@ from src.services.agent_stats import get_agent_stats, get_agent_stats_batch, get
 from src.services.workflow_role_service import sync_agent_roles_to_workflows
 from src.services.operation_catalog import operation_route
 
+if TYPE_CHECKING:
+    from src.services.authorization.enforce import Caller
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agents", tags=["Agents"])
@@ -88,25 +92,11 @@ async def _validate_llm_profile_id(
         )
 
 
-async def _user_has_permission(
-    db: DbSession,
-    user_id: UUID,
-    permission: str,
-) -> bool:
-    """Check if a user holds `permission` via any of their assigned roles.
+def _may_promote_agent(caller: "Caller", agent: Agent) -> bool:
+    """Whether caller holds agent write permission at this agent's boundary."""
+    from src.services.authorization.enforce import permitted_organizations
 
-    `permission` here is a `role_permissions` string (`<domain>.<read|
-    readwrite|execute>`), not the retired `can_promote_agent` flag — the
-    one caller (agent self-promotion) now passes `agents.readwrite`.
-    """
-    from src.models.orm.users import UserRole
-    from src.services.role_permissions import role_has_permission
-
-    result = await db.execute(
-        select(UserRole.role_id).where(UserRole.user_id == user_id)
-    )
-    role_ids = list(result.scalars().all())
-    return await role_has_permission(db, role_ids=role_ids, permission=permission)
+    return permitted_organizations(caller, "agents.readwrite").covers(agent.organization_id)
 
 
 def _others_private(agent: Agent, user_id: UUID) -> bool:
@@ -908,7 +898,9 @@ async def promote_agent(
     if not is_admin:
         if agent.owner_user_id != user.user_id:
             raise HTTPException(403, "You can only promote your own agents")
-        if not await _user_has_permission(db, user.user_id, "agents.readwrite"):
+        from src.services.authorization.enforce import load_caller
+
+        if not _may_promote_agent(await load_caller(db, user), agent):
             raise HTTPException(403, "You do not have permission to promote agents")
     else:
         access_checks.note_power("agents.readwrite", agent.organization_id, subject=f"agent:{agent.id}")

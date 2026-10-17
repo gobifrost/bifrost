@@ -13,7 +13,7 @@ import pytest
 
 from src.core.principal import UserPrincipal
 from src.models.enums import ExecutionStatus
-from src.routers.executions import ExecutionRepository
+from src.routers.executions import ExecutionReadAdapter
 
 
 def _caller(user) -> UserPrincipal:
@@ -96,7 +96,7 @@ async def run_as_tree(db_session):
 @pytest.mark.asyncio
 class TestExecutionResult:
     async def test_initiator_reads_the_root_run_they_started_as_someone_else(self, db_session, run_as_tree):
-        repo = ExecutionRepository(db_session)
+        repo = ExecutionReadAdapter(db_session)
 
         body, error = await repo.get_execution_result(run_as_tree["root"].id, _caller(run_as_tree["initiator"]))
 
@@ -104,21 +104,21 @@ class TestExecutionResult:
         assert body == {"result": {"answer": "contoso-root"}, "result_type": "json"}
 
     async def test_a_child_of_the_initiators_run_stays_refused(self, db_session, run_as_tree):
-        repo = ExecutionRepository(db_session)
+        repo = ExecutionReadAdapter(db_session)
 
         body, error = await repo.get_execution_result(run_as_tree["child"].id, _caller(run_as_tree["initiator"]))
 
         assert (body, error) == (None, "Forbidden")
 
     async def test_an_unrelated_caller_stays_refused(self, db_session, run_as_tree):
-        repo = ExecutionRepository(db_session)
+        repo = ExecutionReadAdapter(db_session)
 
         body, error = await repo.get_execution_result(run_as_tree["root"].id, _caller(run_as_tree["stranger"]))
 
         assert (body, error) == (None, "Forbidden")
 
     async def test_the_acting_user_reads_their_runs_as_before(self, db_session, run_as_tree):
-        repo = ExecutionRepository(db_session)
+        repo = ExecutionReadAdapter(db_session)
         colleague = _caller(run_as_tree["colleague"])
 
         plain_body, plain_error = await repo.get_execution_result(run_as_tree["plain"].id, colleague)
@@ -133,28 +133,28 @@ class TestExecutionResult:
 @pytest.mark.asyncio
 class TestExecutionLogs:
     async def test_initiator_reads_the_root_run_they_started_as_someone_else(self, db_session, run_as_tree):
-        repo = ExecutionRepository(db_session)
+        repo = ExecutionReadAdapter(db_session)
 
         logs, error = await repo.get_execution_logs(run_as_tree["root"].id, _caller(run_as_tree["initiator"]))
 
         assert (logs, error) == ([], None)
 
     async def test_a_child_of_the_initiators_run_stays_refused(self, db_session, run_as_tree):
-        repo = ExecutionRepository(db_session)
+        repo = ExecutionReadAdapter(db_session)
 
         logs, error = await repo.get_execution_logs(run_as_tree["child"].id, _caller(run_as_tree["initiator"]))
 
         assert (logs, error) == (None, "Forbidden")
 
     async def test_an_unrelated_caller_stays_refused(self, db_session, run_as_tree):
-        repo = ExecutionRepository(db_session)
+        repo = ExecutionReadAdapter(db_session)
 
         logs, error = await repo.get_execution_logs(run_as_tree["root"].id, _caller(run_as_tree["stranger"]))
 
         assert (logs, error) == (None, "Forbidden")
 
     async def test_the_acting_user_reads_their_runs_as_before(self, db_session, run_as_tree):
-        repo = ExecutionRepository(db_session)
+        repo = ExecutionReadAdapter(db_session)
         colleague = _caller(run_as_tree["colleague"])
 
         plain = await repo.get_execution_logs(run_as_tree["plain"].id, colleague)

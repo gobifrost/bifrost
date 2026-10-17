@@ -1348,6 +1348,9 @@ class MCPAgentGatewayService:
             caller_user_id=str(self.context.user_id),
             caller_email=self.context.user_email,
             caller_name=self.context.user_name,
+            caller_is_superuser=self.context.is_platform_admin,
+            caller_is_external=self.context.is_external,
+            caller_is_provider_org=self.context.is_provider_org,
             sync=not async_execution,
             lineage=lineage,
         )

@@ -106,8 +106,8 @@ def _validate_iso_date_filter(value: str | None, name: str) -> str | None:
 # =============================================================================
 
 
-class ExecutionRepository:
-    """PostgreSQL-based execution repository."""
+class ExecutionReadAdapter:
+    """HTTP-specific execution detail and cancellation reads."""
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -586,7 +586,7 @@ async def get_execution_result(
     ctx: Context,
 ) -> Any:
     """Get execution result."""
-    repo = ExecutionRepository(ctx.db)
+    repo = ExecutionReadAdapter(ctx.db)
     result, error = await repo.get_execution_result(execution_id, ctx.user)
 
     if error == "NotFound":
@@ -614,7 +614,7 @@ async def get_execution_logs(
     ctx: Context,
 ) -> list[ExecutionLogPublic]:
     """Get execution logs."""
-    repo = ExecutionRepository(ctx.db)
+    repo = ExecutionReadAdapter(ctx.db)
     logs, error = await repo.get_execution_logs(execution_id, ctx.user)
 
     if error == "NotFound":
@@ -641,7 +641,7 @@ async def get_execution_variables(
     ctx: Context,
 ) -> dict:
     """Get execution variables."""
-    repo = ExecutionRepository(ctx.db)
+    repo = ExecutionReadAdapter(ctx.db)
     variables, error = await repo.get_execution_variables(execution_id, ctx.user)
 
     if error == "NotFound":
@@ -682,7 +682,7 @@ async def cancel_execution(
     3. If not in PostgreSQL yet, try to cancel Redis pending record
     """
     redis_client = get_redis_client()
-    repo = ExecutionRepository(ctx.db)
+    repo = ExecutionReadAdapter(ctx.db)
 
     # First, try to find in PostgreSQL to check authorization
     execution, error = await repo.cancel_execution(execution_id, ctx.user)
@@ -770,7 +770,7 @@ async def get_stuck_executions(
     result = await ctx.db.execute(query)
     executions = result.scalars().all()
 
-    repo = ExecutionRepository(ctx.db)
+    repo = ExecutionReadAdapter(ctx.db)
     stuck_executions = [repo._to_pydantic(e, ctx.user) for e in executions]
 
     return StuckExecutionsResponse(

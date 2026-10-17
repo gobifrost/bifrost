@@ -234,61 +234,40 @@ class TestDeleteAgentAuthorization:
 
 
 class TestPromoteAgentPermission:
-    """Test promote endpoint permission logic.
+    """Promotion consults the authorization context at the agent's actual org."""
 
-    ``_user_has_permission`` now reads the ``role_permissions`` table (see
-    ``src.services.role_permissions``) rather than the retired
-    ``roles.permissions`` JSONB column, so these exercise it against a
-    real seeded role instead of mocking the session.
-    """
+    def test_grant_at_another_org_cannot_promote(self):
+        from shared.builtin_roles import USER_ROLE_ID
+        from src.core.principal import UserPrincipal
+        from src.routers.agents import _may_promote_agent
+        from src.services.authorization.context import AuthorizationContext, Boundary, BoundaryKind, RoleGrant
+        from src.services.authorization.enforce import Caller
 
-    @pytest.mark.asyncio
-    async def test_user_has_permission_returns_true(self, db_session):
-        """_user_has_permission returns True when a held role grants it."""
-        from src.models.orm.users import Role, RolePermission, User, UserRole
-        from src.routers.agents import _user_has_permission
-
-        from src.models.orm.organizations import Organization
-        org = Organization(name=f"org-{uuid4().hex[:8]}", is_active=True, created_by="test")
-        db_session.add(org)
-        await db_session.flush()
-        user = User(
-            email=f"promoter-{uuid4().hex[:8]}@test.local",
-            name="Promoter",
-            organization_id=org.id,
+        home, granted, agent_org = uuid4(), uuid4(), uuid4()
+        caller = Caller(
+            UserPrincipal(user_id=uuid4(), email="person@example.com", organization_id=home),
+            AuthorizationContext(
+                user_id=uuid4(), home_organization_id=home, base_role_id=USER_ROLE_ID,
+                is_external=False, base_permissions=frozenset(),
+                role_grants=(RoleGrant(uuid4(), frozenset({"agents.readwrite"}), (Boundary(BoundaryKind.ORGANIZATION, granted),)),),
+            ),
         )
-        db_session.add(user)
-        role = Role(name=f"Promoters-{uuid4().hex[:8]}", created_by="test")
-        db_session.add(role)
-        await db_session.flush()
-        db_session.add(RolePermission(role_id=role.id, permission="agents.readwrite"))
-        db_session.add(UserRole(user_id=user.id, role_id=role.id, assigned_by="test"))
-        await db_session.flush()
+        assert not _may_promote_agent(caller, make_agent(organization_id=agent_org))
 
-        result = await _user_has_permission(db_session, user.id, "agents.readwrite")
-        assert result is True
+    def test_grant_at_agent_org_can_promote(self):
+        from shared.builtin_roles import USER_ROLE_ID
+        from src.core.principal import UserPrincipal
+        from src.routers.agents import _may_promote_agent
+        from src.services.authorization.context import AuthorizationContext, Boundary, BoundaryKind, RoleGrant
+        from src.services.authorization.enforce import Caller
 
-    @pytest.mark.asyncio
-    async def test_user_has_permission_returns_false_when_no_permission(self, db_session):
-        """_user_has_permission returns False when no held role grants it."""
-        from src.models.orm.users import Role, User, UserRole
-        from src.routers.agents import _user_has_permission
-
-        from src.models.orm.organizations import Organization
-        org = Organization(name=f"org-{uuid4().hex[:8]}", is_active=True, created_by="test")
-        db_session.add(org)
-        await db_session.flush()
-        user = User(
-            email=f"nonpromoter-{uuid4().hex[:8]}@test.local",
-            name="Non-promoter",
-            organization_id=org.id,
+        home, agent_org = uuid4(), uuid4()
+        caller = Caller(
+            UserPrincipal(user_id=uuid4(), email="person@example.com", organization_id=home),
+            AuthorizationContext(
+                user_id=uuid4(), home_organization_id=home, base_role_id=USER_ROLE_ID,
+                is_external=False, base_permissions=frozenset(),
+                role_grants=(RoleGrant(uuid4(), frozenset({"agents.readwrite"}), (Boundary(BoundaryKind.ORGANIZATION, agent_org),)),),
+            ),
         )
-        db_session.add(user)
-        role = Role(name=f"Readers-{uuid4().hex[:8]}", created_by="test")
-        db_session.add(role)
-        await db_session.flush()
-        db_session.add(UserRole(user_id=user.id, role_id=role.id, assigned_by="test"))
-        await db_session.flush()
-
-        result = await _user_has_permission(db_session, user.id, "agents.readwrite")
-        assert result is False
+        assert _may_promote_agent(caller, make_agent(organization_id=agent_org))

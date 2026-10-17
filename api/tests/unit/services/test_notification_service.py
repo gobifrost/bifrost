@@ -538,6 +538,27 @@ class TestNotificationService:
             )
 
         assert result is True
+
+    async def test_admin_cannot_access_another_users_personal_notification(
+        self, notification_service, mock_redis
+    ):
+        """Admin status only expands access to notifications in the admin set."""
+        service, _ = notification_service
+        notification = self._notification_owned_by("person-123")
+        mock_redis.get.return_value = notification
+        mock_redis.sismember.return_value = False
+
+        assert not await service.can_access_notification(
+            notification_id="notif-admin",
+            notification=json.loads(notification),
+            user_id="admin-123",
+            is_admin=True,
+        )
+        dismissed = await service.dismiss_notification(
+            notification_id="notif-admin", user_id="admin-123", is_admin=True
+        )
+        assert dismissed is False
+        mock_redis.delete.assert_not_called()
         mock_redis.delete.assert_called_once()
 
     async def test_admin_cannot_dismiss_another_users_notification(
