@@ -89,12 +89,12 @@ describe("stepSentence", () => {
 			"No workflow: only their own roles apply.",
 		);
 		expect(sentence(step("powers", "full", { grants: [] }))).toBe(
-			"The workflow has Full powers: every permission, secrets included.",
+			"The workflow has Full Access: every permission, secrets included.",
 		);
 		expect(
 			sentence(step("powers", "restricted", { grants: [{}, {}] })),
 		).toBe(
-			"The workflow is Restricted: 2 grants add to the run user's roles.",
+			"The workflow uses Declared Permissions: 2 grants add to the run user's roles.",
 		);
 	});
 
@@ -135,7 +135,7 @@ describe("stepSentence", () => {
 			sentence(step("permission", reason, { permission: "tables.read" }));
 
 		expect(permission("full")).toBe(
-			"Full powers include every permission.",
+			"Full Access includes every permission.",
 		);
 		expect(permission("platform_admin")).toBe(
 			"A Platform Admin holds All Permissions.",
@@ -149,7 +149,7 @@ describe("stepSentence", () => {
 		expect(permission("role:role-unknown:tables.read@organization")).toBe(
 			"A role placed there grants Read Tables.",
 		);
-		// A Restricted workflow's grants are judged as a role named by the run user's id.
+		// A Declared Permissions workflow's grants are judged as a role named by the run user's id.
 		expect(permission("role:user-1:tables.read@organization")).toBe(
 			"The workflow's grants include Read Tables.",
 		);

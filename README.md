@@ -232,6 +232,16 @@ For detailed documentation on architecture, development, deployment, and usage:
 
 ## Security & Verification
 
+### Zero Trust Automation
+
+Zero Trust Automation checks each run against the run user's current roles and
+organization reach. A run identity records who acts. Workflows use **Full
+Access** or **Declared Permissions** only within that reach. Full Access remains
+the default. See [Zero Trust Automation](docs/runbooks/zero-trust-automation.md)
+for access modes, Solution approvals, and moving to narrower permissions.
+
+### Verify Release Artifacts
+
 Bifrost release artifacts are signed with [Sigstore](https://www.sigstore.dev/) using GitHub's keyless OIDC signing. You can verify any image or release pulled from this repo:
 
 **Verify a Docker image:**

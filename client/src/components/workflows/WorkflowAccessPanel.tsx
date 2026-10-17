@@ -63,8 +63,8 @@ import {
 type Workflow = components["schemas"]["WorkflowMetadata"];
 
 const ACCESS_MODE_LABELS: Record<Workflow["permission_mode"], string> = {
-	full: "Full",
-	restricted: "Restricted",
+	full: "Full Access",
+	restricted: "Declared Permissions",
 };
 
 const RECOMMENDATION_ICONS: Record<RecommendedAccessItem["kind"], LucideIcon> =
@@ -522,8 +522,8 @@ export function WorkflowAccessPanel({ workflow }: { workflow: Workflow }) {
 				</div>
 				<p className="text-xs text-muted-foreground">
 					{workflow.permission_mode === "full"
-						? "Full adds every permission, including Secrets, within the run user's organization reach."
-						: "Restricted adds its configured permissions to the run user's own roles. It does not add organizations to their reach."}
+						? "Full Access adds every permission, including Secrets, within the run user's organization reach."
+						: "Declared Permissions adds the workflow's configured permissions to the run user's own roles. It does not add organizations to their reach."}
 				</p>
 			</Section>
 
