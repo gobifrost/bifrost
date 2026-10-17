@@ -160,7 +160,7 @@ async def describe_role_permissions(session: AsyncSession, *, role_id: UUID):
 
 
 async def replace_identity_permissions(
-    session: AsyncSession, *, caller: "Caller", role_id: UUID, permissions: list[str]
+    session: AsyncSession, *, caller: Caller, role_id: UUID, permissions: list[str]
 ):
     """Replace the role's identity permissions, keeping every other
     permission it holds. 422 for anything outside the identity set, 409 for
