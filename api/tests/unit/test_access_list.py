@@ -952,7 +952,7 @@ def _subprocess_inventory(
 
 def _redis_inventory() -> dict[str, list[str]]:
     """Owner → Redis reads (B10) across ``src`` and ``shared`` (the server)
-    and ``bifrost`` (the workflow runtime and the write-buffer flush)."""
+    and ``bifrost`` (the workflow runtime)."""
     return {owner: reads for owner, nodes in _nodes_by_owner().items() if (reads := _redis_reads(nodes))}
 
 
@@ -2217,7 +2217,6 @@ _FLAG_POLICY_SEEDS: dict[str, str] = {}
 # cutover.
 _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "bifrost._logging.read_logs_from_stream": (1, "cutover"),
-    "bifrost._sync.flush_pending_changes": (1, "cutover"),
     "shared.form_runtime.load_startup_result": (1, "cutover"),
     "shared.form_runtime.validate_embed_upload_references": (1, "cutover"),
     "shared.role_cache.get_user_roles": (1, "cutover"),

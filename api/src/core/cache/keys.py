@@ -243,21 +243,6 @@ def execution_cancel_key(execution_id: str) -> str:
     return f"bifrost:exec:{execution_id}:cancel"
 
 
-# =============================================================================
-# Execution-Scoped Keys (Write Buffer)
-# =============================================================================
-
-
-def pending_changes_key(execution_id: str) -> str:
-    """
-    Key for the hash containing pending changes for an execution.
-
-    Structure: HASH where field = change identifier, value = JSON change record
-    Used by write buffer, cleared after flush.
-    """
-    return f"bifrost:pending:{execution_id}"
-
-
 def execution_logs_stream_key(execution_id: str) -> str:
     """
     Key for the Redis Stream containing logs for an execution.
@@ -398,7 +383,6 @@ TTL_CONFIG = 300  # 5 minutes
 TTL_FORMS = 600  # 10 minutes
 TTL_ROLES = 600  # 10 minutes
 TTL_ORGS = 3600  # 1 hour
-TTL_PENDING = 3600  # 1 hour (safety for orphaned changes)
 TTL_PENDING_EXECUTION = 3600  # 1 hour (safety for orphaned pending executions)
 TTL_ACTIVE_EXECUTION = 3600  # 1 hour (recreated while the child is active)
 

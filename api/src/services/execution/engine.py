@@ -61,16 +61,6 @@ except ImportError:
         "Bifrost SDK not available - user workflows cannot use bifrost SDK")
     BIFROST_CONTEXT_AVAILABLE = False
 
-# Import write buffer for SDK writes
-try:
-    from bifrost._write_buffer import WriteBuffer, set_write_buffer, clear_write_buffer
-    WRITE_BUFFER_AVAILABLE = True
-except ImportError:
-    WRITE_BUFFER_AVAILABLE = False
-    WriteBuffer = None  # type: ignore
-    set_write_buffer = None  # type: ignore
-    clear_write_buffer = None  # type: ignore
-
 @dataclass
 class ServiceRunConfig:
     """Supervision config for one service attempt (engine service mode)."""
@@ -690,7 +680,7 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
         )
 
     finally:
-        # NOTE: flush_pending_changes, flush_logs_to_postgres, and cleanup_execution_cache
+        # NOTE: flush_logs_to_postgres and cleanup_execution_cache
         # are now called from workflow_execution.py's _process_execution_result() callback.
         # This avoids event loop issues when running in thread workers (each thread creates
         # its own event loop via asyncio.run(), which breaks shared async Redis connections).
@@ -701,10 +691,6 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
             clear_execution_context()
             logger.debug(
                 f"Cleared bifrost execution context for execution {request.execution_id}")
-
-        # Clear write buffer context
-        if WRITE_BUFFER_AVAILABLE and clear_write_buffer:
-            clear_write_buffer()
 
         # Close broadcaster to prevent resource leaks
         if request.broadcaster is not None:
@@ -1503,16 +1489,6 @@ async def _execute_workflow_with_trace(
         if BIFROST_CONTEXT_AVAILABLE:
             set_execution_context(context)
 
-        # Initialize write buffer for SDK writes
-        if WRITE_BUFFER_AVAILABLE and WriteBuffer and set_write_buffer:
-            org_id = context.org_id if context.org_id != "GLOBAL" else None
-            buffer = WriteBuffer(
-                execution_id=execution_id or "",
-                org_id=org_id,
-                user_id=context.user_id,
-            )
-            set_write_buffer(buffer)
-
         # Set up trace function for variable capture
         sys.settrace(chained_trace_func if existing_trace else trace_func)
         try:
@@ -1524,9 +1500,6 @@ async def _execute_workflow_with_trace(
             # Clear context
             if BIFROST_CONTEXT_AVAILABLE:
                 clear_execution_context()
-            # Clear write buffer
-            if WRITE_BUFFER_AVAILABLE and clear_write_buffer:
-                clear_write_buffer()
     except TypeError as e:
         # Check if this is the "got multiple values" error caused by missing context parameter
         if "got multiple values for argument" in str(e):

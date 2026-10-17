@@ -48,8 +48,6 @@ class WorkspaceImportRestrictor(MetaPathFinder):
         'bifrost._context',
         'bifrost._internal',
         'bifrost._logging',
-        'bifrost._sync',
-        'bifrost._write_buffer',
         'bifrost.organizations',
         'bifrost.workflows',
         'bifrost.files',

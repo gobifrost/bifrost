@@ -37,7 +37,6 @@ from .keys import (
     role_users_key,
     roles_hash_key,
     execution_logs_stream_key,
-    pending_changes_key,
 )
 from src.core.log_safety import log_safe
 
@@ -345,7 +344,6 @@ async def cleanup_execution_cache(execution_id: str) -> None:
     Clean up all execution-scoped cache entries.
 
     Called after execution completes to remove:
-    - Pending changes (should already be flushed)
     - Log stream (if using Redis streams)
     - Active execution lease
 
@@ -355,7 +353,6 @@ async def cleanup_execution_cache(execution_id: str) -> None:
     try:
         r = await get_shared_redis()
         await r.delete(
-            pending_changes_key(execution_id),
             execution_logs_stream_key(execution_id),
             active_execution_key(execution_id),
         )

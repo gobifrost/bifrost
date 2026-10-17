@@ -9,7 +9,6 @@ from src.core.cache.keys import (
     TTL_CONFIG,
     TTL_FORMS,
     TTL_ORGS,
-    TTL_PENDING,
     TTL_ROLES,
     config_hash_key,
     config_key,
@@ -18,7 +17,6 @@ from src.core.cache.keys import (
     forms_hash_key,
     org_key,
     orgs_list_key,
-    pending_changes_key,
     role_forms_key,
     role_key,
     role_users_key,
@@ -148,15 +146,6 @@ class TestOrgKeys:
         assert key == "bifrost:global:orgs:_list"
 
 
-class TestPendingChangesKeys:
-    """Tests for pending changes (write buffer) key generation."""
-
-    def test_pending_changes_key(self):
-        """Pending changes key for execution."""
-        key = pending_changes_key("exec-777")
-        assert key == "bifrost:pending:exec-777"
-
-
 class TestExecutionKeys:
     """Tests for execution-scoped key generation."""
 
@@ -185,11 +174,6 @@ class TestTTLConstants:
         """Organizations TTL is 1 hour."""
         assert TTL_ORGS == 3600
 
-    def test_ttl_pending(self):
-        """Pending changes TTL is 1 hour."""
-        assert TTL_PENDING == 3600
-
-
 class TestKeyPatternConsistency:
     """Tests for consistent key patterns across all functions."""
 
@@ -205,7 +189,6 @@ class TestKeyPatternConsistency:
             role_key("org-4", "role-1"),
             org_key("org-5"),
             orgs_list_key(),
-            pending_changes_key("exec-1"),
             execution_logs_stream_key("exec-2"),
             user_forms_key("org-6", "user-1"),
             role_users_key("org-7", "role-1"),
@@ -247,7 +230,6 @@ class TestKeyPatternConsistency:
         """Execution-scoped keys should contain the execution ID."""
         exec_id = "exec-test-uuid-456"
         keys = [
-            pending_changes_key(exec_id),
             execution_logs_stream_key(exec_id),
         ]
         for key in keys:

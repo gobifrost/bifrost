@@ -377,8 +377,8 @@ class WorkflowExecutionConsumer(BaseConsumer):
         roi_time_saved = roi_data.get("time_saved", 0)
         roi_value = roi_data.get("value", 0.0)
 
-        # DB operations + flush — single short-lived session
-        # (flush functions do Redis reads internally but DB writes share the session)
+        # DB operations and log flush — single short-lived session
+        # (log flush reads Redis internally but DB writes share the session)
         session_factory = get_session_factory()
         async with session_factory() as session:
             await update_execution(
@@ -408,16 +408,6 @@ class WorkflowExecutionConsumer(BaseConsumer):
                         f"Failed to update event delivery for {execution_id[:8]}...: {e}"
                     )
 
-            # Flush pending changes and logs (Redis read + DB write in same session)
-            try:
-                from bifrost._sync import flush_pending_changes
-                changes_count = await flush_pending_changes(execution_id, session=session)
-                if changes_count > 0:
-                    logger.info(f"Flushed {changes_count} pending changes for {execution_id[:8]}...")
-            except Exception as e:
-                logger.warning(f"Failed to flush pending changes for {execution_id[:8]}...: {e}")
-            changes_flushed_ms = (time.perf_counter() - completion_started) * 1000
-
             if result.get("logs"):
                 try:
                     from bifrost._logging import flush_logs_to_postgres
@@ -437,8 +427,8 @@ class WorkflowExecutionConsumer(BaseConsumer):
             await session.commit()
         durable_ms = (time.perf_counter() - completion_started) * 1000
 
-        # Wake sync callers as soon as their result and buffered SDK writes are
-        # durably committed.  Everything below is terminal-event fan-out or
+        # Wake sync callers as soon as their result is durably committed.
+        # Everything below is terminal-event fan-out or
         # cleanup and must not add latency to the request/response path.
         if is_sync:
             await self._redis_client.push_result(
@@ -501,12 +491,11 @@ class WorkflowExecutionConsumer(BaseConsumer):
 
         logger.debug(
             "Completion timing %s: metadata=%.1fms execution_update=%.1fms "
-            "changes=%.1fms logs=%.1fms durable=%.1fms result_ready=%.1fms "
+            "logs=%.1fms durable=%.1fms result_ready=%.1fms "
             "metrics=%.1fms total=%.1fms",
             execution_id[:8],
             metadata_read_ms,
             execution_update_ms,
-            changes_flushed_ms,
             logs_flushed_ms,
             durable_ms,
             result_ready_ms,
@@ -567,7 +556,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
         else:
             status = ExecutionStatus.FAILED
 
-        # DB operations + flush — single short-lived session
+        # DB operations and log flush — single short-lived session
         session_factory = get_session_factory()
         async with session_factory() as session:
             # Forward resource metrics when the pool reports them (timeout,
@@ -598,14 +587,6 @@ class WorkflowExecutionConsumer(BaseConsumer):
                     logger.warning(
                         f"Failed to update event delivery for {execution_id[:8]}...: {e}"
                     )
-
-            try:
-                from bifrost._sync import flush_pending_changes
-                changes_count = await flush_pending_changes(execution_id, session=session)
-                if changes_count > 0:
-                    logger.info(f"Flushed {changes_count} pending changes for failed {execution_id[:8]}...")
-            except Exception as e:
-                logger.warning(f"Failed to flush pending changes for {execution_id[:8]}...: {e}")
 
             if result.get("logs"):
                 try:

@@ -307,11 +307,6 @@ class TestSuccessfulExecutionCompletionOrder:
                     new=update_delivery,
                 ),
                 patch(
-                    "bifrost._sync.flush_pending_changes",
-                    new_callable=AsyncMock,
-                    return_value=0,
-                ),
-                patch(
                     "bifrost._logging.flush_logs_to_postgres",
                     new=flush_logs,
                 ),
@@ -428,11 +423,6 @@ class TestFailedExecutionCompletionOrder:
                     new=update_delivery,
                 ),
                 patch(
-                    "bifrost._sync.flush_pending_changes",
-                    new_callable=AsyncMock,
-                    return_value=0,
-                ),
-                patch(
                     "bifrost._logging.flush_logs_to_postgres",
                     new=flush_logs,
                 ),
@@ -537,11 +527,6 @@ class TestFailedExecutionCompletionOrder:
                 patch(
                     "src.services.events.processor.update_delivery_from_execution",
                     new=update_delivery,
-                ),
-                patch(
-                    "bifrost._sync.flush_pending_changes",
-                    new_callable=AsyncMock,
-                    return_value=0,
                 ),
                 patch(
                     "bifrost._logging.flush_logs_to_postgres",
