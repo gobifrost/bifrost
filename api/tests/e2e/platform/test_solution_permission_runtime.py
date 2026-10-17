@@ -232,15 +232,27 @@ async def test_reloaded_powers_observe_revocation_over_a_cached_approval(db_sess
     assert (await load_powers(db_session, workflow.id)).grants == ()
 
 
-async def test_declined_approval_cannot_return_when_bundle_reverts(db_session):
+@pytest.mark.parametrize("cached_revocation", [False, True])
+async def test_declined_approval_cannot_return_when_bundle_reverts(
+    db_session, cached_revocation
+):
     requested = RequestedWorkflowPermissions(
         mode="restricted", grants=[{"permission": "tables.read"}]
     )
     workflow, row = await _installed(db_session, requested)
     row.status, row.approved_digest = "approved", row.request_digest
     await db_session.flush()
-    row.status = "declined"
-    await db_session.flush()
+    if cached_revocation:
+        await db_session.execute(
+            update(SolutionWorkflowPermissionRequest)
+            .where(SolutionWorkflowPermissionRequest.id == row.id)
+            .values(status="declined")
+            .execution_options(synchronize_session=False)
+        )
+        assert row.status == "approved"
+    else:
+        row.status = "declined"
+        await db_session.flush()
     changed = RequestedWorkflowPermissions(
         mode="restricted", grants=[{"permission": "secrets.read"}]
     )

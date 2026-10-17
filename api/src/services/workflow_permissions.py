@@ -228,9 +228,11 @@ async def sync_solution_permission_requests(
         row.workflow_id: row
         for row in (
             await db.execute(
-                select(SolutionWorkflowPermissionRequest).where(
-                    SolutionWorkflowPermissionRequest.solution_id == solution_id
-                )
+                select(SolutionWorkflowPermissionRequest)
+                .where(SolutionWorkflowPermissionRequest.solution_id == solution_id)
+                .order_by(SolutionWorkflowPermissionRequest.workflow_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
             )
         ).scalars()
     }
