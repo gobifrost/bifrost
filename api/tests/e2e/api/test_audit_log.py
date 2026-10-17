@@ -187,6 +187,6 @@ class TestAuditLogRetentionWindow:
         resp = e2e_client.get("/api/audit?limit=1", headers=platform_admin.headers)
         assert resp.status_code == 200
         retention = resp.json()["retention"]
-        assert retention["hot_days"] == 90
+        assert retention["hot_days"] == 30
         assert retention["archive_days"] == 365
         datetime.fromisoformat(retention["oldest_in_database"])

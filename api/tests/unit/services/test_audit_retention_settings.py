@@ -21,7 +21,7 @@ async def test_missing_row_means_new_install_defaults() -> None:
     db = MagicMock()
     db.execute = AsyncMock(return_value=_execute_result())
     assert await AuditRetentionSettingsService(db).get_settings() == AuditRetentionSettings(
-        hot_days=90, archive_days=365
+        hot_days=30, archive_days=365
     )
 
 

@@ -2,6 +2,7 @@ import { PaginationFooter } from "@/components/pagination/PaginationFooter";
 
 export function AuditPagination({
 	count,
+	kind = "event",
 	page,
 	hasNext,
 	pending,
@@ -9,6 +10,7 @@ export function AuditPagination({
 	onNext,
 }: {
 	count: number;
+	kind?: "event" | "summary";
 	page: number;
 	hasNext: boolean;
 	pending: boolean;
@@ -18,7 +20,7 @@ export function AuditPagination({
 	return (
 		<PaginationFooter
 			aria-label="Audit pagination"
-			summary={`${count} event${count !== 1 ? "s" : ""} on this page · Page ${page + 1}`}
+			summary={`${count} ${kind === "summary" ? (count === 1 ? "summary" : "summaries") : `event${count === 1 ? "" : "s"}`} on this page · Page ${page + 1}`}
 			pending={pending}
 			previousDisabled={page === 0 || pending}
 			nextDisabled={!hasNext || pending}

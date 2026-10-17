@@ -174,7 +174,9 @@ def test_a_role_policy_follows_the_run_users_own_roles(world) -> None:
     hr = _policy(_run_checks(world, "hr"), world["hr_table"])
     customer = _policy(_run_checks(world, "customer"), world["hr_table"])
 
-    assert [(c["outcome"], c["details"]["today"], c["user_id"]) for c in hr] == [("success", "denied", world["hr_id"])]
+    assert [(c["outcome"], c["details"]["inputs"]["today"], c["user_id"]) for c in hr] == [
+        ("success", False, world["hr_id"])
+    ]
     assert customer == []
 
 

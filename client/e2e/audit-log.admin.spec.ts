@@ -199,9 +199,45 @@ test.describe("Access Checks on a recorded check", () => {
 			page.getByRole("heading", { level: 2, name: workflowName }),
 		).toBeVisible();
 		await expect(page.getByText("1 would-deny check")).toBeVisible();
-		const row = page.locator("table tbody tr");
+		await expect(
+			page.getByRole("combobox", { name: "Time Aggregate" }),
+		).toHaveText("1 Hour");
+		if (process.env.PLAYWRIGHT_SCREENSHOT_ALL === "1") {
+			await page.emulateMedia({ reducedMotion: "reduce" });
+			await page.screenshot({
+				animations: "disabled",
+				path: test.info().outputPath("summary-desktop-dark.png"),
+			});
+			await page.getByRole("button", { name: "Toggle theme" }).click();
+			await expect(page.locator("html")).not.toHaveClass(/dark/);
+			await page.screenshot({
+				animations: "disabled",
+				path: test.info().outputPath("summary-desktop-light.png"),
+			});
+			await page.setViewportSize({ width: 390, height: 844 });
+			await expect(
+				page.getByRole("list", { name: "Check Summaries" }),
+			).toBeVisible();
+			await page.screenshot({
+				animations: "disabled",
+				path: test.info().outputPath("summary-phone-light.png"),
+			});
+			await page.setViewportSize({ width: 1280, height: 720 });
+		}
+		await page
+			.getByRole("button", { name: "Show 1 Recorded Check" })
+			.click();
+		const row = page
+			.getByRole("region", { name: "Recorded Checks" })
+			.locator("table tbody tr");
 		await expect(row).toHaveCount(1);
 		await expect(row).toContainText(identityName);
+		if (process.env.PLAYWRIGHT_SCREENSHOT_ALL === "1") {
+			await page.screenshot({
+				animations: "disabled",
+				path: test.info().outputPath("expanded-desktop-light.png"),
+			});
+		}
 		await row.getByRole("button").first().click();
 
 		const drawer = page.getByRole("dialog", { name: "Access Check" });
@@ -222,5 +258,17 @@ test.describe("Access Checks on a recorded check", () => {
 			drawer.getByText("Nothing changed since then."),
 		).toBeVisible();
 		await expect(reachStep("Now")).toContainText("Would Stop Here");
+		if (process.env.PLAYWRIGHT_SCREENSHOT_ALL === "1") {
+			await page.screenshot({
+				animations: "disabled",
+				path: test.info().outputPath("explanation-desktop-light.png"),
+			});
+			await page.setViewportSize({ width: 390, height: 844 });
+			await expect(drawer).toBeVisible();
+			await page.screenshot({
+				animations: "disabled",
+				path: test.info().outputPath("explanation-phone-light.png"),
+			});
+		}
 	});
 });

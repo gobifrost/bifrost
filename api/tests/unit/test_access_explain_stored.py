@@ -13,10 +13,11 @@ from uuid import uuid4
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.access_trace_storage import compact_access_check_details
 from src.models.orm.audit import AuditLog
 from src.models.orm.organizations import Organization
 from src.models.orm.users import User
-from src.services.access_explain import rerun, stored_trace
+from src.services.access_explain import rerun, stored_note, stored_trace
 
 _TRACE = {
     "outcome": "failure",
@@ -37,6 +38,31 @@ def test_stored_trace_is_the_trace_the_writer_kept() -> None:
 
 def test_no_stored_trace_is_none() -> None:
     assert stored_trace(_row({"workflow_id": None, "inputs": {"operation": "GET /api/tables", "target": None}})) is None
+
+
+def test_versioned_details_expand_for_the_stored_trace_and_note() -> None:
+    details = compact_access_check_details(
+        {
+            "enforced": False,
+            "direct": True,
+            "workflow_id": None,
+            "inputs": {"operation": "GET /api/audit", "target": None},
+            "trace": _TRACE,
+        }
+    )
+    row = AuditLog(
+        action="access.check",
+        resource_type="scope_switch",
+        outcome="failure",
+        operation_id="GET /api/audit",
+        user_id=uuid4(),
+        details=details,
+    )
+
+    trace = stored_trace(row)
+
+    assert trace is not None and trace.model_dump() == _TRACE
+    assert stored_note(row).target is None
 
 
 def test_no_stored_inputs_cannot_be_judged_now() -> None:

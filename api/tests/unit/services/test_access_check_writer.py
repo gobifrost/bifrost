@@ -107,7 +107,8 @@ async def test_a_target_outside_reach_is_written_as_a_failure(db_session: AsyncS
     assert row.details["enforced"] is False
     assert row.details["trace"]["steps"][2]["status"] == "stopped"
     assert row.details["inputs"]["target"] == str(other.id)
-    assert row.details["today"] == "allowed"
+    assert row.details["access_trace_storage_version"] == 1
+    assert "today" not in row.details
     assert collector.closed is True
 
 
@@ -374,7 +375,7 @@ async def test_a_persons_run_as_is_written_enforced_in_both_outcomes(db_session:
     for row in rows.values():
         assert row.details is not None
         assert (row.resource_type, row.details["enforced"], row.details["direct"]) == ("run_as", True, True)
-        assert row.details["trace"]["enforced"] is True
+        assert row.details["access_trace_storage_version"] == 1
     failure = rows[fabrikam.id].details
     assert failure is not None
     stopped = [step["key"] for step in failure["trace"]["steps"] if step["status"] == "stopped"]
@@ -391,7 +392,8 @@ async def test_a_runs_run_as_is_written_report_only(db_session: AsyncSession) ->
     [row] = await _rows(db_session, collector)
     assert (row.resource_type, row.outcome) == ("run_as", "success")
     assert row.details is not None
-    assert (row.details["enforced"], row.details["trace"]["enforced"]) == (False, False)
+    assert row.details["enforced"] is False
+    assert row.details["access_trace_storage_version"] == 1
 
 
 async def test_every_enforced_run_as_is_written_and_a_report_only_one_once(db_session: AsyncSession) -> None:

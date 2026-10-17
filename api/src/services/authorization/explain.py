@@ -29,6 +29,7 @@ from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.access_checks import ALL_ORGS, NoteTarget
+from shared.access_trace_storage import CANONICAL_TRACE_STEP_LABELS
 from shared.system_account_guard import is_system_account
 from src.core.constants import PROVIDER_ORG_ID
 from src.models.contracts.access_list import AccessClass, AccessEntry, CurrentGate
@@ -150,7 +151,7 @@ def _run_user_step(run_user: RunUser) -> Step:
     who = "identity" if run_user.identity_kind else "person"
     return Step(
         key="run_user",
-        label="Run user",
+        label=CANONICAL_TRACE_STEP_LABELS["run_user"],
         status="passed",
         reason=who,
         facts={
@@ -165,7 +166,7 @@ def _run_user_step(run_user: RunUser) -> Step:
 def _powers_step(powers: Powers) -> Step:
     return Step(
         key="powers",
-        label="Workflow powers",
+        label=CANONICAL_TRACE_STEP_LABELS["powers"],
         status="passed",
         reason=powers.mode.value,
         facts={"grants": [grant.model_dump(mode="json") for grant in powers.grants]},
@@ -243,13 +244,18 @@ def _permission_step(
     run_user: RunUser, powers: Powers, target: UUID | None, entry: AccessEntry | None
 ) -> Step:
     if powers.mode is WorkflowPermissionMode.FULL:
-        return Step("permission", "Permission", "passed", "full")
+        return Step("permission", CANONICAL_TRACE_STEP_LABELS["permission"], "passed", "full")
     if entry is None:
-        return Step("permission", "Permission", "not_applicable", "no_access_list_entry")
+        return Step(
+            "permission",
+            CANONICAL_TRACE_STEP_LABELS["permission"],
+            "not_applicable",
+            "no_access_list_entry",
+        )
     decision = decide(_restricted_context(run_user, powers), entry, _evaluator_target(run_user, target))
     return Step(
         "permission",
-        "Permission",
+        CANONICAL_TRACE_STEP_LABELS["permission"],
         "passed" if decision.allowed else "stopped",
         decision.rule,
         {"permission": entry.permission},
@@ -268,14 +274,14 @@ def _direct_permission_step(run_user: RunUser, target: UUID | None, entry: Acces
     )
 
 
-_NO_WORKFLOW = Step("powers", "Workflow powers", "not_applicable", "no_workflow")
+_NO_WORKFLOW = Step("powers", CANONICAL_TRACE_STEP_LABELS["powers"], "not_applicable", "no_workflow")
 
 
 def _target_step(run_user: RunUser, target: TargetOrg) -> Step:
     inside, via = in_reach(run_user, target)
     return Step(
         "target",
-        "Target in reach",
+        CANONICAL_TRACE_STEP_LABELS["target"],
         "passed" if inside else "stopped",
         via,
         {"organization_id": None if target is None else str(target)},
@@ -291,7 +297,7 @@ def check_target(
     if powers is None:
         powers_step = _NO_WORKFLOW
         permission = (
-            Step("permission", "Permission", "not_applicable", "no_access_list_entry")
+            Step("permission", CANONICAL_TRACE_STEP_LABELS["permission"], "not_applicable", "no_access_list_entry")
             if entry is None
             else _direct_permission_step(run_user, org, entry)
         )
@@ -301,7 +307,7 @@ def check_target(
 
 
 def _workflow_access_step(run_user: RunUser, workflow_access: bool | None) -> Step:
-    label = "Workflow access"
+    label = CANONICAL_TRACE_STEP_LABELS["workflow_access"]
     if run_user.identity_kind:
         return Step("workflow_access", label, "not_applicable", "unattended")
     allowed = bool(workflow_access)
@@ -387,7 +393,7 @@ def run_as_user_step(target: RunAsTarget) -> Step:
         status, reason = "passed", "person"
     return Step(
         "run_as_user",
-        "Run As User",
+        CANONICAL_TRACE_STEP_LABELS["run_as_user"],
         status,
         reason,
         {
@@ -417,7 +423,13 @@ def check_run_as(run_user: RunUser, powers: Powers | None, target: RunAsTarget) 
     ]
     if target.privileged:
         held = _held_step(run_user, powers, org, _PRIVILEGED_PERMISSION)
-        steps.append(replace(held, key="privileged_target", label="Privileged User"))
+        steps.append(
+            replace(
+                held,
+                key="privileged_target",
+                label=CANONICAL_TRACE_STEP_LABELS["privileged_target"],
+            )
+        )
     trace = _trace(steps)
     # Each permission is named even when an earlier step stopped the trace.
     permissions = {"permission": _IMPERSONATE_PERMISSION, "privileged_target": _PRIVILEGED_PERMISSION}
@@ -434,13 +446,19 @@ def check_run_as_outside_reach(run_user: RunUser) -> Trace:
     doesn't exist, or one outside the organizations their grant covers. The
     trace is the same for both and records nothing about that user; the
     detailed decision is recorded in the user's own organization."""
-    step = Step("target", "Target in reach", "stopped", "outside_reach", {})
+    step = Step("target", CANONICAL_TRACE_STEP_LABELS["target"], "stopped", "outside_reach", {})
     return _trace([_run_user_step(run_user), _NO_WORKFLOW, step])
 
 
 def check_entry(run_user: RunUser, *, allowed: bool, subject: str) -> Trace:
     """Starting ``subject`` (workflow, agent): the run user's own access to it."""
-    step = Step("entry", "Entry", "passed" if allowed else "stopped", "access" if allowed else "no_access", {"subject": subject})
+    step = Step(
+        "entry",
+        CANONICAL_TRACE_STEP_LABELS["entry"],
+        "passed" if allowed else "stopped",
+        "access" if allowed else "no_access",
+        {"subject": subject},
+    )
     return _trace([_run_user_step(run_user), step])
 
 
@@ -450,7 +468,7 @@ def check_policy(
     """A table or file policy evaluated against the run user."""
     step = Step(
         "policy",
-        "Policy",
+        CANONICAL_TRACE_STEP_LABELS["policy"],
         "passed" if model else "stopped",
         "allowed" if model else "denied",
         {"today": today, "missing": missing},

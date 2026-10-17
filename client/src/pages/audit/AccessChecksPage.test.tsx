@@ -148,8 +148,20 @@ beforeEach(() => {
 	audit.groups.mockReset();
 	audit.list.mockReset();
 	audit.groups.mockReturnValue(query({ entries: [], groups }));
-	audit.list.mockReturnValue(
-		query({ entries: [sample], continuation_token: null }),
+	audit.list.mockImplementation((params: { aggregate?: string }) =>
+		params.aggregate
+			? query({
+					entries: [],
+					groups: [
+						{
+							...groups[0],
+							key: "window-1",
+							first_seen: sample.timestamp,
+						},
+					],
+					continuation_token: null,
+				})
+			: query({ entries: [sample], continuation_token: null }),
 	);
 });
 
@@ -248,12 +260,27 @@ describe("AccessChecksPage", () => {
 				outcome: "failure",
 				workflow_id: "wf-1",
 				limit: 50,
+				aggregate: "1h",
+			}),
+			true,
+			{ preservePageData: true },
+		);
+		await user.click(
+			screen.getByRole("button", { name: "Show 12 Recorded Checks" }),
+		);
+		const checks = within(
+			screen.getByRole("region", { name: "Recorded Checks" }),
+		);
+		expect(audit.list).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				aggregate_key: "window-1",
+				workflow_id: "wf-1",
 			}),
 			true,
 			{ preservePageData: true },
 		);
 		expect(
-			screen
+			checks
 				.getAllByRole("columnheader")
 				.map((header) => header.textContent),
 		).toEqual([
@@ -263,7 +290,7 @@ describe("AccessChecksPage", () => {
 			"Resource Type",
 			"Would Stop Here",
 		]);
-		const [, row] = screen.getAllByRole("row");
+		const [, row] = checks.getAllByRole("row");
 		const cells = within(row).getAllByRole("cell");
 		expect(cells[0]).toHaveTextContent("Fabrikam");
 		expect(cells[2]).toHaveTextContent("Default Identity · Contoso");
@@ -294,7 +321,12 @@ describe("AccessChecksPage", () => {
 		const { user } = renderPage();
 
 		await user.click(screen.getByRole("button", { name: "Nightly Sync" }));
-		const [, row] = screen.getAllByRole("row");
+		await user.click(
+			screen.getByRole("button", { name: "Show 12 Recorded Checks" }),
+		);
+		const [, row] = within(
+			screen.getByRole("region", { name: "Recorded Checks" }),
+		).getAllByRole("row");
 		expect(row).toHaveTextContent("Default Identity · Contoso");
 
 		await user.click(within(row).getByRole("button"));
@@ -311,6 +343,9 @@ describe("AccessChecksPage", () => {
 		media.desktop = false;
 		const { user } = renderPage(
 			"/audit/access-checks?group_by=workflow&key=wf-1",
+		);
+		await user.click(
+			screen.getByRole("button", { name: "Show 12 Recorded Checks" }),
 		);
 
 		const [record] = within(
@@ -332,6 +367,42 @@ describe("AccessChecksPage", () => {
 		await user.click(within(record).getByRole("button"));
 		expect(
 			await screen.findByRole("dialog", { name: "Access Check" }),
+		).toBeVisible();
+	});
+
+	it("changes the aggregation window and can show ungrouped checks", async () => {
+		const { user } = renderPage(
+			"/audit/access-checks?group_by=workflow&key=wf-1",
+		);
+		expect(
+			screen.getByText("1 summary on this page · Page 1"),
+		).toBeVisible();
+		await user.click(
+			screen.getByRole("combobox", { name: "Time Aggregate" }),
+		);
+		await user.click(screen.getByRole("option", { name: "6 Hours" }));
+		expect(audit.list).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				aggregate: "6h",
+				workflow_id: "wf-1",
+				continuation_token: undefined,
+			}),
+			true,
+			{ preservePageData: true },
+		);
+		await user.click(
+			screen.getByRole("combobox", { name: "Time Aggregate" }),
+		);
+		await user.click(screen.getByRole("option", { name: "Off" }));
+		const params = audit.list.mock.lastCall?.[0];
+		expect(params).not.toHaveProperty("aggregate");
+		expect(params).not.toHaveProperty("aggregate_key");
+		expect(screen.getByText("1 event on this page · Page 1")).toBeVisible();
+		expect(
+			screen.queryByRole("columnheader", { name: "# Checks" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("columnheader", { name: "Would Stop Here" }),
 		).toBeVisible();
 	});
 });
