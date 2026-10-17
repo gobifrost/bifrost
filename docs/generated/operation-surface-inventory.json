@@ -4231,7 +4231,7 @@
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "ExecutionRepository.list_executions and caller scope resolver",
+        "authorization_resolver": "shared.sdk_execution_reads.list_sdk_executions and caller scope resolver",
         "cli": {
           "path": [
             "workflows",
@@ -4291,7 +4291,7 @@
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "ExecutionRepository.get_execution access check",
+        "authorization_resolver": "shared.sdk_execution_reads.get_sdk_execution access check",
         "cli": {
           "path": [
             "workflows",

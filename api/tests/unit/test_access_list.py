@@ -1866,6 +1866,9 @@ def scanned_functions(entry_functions) -> dict[str, list[tuple[str, str]]]:
 # function holds (``_elevated_site_nodes``), so a new elevated branch in a
 # registered function fails until it is counted and its replacement named.
 _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
+    "shared.sdk_agent_runs.enqueue_sdk_agent_run": (2, "cutover"),
+    "src.routers.agent_runs.execute_agent_run": (2, "cutover"),
+    "src.routers.agent_runs.rerun_agent_run": (2, "cutover"),
     "bifrost._context.resolve_scope": (1, "cutover"),
     # Full execution powers remain until delegated execution cutover.
     "src.core.auth.get_execution_context": (1, "cutover"),
@@ -2106,7 +2109,7 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor._execute_knowledge_search": (1, "reach"),
     "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor._execute_system_tool": (3, "reach"),
     "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor._execute_tool": (2, "reach"),
-    "src.services.execution.autonomous_agent_executor._acting_user_from_caller": (2, "reach"),
+    "src.services.execution.autonomous_agent_executor._acting_user_from_caller": (3, "reach"),
     "src.services.execution.engine.execute": (2, "cutover"),
     "src.services.execution.service.execute_tool": (1, "reach"),
     "src.services.execution.worker.run_execution": (2, "cutover"),
@@ -2119,7 +2122,7 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.services.manifest_import.ManifestResolver._resolve_table": (1, "system"),
     "src.services.mcp_server.gateway.MCPAgentGatewayService._agent_repo": (2, "reach"),
     "src.services.mcp_server.gateway.MCPAgentGatewayService._authorize_discovery_scope": (1, "reach"),
-    "src.services.mcp_server.gateway.MCPAgentGatewayService._dispatch_delegation": (1, "reach"),
+    "src.services.mcp_server.gateway.MCPAgentGatewayService._dispatch_delegation": (3, "reach"),
     "src.services.mcp_server.gateway.MCPAgentGatewayService._dispatch_system_tool": (3, "reach"),
     "src.services.mcp_server.gateway.MCPAgentGatewayService._dispatch_workflow": (2, "reach"),
     "src.services.mcp_server.gateway.MCPAgentGatewayService._has_scope_bypass": (4, "reach"),
@@ -2142,6 +2145,7 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.services.mcp_server.tools.code_editor._check_write_scope": (1, "repository.readwrite"),
     "src.services.mcp_server.tools.knowledge.search_knowledge": (1, "reach"),
     "src.services.policy_rule_service.PolicyRuleService._get": (1, "reach"),
+    "src.services.role_permissions.replace_identity_permissions": (1, "privilegedaccess.readwrite"),
     "src.services.solution_scope.derive_execution_solution_scope": (1, "cutover"),
     "src.services.solution_scope.is_engine_user": (1, "cutover"),
     "src.services.solution_scope.is_service_principal": (2, "reach"),
