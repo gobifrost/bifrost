@@ -530,7 +530,7 @@ class TestRolePermissions:
             await replace_identity_permissions(
                 db_session,
                 caller=_delegate(
-                    grants=(
+                    (
                         {"privilegedaccess.readwrite"},
                         (Boundary(BoundaryKind.ORGANIZATION, uuid4()),),
                     ),
@@ -554,7 +554,7 @@ class TestRolePermissions:
         response = await replace_identity_permissions(
             db_session,
             caller=_delegate(
-                grants=({"privilegedaccess.readwrite"}, (Boundary(BoundaryKind.PLATFORM),)),
+                ({"privilegedaccess.readwrite"}, (Boundary(BoundaryKind.PLATFORM),)),
             ),
             role_id=role.id,
             permissions=[],

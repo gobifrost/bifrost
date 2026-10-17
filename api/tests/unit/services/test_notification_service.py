@@ -538,6 +538,7 @@ class TestNotificationService:
             )
 
         assert result is True
+        mock_redis.delete.assert_called_once()
 
     async def test_admin_cannot_access_another_users_personal_notification(
         self, notification_service, mock_redis
@@ -559,7 +560,6 @@ class TestNotificationService:
         )
         assert dismissed is False
         mock_redis.delete.assert_not_called()
-        mock_redis.delete.assert_called_once()
 
     async def test_admin_cannot_dismiss_another_users_notification(
         self, notification_service, mock_redis
