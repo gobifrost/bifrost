@@ -7,16 +7,14 @@ encrypted client_secret, the visibility flags
 shared service token that backs both flags.
 
 Authorization model:
-- Org admin (or platform admin) for CRUD; for v1 we accept any user in
-  the connection's org plus platform admins. The frontend gates the page
-  to admins; locking down further is a Phase 5 job once the role lattice
-  is finalized.
-- ``/connect`` requires the same scope plus the ability to initiate
-  OAuth on behalf of the org (admin path).
-- Per-user routes under ``/api/me/mcp-connections/...`` only require
-  that the connection is in the caller's org and that
-  ``available_in_chat`` is set on it (otherwise per-user delegation is
-  meaningless — the user would never use the resulting token).
+- Shared connection reads require ``mcp.readbasic`` and mutations require
+  ``mcp.readwrite`` at the connection's persisted organization. Detail
+  lookups mask connections outside the caller's operation reach as not found.
+- Shared service-token connect and catalog refresh use the same persisted-org
+  ``mcp.readwrite`` authorization as other mutations.
+- Per-user OAuth connect requires visibility of the shared connection through
+  ``mcp.readbasic``; credential enumeration and disconnect remain restricted
+  to the caller's own credential rows.
 """
 
 from __future__ import annotations
@@ -175,11 +173,12 @@ async def _get_shared_connection_or_404(
     operation: str,
 ) -> MCPConnection:
     """Load and authorize a shared connection at its persisted organization."""
+    caller = await load_caller(ctx.db, user)
+    reach = operation_reach(caller, operation)
     repo = MCPConnectionRepository(session=ctx.db, org_id=None)
     connection = await repo.get_connection(connection_id)
-    if connection is None:
+    if connection is None or not reach.covers(connection.organization_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="MCP connection not found")
-    caller = await load_caller(ctx.db, user)
     require_operation(caller, operation, org_target(connection.organization_id))
     return connection
 

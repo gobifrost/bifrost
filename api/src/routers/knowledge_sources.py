@@ -417,16 +417,25 @@ async def get_document(
 ) -> KnowledgeDocumentPublic:
     """Get a document by UUID."""
     caller = await _knowledge_caller(db, user)
+    reach = operation_reach(caller, KNOWLEDGE_DOCUMENTS_GET_OPERATION)
     repo = KnowledgeRepository(session=db, org_id=None)
     doc = await repo.get_by_id(doc_id)
 
     if not doc or doc.namespace != namespace:
         raise HTTPException(404, f"Document {doc_id} not found in namespace {namespace}")
 
+    organization_id = UUID(doc.organization_id) if doc.organization_id else None
+    # Global remains an explicit permission target: callers with an
+    # organization-scoped grant keep the existing 403 rather than treating
+    # Global as a hidden organization. Foreign organization documents are
+    # hidden before the persisted-target permission check.
+    if organization_id is not None and not reach.covers(organization_id):
+        raise HTTPException(404, f"Document {doc_id} not found in namespace {namespace}")
+
     require_operation(
         caller,
         KNOWLEDGE_DOCUMENTS_GET_OPERATION,
-        org_target(UUID(doc.organization_id) if doc.organization_id else None),
+        org_target(organization_id),
     )
 
     return KnowledgeDocumentPublic(

@@ -343,6 +343,63 @@ async def test_stop_mirror_notifies_child_once(db_session, redis_holder):
     pool.stop_service_child.assert_awaited_once_with(attempt_id)
 
 
+async def test_stop_mirror_closes_tick_database_context_before_child_termination(
+    db_session, redis_holder, monkeypatch
+):
+    """A child result may acquire the DB while its stop is being awaited."""
+    definition, _, _ = await _ensure_service(db_session)
+    await db_session.commit()
+    pool = StubPool()
+    loop = _loop(pool)
+    await loop.tick()
+    attempt_id = pool.route_service.await_args.kwargs["attempt_id"]
+
+    await service_lifecycle.stop_service(db_session, definition)
+    await db_session.commit()
+
+    from src.core import database
+
+    real_get_db_context = database.get_db_context
+    state = {"open_contexts": 0, "callback_completed": False}
+
+    @asynccontextmanager
+    async def tracked_db_context():
+        state["open_contexts"] += 1
+        try:
+            async with real_get_db_context() as db:
+                yield db
+        finally:
+            state["open_contexts"] -= 1
+
+    async def stop_child(_attempt_id):
+        assert state["open_contexts"] == 0
+        await loop.handle_service_result({
+            "success": True,
+            "status": "Success",
+            "service": {
+                "service_id": str(definition.id),
+                "attempt_id": attempt_id,
+                "lease_token": loop._owned[attempt_id].lease_token,
+            },
+        })
+        state["callback_completed"] = True
+        return True
+
+    monkeypatch.setattr(database, "get_db_context", tracked_db_context)
+    pool.stop_service_child.side_effect = stop_child
+    loop._last_beat = 0
+
+    await loop.tick()
+
+    assert state["callback_completed"] is True
+    pool.stop_service_child.assert_awaited_once_with(attempt_id)
+    from src.models.orm.services import ServiceAttempt
+
+    attempt = await db_session.get(ServiceAttempt, attempt_id)
+    await db_session.refresh(attempt)
+    assert attempt.state == "stopped"
+
+
 async def test_success_completes_clean_return(db_session):
     definition, _, _ = await _ensure_service(db_session)
     await db_session.commit()

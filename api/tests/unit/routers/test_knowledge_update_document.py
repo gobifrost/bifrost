@@ -31,6 +31,7 @@ from src.models.orm.knowledge import KnowledgeStore
 from src.models.orm.users import User
 from src.repositories.knowledge import KnowledgeRepository
 import src.routers.knowledge_sources as knowledge_router
+from src.services.authorization.reach import EVERYTHING
 
 
 class _FakeEmbedder:
@@ -93,6 +94,7 @@ def _bypass_authorization_for_document_storage_regressions(monkeypatch):
 
     monkeypatch.setattr(knowledge_router, "_authorize_knowledge_scope", authorize_scope)
     monkeypatch.setattr(knowledge_router, "_knowledge_caller", knowledge_caller)
+    monkeypatch.setattr(knowledge_router, "operation_reach", lambda *_args: EVERYTHING)
     monkeypatch.setattr(knowledge_router, "require_operation", lambda *_args: None)
     monkeypatch.setattr(
         knowledge_router,

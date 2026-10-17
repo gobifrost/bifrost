@@ -121,6 +121,7 @@ class ServiceClaimLoop:
         """One claim-loop iteration: expire, beat owned, claim fill."""
         from src.core.database import get_db_context
 
+        stops: list[str] = []
         async with get_db_context() as db:
             from src.services import service_lifecycle as lifecycle
 
@@ -129,15 +130,20 @@ class ServiceClaimLoop:
                 logger.warning("expired %d service lease(s)", expired)
             await db.commit()
 
-            await self._beat_owned(db)
+            await self._beat_owned(db, stops)
             await db.commit()
-            await self._store_cursors()
 
+        # A child can send its terminal result while SIGTERM waits for it to
+        # exit.  That callback needs an independent transaction and may lock
+        # this attempt, so never await child termination while this tick owns
+        # a session or its heartbeat row lock.
+        await self._store_cursors()
+        await self._stop_children(stops)
         await self._claim_available()
 
     # -- owned-attempt supervision -------------------------------------
 
-    async def _beat_owned(self, db) -> None:
+    async def _beat_owned(self, db, stops: list[str]) -> None:
         """Renew leases, drain ready reports, mirror stops, rotate tokens."""
         import time as _time
 
@@ -162,19 +168,23 @@ class ServiceClaimLoop:
                 logger.warning(
                     "lost ownership of attempt %s; dropping", attempt_key[:8]
                 )
-                await self._drop_ownership(owned)
+                await self._drop_ownership(owned, stops)
                 continue
 
             definition = await db.get(ServiceDefinition, owned.service_id)
-            if await self._enforce_startup_grace(db, owned, attempt, definition):
+            if await self._enforce_startup_grace(
+                db, owned, attempt, definition, stops
+            ):
                 continue
-            await self._drain_ready(db, owned)
-            await self._mirror_stop(db, owned, attempt)
+            await self._drain_ready(db, owned, stops)
+            await self._mirror_stop(db, owned, attempt, stops)
             await self._report_memory(owned)
             await self._rotate_token(db, owned, definition)
             await self._flush_logs(db, owned)
 
-    async def _enforce_startup_grace(self, db, owned, attempt, definition) -> bool:
+    async def _enforce_startup_grace(
+        self, db, owned, attempt, definition, stops: list[str]
+    ) -> bool:
         """Fail attempts that never report ready within their grace.
 
         A live-but-never-ready child would otherwise renew its lease forever
@@ -217,10 +227,10 @@ class ServiceClaimLoop:
             # Lost the race: another owner already moved the attempt, so
             # our completion was fenced and there is nothing to roll back.
             pass
-        await self._drop_ownership(owned)
+        await self._drop_ownership(owned, stops)
         return True
 
-    async def _drain_ready(self, db, owned: OwnedAttempt) -> None:
+    async def _drain_ready(self, db, owned: OwnedAttempt, stops: list[str]) -> None:
         """Consume the child's ready() report into the attempt row."""
         from src.core.cache import get_redis
         from src.services import service_lifecycle as lifecycle
@@ -243,13 +253,15 @@ class ServiceClaimLoop:
                 lease_token=owned.lease_token,
             )
         except lifecycle.StaleLeaseError:
-            await self._drop_ownership(owned)
+            await self._drop_ownership(owned, stops)
         except Exception as e:
             logger.warning(
                 "mark_attempt_ready failed for %s: %s", owned.attempt_id, e
             )
 
-    async def _mirror_stop(self, db, owned: OwnedAttempt, attempt) -> None:
+    async def _mirror_stop(
+        self, db, owned: OwnedAttempt, attempt, stops: list[str]
+    ) -> None:
         """Mirror durable stop_requested to the child exactly once."""
         if attempt.stop_requested_at is None or owned.stop_mirrored:
             return
@@ -263,15 +275,7 @@ class ServiceClaimLoop:
                 )
         except Exception as e:
             logger.debug("stop mirror failed for %s: %s", owned.attempt_id, e)
-        if self.pool is not None:
-            try:
-                await self.pool.stop_service_child(str(owned.attempt_id))
-            except Exception as e:
-                logger.warning(
-                    "stop_service_child failed for %s: %s",
-                    owned.attempt_id,
-                    e,
-                )
+        stops.append(str(owned.attempt_id))
 
     async def _report_memory(self, owned: OwnedAttempt) -> None:
         """Publish one owned attempt's memory into the pool registration hash.
@@ -427,7 +431,7 @@ class ServiceClaimLoop:
                 "token rotation failed for %s: %s", owned.attempt_id, e
             )
 
-    async def _drop_ownership(self, owned: OwnedAttempt) -> None:
+    async def _drop_ownership(self, owned: OwnedAttempt, stops: list[str]) -> None:
         """Forget an attempt and revoke its rotation channel."""
         self._owned.pop(str(owned.attempt_id), None)
         await self._clear_reported_memory(str(owned.attempt_id))
@@ -440,13 +444,19 @@ class ServiceClaimLoop:
             logger.debug(
                 "token key cleanup failed for %s: %s", owned.attempt_id, e
             )
-        if self.pool is not None:
+        stops.append(str(owned.attempt_id))
+
+    async def _stop_children(self, attempt_ids: list[str]) -> None:
+        """Terminate children only after the tick transaction has closed."""
+        if self.pool is None:
+            return
+        for attempt_id in dict.fromkeys(attempt_ids):
             try:
-                await self.pool.stop_service_child(str(owned.attempt_id))
-            except Exception:
-                # Best-effort child stop during ownership drop: the DB
-                # lease expiry (not this signal) owns the lifetime.
-                pass
+                await self.pool.stop_service_child(attempt_id)
+            except Exception as e:
+                # The durable stop state and lease expiry own recovery; this
+                # signal only prompts the local child to exit promptly.
+                logger.warning("stop_service_child failed for %s: %s", attempt_id, e)
 
     # -- claiming ------------------------------------------------------
 

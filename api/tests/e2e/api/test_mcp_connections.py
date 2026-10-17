@@ -33,15 +33,13 @@ def server_template(e2e_client, platform_admin):
     )
 
 
-@pytest.fixture
-def connection(e2e_client, platform_admin, server_template, org1):
-    """Create a connection bound to ``server_template`` in ``org1``."""
+def _create_connection(e2e_client, headers, server_id: str, organization_id: str) -> dict:
     resp = e2e_client.post(
         "/api/mcp-connections",
-        headers=platform_admin.headers,
+        headers=headers,
         json={
-            "server_id": server_template["id"],
-            "organization_id": str(org1["id"]),
+            "server_id": server_id,
+            "organization_id": organization_id,
             "client_id": "vendor-client-id",
             "client_secret": "vendor-client-secret-PLAINTEXT",
             "available_in_chat": True,
@@ -49,12 +47,35 @@ def connection(e2e_client, platform_admin, server_template, org1):
         },
     )
     assert resp.status_code == 201, resp.text
-    conn = resp.json()
+    return resp.json()
+
+
+@pytest.fixture
+def connection(e2e_client, platform_admin, server_template, org1):
+    """Create a connection bound to ``server_template`` in Contoso."""
+    conn = _create_connection(
+        e2e_client, platform_admin.headers, server_template["id"], str(org1["id"])
+    )
     yield conn
-    e2e_client.delete(
+    deleted = e2e_client.delete(
         f"/api/mcp-connections/{conn['id']}",
         headers=platform_admin.headers,
     )
+    assert deleted.status_code == 204, deleted.text
+
+
+@pytest.fixture
+def org2_connection(e2e_client, platform_admin, server_template, org2):
+    """Create a connection in Fabrikam for the scoped read control."""
+    conn = _create_connection(
+        e2e_client, platform_admin.headers, server_template["id"], str(org2["id"])
+    )
+    yield conn
+    deleted = e2e_client.delete(
+        f"/api/mcp-connections/{conn['id']}",
+        headers=platform_admin.headers,
+    )
+    assert deleted.status_code == 204, deleted.text
 
 
 @pytest.mark.e2e
@@ -118,10 +139,21 @@ class TestMCPConnectionsCRUD:
         )
         assert resp.status_code == 404
 
+    def test_org_user_can_read_own_org_connection(
+        self, e2e_client, org2_user, org2_connection
+    ):
+        """The User base role's mcp.readbasic applies at Fabrikam only."""
+        resp = e2e_client.get(
+            f"/api/mcp-connections/{org2_connection['id']}",
+            headers=org2_user.headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["organization_id"] == str(org2_user.organization_id)
+
     def test_org_user_cannot_see_other_orgs_connection(
         self, e2e_client, org2_user, connection
     ):
-        """A connection in org1 must 404 for an org2 user."""
+        """A Contoso connection is hidden from mcp.readbasic at Fabrikam."""
         resp = e2e_client.get(
             f"/api/mcp-connections/{connection['id']}",
             headers=org2_user.headers,
