@@ -15,7 +15,6 @@ from src.jobs.platform.application_deploy import (
     APPLICATION_DEPLOY_DEFINITION,
     ApplicationDeployPayload,
 )
-from src.jobs.schedulers import platform_jobs as scheduler
 from src.services.platform_jobs import enqueue_platform_job
 
 
@@ -84,9 +83,7 @@ async def test_admit_kubernetes_platform_job_binds_first_pod(
     assert claim.id == job.id
     assert claim.lease_token == token
     assert claim.job_type == "application.deploy"
-    assert claim.hard_memory_ratio == scheduler.get_platform_job_definition(
-        "application.deploy"
-    ).policy.hard_memory_ratio
+    assert claim.hard_memory_ratio == APPLICATION_DEPLOY_DEFINITION.policy.hard_memory_ratio
     await db_session.refresh(job)
     assert job.kubernetes_pod_uid == "pod-uid"
     assert job.lease_owner == "kubernetes-pod:pod-uid"

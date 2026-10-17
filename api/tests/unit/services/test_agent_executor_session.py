@@ -321,6 +321,7 @@ class TestDelegationUsesFactory:
         ):
             executor = AutonomousAgentExecutor(factory, redis_client=mock_redis)
             executor._caller = caller
+            executor._acting_user_id = caller.principal.user_id
             executor._run_user_id = None
             executor._run_as = None
             executor._current_run_id = str(uuid4())
