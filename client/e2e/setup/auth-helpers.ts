@@ -99,7 +99,9 @@ export async function createTestUsers(): Promise<AllCredentials> {
 /**
  * Register a user and complete MFA setup via API.
  */
-async function registerAndSetupMFA(user: TestUser): Promise<UserCredentials> {
+export async function registerAndSetupMFA(
+	user: TestUser,
+): Promise<UserCredentials> {
 	// Register
 	const registerRes = await fetch(`${API_URL}/auth/register`, {
 		method: "POST",

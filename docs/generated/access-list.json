@@ -3362,7 +3362,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/forms/{form_id}/embed-secrets",
-    "permission": "secrets.read",
+    "permission": "settings.readwrite",
     "reason": "Current original-user permission and reach; resource sharing, parent-resource launch, and Solution boundaries remain independent."
   },
   {

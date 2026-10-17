@@ -82,8 +82,11 @@ def _cleanup_tool(e2e_client, headers, tool: dict) -> None:
         pass
 
 
-def _tool_ids(e2e_client, headers) -> set[str]:
-    resp = e2e_client.get("/api/tools", headers=headers, params={"type": "workflow"})
+def _tool_ids(e2e_client, headers, *, scope: str | None = None) -> set[str]:
+    params = {"type": "workflow"}
+    if scope is not None:
+        params["scope"] = scope
+    resp = e2e_client.get("/api/tools", headers=headers, params=params)
     assert resp.status_code == 200, resp.text
     return {t["id"] for t in resp.json()["tools"]}
 
@@ -221,13 +224,17 @@ def access_level_tools(e2e_client, platform_admin, org1, org2, bespoke_role, oth
 
 @pytest.mark.e2e
 class TestToolsAccessFilter:
-    def test_platform_admin_sees_every_access_level(
-        self, e2e_client, platform_admin, access_level_tools
+    def test_platform_admin_sees_every_access_level_in_each_selected_org(
+        self, e2e_client, platform_admin, access_level_tools, org1, org2
     ):
-        """Regression guard: admin output must stay unfiltered (agent editor)."""
-        ids = _tool_ids(e2e_client, platform_admin.headers)
-        for key, tool in access_level_tools.items():
-            assert tool["id"] in ids, f"admin missing {key} tool"
+        """Access level does not filter an admin's explicitly selected org."""
+        org1_ids = _tool_ids(e2e_client, platform_admin.headers, scope=org1["id"])
+        for key in ("everyone", "authenticated", "role_based_match", "role_based_no_match"):
+            assert access_level_tools[key]["id"] in org1_ids, f"admin missing {key} tool"
+        assert access_level_tools["other_org"]["id"] not in org1_ids
+
+        org2_ids = _tool_ids(e2e_client, platform_admin.headers, scope=org2["id"])
+        assert access_level_tools["other_org"]["id"] in org2_ids
 
     def test_org_member_sees_everyone_authenticated_and_matching_role(
         self, e2e_client, role_member, access_level_tools

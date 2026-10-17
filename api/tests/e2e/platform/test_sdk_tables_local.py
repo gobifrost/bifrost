@@ -11,11 +11,10 @@ delete, missing-entity results) end to end:
   forked-child socket tests, where the child's network API is dead);
 - the same values served over external HTTP match.
 
-A second, service-identity path registers a live ``@service`` doing the
-same reads: its token identity differs (system-user non-superuser,
-org-confined), so the default admin-bypass table reads as empty/denied —
-proving the parent dispatches service table calls under the service
-token, not the initiating user's admin flag.
+A second, service-context path registers a live ``@service`` doing the same
+reads. It runs with its persisted run user and the service definition's
+default organization, which is distinct from the org-scoped test table, so
+the SDK maps that table to its documented empty/missing results.
 """
 
 from __future__ import annotations
@@ -48,14 +47,14 @@ def live_table_keys():
 
 
 @pytest.fixture(scope="module")
-def live_table(e2e_client, platform_admin, live_table_keys):
-    """Seed one GLOBAL table with three rows (deterministic for any caller org)."""
+def live_table(e2e_client, platform_admin, org1, live_table_keys):
+    """Seed one org-scoped table for the worker workflow's default scope."""
     name = live_table_keys["table"]
     create = e2e_client.post(
         "/api/tables",
         headers=platform_admin.headers,
         json={"name": name, "description": "stage 3a local tables E2E",
-              "organization_id": None},
+              "organization_id": org1["id"]},
     )
     assert create.status_code == 201, create.text
     table_id = create.json()["id"]
@@ -404,11 +403,7 @@ async def {function_name}() -> None:
     used_socket = get_engine_socket_path() is not None
 
     queried = await tables.query("{table}")
-    try:
-        await tables.get("{table}", "row-a")
-        get_result = "LEAKED"
-    except Exception as e:
-        get_result = type(e).__name__
+    doc = await tables.get("{table}", "row-a")
     counted = await tables.count("{table}")
     logging.getLogger(__name__).info(
         "TABLES_LOCAL %s",
@@ -416,7 +411,7 @@ async def {function_name}() -> None:
             "used_socket": used_socket,
             "query_total": queried.total,
             "query_docs": len(queried.documents),
-            "get_result": get_result,
+            "doc_id": doc.id if doc is not None else None,
             "count": counted,
         }}),
     )
@@ -448,7 +443,9 @@ async def _wait_for_state(e2e_client, headers, definition_id: str, state: str,
 
 
 @pytest.fixture(scope="module")
-def live_tables_service(e2e_client, platform_admin, live_table_keys, live_table):
+def live_tables_service(
+    e2e_client, platform_admin, org1, live_table_keys, live_table
+):
     suffix = live_table_keys["tag"]
     function_name = f"e2e_svc_tables_{suffix}"
     path = f"workflows/e2e_svc_tables_{suffix}.py"
@@ -457,7 +454,8 @@ def live_tables_service(e2e_client, platform_admin, live_table_keys, live_table)
         platform_admin.headers,
         path,
         _SERVICE_SOURCE.format(
-            function_name=function_name, table=live_table_keys["table"]
+            function_name=function_name,
+            table=live_table_keys["table"],
         ),
         function_name,
     )
@@ -465,6 +463,7 @@ def live_tables_service(e2e_client, platform_admin, live_table_keys, live_table)
     definition = _service_definition(
         e2e_client, platform_admin.headers, registered["id"]
     )
+    assert definition["organization_id"] != org1["id"]
     yield definition
     e2e_client.post(
         f"/api/services/{definition['id']}/stop", headers=platform_admin.headers
@@ -481,12 +480,12 @@ class TestSdkTablesLocalLiveService:
     async def test_service_reads_use_service_token_identity(
         self, e2e_client, platform_admin, live_tables_service
     ):
-        """The service child rides the local transport under its own token.
+        """The service child rides local transport under its persisted run context.
 
-        The seeded table carries the default admin-bypass policy, which the
-        service token (system-user non-superuser) does not satisfy — so a
-        local query reads empty, a local get denies, and a local count is
-        zero, even though the platform-admin initiator could read everything.
+        The service definition's current default organization differs from
+        org1, where the test table lives. The local table helpers therefore
+        return their documented hidden-table results: an empty query, no
+        document, and zero count.
         """
         definition_id = live_tables_service["id"]
         await _wait_for_state(
@@ -513,5 +512,5 @@ class TestSdkTablesLocalLiveService:
         assert payload["used_socket"] is True
         assert payload["query_total"] == 0
         assert payload["query_docs"] == 0
-        assert payload["get_result"] == "BifrostAuthorizationError"
+        assert payload["doc_id"] is None
         assert payload["count"] == 0

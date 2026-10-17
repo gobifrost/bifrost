@@ -80,6 +80,11 @@ class MockMCPContext:
         # Mirrors MCPContext: a person's own MCP call carries no agent-run user.
         self.run_user_id = None
         self.agent_run_id = None
+        # Mirrors the durable runtime provenance fields on MCPContext. Human
+        # parity calls deliberately carry no runtime credential.
+        self.runtime_credential_kind = None
+        self.runtime_credential_id = None
+        self.runtime_service_id = None
 
 
 @pytest_asyncio.fixture
@@ -1052,28 +1057,22 @@ class TestMcpParityWorkflow:
         # 409 we surface as error. Happy path: no "error" in structured.
         assert delete_result.structured_content is not None
 
-    async def test_workflow_list_is_platform_admin_only(
+    async def test_workflow_list_filters_for_a_regular_user(
         self, admin_context, org_user_context
     ) -> None:
-        """R1b batch 5 decision 1: list stays platform-admin only — a
-        non-admin caller gets a plain 403 from the MCP tool, same as REST.
-        """
+        """A regular user's workflow list is filtered by reach and permission."""
         from src.services.mcp_server.tools.workflow import bifrost_workflow_list
 
         admin_result = await bifrost_workflow_list(admin_context)
         assert "error" not in (admin_result.structured_content or {"error": "x"})
 
         org_result = await bifrost_workflow_list(org_user_context)
-        assert org_result.structured_content is not None
-        assert org_result.structured_content.get("status_code") == 403
+        assert org_result.structured_content == {"workflows": [], "count": 0}
 
-    async def test_workflow_get_admin_cross_org_and_non_admin_403(
-        self, admin_context, org_user_context, e2e_client, platform_admin
+    async def test_workflow_get_admin_cross_org_and_non_admin_is_hidden(
+        self, admin_context, org_user_context, e2e_client, platform_admin, org2
     ) -> None:
-        """New ``GET /api/workflows/{id}`` (batch 5 decision 3): platform
-        admin can read any org's workflow by id; non-admin gets 403; a
-        random id gets 404.
-        """
+        """An admin can read a foreign workflow while a regular user cannot discover it."""
         from src.services.mcp_server.tools.workflow import bifrost_workflow_get
 
         path = f"apps/mcp_parity/get_{uuid4().hex[:6]}.py"
@@ -1092,7 +1091,11 @@ class TestMcpParityWorkflow:
         register_resp = e2e_client.post(
             "/api/workflows/register",
             headers=platform_admin.headers,
-            json={"path": path, "function_name": "get_target"},
+            json={
+                "path": path,
+                "function_name": "get_target",
+                "organization_id": org2["id"],
+            },
         )
         assert register_resp.status_code in (200, 201), register_resp.text
         workflow_id = register_resp.json()["id"]
@@ -1104,7 +1107,7 @@ class TestMcpParityWorkflow:
 
         org_result = await bifrost_workflow_get(org_user_context, workflow_id)
         assert org_result.structured_content is not None
-        assert org_result.structured_content.get("status_code") == 403
+        assert org_result.structured_content.get("status_code") == 404
 
         missing_result = await bifrost_workflow_get(admin_context, str(uuid4()))
         assert missing_result.structured_content is not None
@@ -1385,7 +1388,7 @@ class TestMcpParityAgents:
         assert delete_result.structured_content is not None
         assert delete_result.structured_content.get("deleted") == agent_id
 
-    async def test_regular_user_update_of_someone_elses_agent_is_403(
+    async def test_regular_user_update_of_someone_elses_agent_is_hidden(
         self, admin_context, org_user_context: MockMCPContext, e2e_client
     ) -> None:
         from src.services.mcp_server.tools.agents import (
@@ -1409,7 +1412,7 @@ class TestMcpParityAgents:
                 org_user_context, agent_ref=agent_id, name="hijacked"
             )
             payload = update_result.structured_content or {}
-            assert payload.get("status_code") == 403, payload
+            assert payload.get("status_code") == 404, payload
         finally:
             await bifrost_agent_delete(admin_context, agent_ref=agent_id)
 
@@ -1775,16 +1778,21 @@ class TestMcpParityForms:
         assert delete_result.structured_content.get("deleted") == form_id
 
     async def test_regular_user_cannot_create_form(
-        self, org_user_context: MockMCPContext
+        self, org_user_context: MockMCPContext, e2e_client, platform_admin, org1_user
     ) -> None:
         """Forms are admin-managed; a regular org user's create is forwarded
         as REST's 403, not silently allowed or masked as a 500."""
         from src.services.mcp_server.tools.forms import bifrost_form_create
 
+        workflow_id = _register_workflow(
+            e2e_client,
+            platform_admin.headers,
+            organization_id=str(org1_user.organization_id),
+        )
         result = await bifrost_form_create(
             org_user_context,
             name=f"mcp-parity-form-denied-{uuid4().hex[:8]}",
-            workflow_id=str(uuid4()),
+            workflow_id=workflow_id,
             fields=[],
         )
         payload = result.structured_content or {}
@@ -1999,12 +2007,11 @@ class TestMcpParityEvents:
         finally:
             await bifrost_event_source_delete(admin_context, source_ref=source_id)
 
-    async def test_regular_user_cannot_list_event_sources(
+    async def test_regular_user_lists_no_unreachable_event_sources(
         self, org_user_context: MockMCPContext
     ) -> None:
-        """Event source/subscription administration is platform-admin only."""
+        """A regular user's event-source collection is filtered by reach."""
         from src.services.mcp_server.tools.events import bifrost_event_source_list
 
         result = await bifrost_event_source_list(org_user_context)
-        payload = result.structured_content or {}
-        assert payload.get("status_code") == 403, payload
+        assert result.structured_content == {"sources": [], "count": 0}

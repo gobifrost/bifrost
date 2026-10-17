@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 from src.core.auth import UserPrincipal
 from src.core.pubsub import manager
@@ -104,6 +104,131 @@ async def test_basic_execution_reader_drops_diagnostics_without_losing_subscript
             {"type": "execution_log", "level": "INFO"}
         )
         diagnostics.assert_awaited_once()
+    finally:
+        manager.connections.pop(channel, None)
+
+
+async def test_table_filter_drop_keeps_subscription_for_later_visible_row(monkeypatch):
+    table_id = str(uuid.uuid4())
+    channel = f"table:{table_id}"
+    websocket = _websocket_with_subscriptions(table_id)
+    user = _user()
+    dispatcher = ws_mod._make_delivery_dispatcher(websocket, user)
+    manager.connections[channel] = {websocket}
+
+    async def filter_and_deliver(ws, _user, _channel, payload):
+        if payload["status"] == "open":
+            await ws.send_json({"type": "document_change", "status": "open"})
+        return True
+
+    handler = AsyncMock(side_effect=filter_and_deliver)
+    monkeypatch.setattr(ws_mod, "_handle_table_message", handler)
+
+    try:
+        await dispatcher(channel, {"status": "done"})
+
+        websocket.send_json.assert_not_awaited()
+        assert websocket in manager.connections[channel]
+
+        await dispatcher(channel, {"status": "open"})
+
+        handler.assert_has_awaits([
+            call(websocket, user, channel, {"status": "done"}),
+            call(websocket, user, channel, {"status": "open"}),
+        ])
+        websocket.send_json.assert_awaited_once_with(
+            {"type": "document_change", "status": "open"}
+        )
+        assert websocket in manager.connections[channel]
+    finally:
+        manager.connections.pop(channel, None)
+
+
+async def test_file_prefix_revocation_keeps_other_prefix_subscribed(monkeypatch):
+    location = f"location-{uuid.uuid4()}"
+    channel = f"files:{location}:shared"
+    blocked_channel = f"files:{location}:blocked"
+    permitted_channel = f"files:{location}:permitted"
+    organization_id = uuid.uuid4()
+    websocket = _websocket_with_subscriptions()
+    websocket.state.file_subscriptions = {
+        f"{channel}:blocked": {
+            "channel_name": channel,
+            "requested_channel": blocked_channel,
+            "location": location,
+            "scope": "shared",
+            "organization_id": organization_id,
+            "prefix": "blocked",
+        },
+        f"{channel}:permitted": {
+            "channel_name": channel,
+            "requested_channel": permitted_channel,
+            "location": location,
+            "scope": "shared",
+            "organization_id": organization_id,
+            "prefix": "permitted",
+        },
+    }
+    manager.connections[channel] = {websocket}
+    monkeypatch.setattr(
+        ws_mod, "_file_has_applicable_policy", AsyncMock(return_value=True)
+    )
+
+    async def file_allowed(*, path, **_kwargs):
+        return path != "blocked"
+
+    monkeypatch.setattr(ws_mod, "_file_allowed", AsyncMock(side_effect=file_allowed))
+    dispatcher = ws_mod._make_delivery_dispatcher(websocket, _user())
+
+    try:
+        await dispatcher(channel, {"type": "file_policy_changed"})
+
+        assert websocket in manager.connections[channel]
+        assert set(websocket.state.file_subscriptions) == {f"{channel}:permitted"}
+        websocket.send_json.assert_awaited_once_with({
+            "type": "subscription_revoked",
+            "channel": blocked_channel,
+        })
+
+        await dispatcher(channel, {
+            "type": "file_change",
+            "location": location,
+            "scope": "shared",
+            "path": "permitted/report.txt",
+            "action": "write",
+        })
+
+        websocket.send_json.assert_has_awaits([
+            call({"type": "subscription_revoked", "channel": blocked_channel}),
+            call({
+                "type": "file_change",
+                "channel": permitted_channel,
+                "location": location,
+                "scope": "shared",
+                "path": "permitted/report.txt",
+                "action": "write",
+            }),
+        ])
+        assert websocket.send_json.await_count == 2
+        assert websocket in manager.connections[channel]
+    finally:
+        manager.connections.pop(channel, None)
+
+
+async def test_genuine_delivery_denial_removes_subscription(monkeypatch):
+    execution_id = str(uuid.uuid4())
+    channel = f"execution:{execution_id}"
+    websocket = _websocket_with_subscriptions()
+    manager.connections[channel] = {websocket}
+    monkeypatch.setattr(ws_mod, "can_access_execution", AsyncMock(return_value=False))
+
+    try:
+        await ws_mod._make_delivery_dispatcher(websocket, _user())(
+            channel, {"type": "execution_status"}
+        )
+
+        websocket.send_json.assert_not_awaited()
+        assert channel not in manager.connections
     finally:
         manager.connections.pop(channel, None)
 

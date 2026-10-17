@@ -299,15 +299,37 @@ async def {provider_name}(value: str = "default"):
 class TestDataProviderAccess:
     """Test data provider access control."""
 
-    def test_org_user_cannot_list_all_data_providers(self, e2e_client, org1_user):
-        """Org user cannot list all data providers (requires platform admin)."""
-        response = e2e_client.get(
-            "/api/workflows?type=data_provider",
-            headers=org1_user.headers,
+    def test_org_user_lists_only_reachable_data_providers(
+        self, e2e_client, platform_admin, org1_user, org2
+    ):
+        """An org user receives a filtered data-provider collection."""
+        suffix = uuid4().hex[:8]
+        path = f"workflows/e2e_hidden_provider_{suffix}.py"
+        function_name = f"e2e_hidden_provider_{suffix}"
+        provider = write_and_register(
+            e2e_client,
+            platform_admin.headers,
+            path,
+            (
+                "from bifrost import data_provider\n\n"
+                f"@data_provider(name='{function_name}')\n"
+                f"def {function_name}():\n"
+                "    return []\n"
+            ),
+            function_name,
+            organization_id=org2["id"],
         )
-        # Workflows endpoint requires platform admin access
-        assert response.status_code == 403, \
-            f"Org user should not be able to list all data providers: {response.status_code}"
+        try:
+            response = e2e_client.get(
+                "/api/workflows?type=data_provider",
+                headers=org1_user.headers,
+            )
+            assert response.status_code == 200, response.text
+            assert provider["id"] not in {item["id"] for item in response.json()}
+        finally:
+            e2e_client.delete(
+                f"/api/files/editor?path={path}", headers=platform_admin.headers
+            )
 
 
 @pytest.mark.e2e

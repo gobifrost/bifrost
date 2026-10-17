@@ -6,7 +6,7 @@ const auth = {
 	isLoading: false,
 	isPlatformAdmin: false,
 	isOrgUser: false,
-	hasRole: vi.fn(() => false),
+	hasRole: vi.fn((_role: string) => false),
 };
 
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => auth }));
@@ -27,12 +27,20 @@ vi.mock("@/services/authorization", () => ({
 	}),
 }));
 
+import { EMBED_TOKEN_KEY, type EmbedTokenClaims } from "@/lib/auth-token";
 import {
 	meetsRequirement,
 	type AuthorizationSummary,
 	type PermissionRequirement,
 } from "@/lib/authorization";
 import { ProtectedRoute } from "./ProtectedRoute";
+
+function setEmbedTokenClaims(claims: EmbedTokenClaims) {
+	sessionStorage.setItem(
+		EMBED_TOKEN_KEY,
+		`header.${btoa(JSON.stringify(claims)).replace(/=/g, "")}.signature`,
+	);
+}
 
 const operator: AuthorizationSummary = {
 	is_platform_admin: false,
@@ -48,6 +56,7 @@ const operator: AuthorizationSummary = {
 };
 
 beforeEach(() => {
+	sessionStorage.clear();
 	auth.isAuthenticated = true;
 	auth.isLoading = false;
 	auth.isPlatformAdmin = false;
@@ -129,6 +138,73 @@ describe("ProtectedRoute permission mode", () => {
 		);
 		expect(screen.getByText("No access")).toBeInTheDocument();
 		expect(screen.queryByText("Roles page")).not.toBeInTheDocument();
+	});
+
+	it("admits an HMAC form session only on its scoped result route", () => {
+		auth.hasRole.mockImplementation((role) => role === "EmbedUser");
+		authz.authorization = undefined;
+		setEmbedTokenClaims({
+			embed: true,
+			embed_kind: "form",
+			grant: "hmac",
+			form_id: "form-1",
+		});
+
+		renderWithProviders(
+			<ProtectedRoute
+				requirePermission={{ permission: "executions.readbasic" }}
+				allowHmacFormExecutionResult
+			>
+				<p>Execution result</p>
+			</ProtectedRoute>,
+		);
+
+		expect(screen.getByText("Execution result")).toBeInTheDocument();
+	});
+
+	it("keeps HMAC form sessions out of ordinary permission routes", () => {
+		auth.hasRole.mockImplementation((role) => role === "EmbedUser");
+		authz.authorization = undefined;
+		setEmbedTokenClaims({
+			embed: true,
+			embed_kind: "form",
+			grant: "hmac",
+			form_id: "form-1",
+		});
+
+		renderWithProviders(
+			<ProtectedRoute
+				requirePermission={{ permission: "executions.readbasic" }}
+			>
+				<p>Execution result</p>
+			</ProtectedRoute>,
+		);
+
+		expect(screen.getByText("No access")).toBeInTheDocument();
+		expect(screen.queryByText("Execution result")).not.toBeInTheDocument();
+	});
+
+	it("does not treat a public form session as an execution-result capability", () => {
+		auth.hasRole.mockImplementation((role) => role === "EmbedUser");
+		authz.authorization = undefined;
+		setEmbedTokenClaims({
+			embed: true,
+			embed_kind: "form",
+			grant: "public",
+			form_id: "form-1",
+		});
+
+		renderWithProviders(
+			<ProtectedRoute
+				requirePermission={{ permission: "executions.readbasic" }}
+				allowHmacFormExecutionResult
+			>
+				<p>Execution result</p>
+			</ProtectedRoute>,
+		);
+
+		expect(screen.getByText("No access")).toBeInTheDocument();
+		expect(screen.queryByText("Execution result")).not.toBeInTheDocument();
 	});
 
 	it("needs a platform-wide grant for a global requirement", () => {

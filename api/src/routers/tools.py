@@ -122,10 +122,6 @@ async def list_tools(
             filter_org_id,
             active_only=not include_inactive,
         )
-        workflows = [
-            workflow for workflow in workflows
-            if await workflow_repo._can_access_entity(workflow)
-        ]
 
         for workflow in workflows:
             tools.append(

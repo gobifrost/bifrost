@@ -1102,6 +1102,7 @@ const routeElements = (
 						requirePermission={{
 							permission: "executions.readbasic",
 						}}
+						allowHmacFormExecutionResult
 					>
 						<ExecutionDetails />
 					</ProtectedRoute>

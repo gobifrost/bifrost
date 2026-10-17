@@ -988,7 +988,7 @@ async def get_integration(
 
     # Get integration-level default config values
     config_defaults = await repo.get_integration_defaults(
-        integration.id, external=False, reveal_secrets=False
+        integration.id, external=False
     )
 
     return IntegrationDetailResponse(
@@ -1352,7 +1352,7 @@ async def update_integration_config(
 
     # Return the saved config
     saved_config = await repo.get_integration_defaults(
-        integration_id, external=False, reveal_secrets=False
+        integration_id, external=False
     )
     return IntegrationConfigResponse(
         integration_id=integration_id,
@@ -1383,9 +1383,7 @@ async def get_integration_config(
             detail="Integration not found",
         )
 
-    config = await repo.get_integration_defaults(
-        integration_id, external=False, reveal_secrets=False
-    )
+    config = await repo.get_integration_defaults(integration_id, external=False)
     return IntegrationConfigResponse(
         integration_id=integration_id,
         config=config,

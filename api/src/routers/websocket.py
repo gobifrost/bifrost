@@ -280,14 +280,19 @@ def _fresh_table_policy_user(user: UserPrincipal) -> UserPrincipal:
 
 
 async def _revoke_live_subscription(
-    websocket: WebSocket, channel: str, *, notice_channel: str | None = None
+    websocket: WebSocket,
+    channel: str,
+    *,
+    notice_channel: str | None = None,
+    remove_connection: bool = True,
 ) -> None:
-    """Tell the client and manager that current authority no longer permits a channel."""
-    sockets = manager.connections.get(channel)
-    if sockets is not None:
-        sockets.discard(websocket)
-        if not sockets:
-            manager.connections.pop(channel, None)
+    """Tell the client that a subscription was revoked and optionally detach it."""
+    if remove_connection:
+        sockets = manager.connections.get(channel)
+        if sockets is not None:
+            sockets.discard(websocket)
+            if not sockets:
+                manager.connections.pop(channel, None)
     await websocket.send_json({
         "type": "subscription_revoked",
         "channel": notice_channel or channel,
@@ -323,18 +328,19 @@ async def _handle_table_message(
     user: UserPrincipal,
     channel_name: str,
     payload: dict[str, Any],
-) -> None:
-    """Apply the four-way visibility decision and emit the right action.
+) -> bool:
+    """Apply table visibility and report whether its subscription remains active.
 
     `policy_changed` triggers a re-evaluation; if the user no longer satisfies
     `is_subscribe_authorized`, a `subscription_revoked` notice is sent and the
-    subscription state is cleared.
+    subscription state is cleared. A row omitted by a policy or user filter
+    keeps the subscription active for later visible rows.
     """
     table_id = channel_name.split(":", 1)[1]
     table_subs: dict[str, dict[str, Any]] = getattr(websocket.state, "table_subscriptions", {})
     sub = table_subs.get(table_id)
     if sub is None:
-        return  # no longer subscribed
+        return False  # no longer subscribed
 
     msg_type = payload.get("type")
 
@@ -346,20 +352,20 @@ async def _handle_table_message(
     if policies is None or policy_user is None or not is_subscribe_authorized(policies, policy_user):
         table_subs.pop(table_id, None)
         await _revoke_live_subscription(websocket, channel_name)
-        return
+        return False
 
     if msg_type == "policy_changed":
-        return
+        return True
 
     if msg_type == "table_invalidated":
         await websocket.send_json({
             "type": "table_invalidated",
             "table_id": table_id,
         })
-        return
+        return True
 
     if msg_type != "document_change":
-        return
+        return True
 
     decision = decide_visibility_change(
         old_row=payload.get("old_row"),
@@ -369,7 +375,7 @@ async def _handle_table_message(
         user_filter=sub.get("filter"),
     )
     if decision is None:
-        return
+        return True
 
     action, body = decision
     if action == "delete":
@@ -386,6 +392,7 @@ async def _handle_table_message(
             "table_id": table_id,
             "row": body,
         })
+    return True
 
 
 async def _re_evaluate_subscription(
@@ -689,7 +696,7 @@ async def _handle_file_message(
     user: UserPrincipal,
     channel_name: str,
     payload: dict[str, Any],
-) -> None:
+) -> bool:
     file_subs: dict[str, dict[str, Any]] = getattr(websocket.state, "file_subscriptions", {})
     matching = [
         (sub_key, sub)
@@ -697,7 +704,12 @@ async def _handle_file_message(
         if sub.get("channel_name") == channel_name
     ]
     if not matching:
-        return
+        return False
+
+    def subscription_active() -> bool:
+        return any(
+            sub.get("channel_name") == channel_name for sub in file_subs.values()
+        )
 
     msg_type = payload.get("type")
     if msg_type == "file_policy_changed":
@@ -720,15 +732,16 @@ async def _handle_file_message(
                     websocket,
                     sub["channel_name"],
                     notice_channel=sub["requested_channel"],
+                    remove_connection=False,
                 )
-        return
+        return subscription_active()
 
     if msg_type != "file_change":
-        return
+        return subscription_active()
 
     changed_path = str(payload.get("path") or "").strip("/")
     if not changed_path:
-        return
+        return subscription_active()
 
     delivered_prefixes: set[str] = set()
     for sub_key, sub in matching:
@@ -749,6 +762,7 @@ async def _handle_file_message(
                 websocket,
                 sub["channel_name"],
                 notice_channel=sub["requested_channel"],
+                remove_connection=False,
             )
             continue
         delivered_prefixes.add(prefix)
@@ -760,6 +774,7 @@ async def _handle_file_message(
             "path": changed_path,
             "action": payload.get("action"),
         })
+    return subscription_active()
 
 
 async def _current_ws_caller(db, user: UserPrincipal):
@@ -938,18 +953,12 @@ async def can_access_admin_notifications(user: UserPrincipal) -> bool:
         return caller is not None and can_read_admin_notifications(caller)
 
 
-async def _delivery_allowed(websocket: WebSocket, user: UserPrincipal, channel: str, payload: dict[str, Any]) -> bool:
-    """One current-Caller guard for every sensitive live delivery."""
-    if channel.startswith("table:"):
-        await _handle_table_message(websocket, user, channel, payload)
-        return False
+async def _delivery_allowed(user: UserPrincipal, channel: str, payload: dict[str, Any]) -> bool:
+    """Return whether a raw live delivery is currently authorized."""
     if channel.startswith("user:"):
         async with get_db_context() as db:
             caller = await _current_ws_caller(db, user)
             return caller is not None and caller.ctx is not None and channel == f"user:{caller.ctx.user_id}"
-    if channel.startswith("files:"):
-        await _handle_file_message(websocket, user, channel, payload)
-        return False
     if channel.startswith("execution:"):
         return await can_access_execution(user, channel.split(":", 1)[1])
     if channel.startswith("history:"):
@@ -995,17 +1004,33 @@ async def _delivery_allowed(websocket: WebSocket, user: UserPrincipal, channel: 
 
 
 def _make_delivery_dispatcher(websocket: WebSocket, user: UserPrincipal):
+    def remove_connection(channel: str) -> None:
+        if channel in manager.connections:
+            manager.connections[channel].discard(websocket)
+            if not manager.connections[channel]:
+                manager.connections.pop(channel, None)
+
     async def dispatch(channel: str, payload: dict[str, Any]) -> None:
-        if await _delivery_allowed(websocket, user, channel, payload):
+        # Table and file handlers own their visibility filtering and delivery.
+        # A filtered message is not an authorization revocation, so it must not
+        # remove the socket from the channel before a later visible message.
+        if channel.startswith("table:"):
+            if not await _handle_table_message(websocket, user, channel, payload):
+                remove_connection(channel)
+            return
+        if channel.startswith("files:"):
+            if not await _handle_file_message(websocket, user, channel, payload):
+                remove_connection(channel)
+            return
+
+        if await _delivery_allowed(user, channel, payload):
             if _is_diagnostic_execution_log(channel, payload):
                 execution_id = channel.split(":", 1)[1]
                 if not await can_read_execution_diagnostics(user, execution_id):
                     return
             await websocket.send_json(payload)
-        elif channel in manager.connections:
-            manager.connections[channel].discard(websocket)
-            if not manager.connections[channel]:
-                manager.connections.pop(channel, None)
+        else:
+            remove_connection(channel)
     return dispatch
 
 

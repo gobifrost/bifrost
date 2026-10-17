@@ -374,16 +374,18 @@ class TestEventSourceCRUD:
         )
         assert response.status_code == 403, f"Expected 403, got {response.status_code}: {response.text}"
 
-    def test_org_user_cannot_list_sources(self, e2e_client, org1_user):
-        """Org users cannot list event sources (platform admin only)."""
+    def test_org_user_lists_no_unreachable_sources(self, e2e_client, org1_user):
+        """Event-source collections filter sources outside the caller's reach."""
         response = e2e_client.get(
             "/api/events/sources",
             headers=org1_user.headers,
         )
-        assert response.status_code == 403, f"Expected 403, got {response.status_code}: {response.text}"
+        assert response.status_code == 200, response.text
+        assert response.json()["items"] == []
+        assert response.json()["total"] == 0
 
-    def test_org_user_cannot_get_source(self, e2e_client, platform_admin, org1_user):
-        """Org users cannot get event source details (platform admin only)."""
+    def test_org_user_cannot_discover_unreachable_source(self, e2e_client, platform_admin, org1_user):
+        """An unreachable event source is hidden from an org user."""
         # Create a source as admin first
         response = e2e_client.post(
             "/api/events/sources",
@@ -402,7 +404,7 @@ class TestEventSourceCRUD:
                 f"/api/events/sources/{source['id']}",
                 headers=org1_user.headers,
             )
-            assert response.status_code == 403, f"Expected 403, got {response.status_code}: {response.text}"
+            assert response.status_code == 404, f"Expected 404, got {response.status_code}: {response.text}"
         finally:
             # Cleanup
             e2e_client.delete(

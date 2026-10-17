@@ -51,6 +51,7 @@ async def e2e_external_users_workflow(foo: str = "bar") -> dict:
         "e2e_external_users_workflow.py",
         content,
         "e2e_external_users_workflow",
+        organization_id=None,
     )
     yield result
     e2e_client.delete(
@@ -83,6 +84,7 @@ async def e2e_external_users_denied_workflow() -> dict:
         "e2e_external_users_denied_workflow.py",
         content,
         "e2e_external_users_denied_workflow",
+        organization_id=None,
     )
     yield result
     e2e_client.delete(

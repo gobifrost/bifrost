@@ -3,13 +3,15 @@
 import pytest
 
 
-def _create_form(client, headers):
+def _create_form(client, headers, **overrides):
     """Create a minimal form for testing."""
-    r = client.post("/api/forms", headers=headers, json={
+    body = {
         "name": "Embed Secret Test Form",
         "description": "Test form for embed secrets",
         "form_schema": {"fields": []},
-    })
+    }
+    body.update(overrides)
+    r = client.post("/api/forms", headers=headers, json=body)
     assert r.status_code == 201, r.text
     return r.json()
 
@@ -104,8 +106,20 @@ class TestFormEmbedSecrets:
         )
         assert r.status_code == 204, r.text
 
-    def test_non_admin_cannot_manage_secrets(self, e2e_client, org1_user, test_form):
-        """Regular org users should NOT be able to manage embed secrets."""
+    def test_non_admin_cannot_manage_secrets(
+        self, e2e_client, org1, org1_user, platform_admin
+    ):
+        """A reachable form still denies a user without settings authority."""
+        test_form = _create_form(
+            e2e_client,
+            platform_admin.headers,
+            organization_id=org1["id"],
+            access_level="authenticated",
+        )
+        visible = e2e_client.get(
+            f"/api/forms/{test_form['id']}", headers=org1_user.headers
+        )
+        assert visible.status_code == 200, visible.text
         r = e2e_client.post(
             f"/api/forms/{test_form['id']}/embed-secrets",
             headers=org1_user.headers,

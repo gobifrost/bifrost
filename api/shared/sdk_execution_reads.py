@@ -63,9 +63,7 @@ class SdkExecutionReadError(Exception):
 
     Raised by the shared service so the HTTP handler (``HTTPException``)
     and callers reached over the worker-local engine socket read the same status/detail. Missing entities are 404, denied
-    access is 403, malformed scope is 400 (workflows list) or 422
-    (executions list) — matching the historical handler responses
-    exactly.
+    access is 403, and malformed scope is 422, matching the shared scope grammar.
     """
 
     def __init__(self, status_code: int, detail: str) -> None:

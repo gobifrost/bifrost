@@ -13,6 +13,7 @@ from aiohttp import web
 from bifrost.solution_dev.function_host import (
     LocalWorkflowImportError,
     LocalWorkflowResolutionError,
+    set_dev_execution_context,
 )
 from bifrost.solution_dev.proxy import (
     DEV_AUTH_EXPIRED_DETAIL,
@@ -146,6 +147,13 @@ class _StubHost:
     async def run(self, ref, params):
         self.last_call = (ref, params)
         return {"ran_local": ref, "params": params}
+
+
+class _ContextHost(_StubHost):
+    async def run(self, ref, params):
+        from bifrost import context
+
+        return {"org_id": context.org_id, "solution_id": context.solution_id}
 
 
 def _make_upstream(record):
@@ -536,8 +544,97 @@ async def test_other_api_path_proxies_with_org_header():
         assert r.status_code == 200
         assert r.json()["upstream_other"] is True
         assert record["other_path"] == "/api/tables/foo"
-        assert record["other_query"] == "limit=10&solution=S"
+        assert record["other_query"] == "limit=10&solution=S&scope=O"
         assert record["other_org"] == "O"
+    finally:
+        await dev_runner.cleanup()
+        await up_runner.cleanup()
+
+
+async def test_local_workflow_uses_captured_bound_execution_context():
+    """The aiohttp request task retains solution-start's selected org/install."""
+    from bifrost._context import clear_execution_context
+
+    record = {}
+    up_port, dev_port = _free_port(), _free_port()
+    up_runner = await _serve(_make_upstream(record), up_port)
+    set_dev_execution_context(
+        user={"id": "user-1", "email": "dev@contoso.example", "name": "Dev"},
+        org={"id": "ORG", "name": "Contoso"},
+        solution_id="SOLUTION",
+    )
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}", token="t", app_id="A", org_id="ORG"
+    )
+    dev_runner = await _serve(
+        build_dev_app(cfg, _ContextHost({"workflows/local.py::run"}), vite_url="http://127.0.0.1:1"),
+        dev_port,
+    )
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"http://127.0.0.1:{dev_port}/api/workflows/execute",
+                json={"workflow_id": "workflows/local.py::run", "input_data": {}},
+            )
+        assert response.status_code == 200
+        assert response.json()["result"] == {"org_id": "ORG", "solution_id": "SOLUTION"}
+    finally:
+        clear_execution_context()
+        await dev_runner.cleanup()
+        await up_runner.cleanup()
+
+
+async def test_api_proxy_replaces_browser_scope_with_bound_install_scope():
+    """A preview cannot use a query string to select a foreign organization."""
+    record = {}
+    up_port, dev_port = _free_port(), _free_port()
+    up_runner = await _serve(_make_upstream(record), up_port)
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}",
+        token="t",
+        app_id="A",
+        org_id="O",
+        solution_id="S",
+    )
+    dev_runner = await _serve(
+        build_dev_app(cfg, _StubHost(set()), vite_url="http://127.0.0.1:1"), dev_port
+    )
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"http://127.0.0.1:{dev_port}/api/tables/foo?scope=FOREIGN&limit=10"
+            )
+        assert response.status_code == 200
+        assert yarl.URL(f"/?{record['other_query']}").query == {
+            "scope": "O",
+            "limit": "10",
+            "solution": "S",
+        }
+    finally:
+        await dev_runner.cleanup()
+        await up_runner.cleanup()
+
+
+async def test_api_proxy_binds_global_install_scope():
+    record = {}
+    up_port, dev_port = _free_port(), _free_port()
+    up_runner = await _serve(_make_upstream(record), up_port)
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}",
+        token="t",
+        app_id="A",
+        org_id=None,
+    )
+    dev_runner = await _serve(
+        build_dev_app(cfg, _StubHost(set()), vite_url="http://127.0.0.1:1"), dev_port
+    )
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"http://127.0.0.1:{dev_port}/api/tables/foo?scope=FOREIGN"
+            )
+        assert response.status_code == 200
+        assert yarl.URL(f"/?{record['other_query']}").query == {"scope": "global"}
     finally:
         await dev_runner.cleanup()
         await up_runner.cleanup()

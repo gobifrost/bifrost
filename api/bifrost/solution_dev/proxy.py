@@ -45,6 +45,7 @@ import httpx
 import yarl
 from aiohttp import web
 
+from bifrost._context import _execution_context
 from bifrost.solution_dev.function_host import LocalWorkflowError
 from bifrost.client import BifrostAPIError
 
@@ -142,6 +143,7 @@ _HOST = web.AppKey("host", object)
 _VITE = web.AppKey("vite_url", str)
 _HTTP = web.AppKey("http", httpx.AsyncClient)
 _WARNED_UUID_REFS = web.AppKey("warned_uuid_refs", set)
+_LOCAL_EXECUTION_CONTEXT = web.AppKey("local_execution_context", object)
 
 
 def build_dev_app(cfg: DevProxyConfig, host, vite_url: str) -> web.Application:
@@ -151,6 +153,10 @@ def build_dev_app(cfg: DevProxyConfig, host, vite_url: str) -> web.Application:
     app[_VITE] = vite_url.rstrip("/")
     app[_HTTP] = httpx.AsyncClient(timeout=120.0)
     app[_WARNED_UUID_REFS] = set()
+    # ``solution start`` seeds this ContextVar before aiohttp creates request
+    # tasks. Capture the verified local execution context here so local
+    # FunctionHost calls retain their selected org/install scope.
+    app[_LOCAL_EXECUTION_CONTEXT] = _execution_context.get()
 
     app.router.add_get(_DEV_SESSION_PATH, _dev_session_handler)
     app.router.add_post("/api/workflows/execute", _execute_handler)
@@ -180,6 +186,11 @@ def _with_solution_query(rel_url: yarl.URL, solution_id: str | None) -> yarl.URL
     if not solution_id:
         return rel_url
     return rel_url.update_query(solution=solution_id)
+
+
+def _with_bound_scope_query(rel_url: yarl.URL, organization_id: str | None) -> yarl.URL:
+    """Keep preview data-plane calls in the bound install's organization."""
+    return rel_url.update_query(scope=organization_id or "global")
 
 
 def _passthrough_headers(resp, default_content_type: str) -> dict[str, str]:
@@ -857,17 +868,27 @@ async def _execute_handler(request: web.Request) -> web.Response:
                 f"'{local_ref}' instead.",
                 err=True,
             )
+        local_context = request.app[_LOCAL_EXECUTION_CONTEXT]
+        context_token = (
+            _execution_context.set(local_context)
+            if local_context is not None
+            else None
+        )
         try:
-            result = await host.run(local_ref, body.get("input_data") or {})
-        except Exception as exc:
-            # Returning {"error": ...} at 200 gives the dev the actual
-            # traceback — the whole point of a local debug loop.
-            import traceback
+            try:
+                result = await host.run(local_ref, body.get("input_data") or {})
+            except Exception as exc:
+                # Returning {"error": ...} at 200 gives the dev the actual
+                # traceback — the whole point of a local debug loop.
+                import traceback
 
-            tb = traceback.format_exc()
-            return _local_execution_response(
-                error=f"{type(exc).__name__}: {exc}\n\n{tb}"
-            )
+                tb = traceback.format_exc()
+                return _local_execution_response(
+                    error=f"{type(exc).__name__}: {exc}\n\n{tb}"
+                )
+        finally:
+            if context_token is not None:
+                _execution_context.reset(context_token)
         return _local_execution_response(result=result)
 
     if not cfg.global_repo_access:
@@ -921,7 +942,9 @@ async def _api_proxy_handler(request: web.Request) -> web.StreamResponse:
             request.method,
             _join_upstream(
                 cfg.upstream_url,
-                _with_solution_query(request.rel_url, cfg.solution_id),
+                _with_bound_scope_query(
+                    _with_solution_query(request.rel_url, cfg.solution_id), cfg.org_id
+                ),
             ),
             content=data or None,
         )

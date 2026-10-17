@@ -217,6 +217,16 @@ async def test_solution_dev_context_binds_proxy_and_local_host_to_installed_scop
             "async def missing(table_name):\n"
             "    await tables.query(table_name)\n"
         )
+        set_dev_execution_context(
+            user={
+                "id": str(platform_admin.user_id),
+                "email": platform_admin.email,
+                "name": platform_admin.name,
+                "is_superuser": True,
+            },
+            org={"id": str(organization_id), "name": org1["name"]},
+            solution_id=str(source_id),
+        )
         host = FunctionHost(workspace, client=client)
         host.reload()
 
@@ -246,16 +256,6 @@ async def test_solution_dev_context_binds_proxy_and_local_host_to_installed_scop
             assert empty_table_response.status_code == 200, empty_table_response.text
             assert empty_table_response.json()["documents"] == []
 
-        set_dev_execution_context(
-            user={
-                "id": str(platform_admin.user_id),
-                "email": platform_admin.email,
-                "name": platform_admin.name,
-                "is_superuser": True,
-            },
-            org={"id": str(organization_id), "name": org1["name"]},
-            solution_id=str(source_id),
-        )
         async with httpx.AsyncClient(base_url=proxy_url) as proxy_client:
             local_workflow = await proxy_client.post(
                 "/api/workflows/execute",
@@ -268,7 +268,9 @@ async def test_solution_dev_context_binds_proxy_and_local_host_to_installed_scop
                 },
             )
         assert local_workflow.status_code == 200, local_workflow.text
-        assert local_workflow.json()["result"] == {
+        local_payload = local_workflow.json()
+        assert "result" in local_payload, local_payload
+        assert local_payload["result"] == {
             "before": ["owned-row"],
             "after": ["local-write", "owned-row"],
         }

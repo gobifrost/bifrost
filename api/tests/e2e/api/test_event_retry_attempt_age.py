@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from src.core.principal import UserPrincipal
 from src.models.enums import EventDeliveryStatus
 from src.models.orm.events import Event, EventDelivery
 from src.repositories.events import EventDeliveryRepository
@@ -21,7 +22,7 @@ from tests.e2e.api.test_events import (
 @pytest.mark.e2e
 @pytest.mark.asyncio
 async def test_retry_timeout_uses_attempt_age(
-    event_source, subscription, test_workflow, db_session, monkeypatch
+    event_source, subscription, test_workflow, db_session, monkeypatch, platform_admin
 ):
     old = datetime.now(timezone.utc) - timedelta(days=1)
     event = Event(
@@ -44,7 +45,12 @@ async def test_retry_timeout_uses_attempt_age(
     await db_session.flush()
     monkeypatch.setattr(EventProcessor, "queue_event_deliveries", AsyncMock(return_value=1))
 
-    response = await retry_delivery(delivery.id, None, None, db_session)
+    principal = UserPrincipal(
+        user_id=platform_admin.user_id,
+        email=platform_admin.email,
+        organization_id=platform_admin.organization_id,
+    )
+    response = await retry_delivery(delivery.id, None, principal, db_session)
 
     assert response.status == "pending"
     assert delivery.completed_at is None

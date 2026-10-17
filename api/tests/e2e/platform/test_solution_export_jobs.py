@@ -38,9 +38,9 @@ def _job_payload(password: str = "correct horse battery staple") -> dict:
     }
 
 
-def test_download_link_requires_platform_admin(e2e_client, platform_admin, org1_user):
+def test_download_link_hides_unknown_jobs_from_non_owners(e2e_client, platform_admin, org1_user):
     path = f"/api/solutions/export-jobs/{uuid.uuid4()}/download-link"
-    assert e2e_client.post(path, headers=org1_user.headers).status_code == 403
+    assert e2e_client.post(path, headers=org1_user.headers).status_code == 404
     assert e2e_client.post(path, headers=platform_admin.headers).status_code == 404
 
 

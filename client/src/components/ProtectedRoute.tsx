@@ -3,6 +3,7 @@ import { NoAccess } from "@/components/NoAccess";
 import { PageLoader } from "@/components/PageLoader";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { getEmbedTokenClaims } from "@/lib/auth-token";
 import type { PermissionRequirement } from "@/lib/authorization";
 import { useAuthorization } from "@/services/authorization";
 
@@ -10,6 +11,7 @@ interface ProtectedRouteProps {
 	children: React.ReactNode;
 	requireOrgUser?: boolean;
 	requirePermission?: PermissionRequirement;
+	allowHmacFormExecutionResult?: boolean;
 }
 
 /**
@@ -18,15 +20,28 @@ interface ProtectedRouteProps {
  * @param requireOrgUser - Route requires OrgUser role (or PlatformAdmin)
  * @param requirePermission - Route requires a permission (held anywhere,
  *   or platform-wide with `at: "global"`), from the caller's authorization
+ * @param allowHmacFormExecutionResult - Allows the HMAC form execution result
+ *   route for its signed embed session. The API still binds that session to
+ *   the execution ID before returning data.
  */
 export function ProtectedRoute({
 	children,
 	requireOrgUser = false,
 	requirePermission,
+	allowHmacFormExecutionResult = false,
 }: ProtectedRouteProps) {
 	const { isAuthenticated, isPlatformAdmin, isOrgUser, isLoading, hasRole } =
 		useAuth();
 	const authorization = useAuthorization();
+	const embedClaims = allowHmacFormExecutionResult
+		? getEmbedTokenClaims()
+		: null;
+	const hasHmacFormExecutionResultAccess =
+		allowHmacFormExecutionResult &&
+		hasRole("EmbedUser") &&
+		embedClaims?.embed === true &&
+		embedClaims.embed_kind === "form" &&
+		embedClaims.grant === "hmac";
 
 	// Wait for auth to load
 	if (isLoading) {
@@ -37,7 +52,7 @@ export function ProtectedRoute({
 	if (!isAuthenticated)
 		return <PageLoader message="Opening sign in…" size="sm" />;
 
-	if (requirePermission) {
+	if (requirePermission && !hasHmacFormExecutionResultAccess) {
 		if (authorization.isLoading) {
 			return <PageLoader message="Loading access…" size="sm" />;
 		}

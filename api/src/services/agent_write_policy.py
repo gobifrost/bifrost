@@ -240,9 +240,23 @@ def enforce_personal_agent_create(agent_data: AgentCreate, *, caller_org_id: UUI
 def enforce_personal_agent_update(agent: Agent, agent_data: AgentUpdate) -> None:
     """Enforce ordinary edits to a caller-owned private Agent.
 
-    Assumes the budget-fields gate, ownership gate, and access-level gate
-    (rules already in the router, unchanged in order) have already passed.
+    The router has checked ownership and access level. Privileged
+    configuration, including clearing a budget, requires management access.
     """
+
+    budget_fields = [
+        field_name
+        for field_name in BUDGET_FIELDS
+        if field_name in agent_data.model_fields_set
+    ]
+    if budget_fields:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "You need permission to manage agents to change budget fields: "
+                + ", ".join(budget_fields)
+            ),
+        )
 
     # A non-null privileged field (including an explicit ``[]``) is refused
     # for update — unlike create, an explicit ``[]`` here is still a

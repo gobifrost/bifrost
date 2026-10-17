@@ -402,9 +402,9 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
     ) -> Sequence[Workflow]:
         """List workflow tools for an already-resolved organization filter.
 
-        Platform admins (``self.is_superuser``) see every tool workflow in
-        scope, unchanged. Everyone else is further filtered to the tools
-        they could actually attach to an agent — the same rule
+        Caller-mode listings apply the canonical entity check, including named
+        workflow-management authority at the workflow's persisted organization.
+        Legacy repository callers retain their access-level filter — the same rule
         ``agent_write_policy.validate_user_tool_access`` enforces at save time (see
         ``shared.workflow_access.user_can_access_workflow``) — so the agent
         editor's tool picker never offers a tool the save would reject.
@@ -440,6 +440,13 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
         stmt = stmt.order_by(Workflow.name)
         result = await self.session.execute(stmt)
         workflows = list(result.scalars().all())
+
+        if self.caller is not None:
+            return [
+                workflow
+                for workflow in workflows
+                if await self._can_access_entity(workflow)
+            ]
 
         if self.is_superuser:
             return workflows

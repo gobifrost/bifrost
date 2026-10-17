@@ -99,7 +99,11 @@ async def list_form_embed_secrets(
     _user: CurrentUser,
     form_id: UUID = Path(...),
 ):
-    await _require_embed_secret_permission(ctx, _user, form_id, "secrets.read")
+    # This response deliberately excludes raw secret material.  It is form
+    # configuration metadata, so keep its gate aligned with the other HMAC
+    # settings operations.  Creating a secret remains separately gated by
+    # ``secrets.read`` because it returns the raw value once.
+    await _require_embed_secret_permission(ctx, _user, form_id, "settings.readwrite")
 
     result = await ctx.db.execute(
         select(FormEmbedSecret)

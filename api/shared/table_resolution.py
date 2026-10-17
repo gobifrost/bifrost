@@ -160,6 +160,7 @@ async def get_table_or_404(
 
     # Try UUID lookup first after the target reach gate above.
     table: Table | None = None
+    solution_name_resolution = False
     try:
         table_uuid = UUID(name_or_id)
         table = await ctx.db.get(Table, table_uuid)
@@ -191,6 +192,7 @@ async def get_table_or_404(
         )
         if install_table is not None:
             table = install_table
+            solution_name_resolution = True
         elif solution_id is not None:
             table = None
         else:
@@ -203,7 +205,13 @@ async def get_table_or_404(
         )
 
     await assert_resolved_table_reachable(
-        ctx, table, target_org_id=target_org_id, scope=scope
+        ctx,
+        table,
+        target_org_id=target_org_id,
+        # An open Solution name lookup intentionally cascades from its org to
+        # Global. Preserve the exact-scope rule for UUID and ordinary _repo
+        # lookups, while allowing this documented terminal fallback.
+        scope=None if solution_name_resolution and table.organization_id is None else scope,
     )
 
     # SPIKE inbound gate for direct UUID access to install-owned tables
