@@ -80,6 +80,28 @@ test.describe("Workflow conversion", () => {
 			.click();
 
 		await expect(page).toHaveURL(/\/workflows\/convert\?workflows=/);
+		const analyzeAction = page.getByRole("button", {
+			name: "Analyze selected workflows",
+		});
+		await expect(analyzeAction).toBeVisible();
+		const backBounds = await page
+			.getByRole("link", { name: "Back to workflows" })
+			.boundingBox();
+		const analyzeBounds = await analyzeAction.boundingBox();
+		expect(backBounds).not.toBeNull();
+		expect(analyzeBounds).not.toBeNull();
+		expect(Math.abs(backBounds!.y - analyzeBounds!.y)).toBeLessThanOrEqual(
+			2,
+		);
+		expect(
+			Math.abs(backBounds!.height - analyzeBounds!.height),
+		).toBeLessThanOrEqual(2);
+		expect(
+			analyzeBounds!.x - (backBounds!.x + backBounds!.width),
+		).toBeGreaterThanOrEqual(0);
+		expect(
+			analyzeBounds!.x - (backBounds!.x + backBounds!.width),
+		).toBeLessThanOrEqual(12);
 		await page.screenshot({
 			animations: "disabled",
 			path: testInfo.outputPath("conversion-scope-desktop.png"),

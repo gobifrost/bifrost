@@ -7,10 +7,14 @@ import {
 } from "react-router-dom";
 import {
 	AlertCircle,
+	ArrowLeft,
 	CheckCircle2,
-	X,
+	FileCode2,
 	Loader2,
+	ScanSearch,
 	ShieldCheck,
+	Workflow,
+	X,
 } from "lucide-react";
 
 import { ListPageHeader } from "@/components/layout/ListPageHeader";
@@ -354,7 +358,9 @@ function WorkflowConversionWizard() {
 		});
 	};
 	return (
-		<PageWorkspace className="mx-auto h-full w-full max-w-7xl gap-4">
+		<PageWorkspace
+			className={`mx-auto h-full w-full gap-4 ${stage === "scope" ? "max-w-4xl" : "max-w-7xl"}`}
+		>
 			<ListPageHeader
 				title="Convert workflow access"
 				className="flex-row flex-nowrap"
@@ -428,22 +434,48 @@ function WorkflowConversionWizard() {
 							</div>
 						</>
 					) : stage === "scope" ? (
-						<>
-							<Button asChild variant="outline">
-								<Link to="/workflows">Back to workflows</Link>
+						<div className="ml-auto flex shrink-0 gap-2">
+							<Button
+								asChild
+								variant="ghost"
+								className="min-h-11"
+							>
+								<Link
+									to="/workflows"
+									aria-label="Back to workflows"
+								>
+									<ArrowLeft
+										aria-hidden="true"
+										className="size-4"
+									/>
+									Back
+								</Link>
 							</Button>
 							<Button
+								className="min-h-11"
 								onClick={() => void start()}
 								disabled={starting || selectionLost}
+								aria-busy={starting}
+								aria-label={
+									workflowIds.length || selectionLost
+										? "Analyze selected workflows"
+										: "Analyze all workflows"
+								}
 							>
-								{starting && (
-									<Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
+								{starting ? (
+									<Loader2
+										aria-hidden="true"
+										className="size-4 animate-spin motion-reduce:animate-none"
+									/>
+								) : (
+									<ScanSearch
+										aria-hidden="true"
+										className="size-4"
+									/>
 								)}
-								{workflowIds.length || selectionLost
-									? "Analyze selected workflows"
-									: "Analyze all workflows"}
+								{starting ? "Starting…" : "Analyze"}
 							</Button>
-						</>
+						</div>
 					) : stage === "analyze" ? (
 						<>
 							<p className="text-xs text-muted-foreground">
@@ -516,7 +548,7 @@ function WorkflowConversionWizard() {
 				<div aria-live="polite" role="status" className="sr-only">
 					{job
 						? `Conversion job ${job.status}`
-						: "Choose a conversion scope"}
+						: "Confirm the conversion scope"}
 				</div>
 				{(error || localError) && (
 					<Alert variant="destructive" className="mb-4 shrink-0">
@@ -874,50 +906,66 @@ function Scope({
 	selectionLost: boolean;
 }) {
 	return (
-		<section className="space-y-5" aria-labelledby="conversion-scope">
-			<div className="max-w-2xl space-y-5">
-				<div>
-					<h2 id="conversion-scope" className="text-lg font-semibold">
-						Review your selection
-					</h2>
-					<p className="mt-1 text-sm text-muted-foreground">
-						{selectionLost
-							? "This selection is no longer available. Return to Workflows, choose workflows again, then start a new analysis."
-							: ids.length
-								? `${ids.length} selected workflow${ids.length === 1 ? "" : "s"} will be frozen into this analysis.`
-								: "All workflows you are authorized to review will be analyzed."}
-					</p>
-				</div>
-				<div className="grid gap-3 sm:grid-cols-2">
-					<div className="rounded-[var(--bf-radius-surface)] border p-4">
-						<p className="text-sm font-medium">
-							{ids.length
-								? "Selected workflows"
-								: "All authorized workflows"}
+		<section className="py-2 sm:py-4" aria-labelledby="conversion-scope">
+			<div className="max-w-2xl space-y-4">
+				<h2 id="conversion-scope" className="text-lg font-semibold">
+					Confirm analysis scope
+				</h2>
+				{selectionLost ? (
+					<div className="space-y-2 text-sm">
+						<p className="font-medium">
+							This workflow selection is no longer available.
 						</p>
-						<p className="mt-1 text-sm text-muted-foreground">
-							{ids.length
-								? `${ids.length} selected`
-								: "Workflows, tools, data providers and services"}
+						<p className="leading-6 text-muted-foreground">
+							Go back to Workflows and choose the workflows again.
+							Analysis cannot start until the selection is
+							restored.
 						</p>
 					</div>
-					<div className="rounded-[var(--bf-radius-surface)] border p-4">
-						<p className="text-sm font-medium">
-							30-day observation
-						</p>
-						<p className="mt-1 text-sm text-muted-foreground">
-							Uses Python source and operations recorded over the
-							last 30 days.
-						</p>
-					</div>
-				</div>
-				<Alert>
-					<ShieldCheck className="size-4" />
-					<AlertDescription>
-						Analysis is read-only. Applying later never runs a
-						workflow or silently adds organization reach.
-					</AlertDescription>
-				</Alert>
+				) : (
+					<dl className="divide-y divide-border text-sm">
+						<div className="grid gap-1 py-3 sm:grid-cols-[6rem_minmax(0,1fr)] sm:gap-4">
+							<dt className="flex items-center gap-2 font-medium text-muted-foreground">
+								<Workflow
+									aria-hidden="true"
+									className="size-4 shrink-0"
+								/>
+								Scope
+							</dt>
+							<dd className="font-medium">
+								{ids.length
+									? `${ids.length} selected workflow${ids.length === 1 ? "" : "s"}`
+									: "All workflows you can review"}
+							</dd>
+						</div>
+						<div className="grid gap-1 py-3 sm:grid-cols-[6rem_minmax(0,1fr)] sm:gap-4">
+							<dt className="flex items-start gap-2 font-medium text-muted-foreground">
+								<FileCode2
+									aria-hidden="true"
+									className="mt-1 size-4 shrink-0"
+								/>
+								Inputs
+							</dt>
+							<dd className="leading-6 text-muted-foreground">
+								Python source and imported modules, plus access
+								recorded over the last 30 days.
+							</dd>
+						</div>
+						<div className="grid gap-1 py-3 sm:grid-cols-[6rem_minmax(0,1fr)] sm:gap-4">
+							<dt className="flex items-start gap-2 font-medium text-muted-foreground">
+								<ShieldCheck
+									aria-hidden="true"
+									className="mt-1 size-4 shrink-0"
+								/>
+								Next
+							</dt>
+							<dd className="leading-6 text-muted-foreground">
+								Review proposed permissions and run identities;
+								access changes only when you Apply.
+							</dd>
+						</div>
+					</dl>
+				)}
 			</div>
 		</section>
 	);

@@ -74,15 +74,25 @@ describe("WorkflowConversion", () => {
 		).toBeVisible();
 	});
 
-	it("shows the frozen selection and starts one shared analysis", async () => {
+	it("confirms a selected scope and starts one shared analysis", async () => {
 		analyze.mockResolvedValue({ job_id: "job-synthetic" });
 		const { user } = renderWithProviders(<WorkflowConversion />, {
 			initialEntries: ["/workflows/convert?workflows=workflow-synthetic"],
 		});
 
 		expect(
-			screen.getByText(/1 selected workflow will be frozen/),
+			screen.getByRole("heading", { name: "Confirm analysis scope" }),
 		).toBeVisible();
+		expect(screen.getByText("1 selected workflow")).toBeVisible();
+		expect(
+			screen.getByText(/Python source and imported modules/i),
+		).toBeVisible();
+		expect(
+			screen.getByRole("link", { name: "Back to workflows" }),
+		).toHaveTextContent("Back");
+		expect(
+			screen.getByRole("button", { name: "Analyze selected workflows" }),
+		).toHaveTextContent(/^Analyze$/);
 		await user.click(
 			screen.getByRole("button", { name: "Analyze selected workflows" }),
 		);
@@ -90,6 +100,16 @@ describe("WorkflowConversion", () => {
 			workflow_ids: ["workflow-synthetic"],
 			platform_cutover: false,
 		});
+	});
+
+	it("confirms the explicit all-workflows scope", () => {
+		renderWithProviders(<WorkflowConversion />, {
+			initialEntries: ["/workflows/convert"],
+		});
+		expect(screen.getByText("All workflows you can review")).toBeVisible();
+		expect(
+			screen.getByRole("button", { name: "Analyze all workflows" }),
+		).toBeEnabled();
 	});
 
 	it("uses a bounded navigation-state selection without widening it", async () => {
@@ -132,6 +152,9 @@ describe("WorkflowConversion", () => {
 		expect(
 			screen.getByRole("button", { name: "Analyze selected workflows" }),
 		).toBeDisabled();
+		expect(
+			screen.queryByText("All workflows you can review"),
+		).not.toBeInTheDocument();
 	});
 
 	it("shows current identity risk and a persisted applied identity decision", async () => {

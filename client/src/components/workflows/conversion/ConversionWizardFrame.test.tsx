@@ -17,7 +17,7 @@ describe("ConversionWizardFrame", () => {
 			screen.getByRole("list", { name: "Conversion steps" }),
 		).getAllByRole("listitem");
 		expect(steps).toHaveLength(4);
-		expect(steps[0]).toHaveAccessibleName("Choose workflows, complete");
+		expect(steps[0]).toHaveAccessibleName("Confirm scope, complete");
 		expect(steps[2]).toHaveAccessibleName("Review, current");
 		expect(steps[2]).toHaveAttribute("aria-current", "step");
 		expect(steps[3]).toHaveAccessibleName("Apply, upcoming");

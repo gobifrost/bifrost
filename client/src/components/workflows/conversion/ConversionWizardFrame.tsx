@@ -6,7 +6,7 @@ export type ConversionStage =
 	"scope" | "analyze" | "review" | "apply" | "cutover";
 
 const STEPS: { id: ConversionStage; label: string }[] = [
-	{ id: "scope", label: "Choose workflows" },
+	{ id: "scope", label: "Confirm scope" },
 	{ id: "analyze", label: "Analyze" },
 	{ id: "review", label: "Review" },
 	{ id: "apply", label: "Apply" },
