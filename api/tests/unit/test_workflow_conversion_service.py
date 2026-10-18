@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 from dataclasses import replace
 import hashlib
 
@@ -33,7 +33,18 @@ async def test_persistent_parse_summary_is_reused_until_the_file_version_changes
 
     parse = Mock(wraps=summarize_source)
     monkeypatch.setattr(analysis, "summarize_source", parse)
-    source = "def run():\n    return 1\n"
+    source = (
+        "from bifrost import integrations, tables\n\n"
+        "class Helper:\n"
+        "    def method(self, value):\n"
+        "        return value\n\n"
+        "def run():\n    return 1\n\n"
+        "async def typed_sdk():\n"
+        "    connection = await integrations.get('Contoso')\n"
+        "    oauth = connection.oauth\n"
+        "    await oauth.refresh()\n"
+        "    return await tables.get('Contoso', 'order', scope='global')\n"
+    )
     file = SourceFile(
         key=f"workflows/{uuid4()}.py",
         path="workflows/example.py",
@@ -54,6 +65,10 @@ async def test_persistent_parse_summary_is_reused_until_the_file_version_changes
     )
     assert parse.call_count == 2
 
+    monkeypatch.setattr(conversion, "_sdk_permission_fingerprint", lambda: "b" * 64)
+    await conversion._summary(db_session, file)
+    assert parse.call_count == 3
+
 
 def _workflow():
     return SimpleNamespace(
@@ -68,6 +83,48 @@ def _workflow():
         run_identity_id=None,
         updated_at=datetime(2026, 10, 18, tzinfo=UTC),
     )
+
+
+@pytest.mark.asyncio
+async def test_target_solution_admission_changes_invalidate_the_review_inputs(db_session):
+    from src.models.orm.solutions import Solution
+
+    target = Solution(slug=f"contoso-{uuid4()}", name="Contoso", allow_inbound_access=True)
+    db_session.add(target)
+    await db_session.flush()
+    workflow = _workflow()
+    first = await conversion._policy_revision_snapshot(db_session, workflow)
+
+    target.allow_inbound_access = False
+    await db_session.flush()
+    second = await conversion._policy_revision_snapshot(db_session, workflow)
+
+    assert first["solutions"] != second["solutions"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("solution_id", [None, UUID("00000000-0000-0000-0000-000000000011")])
+async def test_runtime_namespace_import_remains_a_resolved_analysis_dependency(
+    monkeypatch: pytest.MonkeyPatch, solution_id: UUID | None
+) -> None:
+    workflow = _workflow()
+    workflow.solution_id = solution_id
+    resolve = AsyncMock(return_value={"kind": "namespace", "path": "modules/contoso"})
+    monkeypatch.setattr(conversion, "resolve_module_name", resolve)
+    source = SourceFile("workflows/example.py", "workflows/example.py", "", "a" * 64)
+
+    result = await conversion._resolve_import(
+        source, "modules.contoso", 0, workflow=workflow, allow_outbound_access=False
+    )
+
+    assert result is not None
+    assert result.kind == "namespace"
+    assert result.path == "modules/contoso"
+    assert result.source == ""
+    assert len(result.content_hash) == 64
+    scope = resolve.call_args.kwargs["scope"]
+    assert scope.solution_id == (str(solution_id) if solution_id else None)
+    assert scope.global_repo_access is False
 
 
 class _Result:

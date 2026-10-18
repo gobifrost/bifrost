@@ -209,18 +209,15 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
         item = items[str(workflow.id)]
         solution_item = items[str(solution_workflow.id)]
         for candidate in (item,):
-            assert candidate["status"] == "needs_review"
-            assert candidate["source_permissions"] == ["secrets.read"]
-            assert candidate["proposed_permissions"] == ["secrets.read"]
+            assert candidate["status"] == "ready"
+            assert candidate["source_permissions"] == ["configs.read", "secrets.read"]
+            assert candidate["proposed_permissions"] == ["configs.read", "secrets.read"]
             assert any(
                 evidence["call"] == "bifrost.config.get"
                 and evidence["path"] == helper_path
                 for evidence in candidate["evidence"]
             )
-            assert any(
-                "Review whether bifrost.config.get reads a secret" in value
-                for value in candidate["unknowns"]
-            )
+            assert candidate["unknowns"] == []
         assert solution_item["source_permissions"] == ["roles.read"]
         assert solution_item["proposed_permissions"] == ["roles.read"]
         assert any(
@@ -237,14 +234,14 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
                         "workflow_id": str(workflow.id),
                         "source_fingerprint": item["source_fingerprint"],
                         "identity_strategy": "dedicated",
-                        "acknowledged_unknowns": True,
+                        "acknowledged_unknowns": False,
                         "acknowledged_broad_identity": False,
                     },
                     {
                         "workflow_id": str(solution_workflow.id),
                         "source_fingerprint": solution_item["source_fingerprint"],
                         "identity_strategy": "dedicated",
-                        "acknowledged_unknowns": True,
+                        "acknowledged_unknowns": False,
                         "acknowledged_broad_identity": False,
                     },
                 ],
@@ -267,7 +264,7 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
             review = reopened_items[workflow_id]["review"]
             assert review["applied"] is True
             assert review["identity_strategy"] == "dedicated"
-            assert review["acknowledged_unknowns"] is True
+            assert review["acknowledged_unknowns"] is False
 
         await db_session.refresh(workflow)
         identity = await db_session.get(User, workflow.run_identity_id)
@@ -285,7 +282,22 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
         assert identity.identity_kind == IdentityKind.CUSTOM.value
         assert identity.organization_id == workflow.organization_id
         assert identity.base_role_id == UUID("00000000-0000-0000-0000-000000000006")
-        assert grants == ["secrets.read"]
+        assert sorted(grants) == ["configs.read", "secrets.read"]
+
+        # The persisted proposal must pass the runtime's actual named gate,
+        # not merely save the strings the analyzer happened to recommend.
+        from src.services.authorization.explain import (
+            Powers, check_target, load_run_user, permission_entry,
+        )
+
+        run_user = await load_run_user(db_session, identity.id)
+        assert run_user is not None
+        converted_mode, converted_grants = await load_workflow_permissions(db_session, workflow)
+        for permission in ("configs.read", "secrets.read"):
+            assert check_target(
+                run_user, Powers(converted_mode, tuple(converted_grants)),
+                None, permission_entry(permission),
+            ).outcome == "success"
 
         await db_session.refresh(solution_workflow)
         assert solution_workflow.permission_mode == "restricted"

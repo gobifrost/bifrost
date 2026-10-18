@@ -147,6 +147,10 @@ def _is_missing_source_error(exc: Exception) -> bool:
 
 
 async def _summary(db: AsyncSession, source_file) -> dict:
+    # SDK shapes and resource defaults participate in source summaries.
+    cache_version = hashlib.sha256(
+        f"{_analysis_version()}:{_sdk_permission_fingerprint()}".encode()
+    ).hexdigest()
     cached = (
         await db.execute(
             select(WorkflowConversionAnalysisCache).where(
@@ -154,7 +158,7 @@ async def _summary(db: AsyncSession, source_file) -> dict:
                 == _cache_source_key(source_file.key),
                 WorkflowConversionAnalysisCache.content_hash
                 == source_file.content_hash,
-                WorkflowConversionAnalysisCache.analyzer_version == _analysis_version(),
+                WorkflowConversionAnalysisCache.analyzer_version == cache_version,
             )
         )
     ).scalar_one_or_none()
@@ -167,7 +171,7 @@ async def _summary(db: AsyncSession, source_file) -> dict:
         WorkflowConversionAnalysisCache(
             source_key=_cache_source_key(source_file.key),
             content_hash=source_file.content_hash,
-            analyzer_version=_analysis_version(),
+            analyzer_version=cache_version,
             summary=compact,
         )
     )
@@ -211,7 +215,8 @@ async def _resolve_import(
     """Use the runtime module resolver's exact Solution-before-repository scope."""
     if level:
         importer = PurePosixPath(source_file.path)
-        package_parts = list(importer.parent.parts)
+        package_path = importer if source_file.kind == "namespace" else importer.parent
+        package_parts = list(package_path.parts)
         # ``from .x`` resolves in the current package; each added dot climbs
         # one parent.  Package initializers themselves are their own package.
         climb = level - 1
@@ -226,13 +231,27 @@ async def _resolve_import(
         global_repo_access=allow_outbound_access,
     )
     resolved = await resolve_module_name(module, scope=scope)
-    if resolved.get("kind") not in {"module", "package"}:
+    kind = resolved.get("kind")
+    if kind not in {"module", "package", "namespace"}:
         return None
     from shared.workflow_conversion_analysis import SourceFile
 
+    source_path = resolved.get("path")
+    if kind == "namespace" and isinstance(source_path, str):
+        storage_key = (
+            f"_solutions/{workflow.solution_id}/{source_path}/"
+            if workflow.solution_id
+            else f"{source_path}/"
+        )
+        return SourceFile(
+            key=storage_key,
+            path=source_path,
+            source="",
+            content_hash=hashlib.sha256(f"namespace:{storage_key}".encode()).hexdigest(),
+            kind="namespace",
+        )
     content = resolved.get("content")
     storage_path = resolved.get("storage_path")
-    source_path = resolved.get("path")
     if (
         not isinstance(content, str)
         or not isinstance(storage_path, str)
@@ -246,45 +265,17 @@ async def _resolve_import(
         content_hash=str(
             resolved.get("hash") or hashlib.sha256(content.encode()).hexdigest()
         ),
+        kind=str(kind),
     )
 
 
 def _permissions_for_observed_operations(
     operations: list[str],
 ) -> tuple[list[str], list[str]]:
-    """Map recorded canonical operation keys through the access-list catalog.
+    """Resolve recorded route keys and operation IDs from the same SDK catalog."""
+    from shared.workflow_conversion_sdk import permissions_for_recorded_operations
 
-    Static SDK calls deliberately remain unknown until the authoritative SDK
-    operation mapping identifies them; guessing a module-wide permission would
-    overgrant a converted workflow.
-    """
-    from src.models.contracts.access_list import AccessClass
-    from src.services.authorization.enforce import entry_for_operation
-
-    permissions: set[str] = set()
-    unknown: list[str] = []
-    for operation in sorted(set(operations)):
-        try:
-            entry = entry_for_operation(operation)
-            if entry.access_class == AccessClass.PERMISSION:
-                # Access-list permissions are already narrowed to the
-                # operation's ordinary authority. Other access classes may
-                # name a permission solely for an elevated branch.
-                if entry.permission is not None:
-                    permissions.add(entry.permission)
-            elif entry.access_class == AccessClass.TABLE_POLICY:
-                unknown.append(
-                    f"Observed operation {operation} is governed by a resource policy and needs review"
-                )
-            elif entry.access_class == AccessClass.OWN_PRIVATE_AGENT:
-                unknown.append(
-                    f"Observed operation {operation} depends on ownership and needs review"
-                )
-        except KeyError:
-            unknown.append(
-                f"No canonical permission mapping for observed operation {operation}"
-            )
-    return sorted(permissions), unknown
+    return permissions_for_recorded_operations(operations)
 
 
 def _fingerprint(
@@ -483,6 +474,9 @@ async def _policy_revision_snapshot(db: AsyncSession, workflow: Workflow) -> dic
         "tables": await digest_rows(Table),
         "file_policies": await digest_rows(FilePolicy),
         "policy_rules": await digest_rows(PolicyRule),
+        # Per-call Solution selectors may target an install other than the
+        # workflow's own. Its resolution and inbound admission are review inputs.
+        "solutions": await digest_rows(Solution),
     }
 
 
@@ -559,11 +553,28 @@ async def _report_for_workflow(
     )
     authority, identity = await _authority_snapshot(db, workflow)
     policies = await _policy_revision_snapshot(db, workflow)
-    from shared.workflow_conversion_access import recorded_identity_requirements
+    from shared.workflow_conversion_access import (
+        recorded_identity_requirements,
+        recorded_permission_requirements,
+        source_identity_requirements,
+    )
 
+    observed_permissions = sorted(set(observed_permissions) | set(
+        await recorded_permission_requirements(
+            db, workflow.id, window_days=OBSERVATION_WINDOW_DAYS
+        )
+    ))
     dedicated_requirements = await recorded_identity_requirements(
         db, workflow, window_days=OBSERVATION_WINDOW_DAYS
     )
+    proposed_permissions = sorted(set(source_permissions) | set(observed_permissions))
+    from shared.workflow_conversion_resources import source_resource_requirements
+
+    resource_requirements = await source_resource_requirements(
+        db, workflow, analysis, proposed_permissions, observed_operations
+    )
+    source_permissions = sorted(set(source_permissions) | set(resource_requirements.permissions))
+    proposed_permissions = sorted(set(source_permissions) | set(observed_permissions))
     unknowns = list(
         dict.fromkeys(
             [
@@ -571,6 +582,8 @@ async def _report_for_workflow(
                 *source_unknowns,
                 *mapping_unknowns,
                 *dedicated_requirements,
+                *source_identity_requirements(analysis, workflow.organization_id),
+                *resource_requirements.unknowns,
             ]
         )
     )
@@ -578,7 +591,6 @@ async def _report_for_workflow(
         unknowns.append("The workflow run identity is unavailable and needs review.")
     elif not authority["identity_is_active"]:
         unknowns.append("The workflow run identity is inactive and needs review.")
-    proposed_permissions = sorted(set(source_permissions) | set(observed_permissions))
     current_mode = (await effective_workflow_permission_mode(db, workflow)).value
     status_value = (
         "already_declared"

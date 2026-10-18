@@ -10,7 +10,6 @@ from shared.models import (
     WorkflowConversionApplyRequest,
     WorkflowConversionSelection,
 )
-from src.models.contracts.access_list import AccessClass
 from shared import workflow_conversions as conversion
 
 
@@ -32,33 +31,14 @@ def test_apply_selection_requires_review_of_unknown_source() -> None:
     assert request.selections == [selection]
 
 
-def test_observed_own_resource_operation_needs_review_instead_of_granting_all(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An ownership-only operation must not inflate a converted grant set."""
-    from src.services.authorization import enforce
-
-    monkeypatch.setattr(
-        enforce,
-        "entry_for_operation",
-        lambda _operation: type(
-            "Entry",
-            (),
-            {
-                "access_class": AccessClass.OWN_PRIVATE_AGENT,
-                "permission": "agents.readwrite.all",
-            },
-        )(),
-    )
-
+def test_recorded_own_resource_operation_does_not_add_elevated_authority() -> None:
+    """Own-resource admission stays separate from declared named powers."""
     permissions, unknowns = conversion._permissions_for_observed_operations(
         ["agents.update"]
     )
 
     assert permissions == []
-    assert unknowns == [
-        "Observed operation agents.update depends on ownership and needs review"
-    ]
+    assert unknowns == []
 
 
 def test_followup_dedupe_key_is_stable_per_analysis_request_and_job_type() -> None:

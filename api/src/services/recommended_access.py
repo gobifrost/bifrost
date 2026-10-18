@@ -201,7 +201,13 @@ def _is_uuid(value: str) -> bool:
     return True
 
 
-async def _recorded_actions(db: AsyncSession, workflow_id: UUID, since: datetime) -> tuple[list[CheckedAction], int]:
+async def _recorded_actions(
+    db: AsyncSession,
+    workflow_id: UUID,
+    since: datetime,
+    *,
+    run_user_id: UUID | None = None,
+) -> tuple[list[CheckedAction], int]:
     """The workflow's distinct recorded checks since ``since``, and how many
     runs recorded them."""
     recorded = (
@@ -209,6 +215,8 @@ async def _recorded_actions(db: AsyncSession, workflow_id: UUID, since: datetime
         named_workflow_id() == str(workflow_id),
         AuditLog.created_at >= since,
     )
+    if run_user_id is not None:
+        recorded += (AuditLog.user_id == run_user_id,)
     inputs = AuditLog.details["inputs"]
     rows = (
         await db.execute(

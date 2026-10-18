@@ -18,15 +18,27 @@ runs. It does not hold source or ASTs for an entire workflow inventory in memory
 Traversal and source-size limits produce visible review requirements.
 
 Permission candidates combine SDK transport mappings from the canonical access
-list with recorded workflow operations from the preceding 30 days. Observations
-cannot prove that unobserved branches are safe. Dynamic calls, unresolved
-imports, resource policies, ownership checks, and secret context need review.
+list, named checks in the shipped SDK and its platform helpers, and successful
+recorded permission decisions from the preceding 30 days. Observations cannot
+prove that unobserved branches are safe. The analyzer uses the shipped SDK's
+return contracts to distinguish data methods from further SDK calls; it does
+not trust user annotations as proof of authority.
+
+Static table and file targets are resolved through the ordinary resource
+resolvers. Their current policies are evaluated for the proposed identity
+without Full Access authority. Unavailable targets, denied or conditional
+policies, dynamic scope, unresolved imports, and external effects remain visible
+review requirements. Analysis does not read table documents or file contents,
+change resource policies, or grant additional authority.
 
 Review each proposal before selecting it. The default identity strategy creates
 a dedicated identity with the User base role, the workflow's organization, and
-no additional roles or organization reach. Recorded requirements for additional
-reach, policy roles, or personal claims are shown for review; conversion does
-not grant them. Keeping an existing broad identity requires acknowledgement.
+no additional roles or organization reach. Source and unattended execution
+evidence identify additional reach requirements; human-initiated runs do not
+establish the unattended identity's reach. Policy checks use known facts about
+the proposed identity and leave future user, row, claim, or file metadata
+conditional. Conversion does not grant that additional authority. Keeping an
+existing broad identity requires acknowledgement.
 Conversion never reduces the privileges of a shared identity.
 
 Apply is atomic per workflow. It sets Declared Permissions and the reviewed
