@@ -20,13 +20,16 @@ from src.models.orm.solution_file_location import SolutionFileLocation
 from src.models.orm.solutions import Solution
 from src.models.orm.tables import Document, Table
 from src.models.orm.workflows import Workflow
+from src.services.solutions.guard import install_solution_write_guard
 
 pytestmark = pytest.mark.e2e
 
 
 @pytest_asyncio.fixture
 async def sealed_app(db_session, org1, request):
-    org_id = None if getattr(request, "param", "org") == "global" else UUID(org1["id"])
+    install_solution_write_guard()
+    case = getattr(request, "param", {})
+    org_id = None if case.get("global") else UUID(org1["id"])
     suffix = uuid4().hex[:10]
     solution = Solution(
         id=uuid4(), slug=f"sealed-{suffix}", name="Sealed App Fixture",
@@ -36,13 +39,13 @@ async def sealed_app(db_session, org1, request):
     app = Application(
         id=uuid4(), slug=f"sealed-app-{suffix}", name="Sealed App Fixture",
         organization_id=org_id, solution_id=solution.id,
-        app_model="standalone_v2", access_level="authenticated",
+        app_model="standalone_v2", access_level=case.get("app_access", "authenticated"),
     )
     workflow = Workflow(
         id=uuid4(), name=f"sealed_workflow_{suffix}",
         path=f"workflows/{suffix}.py", function_name="load",
         organization_id=org_id, solution_id=solution.id,
-        access_level="authenticated", type="workflow", is_active=True,
+        access_level=case.get("workflow_access", "authenticated"), type="workflow", is_active=True,
     )
     shared_workflow = Workflow(
         id=uuid4(), name=f"shared_workflow_{suffix}", path=workflow.path,
@@ -92,7 +95,10 @@ def _schedule(client, headers, fixture, **extra):
 
 
 @pytest.mark.parametrize("transport", ["header", "legacy_body", "body_with_solution"])
-@pytest.mark.parametrize("sealed_app", ["org", "global"], indirect=True)
+@pytest.mark.parametrize(
+    "sealed_app", [pytest.param({}, id="org"), pytest.param({"global": True}, id="global")],
+    indirect=True,
+)
 async def test_sealed_app_workflow_admission_preserves_user_identity(
     e2e_client, org1_user, db_session, sealed_app, transport,
 ):
@@ -114,11 +120,10 @@ async def test_sealed_app_workflow_admission_preserves_user_identity(
     assert row.run_user_id == org1_user.user_id
 
 
+@pytest.mark.parametrize("sealed_app", [{"workflow_access": "role_based"}], indirect=True)
 async def test_app_context_does_not_grant_workflow_sharing(
-    e2e_client, org1_user, db_session, sealed_app,
+    e2e_client, org1_user, sealed_app,
 ):
-    sealed_app.workflow.access_level = "role_based"
-    await db_session.commit()
     response = _schedule(
         e2e_client,
         {**org1_user.headers, "X-Bifrost-App": str(sealed_app.app.id)},
@@ -128,11 +133,10 @@ async def test_app_context_does_not_grant_workflow_sharing(
 
 
 @pytest.mark.parametrize("transport", ["header", "legacy_body"])
+@pytest.mark.parametrize("sealed_app", [{"app_access": "role_based"}], indirect=True)
 async def test_denied_app_context_cannot_fall_through_to_shared_workflow(
-    e2e_client, org1_user, db_session, sealed_app, transport,
+    e2e_client, org1_user, sealed_app, transport,
 ):
-    sealed_app.app.access_level = "role_based"
-    await db_session.commit()
     headers = org1_user.headers
     extra = {}
     if transport == "header":
