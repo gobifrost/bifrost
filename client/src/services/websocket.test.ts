@@ -169,6 +169,159 @@ describe("chat WebSocket contract", () => {
 	});
 });
 
+describe("channel subscription lifecycle", () => {
+	it("subscribes channels requested before the connection acknowledgement without releasing implicit channels", async () => {
+		const service = webSocketService as unknown as {
+			ws: Pick<WebSocket, "readyState" | "send"> | null;
+			subscribedChannels: Set<string>;
+			subscribe(channel: string): Promise<void>;
+			unsubscribe(channel: string): Promise<void>;
+			handleMessage(message: unknown): void;
+		};
+		const requestedChannel = "notification:before-connected";
+		const implicitChannel = "user:server-provided";
+		const send = vi.fn();
+
+		try {
+			service.ws = null;
+			await service.subscribe(requestedChannel);
+			service.ws = { readyState: WebSocket.OPEN, send };
+			service.handleMessage({
+				type: "connected",
+				channels: [implicitChannel],
+				userId: "server-provided",
+			});
+
+			expect(send).toHaveBeenCalledWith(
+				JSON.stringify({ type: "subscribe", channels: [requestedChannel] }),
+			);
+			expect(send).not.toHaveBeenCalledWith(
+				JSON.stringify({ type: "unsubscribe", channel: implicitChannel }),
+			);
+		} finally {
+			service.handleMessage({ type: "subscribed", channel: requestedChannel });
+			await service.unsubscribe(requestedChannel);
+			service.handleMessage({ type: "unsubscribed", channel: requestedChannel });
+			service.ws = null;
+			service.subscribedChannels.delete(implicitChannel);
+		}
+	});
+
+	it("does not reconnect a channel released while disconnected", async () => {
+		const service = webSocketService as unknown as {
+			connect(channels: string[]): Promise<void>;
+			unsubscribe(channel: string): Promise<void>;
+			disconnect(): Promise<void>;
+		};
+		const sockets: Array<{
+			url: string;
+			onclose: ((event: CloseEvent) => void) | null;
+		}> = [];
+		const retainedChannel = "notification:retained";
+		const releasedChannel = "notification:released";
+
+		class FakeWebSocket {
+			static OPEN = 1;
+			readyState = FakeWebSocket.OPEN;
+			onopen: ((event: Event) => void) | null = null;
+			onclose: ((event: CloseEvent) => void) | null = null;
+			onmessage: ((event: MessageEvent) => void) | null = null;
+			onerror: ((event: Event) => void) | null = null;
+			url: string;
+
+			constructor(url: string) {
+				this.url = url;
+				sockets.push(this);
+				queueMicrotask(() => this.onopen?.(new Event("open")));
+			}
+
+			addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+				if (type === "open") {
+					queueMicrotask(() => {
+						if (typeof listener === "function") {
+							listener(new Event("open"));
+						}
+					});
+				}
+			}
+
+			send() {}
+			close() {}
+		}
+
+		vi.useFakeTimers();
+		vi.stubGlobal("WebSocket", FakeWebSocket);
+		try {
+			const connect = service.connect([retainedChannel, releasedChannel]);
+			await vi.runAllTicks();
+			await connect;
+
+			sockets[0].onclose?.({ code: 1006 } as CloseEvent);
+			await service.unsubscribe(releasedChannel);
+			await vi.advanceTimersByTimeAsync(2000);
+
+			expect(sockets).toHaveLength(2);
+			expect(sockets[1].url).toContain(
+				`channels=${encodeURIComponent(retainedChannel)}`,
+			);
+			expect(sockets[1].url).not.toContain(
+				encodeURIComponent(releasedChannel),
+			);
+		} finally {
+			await service.disconnect();
+			vi.unstubAllGlobals();
+			vi.useRealTimers();
+		}
+	});
+
+	it("restores a re-requested channel after its delayed unsubscribe acknowledgement", async () => {
+		const service = webSocketService as unknown as {
+			ws: Pick<WebSocket, "readyState" | "send"> | null;
+			subscribedChannels: Set<string>;
+			connect(channels: string[]): Promise<void>;
+			subscribe(channel: string): Promise<void>;
+			unsubscribe(channel: string): Promise<void>;
+			handleMessage(message: unknown): void;
+		};
+		const channel = "notification:user-regression";
+		const send = vi.fn();
+		const sentMessages: Array<{
+			type: string;
+			channel?: string;
+			channels?: string[];
+		}> = [];
+		send.mockImplementation((message: string) => {
+			sentMessages.push(
+				JSON.parse(message) as {
+					type: string;
+					channel?: string;
+					channels?: string[];
+				},
+			);
+		});
+		service.ws = { readyState: WebSocket.OPEN, send };
+
+		try {
+			await service.subscribe(channel);
+			service.handleMessage({ type: "subscribed", channel });
+
+			await service.unsubscribe(channel);
+			await service.connect([channel]);
+			service.handleMessage({ type: "unsubscribed", channel });
+		} finally {
+			service.handleMessage({ type: "subscribed", channel });
+			service.ws = null;
+			await service.unsubscribe(channel);
+			service.subscribedChannels.delete(channel);
+		}
+
+		expect(sentMessages.at(-1)).toEqual({
+			type: "subscribe",
+			channels: [channel],
+		});
+	});
+});
+
 describe("service log streaming contract", () => {
 	it("dispatches bridged attempt lines by service id", () => {
 		const callback = vi.fn();
