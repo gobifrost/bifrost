@@ -1,0 +1,18 @@
+{
+  "key": "pr:1000",
+  "classification": "highlight",
+  "entry_ids": [
+    "a523fe00-ec4a-4468-a4f1-79d248e6cf22"
+  ],
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1000"
+  },
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1000",
+      "Draft capability notice for maintainer copy and security review. Focused checks cover source analysis, authority revalidation, dedicated identities, exact Solution approval, and explicit platform cutover."
+    ]
+  }
+}
