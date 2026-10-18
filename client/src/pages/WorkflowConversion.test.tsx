@@ -81,9 +81,13 @@ describe("WorkflowConversion", () => {
 		});
 
 		expect(
-			screen.getByRole("heading", { name: "Confirm analysis scope" }),
+			screen.getByRole("heading", { name: "1 workflow" }),
 		).toBeVisible();
-		expect(screen.getByText("1 selected workflow")).toBeVisible();
+		expect(
+			screen.getByText(
+				/Review proposed permissions and run identities\. Access changes only when you Apply\./,
+			),
+		).toBeVisible();
 		expect(
 			screen.getByText(/Python source and imported modules/i),
 		).toBeVisible();
@@ -106,7 +110,11 @@ describe("WorkflowConversion", () => {
 		renderWithProviders(<WorkflowConversion />, {
 			initialEntries: ["/workflows/convert"],
 		});
-		expect(screen.getByText("All workflows you can review")).toBeVisible();
+		expect(
+			screen.getByRole("heading", {
+				name: "All workflows you can review",
+			}),
+		).toBeVisible();
 		expect(
 			screen.getByRole("button", { name: "Analyze all workflows" }),
 		).toBeEnabled();
@@ -131,6 +139,9 @@ describe("WorkflowConversion", () => {
 				<WorkflowConversion />
 			</MemoryRouter>,
 		);
+		expect(
+			await findByRole("heading", { name: "1,001 workflows" }),
+		).toBeVisible();
 
 		await (
 			await findByRole("button", { name: "Analyze selected workflows" })

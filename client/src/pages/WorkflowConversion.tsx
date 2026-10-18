@@ -12,7 +12,6 @@ import {
 	FileCode2,
 	Loader2,
 	ScanSearch,
-	ShieldCheck,
 	Workflow,
 	X,
 } from "lucide-react";
@@ -366,7 +365,11 @@ function WorkflowConversionWizard() {
 				className="flex-row flex-nowrap"
 				titleClassName="text-xl sm:text-3xl"
 				descriptionClassName="hidden sm:block"
-				description="Review proposed permissions and run identities before applying changes."
+				description={
+					stage === "scope"
+						? undefined
+						: "Review proposed permissions and run identities before applying changes."
+				}
 				actions={
 					jobId ? (
 						<Button
@@ -906,67 +909,48 @@ function Scope({
 	selectionLost: boolean;
 }) {
 	return (
-		<section className="py-2 sm:py-4" aria-labelledby="conversion-scope">
-			<div className="max-w-2xl space-y-4">
-				<h2 id="conversion-scope" className="text-lg font-semibold">
-					Confirm analysis scope
-				</h2>
-				{selectionLost ? (
-					<div className="space-y-2 text-sm">
-						<p className="font-medium">
-							This workflow selection is no longer available.
+		<section className="py-4 sm:py-6" aria-labelledby="conversion-scope">
+			{selectionLost ? (
+				<div className="max-w-2xl space-y-2">
+					<h2 id="conversion-scope" className="text-lg font-semibold">
+						Restore your selection
+					</h2>
+					<p className="text-sm leading-6 text-muted-foreground">
+						This workflow selection is no longer available. Go back
+						to Workflows and choose the workflows again before
+						starting analysis.
+					</p>
+				</div>
+			) : (
+				<div className="flex max-w-2xl items-start gap-3 sm:gap-4">
+					<Workflow
+						aria-hidden="true"
+						className="mt-1 size-6 shrink-0 text-[var(--bf-success)] sm:mt-1.5"
+					/>
+					<div className="min-w-0">
+						<h2
+							id="conversion-scope"
+							className="text-2xl font-semibold text-[var(--bf-success)] tabular-nums sm:text-3xl"
+						>
+							{ids.length
+								? `${ids.length.toLocaleString()} workflow${ids.length === 1 ? "" : "s"}`
+								: "All workflows you can review"}
+						</h2>
+						<p className="mt-2 text-sm leading-6 text-muted-foreground">
+							Review proposed permissions and run identities.
+							Access changes only when you Apply.
 						</p>
-						<p className="leading-6 text-muted-foreground">
-							Go back to Workflows and choose the workflows again.
-							Analysis cannot start until the selection is
-							restored.
+						<p className="mt-6 flex items-start gap-2 text-xs leading-5 text-muted-foreground">
+							<FileCode2
+								aria-hidden="true"
+								className="mt-0.5 size-4 shrink-0"
+							/>
+							Python source and imported modules, plus access
+							recorded over the last 30 days.
 						</p>
 					</div>
-				) : (
-					<dl className="divide-y divide-border text-sm">
-						<div className="grid gap-1 py-3 sm:grid-cols-[6rem_minmax(0,1fr)] sm:gap-4">
-							<dt className="flex items-center gap-2 font-medium text-muted-foreground">
-								<Workflow
-									aria-hidden="true"
-									className="size-4 shrink-0"
-								/>
-								Scope
-							</dt>
-							<dd className="font-medium">
-								{ids.length
-									? `${ids.length} selected workflow${ids.length === 1 ? "" : "s"}`
-									: "All workflows you can review"}
-							</dd>
-						</div>
-						<div className="grid gap-1 py-3 sm:grid-cols-[6rem_minmax(0,1fr)] sm:gap-4">
-							<dt className="flex items-start gap-2 font-medium text-muted-foreground">
-								<FileCode2
-									aria-hidden="true"
-									className="mt-1 size-4 shrink-0"
-								/>
-								Inputs
-							</dt>
-							<dd className="leading-6 text-muted-foreground">
-								Python source and imported modules, plus access
-								recorded over the last 30 days.
-							</dd>
-						</div>
-						<div className="grid gap-1 py-3 sm:grid-cols-[6rem_minmax(0,1fr)] sm:gap-4">
-							<dt className="flex items-start gap-2 font-medium text-muted-foreground">
-								<ShieldCheck
-									aria-hidden="true"
-									className="mt-1 size-4 shrink-0"
-								/>
-								Next
-							</dt>
-							<dd className="leading-6 text-muted-foreground">
-								Review proposed permissions and run identities;
-								access changes only when you Apply.
-							</dd>
-						</div>
-					</dl>
-				)}
-			</div>
+				</div>
+			)}
 		</section>
 	);
 }

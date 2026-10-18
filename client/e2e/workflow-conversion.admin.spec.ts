@@ -80,6 +80,9 @@ test.describe("Workflow conversion", () => {
 			.click();
 
 		await expect(page).toHaveURL(/\/workflows\/convert\?workflows=/);
+		await expect(
+			page.getByRole("heading", { name: "1 workflow", exact: true }),
+		).toBeVisible();
 		const analyzeAction = page.getByRole("button", {
 			name: "Analyze selected workflows",
 		});
