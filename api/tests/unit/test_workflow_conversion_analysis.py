@@ -4,7 +4,6 @@ import hashlib
 
 import pytest
 
-import shared.workflow_conversion_analysis as conversion_analysis
 from shared.workflow_conversion_analysis import (
     SourceFile,
     analyze_workflow,
@@ -377,18 +376,16 @@ async def test_resolver_can_intentionally_shadow_a_stdlib_module() -> None:
 async def test_reports_source_summary_limits_as_unknown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from shared import workflow_conversion_analysis as analysis
-
-    monkeypatch.setattr(analysis, "MAX_SOURCE_BYTES", 1)
+    monkeypatch.setattr("shared.workflow_conversion_analysis.MAX_SOURCE_BYTES", 1)
     entry = _source("workflows/run.py", "def run():\n    return 'ok'\n")
 
     async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
         return None
 
     async def summarize(source_file: SourceFile) -> dict:
-        return analysis.summarize_source(source_file.source)
+        return summarize_source(source_file.source)
 
-    result = await analysis.analyze_workflow(entry, "run", resolve_import, summarize)
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
 
     assert any("source exceeds maximum size" in item for item in result["unknowns"])
 
@@ -592,10 +589,8 @@ async def test_function_parameter_shadowing_an_imported_helper_is_not_followed()
 async def test_deep_import_graph_reports_recursion_limit_instead_of_crashing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from shared import workflow_conversion_analysis as analysis
-
-    monkeypatch.setattr(analysis, "MAX_DEPENDENCIES", 2_000)
-    monkeypatch.setattr(analysis, "MAX_GRAPH_STEPS", 20_000)
+    monkeypatch.setattr("shared.workflow_conversion_analysis.MAX_DEPENDENCIES", 2_000)
+    monkeypatch.setattr("shared.workflow_conversion_analysis.MAX_GRAPH_STEPS", 20_000)
     depth = 400
     files = {
         f"workflows/module_{index}.py": _source(
@@ -611,7 +606,7 @@ async def test_deep_import_graph_reports_recursion_limit_instead_of_crashing(
         return files.get(f"workflows/{module}.py")
 
     async def summarize(source_file: SourceFile) -> dict:
-        return analysis.summarize_source(source_file.source)
+        return summarize_source(source_file.source)
 
     # Python versions allocate coroutine frames differently. Deliberately
     # expose the recursion boundary rather than relying on a host's default.
@@ -620,7 +615,7 @@ async def test_deep_import_graph_reports_recursion_limit_instead_of_crashing(
     previous_limit = sys.getrecursionlimit()
     try:
         sys.setrecursionlimit(200)
-        result = await analysis.analyze_workflow(
+        result = await analyze_workflow(
             entry, "run", resolve_import, summarize
         )
     finally:
@@ -1030,7 +1025,8 @@ async def test_unresolved_installed_external_call_remains_needs_review(
         "    helper()\n",
     )
     monkeypatch.setattr(
-        conversion_analysis, "_is_installed_third_party", lambda _module: True
+        "shared.workflow_conversion_analysis._is_installed_third_party",
+        lambda _module: True,
     )
 
     async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
@@ -1352,15 +1348,8 @@ def test_allows_a_synthetic_wide_module_within_expanded_bounds() -> None:
 @pytest.mark.parametrize(
     "factory_source",
     [
-        "from bifrost import config\n\n"
-        "def factory():\n"
-        "    return config\n",
-        "from bifrost import tables\n\n"
-        "class Client:\n"
-        "    def read(self):\n"
-        "        return tables.list()\n\n"
-        "def factory():\n"
-        "    return Client()\n",
+        "from bifrost import config\n\ndef factory():\n    return config\n",
+        "from bifrost import tables\n\nclass Client:\n    def read(self):\n        return tables.list()\n\ndef factory():\n    return Client()\n",
     ],
 )
 async def test_invoked_dynamic_getattr_on_a_factory_return_remains_needs_review(
