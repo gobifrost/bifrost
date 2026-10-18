@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
+import { renderWithProviders as render } from "@/test-utils";
 import userEvent from "@testing-library/user-event";
 
 import type { components } from "@/lib/v1";
@@ -89,6 +90,7 @@ vi.mock("@/services/access", () => ({
 
 vi.mock("@/services/authorization", () => ({
 	useAuthorization: () => ({
+		isPlatformAdmin: true,
 		authorization: { provider_organization_id: PROVIDER },
 	}),
 }));
@@ -210,6 +212,13 @@ describe("WorkflowAccessPanel", () => {
 		render(<WorkflowAccessPanel workflow={makeWorkflow()} />);
 		expect(screen.getByText("Full Access")).toBeVisible();
 		expect(screen.getByText("Full Access adds every permission, including Secrets, within the run user's organization reach.")).toBeVisible();
+	});
+
+	it("opens the shared conversion wizard for this workflow", () => {
+		render(<WorkflowAccessPanel workflow={makeWorkflow()} />);
+		expect(
+			screen.getByRole("link", { name: "Review conversion proposal" }),
+		).toHaveAttribute("href", "/workflows/convert?workflows=wf-1");
 	});
 
 	it("labels Declared Permissions and explains it does not expand organization reach", () => {

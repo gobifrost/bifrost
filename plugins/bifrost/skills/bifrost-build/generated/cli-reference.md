@@ -3230,6 +3230,7 @@ Options:
   --help  Show this message and exit.
 
 Commands:
+  convert          Analyze, review and convert workflow permissions.
   delete           Delete a workflow by removing its function from the...
   execute          Execute a registered workflow remotely and stream logs...
   get              Get a single workflow by UUID, name, or ``path::func``...
@@ -3243,6 +3244,86 @@ Commands:
   replace          Repoint an orphaned workflow to a new file location.
   revoke-role      Revoke a role's access from a workflow.
   update           Update a workflow's editable properties.
+```
+
+### `workflows convert`
+
+```
+Usage: workflows convert [OPTIONS] COMMAND [ARGS]...
+
+  Analyze, review and convert workflow permissions.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  analyze  Start durable read-only analysis.
+  apply    Apply explicitly reviewed proposals; stale proposals are refused.
+  cutover  Request the final reviewed platform switch.
+  report   Read a page of a saved analysis without restarting it.
+```
+
+#### `workflows convert analyze`
+
+```
+Usage: workflows convert analyze [OPTIONS]
+
+  Start durable read-only analysis. Observe it with platform-jobs get.
+
+Options:
+  --workflow TEXT     Workflow UUID, name or path::function. Repeat for a
+                      selection.
+  --scope TEXT        all, global, or an organization UUID when no workflows
+                      are selected.
+  --platform-cutover  Prepare a platform-wide readiness review; does not
+                      change the default.
+  --json              Emit JSON instead of human-readable output.
+  --help              Show this message and exit.
+```
+
+#### `workflows convert apply`
+
+```
+Usage: workflows convert apply [OPTIONS] JOB_ID
+
+  Apply explicitly reviewed proposals; stale proposals are refused.
+
+Options:
+  --review-file FILENAME  JSON reviewed selections, fingerprints and explicit
+                          acknowledgements from the saved report.  [required]
+  --json                  Emit JSON instead of human-readable output.
+  --help                  Show this message and exit.
+```
+
+#### `workflows convert cutover`
+
+```
+Usage: workflows convert cutover [OPTIONS] JOB_ID
+
+  Request the final reviewed platform switch. Analysis alone never switches
+  it.
+
+Options:
+  --acknowledge-platform-cutover  Explicitly request Declared Permissions as
+                                  the platform default after readiness is
+                                  revalidated.  [required]
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
+#### `workflows convert report`
+
+```
+Usage: workflows convert report [OPTIONS] JOB_ID
+
+  Read a page of a saved analysis without restarting it.
+
+Options:
+  --offset INTEGER RANGE  [x>=0]
+  --limit INTEGER RANGE   [1<=x<=200]
+  --json                  Emit JSON instead of human-readable output.
+  --help                  Show this message and exit.
 ```
 
 ### `workflows delete`
