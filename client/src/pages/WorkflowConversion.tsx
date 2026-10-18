@@ -19,7 +19,6 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Progress } from "@/components/ui/progress";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -43,6 +42,7 @@ import {
 	ConversionWizardFrame,
 	type ConversionStage,
 } from "@/components/workflows/conversion/ConversionWizardFrame";
+import { ConversionJobProgress } from "@/components/workflows/conversion/ConversionJobProgress";
 import { cancelPlatformJob } from "@/services/platformJobs";
 import {
 	useWorkflowConversionJob,
@@ -452,10 +452,12 @@ function WorkflowConversionWizard() {
 							{job && ACTIVE.has(job.status) ? (
 								<Button
 									variant="outline"
-									disabled={mutating}
+									disabled={mutating || !job.can_cancel}
 									onClick={cancelAnalysis}
 								>
-									Cancel analysis
+									{job.status === "cancel_requested"
+										? "Stopping analysis…"
+										: "Cancel analysis"}
 								</Button>
 							) : (
 								<Button asChild variant="outline">
@@ -475,6 +477,10 @@ function WorkflowConversionWizard() {
 									ACTIVE.has(operation.job.status) && (
 										<Button
 											variant="outline"
+											disabled={
+												mutating ||
+												!operation.job.can_cancel
+											}
 											onClick={() =>
 												void cancelPlatformJob(
 													operation.job!.id,
@@ -490,7 +496,10 @@ function WorkflowConversionWizard() {
 													)
 											}
 										>
-											Cancel requested change
+											{operation.job.status ===
+											"cancel_requested"
+												? "Stopping changes…"
+												: "Cancel requested change"}
 										</Button>
 									)}
 								<Button
@@ -920,31 +929,12 @@ function ProgressStage({
 }) {
 	return (
 		<section className="space-y-5" aria-labelledby="conversion-analysis">
-			<div className="max-w-2xl space-y-5">
-				<div>
-					<h2
-						id="conversion-analysis"
-						className="text-lg font-semibold"
-					>
-						{!job || ACTIVE.has(job.status)
-							? "Analysis in progress"
-							: `Analysis ${statusLabel(job.status).toLowerCase()}`}
-					</h2>
-					<p className="mt-1 text-sm text-muted-foreground">
-						{job?.progress.phase ?? "Restoring analysis status…"}
-					</p>
-				</div>
-				{job?.progress.percent != null && (
-					<Progress
-						aria-label="Analysis progress"
-						value={job.progress.percent}
-					/>
-				)}
-				{job?.progress.total != null && (
-					<p className="text-sm text-muted-foreground">
-						{job.progress.current} of {job.progress.total} completed
-					</p>
-				)}
+			<div className="space-y-5">
+				<ConversionJobProgress
+					job={job}
+					kind="analysis"
+					titleId="conversion-analysis"
+				/>
 				{job &&
 					!ACTIVE.has(job.status) &&
 					job.status !== "succeeded" && (
@@ -1110,26 +1100,20 @@ function OperationStage({
 	const completed = current?.result?.completed;
 	return (
 		<section className="space-y-5" aria-labelledby="conversion-apply">
-			<div className="max-w-2xl space-y-5">
-				<div>
-					<h2 id="conversion-apply" className="text-lg font-semibold">
-						Apply and verify
-					</h2>
-					<p className="mt-1 text-sm text-muted-foreground">
-						{current?.progress.phase ??
-							"Restoring the requested change…"}
-					</p>
-				</div>
+			<div className="space-y-5">
+				<ConversionJobProgress
+					job={current}
+					kind={
+						current?.job_type === "workflow.permissions.cutover"
+							? "cutover"
+							: "apply"
+					}
+					titleId="conversion-apply"
+				/>
 				{operation.error && (
 					<Alert variant="destructive">
 						<AlertDescription>{operation.error}</AlertDescription>
 					</Alert>
-				)}
-				{current?.progress.percent != null && (
-					<Progress
-						aria-label="Apply progress"
-						value={current.progress.percent}
-					/>
 				)}
 				{Array.isArray(completed) && (
 					<p className="text-sm text-muted-foreground">

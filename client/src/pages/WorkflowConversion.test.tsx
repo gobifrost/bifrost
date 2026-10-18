@@ -40,6 +40,40 @@ describe("WorkflowConversion", () => {
 		apply.mockReset();
 	});
 
+	it("shows a saved queued request without suggesting analysis has started", () => {
+		useConversionJob.mockReturnValue({
+			job: {
+				id: "job-synthetic",
+				status: "queued",
+				can_cancel: true,
+				progress: {
+					phase: "Queued",
+					current: 0,
+					total: null,
+					percent: 0,
+				},
+			},
+			report: null,
+			error: null,
+			loading: false,
+			refresh: vi.fn(),
+			setReport: vi.fn(),
+		});
+		renderWithProviders(<WorkflowConversion />, {
+			initialEntries: ["/workflows/convert?job=job-synthetic"],
+		});
+		expect(
+			screen.getByRole("heading", { name: "Analysis queued" }),
+		).toBeVisible();
+		expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "Cancel analysis" }),
+		).toBeEnabled();
+		expect(
+			screen.getByRole("button", { name: "Leave and reopen later" }),
+		).toBeVisible();
+	});
+
 	it("shows the frozen selection and starts one shared analysis", async () => {
 		analyze.mockResolvedValue({ job_id: "job-synthetic" });
 		const { user } = renderWithProviders(<WorkflowConversion />, {

@@ -182,11 +182,16 @@ test.describe("Workflow conversion", () => {
 			.click();
 		await page.getByText(/requested change completed/i).waitFor();
 		await expect(
-			page.getByRole("heading", { name: "Apply and verify" }),
+			page.getByRole("heading", { name: "Requested changes completed" }),
 		).toBeVisible();
 		await expect(
 			page.getByText(/requested change completed/i),
 		).toBeVisible();
+		await page.screenshot({
+			animations: "disabled",
+			path: testInfo.outputPath("conversion-completed-desktop.png"),
+			fullPage: true,
+		});
 		await page.getByRole("button", { name: "Return to review" }).click();
 		await expect(
 			page.getByRole("heading", { name: "Review proposals" }),
