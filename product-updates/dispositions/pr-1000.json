@@ -9,10 +9,10 @@
     "review_ref": "https://github.com/gobifrost/bifrost/pull/1000"
   },
   "review": {
-    "status": "draft",
+    "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1000",
-      "Draft capability notice for maintainer copy and security review. Focused checks cover source analysis, authority revalidation, dedicated identities, exact Solution approval, and explicit platform cutover."
+      "Author-reviewed capability notice. Focused and CI checks cover source analysis, authority revalidation, dedicated same-organization identities, exact Solution approval, and explicit platform cutover. The PR remains unmerged for maintainer review; source eligibility withholds the notice until delivery."
     ]
   }
 }

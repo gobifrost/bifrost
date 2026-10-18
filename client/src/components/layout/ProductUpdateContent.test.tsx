@@ -140,12 +140,13 @@ describe("shared product update content", () => {
 		fireEvent.error(screen.getByRole("img", { name: "Roles" }));
 		expect(screen.getByText("Screenshot unavailable: Roles")).toBeVisible();
 	});
-	it("keeps the three branded community destinations in the same order", () => {
+	it("keeps the four branded community destinations in the same order", () => {
 		renderWithProviders(<CommunityFooter />);
 		const links = screen.getAllByRole("link");
 		expect(links.map((link) => link.textContent)).toEqual([
 			"GitHub",
 			"Discord",
+			"YouTube",
 			"Website",
 		]);
 		const website = screen.getByRole("link", { name: "Website" });
@@ -158,6 +159,10 @@ describe("shared product update content", () => {
 		expect(links[1]).toHaveAttribute(
 			"href",
 			"https://discord.gg/x84pft2YDa",
+		);
+		expect(screen.getByRole("link", { name: "YouTube" })).toHaveAttribute(
+			"href",
+			"https://www.youtube.com/@gobifrost",
 		);
 	});
 });

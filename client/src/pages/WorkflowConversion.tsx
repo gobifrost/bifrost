@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
 	Link,
 	useLocation,
@@ -8,8 +8,7 @@ import {
 import {
 	AlertCircle,
 	CheckCircle2,
-	ChevronLeft,
-	ChevronRight,
+	X,
 	Loader2,
 	ShieldCheck,
 } from "lucide-react";
@@ -22,16 +21,34 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import {
-	Accordion,
-	AccordionContent,
-	AccordionItem,
-	AccordionTrigger,
-} from "@/components/ui/accordion";
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+	Sheet,
+	SheetContent,
+	SheetDescription,
+	SheetHeader,
+	SheetTitle,
+} from "@/components/ui/sheet";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { PaginationFooter } from "@/components/pagination/PaginationFooter";
+import {
+	ConversionWizardFrame,
+	type ConversionStage,
+} from "@/components/workflows/conversion/ConversionWizardFrame";
 import { cancelPlatformJob } from "@/services/platformJobs";
 import {
 	useWorkflowConversionJob,
 	useWorkflowConversionOperation,
 } from "@/hooks/useWorkflowConversionJob";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import {
 	analyzeWorkflowConversions,
 	applyWorkflowConversion,
@@ -42,116 +59,76 @@ import {
 
 type Item = WorkflowConversionReport["items"][number];
 type IdentityStrategy = "dedicated" | "keep_current";
-
+type Selection = {
+	workflow_name: string;
+	source_fingerprint: string;
+	identity_strategy: IdentityStrategy;
+	acknowledged_unknowns: boolean;
+	acknowledged_broad_identity: boolean;
+	requires_solution_ack: boolean;
+};
 const PAGE_SIZE = 25;
 const ACTIVE = new Set(["queued", "running", "waiting", "cancel_requested"]);
 const reviewable = new Set(["ready", "needs_review"]);
-
-function workflowIdsFromNavigationState(state: unknown): string[] | null {
-	if (typeof state !== "object" || state === null) return null;
-	const workflowIds = (state as Record<string, unknown>).workflowIds;
-	return Array.isArray(workflowIds) &&
-		workflowIds.every((workflowId) => typeof workflowId === "string")
-		? workflowIds
-		: null;
-}
 
 function statusLabel(value: string) {
 	return value
 		.replaceAll("_", " ")
 		.replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
-
-function StepIndicator({
-	stage,
-	platformIntent,
-}: {
-	stage: "scope" | "analyze" | "review" | "apply";
-	platformIntent: boolean;
-}) {
-	const steps = ["Scope", "Analyze", "Review", "Apply & verify"];
-	const current = ["scope", "analyze", "review", "apply"].indexOf(stage);
-	return (
-		<ol
-			aria-label="Conversion steps"
-			className="flex flex-wrap gap-x-5 gap-y-2 text-sm"
-		>
-			{steps.map((label, index) => (
-				<li
-					key={label}
-					className={
-						index === current
-							? "font-semibold text-foreground"
-							: index < current
-								? "text-primary"
-								: "text-muted-foreground"
-					}
-					aria-current={index === current ? "step" : undefined}
-				>
-					{index + 1}. {label}
-				</li>
-			))}
-			{platformIntent && (
-				<li className="text-muted-foreground">5. Platform cutover</li>
-			)}
-		</ol>
-	);
+function navigationSelection(state: unknown) {
+	if (typeof state !== "object" || state === null) return null;
+	const ids = (state as Record<string, unknown>).workflowIds;
+	return Array.isArray(ids) && ids.every((id) => typeof id === "string")
+		? ids
+		: null;
 }
 
 function Evidence({ item }: { item: Item }) {
-	const evidenceLines = (item.evidence ?? []).map((entry) => {
-		if (typeof entry !== "object" || entry === null) return String(entry);
-		const detail = entry as {
-			path: string;
-			line?: number | null;
-			call: string;
-			via: string[];
-		};
-		const location = `${detail.path}${detail.line == null ? "" : `:${detail.line}`}`;
-		return `${location} → ${[...detail.via, detail.call].join(" → ")}`;
-	});
 	return (
-		<Accordion type="single" collapsible>
-			<AccordionItem value="evidence">
-				<AccordionTrigger>Evidence and uncertainty</AccordionTrigger>
-				<AccordionContent className="space-y-3 text-muted-foreground">
-					<p>
-						Source requirements and observed operations are inputs
-						to this proposal. They do not prove unexecuted code
-						paths are safe.
-					</p>
-					{evidenceLines.length > 0 ? (
-						<ul className="list-disc space-y-1 pl-5">
-							{evidenceLines.map((line, index) => (
+		<details className="border-t pt-4 text-sm">
+			<summary className="cursor-pointer font-medium">
+				Evidence and uncertainty
+			</summary>
+			<div className="mt-3 space-y-2 text-muted-foreground">
+				<p>
+					Source requirements and observed operations inform this
+					proposal; they do not prove unexecuted code paths are safe.
+				</p>
+				{(item.evidence ?? []).length > 0 && (
+					<ul className="list-disc space-y-1 pl-5">
+						{(item.evidence ?? []).map((entry, index) => {
+							const detail = entry as {
+								path?: string;
+								line?: number | null;
+								call?: string;
+								via?: string[];
+							};
+							const trace =
+								typeof entry === "object" &&
+								entry !== null &&
+								detail.path
+									? `${detail.path}${detail.line == null ? "" : `:${detail.line}`} → ${[...(detail.via ?? []), detail.call].filter(Boolean).join(" → ")}`
+									: String(entry);
+							return (
 								<li
 									key={index}
 									className="[overflow-wrap:anywhere]"
 								>
-									{line}
+									{trace}
 								</li>
-							))}
-						</ul>
-					) : (
-						<p>
-							No compact evidence was retained for this workflow.
-						</p>
-					)}
-					{(item.unknowns ?? []).length > 0 && (
-						<p className="text-[var(--bf-warning)]">
-							Unresolved: {(item.unknowns ?? []).join("; ")}
-						</p>
-					)}
-				</AccordionContent>
-			</AccordionItem>
-		</Accordion>
+							);
+						})}
+					</ul>
+				)}
+				{(item.unknowns ?? []).length > 0 && (
+					<p className="text-[var(--bf-warning)]">
+						Unresolved: {item.unknowns?.join("; ")}
+					</p>
+				)}
+			</div>
+		</details>
 	);
-}
-
-function reviewedIdentityStrategy(item: Item): IdentityStrategy | null {
-	const strategy = item.review?.identity_strategy;
-	return strategy === "dedicated" || strategy === "keep_current"
-		? strategy
-		: null;
 }
 
 export function WorkflowConversion() {
@@ -165,47 +142,37 @@ function WorkflowConversionWizard() {
 	const [params, setParams] = useSearchParams();
 	const jobId = params.get("job");
 	const operationId = params.get("operation");
-	const queryWorkflowIds = useMemo(
+	const queryIds = useMemo(
 		() => (params.get("workflows") ?? "").split(",").filter(Boolean),
 		[params],
 	);
-	const isNavigationSelection = params.get("selection") === "true";
-	const navigationWorkflowIds = useMemo(
-		() => workflowIdsFromNavigationState(location.state),
+	const stateIds = useMemo(
+		() => navigationSelection(location.state),
 		[location.state],
 	);
 	const selectionLost =
-		isNavigationSelection &&
-		(!navigationWorkflowIds || navigationWorkflowIds.length === 0);
-	const workflowIds = isNavigationSelection
-		? (navigationWorkflowIds ?? [])
-		: queryWorkflowIds;
-	const queryPlatformIntent = params.get("platform") === "true";
+		params.get("selection") === "true" &&
+		(!stateIds || stateIds.length === 0);
+	const workflowIds =
+		params.get("selection") === "true" ? (stateIds ?? []) : queryIds;
 	const { job, report, error, loading, refresh, setReport } =
 		useWorkflowConversionJob(jobId);
 	const operation = useWorkflowConversionOperation(operationId);
-	const platformIntent =
-		queryPlatformIntent || report?.summary.platform_cutover === true;
-	const cutoverReady = report?.summary.cutover_ready === true;
+	const desktop = useMediaQuery("(min-width: 1024px)");
+	const reviewTriggerRef = useRef<HTMLButtonElement | null>(null);
+	const platform =
+		params.get("platform") === "true" ||
+		report?.summary.platform_cutover === true;
 	const [starting, setStarting] = useState(false);
 	const [mutating, setMutating] = useState(false);
 	const [localError, setLocalError] = useState<string | null>(null);
-	const [selected, setSelected] = useState<
-		Record<
-			string,
-			{
-				source_fingerprint: string;
-				identity_strategy: IdentityStrategy;
-				acknowledged_unknowns: boolean;
-				acknowledged_broad_identity: boolean;
-				requires_solution_ack: boolean;
-			}
-		>
-	>({});
-	const [acknowledgedSolutionRequests, setAcknowledgedSolutionRequests] =
-		useState(false);
-	const [acknowledgedExceptions, setAcknowledgedExceptions] = useState(false);
-
+	const [selected, setSelected] = useState<Record<string, Selection>>({});
+	const [detailId, setDetailId] = useState<string | null>(null);
+	const [sheetOpen, setSheetOpen] = useState(false);
+	const [confirmApply, setConfirmApply] = useState(false);
+	const [confirmCutover, setConfirmCutover] = useState(false);
+	const [solutionAck, setSolutionAck] = useState(false);
+	const [exceptionsAck, setExceptionsAck] = useState(false);
 	const stage: "scope" | "analyze" | "review" | "apply" = !jobId
 		? "scope"
 		: operationId
@@ -216,37 +183,37 @@ function WorkflowConversionWizard() {
 					? "review"
 					: "analyze";
 	const items = report?.items ?? [];
-	const selectedEntries = Object.entries(selected);
-	const hasSolutionRequests = selectedEntries.some(
-		([, selection]) => selection.requires_solution_ack,
+	const detail =
+		items.find((item) => item.workflow_id === detailId) ?? items[0] ?? null;
+	const entries = Object.entries(selected);
+	const solutionRequired = entries.some(
+		([, value]) => value.requires_solution_ack,
 	);
-
-	const start = async () => {
-		if (selectionLost) return;
-		setStarting(true);
-		setLocalError(null);
-		try {
-			const accepted = await analyzeWorkflowConversions({
-				...(workflowIds.length
-					? { workflow_ids: workflowIds }
-					: { scope: "all" }),
-				platform_cutover: platformIntent,
-			});
-			setParams({
-				job: accepted.job_id,
-				...(platformIntent ? { platform: "true" } : {}),
-			});
-		} catch (cause) {
-			setLocalError(
-				cause instanceof Error
-					? cause.message
-					: "Could not start the analysis.",
-			);
-		} finally {
-			setStarting(false);
-		}
-	};
-
+	const selectionReady =
+		entries.length > 0 &&
+		!entries.some(
+			([, value]) =>
+				!value.acknowledged_unknowns ||
+				(value.identity_strategy === "keep_current" &&
+					!value.acknowledged_broad_identity),
+		);
+	const select = (item: Item, checked: boolean) =>
+		setSelected((current) => {
+			const next = { ...current };
+			if (checked)
+				next[item.workflow_id] = {
+					workflow_name: item.workflow_name,
+					source_fingerprint: item.source_fingerprint,
+					identity_strategy: "dedicated",
+					acknowledged_unknowns: (item.unknowns ?? []).length === 0,
+					acknowledged_broad_identity: false,
+					requires_solution_ack:
+						item.solution_id != null ||
+						item.solution_permission_request != null,
+				};
+			else delete next[item.workflow_id];
+			return next;
+		});
 	const changePage = async (offset: number) => {
 		if (!jobId) return;
 		try {
@@ -264,29 +231,54 @@ function WorkflowConversionWizard() {
 			);
 		}
 	};
-
+	const start = async () => {
+		if (selectionLost) return;
+		setStarting(true);
+		setLocalError(null);
+		try {
+			const accepted = await analyzeWorkflowConversions({
+				...(workflowIds.length
+					? { workflow_ids: workflowIds }
+					: { scope: "all" }),
+				platform_cutover: platform,
+			});
+			setParams({
+				job: accepted.job_id,
+				...(platform ? { platform: "true" } : {}),
+			});
+		} catch (cause) {
+			setLocalError(
+				cause instanceof Error
+					? cause.message
+					: "Could not start the analysis.",
+			);
+		} finally {
+			setStarting(false);
+		}
+	};
 	const apply = async () => {
-		if (!jobId || selectedEntries.length === 0) return;
+		if (!jobId || !selectionReady || (solutionRequired && !solutionAck))
+			return;
 		setMutating(true);
 		setLocalError(null);
 		try {
 			const accepted = await applyWorkflowConversion(jobId, {
-				selections: selectedEntries.map(([workflow_id, selection]) => ({
+				selections: entries.map(([workflow_id, value]) => ({
 					workflow_id,
-					source_fingerprint: selection.source_fingerprint,
-					identity_strategy: selection.identity_strategy,
-					acknowledged_unknowns: selection.acknowledged_unknowns,
+					source_fingerprint: value.source_fingerprint,
+					identity_strategy: value.identity_strategy,
+					acknowledged_unknowns: value.acknowledged_unknowns,
 					acknowledged_broad_identity:
-						selection.acknowledged_broad_identity,
+						value.acknowledged_broad_identity,
 				})),
-				acknowledged_solution_requests: acknowledgedSolutionRequests,
+				acknowledged_solution_requests: solutionAck,
 			});
 			setSelected({});
-			setAcknowledgedSolutionRequests(false);
+			setSolutionAck(false);
 			setParams({
 				job: jobId,
 				operation: accepted.job_id,
-				...(platformIntent ? { platform: "true" } : {}),
+				...(platform ? { platform: "true" } : {}),
 			});
 		} catch (cause) {
 			setLocalError(
@@ -298,11 +290,9 @@ function WorkflowConversionWizard() {
 			setMutating(false);
 		}
 	};
-
 	const cutover = async () => {
-		if (!jobId || !acknowledgedExceptions) return;
+		if (!jobId || !exceptionsAck) return;
 		setMutating(true);
-		setLocalError(null);
 		try {
 			const accepted = await cutOverWorkflowConversions(jobId, {
 				acknowledged_remaining_exceptions: true,
@@ -322,249 +312,362 @@ function WorkflowConversionWizard() {
 			setMutating(false);
 		}
 	};
-
+	const inspector = detail && (
+		<Inspector
+			item={detail}
+			selection={selected[detail.workflow_id]}
+			update={(change) =>
+				setSelected((current) => ({
+					...current,
+					[detail.workflow_id]: {
+						...current[detail.workflow_id],
+						...change,
+					},
+				}))
+			}
+		/>
+	);
+	const frameStage: ConversionStage =
+		confirmCutover ||
+		operation.job?.job_type === "workflow.permissions.cutover"
+			? "cutover"
+			: stage;
+	const cancelAnalysis = () => {
+		if (!job) return;
+		setMutating(true);
+		void cancelPlatformJob(job.id)
+			.then(refresh)
+			.catch((cause) =>
+				setLocalError(
+					cause instanceof Error
+						? cause.message
+						: "Could not cancel analysis.",
+				),
+			)
+			.finally(() => setMutating(false));
+	};
+	const returnToReview = () => {
+		void refresh();
+		setParams({
+			job: jobId ?? "",
+			...(platform ? { platform: "true" } : {}),
+		});
+	};
 	return (
-		<PageWorkspace className="mx-auto w-full max-w-7xl space-y-6">
+		<PageWorkspace className="mx-auto h-full w-full max-w-7xl gap-4">
 			<ListPageHeader
 				title="Convert workflow access"
-				description="Review a bounded, read-only proposal before changing any workflow permissions or unattended identity."
+				className="flex-row flex-nowrap"
+				titleClassName="text-xl sm:text-3xl"
+				descriptionClassName="hidden sm:block"
+				description="Review proposed permissions and run identities before applying changes."
 				actions={
 					jobId ? (
 						<Button
 							variant="outline"
+							aria-label="Leave and reopen later"
 							onClick={() => navigate("/workflows")}
 						>
-							Leave and reopen later
+							<X
+								aria-hidden="true"
+								className="size-4 sm:hidden"
+							/>
+							<span className="hidden sm:inline">
+								Leave and reopen later
+							</span>
 						</Button>
 					) : undefined
 				}
-			>
-				<StepIndicator stage={stage} platformIntent={platformIntent} />
-			</ListPageHeader>
-			<div aria-live="polite" role="status" className="sr-only">
-				{job
-					? `Conversion job ${job.status}`
-					: "Choose a conversion scope"}
-			</div>
-			{(error || localError) && (
-				<Alert variant="destructive">
-					<AlertCircle className="size-4" />
-					<AlertTitle>Conversion needs attention</AlertTitle>
-					<AlertDescription className="flex flex-wrap items-center gap-3">
-						{error || localError}
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={() => void refresh()}
-						>
-							Try again
-						</Button>
-					</AlertDescription>
-				</Alert>
-			)}
-			{stage === "scope" && (
-				<section
-					aria-labelledby="conversion-scope"
-					className="max-w-3xl space-y-5"
-				>
-					<div className="space-y-2">
-						<h2
-							id="conversion-scope"
-							className="text-lg font-semibold"
-						>
-							Scope
-						</h2>
-						<p className="text-sm text-muted-foreground">
-							{selectionLost
-								? "This selection is no longer available. Return to Workflows, choose the workflows again, then start a new analysis."
-								: workflowIds.length
-									? `${workflowIds.length} selected workflow${workflowIds.length === 1 ? "" : "s"} will be frozen into this analysis.`
-									: "All workflows you are authorized to review will be analyzed. This is an explicit all-workflows scope, not the workflows currently loaded on another page."}{" "}
-							{!selectionLost &&
-								(workflowIds.length
-									? "This selected-workflow analysis covers only those workflows, using a 30-day observed operation window."
-									: "The all-workflows analysis includes active workflows, tools, data providers, and services, using a 30-day observed operation window.")}
-						</p>
-					</div>
-					<Alert>
-						<ShieldCheck className="size-4" />
-						<AlertDescription>
-							Analysis is read-only. Applying later never runs a
-							workflow and does not silently add organization
-							reach.
-						</AlertDescription>
-					</Alert>
-					<Button
-						onClick={() => void start()}
-						disabled={starting || selectionLost}
-					>
-						{starting && (
-							<Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
-						)}
-						{workflowIds.length || selectionLost
-							? "Analyze selected workflows"
-							: "Analyze all workflows"}
-					</Button>
-				</section>
-			)}
-			{stage === "analyze" && (
-				<section
-					aria-labelledby="conversion-analysis"
-					className="max-w-3xl space-y-5"
-				>
-					<div className="space-y-2">
-						<h2
-							id="conversion-analysis"
-							className="text-lg font-semibold"
-						>
-							Analysis in progress
-						</h2>
-						<p className="text-sm text-muted-foreground">
-							{job?.progress.phase ??
-								"Restoring analysis status…"}
-						</p>
-					</div>
-					{job?.progress.percent != null && (
-						<Progress
-							aria-label="Analysis progress"
-							value={job.progress.percent}
-						/>
-					)}
-					{job?.progress.total != null && (
-						<p className="text-sm text-muted-foreground">
-							{job.progress.current} of {job.progress.total}{" "}
-							completed
-						</p>
-					)}
-					{job && ACTIVE.has(job.status) && (
-						<Button
-							variant="outline"
-							disabled={mutating}
-							onClick={() => {
-								setMutating(true);
-								void cancelPlatformJob(job.id)
-									.then(refresh)
-									.catch((cause) =>
-										setLocalError(
-											cause instanceof Error
-												? cause.message
-												: "Could not cancel the analysis.",
-										),
-									)
-									.finally(() => setMutating(false));
-							}}
-						>
-							Cancel analysis
-						</Button>
-					)}
-					{job && !ACTIVE.has(job.status) && (
-						<Alert
-							variant={
-								job.status === "succeeded"
-									? "default"
-									: "destructive"
-							}
-						>
-							<AlertDescription>
-								{job.status === "succeeded"
-									? "Analysis is ready to review."
-									: `Analysis ${statusLabel(job.status)}. Open the job again after resolving the issue.`}
-							</AlertDescription>
-						</Alert>
-					)}
-				</section>
-			)}
-			{stage === "review" && (
-				<section
-					aria-labelledby="conversion-review"
-					className="space-y-5"
-				>
-					<div>
-						<h2
-							id="conversion-review"
-							className="text-lg font-semibold"
-						>
-							Review proposals
-						</h2>
-						<p className="text-sm text-muted-foreground">
-							{report?.summary.observation_window_days} day
-							observation window. Selected reviews remain
-							available across report pages.
-						</p>
-					</div>
-					<Alert>
-						<AlertDescription>
-							Changing mode does not reduce a broad existing
-							identity. Select only proposals you have reviewed.
-						</AlertDescription>
-					</Alert>
-					<div className="max-h-[min(60vh,42rem)] space-y-3 overflow-auto pr-1">
-						<div className="sr-only">
-							<div>
-								<span>Select</span>
-								<span>Workflow</span>
-								<span>Current → proposed</span>
-								<span>Readiness</span>
-								<span>Identity</span>
-							</div>
-						</div>
-						<div className="space-y-3">
-							{items.map((item) => {
-								const selection = selected[item.workflow_id];
-								const selectable = reviewable.has(item.status);
-								const appliedIdentityStrategy =
-									reviewedIdentityStrategy(item);
-								return (
-									<article
-										key={item.workflow_id}
-										className="space-y-4 rounded-[var(--bf-radius-surface)] border border-border bg-card p-4"
+			/>
+			<ConversionWizardFrame
+				stage={frameStage}
+				platformIntent={platform}
+				workspace={stage === "review" && (report?.total ?? 0) > 6}
+				footer={
+					stage === "review" ? (
+						<>
+							<p className="text-sm text-muted-foreground">
+								{entries.length === 0
+									? "0 selected"
+									: selectionReady
+										? `${entries.length} workflow${entries.length === 1 ? "" : "s"} ready to confirm.`
+										: "Finish the required acknowledgements in each selected workflow."}
+							</p>
+							<div className="flex flex-wrap gap-2">
+								{platform && (
+									<Button
+										variant="outline"
+										className={
+											report?.summary.cutover_ready
+												? undefined
+												: "hidden sm:inline-flex"
+										}
+										disabled={
+											report?.summary.cutover_ready !==
+												true || mutating
+										}
+										onClick={() => setConfirmCutover(true)}
 									>
-										<div className="flex flex-wrap items-center gap-3">
+										Review platform cutover
+									</Button>
+								)}
+								{entries.length > 0 && (
+									<Button
+										variant="ghost"
+										onClick={() => setSelected({})}
+									>
+										Clear selection
+									</Button>
+								)}
+								<Button
+									disabled={!selectionReady || mutating}
+									onClick={() => setConfirmApply(true)}
+								>
+									Review selected →
+								</Button>
+							</div>
+						</>
+					) : stage === "scope" ? (
+						<>
+							<Button asChild variant="outline">
+								<Link to="/workflows">Back to workflows</Link>
+							</Button>
+							<Button
+								onClick={() => void start()}
+								disabled={starting || selectionLost}
+							>
+								{starting && (
+									<Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
+								)}
+								{workflowIds.length || selectionLost
+									? "Analyze selected workflows"
+									: "Analyze all workflows"}
+							</Button>
+						</>
+					) : stage === "analyze" ? (
+						<>
+							<p className="text-xs text-muted-foreground">
+								Progress is saved when you leave.
+							</p>
+							{job && ACTIVE.has(job.status) ? (
+								<Button
+									variant="outline"
+									disabled={mutating}
+									onClick={cancelAnalysis}
+								>
+									Cancel analysis
+								</Button>
+							) : (
+								<Button asChild variant="outline">
+									<Link to="/workflows">
+										Back to workflows
+									</Link>
+								</Button>
+							)}
+						</>
+					) : (
+						<>
+							<p className="text-xs text-muted-foreground">
+								Changes and partial outcomes are saved.
+							</p>
+							<div className="flex flex-wrap gap-2">
+								{operation.job &&
+									ACTIVE.has(operation.job.status) && (
+										<Button
+											variant="outline"
+											onClick={() =>
+												void cancelPlatformJob(
+													operation.job!.id,
+												)
+													.then(operation.refresh)
+													.catch((cause) =>
+														setLocalError(
+															cause instanceof
+																Error
+																? cause.message
+																: "Could not cancel changes.",
+														),
+													)
+											}
+										>
+											Cancel requested change
+										</Button>
+									)}
+								<Button
+									variant="outline"
+									onClick={returnToReview}
+								>
+									Return to review
+								</Button>
+							</div>
+						</>
+					)
+				}
+			>
+				<div aria-live="polite" role="status" className="sr-only">
+					{job
+						? `Conversion job ${job.status}`
+						: "Choose a conversion scope"}
+				</div>
+				{(error || localError) && (
+					<Alert variant="destructive" className="mb-4 shrink-0">
+						<AlertCircle className="size-4" />
+						<AlertTitle>Conversion needs attention</AlertTitle>
+						<AlertDescription>
+							{error || localError}
+						</AlertDescription>
+					</Alert>
+				)}
+				{stage === "scope" && (
+					<Scope ids={workflowIds} selectionLost={selectionLost} />
+				)}
+				{stage === "analyze" && <ProgressStage job={job} />}
+				{stage === "review" && (
+					<div
+						className={`flex min-h-0 flex-col ${(report?.total ?? 0) > 6 ? "flex-1" : ""}`}
+					>
+						<div className="mb-4 shrink-0">
+							<h2 className="text-lg font-semibold">
+								Review proposals
+							</h2>
+							<p className="text-sm text-muted-foreground">
+								{report?.summary.observation_window_days} day
+								observation window. Selections persist across
+								report pages.
+							</p>
+						</div>
+						<div
+							aria-label="Readiness summary"
+							className="mb-4 flex shrink-0 flex-wrap gap-2 text-xs"
+						>
+							{[
+								["Ready", report?.summary.ready ?? 0],
+								[
+									"Needs review",
+									report?.summary.needs_review ?? 0,
+								],
+								["Blocked", report?.summary.blocked ?? 0],
+								["Stale", report?.summary.stale ?? 0],
+								[
+									"Already declared",
+									report?.summary.already_declared ?? 0,
+								],
+								...(platform
+									? [
+											[
+												"Full Access remaining",
+												report?.summary
+													.remaining_full ?? 0,
+											],
+										]
+									: []),
+							]
+								.filter(
+									([label, count]) =>
+										!["Stale", "Already declared"].includes(
+											String(label),
+										) || Number(count) > 0,
+								)
+								.map(([label, count]) => (
+									<span
+										key={label}
+										className="rounded-md border bg-muted/30 px-2.5 py-1.5"
+									>
+										<span className="font-medium">
+											{Number(count).toLocaleString()}
+										</span>{" "}
+										<span className="text-muted-foreground">
+											{label}
+										</span>
+									</span>
+								))}
+						</div>
+						<div
+							className={`grid min-h-0 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.9fr)] ${(report?.total ?? 0) > 6 ? "flex-1" : ""}`}
+						>
+							<div className="flex min-h-0 min-w-0 flex-col rounded-[var(--bf-radius-surface)] border border-border">
+								<div className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3 border-b px-4 py-3 text-xs font-medium text-muted-foreground">
+									<span>Select</span>
+									<span>
+										Workflow · transition · identity risk
+									</span>
+									<span>Readiness</span>
+								</div>
+								<div className="max-h-[min(48vh,34rem)] min-h-0 overflow-auto">
+									{items.map((item) => (
+										<div
+											key={item.workflow_id}
+											className={`grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border-b px-4 py-3 last:border-b-0 ${detail?.workflow_id === item.workflow_id ? "bg-muted/50" : ""}`}
+										>
 											<Checkbox
 												aria-label={`Select ${item.workflow_name}`}
-												checked={!!selection}
-												disabled={!selectable}
-												onCheckedChange={(checked) =>
-													setSelected((current) => {
-														const next = {
-															...current,
-														};
-														if (checked)
-															next[
-																item.workflow_id
-															] = {
-																source_fingerprint:
-																	item.source_fingerprint,
-																identity_strategy:
-																	"dedicated",
-																acknowledged_unknowns:
-																	(
-																		item.unknowns ??
-																		[]
-																	).length ===
-																	0,
-																acknowledged_broad_identity: false,
-																requires_solution_ack:
-																	item.solution_id !=
-																		null ||
-																	item.solution_permission_request !=
-																		null,
-															};
-														else
-															delete next[
-																item.workflow_id
-															];
-														return next;
-													})
+												checked={
+													!!selected[item.workflow_id]
 												}
+												disabled={
+													!reviewable.has(item.status)
+												}
+												onCheckedChange={(checked) => {
+													select(
+														item,
+														checked === true,
+													);
+													if (checked)
+														setDetailId(
+															item.workflow_id,
+														);
+												}}
 											/>
-											<div className="min-w-0 flex-1">
-												<p className="font-medium [overflow-wrap:anywhere]">
-													{item.workflow_name}
+											<div className="min-w-0">
+												<Button
+													variant="link"
+													aria-label={`Review ${item.workflow_name}`}
+													className="h-auto min-h-0 max-w-full justify-start px-0 py-0 text-left font-medium"
+													onClick={(event) => {
+														reviewTriggerRef.current =
+															event.currentTarget;
+														setDetailId(
+															item.workflow_id,
+														);
+														if (!desktop)
+															setSheetOpen(true);
+													}}
+												>
+													<span className="truncate">
+														{item.workflow_name}
+													</span>
+												</Button>
+												<p className="mt-1 text-xs text-muted-foreground">
+													{item.current_permission_mode ===
+													"full"
+														? "Full Access"
+														: "Declared Permissions"}{" "}
+													→ Declared Permissions ·{" "}
+													{item.identity
+														?.broad_power_warning
+														? "Broad identity"
+														: item.identity?.shared
+															? "Shared identity"
+															: "Dedicated identity"}
 												</p>
+												{item.error && (
+													<p className="mt-1 text-xs text-destructive">
+														{item.error}
+													</p>
+												)}
+												{["stale", "blocked"].includes(
+													item.status,
+												) && (
+													<Link
+														className="mt-1 inline-block text-xs text-primary underline"
+														to={`/workflows/convert?workflows=${encodeURIComponent(item.workflow_id)}`}
+													>
+														Analyze this workflow
+														again
+													</Link>
+												)}
 											</div>
 											<Badge
-												className="shrink-0"
 												variant={
 													item.status === "ready"
 														? "secondary"
@@ -574,468 +677,489 @@ function WorkflowConversionWizard() {
 												{statusLabel(item.status)}
 											</Badge>
 										</div>
-										{item.error && (
-											<p
-												role="alert"
-												className="text-sm text-destructive"
-											>
-												{item.error}
-											</p>
-										)}
-										{(item.status === "stale" ||
-											item.status === "blocked") && (
-											<Button
-												asChild
-												variant="outline"
-												size="sm"
-											>
-												<Link
-													to={`/workflows/convert?workflows=${encodeURIComponent(item.workflow_id)}`}
-												>
-													Analyze this workflow again
-												</Link>
-											</Button>
-										)}
-										<div className="grid gap-4 sm:grid-cols-2">
-											<section className="min-w-0 space-y-1">
-												<h3 className="text-sm font-medium">
-													Current → proposed
-												</h3>
-												<p className="text-sm [overflow-wrap:anywhere]">
-													{item.current_permission_mode ===
-													"full"
-														? "Full Access"
-														: "Declared Permissions"}{" "}
-													→ Declared Permissions (
-													{
-														(
-															item.proposed_permissions ??
-															[]
-														).length
-													}
-													)
-												</p>
-												<p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-													Proposed permissions:{" "}
-													{(
-														item.proposed_permissions ??
-														[]
-													).join(", ") || "None"}
-												</p>
-											</section>
-											<section className="min-w-0 space-y-1">
-												<h3 className="text-sm font-medium">
-													Current identity
-												</h3>
-												<p className="text-sm [overflow-wrap:anywhere]">
-													{item.identity?.name ??
-														"Identity unavailable"}
-												</p>
-												<p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-													Organization:{" "}
-													{item.identity
-														? (item.identity
-																.organization_id ??
-															"Global")
-														: "Unavailable"}
-												</p>
-												<p className="text-xs text-muted-foreground">
-													{item.identity
-														? item.identity.shared
-															? "Shared identity"
-															: "Dedicated identity"
-														: "Identity type unavailable"}
-												</p>
-												{item.identity
-													?.broad_power_warning && (
-													<p className="text-xs text-[var(--bf-warning)]">
-														This identity has broad
-														authority.
-													</p>
-												)}
-												<p className="text-xs text-muted-foreground">
-													Proposed dedicated identity:
-													User base role in this
-													workflow's organization,
-													with no extra roles.
-												</p>
-												{item.status ===
-													"already_declared" &&
-													appliedIdentityStrategy && (
-														<p className="text-xs text-muted-foreground">
-															Applied review:{" "}
-															{appliedIdentityStrategy ===
-															"dedicated"
-																? "Dedicated identity"
-																: "Keep current identity"}
-														</p>
-													)}
-											</section>
-										</div>
-										<div className="grid gap-3 sm:grid-cols-2">
-											<p className="min-w-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">
-												Source:{" "}
-												{(
-													item.source_permissions ??
-													[]
-												).join(", ") || "None"}
-											</p>
-											<p className="min-w-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">
-												Observed:{" "}
-												{(
-													item.observed_permissions ??
-													[]
-												).join(", ") || "None"}
-											</p>
-										</div>
-										<Evidence item={item} />
-										<div className="space-y-1">
-											{(item.warnings ?? []).map(
-												(warning) => (
-													<p
-														key={warning}
-														className="text-xs text-[var(--bf-warning)]"
-													>
-														{warning}
-													</p>
+									))}
+								</div>
+								{report && (
+									<PaginationFooter
+										aria-label="Report pages"
+										className="shrink-0 px-4"
+										summary={
+											desktop
+												? `${report.total === 0 ? 0 : report.offset + 1}–${Math.min(report.offset + report.limit, report.total)} of ${report.total} workflows`
+												: `${report.total === 0 ? 0 : report.offset + 1}–${Math.min(report.offset + report.limit, report.total)} / ${report.total}`
+										}
+										previousDisabled={report.offset === 0}
+										nextDisabled={
+											report.offset + report.limit >=
+											report.total
+										}
+										onPrevious={() =>
+											void changePage(
+												Math.max(
+													0,
+													report.offset -
+														report.limit,
 												),
-											)}
-										</div>
-										<div>
-											{selection && (
-												<fieldset className="space-y-1">
-													<label className="flex gap-2 text-xs">
-														<input
-															type="radio"
-															checked={
-																selection.identity_strategy ===
-																"dedicated"
-															}
-															onChange={() =>
-																setSelected(
-																	(
-																		current,
-																	) => ({
-																		...current,
-																		[item.workflow_id]:
-																			{
-																				...selection,
-																				identity_strategy:
-																					"dedicated",
-																				acknowledged_broad_identity: false,
-																			},
-																	}),
-																)
-															}
-														/>
-														Dedicated
-													</label>
-													<label className="flex gap-2 text-xs">
-														<input
-															type="radio"
-															checked={
-																selection.identity_strategy ===
-																"keep_current"
-															}
-															onChange={() =>
-																setSelected(
-																	(
-																		current,
-																	) => ({
-																		...current,
-																		[item.workflow_id]:
-																			{
-																				...selection,
-																				identity_strategy:
-																					"keep_current",
-																			},
-																	}),
-																)
-															}
-														/>
-														Keep current
-													</label>
-													{selection.identity_strategy ===
-														"keep_current" && (
-														<label className="flex gap-2 text-xs">
-															<Checkbox
-																checked={
-																	selection.acknowledged_broad_identity
-																}
-																onCheckedChange={(
-																	value,
-																) =>
-																	setSelected(
-																		(
-																			current,
-																		) => ({
-																			...current,
-																			[item.workflow_id]:
-																				{
-																					...selection,
-																					acknowledged_broad_identity:
-																						value ===
-																						true,
-																				},
-																		}),
-																	)
-																}
-															/>
-															Acknowledge existing
-															authority
-														</label>
-													)}
-													{(item.unknowns ?? [])
-														.length > 0 && (
-														<label className="flex gap-2 text-xs">
-															<Checkbox
-																checked={
-																	selection.acknowledged_unknowns
-																}
-																onCheckedChange={(
-																	value,
-																) =>
-																	setSelected(
-																		(
-																			current,
-																		) => ({
-																			...current,
-																			[item.workflow_id]:
-																				{
-																					...selection,
-																					acknowledged_unknowns:
-																						value ===
-																						true,
-																				},
-																		}),
-																	)
-																}
-															/>
-															Acknowledge
-															unresolved code
-														</label>
-													)}
-												</fieldset>
-											)}
-										</div>
-									</article>
-								);
-							})}
+											)
+										}
+										onNext={() =>
+											void changePage(
+												report.offset + report.limit,
+											)
+										}
+									/>
+								)}
+							</div>
+							<aside
+								aria-label="Workflow detail"
+								className="hidden max-h-[min(48vh,34rem)] min-h-0 overflow-auto rounded-[var(--bf-radius-surface)] border border-border p-5 lg:block"
+							>
+								{detail ? (
+									<>
+										<h3 className="mb-4 font-medium">
+											{detail.workflow_name}
+										</h3>
+										{inspector}
+									</>
+								) : (
+									<p className="text-sm text-muted-foreground">
+										Select a workflow to inspect its
+										proposal.
+									</p>
+								)}
+							</aside>
 						</div>
 					</div>
-					{report && report.total > report.limit && (
-						<nav
-							aria-label="Report pages"
-							className="flex justify-end gap-2"
-						>
-							<Button
-								variant="outline"
-								disabled={report.offset === 0}
-								onClick={() =>
-									void changePage(
-										Math.max(
-											0,
-											report.offset - report.limit,
-										),
-									)
-								}
-							>
-								<ChevronLeft />
-								Previous
-							</Button>
-							<Button
-								variant="outline"
-								disabled={
-									report.offset + report.limit >= report.total
-								}
-								onClick={() =>
-									void changePage(
-										report.offset + report.limit,
-									)
-								}
-							>
-								Next
-								<ChevronRight />
-							</Button>
-						</nav>
-					)}
-					<div className="space-y-3 border-t pt-5">
-						{hasSolutionRequests && (
-							<label className="flex gap-2 text-sm">
+				)}
+				{stage === "apply" && <OperationStage operation={operation} />}
+				{!desktop && (
+					<Sheet
+						open={sheetOpen}
+						onOpenChange={(open) => {
+							setSheetOpen(open);
+							if (!open)
+								requestAnimationFrame(() =>
+									reviewTriggerRef.current?.focus(),
+								);
+						}}
+					>
+						<SheetContent className="flex w-full flex-col overflow-hidden sm:max-w-xl">
+							<SheetHeader className="border-b">
+								<SheetTitle>Workflow details</SheetTitle>
+								<SheetDescription>
+									{detail?.workflow_name}
+								</SheetDescription>
+							</SheetHeader>
+							<div className="overflow-auto p-5">{inspector}</div>
+						</SheetContent>
+					</Sheet>
+				)}
+				<AlertDialog open={confirmApply} onOpenChange={setConfirmApply}>
+					<AlertDialogContent>
+						<AlertDialogHeader>
+							<AlertDialogTitle>
+								Confirm reviewed changes
+							</AlertDialogTitle>
+							<AlertDialogDescription>
+								Apply declared-permission proposals to{" "}
+								{entries.length} selected workflow
+								{entries.length === 1 ? "" : "s"}. This uses
+								exact reviewed fingerprints and does not run
+								workflows.
+							</AlertDialogDescription>
+						</AlertDialogHeader>
+						<ul className="max-h-40 space-y-1 overflow-auto text-sm">
+							{entries.map(([id, value]) => (
+								<li key={id}>
+									{value.workflow_name || id} ·{" "}
+									{value.identity_strategy === "dedicated"
+										? "Dedicated identity"
+										: "Keep current identity"}
+								</li>
+							))}
+						</ul>
+						{solutionRequired && (
+							<label className="flex items-start gap-2 text-sm">
 								<Checkbox
-									checked={acknowledgedSolutionRequests}
+									checked={solutionAck}
 									onCheckedChange={(value) =>
-										setAcknowledgedSolutionRequests(
-											value === true,
-										)
+										setSolutionAck(value === true)
 									}
 								/>
 								I reviewed selected Solution declarations.
 							</label>
 						)}
-						<Button
-							disabled={
-								selectedEntries.length === 0 ||
-								selectedEntries.some(
-									([, selection]) =>
-										!selection.acknowledged_unknowns ||
-										(selection.identity_strategy ===
-											"keep_current" &&
-											!selection.acknowledged_broad_identity),
-								) ||
-								(hasSolutionRequests &&
-									!acknowledgedSolutionRequests) ||
-								mutating
-							}
-							onClick={() => void apply()}
-						>
-							Apply {selectedEntries.length} reviewed proposal
-							{selectedEntries.length === 1 ? "" : "s"}
-						</Button>
-					</div>
-					{platformIntent && (
-						<section className="space-y-3 border-t pt-6">
-							<h2 className="text-lg font-semibold">
-								Platform cutover
-							</h2>
-							<p className="text-sm text-muted-foreground">
-								{report?.summary.ready ?? 0} ready;{" "}
-								{report?.summary.needs_review ?? 0} need review;{" "}
-								{report?.summary.blocked ?? 0} blocked;{" "}
-								{report?.summary.stale ?? 0} stale;{" "}
-								{report?.summary.remaining_full ?? 0} Full
-								Access or inherited default exceptions remain.
-								The backend rechecks this state before the
-								change.
-							</p>
-							<label className="flex gap-2 text-sm">
-								<Checkbox
-									checked={acknowledgedExceptions}
-									onCheckedChange={(value) =>
-										setAcknowledgedExceptions(
-											value === true,
-										)
-									}
-								/>
-								I reviewed remaining exceptions.
-							</label>
-							<Button
+						<AlertDialogFooter>
+							<AlertDialogCancel>
+								Keep reviewing
+							</AlertDialogCancel>
+							<AlertDialogAction
+								disabled={
+									!selectionReady ||
+									(solutionRequired && !solutionAck) ||
+									mutating
+								}
+								onClick={() => void apply()}
+							>
+								Apply reviewed changes
+							</AlertDialogAction>
+						</AlertDialogFooter>
+					</AlertDialogContent>
+				</AlertDialog>
+				<AlertDialog
+					open={confirmCutover}
+					onOpenChange={setConfirmCutover}
+				>
+					<AlertDialogContent>
+						<AlertDialogHeader>
+							<AlertDialogTitle>
+								Confirm platform cutover
+							</AlertDialogTitle>
+							<AlertDialogDescription>
+								Change the platform default to Declared
+								Permissions. The backend rechecks readiness
+								before making this change.
+							</AlertDialogDescription>
+						</AlertDialogHeader>
+						<p className="text-sm text-muted-foreground">
+							{report?.summary.remaining_full ?? 0} Full Access
+							workflows remaining.
+						</p>
+						<label className="flex items-start gap-2 text-sm">
+							<Checkbox
+								checked={exceptionsAck}
+								onCheckedChange={(value) =>
+									setExceptionsAck(value === true)
+								}
+							/>
+							I reviewed the remaining exceptions.
+						</label>
+						<AlertDialogFooter>
+							<AlertDialogCancel>
+								Keep reviewing
+							</AlertDialogCancel>
+							<AlertDialogAction
 								variant="destructive"
 								disabled={
-									!cutoverReady ||
-									!acknowledgedExceptions ||
+									report?.summary.cutover_ready !== true ||
+									!exceptionsAck ||
 									mutating
 								}
 								onClick={() => void cutover()}
 							>
 								Change platform default to Declared Permissions
-							</Button>
-							{!cutoverReady && (
-								<p className="text-sm text-muted-foreground">
-									Resolve remaining Full Access, review,
-									blocked, and stale workflows before cutover.
-								</p>
-							)}
-						</section>
-					)}
-				</section>
-			)}
-			{stage === "apply" && (
-				<section
-					aria-labelledby="conversion-apply"
-					className="max-w-3xl space-y-5"
-				>
-					<div className="space-y-2">
-						<h2
-							id="conversion-apply"
-							className="text-lg font-semibold"
-						>
-							Apply and verify
-						</h2>
-						<p className="text-sm text-muted-foreground">
-							{operation.job?.progress.phase ??
-								"Restoring the requested change…"}
+							</AlertDialogAction>
+						</AlertDialogFooter>
+					</AlertDialogContent>
+				</AlertDialog>
+			</ConversionWizardFrame>
+		</PageWorkspace>
+	);
+}
+
+function Scope({
+	ids,
+	selectionLost,
+}: {
+	ids: string[];
+	selectionLost: boolean;
+}) {
+	return (
+		<section className="space-y-5" aria-labelledby="conversion-scope">
+			<div className="max-w-2xl space-y-5">
+				<div>
+					<h2 id="conversion-scope" className="text-lg font-semibold">
+						Review your selection
+					</h2>
+					<p className="mt-1 text-sm text-muted-foreground">
+						{selectionLost
+							? "This selection is no longer available. Return to Workflows, choose workflows again, then start a new analysis."
+							: ids.length
+								? `${ids.length} selected workflow${ids.length === 1 ? "" : "s"} will be frozen into this analysis.`
+								: "All workflows you are authorized to review will be analyzed."}
+					</p>
+				</div>
+				<div className="grid gap-3 sm:grid-cols-2">
+					<div className="rounded-[var(--bf-radius-surface)] border p-4">
+						<p className="text-sm font-medium">
+							{ids.length
+								? "Selected workflows"
+								: "All authorized workflows"}
+						</p>
+						<p className="mt-1 text-sm text-muted-foreground">
+							{ids.length
+								? `${ids.length} selected`
+								: "Workflows, tools, data providers and services"}
 						</p>
 					</div>
-					{operation.error && (
+					<div className="rounded-[var(--bf-radius-surface)] border p-4">
+						<p className="text-sm font-medium">
+							30-day observation
+						</p>
+						<p className="mt-1 text-sm text-muted-foreground">
+							Uses Python source and operations recorded over the
+							last 30 days.
+						</p>
+					</div>
+				</div>
+				<Alert>
+					<ShieldCheck className="size-4" />
+					<AlertDescription>
+						Analysis is read-only. Applying later never runs a
+						workflow or silently adds organization reach.
+					</AlertDescription>
+				</Alert>
+			</div>
+		</section>
+	);
+}
+function ProgressStage({
+	job,
+}: {
+	job: ReturnType<typeof useWorkflowConversionJob>["job"];
+}) {
+	return (
+		<section className="space-y-5" aria-labelledby="conversion-analysis">
+			<div className="max-w-2xl space-y-5">
+				<div>
+					<h2
+						id="conversion-analysis"
+						className="text-lg font-semibold"
+					>
+						{!job || ACTIVE.has(job.status)
+							? "Analysis in progress"
+							: `Analysis ${statusLabel(job.status).toLowerCase()}`}
+					</h2>
+					<p className="mt-1 text-sm text-muted-foreground">
+						{job?.progress.phase ?? "Restoring analysis status…"}
+					</p>
+				</div>
+				{job?.progress.percent != null && (
+					<Progress
+						aria-label="Analysis progress"
+						value={job.progress.percent}
+					/>
+				)}
+				{job?.progress.total != null && (
+					<p className="text-sm text-muted-foreground">
+						{job.progress.current} of {job.progress.total} completed
+					</p>
+				)}
+				{job &&
+					!ACTIVE.has(job.status) &&
+					job.status !== "succeeded" && (
 						<Alert variant="destructive">
 							<AlertDescription>
-								{operation.error}
+								{job.error?.message ||
+									"This analysis stopped. Its saved progress is available in Platform Jobs."}
 							</AlertDescription>
 						</Alert>
 					)}
-					{operation.job?.progress.percent != null && (
-						<Progress
-							aria-label="Apply progress"
-							value={operation.job.progress.percent}
-						/>
-					)}
-					{operation.job?.status === "succeeded" && (
-						<Alert>
-							<CheckCircle2 className="size-4" />
-							<AlertDescription>
-								The requested change completed. Review each
-								workflow before running it; this conversion did
-								not execute a workflow.
-							</AlertDescription>
-						</Alert>
-					)}
-					{operation.job &&
-						["failed", "cancelled", "requires_action"].includes(
-							operation.job.status,
-						) && (
-							<Alert variant="destructive">
-								<AlertDescription>
-									The requested change{" "}
-									{statusLabel(operation.job.status)}. The
-									durable job record keeps any partial
-									outcomes for review.
-								</AlertDescription>
-							</Alert>
-						)}
-					{operation.job && ACTIVE.has(operation.job.status) && (
-						<Button
-							variant="outline"
-							onClick={() =>
-								void cancelPlatformJob(operation.job!.id).then(
-									operation.refresh,
-								)
-							}
-						>
-							Cancel requested change
-						</Button>
-					)}
-					<Button
-						variant="outline"
-						onClick={() =>
-							setParams({
-								job: jobId ?? "",
-								...(platformIntent ? { platform: "true" } : {}),
+			</div>
+		</section>
+	);
+}
+function Inspector({
+	item,
+	selection,
+	update,
+}: {
+	item: Item;
+	selection?: Selection;
+	update: (change: Partial<Selection>) => void;
+}) {
+	const reviewedStrategy = item.review?.identity_strategy;
+	const applied =
+		reviewedStrategy === "dedicated" || reviewedStrategy === "keep_current"
+			? reviewedStrategy
+			: null;
+	return (
+		<div className="space-y-5">
+			<div>
+				<Badge
+					variant={item.status === "ready" ? "secondary" : "outline"}
+				>
+					{statusLabel(item.status)}
+				</Badge>
+				<p className="mt-2 text-sm">
+					{item.current_permission_mode === "full"
+						? "Full Access"
+						: "Declared Permissions"}{" "}
+					→ Declared Permissions
+				</p>
+				<p className="mt-1 text-sm text-muted-foreground">
+					{(item.proposed_permissions ?? []).join(", ") ||
+						"No SDK permissions found"}
+				</p>
+			</div>
+			<div className="border-t pt-4">
+				<h4 className="font-medium">Identity risk</h4>
+				<p className="mt-2 text-sm">
+					{item.identity?.name ?? "Identity unavailable"}
+				</p>
+				<p className="text-sm text-muted-foreground">
+					{item.identity?.shared
+						? "Shared identity"
+						: "Dedicated identity"}
+					{item.identity?.broad_power_warning
+						? " · Broad authority"
+						: ""}
+				</p>
+				<p className="mt-2 text-sm text-muted-foreground">
+					Proposed dedicated identity: User base role in this
+					workflow’s organization, with no extra roles.
+				</p>
+				{applied && (
+					<p className="mt-2 text-sm text-muted-foreground">
+						Applied review:{" "}
+						{applied === "dedicated"
+							? "Dedicated identity"
+							: "Keep current identity"}
+					</p>
+				)}
+				{item.identity?.organization_id && (
+					<details className="mt-2 text-sm text-muted-foreground">
+						<summary>Identity details</summary>
+						<p className="mt-2 break-all">
+							Organization: {item.identity.organization_id}
+						</p>
+					</details>
+				)}
+			</div>
+			<details className="border-t pt-4 text-sm">
+				<summary className="cursor-pointer font-medium">
+					Permission inputs
+				</summary>
+				<p className="mt-2 text-muted-foreground">
+					Source:{" "}
+					{(item.source_permissions ?? []).join(", ") || "None"}
+				</p>
+				<p className="mt-1 text-muted-foreground">
+					Observed:{" "}
+					{(item.observed_permissions ?? []).join(", ") || "None"}
+				</p>
+				{(item.warnings ?? []).map((warning) => (
+					<p key={warning} className="mt-1 text-[var(--bf-warning)]">
+						{warning}
+					</p>
+				))}
+			</details>
+			{selection && (
+				<fieldset className="space-y-3 border-t pt-4">
+					<legend className="font-medium">Identity strategy</legend>
+					<RadioGroup
+						value={selection.identity_strategy}
+						onValueChange={(value) =>
+							update({
+								identity_strategy: value as IdentityStrategy,
+								acknowledged_broad_identity:
+									value === "dedicated"
+										? false
+										: selection.acknowledged_broad_identity,
 							})
 						}
 					>
-						Return to review
-					</Button>
-				</section>
+						<label className="flex items-center gap-2 text-sm">
+							<RadioGroupItem value="dedicated" />
+							Use a dedicated identity
+						</label>
+						<label className="flex items-center gap-2 text-sm">
+							<RadioGroupItem value="keep_current" />
+							Keep the current identity
+						</label>
+					</RadioGroup>
+					{selection.identity_strategy === "keep_current" && (
+						<label className="flex items-start gap-2 text-sm">
+							<Checkbox
+								checked={selection.acknowledged_broad_identity}
+								onCheckedChange={(value) =>
+									update({
+										acknowledged_broad_identity:
+											value === true,
+									})
+								}
+							/>
+							I acknowledge the existing authority.
+						</label>
+					)}
+					{(item.unknowns ?? []).length > 0 && (
+						<label className="flex items-start gap-2 text-sm">
+							<Checkbox
+								checked={selection.acknowledged_unknowns}
+								onCheckedChange={(value) =>
+									update({
+										acknowledged_unknowns: value === true,
+									})
+								}
+							/>
+							I acknowledge unresolved code paths.
+						</label>
+					)}
+				</fieldset>
 			)}
-			{job?.status === "succeeded" &&
-				stage === "review" &&
-				selectedEntries.length === 0 && (
+			<Evidence item={item} />
+		</div>
+	);
+}
+function OperationStage({
+	operation,
+}: {
+	operation: ReturnType<typeof useWorkflowConversionOperation>;
+}) {
+	const current = operation.job;
+	const completed = current?.result?.completed;
+	return (
+		<section className="space-y-5" aria-labelledby="conversion-apply">
+			<div className="max-w-2xl space-y-5">
+				<div>
+					<h2 id="conversion-apply" className="text-lg font-semibold">
+						Apply and verify
+					</h2>
+					<p className="mt-1 text-sm text-muted-foreground">
+						{current?.progress.phase ??
+							"Restoring the requested change…"}
+					</p>
+				</div>
+				{operation.error && (
+					<Alert variant="destructive">
+						<AlertDescription>{operation.error}</AlertDescription>
+					</Alert>
+				)}
+				{current?.progress.percent != null && (
+					<Progress
+						aria-label="Apply progress"
+						value={current.progress.percent}
+					/>
+				)}
+				{Array.isArray(completed) && (
 					<p className="text-sm text-muted-foreground">
-						<CheckCircle2 className="mr-2 inline size-4 text-[var(--bf-success)]" />
-						Choose reviewed workflows above. Successful applies link
-						back to each workflow; no workflow execution occurs
-						here.
+						{completed.length} workflow change
+						{completed.length === 1 ? "" : "s"} saved.
 					</p>
 				)}
-			{job?.status === "succeeded" && (
-				<Link
-					className="text-sm text-primary underline"
-					to="/workflows"
-				>
-					Back to workflows
-				</Link>
-			)}
-		</PageWorkspace>
+				{current?.status === "succeeded" && (
+					<Alert>
+						<CheckCircle2 className="size-4" />
+						<AlertDescription>
+							The requested change completed. Review each workflow
+							before running it; this conversion did not execute a
+							workflow.
+						</AlertDescription>
+					</Alert>
+				)}
+				{current &&
+					["failed", "cancelled", "requires_action"].includes(
+						current.status,
+					) && (
+						<Alert variant="destructive">
+							<AlertDescription>
+								{current.error?.message} The requested change{" "}
+								{statusLabel(current.status)}. The durable job
+								record keeps any partial outcomes for review.
+							</AlertDescription>
+						</Alert>
+					)}
+			</div>
+		</section>
 	);
 }

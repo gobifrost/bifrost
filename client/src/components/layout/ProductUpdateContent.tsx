@@ -3,6 +3,7 @@ import { ExternalLink, ImageOff } from "lucide-react";
 import { MarkdownContent } from "@/components/common/MarkdownContent";
 import { DiscordIcon } from "@/components/icons/DiscordIcon";
 import { Github } from "@/components/icons/GithubIcon";
+import { YouTubeIcon } from "@/components/icons/YouTubeIcon";
 import { Badge } from "@/components/ui/badge";
 import type {
 	ProductUpdateAsset,
@@ -362,6 +363,12 @@ export function CommunityFooter({
 						icon={<DiscordIcon className="size-4" />}
 					>
 						Discord
+					</CommunityLink>
+					<CommunityLink
+						href="https://www.youtube.com/@gobifrost"
+						icon={<YouTubeIcon className="size-4" />}
+					>
+						YouTube
 					</CommunityLink>
 					<CommunityLink
 						href="https://gobifrost.com"
