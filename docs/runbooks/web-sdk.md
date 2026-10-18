@@ -117,6 +117,14 @@ constants. This applies to both the live App and its editor preview. It does
 not grant access to Solution administration; those routes retain their
 platform-administrator checks.
 
+Ordinary signed-in viewers call workflows as themselves. The SDK's
+`X-Bifrost-App` header, or the older workflow request's `app_id` field, selects
+the App's install; it does not make the App a security principal. A viewer who
+can currently open an App can select its own active, sealed Solution without
+enabling inbound access. Their organization reach, workflow sharing and
+execution permissions, and table/file policies still apply. Runtime credentials
+continue to use their verified install provenance for inbound checks.
+
 Solution Detail tabs accept `?tab=overview`, `contents`, `access`,
 `configuration`, or `exports`. Links to an owning Solution's backup history
 can use `/solutions/${solutionId}?tab=exports`. Missing or unknown tab values

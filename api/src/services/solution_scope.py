@@ -68,6 +68,86 @@ async def resolve_trustworthy_caller(db: AsyncSession, ctx) -> UUID | None:
     return None
 
 
+def _is_ordinary_human_principal(user) -> bool:
+    """Whether ``user`` can select an App context for their own request.
+
+    An App header identifies UI context; it is not runtime provenance.  Only a
+    direct human request may use that context to access its own sealed
+    Solution.  Runtime, embed, engine, and service credentials retain the
+    durable caller behavior in :func:`resolve_trustworthy_caller` instead.
+    """
+    return bool(
+        user is not None
+        and not getattr(user, "embed", False)
+        and getattr(user, "runtime_authority", None) is None
+        and not getattr(user, "engine_execution_id", None)
+        and not getattr(user, "engine_solution_id", None)
+        and not getattr(user, "service_id", None)
+        and not getattr(user, "service_attempt_id", None)
+    )
+
+
+async def is_authorized_human_app_context(
+    db: AsyncSession,
+    ctx,
+    target_id: UUID,
+    *,
+    app_id: str | None = None,
+) -> bool:
+    """Return whether a visible App selects its own active Solution install.
+
+    The App remains a selector, never a caller identity.  Its current
+    visibility is checked through ``ApplicationRepository`` using the human's
+    current authorization context, so a stale, foreign, or revoked App header
+    cannot open a sealed install.
+    """
+    user = getattr(ctx, "user", None)
+    if not _is_ordinary_human_principal(user):
+        return False
+
+    raw_app_id = app_id if app_id is not None else getattr(ctx, "app_id", None)
+    if raw_app_id is None:
+        return False
+    try:
+        app_uuid = UUID(str(raw_app_id))
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+    target = await get_active_solution(db, target_id)
+    if target is None:
+        return False
+
+    from src.repositories.applications import ApplicationRepository
+    from src.services.authorization.enforce import load_caller
+
+    app = await ApplicationRepository(
+        db,
+        target.organization_id,
+        caller=await load_caller(db, user),
+    ).get(id=app_uuid)
+    return bool(
+        app is not None
+        and app.solution_id == target.id
+        and app.organization_id == target.organization_id
+    )
+
+
+async def inbound_allowed_for_context(
+    db: AsyncSession,
+    ctx,
+    target_id: UUID,
+    *,
+    app_id: str | None = None,
+) -> bool:
+    """Apply the inbound gate with verified callers and human App selection."""
+    caller = await resolve_trustworthy_caller(db, ctx)
+    if await check_inbound_allowed(db, target_id, caller):
+        return True
+    return await is_authorized_human_app_context(
+        db, ctx, target_id, app_id=app_id
+    )
+
+
 async def check_inbound_allowed(
     db: AsyncSession,
     target_id: UUID,
@@ -302,6 +382,9 @@ async def derive_execution_solution_scope(
     # ctx unset, so it resolves; direct HTTP callers with both keep ctx-wins.
     target: UUID | None = None
     explicit = False
+    # The authenticated header wins, while the deprecated body app id retains
+    # its role as the selector for existing SDK callers that have no header.
+    app_context_id = getattr(ctx, "app_id", None) or app_id
     ctx_scope = await solution_context_id(db, ctx)
     if ctx_scope is not None:
         target = ctx_scope
@@ -348,12 +431,17 @@ async def derive_execution_solution_scope(
                     select(Application.solution_id).where(Application.id == app_uuid)
                 )
             ).scalar_one_or_none()
+            # A known App-derived install is a concrete target.  If its own
+            # App context is no longer visible, do not fall back to a loose
+            # same-path workflow outside a sealed install.
+            explicit = target is not None
     if target is None:
         if explicit:
             raise SolutionInboundDenied(solution_id)
         return None
-    caller = await resolve_trustworthy_caller(db, ctx)
-    if await check_inbound_allowed(db, target, caller):
+    if await inbound_allowed_for_context(
+        db, ctx, target, app_id=app_context_id
+    ):
         return target
     if explicit:
         raise SolutionInboundDenied(solution_id)
@@ -381,8 +469,7 @@ async def resolve_solution_table_by_name(
 
     # SPIKE inbound gate: own-install callers always pass, otherwise the
     # target's allow_inbound_access decides. Denied → None (404 downstream).
-    caller = await resolve_trustworthy_caller(db, ctx)
-    if not await check_inbound_allowed(db, solution_id, caller):
+    if not await inbound_allowed_for_context(db, ctx, solution_id):
         return None
 
     solution = await get_active_solution(db, solution_id)
@@ -471,10 +558,10 @@ async def file_read_tiers(
         solution.organization_id
     ):
         return []
-    # SPIKE inbound gate (same rule as tables): own-install callers pass,
-    # otherwise allow_inbound_access decides. Denied → no tiers (404 downstream).
-    caller = await resolve_trustworthy_caller(db, ctx)
-    if not await check_inbound_allowed(db, solution_id, caller):
+    # The same shared inbound gate as tables accepts a visible direct-human
+    # App context for its own sealed install. Runtime callers use durable
+    # provenance only.
+    if not await inbound_allowed_for_context(db, ctx, solution_id):
         return []
 
     tiers = [

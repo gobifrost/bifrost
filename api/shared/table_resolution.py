@@ -219,12 +219,10 @@ async def get_table_or_404(
     # Own-install callers pass; otherwise allow_inbound_access decides.
     if table.solution_id is not None:
         from src.services.solution_scope import (
-            check_inbound_allowed,
-            resolve_trustworthy_caller,
+            inbound_allowed_for_context,
         )
 
-        caller = await resolve_trustworthy_caller(ctx.db, ctx)
-        if not await check_inbound_allowed(ctx.db, table.solution_id, caller):
+        if not await inbound_allowed_for_context(ctx.db, ctx, table.solution_id):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Table '{name_or_id}' not found",
