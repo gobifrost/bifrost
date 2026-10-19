@@ -188,9 +188,11 @@ def test_a_role_policy_follows_the_run_users_own_roles(world) -> None:
 
 def test_a_full_run_keeps_the_default_admin_policy_authority(world) -> None:
     assert world["runs"]["customer"]["result"]["admin_table"] == "inserted"
-    # Full authority is enforced at the write. Its successful policy check is
-    # not emitted as a separate access-check sample.
-    assert _policy(_run_checks(world, "customer"), world["admin_table"]) == []
+    # The by-name insert reached the Global table itself, where Full Access
+    # satisfies its platform_admin authority policy.
+    [check] = _policy(_run_checks(world, "customer"), world["admin_table"])
+
+    assert (check["outcome"], check["details"]["enforced"]) == ("success", True)
 
 
 def test_a_secret_read_is_recorded_without_its_value(world) -> None:
