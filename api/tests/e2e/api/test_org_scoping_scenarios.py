@@ -157,7 +157,7 @@ class TestScenario2a_PlatformAdminBypass:
         assert r.status_code == 200, r.text
         assert r.json() is not None
 
-    def test_platform_admin_lists_every_mapping_and_scope_stays_exact(
+    def test_platform_admin_lists_every_mapping_whatever_the_scope(
         self, e2e_client, platform_admin, org1, org2
     ):
         integration_name = f"admin_list_mappings_{uuid4().hex[:8]}"
@@ -191,9 +191,9 @@ class TestScenario2a_PlatformAdminBypass:
                 assert r.status_code == 200, r.text
                 return {item["entity_id"] for item in r.json()["items"]}
 
-            assert listed(None) == {"provider-tenant", "org1-tenant", "org2-tenant"}
-            assert listed(str(PROVIDER_ORG_ID)) == {"provider-tenant"}
-            assert listed(org1["id"]) == {"org1-tenant"}
+            every = {"provider-tenant", "org1-tenant", "org2-tenant"}
+            for scope in (None, "global", str(PROVIDER_ORG_ID), org1["id"]):
+                assert listed(scope) == every, scope
         finally:
             e2e_client.delete(
                 f"/api/integrations/{integration['id']}",
@@ -704,7 +704,7 @@ class TestScenario4_CrossOrgBlocked:
         )
 
     def test_mapping_endpoint_isolation(
-        self, e2e_client, platform_admin, org1_user, org2
+        self, e2e_client, platform_admin, org1_user, org1_service_headers, org2
     ):
         """Mapping endpoints were a Codex HIGH finding (unguarded). A
         non-bypass org user must not be able to list or mutate another
@@ -744,15 +744,15 @@ class TestScenario4_CrossOrgBlocked:
             )
             assert mapping_resp.status_code == 201, mapping_resp.text
 
-            # list_mappings with scope=org2 as an org1 user must be 403.
+            # list_mappings ignores scope: asking for org2 from org1 still
+            # lists only what org1 can read, never org2's mapping.
             r = e2e_client.post(
                 "/api/sdk/integrations/list_mappings",
-                headers=org1_user.headers,
+                headers=org1_service_headers,
                 json={"name": integration_name, "scope": org2["id"]},
             )
-            assert r.status_code == 403, (
-                f"Cross-org list_mappings must be 403, got {r.status_code}: {r.text}"
-            )
+            assert r.status_code == 200, r.text
+            assert "org2-tenant-secret" not in {item["entity_id"] for item in r.json()["items"]}
 
             # get_mapping with scope=org2 as an org1 user must be 403.
             r = e2e_client.post(

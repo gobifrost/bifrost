@@ -530,21 +530,18 @@ async def list_sdk_integration_mappings(
     session: AsyncSession,
     *,
     name: str,
-    scope: str | None,
     caller: Caller,
 ) -> list[dict[str, Any]] | None:
     """List mappings for an integration (shared by both paths).
 
-    A list returns the mappings whose organization the caller may read
+    A list returns every mapping whose organization the caller may read
     with ``integrations.read``, filtered in SQL like the REST mapping list.
-    An explicit ``scope`` (an organization UUID or ``"global"``) is an exact
-    filter inside that reach; it never widens the result.
+    It takes no scope: finding one organization's mapping is
+    ``get_sdk_integration_mapping_dict``.
 
     Args:
         session: Short-lived parent/HTTP database session.
         name: Integration name.
-        scope: Raw validated scope string. None/"" (UNSET) lists every
-            mapping in the caller's reach.
         caller: Verified principal plus original-user authorization context.
 
     Returns:
@@ -552,14 +549,8 @@ async def list_sdk_integration_mappings(
         is not found.
     """
     from src.repositories.integrations import IntegrationsRepository
-    from shared.sdk_config import resolve_sdk_scope
 
-    if scope is None or scope == "":
-        reach = operation_reach(caller, "integrations.mappings.list")
-    else:
-        org_id = await resolve_sdk_scope(scope, caller=caller)
-        require_permission(caller, "integrations.read", org_id)
-        reach = _exact_reach(org_id)
+    reach = operation_reach(caller, "integrations.mappings.list")
     repo = IntegrationsRepository(session)
     integration = await repo.get_integration_by_name(name)
     if not integration:
@@ -579,10 +570,8 @@ async def list_sdk_integration_mappings(
     ]
 
 
-def _exact_reach(organization_id: UUID | None) -> OrgReach:
-    """A reach of exactly one organization, or of Global rows only."""
-    if organization_id is None:
-        return OrgReach(include_global=True)
+def _exact_reach(organization_id: UUID) -> OrgReach:
+    """A reach of exactly one organization."""
     return OrgReach(organization_ids=frozenset({organization_id}))
 
 

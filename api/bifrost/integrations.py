@@ -152,17 +152,14 @@ class integrations:
         and over the network API otherwise. A local failure raises and never
         falls back to the network API.
 
-        Without ``scope`` the result is every mapping whose organization the
-        run user may read with Integrations Read, the same set the REST
-        mapping list returns. A ``scope`` is an exact filter inside that
-        reach: an organization ID returns that organization's mapping, and
-        ``"global"`` returns the integration's Global mapping. A scope
-        never widens the result.
+        The result is every mapping whose organization the run user may read
+        with Integrations Read, the same set the REST mapping list returns.
+        Use ``get_mapping`` for one organization's mapping.
 
         Args:
             name: Integration name
-            scope: Optional exact filter: an organization ID or ``"global"``.
-                Omit it to list every mapping you may read.
+            scope: Accepted for existing callers and ignored; any value lists
+                every mapping you may read.
 
         Returns:
             list[IntegrationMappingResponse] | None: List of mappings.
@@ -180,7 +177,7 @@ class integrations:
         response = await client.engine_request(
             "POST",
             "/api/sdk/integrations/list_mappings",
-            json={"name": name, "scope": scope},
+            json={"name": name},
             retry_transient=True,
         )
 

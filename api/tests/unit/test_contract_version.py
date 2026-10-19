@@ -386,7 +386,9 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # These transports are additive and ship with the existing 1.4.2 floor;
     # the legacy contract marker remains frozen. The execution scope description
     # now documents original reach and the named execution permission.
-    "c1ebda500c77bbc290bf2d707e1ecf8e5151fb8d2875972eeb8079cfda359dfd"
+    # SDKIntegrationsListMappingsRequest.scope is documented as accepted and
+    # ignored (description only; the field is unchanged).
+    "bcc4312a1910a586ce95e0ec53109250a4dade6827218a3af3da25d0c7475b89"
 )
 
 

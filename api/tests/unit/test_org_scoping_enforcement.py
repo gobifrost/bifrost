@@ -427,11 +427,12 @@ SDK_ROUTER_FILES = {
 # the function across URL renames; the path-based version would have
 # missed the same drift the resolver test was meant to catch.
 EXEMPT_SDK_HANDLERS: dict[str, str] = {
-    # As of 2026-05-26 every scope-taking SDK handler in cli.py routes
-    # through _resolve_sdk_org_id. This list is left in place so that future
-    # exempt handlers can be added with an explicit justification — adding
-    # an entry without a one-line reason is itself a CI failure
+    # Adding an entry without a one-line reason is itself a CI failure
     # (test_exempt_list_well_formed).
+    "sdk_integrations_list_mappings": (
+        "Ignores the legacy scope field; lists every mapping in the caller's "
+        "integrations.read reach (shared.sdk_integrations)."
+    ),
 }
 
 
@@ -450,7 +451,6 @@ RESOLVER_CALL_NAMES = {
 # accepting a helper name by itself would let a later refactor remove the
 # authorization boundary while preserving this router-level tripwire.
 DELEGATED_SCOPE_SERVICES: dict[str, tuple[Path, str]] = {
-    "list_sdk_integration_mappings": (API_ROOT.parent / "shared" / "sdk_integrations.py", "resolve_sdk_scope"),
     "get_sdk_integration_mapping_dict": (API_ROOT.parent / "shared" / "sdk_integrations.py", "resolve_sdk_scope"),
     "upsert_sdk_integration_mapping": (API_ROOT.parent / "shared" / "sdk_integrations.py", "resolve_sdk_scope"),
     "delete_sdk_integration_mapping": (API_ROOT.parent / "shared" / "sdk_integrations.py", "resolve_sdk_scope"),

@@ -13,7 +13,6 @@ from shared.builtin_roles import (
     USER_BASE_PERMISSIONS,
     USER_ROLE_ID,
 )
-from shared.sdk_config import ScopeResolutionError
 from shared.sdk_integrations import (
     get_sdk_integration_mapping_dict,
     list_sdk_integration_mappings,
@@ -100,10 +99,8 @@ async def world(db_session):
     return {"a": org_a.id, "b": org_b.id, "name": integration.name}
 
 
-async def _entities(db_session, world, caller: Caller, scope: str | None = None) -> set[str]:
-    items = await list_sdk_integration_mappings(
-        db_session, name=world["name"], scope=scope, caller=caller
-    )
+async def _entities(db_session, world, caller: Caller) -> set[str]:
+    items = await list_sdk_integration_mappings(db_session, name=world["name"], caller=caller)
     assert items is not None
     return {item["entity_id"] for item in items}
 
@@ -166,26 +163,6 @@ class TestWorkflowPowers:
     async def test_declared_permissions_with_no_reach_are_refused(self, db_session, world) -> None:
         with pytest.raises(HTTPException) as exc_info:
             await _entities(db_session, world, _workflow(_ctx(home=world["a"]), mode="restricted"))
-        assert exc_info.value.status_code == 403
-
-
-@pytest.mark.asyncio
-class TestExplicitScopeIsExact:
-    async def test_organization_scope_never_widens(self, db_session, world) -> None:
-        caller = _person(_ctx(platform_admin_grant(), home=PROVIDER_ORG_ID))
-        assert await _entities(db_session, world, caller, scope=str(PROVIDER_ORG_ID)) == {"ent-provider"}
-        assert await _entities(db_session, world, caller, scope=str(world["a"])) == {"ent-a"}
-
-    async def test_global_scope_returns_the_global_mapping(self, db_session, world) -> None:
-        caller = _person(_ctx(platform_admin_grant(), home=PROVIDER_ORG_ID))
-        assert await _entities(db_session, world, caller, scope="global") == {"ent-global"}
-
-    async def test_organization_outside_reach_is_refused(self, db_session, world) -> None:
-        caller = _person(
-            _ctx(home=world["a"], base=USER_BASE_PERMISSIONS | {"integrations.read"})
-        )
-        with pytest.raises(ScopeResolutionError) as exc_info:
-            await _entities(db_session, world, caller, scope=str(world["b"]))
         assert exc_info.value.status_code == 403
 
 

@@ -209,11 +209,8 @@ class SDKIntegrationsListMappingsRequest(BaseModel):
     scope: str | None = Field(
         default=None,
         description=(
-            "Optional org scope. Omit / pass null to list only the caller's "
-            "own org mapping, unless the resolved org is a provider org, "
-            "which lists all mappings. Platform admins and provider-org "
-            "members may pass 'global' (no filter, all orgs) or a specific "
-            "org UUID."
+            "Accepted from older SDK callers and ignored: the list always "
+            "returns every mapping the caller may read with Integrations Read."
         ),
     )
 

@@ -456,11 +456,11 @@ async def sdk_integrations_list_mappings(
 ) -> SDKIntegrationsListMappingsResponse | None:
     """List all mappings for an integration via SDK.
 
-    Scope resolution and response construction live in the shared
+    Reach filtering and response construction live in the shared
     integrations service (``shared.sdk_integrations``), which the
-    worker-local engine child calls for the same inputs.
+    worker-local engine child calls for the same inputs. ``request.scope``
+    is ignored: the list returns every mapping the caller may read.
     """
-    from shared.sdk_config import ScopeResolutionError
     from shared.sdk_integrations import list_sdk_integration_mappings
     from src.services.authorization.enforce import load_caller
 
@@ -470,11 +470,8 @@ async def sdk_integrations_list_mappings(
         items = await list_sdk_integration_mappings(
             db,
             name=request.name,
-            scope=request.scope,
             caller=caller,
         )
-    except ScopeResolutionError as e:
-        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
     except HTTPException:
         # Authorization failures must surface to the client.
         raise

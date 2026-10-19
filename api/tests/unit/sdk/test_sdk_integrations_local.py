@@ -66,9 +66,9 @@ class TestFacadeEngineRequest:
             clear_execution_context()
 
     @pytest.mark.asyncio
-    async def test_list_mappings_leaves_an_omitted_scope_to_the_server(self):
-        """An omitted scope lists the run user's reach, so the facade must not
-        replace it with the execution's organization."""
+    async def test_list_mappings_sends_no_scope(self):
+        """The list is every mapping the run user can read; a scope argument
+        is accepted for existing callers and never sent."""
         from bifrost._context import (
             clear_execution_context,
             set_execution_context,
@@ -101,10 +101,7 @@ class TestFacadeEngineRequest:
 
             assert [
                 call.kwargs["json"] for call in client.engine_request.await_args_list
-            ] == [
-                {"name": "P", "scope": None},
-                {"name": "P", "scope": "org-2"},
-            ]
+            ] == [{"name": "P"}, {"name": "P"}]
         finally:
             clear_execution_context()
 
