@@ -685,6 +685,59 @@ class TestDocumentScopeQueryParam:
         assert q.json()["table_id"] == table_id
         assert len(q.json()["documents"]) == 1
 
+    def test_org_scoped_name_writes_cascade_to_the_global_table(
+        self, e2e_client, platform_admin, alice_user
+    ):
+        """The SDK always sends the run's org as ``scope``. A name that only
+        exists at Global must resolve there for writes and reads alike."""
+        name = f"global_cascade_{uuid4().hex[:8]}"
+        resp = e2e_client.post(
+            "/api/tables",
+            headers=platform_admin.headers,
+            json={
+                "name": name,
+                "organization_id": None,
+                "policies": {
+                    "policies": [
+                        {
+                            "name": "everyone_writes",
+                            "actions": ["read", "create", "update"],
+                            "when": None,
+                        },
+                    ],
+                },
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        table_id = resp.json()["id"]
+        own_scope = {"scope": str(alice_user.organization_id)}
+
+        ins = e2e_client.post(
+            f"/api/tables/{name}/documents",
+            headers=alice_user.headers,
+            params=own_scope,
+            json={"id": "run-1", "data": {"status": "in_progress"}},
+        )
+        assert ins.status_code == 201, ins.text
+        assert ins.json()["table_id"] == table_id
+
+        upd = e2e_client.patch(
+            f"/api/tables/{name}/documents/run-1",
+            headers=alice_user.headers,
+            params=own_scope,
+            json={"data": {"status": "success"}},
+        )
+        assert upd.status_code == 200, upd.text
+
+        got = e2e_client.get(
+            f"/api/tables/{name}/documents/run-1",
+            headers=alice_user.headers,
+            params=own_scope,
+        )
+        assert got.status_code == 200, got.text
+        assert got.json()["table_id"] == table_id
+        assert got.json()["data"]["status"] == "success"
+
 
 @pytest.mark.e2e
 class TestDocumentAttributionOverride:

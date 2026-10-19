@@ -138,3 +138,72 @@ async def test_solution_name_lookup_keeps_documented_global_fallback(monkeypatch
     reachable.assert_awaited_once_with(
         ctx, table, target_org_id=home, scope=None
     )
+
+
+@pytest.mark.asyncio
+async def test_ordinary_name_lookup_uses_the_cascade_under_an_explicit_scope(monkeypatch):
+    """A workspace workflow names a Global table from an org scope; the
+    canonical org-then-Global cascade decides, not an exact-scope check."""
+    from shared import table_resolution
+
+    home = uuid4()
+    caller = _caller(home=home, original_user=uuid4())
+    table = SimpleNamespace(
+        name="onboarding_runs", organization_id=None, solution_id=None
+    )
+    ctx = SimpleNamespace(
+        db=object(),
+        user=caller.principal,
+        app_id=None,
+        solution_id=None,
+        caller_solution_id=None,
+    )
+    reachable = AsyncMock()
+    repo = Mock()
+    repo.get_by_name = AsyncMock(return_value=table)
+    monkeypatch.setattr(
+        table_resolution, "resolve_target_org_safe", AsyncMock(return_value=home)
+    )
+    monkeypatch.setattr(
+        table_resolution, "resolve_effective_solution_id", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        table_resolution, "resolve_solution_table_by_name", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(table_resolution, "assert_resolved_table_reachable", reachable)
+    monkeypatch.setattr(table_resolution, "TableRepository", Mock(return_value=repo))
+
+    resolved = await get_table_or_404(ctx, "onboarding_runs", scope=str(home))
+
+    assert resolved is table
+    repo.get_by_name.assert_awaited_once_with("onboarding_runs")
+    reachable.assert_awaited_once_with(ctx, table, target_org_id=home, scope=None)
+
+
+@pytest.mark.asyncio
+async def test_uuid_lookup_keeps_the_explicit_scope(monkeypatch):
+    from shared import table_resolution
+
+    home = uuid4()
+    caller = _caller(home=home, original_user=uuid4())
+    table_id = uuid4()
+    table = SimpleNamespace(
+        id=table_id, name="onboarding_runs", organization_id=None, solution_id=None
+    )
+    db = SimpleNamespace(get=AsyncMock(return_value=table))
+    ctx = SimpleNamespace(
+        db=db, user=caller.principal, app_id=None, solution_id=None, caller_solution_id=None
+    )
+    reachable = AsyncMock()
+    monkeypatch.setattr(
+        table_resolution, "resolve_target_org_safe", AsyncMock(return_value=home)
+    )
+    monkeypatch.setattr(
+        table_resolution, "resolve_effective_solution_id", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(table_resolution, "assert_resolved_table_reachable", reachable)
+    monkeypatch.setattr(table_resolution, "TableRepository", Mock())
+
+    await get_table_or_404(ctx, str(table_id), scope=str(home))
+
+    assert reachable.await_args_list[-1].kwargs["scope"] == str(home)
