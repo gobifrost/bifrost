@@ -6,6 +6,9 @@ const auth = {
 	isPlatformAdmin: true,
 	isOrgUser: false,
 	hasRole: vi.fn(() => false),
+	isImpersonating: false,
+	user: { name: "Avery Example", email: "avery@example.test" },
+	endImpersonation: vi.fn(),
 };
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => auth }));
 vi.mock("react-router-dom", async (original) => ({
@@ -26,6 +29,8 @@ beforeEach(() => {
 	auth.isPlatformAdmin = true;
 	auth.isOrgUser = false;
 	auth.hasRole.mockReturnValue(false);
+	auth.isImpersonating = false;
+	auth.endImpersonation.mockReset();
 });
 describe("PageShell access contract", () => {
 	it("shows loading without exposing routed content", () => {
@@ -57,6 +62,15 @@ describe("PageShell access contract", () => {
 		expect(screen.getByRole("navigation")).toBeVisible();
 		expect(screen.getByRole("banner")).toBeVisible();
 		expect(screen.getByText("Page content")).toBeVisible();
+	});
+
+	it("keeps the impersonated person's name and email visible above the workspace", () => {
+		auth.isImpersonating = true;
+		renderWithProviders(<PageShell />);
+		expect(
+			screen.getByRole("status", { name: "Impersonation session" }),
+		).toHaveTextContent("Impersonating Avery Example");
+		expect(screen.getByText("avery@example.test")).toBeInTheDocument();
 	});
 });
 

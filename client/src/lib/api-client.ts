@@ -18,6 +18,7 @@ import {
 	consumeEmbedTokenFromHash,
 	getActiveToken,
 	isEmbedSession,
+	isImpersonating,
 } from "./auth-token";
 
 // Pull an embed token off the URL fragment (if any) before any API call
@@ -167,6 +168,10 @@ type PlatformAuthGlobal = typeof globalThis & {
  * Returns true if successful, false if refresh failed
  */
 async function refreshAccessToken(): Promise<boolean> {
+	// Support-session tokens deliberately have no refresh path. Refreshing the
+	// operator's cookie here would silently swap an expired impersonation into
+	// the operator identity and could replay a mutation under the wrong user.
+	if (isImpersonating()) return false;
 	// Use lock to prevent concurrent refresh attempts
 	if (refreshPromise) {
 		return refreshPromise;
@@ -204,7 +209,7 @@ async function refreshAccessToken(): Promise<boolean> {
  */
 async function retryRequestWithFreshAuth(request: Request): Promise<Response> {
 	const headers = new Headers(request.headers);
-	const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+	const token = getActiveToken();
 
 	if (token) {
 		headers.set("Authorization", `Bearer ${token}`);
@@ -226,6 +231,10 @@ async function retryRequestWithFreshAuth(request: Request): Promise<Response> {
 let loginRedirectStarted = false;
 
 function handleAuthFailure(): void {
+	// Keep an expired or rejected support session visible so its explicit Exit
+	// control can return to the operator. Do not clear or refresh into the
+	// operator token from an impersonated tab.
+	if (isImpersonating()) return;
 	sessionStorage.removeItem("userId");
 	clearAuthTokens();
 
@@ -251,7 +260,7 @@ function handleAuthFailure(): void {
 // handshake instead of borrowing the signed-in user's refresh cookie.
 (globalThis as PlatformAuthGlobal).__BIFROST_PLATFORM_AUTH_V1__ = {
 	getAccessToken: getActiveToken,
-	canRefreshAccessToken: () => !isEmbedSession(),
+	canRefreshAccessToken: () => !isEmbedSession() && !isImpersonating(),
 	refreshAccessToken,
 	handleAuthenticationFailure: handleAuthFailure,
 };
@@ -266,6 +275,10 @@ async function ensureValidToken(): Promise<boolean> {
 	// for it. Just trust whatever's in sessionStorage; expiry surfaces
 	// as a 401 and the caller can re-enter the embed flow.
 	if (isEmbedSession()) return true;
+	if (isImpersonating()) {
+		const token = getActiveToken();
+		return !!token && !isTokenExpiringSoon(token);
+	}
 
 	const token = localStorage.getItem(ACCESS_TOKEN_KEY);
 
@@ -449,6 +462,7 @@ async function handleAuthResponse(
 		// Login failures and embed capabilities belong to their own callers.
 		if (
 			isEmbedSession() ||
+			isImpersonating() ||
 			AUTH_ENDPOINTS.some((ep) => pathname.startsWith(ep))
 		)
 			return response;

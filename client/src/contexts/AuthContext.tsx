@@ -15,16 +15,23 @@ import {
 	type ReactNode,
 } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import { toast } from "sonner";
 import {
 	ACCESS_TOKEN_KEY,
+	IMPERSONATION_TOKEN_KEY,
 	clearAuthTokens,
 	clearEmbedToken,
+	clearImpersonationToken,
 	consumeEmbedTokenFromHash,
 	getActiveToken,
 	isEmbedSession,
+	isImpersonating,
+	setImpersonationToken,
 } from "@/lib/auth-token";
 import { clearPreferredSsoRedirectAttempt } from "@/services/auth";
 import { refreshAccessToken } from "@/lib/api-client";
+import { getErrorMessage } from "@/lib/api-error";
+import type { components } from "@/lib/v1";
 
 // Consume the fragment before AuthProvider performs its initial auth check.
 // api-client does the same defensively before requests; this keeps auth state
@@ -52,6 +59,12 @@ export interface LoginResult {
 	expiresIn?: number;
 }
 
+export interface ImpersonationTarget {
+	id: string;
+	email: string;
+	name: string;
+}
+
 interface AuthContextValue {
 	// State
 	user: AuthUser | null;
@@ -63,6 +76,7 @@ interface AuthContextValue {
 	isPlatformAdmin: boolean;
 	isOrgUser: boolean;
 	hasRole: (role: string) => boolean;
+	isImpersonating: boolean;
 
 	// Actions
 	login: (email: string, password: string) => Promise<LoginResult>;
@@ -81,6 +95,8 @@ interface AuthContextValue {
 	logout: () => void;
 	refreshToken: () => Promise<boolean>;
 	checkAuthStatus: () => Promise<void>;
+	startImpersonation: (target: ImpersonationTarget) => Promise<void>;
+	endImpersonation: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -157,6 +173,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
 	const completeLoginWithToken = useCallback((accessToken: string): void => {
 		clearEmbedToken();
+		clearImpersonationToken();
 		clearPreferredSsoRedirectAttempt();
 		localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
 
@@ -172,6 +189,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 	// Internal refresh function (no hooks)
 	// Uses HttpOnly cookie for refresh token (browser sends it automatically)
 	const refreshTokenInternal = useCallback(async (): Promise<boolean> => {
+		if (isImpersonating()) return false;
 		try {
 			// Share the API/SDK refresh lock: rotating the same refresh cookie twice
 			// during bootstrap can invalidate an otherwise valid browser session.
@@ -239,12 +257,16 @@ export function AuthProvider({ children }: AuthProviderProps) {
 					setIsLoading(false);
 					return;
 				}
-				// Try to refresh
-				const refreshed = await refreshTokenInternal();
-				if (!refreshed) {
-					setUser(null);
-					setIsLoading(false);
-					return;
+				// Impersonation has no refresh cookie. Keep its session in place so
+				// the explicit Exit action can return to the saved operator.
+				if (!isImpersonating()) {
+					// Try to refresh
+					const refreshed = await refreshTokenInternal();
+					if (!refreshed) {
+						setUser(null);
+						setIsLoading(false);
+						return;
+					}
 				}
 			}
 
@@ -398,12 +420,99 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
 	// Logout
 	const logout = useCallback(() => {
-		clearAuthTokens();
-		localStorage.removeItem(USER_KEY);
-		sessionStorage.removeItem("userId");
-		setUser(null);
-		navigate("/login");
+		void (async () => {
+			try {
+				const token = getActiveToken();
+				const response = await fetch("/api/auth/logout", {
+					method: "POST",
+					headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+					credentials: "same-origin",
+				});
+				if (!response.ok) {
+					const body = await response.json().catch(() => ({}));
+					throw new Error(body.detail || "Could not sign out");
+				}
+			} catch (error) {
+				toast.error("Could not sign out", {
+					description: getErrorMessage(
+						error,
+						"The browser session could not be ended.",
+					),
+				});
+				return;
+			}
+
+			clearAuthTokens();
+			localStorage.removeItem(USER_KEY);
+			sessionStorage.removeItem("userId");
+			setUser(null);
+			navigate("/login");
+		})();
 	}, [navigate]);
+
+	// A support session changes the identity behind every regular browser tab.
+	// Reload instead of trying to reconcile query caches, sockets, and mounted
+	// Solution apps from the previous identity. Embed capability sessions stay
+	// isolated and retain their per-tab token.
+	useEffect(() => {
+		const handleStorage = (event: StorageEvent) => {
+			if (event.storageArea !== localStorage || isEmbedSession()) return;
+			if (
+				event.key === IMPERSONATION_TOKEN_KEY ||
+				(event.key === ACCESS_TOKEN_KEY && event.newValue === null)
+			) {
+				window.location.reload();
+			}
+		};
+		window.addEventListener("storage", handleStorage);
+		return () => window.removeEventListener("storage", handleStorage);
+	}, []);
+
+	const startImpersonation = useCallback(
+		async (target: ImpersonationTarget): Promise<void> => {
+			if (isImpersonating()) {
+				throw new Error("End the current impersonation session first");
+			}
+			const token = getActiveToken();
+			if (!token) throw new Error("Your session has expired");
+			const response = await fetch(`/api/auth/impersonate/${target.id}`, {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				credentials: "same-origin",
+			});
+			if (!response.ok) {
+				const body = await response.json().catch(() => ({}));
+				throw new Error(body.detail || "Could not start impersonation");
+			}
+			const body =
+				(await response.json()) as components["schemas"]["BrowserImpersonationTokenResponse"];
+			if (!body.access_token) {
+				throw new Error("Impersonation did not return an access token");
+			}
+			setImpersonationToken(body.access_token);
+			window.location.assign("/apps");
+		},
+		[],
+	);
+
+	const endImpersonation = useCallback(async (): Promise<void> => {
+		const operator = localStorage.getItem(ACCESS_TOKEN_KEY);
+		if (!operator) throw new Error("Your operator session has expired");
+		const response = await fetch("/api/auth/impersonation/end", {
+			method: "POST",
+			headers: { Authorization: `Bearer ${operator}` },
+			credentials: "same-origin",
+		});
+		if (!response.ok) {
+			const body = await response.json().catch(() => ({}));
+			throw new Error(body.detail || "Could not end impersonation");
+		}
+
+		clearImpersonationToken();
+		const payload = parseJwt(operator);
+		if (payload) sessionStorage.setItem("userId", extractUser(payload).id);
+		window.location.assign("/users");
+	}, []);
 
 	// Refresh token
 	const refreshToken = useCallback(async (): Promise<boolean> => {
@@ -454,6 +563,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 			isPlatformAdmin: user?.isSuperuser ?? false,
 			isOrgUser: !user?.isSuperuser && user?.organizationId != null,
 			hasRole: (role: string) => user?.roles.includes(role) ?? false,
+			isImpersonating: isImpersonating(),
 			login,
 			loginWithMfa,
 			loginWithOAuth,
@@ -462,6 +572,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
 			logout,
 			refreshToken,
 			checkAuthStatus,
+			startImpersonation,
+			endImpersonation,
 		}),
 		[
 			user,
@@ -475,6 +587,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
 			logout,
 			refreshToken,
 			checkAuthStatus,
+			startImpersonation,
+			endImpersonation,
 		],
 	);
 
@@ -493,5 +607,5 @@ export function useAuth() {
 
 // Export token getter for API client
 export function getAccessToken(): string | null {
-	return localStorage.getItem(ACCESS_TOKEN_KEY);
+	return getActiveToken();
 }

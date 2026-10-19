@@ -64,7 +64,11 @@ vi.mock("@/hooks/useOrganizations", () => ({
 }));
 
 vi.mock("@/contexts/AuthContext", () => ({
-	useAuth: () => ({ user: { id: "caller" } }),
+	useAuth: () => ({
+		user: { id: "caller" },
+		isImpersonating: false,
+		startImpersonation: vi.fn(),
+	}),
 }));
 
 const authz = vi.hoisted(() => ({
@@ -309,6 +313,7 @@ describe("UserAccessPage", () => {
 
 	it("offers the Users list's account actions, without Edit Profile", async () => {
 		const { user } = renderPage();
+		expect(screen.getByRole("button", { name: "Impersonate" })).toBeVisible();
 
 		await user.click(
 			screen.getByRole("button", { name: "Avery Example actions" }),

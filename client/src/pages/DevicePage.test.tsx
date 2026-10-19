@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderWithProviders, screen, waitFor } from "@/test-utils";
+import { setImpersonationToken } from "@/lib/auth-token";
 
 const mockLogout = vi.fn();
 const mockNavigate = vi.fn();
@@ -45,6 +46,7 @@ beforeEach(() => {
 	mockNavigate.mockReset();
 	authState.isAuthenticated = true;
 	localStorage.clear();
+	sessionStorage.clear();
 });
 
 afterEach(() => {
@@ -141,5 +143,26 @@ describe("DevicePage", () => {
 			screen.getByRole("button", { name: /return to dashboard/i }),
 		);
 		expect(mockNavigate).toHaveBeenCalledWith("/");
+	});
+
+	it("authorizes the device with the active impersonation token", async () => {
+		localStorage.setItem("bifrost_access_token", "operator-token");
+		setImpersonationToken("impersonated-token");
+		const fetchMock = vi.fn(async () => ({
+			ok: true,
+			status: 200,
+			json: async () => ({}),
+		}));
+		vi.stubGlobal("fetch", fetchMock);
+
+		const { user } = renderWithProviders(<DevicePage />, {
+			initialEntries: ["/device"],
+		});
+		await user.type(screen.getByLabelText(/device code/i), "abcd1234");
+		await user.click(screen.getByRole("button", { name: /authorize device/i }));
+
+		expect(new Headers(fetchMock.mock.calls[0][1].headers).get("Authorization")).toBe(
+			"Bearer impersonated-token",
+		);
 	});
 });

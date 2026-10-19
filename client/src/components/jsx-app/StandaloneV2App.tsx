@@ -6,7 +6,7 @@
  * once per host mount. This preserves browser ES-module identity across lazy
  * chunks while still giving every mount its own React root and bootstrap.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { ApplicationUpdateScreen } from "@/components/ApplicationUpdateScreen";
 import { AppLoadingSkeleton } from "./AppLoadingSkeleton";
@@ -15,6 +15,7 @@ import { getAppLoadErrorMessage } from "./app-load-error";
 import { useOrgScope } from "@/hooks/useOrgScope";
 import { authFetch } from "@/lib/api-client";
 import { clearAuthTokens, getActiveToken } from "@/lib/auth-token";
+import { ImpersonationBanner } from "@/components/layout/ImpersonationBanner";
 
 export interface BifrostAppBootstrap {
 	/** Router basename so app URLs live below /apps/{slug}. */
@@ -241,6 +242,15 @@ interface StandaloneBundleManifest {
 	base_url: string;
 	app_model?: "inline_v1" | "standalone_v2";
 	runtime_contract?: StandaloneV2RuntimeContract;
+}
+
+function StandaloneV2Frame({ children }: { children: ReactNode }) {
+	return (
+		<div className="flex h-full w-full flex-col overflow-hidden">
+			<ImpersonationBanner />
+			{children}
+		</div>
+	);
 }
 
 export function StandaloneV2App({
@@ -477,37 +487,48 @@ export function StandaloneV2App({
 
 	if (!isAuthenticated) {
 		return (
-			<div className="flex h-full w-full items-center justify-center p-6">
-				<pre className="max-w-xl whitespace-pre-wrap text-sm text-destructive">
-					{unauthenticatedError}
-				</pre>
-			</div>
+			<StandaloneV2Frame>
+				<div className="flex min-h-0 flex-1 items-center justify-center p-6">
+					<pre className="max-w-xl whitespace-pre-wrap text-sm text-destructive">
+						{unauthenticatedError}
+					</pre>
+				</div>
+			</StandaloneV2Frame>
 		);
 	}
 
 	if (loadError) {
 		return (
-			<BundleLoadFailure
-				error={loadError}
-				onRetry={() => window.location.reload()}
-			/>
+			<StandaloneV2Frame>
+				<BundleLoadFailure
+					error={loadError}
+					onRetry={() => window.location.reload()}
+				/>
+			</StandaloneV2Frame>
 		);
 	}
 
-	if (isRecovering) return <ApplicationUpdateScreen />;
+	if (isRecovering)
+		return (
+			<StandaloneV2Frame>
+				<ApplicationUpdateScreen />
+			</StandaloneV2Frame>
+		);
 
 	return (
-		<div className="relative h-full w-full">
-			<div
-				ref={containerRef}
-				className="h-full w-full"
-				data-testid="solution-v2-app-root"
-			/>
-			{isBootstrapping ? (
-				<div className="absolute inset-0 z-10">
-					<AppLoadingSkeleton />
-				</div>
-			) : null}
-		</div>
+		<StandaloneV2Frame>
+			<div className="relative min-h-0 flex-1">
+				<div
+					ref={containerRef}
+					className="h-full w-full"
+					data-testid="solution-v2-app-root"
+				/>
+				{isBootstrapping ? (
+					<div className="absolute inset-0 z-10">
+						<AppLoadingSkeleton />
+					</div>
+				) : null}
+			</div>
+		</StandaloneV2Frame>
 	);
 }

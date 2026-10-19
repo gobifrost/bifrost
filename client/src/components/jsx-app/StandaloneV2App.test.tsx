@@ -25,6 +25,10 @@ vi.mock("@/hooks/useOrgScope", () => ({
 	useOrgScope: () => ({ scope: orgScopeState.scope }),
 }));
 
+vi.mock("@/components/layout/ImpersonationBanner", () => ({
+	ImpersonationBanner: () => null,
+}));
+
 function props(entry: string) {
 	return {
 		appId: "app-1",

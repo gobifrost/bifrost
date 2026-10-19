@@ -9,6 +9,7 @@ import { RouteErrorBoundary } from "@/components/PageErrorBoundary";
 import { useSidebar } from "@/hooks/useSidebar";
 import { RouteReadyReveal } from "./RouteReadyReveal";
 import { routeRevealKey as getRouteRevealKey } from "@/lib/route-reveal-key";
+import { ImpersonationBanner } from "./ImpersonationBanner";
 
 export function PageShell({ padded = false }: { padded?: boolean }) {
 	const { isAuthenticated, isLoading, hasRole } = useAuth();
@@ -73,6 +74,7 @@ export function PageShell({ padded = false }: { padded?: boolean }) {
 
 			{/* Main content area with header */}
 			<div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+				<ImpersonationBanner />
 				<Header
 					onMobileMenuToggle={() => setIsMobileMenuOpen(true)}
 					onSidebarToggle={toggleSidebar}

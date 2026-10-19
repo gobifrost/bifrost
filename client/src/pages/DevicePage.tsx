@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import { Logo } from "@/components/branding/Logo";
+import { getActiveToken } from "@/lib/auth-token";
 
 type AuthorizationStep = "input" | "authorized" | "error";
 
@@ -84,7 +85,7 @@ export function DevicePage() {
 		setIsLoading(true);
 
 		try {
-			const accessToken = localStorage.getItem("bifrost_access_token");
+			const accessToken = getActiveToken();
 			if (!accessToken) {
 				throw new Error("Not authenticated");
 			}

@@ -12,7 +12,7 @@
 
 import type { components } from "@/lib/v1";
 import { refreshAccessToken } from "@/lib/api-client";
-import { getActiveToken } from "@/lib/auth-token";
+import { getActiveToken, isImpersonating } from "@/lib/auth-token";
 import type { ChatStreamEnvelope } from "@/lib/chat-runtime";
 import { useNotificationStore } from "@/stores/notificationStore";
 import type { Notification } from "@/stores/notificationStore";
@@ -542,12 +542,14 @@ class WebSocketService {
 			const params = new URLSearchParams();
 			channels.forEach((ch) => params.append("channels", ch));
 
-			// For embed tokens, pass as query param since browser WebSocket
-			// API can't set custom headers. getActiveToken() prefers the
-			// per-tab embed token (sessionStorage) over the user token.
-			const embedToken = getActiveToken();
-			if (embedToken && isEmbedToken(embedToken)) {
-				params.set("token", embedToken);
+			// Embed and browser-wide support tokens need a query parameter because
+			// the browser WebSocket API cannot set custom authorization headers.
+			const activeToken = getActiveToken();
+			if (
+				activeToken &&
+				(isEmbedToken(activeToken) || isImpersonating())
+			) {
+				params.set("token", activeToken);
 			}
 
 			const wsUrl = `${protocol}//${host}/ws/connect?${params.toString()}`;
