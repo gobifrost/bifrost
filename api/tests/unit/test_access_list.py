@@ -2149,6 +2149,10 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
 _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
     "bifrost._logging.flush_logs_to_postgres": (1, "Moves a finished run's log lines into the database."),
     "shared.role_cache.invalidate_role": (1, "Scans role-cache entries to delete them."),
+    "shared.runtime_modules.read_runtime_modules": (
+        1,
+        "Worker-reported installed import roots for permission-scan diagnostics; never grants access or loads code.",
+    ),
     "src.core.cache.data_provider_cache.get_cached_result": (1, "Cached data-provider options for a form field."),
     "src.core.cache.keys._current_global_version": (1, "Cache version counter."),
     "src.core.locks.DistributedLockService.get_lock_info": (1, "Lock diagnostics."),
