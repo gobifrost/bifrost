@@ -408,6 +408,19 @@ async def _heartbeat(
         return job.status
 
 
+async def _republish_current_platform_job(job_id: UUID) -> None:
+    """Re-emit the durable row after a runner releases its fenced lease.
+
+    A runner commits terminal state before publishing it. A heartbeat can see
+    that cleared lease in that narrow interval and terminate the runner, so the
+    scheduler re-reads the authoritative row instead of replaying runner data.
+    """
+    async with get_db_context() as db:
+        job = await db.get(PlatformJob, job_id)
+    if job is not None:
+        await publish_platform_job_update(job)
+
+
 async def _terminate_runner(process: asyncio.subprocess.Process) -> None:
     if process.returncode is not None:
         return
@@ -505,6 +518,7 @@ async def run_claimed_platform_job(claim: ClaimedPlatformJob) -> bool:
             status = await _heartbeat(claim.id, claim.lease_token)
             if status is None:
                 await _terminate_runner(process)
+                await _republish_current_platform_job(claim.id)
                 return True
             if status == "cancel_requested":
                 await _terminate_runner(process)

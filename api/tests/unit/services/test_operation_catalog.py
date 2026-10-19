@@ -1118,6 +1118,30 @@ WORKSPACE_FILE_OPERATIONS = {
 }
 
 CANONICAL_OPERATIONS = {
+    "workflows.conversions.create": (
+        "POST",
+        "/api/workflow-conversions",
+        ("workflows", "convert", "analyze"),
+        "bifrost_workflow_conversion_create",
+    ),
+    "workflows.conversions.get": (
+        "GET",
+        "/api/workflow-conversions/{job_id}/report",
+        ("workflows", "convert", "report"),
+        "bifrost_workflow_conversion_get",
+    ),
+    "workflows.conversions.update": (
+        "POST",
+        "/api/workflow-conversions/{job_id}/apply",
+        ("workflows", "convert", "apply"),
+        "bifrost_workflow_conversion_update",
+    ),
+    "workflows.permission_default.update": (
+        "POST",
+        "/api/workflow-conversions/{job_id}/cutover",
+        ("workflows", "convert", "cutover"),
+        "bifrost_workflow_permission_default_update",
+    ),
     **AGENT_OPERATIONS,
     **FORM_OPERATIONS,
     **TABLE_OPERATIONS,
@@ -1273,7 +1297,10 @@ _CANONICAL_MCP_TOOL_MODULES = {
     "configs": "src.services.mcp_server.tools.configs",
     "policy": "src.services.mcp_server.tools.policy_rules",
     "integrations": "src.services.mcp_server.tools.integrations",
-    "workflows": "src.services.mcp_server.tools.workflow",
+    "workflows": (
+        "src.services.mcp_server.tools.workflow",
+        "src.services.mcp_server.tools.workflow_conversion",
+    ),
 }
 
 
@@ -1287,8 +1314,16 @@ def test_registered_mcp_tool_ids_match_the_catalog() -> None:
     import importlib
 
     for domain in sorted(CANONICAL_MCP_DOMAINS):
-        module = importlib.import_module(_CANONICAL_MCP_TOOL_MODULES[domain])
-        registered_ids = {tool_id for tool_id, _name, _description in module.TOOLS}
+        module_names = _CANONICAL_MCP_TOOL_MODULES[domain]
+        if isinstance(module_names, str):
+            module_names = (module_names,)
+        registered_ids = {
+            tool_id
+            for module_name in module_names
+            for tool_id, _name, _description in importlib.import_module(
+                module_name
+            ).TOOLS
+        }
         catalog_names = {
             operation.mcp.name
             for operation in OPERATION_CATALOG
@@ -1320,4 +1355,3 @@ def test_action_scopes_use_the_closed_permission_domain_vocabulary() -> None:
     assert not unknown, (
         f"catalog action_scopes outside the grammar or PERMISSION_DOMAINS: {unknown}"
     )
-

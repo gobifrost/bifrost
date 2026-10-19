@@ -489,42 +489,40 @@ class WebSocketService {
 		new Map();
 	private connectionStatusCallbacks = new Set<(connected: boolean) => void>();
 
-	// Track subscribed channels
+	// Track the server's acknowledged channels separately from the channels
+	// callers currently want. A delayed unsubscribe acknowledgement must not
+	// erase a channel that has since been requested again.
 	private subscribedChannels = new Set<string>();
+	private desiredChannels = new Set<string>();
 	private pendingSubscriptions = new Set<string>();
 
 	/**
 	 * Connect to WebSocket with authentication
 	 */
 	async connect(channels: string[] = []): Promise<void> {
+		channels.forEach((channel) => this.desiredChannels.add(channel));
+
 		// If already connected, just subscribe to new channels
 		if (this.ws?.readyState === WebSocket.OPEN) {
-			for (const channel of channels) {
-				if (!this.subscribedChannels.has(channel)) {
-					await this.subscribe(channel);
-				}
-			}
+			this.reconcileChannels(channels);
 			return;
 		}
 
 		// If already connecting, wait for that connection
 		if (this.isConnecting && this.connectionPromise) {
 			await this.connectionPromise;
-			// Subscribe to channels after connection
-			for (const channel of channels) {
-				if (!this.subscribedChannels.has(channel)) {
-					await this.subscribe(channel);
-				}
-			}
+			this.reconcileChannels(channels);
 			return;
 		}
 
 		this.isConnecting = true;
-		this.pendingSubscriptions = new Set(channels);
-		this.connectionPromise = this._connect(channels);
+		this.connectionPromise = this._connect(
+			Array.from(this.desiredChannels),
+		);
 
 		try {
 			await this.connectionPromise;
+			this.reconcileChannels(channels);
 		} finally {
 			this.isConnecting = false;
 			this.connectionPromise = null;
@@ -533,6 +531,8 @@ class WebSocketService {
 
 	private async _connect(channels: string[]): Promise<void> {
 		try {
+			channels.forEach((channel) => this.pendingSubscriptions.add(channel));
+
 			// Build WebSocket URL with channels
 			const protocol =
 				window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -581,6 +581,8 @@ class WebSocketService {
 
 			this.ws.onclose = (event) => {
 				this.ws = null;
+				this.subscribedChannels.clear();
+				this.pendingSubscriptions.clear();
 				this.stopPingInterval();
 				this.connectionStatusCallbacks.forEach((cb) => cb(false));
 
@@ -600,7 +602,7 @@ class WebSocketService {
 							);
 							await refreshAccessToken();
 						}
-						this.connect(Array.from(this.subscribedChannels));
+						this.connect(Array.from(this.desiredChannels));
 					}, delay);
 				}
 			};
@@ -641,19 +643,7 @@ class WebSocketService {
 	 * Connect to a specific execution
 	 */
 	async connectToExecution(executionId: string): Promise<void> {
-		// If already connected to this execution, return
 		const channel = `execution:${executionId}`;
-		if (this.subscribedChannels.has(channel)) {
-			return;
-		}
-
-		// If WebSocket is open, subscribe to channel
-		if (this.ws?.readyState === WebSocket.OPEN) {
-			await this.subscribe(channel);
-			return;
-		}
-
-		// Otherwise, connect with this channel
 		await this.connect([channel]);
 	}
 
@@ -665,25 +655,38 @@ class WebSocketService {
 			case "connected":
 				if ("channels" in message) {
 					// General connection confirmation
-					message.channels.forEach((ch) =>
-						this.subscribedChannels.add(ch),
-					);
+					message.channels.forEach((channel) => {
+						const wasPending = this.pendingSubscriptions.has(channel);
+						this.subscribedChannels.add(channel);
+						this.pendingSubscriptions.delete(channel);
+						// The server may include implicit channels (such as user:<id>)
+						// that the client did not request. Leave those intact.
+						if (wasPending || this.desiredChannels.has(channel)) {
+							this.reconcileChannel(channel);
+						}
+					});
+					this.reconcileChannels(this.desiredChannels);
 					this.userId = message.userId;
 				} else if ("executionId" in message) {
 					// Execution-specific connection
-					this.subscribedChannels.add(
-						`execution:${message.executionId}`,
-					);
+					const channel = `execution:${message.executionId}`;
+					this.subscribedChannels.add(channel);
+					this.pendingSubscriptions.delete(channel);
+					this.reconcileChannel(channel);
 				}
 				break;
 
 			case "subscribed":
 				this.subscribedChannels.add(message.channel);
 				this.pendingSubscriptions.delete(message.channel);
+				this.reconcileChannel(message.channel);
 				break;
 
 			case "unsubscribed":
 				this.subscribedChannels.delete(message.channel);
+				if (this.desiredChannels.has(message.channel)) {
+					void this.subscribe(message.channel);
+				}
 				break;
 
 			case "pong":
@@ -1025,15 +1028,44 @@ class WebSocketService {
 		useNotificationStore.getState().setNotification(notification);
 	}
 
+	private reconcileChannels(channels: Iterable<string>) {
+		for (const channel of channels) {
+			this.reconcileChannel(channel);
+		}
+	}
+
+	private reconcileChannel(channel: string) {
+		if (this.desiredChannels.has(channel)) {
+			if (
+				!this.subscribedChannels.has(channel) &&
+				!this.pendingSubscriptions.has(channel)
+			) {
+				void this.subscribe(channel);
+			}
+			return;
+		}
+
+		if (this.subscribedChannels.has(channel)) {
+			void this.unsubscribe(channel);
+		}
+	}
+
 	/**
 	 * Subscribe to a channel
 	 */
 	async subscribe(channel: string): Promise<void> {
+		this.desiredChannels.add(channel);
 		if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-			this.pendingSubscriptions.add(channel);
+			return;
+		}
+		if (
+			this.subscribedChannels.has(channel) ||
+			this.pendingSubscriptions.has(channel)
+		) {
 			return;
 		}
 
+		this.pendingSubscriptions.add(channel);
 		this.ws.send(
 			JSON.stringify({
 				type: "subscribe",
@@ -1046,6 +1078,7 @@ class WebSocketService {
 	 * Unsubscribe from a channel
 	 */
 	async unsubscribe(channel: string): Promise<void> {
+		this.desiredChannels.delete(channel);
 		if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
 			return;
 		}
@@ -1105,15 +1138,6 @@ class WebSocketService {
 	 */
 	async connectToService(serviceId: string): Promise<void> {
 		const channel = `service:${serviceId}`;
-		if (this.subscribedChannels.has(channel)) {
-			return;
-		}
-
-		if (this.ws?.readyState === WebSocket.OPEN) {
-			await this.subscribe(channel);
-			return;
-		}
-
 		await this.connect([channel]);
 	}
 
@@ -1214,18 +1238,6 @@ class WebSocketService {
 	 */
 	async connectToChat(conversationId: string): Promise<void> {
 		const channel = `chat:${conversationId}`;
-		if (
-			this.ws?.readyState === WebSocket.OPEN &&
-			this.subscribedChannels.has(channel)
-		) {
-			return;
-		}
-
-		if (this.ws?.readyState === WebSocket.OPEN) {
-			await this.subscribe(channel);
-			return;
-		}
-
 		await this.connect([channel]);
 	}
 
@@ -1234,15 +1246,6 @@ class WebSocketService {
 	 */
 	async connectToAppDraft(appId: string): Promise<void> {
 		const channel = `app:draft:${appId}`;
-		if (this.subscribedChannels.has(channel)) {
-			return;
-		}
-
-		if (this.ws?.readyState === WebSocket.OPEN) {
-			await this.subscribe(channel);
-			return;
-		}
-
 		await this.connect([channel]);
 	}
 
@@ -1251,15 +1254,6 @@ class WebSocketService {
 	 */
 	async connectToAppLive(appId: string): Promise<void> {
 		const channel = `app:live:${appId}`;
-		if (this.subscribedChannels.has(channel)) {
-			return;
-		}
-
-		if (this.ws?.readyState === WebSocket.OPEN) {
-			await this.subscribe(channel);
-			return;
-		}
-
 		await this.connect([channel]);
 	}
 
@@ -1453,9 +1447,11 @@ class WebSocketService {
 		}
 
 		this.stopPingInterval();
+		this.desiredChannels.clear();
+		this.pendingSubscriptions.clear();
+		this.subscribedChannels.clear();
 
 		if (this.ws) {
-			this.subscribedChannels.clear();
 			this.ws.close(1000, "Normal closure");
 			this.ws = null;
 		}

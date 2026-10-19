@@ -24,6 +24,7 @@ import { RequiredInstructionsSettings } from "@/pages/settings/RequiredInstructi
 import { MCP } from "@/pages/settings/MCP";
 import { Maintenance } from "@/pages/settings/Maintenance";
 import { KubernetesExecutions } from "@/pages/settings/KubernetesExecutions";
+import { ZeroTrustAutomation } from "@/pages/settings/ZeroTrustAutomation";
 import { getKubernetesStatus } from "@/services/kubernetes";
 import { cn } from "@/lib/utils";
 import {
@@ -128,6 +129,12 @@ const settingsSections: SettingsSection[] = [
 				label: "Workflow Keys",
 				icon: Key,
 				content: WorkflowKeys,
+			},
+			{
+				value: "zero-trust-automation",
+				label: "Zero Trust Automation",
+				icon: Shield,
+				content: ZeroTrustAutomation,
 			},
 		],
 	},

@@ -598,6 +598,10 @@
 | PUT | `/api/users/{user_id}/role-assignments` |
 | GET | `/api/users/{user_id}/roles` |
 | GET | `/api/version` |
+| POST | `/api/workflow-conversions` |
+| POST | `/api/workflow-conversions/{job_id}/apply` |
+| POST | `/api/workflow-conversions/{job_id}/cutover` |
+| GET | `/api/workflow-conversions/{job_id}/report` |
 | GET | `/api/workflow-keys` |
 | POST | `/api/workflow-keys` |
 | DELETE | `/api/workflow-keys/{workflow_id}` |

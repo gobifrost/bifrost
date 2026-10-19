@@ -11,6 +11,7 @@ from src.routers.permissions import router as permissions_router
 from src.routers.roles import router as roles_router
 from src.routers.executions import router as executions_router
 from src.routers.workflows import router as workflows_router
+from src.routers.workflow_conversions import router as workflow_conversions_router
 from src.routers.forms import router as forms_router
 from src.routers.config import router as config_router
 from src.routers.websocket import router as websocket_router
@@ -101,6 +102,7 @@ __all__ = [
     "roles_router",
     "executions_router",
     "workflows_router",
+    "workflow_conversions_router",
     "forms_router",
     "config_router",
     "websocket_router",

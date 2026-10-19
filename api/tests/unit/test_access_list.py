@@ -1991,6 +1991,10 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.routers.tables.create_table": (1, "internal_authorized_resource"),
     "src.routers.tables.update_table": (1, "internal_authorized_resource"),
     "src.routers.tables.validate_policies": (1, "internal_authorized_resource"),
+    # Conversion deliberately adds a current Platform Admin restriction to
+    # its named operation gate, both at enqueue and in the durable runner.
+    "src.routers.workflow_conversions._admin_caller": (1, "route"),
+    "shared.workflow_conversions._require_current_conversion_admin": (1, "route"),
     "src.routers.users.create_user": (2, "actor_facts"),
     "src.routers.users.get_user_forms": (2, "internal_authorized_resource"),
     "src.routers.users.update_user": (2, "actor_facts"),
@@ -2002,6 +2006,7 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.services.authorization.enforce.user_reach": (1, "current_role_derivation"),
     "src.services.authorization.evaluator.decide": (1, "current_role_derivation"),
     "src.services.authorization.explain.RunUser.is_platform_admin": (1, "current_role_derivation"),
+    "src.services.authorization.enforce.Caller.is_platform_admin": (1, "current_role_derivation"),
     "src.services.authorization.explain.in_reach": (1, "current_role_derivation"),
     "src.services.authorization.explain.load_run_as_target": (3, "current_role_derivation"),
     "src.services.authorization.runtime_auth._principal_from_authority": (1, "actor_facts"),
@@ -2144,6 +2149,10 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
 _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
     "bifrost._logging.flush_logs_to_postgres": (1, "Moves a finished run's log lines into the database."),
     "shared.role_cache.invalidate_role": (1, "Scans role-cache entries to delete them."),
+    "shared.runtime_modules.read_runtime_modules": (
+        1,
+        "Worker-reported installed import roots for permission-scan diagnostics; never grants access or loads code.",
+    ),
     "src.core.cache.data_provider_cache.get_cached_result": (1, "Cached data-provider options for a form field."),
     "src.core.cache.keys._current_global_version": (1, "Cache version counter."),
     "src.core.locks.DistributedLockService.get_lock_info": (1, "Lock diagnostics."),

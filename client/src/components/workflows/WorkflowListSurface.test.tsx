@@ -16,6 +16,37 @@ function LocationProbe() {
 }
 
 describe("workflow recovery actions", () => {
+	it("keeps a selected checkbox from opening the workflow row", async () => {
+		const workflow = {
+			id: "selected-workflow",
+			name: "selected_workflow",
+			type: "workflow",
+		} as WorkflowListItem;
+		const onSelectWorkflow = vi.fn();
+		const onExecute = vi.fn();
+		const { user } = renderWithProviders(
+			<>
+				<WorkflowListSurface
+					workflows={[workflow]}
+					viewMode="table"
+					isPlatformAdmin
+					canManageWorkflows
+					getOrgName={() => "Global"}
+					onExecute={onExecute}
+					onSelectWorkflow={onSelectWorkflow}
+				/>
+				<LocationProbe />
+			</>,
+		);
+
+		await user.click(
+			screen.getByRole("checkbox", { name: "Select selected_workflow" }),
+		);
+		expect(onSelectWorkflow).toHaveBeenCalledWith(workflow, true);
+		expect(screen.getByLabelText("location")).toHaveTextContent("/");
+		expect(onExecute).not.toHaveBeenCalled();
+	});
+
 	it("does not offer scoped edits for a workflow outside the named grant", async () => {
 		const workflow = {
 			id: "fabrikam-workflow",

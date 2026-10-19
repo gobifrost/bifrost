@@ -225,6 +225,12 @@ channel. The `platform_job_updated` event carries the same
 job-specific live behavior. Reconnect or page-load recovery may read the shared
 status/list endpoints; it must not introduce a per-feature polling system.
 
+A runner commits its new state before publishing it. If the host observes a
+released lease and stops that child, it republishes the latest durable row so
+termination cannot interrupt the final notification. This publication does not
+change the row or restore a stale runner's authority; consumers may receive the
+same revision more than once and must not replace newer state with older events.
+
 The CLI may poll `GET /api/platform-jobs/{job_id}` because it does not maintain
 the browser's WebSocket session. Each poll is a short HTTP request; a CLI-side
 overall wait deadline must explain that the durable server operation may still

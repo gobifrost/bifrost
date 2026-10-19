@@ -386,7 +386,13 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # These transports are additive and ship with the existing 1.4.2 floor;
     # the legacy contract marker remains frozen. The execution scope description
     # now documents original reach and the named execution permission.
-    "c1ebda500c77bbc290bf2d707e1ecf8e5151fb8d2875972eeb8079cfda359dfd"
+    # Workflow conversion request/report/payload DTOs (2026-10-18) are additive
+    # and ship with new commands. Existing CLI contracts and minimum stay intact.
+    # Conversion review no longer accepts identity strategy or broad-identity
+    # acknowledgement fields (2026-10-18). The conversion commands and review
+    # files are unreleased, so the existing 1.4.2 floor already selects the
+    # first compatible CLI; fingerprint refreshed only.
+    "e5632eaca4a741f7a66c4ad6af951090113948cb2ecc526e6339d8a4b053248f"
 )
 
 

@@ -1,0 +1,18 @@
+{
+  "key": "pr:1000",
+  "classification": "highlight",
+  "entry_ids": [
+    "a523fe00-ec4a-4468-a4f1-79d248e6cf22"
+  ],
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1000"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1000",
+      "Author-reviewed capability notice. Focused and CI checks cover source analysis, authority revalidation, dedicated same-organization identities, exact Solution approval, and explicit platform cutover. The PR remains unmerged for maintainer review; source eligibility withholds the notice until delivery."
+    ]
+  }
+}

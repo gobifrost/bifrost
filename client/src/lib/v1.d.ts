@@ -2511,6 +2511,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workflow-conversions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Analyze Workflows */
+        post: operations["workflows.conversions.create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflow-conversions/{job_id}/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Workflow Conversion Report */
+        get: operations["workflows.conversions.get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflow-conversions/{job_id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply Workflow Conversion */
+        post: operations["workflows.conversions.update"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflow-conversions/{job_id}/cutover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cutover Workflow Permissions */
+        post: operations["workflows.permission_default.update"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/forms": {
         parameters: {
             query?: never;
@@ -29797,6 +29865,213 @@ export interface components {
             /** Points */
             points?: components["schemas"]["WorkerMetricPoint"][];
         };
+        /** WorkflowConversionAnalyzeRequest */
+        WorkflowConversionAnalyzeRequest: {
+            /** Workflow Ids */
+            workflow_ids?: string[] | null;
+            /** Scope */
+            scope?: string | null;
+            /**
+             * Platform Cutover
+             * @default false
+             */
+            platform_cutover: boolean;
+        };
+        /** WorkflowConversionApplyRequest */
+        WorkflowConversionApplyRequest: {
+            /** Selections */
+            selections: components["schemas"]["WorkflowConversionSelection"][];
+            /**
+             * Acknowledged Solution Requests
+             * @default false
+             */
+            acknowledged_solution_requests: boolean;
+        };
+        /** WorkflowConversionCutoverRequest */
+        WorkflowConversionCutoverRequest: {
+            /**
+             * Acknowledged Remaining Exceptions
+             * @default false
+             */
+            acknowledged_remaining_exceptions: boolean;
+        };
+        /** WorkflowConversionEvidence */
+        WorkflowConversionEvidence: {
+            /** Path */
+            path: string;
+            /** Line */
+            line?: number | null;
+            /** Call */
+            call: string;
+            /** Via */
+            via?: string[];
+        };
+        /** WorkflowConversionIdentitySummary */
+        WorkflowConversionIdentitySummary: {
+            /** Id */
+            id?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Identity Kind */
+            identity_kind?: string | null;
+            /** Organization Id */
+            organization_id?: string | null;
+            /**
+             * Shared
+             * @default false
+             */
+            shared: boolean;
+        };
+        /** WorkflowConversionReport */
+        WorkflowConversionReport: {
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /** Total */
+            total: number;
+            /** Offset */
+            offset: number;
+            /** Limit */
+            limit: number;
+            /** Items */
+            items: components["schemas"]["WorkflowConversionReportItem"][];
+            summary: components["schemas"]["WorkflowConversionReportSummary"];
+        };
+        /** WorkflowConversionReportItem */
+        WorkflowConversionReportItem: {
+            /**
+             * Workflow Id
+             * Format: uuid
+             */
+            workflow_id: string;
+            /** Workflow Name */
+            workflow_name: string;
+            /** Organization Id */
+            organization_id?: string | null;
+            /** Solution Id */
+            solution_id?: string | null;
+            /** Source Fingerprint */
+            source_fingerprint: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ready" | "needs_review" | "blocked" | "already_declared" | "stale";
+            /**
+             * Current Permission Mode
+             * @enum {string}
+             */
+            current_permission_mode: "full" | "restricted";
+            /** Proposed Permissions */
+            proposed_permissions?: string[];
+            /** Source Permissions */
+            source_permissions?: string[];
+            /** Observed Permissions */
+            observed_permissions?: string[];
+            /** Observed Operations */
+            observed_operations?: string[];
+            /** Evidence */
+            evidence?: components["schemas"]["WorkflowConversionEvidence"][];
+            /** Unknowns */
+            unknowns?: string[];
+            /** Warnings */
+            warnings?: string[];
+            identity?: components["schemas"]["WorkflowConversionIdentitySummary"] | null;
+            solution_permission_request?: components["schemas"]["WorkflowConversionSolutionRequestSummary"] | null;
+            /** Error */
+            error?: string | null;
+            /** Review */
+            review?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** WorkflowConversionReportSummary */
+        WorkflowConversionReportSummary: {
+            /**
+             * Platform Cutover
+             * @default false
+             */
+            platform_cutover: boolean;
+            /** Analyzer Version */
+            analyzer_version: string;
+            /** Total */
+            total: number;
+            /**
+             * Ready
+             * @default 0
+             */
+            ready: number;
+            /**
+             * Needs Review
+             * @default 0
+             */
+            needs_review: number;
+            /**
+             * Blocked
+             * @default 0
+             */
+            blocked: number;
+            /**
+             * Already Declared
+             * @default 0
+             */
+            already_declared: number;
+            /**
+             * Stale
+             * @default 0
+             */
+            stale: number;
+            /**
+             * Observation Window Days
+             * @default 30
+             */
+            observation_window_days: number;
+            /**
+             * Default Permission Mode
+             * @enum {string}
+             */
+            default_permission_mode: "full" | "restricted";
+            /**
+             * Cutover Ready
+             * @default false
+             */
+            cutover_ready: boolean;
+            /**
+             * Remaining Full
+             * @default 0
+             */
+            remaining_full: number;
+        };
+        /** WorkflowConversionSelection */
+        WorkflowConversionSelection: {
+            /**
+             * Workflow Id
+             * Format: uuid
+             */
+            workflow_id: string;
+            /** Source Fingerprint */
+            source_fingerprint: string;
+            /**
+             * Acknowledged Unknowns
+             * @default false
+             */
+            acknowledged_unknowns: boolean;
+        };
+        /** WorkflowConversionSolutionRequestSummary */
+        WorkflowConversionSolutionRequestSummary: {
+            /** Status */
+            status: string;
+            /** Request Digest */
+            request_digest: string;
+            /** Approved Digest */
+            approved_digest?: string | null;
+            /** Requested Mode */
+            requested_mode: string;
+            /** Requested Permissions */
+            requested_permissions?: string[];
+        };
         /**
          * WorkflowExecution
          * @description Workflow execution entity — summary fields plus full payloads.
@@ -35094,6 +35369,143 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RecommendedAccess"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "workflows.conversions.create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowConversionAnalyzeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "workflows.conversions.get": {
+        parameters: {
+            query?: {
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowConversionReport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "workflows.conversions.update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowConversionApplyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "workflows.permission_default.update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowConversionCutoverRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
                 };
             };
             /** @description Validation Error */

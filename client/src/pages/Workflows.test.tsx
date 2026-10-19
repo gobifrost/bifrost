@@ -1,4 +1,4 @@
-import { Workflows } from "./Workflows";
+import { Workflows, workflowConversionLocation } from "./Workflows";
 /**
  * Tests for the Workflows page — focused on the SolutionManagedBadge
  * affordance: managed workflows show the shared admin-only badge and hide the
@@ -7,6 +7,7 @@ import { Workflows } from "./Workflows";
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useLocation } from "react-router-dom";
+import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, within } from "@/test-utils";
 
 const mockUseWorkflowsFiltered = vi.fn();
@@ -112,9 +113,14 @@ beforeEach(() => {
 function LocationProbe() {
 	const location = useLocation();
 	return (
-		<output aria-label="location">
-			{location.pathname + location.search}
-		</output>
+		<>
+			<output aria-label="location">
+				{location.pathname + location.search}
+			</output>
+			<output aria-label="location-state">
+				{JSON.stringify(location.state)}
+			</output>
+		</>
 	);
 }
 
@@ -128,6 +134,61 @@ async function renderPage() {
 }
 
 describe("Workflows — solution-managed badge (grid view)", () => {
+	it("freezes matching workflows into the shared conversion wizard", async () => {
+		mockUseWorkflowsFiltered.mockReturnValue({
+			data: [makeWorkflow({ id: "wf-synthetic" })],
+			isLoading: false,
+			refetch: vi.fn(),
+		});
+		await renderPage();
+		await userEvent.setup().click(
+			screen.getByRole("button", {
+				name: "Review 1 matching workflow",
+			}),
+		);
+		expect(
+			screen.getByRole("status", { name: "location" }),
+		).toHaveTextContent("/workflows/convert?selection=true");
+		expect(
+			screen.getByRole("status", { name: "location-state" }),
+		).toHaveTextContent('"workflowIds":["wf-synthetic"]');
+	});
+
+	it("keeps a thousand matching IDs out of the conversion URL", () => {
+		const workflowIds = Array.from(
+			{ length: 1_001 },
+			(_, index) => `wf-${index}`,
+		);
+
+		const location = workflowConversionLocation(workflowIds);
+
+		expect(location.to).toBe("/workflows/convert?selection=true");
+		expect(location.to).not.toContain("wf-1000");
+		expect(location.state.workflowIds).toEqual(workflowIds);
+	});
+
+	it("uses selected rows instead of a broader matching filter", async () => {
+		mockUseWorkflowsFiltered.mockReturnValue({
+			data: [
+				makeWorkflow({ id: "wf-selected", name: "selected_workflow" }),
+				makeWorkflow({ id: "wf-other", name: "other_workflow" }),
+			],
+			isLoading: false,
+			refetch: vi.fn(),
+		});
+		const { user } = await renderPage();
+		await user.click(screen.getByLabelText("Table view"));
+		await user.click(
+			screen.getByRole("checkbox", { name: "Select selected_workflow" }),
+		);
+		await user.click(
+			screen.getByRole("button", { name: "Review 1 selected workflow" }),
+		);
+		expect(
+			screen.getByRole("status", { name: "location" }),
+		).toHaveTextContent("/workflows/convert?selection=true");
+	});
+
 	it("shows the badge and hides the scope-edit control on a managed workflow", async () => {
 		mockUseWorkflowsFiltered.mockReturnValue({
 			data: [

@@ -23,6 +23,7 @@ import { RecordActionsMenu } from "@/components/common/RecordActionsMenu";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent } from "@/components/ui/card";
 import {
 	DataTable,
@@ -76,6 +77,8 @@ export interface WorkflowListSurfaceProps {
 	getServiceHref?: (workflow: WorkflowListItem) => string | undefined;
 	onOpenEmpty?: () => void;
 	emptySearchActive?: boolean;
+	selectedWorkflowIds?: Set<string>;
+	onSelectWorkflow?: (workflow: WorkflowListItem, selected: boolean) => void;
 }
 
 function WorkflowTypeBadge({ workflow }: { workflow: WorkflowListItem }) {
@@ -157,6 +160,8 @@ export function WorkflowListSurface({
 	getServiceHref,
 	onOpenEmpty,
 	emptySearchActive = false,
+	selectedWorkflowIds = new Set<string>(),
+	onSelectWorkflow,
 }: WorkflowListSurfaceProps) {
 	const navigate = useNavigate();
 	const canManageWorkflow = (workflow: WorkflowListItem) =>
@@ -275,6 +280,7 @@ export function WorkflowListSurface({
 				<DataTable className="max-h-full">
 					<DataTableHeader>
 						<DataTableRow>
+							{onSelectWorkflow && <DataTableHead className="w-0"><span className="sr-only">Select</span></DataTableHead>}
 							<DataTableHead>Workflow</DataTableHead>
 							<DataTableHead className="w-0 whitespace-nowrap text-right">
 								<span className="sr-only">Actions</span>
@@ -283,6 +289,7 @@ export function WorkflowListSurface({
 					</DataTableHeader>
 					<DataTableBody>
 						{workflows.map((workflow) => {
+							const selected = workflow.id ? selectedWorkflowIds.has(workflow.id) : false;
 							const executeHref = workflowExecuteHref(
 								workflow,
 								navigationSearch,
@@ -310,6 +317,7 @@ export function WorkflowListSurface({
 											: undefined
 									}
 								>
+									{onSelectWorkflow && <DataTableCell><Checkbox aria-label={`Select ${workflow.name}`} checked={selected} disabled={!workflow.id || !canManageWorkflow(workflow)} onCheckedChange={(checked) => onSelectWorkflow(workflow, checked === true)} /></DataTableCell>}
 									<DataTableCell className="min-w-0 whitespace-normal align-top">
 										{executable ? (
 											<Link

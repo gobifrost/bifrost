@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import importlib
 import os
 import subprocess
 from collections.abc import Awaitable, Callable
@@ -127,8 +128,13 @@ class _FakeProcess:
 
 
 @pytest.fixture
-def recorded(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+def recorded(monkeypatch: pytest.MonkeyPatch, site: str) -> list[dict[str, Any]]:
     """Record the keyword arguments of every subprocess started."""
+    if site.startswith("packages."):
+        # Router dependencies can run platform.architecture() while importing.
+        # Import them before mocking process execution, so the tool recorder
+        # observes the requested package operation rather than library setup.
+        importlib.import_module("src.routers.packages")
     calls: list[dict[str, Any]] = []
 
     def fake_run(

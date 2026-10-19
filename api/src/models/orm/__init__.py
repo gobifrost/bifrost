@@ -69,6 +69,7 @@ from src.models.orm.workflow_permissions import WorkflowPermissionGrant
 from src.models.orm.workflow_roles import WorkflowRole
 from src.models.orm.workflow_run_daily import WorkflowRunDaily
 from src.models.orm.workflows import Workflow
+from src.models.orm.workflow_conversions import WorkflowConversionAnalysisCache, WorkflowConversionReport
 from src.models.orm.file_index import FileIndex, SolutionFileIndex
 from src.models.orm.file_metadata import FileMetadata, FilePolicy
 from src.models.orm.policy_rule import PolicyRule
@@ -81,6 +82,8 @@ __all__ = [
     "HomeResourcePreference",
     # Base
     "Base",
+    "WorkflowConversionAnalysisCache",
+    "WorkflowConversionReport",
     # Organizations
     "Organization",
     # Solutions (installable surfaces)
