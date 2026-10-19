@@ -332,7 +332,9 @@ async def _entries(db: AsyncSession, rows: list[AuditLog]) -> list[AuditLogEntry
     """Entries for ``rows``, with actor user and organization names, the
     acting user's own organization, and the workflow each names."""
     # Look up actor users, organizations and workflow names in batch for display.
-    user_ids = {r.user_id for r in rows if r.user_id}
+    user_ids = {r.user_id for r in rows if r.user_id} | {
+        r.impersonated_by_user_id for r in rows if r.impersonated_by_user_id
+    }
     workflow_ids = {workflow_id for r in rows if (workflow_id := _named_workflow(r))}
 
     users_by_id: dict[UUID, UserORM] = {}
@@ -360,6 +362,7 @@ async def _entries(db: AsyncSession, rows: list[AuditLog]) -> list[AuditLogEntry
     entries: list[AuditLogEntry] = []
     for row in rows:
         actor_user = users_by_id.get(row.user_id) if row.user_id else None
+        impersonating_user = users_by_id.get(row.impersonated_by_user_id) if row.impersonated_by_user_id else None
         actor_org = orgs_by_id.get(row.organization_id) if row.organization_id else None
         home_id = actor_user.organization_id if actor_user else None
         home_org = orgs_by_id.get(home_id) if home_id else None
@@ -376,10 +379,14 @@ async def _entries(db: AsyncSession, rows: list[AuditLog]) -> list[AuditLogEntry
                 operation_id=row.operation_id,
                 surface=row.surface,
                 execution_id=row.execution_id,
+                impersonation_session_id=row.impersonation_session_id,
                 actor=AuditLogActor(
                     user_id=row.user_id,
                     user_email=actor_user.email if actor_user else None,
                     user_name=actor_user.name if actor_user else None,
+                    impersonated_by_user_id=row.impersonated_by_user_id,
+                    impersonated_by_email=impersonating_user.email if impersonating_user else None,
+                    impersonated_by_name=impersonating_user.name if impersonating_user else None,
                     organization_id=row.organization_id,
                     organization_name=actor_org.name if actor_org else None,
                     home_organization_id=home_id,

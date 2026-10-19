@@ -97,6 +97,8 @@ def actor_from_token_payload(
 
     email = payload.get("email")
     name = payload.get("name")
+    impersonated_by_user_id = _uuid_or_none(payload.get("impersonated_by_user_id"))
+    impersonation_session_id = _uuid_or_none(payload.get("impersonation_session_id"))
 
     if any(key in payload for key in ("credential_kind", "engine_execution_id", "service_id", "engine_agent_run_id")):
         return None
@@ -112,6 +114,8 @@ def actor_from_token_payload(
             source="http",
             execution_id=None,
             surface="embed",
+            impersonated_by_user_id=impersonated_by_user_id,
+            impersonation_session_id=impersonation_session_id,
         )
 
     return ActorContext(
@@ -124,6 +128,8 @@ def actor_from_token_payload(
         source="http",
         execution_id=None,
         surface=resolve_self_reported_surface(surface_header),
+        impersonated_by_user_id=impersonated_by_user_id,
+        impersonation_session_id=impersonation_session_id,
     )
 
 
@@ -140,4 +146,6 @@ def actor_from_runtime_principal(
         email=principal.email, name=principal.name, ip_address=ip_address,
         user_agent=user_agent, source=surface, surface=surface,
         execution_id=authority.credential_id if authority.kind != "agent_run" else None,
+        impersonated_by_user_id=authority.impersonated_by_user_id,
+        impersonation_session_id=authority.impersonation_session_id,
     )

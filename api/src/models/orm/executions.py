@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import BigInteger, DateTime, Enum as SQLAlchemyEnum, Float, ForeignKey, Index, Integer, Numeric, String, Text, func, text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.enums import ExecutionStatus
@@ -76,6 +76,11 @@ class Execution(Base):
         ForeignKey("users.id", ondelete="SET NULL"), default=None
     )
     root_execution_id: Mapped[UUID | None] = mapped_column(default=None)
+    # Browser impersonation is audit provenance, never execution authority.
+    # These are intentionally not foreign keys so deleting an operator does
+    # not erase attribution from durable history.
+    impersonated_by_user_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), default=None)
+    impersonation_session_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), default=None)
     organization_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("organizations.id"), default=None
     )

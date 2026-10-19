@@ -61,6 +61,26 @@ async def test_row_gets_the_pending_lineage() -> None:
 
 
 @pytest.mark.asyncio
+async def test_row_gets_the_pending_impersonation_provenance() -> None:
+    operator_id = "00000000-0000-0000-0000-0000000000bb"
+    session_id = "00000000-0000-0000-0000-0000000000cc"
+
+    created = await _created_with(
+        _pending(
+            impersonation_provenance={
+                "impersonated_by_user_id": operator_id,
+                "impersonation_session_id": session_id,
+            }
+        )
+    )
+
+    assert created["impersonation_provenance"] == {
+        "impersonated_by_user_id": operator_id,
+        "impersonation_session_id": session_id,
+    }
+
+
+@pytest.mark.asyncio
 async def test_pending_record_written_before_lineage_existed_is_still_consumed() -> None:
     assert (await _created_with(_pending()))["lineage"] is None
 

@@ -148,7 +148,7 @@ describe("DevicePage", () => {
 	it("authorizes the device with the active impersonation token", async () => {
 		localStorage.setItem("bifrost_access_token", "operator-token");
 		setImpersonationToken("impersonated-token");
-		const fetchMock = vi.fn(async () => ({
+		const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({
 			ok: true,
 			status: 200,
 			json: async () => ({}),
@@ -161,7 +161,7 @@ describe("DevicePage", () => {
 		await user.type(screen.getByLabelText(/device code/i), "abcd1234");
 		await user.click(screen.getByRole("button", { name: /authorize device/i }));
 
-		expect(new Headers(fetchMock.mock.calls[0][1].headers).get("Authorization")).toBe(
+		expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Authorization")).toBe(
 			"Bearer impersonated-token",
 		);
 	});

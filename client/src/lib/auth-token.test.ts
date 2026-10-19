@@ -105,6 +105,7 @@ describe("impersonation token storage", () => {
 		clearAuthTokens();
 
 		expect(sessionStorage.getItem(EMBED_TOKEN_KEY)).toBeNull();
+		expect(localStorage.getItem(ACCESS_TOKEN_KEY)).toBe("operator-token");
 		expect(localStorage.getItem(IMPERSONATION_TOKEN_KEY)).toBe(
 			"impersonated-token",
 		);

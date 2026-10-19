@@ -41,6 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared import access_checks
 from shared.run_lineage import RunLineage, lineage_columns, principal_lineage
 from src.core.principal import UserPrincipal
+from src.services.durable_impersonation import current_durable_impersonation
 
 if TYPE_CHECKING:
     from src.models import WorkflowExecutionRequest, WorkflowExecutionResponse
@@ -123,6 +124,7 @@ async def insert_scheduled_execution(
             api_key_id=api_key_id,
             execution_context=execution_context,
             **lineage_columns(lineage.bound(exec_id) if lineage else None),
+            **current_durable_impersonation().columns(),
         )
     )
     await db.commit()

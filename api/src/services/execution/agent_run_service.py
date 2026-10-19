@@ -15,6 +15,7 @@ from src.core.database import get_session_factory
 from src.core.log_safety import log_safe
 from src.jobs.rabbitmq import publish_message
 from src.models.orm.agent_runs import AgentRun
+from src.services.durable_impersonation import current_durable_impersonation
 
 if TYPE_CHECKING:
     from shared.run_lineage import RunLineage
@@ -88,6 +89,7 @@ async def enqueue_agent_run(
         lineage=lineage,
         run_as_user_id=run_as_user_id,
     )
+    impersonation = current_durable_impersonation()
     session_factory = get_session_factory()
     async with session_factory() as db:
         db.add(
@@ -110,6 +112,7 @@ async def enqueue_agent_run(
                 run_user_id=lineage.run_user_id if lineage else None,
                 run_as_user_id=run_as_user_id,
                 acting_user_id=acting_user_id,
+                **impersonation.columns(),
             )
         )
         await db.commit()

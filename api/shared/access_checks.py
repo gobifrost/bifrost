@@ -73,6 +73,10 @@ class Collector:
     agent_run_id: UUID | None = None
     # Some chat bridges have run lineage without a persistent AgentRun.
     is_run: bool = False
+    # Browser impersonation provenance for access-check audit rows. The
+    # collector's run user remains the effective target.
+    impersonated_by_user_id: UUID | None = None
+    impersonation_session_id: UUID | None = None
 
 
 _current: ContextVar[Collector | None] = ContextVar("access_check_collector", default=None)
@@ -80,6 +84,14 @@ _current: ContextVar[Collector | None] = ContextVar("access_check_collector", de
 
 def _uuid(value: Any) -> UUID | None:
     return UUID(str(value)) if value else None
+
+
+def _optional_uuid(value: Any) -> UUID | None:
+    """Treat malformed attribution-only claims as absent."""
+    try:
+        return _uuid(value)
+    except (ValueError, TypeError, AttributeError):
+        return None
 
 
 def start_collecting(
@@ -100,6 +112,8 @@ def start_collecting(
         collector.surface = "agent" if collector.agent_run_id else surface
         # An agent adds no workflow power; it is judged on its original user.
         collector.direct = runtime.powers is None
+        collector.impersonated_by_user_id = runtime.impersonated_by_user_id
+        collector.impersonation_session_id = runtime.impersonation_session_id
         return token
     if any(key in payload for key in ("credential_kind", "engine_execution_id", "service_id", "engine_agent_run_id")):
         return None
@@ -107,6 +121,8 @@ def start_collecting(
     collector = _current.get()
     if token is not None and collector is not None:
         collector.surface = surface
+        collector.impersonated_by_user_id = _optional_uuid(payload.get("impersonated_by_user_id"))
+        collector.impersonation_session_id = _optional_uuid(payload.get("impersonation_session_id"))
     return token
 
 
@@ -151,6 +167,8 @@ def renew() -> Collector | None:
             surface=collector.surface,
             agent_run_id=collector.agent_run_id,
             is_run=collector.is_run,
+            impersonated_by_user_id=collector.impersonated_by_user_id,
+            impersonation_session_id=collector.impersonation_session_id,
         )
     )
     return collector

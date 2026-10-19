@@ -24,6 +24,7 @@ from src.core.log_safety import log_safe
 from src.core.redis_client import get_redis_client
 from src.jobs.rabbitmq import publish_message
 from src.sdk.context import EventContext, ExecutionContext
+from src.services.durable_impersonation import current_durable_impersonation
 from src.services.execution.queue_tracker import add_to_queue
 
 if TYPE_CHECKING:
@@ -56,6 +57,7 @@ async def _publish_pending(
     artifact_workspace_id: str | None = None,
     *,
     lineage: dict[str, str] | None,
+    impersonation_provenance: dict[str, str] | None = None,
 ) -> None:
     """
     Write a pending-execution blob to Redis, register with the queue tracker,
@@ -86,6 +88,11 @@ async def _publish_pending(
         event=event,
         artifact_workspace_id=artifact_workspace_id,
         lineage=lineage,
+        impersonation_provenance=(
+            current_durable_impersonation().pending_value()
+            if impersonation_provenance is None
+            else impersonation_provenance
+        ),
     )
 
     # Sync callers wait on their private result list and cannot consume queue
@@ -242,6 +249,7 @@ async def enqueue_code_execution(
         is_platform_admin=context.is_platform_admin,
         artifact_workspace_id=context.artifact_workspace_id,
         lineage=lineage.bound(execution_id) if lineage else None,
+        impersonation_provenance=current_durable_impersonation().pending_value(),
     )
 
     # Sync callers wait on their private result list and cannot consume queue

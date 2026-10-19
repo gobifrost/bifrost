@@ -35,6 +35,11 @@ class ActorContext:
     # about which client made the call. See
     # src/core/request_actor.py::actor_from_token_payload for resolution.
     surface: str = "web"
+    # Browser impersonation provenance. ``user_id`` remains the effective
+    # target for the request; these identify the operator and their browser
+    # impersonation session without affecting authorization.
+    impersonated_by_user_id: UUID | None = None
+    impersonation_session_id: UUID | None = None
 
 
 _actor: ContextVar[ActorContext | None] = ContextVar("audit_actor", default=None)

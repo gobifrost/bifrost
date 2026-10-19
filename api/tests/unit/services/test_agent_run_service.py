@@ -6,6 +6,7 @@ import pytest
 
 from src.services.execution import agent_run_service
 from src.services.execution.agent_run_service import enqueue_agent_run
+from src.services.audit_context import ActorContext, clear_actor, set_actor
 
 
 @pytest.fixture
@@ -34,6 +35,33 @@ def _redis_context(mock_get_redis):
 
 
 class TestEnqueueAgentRun:
+    @pytest.mark.asyncio
+    @patch("src.services.execution.agent_run_service.publish_message")
+    @patch("src.services.execution.agent_run_service.get_redis")
+    async def test_persists_current_impersonation_provenance(
+        self, mock_get_redis, _mock_publish, db_session
+    ):
+        _redis_context(mock_get_redis)
+        operator_id, session_id = uuid4(), uuid4()
+        token = set_actor(
+            ActorContext(
+                user_id=uuid4(),
+                organization_id=uuid4(),
+                impersonated_by_user_id=operator_id,
+                impersonation_session_id=session_id,
+            )
+        )
+        try:
+            await enqueue_agent_run(
+                agent_id=str(uuid4()), trigger_type="api", lineage=None
+            )
+        finally:
+            clear_actor(token)
+
+        row = db_session.add.call_args.args[0]
+        assert row.impersonated_by_user_id == operator_id
+        assert row.impersonation_session_id == session_id
+
     @pytest.mark.asyncio
     @patch("src.services.execution.agent_run_service.publish_message")
     @patch("src.services.execution.agent_run_service.get_redis")

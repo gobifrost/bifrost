@@ -117,6 +117,29 @@ async def test_workflow_runtime_loads_separate_actor_and_restricted_powers(db_se
 
 
 @pytest.mark.asyncio
+async def test_workflow_runtime_retains_durable_impersonation_provenance(db_session: AsyncSession) -> None:
+    organization = await _organization(db_session, "Contoso")
+    user = await _person(db_session, organization, "runtime-user")
+    execution = await _execution(
+        db_session,
+        workflow=None,
+        run_user=user,
+        actor=user,
+        organization_id=organization.id,
+        started_by_user_id=user.id,
+        root_execution_id=uuid4(),
+    )
+    execution.impersonated_by_user_id = uuid4()
+    execution.impersonation_session_id = uuid4()
+    await db_session.flush()
+
+    authority = await load_runtime_authority(db_session, "workflow_execution", execution.id)
+
+    assert authority.impersonated_by_user_id == execution.impersonated_by_user_id
+    assert authority.impersonation_session_id == execution.impersonation_session_id
+
+
+@pytest.mark.asyncio
 async def test_workflow_runtime_does_not_give_inline_execution_default_powers(db_session: AsyncSession) -> None:
     contoso = await _organization(db_session, "Contoso")
     user = await _person(db_session, contoso, "inline-user")

@@ -221,7 +221,22 @@ class _Writer:
         )
 
     def _key(self, *parts: Any) -> str:
-        digest = hashlib.sha256("|".join(str(part) for part in parts).encode()).hexdigest()[:16]
+        provenance = (
+            ()
+            if self.collector.impersonated_by_user_id is None
+            and self.collector.impersonation_session_id is None
+            else (
+                "impersonation",
+                self.collector.impersonated_by_user_id,
+                self.collector.impersonation_session_id,
+            )
+        )
+        digest = hashlib.sha256(
+            "|".join(
+                str(part)
+                for part in (*provenance, *parts)
+            ).encode()
+        ).hexdigest()[:16]
         return f"bifrost:access_check:{self.run_key}:{digest}"
 
     async def _claim(self, key: str) -> Claim | None:
@@ -303,6 +318,8 @@ class _Writer:
             },
             execution_id=self.collector.execution_id,
             operation_id=self.operation,
+            impersonated_by_user_id=self.collector.impersonated_by_user_id,
+            impersonation_session_id=self.collector.impersonation_session_id,
         )
 
     async def check(self, note: Note, trace: Trace, run_user: RunUser) -> bool:
@@ -335,6 +352,8 @@ class _Writer:
             ),
             execution_id=self.collector.execution_id,
             operation_id=self.operation,
+            impersonated_by_user_id=self.collector.impersonated_by_user_id,
+            impersonation_session_id=self.collector.impersonation_session_id,
         )
         if _every_call(note):
             await self._insert(**row)

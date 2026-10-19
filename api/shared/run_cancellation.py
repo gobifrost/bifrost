@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.models.enums import ExecutionStatus
 from src.models.orm.executions import Execution
 from src.models.orm.users import User
+from src.services.durable_impersonation import pending_durable_impersonation
 
 
 RUN_USER_DELETED_ERROR = "The user for this run was deleted"
@@ -67,6 +68,7 @@ async def cancel_redis_queued_run_if_user_deleted(
     form_id: UUID | None,
     api_key_id: UUID | None,
     executed_by_name: str,
+    impersonation_provenance: dict[str, str] | None = None,
 ) -> bool:
     """Persist cancellation for a Redis-only queued run whose user is gone.
 
@@ -91,6 +93,7 @@ async def cancel_redis_queued_run_if_user_deleted(
             status=ExecutionStatus.CANCELLED,
             error_message=RUN_USER_DELETED_ERROR,
             completed_at=datetime.now(timezone.utc),
+            **pending_durable_impersonation(impersonation_provenance).columns(),
         )
     )
     await session.flush()

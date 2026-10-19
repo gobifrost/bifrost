@@ -44,6 +44,9 @@ class AgentRun(Base):
     acting_user_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), default=None
     )
+    # Audit provenance retained independently of the effective actor.
+    impersonated_by_user_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), default=None)
+    impersonation_session_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), default=None)
     iterations_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tokens_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     budget_max_iterations: Mapped[int | None] = mapped_column(Integer, default=None)

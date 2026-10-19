@@ -28,6 +28,7 @@ from src.models.contracts.platform_jobs import (
     PlatformJobStatus,
 )
 from src.models.orm.platform_jobs import PlatformJob
+from src.services.durable_impersonation import current_durable_impersonation
 from src.services.platform_job_memory_profiles import (
     resolve_platform_job_memory_required_bytes,
     record_platform_job_memory_profile,
@@ -250,6 +251,7 @@ async def enqueue_platform_job(
         db, settings, definition
     )
 
+    impersonation = current_durable_impersonation()
     job = PlatformJob(
         id=job_id or uuid4(),
         job_type=definition.job_type,
@@ -263,6 +265,7 @@ async def enqueue_platform_job(
         requested_by_user_id=str(requested_by_user_id),
         requested_by_email=requested_by_email,
         requested_by_name=requested_by_name,
+        **impersonation.columns(),
         resource_type=resource_type,
         resource_id=resource_id,
         title=title[:200],

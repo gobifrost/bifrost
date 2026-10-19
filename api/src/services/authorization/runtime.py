@@ -62,6 +62,8 @@ class RuntimeAuthority:
     root_execution_id: UUID | None
     service_id: UUID | None = None
     solution_id: UUID | None = None
+    impersonated_by_user_id: UUID | None = None
+    impersonation_session_id: UUID | None = None
 
 
 async def load_runtime_authority(
@@ -119,6 +121,8 @@ async def _load_workflow_execution(db: AsyncSession, execution_id: UUID) -> Runt
         started_by_user_id=execution.started_by_user_id,
         root_execution_id=execution.root_execution_id,
         solution_id=solution_id,
+        impersonated_by_user_id=execution.impersonated_by_user_id,
+        impersonation_session_id=execution.impersonation_session_id,
     )
 
 
@@ -193,6 +197,8 @@ async def _load_agent_run(db: AsyncSession, run_id: UUID) -> RuntimeAuthority:
         workflow_id=None,
         started_by_user_id=None,
         root_execution_id=None,
+        impersonated_by_user_id=run.impersonated_by_user_id,
+        impersonation_session_id=run.impersonation_session_id,
     )
 
 

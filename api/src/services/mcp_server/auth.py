@@ -303,8 +303,15 @@ class BifrostAuthProvider:
         3. Generate authorization code
         4. Redirect to client's redirect_uri with code
         """
+        from shared.browser_impersonation import IMPERSONATION_COOKIE_NAME
         from src.core.cache import get_shared_redis
         from src.core.security import decode_token
+
+        if request.cookies.get(IMPERSONATION_COOKIE_NAME):
+            return JSONResponse(
+                {"error": "access_denied", "error_description": "Exit impersonation before connecting an MCP client"},
+                status_code=403,
+            )
 
         internal_state = request.query_params.get("internal_state")
         if not internal_state:
@@ -660,6 +667,10 @@ class BifrostAuthProvider:
         payload = decode_token(token, expected_type="access")
         if payload is None:
             logger.info("MCP auth: decode_token returned None (invalid/expired JWT)")
+            return None
+        if payload.get("impersonated_by_user_id") or payload.get("impersonation_session_id"):
+            # A browser support credential cannot establish an independent
+            # MCP session with a different lifetime or revocation boundary.
             return None
 
         runtime_principal = None

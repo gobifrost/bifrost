@@ -89,6 +89,27 @@ def test_verified_engine_requests_collect_their_durable_lineage() -> None:
         assert collector.notes == [access_checks.Note("scope_switch", target, {})]
     finally:
         access_checks.stop_collecting(token)
+
+
+def test_runtime_access_checks_retain_verified_impersonation_provenance() -> None:
+    from dataclasses import replace
+
+    operator, session = uuid4(), uuid4()
+    principal = _runtime_principal()
+    assert principal.runtime_authority is not None
+    principal.runtime_authority = replace(
+        principal.runtime_authority,
+        impersonated_by_user_id=operator,
+        impersonation_session_id=session,
+    )
+    token = access_checks.start_collecting(_runtime_payload(principal), principal=principal)
+    try:
+        collector = access_checks.current()
+        assert collector is not None
+        assert collector.impersonated_by_user_id == operator
+        assert collector.impersonation_session_id == session
+    finally:
+        access_checks.stop_collecting(token)
     assert access_checks.current() is None
 
 
@@ -190,6 +211,41 @@ def test_renew_hands_back_the_notes_and_collects_afresh() -> None:
     finally:
         access_checks.stop_collecting(token)
     assert access_checks.current() is None
+
+
+def test_a_persons_collector_keeps_impersonation_provenance() -> None:
+    person, operator, session = uuid4(), uuid4(), uuid4()
+    token = access_checks.start_collecting(
+        {
+            "sub": str(person),
+            "impersonated_by_user_id": str(operator),
+            "impersonation_session_id": str(session),
+        }
+    )
+    try:
+        collector = access_checks.current()
+        assert collector is not None
+        assert collector.impersonated_by_user_id == operator
+        assert collector.impersonation_session_id == session
+    finally:
+        access_checks.stop_collecting(token)
+
+
+def test_malformed_impersonation_provenance_does_not_skip_access_checks() -> None:
+    token = access_checks.start_collecting(
+        {
+            "sub": str(uuid4()),
+            "impersonated_by_user_id": "not-a-uuid",
+            "impersonation_session_id": "not-a-uuid",
+        }
+    )
+    try:
+        collector = access_checks.current()
+        assert collector is not None
+        assert collector.impersonated_by_user_id is None
+        assert collector.impersonation_session_id is None
+    finally:
+        access_checks.stop_collecting(token)
 
 
 def test_a_global_object_is_launched_where_the_caller_is() -> None:

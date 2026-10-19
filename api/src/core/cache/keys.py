@@ -193,6 +193,11 @@ def embed_execution_key(jti: str, execution_id: str) -> str:
     return f"bifrost:embed:exec:{jti}:{execution_id}"
 
 
+def browser_impersonation_session_key(session_id: str) -> str:
+    """Key for one short-lived, bearer-only browser impersonation session."""
+    return f"bifrost:auth:browser-impersonation:{session_id}"
+
+
 # =============================================================================
 # Execution-Scoped Keys (Process Isolation)
 # =============================================================================

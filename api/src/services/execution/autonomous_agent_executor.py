@@ -36,6 +36,7 @@ from src.services.authorization.agent_runtime import (
     authorize_agent_execution,
 )
 from src.services.authorization.runtime_auth import load_runtime_principal
+from src.services.durable_impersonation import principal_durable_impersonation
 from src.core.cache.keys import agent_run_steps_stream_key
 from src.core.pubsub import publish_agent_run_step
 from src.services.agent_run_step_streams import append_agent_run_step
@@ -1248,6 +1249,7 @@ class AutonomousAgentExecutor:
                 run_user_id=run_user_id,
                 run_as_user_id=UUID(run_as.user_id) if run_as else None,
                 acting_user_id=acting_user_id,
+                **principal_durable_impersonation(caller.principal).columns(),
                 parent_run_id=UUID(parent_run_id) if parent_run_id else None,
                 budget_max_iterations=target_agent.max_iterations,
                 budget_max_tokens=target_agent.max_token_budget,

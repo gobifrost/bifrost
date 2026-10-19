@@ -1,0 +1,110 @@
+# Browser Impersonation Spike
+
+This local spike reuses `users.impersonate` and the existing `authorize_run_as` organization/protected-target checks. It does not add another permission. Changes live on `codex/impersonation-spike` in this isolated worktree; the debug environment stays running for review.
+
+## Try It
+
+Run `./debug.sh status` in this worktree for the current URL and generated administrator login.
+
+1. Sign in as `dev@gobifrost.com`.
+2. Open Users → Jane Demo → Profile, or `/users/4babcb49-822a-44a1-a2ff-9d4c1aeff4bf/profile`.
+3. Click **Impersonate**, then open **Customer Workspace** (`/apps/customer-workspace`).
+4. The V2 app reads the effective user through the ordinary SDK and supports synthetic organization notes through `useTable`/`tables.insert`.
+5. Existing and newly opened regular tabs use the same impersonation session and display the banner.
+6. Click **Exit** above the navbar to restore the original admin session across tabs.
+7. Open **Auditing** to see the target user and “Impersonated by dev@gobifrost.com”.
+
+The demo app source is `/tmp/bifrost-cli-impersonation-spike/demo-app`. All demo resources are synthetic and exist only in this isolated debug database.
+
+## Session Design
+
+The original spike used a `sessionStorage` override. That deliberately isolated the switch to one tab, while ordinary cookies and other tabs retained the operator identity. It proved the SDK path but left cookie-only resources and browser-wide behavior incomplete.
+
+The revised implementation uses a shared `localStorage` override and an HttpOnly impersonation cookie. Ordinary browser bearer requests and cookie-only requests select the same effective identity. Explicit embed and durable runtime credentials retain their existing boundaries. Entry and exit reload the affected tabs, disposing cached permissions, app roots, and sockets. The target's home organization applies while preserving the operator's saved scope.
+
+The target token expires after 30 minutes and cannot refresh into a normal target login. A Redis session record revalidates the operator's current impersonation permission, target availability, and original refresh-session JTI. The original login cookies remain available solely to recover the operator session on Exit. An expired impersonation marker continues to reject ordinary requests until explicit Exit; it must never silently resume administrator actions.
+
+The WebSocket delivery and incoming-message paths revalidate the impersonation session before processing data. A revoked or expired session closes on its next message rather than continuing to receive through an already-open connection. Idle sockets do not require polling. The host renders the compact banner above both platform and app navigation, including V2 app loading/error states; deployed apps need no SDK upgrade to show it.
+
+Principle: **Interactions, feedback, and system status**. The effective identity and Exit remain visible, including on narrow screens.
+
+## Attribution
+
+Audit rows retain the effective `user_id`, `impersonated_by_user_id`, and `impersonation_session_id`. Shared audit context, access-check collection/writing, live audit APIs, exports, archive snapshots, and audit UI preserve the fields. Operator UUIDs are not foreign keys so account deletion cannot erase provenance; archived rows retain display names as well.
+
+Durable workflow executions, agent runs, and platform jobs must carry the same provenance through enqueue and runtime reconstruction. The fields are attribution only and never grant authority. Background work accepted during impersonation may finish after Exit while retaining its original operator attribution.
+
+A temporary browser session cannot authorize an independent external MCP client. The OAuth callback requires Exit first; browser support tokens are not accepted as standalone MCP credentials.
+
+## Practical Limits
+
+This is a local demo candidate, with focused verification rather than a production rollout.
+
+- The shared audit emitter retains its existing best-effort behavior. An audit-storage failure does not automatically fail the primary operation.
+- This extends existing audit coverage; it does not instrument previously unaudited operations or add an operator field to every application log line. Execution logs can be correlated through their durable parent execution.
+- Browser-wide means regular tabs sharing this origin and browser storage profile. Separate profiles, private sessions, and other devices have independent logins.
+- Full backend, Vitest, Playwright, and merge-queue suites are not claimed as run.
+
+## Verification
+
+The original spike passed its focused backend authorization/audit/contract tests, 145 frontend tests across 16 files, targeted WebSocket transport tests, API and client lint/type checks, and the profile → published V1 app → reload → Exit browser journey. The V2 demo separately proved SDK identity, table insertion, and live updates. Those original checks asserted tab isolation and therefore do not prove the revised browser-wide behavior.
+
+Revised verification results are recorded below after execution.
+
+- `./test.sh tests/unit/routers/test_websocket_table_messages.py -v`: 10 passed, including revocation before delivery and WebSocket operator attribution.
+
+```bash
+./test.sh client unit src/contexts/AuthContext.test.tsx src/lib/auth-token.test.ts src/components/layout/ImpersonationBanner.test.tsx src/components/layout/PageShell.test.tsx src/components/users/ImpersonateUserButton.test.tsx src/pages/DevicePage.test.tsx src/lib/api-client.test.ts src/services/websocket.test.ts src/contexts/OrgScopeContext.test.tsx
+```
+
+Result: 61 passed across 9 files. An additional embed-logout regression found that clearing an embed could remove shared credentials/cookies. It now clears only the embed capability; `./test.sh client unit src/contexts/AuthContext.test.tsx src/lib/auth-token.test.ts` passed 12 tests after that correction.
+
+```bash
+./test.sh tests/unit/services/test_browser_impersonation.py tests/unit/core/test_auth_platform.py tests/unit/routers/test_websocket_table_messages.py tests/unit/services/test_mcp_auth.py tests/unit/services/execution/test_async_executor.py tests/unit/jobs/consumers/test_workflow_execution_lineage.py tests/unit/repositories/test_execution_create.py tests/unit/authorization/test_runtime.py tests/unit/core/test_request_actor.py tests/unit/services/test_agent_run_service.py tests/unit/services/test_platform_jobs.py tests/unit/jobs/test_platform_job_runner.py tests/unit/test_contract_version.py tests/e2e/api/test_browser_impersonation.py -v --durations=0
+```
+
+Result: 123 passed, three runtime actor assertions failed. Runtime audit attribution was reading the principal's copied fields rather than the verified durable authority; it now reads the authority directly. The browser auth E2E passed. Its original focused run also passed (one case); neither run launched a build/deploy/workflow job.
+
+```bash
+./test.sh tests/unit/core/test_request_actor.py tests/unit/services/test_run_user_cancellation.py -v --durations=0
+./test.sh tests/unit/test_access_checks_collector.py tests/e2e/api/test_browser_impersonation.py -v --durations=0
+```
+
+Results: 24 passed and 17 passed respectively, with no failures/errors/skips. The latter includes durable runtime access-check provenance and refusal to turn an impersonation session into an independent CLI login. The browser E2E took 8.45 seconds in fixture setup and 0.17 seconds in ordinary HTTP calls; it enqueued no jobs.
+
+Final frontend checks:
+
+```bash
+./test.sh client unit src/contexts/AuthContext.test.tsx src/lib/auth-token.test.ts src/components/layout/ImpersonationBanner.test.tsx src/components/layout/PageShell.test.tsx src/components/users/ImpersonateUserButton.test.tsx src/pages/DevicePage.test.tsx src/lib/api-client.test.ts src/services/websocket.test.ts src/contexts/OrgScopeContext.test.tsx
+(cd client && npm run tsc)
+(cd client && ./node_modules/.bin/eslint src/contexts/AuthContext.tsx src/contexts/AuthContext.test.tsx src/lib/auth-token.ts src/lib/auth-token.test.ts src/pages/DevicePage.test.tsx e2e/impersonation.admin.spec.ts)
+(cd client && OPENAPI_URL=https://bifrost-2c50930b-efis.eu1.netbird.services/openapi.json npm run generate:types)
+```
+
+Results: 62 tests across 9 files passed; final types and targeted lint passed. Full client lint passed before the final narrow corrections. OpenAPI types were regenerated from the running debug stack. The forward migration was applied to that demo database and its Alembic head is `20261019_durable_impersonation`.
+
+### Final Browser-Wide Result
+
+Exit now refreshes the operator once **before** clearing the shared override. Existing tabs therefore reload with the same fresh access token instead of racing to rotate an expired operator session. Both an Exit error and an operator-refresh error preserve the override/banner. Final focused AuthContext/storage verification passed 14 tests:
+
+```bash
+./test.sh client unit src/contexts/AuthContext.test.tsx src/lib/auth-token.test.ts
+./test.sh quality api
+./test.sh client e2e --screenshots e2e/impersonation.admin.spec.ts --project=platform-admin
+```
+
+API quality: 0 errors/warnings and all lint checks passed. Browser result: **2 passed** (setup plus one journey), 46.0 seconds total; journey 26.9 seconds. There is one publish job proving the published V1 host boundary. The test covers an existing app tab, a new tab, the initiating tab, reload, target identity, and restoration across all three tabs through the original refresh cookie even with an unusable saved operator access token.
+
+The browser fixture now owns a separate login and revokes it in cleanup; refresh rotation cannot invalidate the shared setup login used by other tests. Two fixture errors were corrected from evidence: an organization app was initially requested from Global scope (404), and the test initially assumed the debug administrator email instead of reading the actual test operator. No retries, increased timeouts, or skips were added.
+
+The final live V2 browser check also passed:
+
+- Existing tab and new tab both switch; cookie-only `/api/auth/me` identifies Jane.
+- SDK table insertion and live update succeed; the new note survives reload.
+- Wide/mobile layouts and light/dark themes display the banner; mobile has no horizontal overflow.
+- Exit restores all tabs and cookie-only identity to the operator.
+- The audit response contained **93 events** for that session, each retaining the original operator identity.
+
+Screenshots and executable browser checks are in `/tmp/bifrost-cli-impersonation-spike/`; the final run log is `/tmp/bifrost-impersonation-browser-wide-demo-verified.log`. The app's optional absent logo returns its existing 404/no-logo state. The catalog's role metadata request returns 403 for the normal target user, enforcing its existing permission boundary; the app identity, read, write, and live-update paths succeeded.
+
+Final TypeScript checking and targeted client lint passed. Generated API types and `git diff --check` passed. The public debug readiness endpoint returned 200. Full suites and merge-queue CI remain unrun; this is a local demo, not a deployment to a shared environment.

@@ -55,6 +55,11 @@ class UserPrincipal:
     verified_context: dict[str, str] | None = None
     capability_fingerprint: str | None = None
     token_exp: int | None = None
+    # Browser impersonation is a short-lived, revocable bearer session. These
+    # signed claims identify the original operator and its Redis session; the
+    # auth boundary revalidates both on every request.
+    impersonated_by_user_id: UUID | None = None
+    impersonation_session_id: UUID | None = None
     # Engine execution claims (mint_engine_token). Present only on the
     # short-lived execution-scoped engine token: the SIGNED caller install
     # for per-call solution inbound attestation. Ordinary user/admin JWTs

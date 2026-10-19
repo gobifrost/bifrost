@@ -160,10 +160,13 @@ export function isEmbedSession(): boolean {
  * support session that another regular tab started.
  */
 export function clearAuthTokens(): void {
-	const embedSession = isEmbedSession();
+	if (isEmbedSession()) {
+		clearEmbedToken();
+		return;
+	}
 	localStorage.removeItem(ACCESS_TOKEN_KEY);
 	sessionStorage.removeItem(EMBED_TOKEN_KEY);
-	if (!embedSession) clearImpersonationToken();
+	clearImpersonationToken();
 }
 
 /**

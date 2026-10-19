@@ -226,12 +226,13 @@ def install_request_context_middleware(app: FastAPI) -> None:
         payload = None
         runtime_principal = None
         try:
-            token = None
             auth_header = request.headers.get("authorization", "")
-            if auth_header.startswith("Bearer "):
-                token = auth_header[7:]
-            elif "access_token" in request.cookies:
-                token = request.cookies["access_token"]
+            bearer_token = auth_header[7:] if auth_header.startswith("Bearer ") else None
+            # Keep audit/access-check attribution on the same browser-wide
+            # impersonation credential chosen by the auth dependency.
+            from src.core.auth import select_http_auth_token
+
+            token = select_http_auth_token(request, bearer_token)
             if token:
                 payload = decode_token(token, expected_type="access")
             if payload:

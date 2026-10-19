@@ -119,6 +119,59 @@ async def test_a_target_outside_reach_is_written_as_a_failure(db_session: AsyncS
     assert collector.closed is True
 
 
+async def test_impersonation_provenance_is_written_with_access_checks(db_session: AsyncSession) -> None:
+    home, other = await _org(db_session), await _org(db_session)
+    person = await _person(db_session, home)
+    operator_id, session_id = uuid4(), uuid4()
+    collector = _collector(person.id, Note("scope_switch", other.id))
+    collector.impersonated_by_user_id = operator_id
+    collector.impersonation_session_id = session_id
+
+    await flush(db_session, collector, **ROUTE)
+
+    [row] = await _rows(db_session, collector)
+    assert row.impersonated_by_user_id == operator_id
+    assert row.impersonation_session_id == session_id
+
+
+async def test_impersonated_access_check_does_not_dedupe_with_the_target_users_check(db_session: AsyncSession) -> None:
+    home, other = await _org(db_session), await _org(db_session)
+    person = await _person(db_session, home)
+    normal = Collector(
+        execution_id=None,
+        run_user_id=person.id,
+        workflow_id=None,
+        notes=[Note("scope_switch", other.id)],
+        direct=True,
+    )
+    impersonated = Collector(
+        execution_id=None,
+        run_user_id=person.id,
+        workflow_id=None,
+        notes=[Note("scope_switch", other.id)],
+        direct=True,
+        impersonated_by_user_id=uuid4(),
+        impersonation_session_id=uuid4(),
+    )
+
+    await flush(db_session, normal, **ROUTE)
+    await flush(db_session, impersonated, **ROUTE)
+
+    rows = list(
+        (
+            await db_session.execute(
+                select(AuditLog).where(
+                    AuditLog.action == "access.check",
+                    AuditLog.user_id == person.id,
+                    AuditLog.resource_type == "scope_switch",
+                )
+            )
+        ).scalars()
+    )
+    assert len(rows) == 2
+    assert {row.impersonated_by_user_id for row in rows} == {None, impersonated.impersonated_by_user_id}
+
+
 async def test_home_and_global_successes_write_nothing(db_session: AsyncSession) -> None:
     home = await _org(db_session)
     person = await _person(db_session, home)

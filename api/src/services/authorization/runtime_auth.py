@@ -108,5 +108,7 @@ async def _principal_from_authority(
         started_by_user_id=authority.started_by_user_id,
         root_execution_id=authority.root_execution_id,
         workflow_id=authority.workflow_id,
+        impersonated_by_user_id=authority.impersonated_by_user_id,
+        impersonation_session_id=authority.impersonation_session_id,
         runtime_authority=authority,
     )

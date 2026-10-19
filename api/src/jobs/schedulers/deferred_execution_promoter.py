@@ -121,6 +121,14 @@ async def promote_due_executions() -> tuple[int, int]:
                         if row.run_user_id is not None
                         else None
                     ),
+                    impersonation_provenance={
+                        key: str(value)
+                        for key, value in (
+                            ("impersonated_by_user_id", row.impersonated_by_user_id),
+                            ("impersonation_session_id", row.impersonation_session_id),
+                        )
+                        if value is not None
+                    } or None,
                 )
                 promoted += 1
             except Exception:

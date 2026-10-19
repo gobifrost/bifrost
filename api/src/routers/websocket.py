@@ -17,6 +17,11 @@ from pydantic import ValidationError
 from sqlalchemy import select
 
 from shared import access_checks
+from shared.browser_impersonation import (
+    BrowserImpersonationError,
+    is_browser_impersonation,
+    validate_browser_impersonation,
+)
 from shared.claims.preresolve import preresolve_for_policies
 from shared.policies.probe import is_subscribe_authorized
 from shared.policy_rules import PolicyRuleDomainMismatch, PolicyRuleNotFound, resolve_policy_refs
@@ -666,7 +671,17 @@ def _websocket_actor(websocket: WebSocket, user: UserPrincipal) -> ActorContext:
         name=user.name,
         ip_address=ip_address,
         user_agent=websocket.headers.get("user-agent"),
+        impersonated_by_user_id=user.impersonated_by_user_id,
+        impersonation_session_id=user.impersonation_session_id,
     )
+
+
+def _collect_websocket_checks(user: UserPrincipal):
+    return access_checks.start_collecting({
+        "sub": str(user.user_id),
+        "impersonated_by_user_id": user.impersonated_by_user_id,
+        "impersonation_session_id": user.impersonation_session_id,
+    }, surface="web", principal=user)
 
 
 async def _emit_table_subscribe_denial(
@@ -1003,6 +1018,18 @@ async def _delivery_allowed(user: UserPrincipal, channel: str, payload: dict[str
     return True
 
 
+async def _require_live_impersonation(websocket: WebSocket, user: UserPrincipal) -> None:
+    """Recheck support-session authority before receiving or delivering data."""
+    if not is_browser_impersonation(user):
+        return
+    try:
+        async with get_db_context() as db:
+            await validate_browser_impersonation(db, user)
+    except BrowserImpersonationError:
+        await websocket.close(code=4001, reason="Impersonation session ended")
+        raise WebSocketDisconnect(code=4001)
+
+
 def _make_delivery_dispatcher(websocket: WebSocket, user: UserPrincipal):
     def remove_connection(channel: str) -> None:
         if channel in manager.connections:
@@ -1011,6 +1038,7 @@ def _make_delivery_dispatcher(websocket: WebSocket, user: UserPrincipal):
                 manager.connections.pop(channel, None)
 
     async def dispatch(channel: str, payload: dict[str, Any]) -> None:
+        await _require_live_impersonation(websocket, user)
         # Table and file handlers own their visibility filtering and delivery.
         # A filtered message is not an authorization revocation, so it must not
         # remove the socket from the channel before a later visible message.
@@ -1099,7 +1127,7 @@ async def websocket_connect(
         await websocket.close(code=4003, reason="Form sessions cannot use WebSockets")
         return
 
-    checks = access_checks.collect_person(user.user_id)
+    checks = _collect_websocket_checks(user)
 
     # Filter channels - users can only subscribe to their own user channel
     # and execution channels (we'll validate execution access separately)
@@ -1229,6 +1257,7 @@ async def websocket_connect(
         # Keep connection alive and handle incoming messages
         while True:
             data = await websocket.receive_json()
+            await _require_live_impersonation(websocket, user)
 
             # Handle subscription changes
             if data.get("type") == "subscribe":
@@ -1595,7 +1624,7 @@ async def websocket_execution(
         return
 
     # Validate user has access to this execution
-    checks = access_checks.collect_person(user.user_id)
+    checks = _collect_websocket_checks(user)
     try:
         allowed = await can_access_execution(user, execution_id)
         _judge_access_checks("/ws/execution/{execution_id}")
@@ -1619,6 +1648,7 @@ async def websocket_execution(
 
         while True:
             data = await websocket.receive_json()
+            await _require_live_impersonation(websocket, user)
             if data.get("type") == "ping":
                 await websocket.send_json({"type": "pong"})
 

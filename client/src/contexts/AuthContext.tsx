@@ -420,6 +420,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
 	// Logout
 	const logout = useCallback(() => {
+		if (isEmbedSession()) {
+			clearEmbedToken();
+			setUser(null);
+			navigate("/login");
+			return;
+		}
 		void (async () => {
 			try {
 				const token = getActiveToken();
@@ -508,8 +514,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
 			throw new Error(body.detail || "Could not end impersonation");
 		}
 
+		// Restore one fresh operator token before the storage event reloads the
+		// other tabs. Otherwise an expired operator token makes every tab race
+		// to rotate the same single-use refresh cookie independently.
+		const restored = await fetch("/api/auth/refresh", {
+			method: "POST",
+			credentials: "same-origin",
+		});
+		if (!restored.ok) throw new Error("Could not restore your operator session");
+		const tokens = (await restored.json()) as components["schemas"]["Token"];
+		if (!tokens.access_token) throw new Error("Operator session did not return an access token");
+		localStorage.setItem(ACCESS_TOKEN_KEY, tokens.access_token);
 		clearImpersonationToken();
-		const payload = parseJwt(operator);
+		const payload = parseJwt(tokens.access_token);
 		if (payload) sessionStorage.setItem("userId", extractUser(payload).id);
 		window.location.assign("/users");
 	}, []);

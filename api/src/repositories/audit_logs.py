@@ -218,6 +218,8 @@ class AuditLogRepository:
         execution_id: UUID | None,
         operation_id: str | None = None,
         surface: str | None = None,
+        impersonated_by_user_id: UUID | None = None,
+        impersonation_session_id: UUID | None = None,
     ) -> AuditLog:
         """Insert a new audit log row."""
         log = AuditLog(
@@ -234,6 +236,8 @@ class AuditLogRepository:
             execution_id=execution_id,
             operation_id=operation_id,
             surface=surface,
+            impersonated_by_user_id=impersonated_by_user_id,
+            impersonation_session_id=impersonation_session_id,
         )
         self.session.add(log)
         await self.session.flush()

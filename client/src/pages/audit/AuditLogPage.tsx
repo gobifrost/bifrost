@@ -1,3 +1,4 @@
+import { RunUserLabel } from "@/components/audit/RunUserLabel";
 import { PageScrollArea } from "@/components/layout/PageWorkspace";
 import { AuditOutcome } from "./AuditOutcome";
 import { AuditEventCards } from "./AuditEventCards";
@@ -316,11 +317,7 @@ export function AuditLogPage() {
 													/>
 												</DataTableCell>
 												<DataTableCell className="text-sm">
-													{entry.actor.user_email ||
-														entry.actor.user_name ||
-														(entry.source !== "http"
-															? `(${entry.source})`
-															: "(unauthenticated)")}
+													<RunUserLabel entry={entry} />
 												</DataTableCell>
 												<DataTableCell className="text-sm text-muted-foreground">
 													<div className="whitespace-normal [overflow-wrap:anywhere]">

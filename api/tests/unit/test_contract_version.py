@@ -388,7 +388,11 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # now documents original reach and the named execution permission.
     # SDKIntegrationsListMappingsRequest.scope is documented as accepted and
     # ignored (description only; the field is unchanged).
-    "bcc4312a1910a586ce95e0ec53109250a4dade6827218a3af3da25d0c7475b89"
+    # AuditLogEntry and AuditLogActor gained optional browser-impersonation
+    # provenance (2026-10-19). ADDITIVE: existing CLI audit readers ignore
+    # unknown fields, so the compatible 1.4.2 floor remains unchanged.
+    # The existing users.impersonate catalog description also names browser sessions.
+    "b84a16f93c3c07d7ee7c5badf65092d4901b11995c70ac60a41c6bc9dfe3fc0b"
 )
 
 

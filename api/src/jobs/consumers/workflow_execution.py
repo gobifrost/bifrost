@@ -738,6 +738,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
         event_data = pending.get("event")  # EventContext dict if event-triggered
         artifact_workspace_id = pending.get("artifact_workspace_id")
         lineage = pending.get("lineage")
+        impersonation_provenance = pending.get("impersonation_provenance")
 
         # Immediate async runs have no durable row until this consumer starts.
         # If their lineage user was deleted after enqueueing, record the same
@@ -757,6 +758,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
                     form_id=UUID(form_id) if form_id else None,
                     api_key_id=UUID(api_key_id) if api_key_id else None,
                     executed_by_name=user_name,
+                    impersonation_provenance=impersonation_provenance,
                 )
                 await db.commit()
             if cancelled:
@@ -816,6 +818,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
                     workflow_id=workflow_id,
                     check_existing=execution_record_exists,
                     lineage=lineage,
+                    impersonation_provenance=impersonation_provenance,
                 )
                 await update_execution(
                     execution_id=execution_id,
@@ -922,6 +925,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
                         workflow_id=workflow_id,
                         check_existing=execution_record_exists,
                         lineage=lineage,
+                        impersonation_provenance=impersonation_provenance,
                     )
                     await update_execution(
                         execution_id=execution_id,
@@ -966,6 +970,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 workflow_id=workflow_id,
                 check_existing=execution_record_exists,
                 lineage=lineage,
+                impersonation_provenance=impersonation_provenance,
             )
             execution_created_ms = (time.perf_counter() - dispatch_started) * 1000
             if not is_sync:

@@ -329,6 +329,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/impersonate/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Browser Impersonation
+         * @description Mint a browser-wide, original-session-bound impersonation marker.
+         */
+        post: operations["start_browser_impersonation_auth_impersonate__user_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/impersonation/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End Browser Impersonation
+         * @description Exit using the original operator, even after marker expiry or revocation.
+         */
+        post: operations["end_browser_impersonation_auth_impersonation_end_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/refresh": {
         parameters: {
             query?: never;
@@ -4612,9 +4652,10 @@ export interface paths {
          * List all mappings for an integration
          * @description List all mappings for an integration via SDK.
          *
-         *     Scope resolution and response construction live in the shared
+         *     Reach filtering and response construction live in the shared
          *     integrations service (``shared.sdk_integrations``), which the
-         *     worker-local engine child calls for the same inputs.
+         *     worker-local engine child calls for the same inputs. ``request.scope``
+         *     is ignored: the list returns every mapping the caller may read.
          */
         post: operations["sdk_integrations_list_mappings_api_sdk_integrations_list_mappings_post"];
         delete?: never;
@@ -13847,6 +13888,21 @@ export interface components {
              */
             user_name?: string | null;
             /**
+             * Impersonated By User Id
+             * @description Operator who impersonated the acting user
+             */
+            impersonated_by_user_id?: string | null;
+            /**
+             * Impersonated By Email
+             * @description Impersonating operator's email
+             */
+            impersonated_by_email?: string | null;
+            /**
+             * Impersonated By Name
+             * @description Impersonating operator's display name
+             */
+            impersonated_by_name?: string | null;
+            /**
              * Organization Id
              * @description Organization the event happened in (an access check's target organization)
              */
@@ -13922,6 +13978,11 @@ export interface components {
              * @description Workflow execution that produced the event, when supported
              */
             execution_id?: string | null;
+            /**
+             * Impersonation Session Id
+             * @description Browser impersonation session that produced the event
+             */
+            impersonation_session_id?: string | null;
             /** @description Who performed the action */
             actor: components["schemas"]["AuditLogActor"];
             /** Ip Address */
@@ -14488,6 +14549,26 @@ export interface components {
             primary_color?: string | null;
             /** @description Fixed product terminology overrides for the platform UI */
             terminology?: components["schemas"]["BrandingTerminology"] | null;
+        };
+        /**
+         * BrowserImpersonationTokenResponse
+         * @description A short-lived bearer credential for one browser impersonation tab.
+         */
+        BrowserImpersonationTokenResponse: {
+            /** Access Token */
+            access_token: string;
+            /**
+             * Token Type
+             * @default bearer
+             * @constant
+             */
+            token_type: "bearer";
+            /**
+             * Expires In
+             * @default 1800
+             * @constant
+             */
+            expires_in: 1800;
         };
         /** BulkExportRequest */
         BulkExportRequest: {
@@ -25815,7 +25896,7 @@ export interface components {
             name: string;
             /**
              * Scope
-             * @description Optional org scope. Omit / pass null to list only the caller's own org mapping, unless the resolved org is a provider org, which lists all mappings. Platform admins and provider-org members may pass 'global' (no filter, all orgs) or a specific org UUID.
+             * @description Accepted from older SDK callers and ignored: the list always returns every mapping the caller may read with Integrations Read.
              */
             scope?: string | null;
         };
@@ -31512,6 +31593,55 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    start_browser_impersonation_auth_impersonate__user_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserImpersonationTokenResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    end_browser_impersonation_auth_impersonation_end_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

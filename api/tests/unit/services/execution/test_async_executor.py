@@ -1,8 +1,11 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+from uuid import UUID
 
 import pytest
 
+from src.services.audit_context import ActorContext, clear_actor, set_actor
+from src.services.durable_impersonation import pending_durable_impersonation
 from src.services.execution.async_executor import _publish_pending, enqueue_code_execution
 
 
@@ -50,6 +53,47 @@ async def test_publish_pending_writes_redis_then_publishes():
         "sync": False,
         "execution_record_exists": False,
     }
+
+
+@pytest.mark.asyncio
+async def test_publish_pending_carries_server_actor_impersonation_across_the_queue_boundary():
+    redis = AsyncMock()
+    operator_id = "00000000-0000-0000-0000-0000000000bb"
+    session_id = "00000000-0000-0000-0000-0000000000cc"
+    token = set_actor(
+        ActorContext(
+            user_id=None,
+            organization_id=None,
+            impersonated_by_user_id=UUID(operator_id),
+            impersonation_session_id=UUID(session_id),
+        )
+    )
+    try:
+        with (
+            patch("src.services.execution.async_executor.get_redis_client", return_value=redis),
+            patch("src.services.execution.async_executor.add_to_queue", new=AsyncMock()),
+            patch("src.services.execution.async_executor.publish_message", new=AsyncMock()),
+        ):
+            await _publish_pending(
+                execution_id="e1", workflow_id="wf", parameters={}, org_id=None,
+                user_id="u", user_name="Name", user_email="n@e", form_id=None,
+                startup=None, form_inputs={}, embed={}, api_key_id=None, sync=False,
+                is_platform_admin=False, file_path=None, lineage=None,
+            )
+    finally:
+        clear_actor(token)
+
+    assert redis.set_pending_execution.await_args.kwargs["impersonation_provenance"] == {
+        "impersonated_by_user_id": operator_id,
+        "impersonation_session_id": session_id,
+    }
+
+
+def test_pending_impersonation_provenance_rejects_incomplete_internal_values() -> None:
+    with pytest.raises(ValueError, match="requires both operator and session"):
+        pending_durable_impersonation(
+            {"impersonated_by_user_id": "00000000-0000-0000-0000-0000000000bb"}
+        )
 
 
 @pytest.mark.asyncio

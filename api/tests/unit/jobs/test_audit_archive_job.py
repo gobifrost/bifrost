@@ -115,6 +115,8 @@ def _row(created_at: datetime) -> ArchiveRow:
         created_at=created_at,
         organization_id=None,
         user_id=None,
+        impersonated_by_user_id=None,
+        impersonation_session_id=None,
         action="test.archive.unit",
         resource_type=None,
         resource_id=None,
@@ -128,6 +130,8 @@ def _row(created_at: datetime) -> ArchiveRow:
         details=None,
         actor_email=None,
         actor_name=None,
+        impersonated_by_email=None,
+        impersonated_by_name=None,
         organization_name=None,
     )
 

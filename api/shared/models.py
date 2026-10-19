@@ -2,10 +2,17 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+
+
+class BrowserImpersonationTokenResponse(BaseModel):
+    """A short-lived bearer credential for one browser impersonation tab."""
+    access_token: str
+    token_type: Literal["bearer"] = "bearer"
+    expires_in: Literal[1800] = 1800
 
 
 class SolutionDevContextRequest(BaseModel):
