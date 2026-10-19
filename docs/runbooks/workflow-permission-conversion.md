@@ -24,11 +24,22 @@ prove that unobserved branches are safe. The analyzer uses the shipped SDK's
 return contracts to distinguish data methods from further SDK calls; it does
 not trust user annotations as proof of authority.
 
+SDK handles passed through helpers and callbacks are followed recursively.
+Generic SDK HTTP calls use their statically identifiable platform routes.
+Ordinary data manipulation, third-party library calls, and external HTTP
+requests do not require named platform permissions. Installed import roots
+come from the execution workers' existing registration metadata, including
+packages installed through the platform. That runtime context is included in
+the proposal fingerprint.
+
 The scan identifies SDK use and named permission requirements. Existing table
 and file policies continue to govern their resources. It does not simulate a
 different identity or treat that hypothetical identity's access as an analysis
 requirement. Missing source and unresolved SDK dispatch remain visible for
 review. No table documents or file contents are read to evaluate access.
+An absent registered entry function blocks conversion until its source or
+registration is repaired. Unsupported methods on SDK data objects are code
+diagnostics; they do not invent additional permission requirements.
 
 Review each proposal before selecting it. Conversion preserves the workflow's
 current unattended identity, including use of the organization's default

@@ -75,14 +75,16 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
     helper_path = f"workflows/conversion_helper_{suffix}.py"
     helper_module = f"conversion_helper_{suffix}"
     source = (
+        "from bifrost import config\n"
         f"from .{helper_module} import load_runtime_setting\n\n"
         "async def run():\n"
-        "    return await load_runtime_setting()\n"
+        "    return await load_runtime_setting(config)\n"
     )
     helper_source = (
-        "from bifrost import config\n\n"
-        "async def load_runtime_setting():\n"
-        "    return await config.get('conversion-runtime')\n"
+        "from bifrost import api\n\n"
+        "async def load_runtime_setting(client):\n"
+        "    await api.get('/api/organizations')\n"
+        "    return await client.get('conversion-runtime')\n"
     )
     storage = RepoStorage()
     workflow = Workflow(
@@ -131,7 +133,7 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
         helper_path,
         (
             "from bifrost import roles\n\n"
-            "async def load_runtime_setting():\n"
+            "async def load_runtime_setting(client):\n"
             "    return await roles.list()\n"
         ).encode(),
     )
@@ -216,8 +218,8 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
         solution_item = items[str(solution_workflow.id)]
         for candidate in (item,):
             assert candidate["status"] == "ready"
-            assert candidate["source_permissions"] == ["configs.read", "secrets.read"]
-            assert candidate["proposed_permissions"] == ["configs.read", "secrets.read"]
+            assert candidate["source_permissions"] == ["configs.read", "organizations.read", "secrets.read"]
+            assert candidate["proposed_permissions"] == ["configs.read", "organizations.read", "secrets.read"]
             assert any(
                 evidence["call"] == "bifrost.config.get"
                 and evidence["path"] == helper_path
@@ -284,7 +286,7 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
         )
         assert workflow.permission_mode == "restricted"
         assert identity is not None
-        assert sorted(grants) == ["configs.read", "secrets.read"]
+        assert sorted(grants) == ["configs.read", "organizations.read", "secrets.read"]
 
         # The persisted proposal must pass the runtime's actual named gate,
         # not merely save the strings the analyzer happened to recommend.
@@ -295,7 +297,7 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
         run_user = await load_run_user(db_session, identity.id)
         assert run_user is not None
         converted_mode, converted_grants = await load_workflow_permissions(db_session, workflow)
-        for permission in ("configs.read", "secrets.read"):
+        for permission in ("configs.read", "organizations.read", "secrets.read"):
             assert check_target(
                 run_user, Powers(converted_mode, tuple(converted_grants)),
                 None, permission_entry(permission),

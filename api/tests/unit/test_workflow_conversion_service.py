@@ -22,6 +22,7 @@ from src.services.authorization.context import AuthorizationContext
 from src.services.authorization.enforce import Caller
 from shared import workflow_conversions as conversion
 from shared.workflow_conversion_analysis import SourceFile, summarize_source
+from shared.runtime_modules import RuntimeModuleInventory
 
 
 @pytest.mark.asyncio
@@ -215,6 +216,10 @@ def _patch_db_context(monkeypatch: pytest.MonkeyPatch, db: _Database) -> None:
         yield db
 
     monkeypatch.setattr(conversion, "get_db_context", context)
+    monkeypatch.setattr(
+        conversion, "read_runtime_modules",
+        AsyncMock(return_value=RuntimeModuleInventory(frozenset(), True)),
+    )
 
     @asynccontextmanager
     async def no_deployment(_solution_id):
@@ -261,6 +266,54 @@ def test_review_fingerprint_changes_when_observed_operations_or_unknowns_change(
         observed_operations=["configs.get"],
         unknowns=[],
     )
+    assert reviewed != conversion._fingerprint(
+        **common,
+        observed_operations=["configs.get"],
+        unknowns=[],
+        runtime_modules_hash="changed-worker-import-context",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source,function_name,expected_status,has_warning", [
+    ("def existing():\n    return 1\n", "absent", "blocked", False),
+    (
+        "from bifrost import organizations\n"
+        "async def run():\n"
+        "    record = await organizations.get('contoso')\n"
+        "    return record.get('name')\n",
+        "run", "ready", True,
+    ),
+])
+async def test_report_distinguishes_missing_entrypoints_from_data_method_diagnostics(
+    db_session, monkeypatch, source, function_name, expected_status, has_warning,
+):
+    from src.models.orm.workflows import Workflow
+
+    workflow = Workflow(
+        id=uuid4(), name="contoso_conversion", path="workflows/contoso.py",
+        function_name=function_name, permission_mode="full", is_active=True,
+    )
+    db_session.add(workflow)
+    await db_session.flush()
+    monkeypatch.setattr(conversion, "_authority_snapshot", AsyncMock(return_value=(
+        {"identity_is_active": True}, {"name": "Contoso identity", "shared": True},
+    )))
+    monkeypatch.setattr(conversion, "_policy_revision_snapshot", AsyncMock(return_value={}))
+    report = await conversion._report_for_workflow(
+        db_session, workflow,
+        source=SourceFile(
+            "workflows/contoso.py", "workflows/contoso.py", source,
+            hashlib.sha256(source.encode()).hexdigest(),
+        ),
+        module_inventory=RuntimeModuleInventory(frozenset(), True),
+    )
+    assert report["status"] == expected_status
+    assert bool(report["error"]) is (expected_status == "blocked")
+    assert bool(report["warnings"]) is has_warning
+    if has_warning:
+        assert report["unknowns"] == []
+        assert report["proposed_permissions"] == ["organizations.read"]
 
 
 @pytest.mark.asyncio

@@ -17,12 +17,29 @@ from src.services.access_list import ACCESS_LIST
 
 _SDK_MODULES = (
     "_context", "_execution_context", "_runtime_io",
-    "agents", "ai", "api", "artifacts", "config", "events", "executions",
+    "agents", "ai", "api", "artifacts", "client", "config", "events", "executions",
     "files", "forms", "integrations", "knowledge", "models", "organizations",
     "roles", "tables", "users", "webhooks", "workflows",
 )
 _TRANSPORTS = {"engine_request", "engine_request_sync", "engine_stream", "request"}
 _GENERIC_HTTP_METHODS = {"get", "post", "put", "patch", "delete"}
+_CLIENT_SHORTCUT_METHODS = {
+    "get": "GET",
+    "post": "POST",
+    "put": "PUT",
+    "patch": "PATCH",
+    "delete": "DELETE",
+    "get_sync": "GET",
+    "post_sync": "POST",
+}
+_CLIENT_METHOD_TRANSPORTS = frozenset({
+    "engine_request", "engine_request_sync", "engine_stream", "request", "stream",
+})
+_CLIENT_TRANSPORT_METHODS = frozenset({
+    *_CLIENT_SHORTCUT_METHODS,
+    *_CLIENT_METHOD_TRANSPORTS,
+})
+_CLIENT_LOCAL_HELPERS = frozenset({"get_client", "raise_for_status_with_detail"})
 _PARAMETER = re.compile(r"\{[^}:]+(?::[^}]+)?\}")
 # The worker proxies these source-loader routes during imports. Their access-list
 # permission protects human diagnostics; execution children instead present the
@@ -322,6 +339,8 @@ def _field_contracts(
 
 def _sdk_names(function: _Function) -> set[str]:
     if function.class_name is None:
+        if function.module == "client" and function.node.name in _CLIENT_LOCAL_HELPERS:
+            return {f"bifrost.client.{function.node.name}"}
         if function.module == "files" and function.node.name == "_solution_query":
             return {"bifrost.files._solution_query"}
         if function.module == "_runtime_io" and not function.node.name.startswith("_"):
@@ -330,6 +349,16 @@ def _sdk_names(function: _Function) -> set[str]:
             return {
                 f"bifrost._context.{function.node.name}",
                 f"bifrost.{function.node.name}",
+            }
+        return set()
+    if function.module == "client":
+        if (
+            function.class_name == "BifrostClient"
+            and function.node.name in _CLIENT_TRANSPORT_METHODS
+        ):
+            return {
+                f"bifrost.client.{function.node.name}",
+                f"bifrost.client.BifrostClient.{function.node.name}",
             }
         return set()
     if function.node.name.startswith("_"):
@@ -456,6 +485,8 @@ def _sdk_contracts() -> tuple[dict[str, SdkCallContract], dict[str, SdkObjectCon
         for name in classes["_execution_context"]
         if name in {"ExecutionContext", "EventContext", "ROIContext"}
     })
+    if "BifrostClient" in classes["client"]:
+        type_names["BifrostClient"] = "bifrost.client.BifrostClient"
 
     objects: dict[str, SdkObjectContract] = {}
     for module in ("models", "_execution_context"):
@@ -466,6 +497,10 @@ def _sdk_contracts() -> tuple[dict[str, SdkCallContract], dict[str, SdkObjectCon
     objects["bifrost.context"] = SdkObjectContract(
         "bifrost.ExecutionContext", objects["bifrost.ExecutionContext"].fields,
     )
+    if "BifrostClient" in classes["client"]:
+        objects["bifrost.client.BifrostClient"] = SdkObjectContract(
+            "bifrost.client.BifrostClient", (),
+        )
 
     calls: dict[str, SdkCallContract] = {}
     for module, tree in trees.items():
@@ -848,7 +883,9 @@ def _merge_permission_scopes(scopes: list[_PermissionScope]) -> _PermissionScope
     return _PermissionScope(merged, frozenset(conditional_names))
 
 
-def _assign_permission_scope(scope: _PermissionScope, node: ast.AST) -> _PermissionScope:
+def _assign_permission_scope(
+    scope: _PermissionScope, node: ast.AST, mappings: dict[str, set[str]],
+) -> _PermissionScope:
     value: ast.AST | None = None
     targets: list[ast.expr] = []
     if isinstance(node, ast.Assign):
@@ -863,10 +900,16 @@ def _assign_permission_scope(scope: _PermissionScope, node: ast.AST) -> _Permiss
     values = dict(scope.values)
     conditional_names = set(scope.conditional_names)
     resolved = _string_values(value, values)
+    finite_mapping_selection = isinstance(value, ast.Subscript) and isinstance(value.value, ast.Name)
+    if finite_mapping_selection:
+        resolved = _mapping_values(value, values, mappings)
     for name in names:
         if resolved:
             values[name] = resolved
-            conditional_names.discard(name)
+            if finite_mapping_selection:
+                conditional_names.add(name)
+            else:
+                conditional_names.discard(name)
         else:
             values.pop(name, None)
             conditional_names.discard(name)
@@ -940,7 +983,7 @@ def _helper_permission_metadata(
                 # side still contributes guards before it updates a binding.
                 if node.value is not None:
                     scope = visit(node.value, conditional, scope, finite_selection)
-                return _assign_permission_scope(scope, node)
+                return _assign_permission_scope(scope, node, symbols.mappings)
             if isinstance(node, ast.If):
                 visit(node.test, conditional, scope, finite_selection)
                 body_scope = visit_block(node.body, True, scope, finite_selection)
@@ -1215,6 +1258,12 @@ def _sdk_bindings() -> tuple[dict[str, tuple[tuple[str, str], ...]], frozenset[s
             bindings[name] = routes
             if unresolved_transport:
                 unresolved_calls.add(name)
+    # These client helpers either obtain an already injected client or inspect
+    # a response. They do not themselves perform a workflow platform request.
+    for helper in _CLIENT_LOCAL_HELPERS:
+        name = f"bifrost.client.{helper}"
+        bindings[name] = ()
+        unresolved_calls.discard(name)
     constructor_contracts, _, constructor_fingerprint = _pure_public_constructor_contracts()
     for name in _sdk_contracts()[0]:
         if name.endswith(".model_validate"):
@@ -1257,6 +1306,20 @@ def sdk_call_contract(call: str) -> SdkCallContract | None:
 def sdk_object_contract(sdk_type: str) -> SdkObjectContract | None:
     """Return static public fields for a known shipped SDK object or proxy."""
     return _sdk_contracts()[1].get(sdk_type)
+
+
+@lru_cache(maxsize=512)
+def sdk_object_is_data(sdk_type: str) -> bool:
+    """Distinguish DTO methods from objects that can perform SDK operations."""
+    if sdk_object_contract(sdk_type) is None:
+        return False
+    bindings, unresolved, _ = _sdk_bindings()
+    prefix = sdk_type + "."
+    return not any(
+        contract.effect != "none" or bool(bindings.get(call)) or call in unresolved
+        for call, contract in _sdk_contracts()[0].items()
+        if call.startswith(prefix)
+    )
 
 
 def sdk_permission_fingerprint() -> str:
@@ -1310,37 +1373,133 @@ def sdk_named_permission_candidates(calls: list[str]) -> list[SdkNamedPermission
     ))
 
 
-def permissions_for_sdk_calls(calls: list[str]) -> tuple[list[str], list[str]]:
+def _is_generic_route_call(call: str) -> bool:
+    method = call.rsplit(".", 1)[-1]
+    return (
+        call.startswith("bifrost.api.") and method in _GENERIC_HTTP_METHODS
+    ) or (
+        call.startswith("bifrost.client.") and method in _CLIENT_TRANSPORT_METHODS
+    )
+
+
+def _invocation_routes(
+    invocation: dict[str, Any],
+) -> tuple[tuple[tuple[str, str], ...], bool]:
+    """Bind a generic SDK HTTP call to canonical route templates.
+
+    Substitutions occupy path segments; they never supply an operation name.
+    A template may admit several routes, so retain every matching candidate.
+    """
+    call = invocation["call"]
+    selectors = invocation.get("selectors", {})
+    method_name = call.rsplit(".", 1)[-1]
+    if call.startswith("bifrost.client.") and method_name in _CLIENT_SHORTCUT_METHODS:
+        method = _CLIENT_SHORTCUT_METHODS[method_name]
+    elif method_name in _GENERIC_HTTP_METHODS:
+        method = method_name.upper()
+    elif method_name in _CLIENT_METHOD_TRANSPORTS:
+        # ``method`` remains the signed-URL payload selector. Generic client
+        # transports carry their HTTP verb under a separate bounded field.
+        literal_method = selectors.get("http_method")
+        method = literal_method.upper() if isinstance(literal_method, str) else None
+    else:
+        method = None
+    path = selectors.get("path")
+    if (
+        method is None
+        or (
+            method_name in _CLIENT_METHOD_TRANSPORTS
+            and "http_method" in invocation.get("dynamic_selectors", [])
+        )
+        or not isinstance(path, str)
+        or "path" in invocation.get("dynamic_selectors", [])
+    ):
+        return (), True
+    path = path.split("?", 1)[0]
+    if not path.startswith("/api/"):
+        return (), True
+    exact = {
+        (method, _normal_path(entry.path))
+        for entry in ACCESS_LIST
+        if entry.method == method and entry.path == path
+    }
+    if exact:
+        return tuple(sorted(exact)), False
+    tokens = re.compile(r"\{[^}]*\}")
+    parts = path.strip("/").split("/")
+
+    def segment_matches(actual: str, expected: str) -> bool:
+        if tokens.fullmatch(expected):
+            return True
+        if "{}" in actual:
+            return False
+        return actual == expected
+
+    def matches(template: str) -> bool:
+        expected = template.strip("/").split("/")
+        for index, segment in enumerate(expected):
+            if segment.endswith(":path}"):
+                return (
+                    index == len(expected) - 1
+                    and len(parts) >= index
+                    and all(segment_matches(a, b) for a, b in zip(parts[:index], expected[:index]))
+                )
+        return len(parts) == len(expected) and all(
+            segment_matches(actual, segment) for actual, segment in zip(parts, expected)
+        )
+
+    candidates = {
+        (method, _normal_path(entry.path))
+        for entry in ACCESS_LIST
+        if entry.method == method and entry.path is not None and matches(entry.path)
+    }
+    return tuple(sorted(candidates)), not candidates
+
+
+def permissions_for_sdk_calls(
+    calls: list[str], *, invocations: list[dict[str, Any]] | None = None,
+) -> tuple[list[str], list[str]]:
     """Return named declaration candidates and unresolved SDK transport mappings."""
     bindings, unresolved_calls, _ = _sdk_bindings()
     routes = _routes_by_key()
-    permissions = {
-        candidate.permission
-        for candidate in sdk_named_permission_candidates(calls)
-    }
+    route_metadata, _ = _service_permission_routes()
+    permissions: set[str] = set()
     unknowns: set[str] = set()
+    invocations = invocations or []
     for call in sorted(set(calls)):
         bound = bindings.get(call)
+        unresolved = call in unresolved_calls
+        if _is_generic_route_call(call):
+            contexts = [invocation for invocation in invocations if invocation["call"] == call]
+            resolved_routes: set[tuple[str, str]] = set()
+            unresolved = not contexts
+            for invocation in contexts:
+                invocation_routes, invocation_unresolved = _invocation_routes(invocation)
+                resolved_routes.update(invocation_routes)
+                unresolved = unresolved or invocation_unresolved
+            bound = tuple(sorted(resolved_routes))
         if bound is None:
             unknowns.add(f"No static platform transport mapping for SDK call {call}")
             continue
-        if call in unresolved_calls:
+        if unresolved:
             unknowns.add(f"No static platform transport mapping for SDK call {call}")
-        metadata = _call_named_permission_metadata(call, bindings)
-        for item in metadata:
-            if item.unresolved:
-                unknowns.add(f"No static named permission mapping for SDK call {call}")
         for method, path in bound:
+            metadata = route_metadata.get((method, path))
+            if metadata is not None:
+                permissions.update(permission for permission, _ in metadata.candidates)
+                if metadata.unresolved:
+                    unknowns.add(f"No static named permission mapping for SDK call {call}")
             entry = routes.get((method, path))
             if entry is None:
                 unknowns.add(f"No canonical access entry for {call}: {method} {path}")
             elif entry.access_class == AccessClass.PERMISSION and entry.permission:
                 if not _is_source_transport_route(entry):
                     permissions.add(entry.permission)
+    permissions.update(_file_invocation_permissions(invocations))
     return sorted(permissions), sorted(unknowns)
 
 
-def permissions_for_sdk_invocations(invocations: list[dict[str, Any]]) -> list[str]:
+def _file_invocation_permissions(invocations: list[dict[str, Any]]) -> list[str]:
     """Include named file checks selected by bounded SDK arguments.
 
     The ordinary workspace-file path checks repository permissions, while
@@ -1350,19 +1509,32 @@ def permissions_for_sdk_invocations(invocations: list[dict[str, Any]]) -> list[s
     """
     permissions: set[str] = set()
     read_paths = {"/api/files/read", "/api/files/stat", "/api/files/exists", "/api/files/list"}
-    write_paths = {"/api/files/write", "/api/files/delete"}
+    write_paths = {"/api/files/write", "/api/files/delete", "/api/files/complete-upload"}
     for invocation in invocations:
         selectors = invocation.get("selectors", {})
         dynamic = set(invocation.get("dynamic_selectors", []))
-        if selectors.get("location") != "workspace" and "location" not in dynamic:
-            continue
-        for route in sdk_route_candidates([invocation["call"]]):
-            if route.path in read_paths:
+        generic = _is_generic_route_call(invocation["call"])
+        paths = (
+            {path for _, path in _invocation_routes(invocation)[0]}
+            if generic
+            else {route.path for route in sdk_route_candidates([invocation["call"]])}
+        )
+        for path in paths:
+            default_location = (
+                "uploads" if path in {"/api/files/signed-url", "/api/files/complete-upload"}
+                else "workspace"
+            ) if generic else None
+            location = selectors.get("location", default_location)
+            if location != "workspace" and "location" not in dynamic:
+                continue
+            if path in read_paths:
                 permissions.add("repository.read")
-            elif route.path in write_paths:
+            elif path in write_paths:
                 permissions.add("repository.readwrite")
-            elif route.path == "/api/files/signed-url":
-                methods = {"GET", "PUT"} if "method" in dynamic else {selectors.get("method")}
+            elif path == "/api/files/signed-url":
+                methods = {"GET", "PUT"} if "method" in dynamic else {
+                    selectors.get("method", "PUT" if generic else None)
+                }
                 if "GET" in methods:
                     permissions.add("repository.read")
                 if "PUT" in methods:

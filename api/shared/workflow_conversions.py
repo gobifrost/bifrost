@@ -19,6 +19,7 @@ from sqlalchemy import and_, delete, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.sdk_modules import ModuleSourceScope, resolve_module_name
+from shared.runtime_modules import RuntimeModuleInventory, read_runtime_modules
 from src.core.database import get_db_context
 from src.core.principal import UserPrincipal
 from src.jobs.platform.base import (
@@ -289,12 +290,14 @@ def _fingerprint(
     proposed_permissions: list[str],
     observed_operations: list[str],
     unknowns: list[str],
+    runtime_modules_hash: str = "",
 ) -> str:
     payload = {
         "source_hash": source_hash,
         "dependencies": dict(sorted(dependencies.items())),
         "analyzer_version": _analysis_version(),
         "sdk_permission_fingerprint": _sdk_permission_fingerprint(),
+        "runtime_modules_hash": runtime_modules_hash,
         "workflow": {
             field: str(value) if isinstance(value, UUID) else value
             for field, value in zip(
@@ -469,11 +472,18 @@ async def _policy_revision_snapshot(db: AsyncSession, workflow: Workflow) -> dic
 
 
 async def _report_for_workflow(
-    db: AsyncSession, workflow: Workflow, *, source=None
+    db: AsyncSession, workflow: Workflow, *, source=None,
+    module_inventory: RuntimeModuleInventory | None = None,
 ) -> dict:
     source = source or await _source_for_workflow(workflow)
     from shared.workflow_conversion_analysis import analyze_workflow
 
+    if module_inventory is None:
+        module_inventory = await read_runtime_modules()
+    runtime_modules_hash = hashlib.sha256(json.dumps({
+        "roots": sorted(module_inventory.roots),
+        "available": module_inventory.available,
+    }, sort_keys=True).encode()).hexdigest()
     allow_outbound_access = workflow.solution_id is None or bool(
         await db.scalar(
             select(Solution.allow_outbound_access).where(
@@ -492,6 +502,7 @@ async def _report_for_workflow(
             allow_outbound_access=allow_outbound_access,
         ),
         lambda sf: _summary(db, sf),
+        external_module_roots=module_inventory.roots,
     )
     cutoff = date.today() - timedelta(days=OBSERVATION_WINDOW_DAYS)
     usages = (
@@ -514,15 +525,10 @@ async def _report_for_workflow(
     source_calls = sorted(set(str(call) for call in analysis.get("sdk_calls", [])))
     # The mapping follows the SDK transport bindings and AccessList, maintained
     # separately from this durable job so source analysis cannot invent powers.
-    from shared.workflow_conversion_sdk import (
-        permissions_for_sdk_calls,
-        permissions_for_sdk_invocations,
-    )
+    from shared.workflow_conversion_sdk import permissions_for_sdk_calls
 
-    source_permissions, source_unknowns = permissions_for_sdk_calls(source_calls)
-    source_permissions = sorted(
-        set(source_permissions)
-        | set(permissions_for_sdk_invocations(analysis.get("resource_calls", [])))
+    source_permissions, source_unknowns = permissions_for_sdk_calls(
+        source_calls, invocations=analysis.get("resource_calls", []),
     )
     request = (
         (
@@ -565,10 +571,15 @@ async def _report_for_workflow(
             ]
         )
     )
-    warnings = _identity_warnings(identity, authority)
+    warnings = list(dict.fromkeys([
+        *_identity_warnings(identity, authority),
+        *analysis.get("warnings", []),
+    ]))
     current_mode = (await effective_workflow_permission_mode(db, workflow)).value
     status_value = (
-        "already_declared"
+        "blocked"
+        if not analysis["entrypoint_found"]
+        else "already_declared"
         if current_mode == "restricted" and not unknowns
         else ("needs_review" if unknowns else "ready")
     )
@@ -590,6 +601,7 @@ async def _report_for_workflow(
             proposed_permissions=proposed_permissions,
             observed_operations=observed_operations,
             unknowns=unknowns,
+            runtime_modules_hash=runtime_modules_hash,
         ),
         "status": status_value,
         "current_permission_mode": current_mode,
@@ -612,11 +624,14 @@ async def _report_for_workflow(
                 str(item.get("permission")) for item in request.requested_grants
             ],
         },
-        "error": None,
+        "error": None if analysis["entrypoint_found"] else (
+            "The registered workflow entry point is unavailable in its current source."
+        ),
         # Private durable inputs for an applied-state refresh. They are hashes
         # and compact dependency metadata, never source or AST content.
         "_conversion_source_hash": source.content_hash,
         "_conversion_dependencies": analysis.get("dependencies", {}),
+        "_conversion_runtime_modules_hash": runtime_modules_hash,
     }
     return report
 
@@ -672,7 +687,12 @@ async def _refresh_applied_report(
     )
     source_hash = report.get("_conversion_source_hash")
     dependencies = report.get("_conversion_dependencies")
-    if not isinstance(source_hash, str) or not isinstance(dependencies, dict):
+    runtime_modules_hash = report.get("_conversion_runtime_modules_hash")
+    if (
+        not isinstance(source_hash, str)
+        or not isinstance(dependencies, dict)
+        or not isinstance(runtime_modules_hash, str)
+    ):
         raise PlatformJobFailure(
             "report_corrupt", "The saved conversion report cannot be refreshed safely"
         )
@@ -691,6 +711,7 @@ async def _refresh_applied_report(
         proposed_permissions=report["proposed_permissions"],
         observed_operations=report["observed_operations"],
         unknowns=report["unknowns"],
+        runtime_modules_hash=runtime_modules_hash,
     )
     return report
 
@@ -765,6 +786,7 @@ def _conversion_actor(
 
 
 async def run_analysis(context: PlatformJobContext, payload) -> dict:
+    module_inventory = await read_runtime_modules()
     state = dict(context.checkpoint or {"completed": 0})
     selected_ids = list(payload.workflow_ids) if payload.workflow_ids else None
     if selected_ids is not None:
@@ -834,7 +856,9 @@ async def run_analysis(context: PlatformJobContext, payload) -> dict:
                         raise
                     report = await _blocked_report_for_source(db, workflow)
                 else:
-                    report = await _report_for_workflow(db, workflow, source=source)
+                    report = await _report_for_workflow(
+                        db, workflow, source=source, module_inventory=module_inventory,
+                    )
                 await _fenced_job(db, context)
                 row = (
                     await db.execute(
@@ -882,6 +906,7 @@ async def run_analysis(context: PlatformJobContext, payload) -> dict:
 
 
 async def run_apply(context: PlatformJobContext, payload) -> dict:
+    module_inventory = await read_runtime_modules()
     try:
         requester = UUID(context.requested_by_user_id)
     except ValueError as exc:
@@ -955,7 +980,7 @@ async def run_apply(context: PlatformJobContext, payload) -> dict:
                         "A Solution deployment is in progress; wait for it to finish and review the proposal again",
                         result={"completed": completed},
                     ) from exc
-            current = await _report_for_workflow(db, workflow)
+            current = await _report_for_workflow(db, workflow, module_inventory=module_inventory)
             if current["source_fingerprint"] != selection.source_fingerprint:
                 await _mark_stale(db, context, report_row)
                 raise PlatformJobFailure(
@@ -1110,6 +1135,7 @@ async def run_apply(context: PlatformJobContext, payload) -> dict:
 
 
 async def run_cutover(context: PlatformJobContext, payload) -> dict:
+    module_inventory = await read_runtime_modules()
     async with get_db_context() as db:
         caller = await _require_current_conversion_admin(
             db, context, "workflows.permission_default.update"
@@ -1182,7 +1208,7 @@ async def run_cutover(context: PlatformJobContext, payload) -> dict:
             for workflow in workflows:
                 checked_revisions[workflow.id] = _workflow_review_state(workflow)
                 row = reports[workflow.id]
-                current = await _report_for_workflow(db, workflow)
+                current = await _report_for_workflow(db, workflow, module_inventory=module_inventory)
                 if current["source_fingerprint"] != row.source_fingerprint:
                     await _mark_stale(db, context, row)
                     raise PlatformJobFailure(

@@ -8,11 +8,11 @@ import pytest
 from shared.workflow_conversion_sdk import (
     permissions_for_recorded_operations,
     permissions_for_sdk_calls,
-    permissions_for_sdk_invocations,
     recorded_route_candidates,
     sdk_named_permission_candidates,
     sdk_call_contract,
     sdk_object_contract,
+    sdk_object_is_data,
     sdk_permission_fingerprint,
     sdk_route_candidates,
 )
@@ -48,9 +48,60 @@ def test_file_and_document_policy_candidates_do_not_invent_named_grants() -> Non
 def test_bounded_sdk_arguments_select_named_checks_without_an_identity(
     call, selectors, dynamic, expected
 ):
-    assert permissions_for_sdk_invocations([{
+    permissions, unknowns = permissions_for_sdk_calls([call], invocations=[{
         "call": call, "selectors": selectors, "dynamic_selectors": dynamic,
-    }]) == expected
+    }])
+    assert permissions == expected
+    assert unknowns == []
+
+
+@pytest.mark.parametrize("call,path,expected", [
+    ("bifrost.api.get", "/api/users", ["users.read"]),
+    ("bifrost.api.get", "/api/users/{}", ["users.read"]),
+    ("bifrost.api.post", "/api/organizations", ["organizations.readwrite"]),
+    ("bifrost.api.get", "/api/files/editor/content?path=contoso.txt", ["repository.read"]),
+    ("bifrost.api.post", "/api/sdk/config/get", ["configs.read", "secrets.read"]),
+])
+def test_generic_sdk_http_calls_use_bounded_canonical_route_templates(call, path, expected):
+    permissions, unknowns = permissions_for_sdk_calls([call], invocations=[{
+        "call": call, "selectors": {"path": path}, "dynamic_selectors": [],
+    }])
+    assert permissions == expected
+    assert unknowns == []
+
+
+def test_one_resolved_generic_sdk_call_does_not_hide_an_unbounded_call():
+    permissions, unknowns = permissions_for_sdk_calls(["bifrost.api.get"], invocations=[
+        {"call": "bifrost.api.get", "selectors": {"path": "/api/config"}},
+        {"call": "bifrost.api.get", "selectors": {}, "dynamic_selectors": ["path"]},
+    ])
+    assert permissions == ["configs.read"]
+    assert unknowns == ["No static platform transport mapping for SDK call bifrost.api.get"]
+
+
+@pytest.mark.parametrize("selectors,dynamic,expected", [
+    ({"path": "/api/files/read"}, [], ["repository.read"]),
+    ({"path": "/api/files/write"}, [], ["repository.readwrite"]),
+    ({"path": "/api/files/read", "location": "uploads"}, [], []),
+    ({"path": "/api/files/read"}, ["location"], ["repository.read"]),
+    ({"path": "/api/files/signed-url"}, [], []),
+    ({"path": "/api/files/signed-url", "location": "workspace", "method": "GET"}, [], ["repository.read"]),
+])
+def test_generic_sdk_file_routes_retain_workspace_named_checks(selectors, dynamic, expected):
+    permissions, unknowns = permissions_for_sdk_calls(["bifrost.api.post"], invocations=[{
+        "call": "bifrost.api.post", "selectors": selectors, "dynamic_selectors": dynamic,
+    }])
+    assert permissions == expected
+    assert unknowns == []
+
+
+@pytest.mark.parametrize("path", ["/api/contoso-unmapped", "/api/{}/unmapped", "https://contoso.invalid/api/users"])
+def test_generic_sdk_path_without_a_canonical_route_stays_unresolved(path):
+    permissions, unknowns = permissions_for_sdk_calls(["bifrost.api.get"], invocations=[{
+        "call": "bifrost.api.get", "selectors": {"path": path},
+    }])
+    assert permissions == []
+    assert unknowns == ["No static platform transport mapping for SDK call bifrost.api.get"]
 
 
 def test_secret_and_personal_route_candidates_remain_available_without_review() -> None:
@@ -89,6 +140,20 @@ def test_execution_visibility_guard_is_a_conditional_candidate() -> None:
     assert [(candidate.permission, candidate.condition) for candidate in candidates] == [
         ("executions.read.all", "conditional"),
     ]
+
+
+def test_recorded_bulk_user_operation_resolves_its_finite_permission_selection():
+    permissions, unknowns = permissions_for_recorded_operations(["users.bulk_update"])
+    assert permissions == ["userlifecycle.readwrite"]
+    assert unknowns == []
+    candidates, unresolved = permissions_for_sdk_calls(["bifrost.api.patch"], invocations=[{
+        "call": "bifrost.api.patch", "selectors": {"path": "/api/users/bulk"},
+    }])
+    assert candidates == [
+        "privilegedaccess.readwrite", "roleassignments.readwrite",
+        "userlifecycle.readwrite", "users.readwrite",
+    ]
+    assert unresolved == []
 
 
 def test_service_guards_resolve_static_constants_and_helper_operation_arguments() -> None:
@@ -528,6 +593,116 @@ def test_sdk_contracts_preserve_table_document_json_fields() -> None:
     assert data.kind == "json_object"
 
 
+def test_client_transport_facades_bind_literal_routes_without_factory_grants() -> None:
+    client_factory = sdk_call_contract("bifrost.client.get_client")
+    assert client_factory is not None
+    assert client_factory.effect == "none"
+    assert client_factory.return_kind == "sdk_object"
+    assert client_factory.sdk_type == "bifrost.client.BifrostClient"
+
+    response_helper = sdk_call_contract("bifrost.client.raise_for_status_with_detail")
+    assert response_helper is not None
+    assert response_helper.effect == "none"
+    assert response_helper.return_kind == "none"
+
+    engine_request = sdk_call_contract("bifrost.client.engine_request")
+    assert engine_request is not None
+    assert engine_request.parameters[:2] == ("method", "path")
+    assert sdk_call_contract("bifrost.client.post") is not None
+
+    permissions, unknowns = permissions_for_sdk_calls(
+        [
+            "bifrost.client.get_client",
+            "bifrost.client.engine_request",
+            "bifrost.client.post",
+            "bifrost.client.raise_for_status_with_detail",
+        ],
+        invocations=[
+            {
+                "call": "bifrost.client.engine_request",
+                "selectors": {"http_method": "POST", "path": "/api/sdk/config/get"},
+                "dynamic_selectors": [],
+            },
+            {
+                "call": "bifrost.client.post",
+                "selectors": {"path": "/api/files/write", "location": "workspace"},
+                "dynamic_selectors": [],
+            },
+        ],
+    )
+
+    assert permissions == ["configs.read", "repository.readwrite", "secrets.read"]
+    assert unknowns == []
+
+
+def test_client_transport_with_dynamic_method_or_path_remains_unknown() -> None:
+    permissions, unknowns = permissions_for_sdk_calls(
+        ["bifrost.client.engine_request", "bifrost.client.post"],
+        invocations=[
+            {
+                "call": "bifrost.client.engine_request",
+                "selectors": {"path": "/api/sdk/config/get"},
+                "dynamic_selectors": ["http_method"],
+            },
+            {
+                "call": "bifrost.client.post",
+                "selectors": {},
+                "dynamic_selectors": ["path"],
+            },
+        ],
+    )
+
+    assert permissions == []
+    assert unknowns == [
+        "No static platform transport mapping for SDK call bifrost.client.engine_request",
+        "No static platform transport mapping for SDK call bifrost.client.post",
+    ]
+
+
+def test_client_sync_shortcut_and_signed_url_method_use_distinct_http_verbs() -> None:
+    permissions, unknowns = permissions_for_sdk_calls(
+        ["bifrost.client.get_sync", "bifrost.client.engine_request"],
+        invocations=[
+            {
+                "call": "bifrost.client.get_sync",
+                "selectors": {"path": "/api/organizations"},
+                "dynamic_selectors": [],
+            },
+            {
+                "call": "bifrost.client.engine_request",
+                "selectors": {
+                    "http_method": "POST",
+                    "path": "/api/files/signed-url",
+                    "method": "GET",
+                    "location": "workspace",
+                },
+                "dynamic_selectors": [],
+            },
+        ],
+    )
+
+    assert permissions == ["organizations.read", "repository.read"]
+    assert unknowns == []
+
+
+@pytest.mark.parametrize("selectors,expected", [
+    ({"path": "/api/files/complete-upload", "location": "workspace"}, ["repository.readwrite"]),
+    ({"path": "/api/files/complete-upload"}, []),
+])
+def test_client_upload_completion_uses_location_selected_named_permission(selectors, expected) -> None:
+    permissions, unknowns = permissions_for_sdk_calls(
+        ["bifrost.client.post"],
+        invocations=[{
+            "call": "bifrost.client.post",
+            "selectors": selectors,
+            "dynamic_selectors": [],
+        }],
+    )
+
+    assert permissions == expected
+    assert unknowns == []
+
+
 def test_proven_pure_public_constructor_contracts_need_no_permissions() -> None:
     calls = [
         "bifrost.UserError",
@@ -583,3 +758,11 @@ def test_sdk_contracts_keep_formal_resource_selector_parameters() -> None:
 
 def test_catalog_and_sdk_version_participate_in_proposal_versioning() -> None:
     assert len(sdk_permission_fingerprint()) == 64
+
+
+def test_sdk_clients_and_credentials_are_distinct_from_data_objects() -> None:
+    assert sdk_object_is_data("bifrost.DocumentData")
+    assert sdk_object_is_data("bifrost.WorkflowExecution")
+    assert not sdk_object_is_data("bifrost.OAuthCredentials")
+    assert not sdk_object_is_data("bifrost.client.BifrostClient")
+    assert not sdk_object_is_data("bifrost.ExecutionContext")

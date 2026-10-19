@@ -264,7 +264,7 @@ def helper():
 
 
 @pytest.mark.asyncio
-async def test_reports_dynamic_dispatch_import_execution_and_raw_http_as_unknowns() -> (
+async def test_reports_only_dynamic_sdk_dispatch_as_an_unknown() -> (
     None
 ):
     entry = _source(
@@ -291,8 +291,7 @@ def run(name):
 
     assert result["sdk_calls"] == []
     assert any("dynamic SDK dispatch" in item for item in result["unknowns"])
-    assert any("dynamic import" in item for item in result["unknowns"])
-    assert any("raw HTTP" in item for item in result["unknowns"])
+    assert len(result["unknowns"]) == 1
 
 
 @pytest.mark.asyncio
@@ -582,7 +581,7 @@ async def test_function_parameter_shadowing_an_imported_helper_is_not_followed()
     result = await analyze_workflow(entry, "run", resolve_import, summarize)
 
     assert result["sdk_calls"] == []
-    assert any("unrecognized wrapper" in item for item in result["unknowns"])
+    assert result["unknowns"] == []
 
 
 @pytest.mark.asyncio
@@ -624,7 +623,7 @@ async def test_deep_import_graph_reports_recursion_limit_instead_of_crashing(
 
 
 @pytest.mark.asyncio
-async def test_higher_order_callback_positions_are_needs_review() -> None:
+async def test_higher_order_callback_positions_follow_local_sdk_helpers() -> None:
     entry = _source(
         "workflows/run.py",
         "from bifrost.tables import tables\n\n"
@@ -643,13 +642,12 @@ async def test_higher_order_callback_positions_are_needs_review() -> None:
 
     result = await analyze_workflow(entry, "run", resolve_import, summarize)
 
-    assert result["sdk_calls"] == []
-    assert any("higher-order callback: map" in item for item in result["unknowns"])
-    assert any("higher-order callback: sorted" in item for item in result["unknowns"])
+    assert result["sdk_calls"] == ["bifrost.tables.get"]
+    assert result["unknowns"] == []
 
 
 @pytest.mark.asyncio
-async def test_conditional_import_aliases_do_not_follow_the_last_branch() -> None:
+async def test_conditional_import_aliases_union_reachable_sdk_helpers() -> None:
     entry = _source(
         "workflows/run.py",
         "if condition:\n"
@@ -681,12 +679,12 @@ async def test_conditional_import_aliases_do_not_follow_the_last_branch() -> Non
 
     result = await analyze_workflow(entry, "run", resolve_import, summarize)
 
-    assert result["sdk_calls"] == []
-    assert any("conditional binding for read" in item for item in result["unknowns"])
+    assert result["sdk_calls"] == ["bifrost.tables.delete", "bifrost.tables.list"]
+    assert result["unknowns"] == []
 
 
 @pytest.mark.asyncio
-async def test_exception_path_import_aliases_remain_needs_review() -> None:
+async def test_exception_path_import_aliases_union_reachable_sdk_helpers() -> None:
     entry = _source(
         "run.py",
         "try:\n    from first import read\nexcept ImportError:\n    from second import read\ndef run():\n    return read()\n",
@@ -706,14 +704,16 @@ async def test_exception_path_import_aliases_remain_needs_review() -> None:
         return summarize_source(source_file.source)
 
     result = await analyze_workflow(entry, "run", resolve, summarize)
-    assert any(
-        "conditional binding in try/except" in item for item in result["unknowns"]
-    )
+    assert result["sdk_calls"] == ["bifrost.config.get"]
+    assert result["unknowns"] == []
 
 
 def test_builtin_sort_without_a_callback_has_no_callback_uncertainty() -> None:
     summary = summarize_source("def run(rows):\n    return sorted(rows)\n")
-    assert summary["functions"]["run"]["events"] == []
+    assert all(
+        event["kind"] != "unknown"
+        for event in summary["functions"]["run"]["events"]
+    )
 
 
 def test_accepts_a_representative_large_module_within_source_bounds() -> None:
@@ -898,11 +898,11 @@ async def test_static_context_method_getattr_alias_is_followed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unknown_static_context_getattr_remains_needs_review() -> None:
+async def test_optional_context_getattr_fields_are_data_reads() -> None:
     entry = _source(
         "workflows/run.py",
-        "from bifrost import context\n\ndef run():\n"
-        "    return getattr(context, 'future_capability', None)\n",
+        "from bifrost import context\n\ndef run(field):\n"
+        "    return getattr(context, 'future_capability', None), getattr(context, field, None)\n",
     )
 
     async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
@@ -914,9 +914,7 @@ async def test_unknown_static_context_getattr_remains_needs_review() -> None:
     result = await analyze_workflow(entry, "run", resolve_import, summarize)
 
     assert result["sdk_calls"] == []
-    assert result["unknowns"] == [
-        "workflows/run.py:4: unrecognized SDK wrapper"
-    ]
+    assert result["unknowns"] == []
 
 
 @pytest.mark.asyncio
@@ -1015,7 +1013,7 @@ async def test_records_shipped_file_location_defaults_without_marking_them_dynam
 
 
 @pytest.mark.asyncio
-async def test_unresolved_installed_external_call_remains_needs_review(
+async def test_unresolved_installed_external_call_is_outside_sdk_inventory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     entry = _source(
@@ -1037,10 +1035,7 @@ async def test_unresolved_installed_external_call_remains_needs_review(
 
     result = await analyze_workflow(entry, "run", resolve_import, summarize)
 
-    assert result["unknowns"] == [
-        "workflows/run.py:1: unresolved external dependency: external_dependency",
-        "workflows/run.py:4: unresolved external dependency: external_dependency"
-    ]
+    assert result["unknowns"] == []
 
 
 @pytest.mark.asyncio
@@ -1113,7 +1108,7 @@ def test_json_branch_union_keeps_ordinary_methods_out_of_capability_review() -> 
     assert summary["functions"]["run"]["events"] == []
 
 
-def test_sdk_alias_in_a_branch_remains_a_conditional_binding() -> None:
+def test_sdk_alias_in_a_branch_retains_its_reachable_sdk_call() -> None:
     summary = summarize_source(
         "from bifrost import config\n\n"
         "def run(enabled):\n"
@@ -1125,9 +1120,8 @@ def test_sdk_alias_in_a_branch_remains_a_conditional_binding() -> None:
     )
 
     assert any(
-        event["reason"] == "conditional binding for value"
+        event["kind"] == "sdk" and event["call"] == "bifrost.config.get"
         for event in summary["functions"]["run"]["events"]
-        if event["kind"] == "unknown"
     )
 
 
@@ -1371,7 +1365,7 @@ async def test_invoked_dynamic_getattr_on_a_factory_return_remains_needs_review(
 
     result = await analyze_workflow(entry, "run", resolve_import, summarize)
 
-    assert any("dynamic callable target" in item for item in result["unknowns"])
+    assert any("dynamic SDK dispatch" in item for item in result["unknowns"])
 
 
 @pytest.mark.asyncio
@@ -1420,10 +1414,13 @@ def test_prior_and_branch_json_assignments_do_not_emit_a_binding_unknown() -> No
         "    return items\n"
     )
 
-    assert summary["functions"]["run"]["events"] == []
+    assert all(
+        event["kind"] != "unknown"
+        for event in summary["functions"]["run"]["events"]
+    )
 
 
-def test_callable_and_json_branch_assignments_remain_distinct() -> None:
+def test_callable_and_json_branch_assignments_do_not_create_generic_review() -> None:
     summary = summarize_source(
         "from bifrost import config\n\n"
         "def run(enabled):\n"
@@ -1435,10 +1432,9 @@ def test_callable_and_json_branch_assignments_remain_distinct() -> None:
         "    return value.get('setting')\n"
     )
 
-    assert any(
-        event["reason"] == "conditional binding for value"
+    assert all(
+        event["kind"] != "unknown"
         for event in summary["functions"]["run"]["events"]
-        if event["kind"] == "unknown"
     )
 
 
@@ -1472,7 +1468,7 @@ async def test_factory_result_and_json_branch_assignments_remain_distinct(
     result = await analyze_workflow(entry, "run", resolve_import, summarize)
 
     assert result["sdk_calls"] == ["bifrost.config.get"]
-    assert any("conditional binding for target" in item for item in result["unknowns"])
+    assert result["unknowns"] == []
 
 
 @pytest.mark.asyncio
@@ -1575,6 +1571,72 @@ async def test_typed_sdk_object_field_preserves_credential_refresh_call() -> Non
 
 
 @pytest.mark.asyncio
+async def test_scalar_sdk_field_chained_builtin_methods_are_data_operations() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost import artifacts\n\n"
+        "async def run():\n"
+        "    ref = await artifacts.create_text('report.txt', format='text', content='contoso')\n"
+        "    return ref.filename.lower().endswith('.txt')\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.artifacts.create_text"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_unknown_typed_sdk_field_chained_data_method_is_not_a_permission_call() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost import workflows\n\n"
+        "async def run():\n"
+        "    execution = await workflows.get('contoso')\n"
+        "    return execution.result.get('value')\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.workflows.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_json_sdk_field_chained_data_methods_are_not_permission_calls() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost import tables\n\n"
+        "async def run():\n"
+        "    document = await tables.get('records', 'contoso')\n"
+        "    return document.data.get('value').replace('a', 'b')\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.tables.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
 async def test_annotation_does_not_override_a_known_credential_field_type() -> None:
     entry = _source(
         "workflows/run.py",
@@ -1632,14 +1694,18 @@ def test_local_annotation_does_not_prove_unknown_factory_data() -> None:
         "    return value.get('setting')\n"
     )
 
-    assert summary["functions"]["run"]["events"] == [
-        {"kind": "local", "line": 5, "name": "factory", "arguments": []},
-        {"kind": "bound_method", "line": 6, "receiver": "value", "method": "get"},
+    events = summary["functions"]["run"]["events"]
+    assert [(event["kind"], event["line"]) for event in events] == [
+        ("local", 5),
+        ("bound_method", 6),
     ]
+    assert events[0]["name"] == "factory"
+    assert events[1]["receiver"] == "value"
+    assert events[1]["method"] == "get"
 
 
 @pytest.mark.asyncio
-async def test_unknown_typed_sdk_object_field_remains_needs_review() -> None:
+async def test_unknown_typed_sdk_object_method_is_a_data_correctness_warning() -> None:
     entry = _source(
         "workflows/run.py",
         "from bifrost import integrations\n\n"
@@ -1657,12 +1723,947 @@ async def test_unknown_typed_sdk_object_field_remains_needs_review() -> None:
     result = await analyze_workflow(entry, "run", resolve_import, summarize)
 
     assert result["sdk_calls"] == ["bifrost.integrations.get"]
-    assert result["unknowns"] == [
-        "workflows/run.py:5: unrecognized SDK wrapper"
+    assert result["unknowns"] == []
+    assert result["warnings"] == [
+        "workflows/run.py:5: unsupported SDK data-object method"
     ]
 
 
-def test_list_sort_callback_remains_needs_review() -> None:
+@pytest.mark.asyncio
+async def test_inventory_ignores_ordinary_python_but_keeps_dynamic_sdk_dispatch() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost import tables\n"
+        "import requests\n\n"
+        "def run(name, values):\n"
+        "    requests.get('https://example.invalid')\n"
+        "    values.sort(key=str)\n"
+        "    getattr(values, name)()\n"
+        "    getattr(tables, name)()\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == []
+    assert result["unknowns"] == [
+        "workflows/run.py:8: dynamic SDK dispatch"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_imported_helper_tracks_a_passed_sdk_namespace() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost import config\n"
+        "from .helpers import read\n\n"
+        "def run():\n"
+        "    return read(config)\n",
+    )
+    helper = _source(
+        "workflows/helpers.py",
+        "def read(client):\n"
+        "    return client.get('setting')\n",
+    )
+
+    async def resolve_import(source_file: SourceFile, module: str, level: int):
+        return helper if source_file is entry and (module, level) == ("helpers", 1) else None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.config.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_callback_and_factory_aliases_preserve_reachable_sdk_calls() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost import config, tables\n\n"
+        "def factory():\n"
+        "    namespace = config\n"
+        "    return namespace\n\n"
+        "def read(row):\n"
+        "    return tables.get(row)\n\n"
+        "def run(rows):\n"
+        "    list(map(read, rows))\n"
+        "    factory().get('setting')\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.config.get", "bifrost.tables.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_generic_sdk_api_path_metadata_is_bounded_and_normalized() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost import api\n\n"
+        "def run(identifier):\n"
+        "    prefix = '/api/tables'\n"
+        "    api.get(f'{prefix}/{identifier}')\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.api.get"]
+    assert result["resource_calls"] == [
+        {
+            "call": "bifrost.api.get",
+            "source_key": "workflows/run.py",
+            "path": "workflows/run.py",
+            "line": 5,
+            "selectors": {"path": "/api/tables/{}"},
+            "dynamic_selectors": [],
+            "selector_reasons": {},
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_external_roots_and_optional_imports_are_not_permissions() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "try:\n"
+        "    import optional_contoso_client\n"
+        "except ImportError:\n"
+        "    optional_contoso_client = None\n"
+        "import runtime_contoso_client\n\n"
+        "def run():\n"
+        "    return runtime_contoso_client.connect()\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(
+        entry,
+        "run",
+        resolve_import,
+        summarize,
+        external_module_roots=frozenset({"runtime_contoso_client"}),
+    )
+
+    assert result["sdk_calls"] == []
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_branch_prior_sdk_namespace_and_nested_keyword_helper_are_followed() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost import config, tables\n\n"
+        "def run(flag):\n"
+        "    client = tables\n"
+        "    if flag:\n"
+        "        client = config\n"
+        "    client.get('id')\n\n"
+        "    def read(client):\n"
+        "        return client.get('setting')\n"
+        "    return read(client=config)\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.config.get", "bifrost.tables.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_direct_sdk_result_data_methods_warn_without_inventing_transport() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost import tables\n\n"
+        "async def run():\n"
+        "    return (await tables.get('reports')).get('id')\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.tables.get"]
+    assert result["unknowns"] == []
+    assert result["warnings"] == [
+        "workflows/run.py:4: unsupported SDK data-object method"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_generic_file_sdk_path_retains_only_location_and_signing_method() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost import api\n\n"
+        "async def run(location):\n"
+        "    await api.post('/api/files/write', json={'location': location, 'content': 'secret'})\n"
+        "    await api.post('/api/files/signed-url', json={'location': 'uploads', 'method': 'GET', 'path': 'private'})\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["resource_calls"] == [
+        {
+            "call": "bifrost.api.post",
+            "source_key": "workflows/run.py",
+            "path": "workflows/run.py",
+            "line": 4,
+            "selectors": {"path": "/api/files/write"},
+            "dynamic_selectors": ["location"],
+            "selector_reasons": {"location": "nonliteral selector"},
+        },
+        {
+            "call": "bifrost.api.post",
+            "source_key": "workflows/run.py",
+            "path": "workflows/run.py",
+            "line": 5,
+            "selectors": {
+                "path": "/api/files/signed-url",
+                "location": "uploads",
+                "method": "GET",
+            },
+            "dynamic_selectors": [],
+            "selector_reasons": {},
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_entrypoint_found_requires_a_local_function_or_resolved_reexport() -> None:
+    entry = _source("workflows/run.py", "from .impl import execute as run\n")
+    implementation = _source("workflows/impl.py", "def execute():\n    return 'ok'\n")
+
+    async def resolve_import(source_file: SourceFile, module: str, level: int):
+        return (
+            implementation
+            if source_file is entry and (module, level) == ("impl", 1)
+            else None
+        )
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    resolved = await analyze_workflow(entry, "run", resolve_import, summarize)
+    missing = await analyze_workflow(entry, "missing", resolve_import, summarize)
+
+    assert resolved["entrypoint_found"] is True
+    assert missing["entrypoint_found"] is False
+
+
+@pytest.mark.asyncio
+async def test_same_file_and_reexported_helpers_preserve_keyword_sdk_handles() -> None:
+    same_file = _source(
+        "workflows/same_file.py",
+        "from bifrost import config\n\n"
+        "def read(client):\n"
+        "    return client.get('setting')\n\n"
+        "def run():\n"
+        "    return read(client=config)\n",
+    )
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost import config\n"
+        "from .exports import read\n\n"
+        "def run():\n"
+        "    return read(client=config)\n",
+    )
+    exports = _source("workflows/exports.py", "from .impl import read\n")
+    implementation = _source(
+        "workflows/impl.py",
+        "def read(client):\n    return client.get('setting')\n",
+    )
+
+    async def resolve_import(source_file: SourceFile, module: str, level: int):
+        return {
+            (entry.key, "exports", 1): exports,
+            (exports.key, "impl", 1): implementation,
+        }.get((source_file.key, module, level))
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    same_file_result = await analyze_workflow(
+        same_file, "run", resolve_import, summarize
+    )
+    reexport_result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert same_file_result["sdk_calls"] == ["bifrost.config.get"]
+    assert reexport_result["sdk_calls"] == ["bifrost.config.get"]
+
+
+@pytest.mark.asyncio
+async def test_conditional_reexport_unions_keyword_helper_targets() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost import config\n"
+        "from .exports import read\n\n"
+        "def run():\n"
+        "    return read(client=config)\n",
+    )
+    exports = _source(
+        "workflows/exports.py",
+        "if enabled:\n    from .first import read\nelse:\n    from .second import read\n",
+    )
+    first = _source("workflows/first.py", "def read(client):\n    return client.get('one')\n")
+    second = _source("workflows/second.py", "def read(client):\n    return client.get('two')\n")
+
+    async def resolve_import(source_file: SourceFile, module: str, level: int):
+        return {
+            (entry.key, "exports", 1): exports,
+            (exports.key, "first", 1): first,
+            (exports.key, "second", 1): second,
+        }.get((source_file.key, module, level))
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.config.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_helper_bound_generic_api_method_preserves_route_evidence() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost import api\n\n"
+        "def users(client):\n"
+        "    return client.get('/api/users')\n\n"
+        "def signed_url(client):\n"
+        "    return client.post('/api/files/signed-url', json={'location': 'uploads', 'method': 'GET', 'token': 'private'})\n\n"
+        "def run():\n"
+        "    users(api)\n"
+        "    signed_url(api)\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.api.get", "bifrost.api.post"]
+    assert result["resource_calls"] == [
+        {
+            "call": "bifrost.api.get",
+            "source_key": "workflows/run.py",
+            "path": "workflows/run.py",
+            "line": 4,
+            "selectors": {"path": "/api/users"},
+            "dynamic_selectors": [],
+            "selector_reasons": {},
+        },
+        {
+            "call": "bifrost.api.post",
+            "source_key": "workflows/run.py",
+            "path": "workflows/run.py",
+            "line": 7,
+            "selectors": {
+                "path": "/api/files/signed-url",
+                "location": "uploads",
+                "method": "GET",
+            },
+            "dynamic_selectors": [],
+            "selector_reasons": {},
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_same_file_generic_api_helper_binds_only_bounded_route_templates() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost import api\n\n"
+        "async def get_json(path):\n"
+        "    return await api.get(path)\n\n"
+        "async def run(identifier, requested_path):\n"
+        "    await get_json('/api/users?token=private')\n"
+        "    await get_json(f'/api/agents/{identifier}/runs')\n"
+        "    return await get_json(requested_path)\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.api.get"]
+    assert {tuple(item["selectors"].items()) for item in result["resource_calls"]} == {
+        (("path", "/api/agents/{}/runs"),),
+        (("path", "/api/users"),),
+        (),
+    }
+    assert any(
+        item["dynamic_selectors"] == ["path"]
+        for item in result["resource_calls"]
+    )
+    assert all(
+        "?" not in item["selectors"].get("path", "")
+        for item in result["resource_calls"]
+    )
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_generic_routes_strip_sdk_query_suffixes_and_bound_helper_paths() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost import api\n"
+        "from bifrost.files import _solution_query\n"
+        "from urllib.parse import urlencode\n\n"
+        "async def get_json(path):\n"
+        "    return await api.get(path)\n\n"
+        "async def run(params):\n"
+        "    await api.post(f'/api/files/complete-upload{_solution_query()}', json={'location': 'workspace', 'token': 'private'})\n"
+        "    await api.post('/api/files/write' + _solution_query(), json={'location': 'workspace'})\n"
+        "    path = '/api/agent-runs?' + urlencode(params)\n"
+        "    return await get_json(path)\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.api.get", "bifrost.api.post"]
+    assert {
+        tuple(sorted(item["selectors"].items()))
+        for item in result["resource_calls"]
+    } == {
+        (("location", "workspace"), ("path", "/api/files/complete-upload")),
+        (("location", "workspace"), ("path", "/api/files/write")),
+        (("path", "/api/agent-runs"),),
+    }
+    assert all(
+        "?" not in item["selectors"].get("path", "")
+        for item in result["resource_calls"]
+    )
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_generic_route_with_an_arbitrary_operation_suffix_stays_dynamic() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost import api\n\n"
+        "def suffix():\n"
+        "    return '/files/write'\n\n"
+        "async def run():\n"
+        "    return await api.post('/api' + suffix(), json={'location': 'workspace'})\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["resource_calls"] == [
+        {
+            "call": "bifrost.api.post",
+            "source_key": "workflows/run.py",
+            "path": "workflows/run.py",
+            "line": 7,
+            "selectors": {},
+            "dynamic_selectors": ["path"],
+            "selector_reasons": {"path": "nonliteral selector"},
+        }
+    ]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_imported_generic_api_helper_binds_keyword_route_template() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from .helpers import get_json\n\n"
+        "async def run(identifier):\n"
+        "    return await get_json(path=f'/api/agents/{identifier}/runs')\n",
+    )
+    helper = _source(
+        "workflows/helpers.py",
+        "from bifrost import api\n\n"
+        "async def get_json(path):\n"
+        "    return await api.get(path)\n",
+    )
+
+    async def resolve_import(source_file: SourceFile, module: str, level: int):
+        return {(entry.key, "helpers", 1): helper}.get(
+            (source_file.key, module, level)
+        )
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.api.get"]
+    assert result["resource_calls"] == [
+        {
+            "call": "bifrost.api.get",
+            "source_key": "workflows/helpers.py",
+            "path": "workflows/helpers.py",
+            "line": 4,
+            "selectors": {"path": "/api/agents/{}/runs"},
+            "dynamic_selectors": [],
+            "selector_reasons": {},
+        }
+    ]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_imported_module_function_return_data_does_not_become_module_member() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from . import client\n\n"
+        "def run():\n"
+        "    row = client.fetch()\n"
+        "    return row.get('value')\n",
+    )
+    package = _source("workflows/__init__.py", "")
+    client = _source(
+        "workflows/client.py",
+        "from bifrost import config\n\n"
+        "def fetch():\n"
+        "    config.get('contoso')\n"
+        "    return {'value': 'ok'}\n",
+    )
+
+    async def resolve_import(source_file: SourceFile, module: str, level: int):
+        return {
+            (entry.key, "", 1): package,
+            (package.key, "client", 1): client,
+        }.get((source_file.key, module, level))
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.config.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_bifrost_client_transports_retain_http_and_file_selectors() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost.client import get_client\n\n"
+        "async def run():\n"
+        "    client = get_client()\n"
+        "    await client.engine_request('POST', '/api/files/signed-url?token=private', json={'location': 'workspace', 'method': 'GET'})\n"
+        "    return await client.get('/api/users')\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == [
+        "bifrost.client.engine_request",
+        "bifrost.client.get",
+        "bifrost.client.get_client",
+    ]
+    assert result["resource_calls"] == [
+        {
+            "call": "bifrost.client.engine_request",
+            "source_key": "workflows/run.py",
+            "path": "workflows/run.py",
+            "line": 5,
+            "selectors": {
+                "path": "/api/files/signed-url",
+                "http_method": "POST",
+                "location": "workspace",
+                "method": "GET",
+            },
+            "dynamic_selectors": [],
+            "selector_reasons": {},
+        },
+        {
+            "call": "bifrost.client.get",
+            "source_key": "workflows/run.py",
+            "path": "workflows/run.py",
+            "line": 6,
+            "selectors": {"path": "/api/users"},
+            "dynamic_selectors": [],
+            "selector_reasons": {},
+        },
+    ]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_helper_bound_bifrost_client_retains_file_transport_selectors() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost.client import get_client\n\n"
+        "async def write_file(client):\n"
+        "    return await client.post('/api/files/write', json={'location': 'workspace'})\n\n"
+        "async def run():\n"
+        "    return await write_file(get_client())\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == [
+        "bifrost.client.BifrostClient.post",
+        "bifrost.client.get_client",
+    ]
+    assert result["resource_calls"] == [
+        {
+            "call": "bifrost.client.BifrostClient.post",
+            "source_key": "workflows/run.py",
+            "path": "workflows/run.py",
+            "line": 4,
+            "selectors": {
+                "path": "/api/files/write",
+                "location": "workspace",
+            },
+            "dynamic_selectors": [],
+            "selector_reasons": {},
+        }
+    ]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_helper_bound_bifrost_client_engine_request_materializes_route_context() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost.client import get_client\n\n"
+        "async def request(client, path):\n"
+        "    return await client.engine_request('POST', path, json={'location': 'workspace', 'token': 'private'})\n\n"
+        "async def run():\n"
+        "    return await request(get_client(), '/api/files/write?token=private')\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == [
+        "bifrost.client.BifrostClient.engine_request",
+        "bifrost.client.get_client",
+    ]
+    assert result["resource_calls"] == [
+        {
+            "call": "bifrost.client.BifrostClient.engine_request",
+            "source_key": "workflows/run.py",
+            "path": "workflows/run.py",
+            "line": 4,
+            "selectors": {
+                "path": "/api/files/write",
+                "http_method": "POST",
+                "location": "workspace",
+            },
+            "dynamic_selectors": [],
+            "selector_reasons": {},
+        }
+    ]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_helper_bound_files_method_preserves_location_evidence() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost import files\n\n"
+        "def read(client):\n"
+        "    return client.read('reports/latest.txt', location='workspace')\n\n"
+        "def run():\n"
+        "    return read(files)\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.files.read"]
+    assert result["resource_calls"] == [
+        {
+            "call": "bifrost.files.read",
+            "source_key": "workflows/run.py",
+            "path": "workflows/run.py",
+            "line": 4,
+            "selectors": {"location": "workspace", "path": "reports/latest.txt"},
+            "dynamic_selectors": [],
+            "selector_reasons": {},
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_conditional_sdk_method_aliases_preserve_all_targets() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost import config, tables\n\n"
+        "def run(flag):\n"
+        "    if flag:\n"
+        "        fetch = config.get\n"
+        "    else:\n"
+        "        fetch = tables.get\n"
+        "    fetch('value')\n"
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.config.get", "bifrost.tables.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_conditional_callback_aliases_follow_all_local_targets() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost import config, tables\n\n"
+        "def first():\n"
+        "    return config.get('first')\n\n"
+        "def second():\n"
+        "    return tables.get('second')\n\n"
+        "def run(flag, rows):\n"
+        "    if flag:\n"
+        "        callback = first\n"
+        "    else:\n"
+        "        callback = second\n"
+        "    list(map(callback, rows))\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.config.get", "bifrost.tables.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_conditional_sdk_imported_method_aliases_preserve_all_targets() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "def run(flag):\n"
+        "    if flag:\n"
+        "        from bifrost.config import get as fetch\n"
+        "    else:\n"
+        "        from bifrost.tables import get as fetch\n"
+        "    return fetch('value')\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.config.get", "bifrost.tables.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("import_style", ["direct", "namespace"])
+@pytest.mark.parametrize("map_location", ["local", "imported"])
+async def test_literal_module_getattr_facade_follows_client_factory_and_child(import_style, map_location) -> None:
+    entry = _source(
+        "workflows/run.py",
+        ("from .facade import list_records\n\nasync def run():\n    return await list_records()\n"
+         if import_style == "direct" else
+         "from modules import facade\n\nasync def run():\n    return await facade.list_records()\n"),
+    )
+    facade = _source(
+        "workflows/facade/__init__.py",
+        "import importlib\nfrom . import credentials\n\n"
+        "METHOD_TO_MODULE = {'list_records': 'records'}\n\n"
+        "def load_child(name):\n    return importlib.import_module(f'{__name__}.{name}')\n\n"
+        "def __getattr__(name):\n"
+        "    child_name = METHOD_TO_MODULE.get(name)\n"
+        "    if child_name is not None:\n"
+        "        module = load_child(child_name)\n"
+        "        function = getattr(module, name, None)\n"
+        "        async def bound(*args, **kwargs):\n"
+        "            client = await credentials.ensure_client()\n"
+        "            return await function(client, *args, **kwargs)\n"
+        "        return bound\n"
+        "    raise AttributeError(name)\n",
+    )
+    if map_location == "imported":
+        facade = _source(facade.path, facade.source.replace(
+            "METHOD_TO_MODULE = {'list_records': 'records'}",
+            "from .metadata import METHOD_TO_MODULE",
+        ))
+    metadata = _source(
+        "workflows/facade/metadata.py",
+        "METHOD_TO_MODULE = {'list_records': 'records'}\n",
+    )
+    credentials = _source(
+        "workflows/facade/credentials.py",
+        "from bifrost import config\n\n"
+        "async def ensure_client():\n"
+        "    return await config.get('contoso_client')\n",
+    )
+    records = _source(
+        "workflows/facade/records.py",
+        "from bifrost import tables\n\n"
+        "async def list_records(client):\n"
+        "    return await tables.get('records')\n",
+    )
+
+    namespace = SourceFile("modules", "modules", "", "namespace", kind="namespace")
+    async def resolve_import(source_file: SourceFile, module: str, level: int):
+        return {
+            (entry.key, "facade", 1): facade,
+            (entry.key, "modules", 0): namespace,
+            (namespace.key, "facade", 1): facade,
+            (facade.key, "credentials", 1): credentials,
+            (facade.key, "", 1): facade,
+            (facade.key, "metadata", 1): metadata,
+            (facade.key, "records", 1): records,
+        }.get((source_file.key, module, level))
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.config.get", "bifrost.tables.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_module_getattr_facade_does_not_route_names_absent_from_literal_map() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from .facade import missing_operation\n\n"
+        "async def run():\n"
+        "    return await missing_operation()\n",
+    )
+    facade = _source(
+        "workflows/facade/__init__.py",
+        "import importlib\nMETHOD_TO_MODULE = {'list_records': 'records'}\n\n"
+        "def load_child(name):\n    return importlib.import_module(f'{__name__}.{name}')\n\n"
+        "def __getattr__(name):\n"
+        "    child_name = METHOD_TO_MODULE.get(name)\n"
+        "    if child_name is not None:\n"
+        "        module = load_child(child_name)\n"
+        "        function = getattr(module, name, None)\n"
+        "        async def bound(*args, **kwargs):\n"
+        "            client = await make_client()\n"
+        "            return await function(client, *args, **kwargs)\n"
+        "        return bound\n"
+        "    raise AttributeError(name)\n",
+    )
+    records = _source(
+        "workflows/facade/records.py",
+        "async def missing_operation(client):\n    return client\n",
+    )
+
+    async def resolve_import(source_file: SourceFile, module: str, level: int):
+        return {
+            (entry.key, "facade", 1): facade,
+            (facade.key, "records", 1): records,
+        }.get((source_file.key, module, level))
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == []
+    assert any("unresolved user function: missing_operation" in item for item in result["unknowns"])
+
+
+def test_local_class_name_takes_precedence_over_builtin_exception_name() -> None:
+    summary = summarize_source(
+        "class ValueError:\n    pass\n\n"
+        "class Derived(ValueError):\n    pass\n"
+    )
+
+    assert summary["classes"]["Derived"]["bases"] == [
+        {"kind": "local", "name": "ValueError"}
+    ]
+
+
+def test_list_sort_callback_follows_sdk_lambda() -> None:
     summary = summarize_source(
         "from bifrost import config\n\n"
         "def run():\n"
@@ -1671,7 +2672,1175 @@ def test_list_sort_callback_remains_needs_review() -> None:
     )
 
     assert any(
-        event["reason"] == "higher-order callback: sort"
+        event["kind"] == "sdk" and event["call"] == "bifrost.config.get"
         for event in summary["functions"]["run"]["events"]
-        if event["kind"] == "unknown"
     )
+
+
+@pytest.mark.asyncio
+async def test_imported_top_level_client_instance_follows_class_helpers() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from .service import client\n\n"
+        "async def run():\n"
+        "    return await client.execute()\n",
+    )
+    service = _source(
+        "workflows/service.py",
+        "from bifrost import config, tables\n\n"
+        "class ContosoClient:\n"
+        "    async def prepare(self):\n"
+        "        return await config.get('contoso')\n\n"
+        "    async def execute(self):\n"
+        "        await self.prepare()\n"
+        "        return await tables.get('records')\n\n"
+        "client = ContosoClient()\n",
+    )
+
+    async def resolve_import(source_file: SourceFile, module: str, level: int):
+        return {(entry.key, "service", 1): service}.get(
+            (source_file.key, module, level)
+        )
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.config.get", "bifrost.tables.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("factory_style", ["cached", "wrapper"])
+async def test_lazy_local_instance_facade_routes_only_concrete_client_methods(factory_style) -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from .lazy import list_records\n\n"
+        "async def run():\n"
+        "    return await list_records()\n",
+    )
+    lazy = _source(
+        "workflows/lazy.py",
+        "from bifrost import config, tables\n\n"
+        "class ContosoClient:\n"
+        "    async def list_records(self):\n"
+        "        return await tables.get('records')\n\n"
+        "def create_client():\n"
+        "    return ContosoClient()\n\n"
+        "class LazyClient:\n"
+        "    def __init__(self):\n"
+        "        self._client = None\n\n"
+        "    async def make_client(self):\n"
+        "        await config.get('contoso')\n"
+        "        if self._client is None:\n"
+        "            self._client = create_client()\n"
+        "        return self._client\n\n"
+        "    def __getattr__(self, name):\n"
+        "        async def wrapper(*args, **kwargs):\n"
+        "            client = await self.make_client()\n"
+        "            method = getattr(client, name)\n"
+        "            return await method(*args, **kwargs)\n"
+        "        return wrapper\n\n"
+        "_lazy = LazyClient()\n\n"
+        "def __getattr__(name):\n"
+        "    return getattr(_lazy, name)\n",
+    )
+
+    if factory_style == "wrapper":
+        lazy = _source(lazy.path, lazy.source.replace(
+            "return self._client", "return {}",
+        ).replace(
+            "client = await self.make_client()", "settings = await self.make_client()\n            client = create_client()",
+        ))
+
+    async def resolve_import(source_file: SourceFile, module: str, level: int):
+        return {(entry.key, "lazy", 1): lazy}.get((source_file.key, module, level))
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.config.get", "bifrost.tables.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_lazy_local_instance_facade_keeps_unknown_method_unresolved() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from .lazy import remove_records\n\n"
+        "async def run():\n"
+        "    return await remove_records()\n",
+    )
+    lazy = _source(
+        "workflows/lazy.py",
+        "class ContosoClient:\n"
+        "    async def list_records(self):\n"
+        "        return []\n\n"
+        "class LazyClient:\n"
+        "    async def make_client(self):\n"
+        "        return ContosoClient()\n\n"
+        "    def __getattr__(self, name):\n"
+        "        async def wrapper(*args, **kwargs):\n"
+        "            client = await self.make_client()\n"
+        "            return await getattr(client, name)(*args, **kwargs)\n"
+        "        return wrapper\n\n"
+        "_lazy = LazyClient()\n\n"
+        "def __getattr__(name):\n"
+        "    return getattr(_lazy, name)\n",
+    )
+
+    async def resolve_import(source_file: SourceFile, module: str, level: int):
+        return {(entry.key, "lazy", 1): lazy}.get((source_file.key, module, level))
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == []
+    assert any("ContosoClient.remove_records" in item for item in result["unknowns"])
+
+
+@pytest.mark.asyncio
+async def test_top_level_local_function_alias_is_an_importable_export() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from .helper import public\n\n"
+        "async def run():\n"
+        "    return await public()\n",
+    )
+    helper = _source(
+        "workflows/helper.py",
+        "from bifrost import config\n\n"
+        "async def implementation():\n"
+        "    return await config.get('contoso')\n\n"
+        "public = implementation\n",
+    )
+
+    async def resolve_import(source_file: SourceFile, module: str, level: int):
+        return {(entry.key, "helper", 1): helper}.get(
+            (source_file.key, module, level)
+        )
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.config.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('source,expected', [
+    (
+        "from bifrost import data_provider, tool, config\n"
+        "@data_provider()\ndef read():\n    return config.get('setting')\n"
+        "@tool()\ndef run():\n    return read()\n",
+        ['bifrost.config.get'],
+    ),
+    (
+        "from bifrost import integrations, context\n"
+        "async def run():\n"
+        "    integration = await integrations.get('contoso')\n"
+        "    integration.entity_id.lower()\n"
+        "    integration.oauth.client_id.split('.')\n"
+        "    return context.email.lower()\n",
+        ['bifrost.integrations.get'],
+    ),
+    (
+        "from bifrost import config\n"
+        "class ValidationError(ValueError):\n    pass\n"
+        "def parse(value):\n    return value.json() if value else {}\n"
+        "def run(value):\n"
+        "    ValidationError('invalid')\n"
+        "    parse(value).get('message')\n"
+        "    return config.get('setting')\n",
+        ['bifrost.config.get'],
+    ),
+])
+async def test_metadata_decorators_and_data_operations_do_not_require_permission_review(source, expected):
+    entry = _source('workflows/contoso.py', source)
+    async def resolve_import(_source_file, _module, _level):
+        return None
+    async def summarize(source_file):
+        return summarize_source(source_file.source)
+    result = await analyze_workflow(entry, 'run', resolve_import, summarize)
+    assert result['sdk_calls'] == expected
+    assert result['unknowns'] == []
+
+
+@pytest.mark.asyncio
+async def test_awaited_sdk_return_arguments_are_data_models_not_sdk_namespaces():
+    entry = _source('workflows/contoso.py',
+        "from bifrost import tables, agents\n"
+        "def normalize(document):\n    return document.get('data', document)\n"
+        "def serialize(run):\n    return run.model_dump(mode='json')\n"
+        "async def run():\n"
+        "    normalize(await tables.get('records', 'contoso'))\n"
+        "    serialize(await agents.get_run('contoso'))\n")
+    async def resolve_import(_source_file, _module, _level):
+        return None
+    async def summarize(source_file):
+        return summarize_source(source_file.source)
+    result = await analyze_workflow(entry, 'run', resolve_import, summarize)
+    assert result['sdk_calls'] == ['bifrost.agents.get_run', 'bifrost.tables.get']
+    assert result['unknowns'] == []
+
+
+@pytest.mark.asyncio
+async def test_imported_literal_data_exports_keep_module_initialization_but_not_class_dispatch():
+    entry = _source(
+        "workflows/run.py",
+        "from .constants import LABELS, QUERY\n\n"
+        "def run():\n"
+        "    return LABELS.get('open'), QUERY.format(ticket='contoso')\n",
+    )
+    constants = _source(
+        "workflows/constants.py",
+        "from bifrost import config\n\n"
+        "LABELS = {'open': {'name': 'Open'}}\n"
+        "QUERY = 'select {ticket}'\n"
+        "config.get('contoso')\n",
+    )
+
+    async def resolve_import(source_file: SourceFile, module: str, level: int):
+        return {(entry.key, "constants", 1): constants}.get(
+            (source_file.key, module, level)
+        )
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.config.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_local_data_fields_and_builtin_data_subclasses_do_not_dispatch_methods() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "class ContosoIndex:\n"
+        "    by_ticket: dict\n\n"
+        "    def lookup(self):\n"
+        "        return self.by_ticket.get('contoso')\n\n"
+        "class ContosoLabel(str):\n"
+        "    def parts(self):\n"
+        "        return self.rsplit('-', 1)\n\n"
+        "def run():\n"
+        "    index = ContosoIndex()\n"
+        "    label = ContosoLabel('a-b')\n"
+        "    return index.lookup(), label.rsplit('-', 1)\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == []
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_lazy_facade_direct_local_client_constructor_routes_requested_method() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from .lazy import list_records\n\n"
+        "async def run():\n"
+        "    return await list_records()\n",
+    )
+    lazy = _source(
+        "workflows/lazy.py",
+        "from bifrost import config, tables\n\n"
+        "class ContosoClient:\n"
+        "    def __init__(self, token):\n"
+        "        self.token = token\n\n"
+        "    async def list_records(self):\n"
+        "        return await tables.get('records')\n\n"
+        "class LazyClient:\n"
+        "    async def _get_integration(self):\n"
+        "        return await config.get('contoso')\n\n"
+        "    def __getattr__(self, name):\n"
+        "        async def wrapper(*args, **kwargs):\n"
+        "            integration = await self._get_integration()\n"
+        "            client = ContosoClient(integration)\n"
+        "            method = getattr(client, name)\n"
+        "            return await method(*args, **kwargs)\n"
+        "        return wrapper\n\n"
+        "_lazy = LazyClient()\n\n"
+        "def __getattr__(name):\n"
+        "    return getattr(_lazy, name)\n",
+    )
+
+    async def resolve_import(source_file: SourceFile, module: str, level: int):
+        return {(entry.key, "lazy", 1): lazy}.get((source_file.key, module, level))
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.config.get", "bifrost.tables.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field_annotation", ["dict", "dict | None", "Optional[dict]"])
+async def test_imported_local_instance_typed_data_field_is_not_a_class_method(field_annotation) -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from .evidence import evidence\n\n"
+        "def run():\n"
+        "    return evidence.by_ticket.get('contoso')\n",
+    )
+    evidence_module = _source(
+        "workflows/evidence.py",
+        "from typing import Optional\n"
+        "class Evidence:\n"
+        f"    by_ticket: {field_annotation}\n\n"
+        "evidence = Evidence()\n",
+    )
+
+    async def resolve_import(source_file: SourceFile, module: str, level: int):
+        return {(entry.key, "evidence", 1): evidence_module}.get(
+            (source_file.key, module, level)
+        )
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == []
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_reassigned_literal_export_remains_an_sdk_namespace_alias() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from .aliases import LABELS\n\n"
+        "def run():\n"
+        "    return LABELS.get('contoso')\n",
+    )
+    aliases = _source(
+        "workflows/aliases.py",
+        "from bifrost import config\n\n"
+        "LABELS = {}\n"
+        "LABELS = config\n",
+    )
+
+    async def resolve_import(source_file: SourceFile, module: str, level: int):
+        return {(entry.key, "aliases", 1): aliases}.get(
+            (source_file.key, module, level)
+        )
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.config.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_dataclass_sdk_callable_fields_only_inventory_reachable_callbacks() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from dataclasses import dataclass\n"
+        "from typing import Callable\n"
+        "from bifrost import tables\n\n"
+        "@dataclass\n"
+        "class Store:\n"
+        "    table_name: str\n"
+        "    get: Callable\n"
+        "    insert: Callable\n"
+        "    update: Callable\n"
+        "    delete: Callable\n\n"
+        "    async def acquire(self):\n"
+        "        await self.insert({'id': 'contoso'})\n"
+        "        return await self.get(self.table_name)\n\n"
+        "    def mark_delivered(self):\n"
+        "        return self.update({'delivered': True})\n\n"
+        "def make_store():\n"
+        "    return Store(table_name='records', get=tables.get, insert=tables.insert, update=tables.update, delete=tables.delete)\n\n"
+        "async def run():\n"
+        "    direct = Store(table_name='records', get=tables.get, insert=tables.insert, update=tables.update, delete=tables.delete)\n"
+        "    await direct.acquire()\n"
+        "    direct.mark_delivered()\n"
+        "    return await make_store().acquire()\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == [
+        "bifrost.tables.get",
+        "bifrost.tables.insert",
+        "bifrost.tables.update",
+    ]
+    assert "bifrost.tables.delete" not in result["sdk_calls"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_imported_dataclass_constructor_and_helper_return_follow_reachable_sdk_fields() -> None:
+    direct_entry = _source(
+        "workflows/run.py",
+        "from bifrost import tables\n"
+        "from .store import Store\n\n"
+        "async def run():\n"
+        "    direct = Store(get=tables.get, insert=tables.insert, update=tables.update, delete=tables.delete)\n"
+        "    await direct.acquire()\n"
+        "    return direct.mark_delivered()\n",
+    )
+    helper_entry = _source(
+        "workflows/helper_run.py",
+        "from .helpers import make_store\n\n"
+        "async def run():\n"
+        "    return await make_store().acquire()\n",
+    )
+    store = _source(
+        "workflows/store.py",
+        "from dataclasses import dataclass\n"
+        "from typing import Callable\n\n"
+        "@dataclass\n"
+        "class Store:\n"
+        "    get: Callable\n"
+        "    insert: Callable\n"
+        "    update: Callable\n"
+        "    delete: Callable\n\n"
+        "    async def acquire(self):\n"
+        "        await self.insert({'id': 'contoso'})\n"
+        "        return await self.get('records')\n\n"
+        "    def mark_delivered(self):\n"
+        "        return self.update({'delivered': True})\n",
+    )
+    helper = _source(
+        "workflows/helpers.py",
+        "from bifrost import tables\n"
+        "from .store import Store\n\n"
+        "def make_store():\n"
+        "    return Store(get=tables.get, insert=tables.insert, update=tables.update, delete=tables.delete)\n",
+    )
+
+    async def resolve_import(source_file: SourceFile, module: str, level: int):
+        return {
+            (direct_entry.key, "store", 1): store,
+            (helper_entry.key, "helpers", 1): helper,
+            (helper.key, "store", 1): store,
+        }.get((source_file.key, module, level))
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    direct_result = await analyze_workflow(
+        direct_entry, "run", resolve_import, summarize
+    )
+    helper_result = await analyze_workflow(
+        helper_entry, "run", resolve_import, summarize
+    )
+
+    assert direct_result["sdk_calls"] == [
+        "bifrost.tables.get",
+        "bifrost.tables.insert",
+        "bifrost.tables.update",
+    ]
+    assert helper_result["sdk_calls"] == [
+        "bifrost.tables.get",
+        "bifrost.tables.insert",
+    ]
+    assert "bifrost.tables.delete" not in direct_result["sdk_calls"]
+    assert "bifrost.tables.delete" not in helper_result["sdk_calls"]
+    assert direct_result["unknowns"] == []
+    assert helper_result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_local_function_and_method_result_data_stay_at_return_boundaries() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "def _deterministic_outcome():\n"
+        "    return {'value': 'ok'}\n\n"
+        "class GraphClient:\n"
+        "    def get(self):\n"
+        "        return {'value': 'ok'}\n\n"
+        "def run():\n"
+        "    row = _deterministic_outcome()\n"
+        "    client = GraphClient()\n"
+        "    graph_row = client.get()\n"
+        "    return row.get('value'), graph_row.get('value')\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == []
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_imported_return_reassigned_to_data_does_not_break_branch_analysis() -> None:
+    entry = _source(
+        "workflows/contoso.py",
+        "from .helpers import load\n"
+        "from bifrost import config\n"
+        "def run(clear):\n"
+        "    value = load()\n"
+        "    if clear:\n"
+        "        value = {}\n"
+        "    return value.get('name'), config.get('setting')\n",
+    )
+    helper = _source("workflows/helpers.py", "def load():\n    return {'name': 'Contoso'}\n")
+
+    async def resolve_import(source_file, module, level):
+        return helper if (source_file.key, module, level) == (entry.key, "helpers", 1) else None
+
+    async def summarize(source_file):
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.config.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_nullable_local_class_field_traverses_to_declared_data_field() -> None:
+    entry = _source(
+        "workflows/contoso.py",
+        "class KnowledgeEntry:\n    metadata: dict\n\n"
+        "class IndexDecision:\n"
+        "    entry: KnowledgeEntry | None\n"
+        "    def value(self):\n"
+        "        return self.entry.metadata.get('status')\n\n"
+        "def run():\n"
+        "    return IndexDecision().value()\n",
+    )
+
+    async def resolve_import(_source_file, _module, _level):
+        return None
+
+    async def summarize(source_file):
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+    assert result["sdk_calls"] == []
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_classmethod_instance_and_json_property_keep_data_return_boundary() -> None:
+    entry = _source(
+        "workflows/contoso.py",
+        "import json\n\n"
+        "class Plan:\n"
+        "    @classmethod\n"
+        "    def from_dict(cls, value) -> dict:\n"
+        "        obj = cls()\n"
+        "        obj.payload_json = '{}'\n"
+        "        return obj\n\n"
+        "    @property\n"
+        "    def payload(self):\n"
+        "        return json.loads(self.payload_json)\n\n"
+        "def run():\n"
+        "    return Plan.from_dict({}).payload.get('value')\n",
+    )
+
+    async def resolve_import(_source_file, _module, _level):
+        return None
+
+    async def summarize(source_file):
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+    assert result["sdk_calls"] == []
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_imported_constructor_stored_on_self_routes_its_reachable_method() -> None:
+    entry = _source(
+        "workflows/contoso.py",
+        "from .parser import BlockParser\n\n"
+        "def run():\n"
+        "    return BlockParser().parse()\n",
+    )
+    parser = _source(
+        "workflows/parser.py",
+        "from .util import Registry\n\n"
+        "class BlockParser:\n"
+        "    def __init__(self):\n"
+        "        self.processors = Registry()\n\n"
+        "    def parse(self):\n"
+        "        return self.processors.register()\n",
+    )
+    util = _source(
+        "workflows/util.py",
+        "from bifrost import config\n\n"
+        "class Registry:\n"
+        "    def register(self):\n"
+        "        return config.get('contoso')\n",
+    )
+
+    async def resolve_import(source_file, module, level):
+        return {
+            (entry.key, "parser", 1): parser,
+            (parser.key, "util", 1): util,
+        }.get((source_file.key, module, level))
+
+    async def summarize(source_file):
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+    assert result["sdk_calls"] == ["bifrost.config.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_imported_typed_class_field_routes_a_dotted_method_to_its_source() -> None:
+    entry = _source(
+        "workflows/contoso.py",
+        "from .decision import Decision\n\n"
+        "def run():\n"
+        "    return Decision().value()\n",
+    )
+    decision = _source(
+        "workflows/decision.py",
+        "from .record import Record\n\n"
+        "class Decision:\n"
+        "    record: Record | None\n\n"
+        "    def value(self):\n"
+        "        return self.record.lookup()\n",
+    )
+    record = _source(
+        "workflows/record.py",
+        "from bifrost import config\n\n"
+        "class Record:\n"
+        "    def lookup(self):\n"
+        "        return config.get('contoso')\n",
+    )
+
+    async def resolve_import(source_file, module, level):
+        return {
+            (entry.key, "decision", 1): decision,
+            (decision.key, "record", 1): record,
+        }.get((source_file.key, module, level))
+
+    async def summarize(source_file):
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.config.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_imported_class_callable_field_preserves_its_passed_sdk_callback() -> None:
+    entry = _source(
+        "workflows/contoso.py",
+        "from bifrost import tables\n"
+        "from .adapter import Adapter\n\n"
+        "async def run():\n"
+        "    adapter = Adapter(get=tables.get)\n"
+        "    return await adapter.get('records')\n",
+    )
+    adapter = _source(
+        "workflows/adapter.py",
+        "class Adapter:\n"
+        "    def __init__(self, *, get):\n"
+        "        self.get = get\n",
+    )
+
+    async def resolve_import(source_file, module, level):
+        return {
+            (entry.key, "adapter", 1): adapter,
+        }.get((source_file.key, module, level))
+
+    async def summarize(source_file):
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.tables.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_imported_dataclass_positional_callbacks_follow_only_invoked_fields() -> None:
+    entry = _source(
+        "workflows/contoso.py",
+        "from bifrost import tables\n"
+        "from .adapter import Adapter\n\n"
+        "async def run():\n"
+        "    adapter = Adapter(\n"
+        "        'records', tables.insert, tables.get, tables.update, tables.delete\n"
+        "    )\n"
+        "    return await adapter.acquire()\n",
+    )
+    adapter = _source(
+        "workflows/adapter.py",
+        "from dataclasses import dataclass, field\n"
+        "from typing import Callable, ClassVar\n\n"
+        "@dataclass\n"
+        "class Adapter:\n"
+        "    DEFAULT_TABLE: ClassVar[str] = 'records'\n"
+        "    table_name: str\n"
+        "    unused_marker: str = field(init=False)\n"
+        "    insert: Callable\n"
+        "    get: Callable\n"
+        "    update: Callable\n"
+        "    delete: Callable\n\n"
+        "    async def acquire(self):\n"
+        "        await self.insert({'id': 'contoso'})\n"
+        "        await self.update({'id': 'contoso'})\n"
+        "        return await self.get(self.table_name)\n",
+    )
+
+    async def resolve_import(source_file, module, level):
+        return {
+            (entry.key, "adapter", 1): adapter,
+        }.get((source_file.key, module, level))
+
+    async def summarize(source_file):
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == [
+        "bifrost.tables.get",
+        "bifrost.tables.insert",
+        "bifrost.tables.update",
+    ]
+    assert "bifrost.tables.delete" not in result["sdk_calls"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_imported_factory_data_field_continuation_stays_at_the_data_boundary() -> None:
+    entry = _source(
+        "workflows/contoso.py",
+        "from .factory import load_evidence\n\n"
+        "def run():\n"
+        "    return load_evidence().by_ticket.get('contoso')\n",
+    )
+    factory = _source(
+        "workflows/factory.py",
+        "from .evidence import Evidence\n\n"
+        "def load_evidence():\n"
+        "    return Evidence()\n",
+    )
+    evidence = _source(
+        "workflows/evidence.py",
+        "class Evidence:\n"
+        "    by_ticket: dict\n",
+    )
+
+    async def resolve_import(source_file, module, level):
+        return {
+            (entry.key, "factory", 1): factory,
+            (factory.key, "evidence", 1): evidence,
+        }.get((source_file.key, module, level))
+
+    async def summarize(source_file):
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == []
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "sdk_calls", "has_unknown"),
+    [
+        ("get", ["bifrost.config.get"], False),
+        ("future_capability", [], True),
+    ],
+)
+async def test_imported_dataclass_sdk_field_binding_overrides_data_annotation(
+    method, sdk_calls, has_unknown
+) -> None:
+    entry = _source(
+        "workflows/contoso.py",
+        "from bifrost import config\n"
+        "from .holder import Holder\n\n"
+        "def run():\n"
+        "    holder = Holder(client=config)\n"
+        f"    return holder.client.{method}('contoso')\n",
+    )
+    holder = _source(
+        "workflows/holder.py",
+        "from dataclasses import dataclass\n\n"
+        "@dataclass\n"
+        "class Holder:\n"
+        "    client: dict\n",
+    )
+
+    async def resolve_import(source_file, module, level):
+        return {
+            (entry.key, "holder", 1): holder,
+        }.get((source_file.key, module, level))
+
+    async def summarize(source_file):
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == sdk_calls
+    assert bool(result["unknowns"]) is has_unknown
+
+
+@pytest.mark.asyncio
+async def test_imported_constructor_tuple_and_default_callback_fields_follow_only_invoked_callbacks() -> None:
+    entry = _source(
+        "workflows/contoso.py",
+        "from bifrost import config, tables\n"
+        "from .coordinator import Coordinator\n\n"
+        "async def run():\n"
+        "    coordinator = Coordinator(\n"
+        "        adapter=tables.get,\n"
+        "        verify_customer=config.get,\n"
+        "        clock=config.get,\n"
+        "    )\n"
+        "    await coordinator.acquire()\n"
+        "    return coordinator.now()\n",
+    )
+    coordinator = _source(
+        "workflows/coordinator.py",
+        "class Coordinator:\n"
+        "    def __init__(self, *, adapter, verify_customer, clock=None):\n"
+        "        self.adapter, self.verify_customer = adapter, verify_customer\n"
+        "        self.clock = clock or (lambda: 'now')\n\n"
+        "    async def acquire(self):\n"
+        "        return await self.adapter('records')\n\n"
+        "    def now(self):\n"
+        "        return self.clock('time')\n",
+    )
+
+    async def resolve_import(source_file, module, level):
+        return {
+            (entry.key, "coordinator", 1): coordinator,
+        }.get((source_file.key, module, level))
+
+    async def summarize(source_file):
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.config.get", "bifrost.tables.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_imported_default_callback_lambda_keeps_its_reachable_sdk_call() -> None:
+    entry = _source(
+        "workflows/contoso.py",
+        "from .runner import Runner\n\n"
+        "def run():\n"
+        "    return Runner().run()\n",
+    )
+    runner = _source(
+        "workflows/runner.py",
+        "from bifrost import config\n\n"
+        "class Runner:\n"
+        "    def __init__(self, loader=None):\n"
+        "        self.loader = loader or (lambda: config.get('contoso'))\n\n"
+        "    def run(self):\n"
+        "        return self.loader()\n",
+    )
+
+    async def resolve_import(source_file, module, level):
+        return {
+            (entry.key, "runner", 1): runner,
+        }.get((source_file.key, module, level))
+
+    async def summarize(source_file):
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.config.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_from_package_import_class_base_and_constructor_field_keep_class_members() -> None:
+    entry = _source(
+        "workflows/contoso.py",
+        "from .worker import Worker\n\n"
+        "def run():\n"
+        "    return Worker().run()\n",
+    )
+    package = _source("workflows/__init__.py", "")
+    worker = _source(
+        "workflows/worker.py",
+        "from . import utility\n\n"
+        "class Worker(utility.Base):\n"
+        "    def __init__(self):\n"
+        "        self.registry = utility.Registry()\n\n"
+        "    def run(self):\n"
+        "        self.reset()\n"
+        "        return self.registry.register()\n",
+    )
+    utility = _source(
+        "workflows/utility.py",
+        "from bifrost import config, tables\n\n"
+        "class Base:\n"
+        "    def reset(self):\n"
+        "        return config.get('contoso')\n\n"
+        "class Registry:\n"
+        "    def register(self):\n"
+        "        return tables.get('records')\n",
+    )
+
+    async def resolve_import(source_file, module, level):
+        return {
+            (entry.key, "worker", 1): worker,
+            (worker.key, "", 1): package,
+            (package.key, "utility", 1): utility,
+        }.get((source_file.key, module, level))
+
+    async def summarize(source_file):
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.config.get", "bifrost.tables.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_imported_class_field_property_continuation_uses_the_property_return_shape() -> None:
+    entry = _source(
+        "workflows/contoso.py",
+        "from .decision import Decision\n\n"
+        "def run():\n"
+        "    return Decision().value()\n",
+    )
+    decision = _source(
+        "workflows/decision.py",
+        "from .record import Record\n\n"
+        "class Decision:\n"
+        "    record: Record | None\n\n"
+        "    def value(self):\n"
+        "        return self.record.catalog.get('contoso')\n",
+    )
+    record = _source(
+        "workflows/record.py",
+        "from bifrost import config\n\n"
+        "class Record:\n"
+        "    @property\n"
+        "    def catalog(self):\n"
+        "        return config\n",
+    )
+
+    async def resolve_import(source_file, module, level):
+        return {
+            (entry.key, "decision", 1): decision,
+            (decision.key, "record", 1): record,
+        }.get((source_file.key, module, level))
+
+    async def summarize(source_file):
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.config.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_literal_class_callback_map_follows_only_finite_imported_candidates() -> None:
+    entry = _source(
+        "workflows/contoso.py",
+        "from .formatter import Markdown\n\n"
+        "def run():\n"
+        "    return Markdown().render()\n",
+    )
+    formatter = _source(
+        "workflows/formatter.py",
+        "from typing import Callable, ClassVar\n"
+        "from .formatters import to_html, to_xhtml, to_dead\n\n"
+        "class Markdown:\n"
+        "    FORMATS: ClassVar[dict[str, Callable]] = {'html': to_html, 'xhtml': to_xhtml}\n\n"
+        "    DEAD_FORMATS: ClassVar[dict[str, Callable]] = {'dead': to_dead}\n\n"
+        "    def __init__(self):\n"
+        "        self.set_output_format('html')\n\n"
+        "    def set_output_format(self, output_format):\n"
+        "        def unreachable():\n"
+        "            self.serializer = self.DEAD_FORMATS['dead']\n"
+        "        try:\n"
+        "            self.serializer = self.FORMATS[output_format]\n"
+        "        except KeyError:\n"
+        "            self.serializer = self.FORMATS['html']\n\n"
+        "    def render(self):\n"
+        "        return self.serializer('contoso')\n",
+    )
+    formatters = _source(
+        "workflows/formatters.py",
+        "from bifrost import config, tables\n\n"
+        "def to_html(value):\n    return config.get(value)\n\n"
+        "def to_xhtml(value):\n    return tables.get(value)\n\n"
+        "def to_dead(value):\n    return tables.delete(value)\n",
+    )
+
+    async def resolve_import(source_file, module, level):
+        return {
+            (entry.key, "formatter", 1): formatter,
+            (formatter.key, "formatters", 1): formatters,
+        }.get((source_file.key, module, level))
+
+    async def summarize(source_file):
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+    assert result["sdk_calls"] == ["bifrost.config.get", "bifrost.tables.get"]
+    assert "bifrost.tables.delete" not in result["sdk_calls"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_imported_constructor_callback_is_followed_only_when_its_field_is_invoked() -> None:
+    entry = _source(
+        "workflows/contoso.py",
+        "from services.batch import BatchCoordinator\n"
+        "from .callbacks import audit, unused\n\n"
+        "def run():\n"
+        "    return BatchCoordinator(audit_sink=audit, unused_sink=unused).run()\n",
+    )
+    batch = _source(
+        "services/batch.py",
+        "class BatchCoordinator:\n"
+        "    def __init__(self, audit_sink, unused_sink):\n"
+        "        self.audit_sink = audit_sink\n"
+        "        self.unused_sink = unused_sink\n\n"
+        "    def run(self):\n"
+        "        return self.audit_sink()\n",
+    )
+    callbacks = _source(
+        "workflows/callbacks.py",
+        "from bifrost import config, tables\n\n"
+        "def audit():\n    return config.get('contoso')\n\n"
+        "def unused():\n    return tables.get('contoso')\n",
+    )
+
+    async def resolve_import(source_file, module, level):
+        return {
+            (entry.key, "services.batch", 0): batch,
+            (entry.key, "callbacks", 1): callbacks,
+        }.get((source_file.key, module, level))
+
+    async def summarize(source_file):
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+    assert result["sdk_calls"] == ["bifrost.config.get"]
+    assert "bifrost.tables.get" not in result["sdk_calls"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_static_local_method_return_continuation_uses_actual_sdk_shape_not_annotation() -> None:
+    entry = _source(
+        "workflows/contoso.py",
+        "from bifrost import config\n\n"
+        "class Service:\n"
+        "    @staticmethod\n"
+        "    def _catalog() -> dict:\n"
+        "        return config\n\n"
+        "def run():\n"
+        "    return Service._catalog().get('contoso')\n",
+    )
+
+    async def resolve_import(_source_file, _module, _level):
+        return None
+
+    async def summarize(source_file):
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+    assert result["sdk_calls"] == ["bifrost.config.get"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_babel_is_external_unless_a_local_source_is_resolved() -> None:
+    entry = _source(
+        "workflows/contoso.py",
+        "from babel.numbers import format_decimal\n\n"
+        "def run():\n"
+        "    return format_decimal(1)\n",
+    )
+    local_babel = _source(
+        "workflows/babel/numbers.py",
+        "from bifrost import config\n\n"
+        "def format_decimal(value):\n    return config.get('contoso')\n",
+    )
+
+    async def absent(_source_file, _module, _level):
+        return None
+
+    async def present(source_file, module, level):
+        return (
+            local_babel
+            if (source_file.key, module, level) == (entry.key, "babel.numbers", 0)
+            else None
+        )
+
+    async def summarize(source_file):
+        return summarize_source(source_file.source)
+
+    absent_result = await analyze_workflow(entry, "run", absent, summarize)
+    local_result = await analyze_workflow(entry, "run", present, summarize)
+    assert absent_result["sdk_calls"] == []
+    assert absent_result["unknowns"] == []
+    assert local_result["sdk_calls"] == ["bifrost.config.get"]
+    assert local_result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", [
+    "from bifrost.client import get_client\n"
+    "async def run():\n"
+    "    client = get_client()\n"
+    "    return await client.future_capability()\n",
+    "from bifrost import integrations\n"
+    "async def run():\n"
+    "    integration = await integrations.get('contoso')\n"
+    "    return await integration.oauth.future_capability()\n",
+])
+async def test_unknown_capability_methods_on_sdk_clients_remain_unresolved(source) -> None:
+    entry = _source("workflows/contoso.py", source)
+
+    async def resolve_import(_source_file, _module, _level):
+        return None
+
+    async def summarize(source_file):
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert any("unrecognized SDK call" in note for note in result["unknowns"])
