@@ -1225,8 +1225,8 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/applications/{app_id}/bundle-manifest",
-    "permission": "apps.read",
-    "reason": "Named app permission within original reach and resource sharing; writes target the actual app organization."
+    "permission": "apps.readbasic",
+    "reason": "Loads the running app manifest within original reach and resource sharing; source reads require apps.read."
   },
   {
     "access_class": "permission",

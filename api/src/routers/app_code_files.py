@@ -569,7 +569,9 @@ async def get_bundle_manifest(
 
     If no manifest exists yet, triggers a build and returns that one.
     """
-    app = await get_application_or_404(ctx, app_id)
+    # The manifest bootstraps the running app, just like its dist/assets.
+    # Source reads remain behind get_application_or_404 (apps.read).
+    app = await _get_application_by_id_or_404(ctx, app_id)
     app_storage = AppStorageService()
     storage_mode = "preview" if mode == FileMode.draft else "live"
     app_id_str = str(app.id)

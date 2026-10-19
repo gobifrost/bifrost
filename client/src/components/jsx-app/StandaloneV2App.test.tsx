@@ -347,6 +347,29 @@ describe("StandaloneV2App", () => {
 		expect(mockAuthFetch).toHaveBeenCalledTimes(1);
 	});
 
+	it("shows a safe permission message when refreshing stale assets is forbidden", async () => {
+		localStorage.setItem("bifrost_access_token", "tok-1");
+		mockAuthFetch.mockResolvedValueOnce({
+			ok: false,
+			status: 403,
+			text: async () => '{"detail":"internal deployment metadata"}',
+		});
+		render(<StandaloneV2App {...props("forbidden-refresh")} />);
+
+		let script!: HTMLScriptElement;
+		await waitFor(() => {
+			script = moduleScript("forbidden-refresh");
+		});
+		act(() => script.dispatchEvent(new Event("error")));
+
+		const details = await screen.findByLabelText("Bundle error details");
+		expect(details).toHaveTextContent(
+			"You do not have permission to open this app.",
+		);
+		expect(details).not.toHaveTextContent("403");
+		expect(details).not.toHaveTextContent("internal deployment metadata");
+	});
+
 	it("uses the preview basename when requested", async () => {
 		localStorage.setItem("bifrost_access_token", "tok-1");
 		const mount = vi.fn<StandaloneV2Module["mount"]>(() => vi.fn());

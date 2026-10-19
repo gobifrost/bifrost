@@ -2452,7 +2452,7 @@ class TestEveryPowerIsNoted:
             ),
             ("GET", "/api/applications/{app_id}/bundle-manifest"): (
                 app_code_files.get_bundle_manifest,
-                "apps.read",
+                "apps.readbasic",
             ),
             ("GET", "/api/applications/{app_id}/bundle-asset/{filename}"): (
                 app_code_files.get_bundle_asset,

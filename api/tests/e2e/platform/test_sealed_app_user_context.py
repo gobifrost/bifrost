@@ -198,3 +198,60 @@ async def test_sealed_app_file_read_retains_file_policy(
     finally:
         removed = e2e_client.post("/api/files/delete", headers=admin_headers, json=body)
         assert removed.status_code == 204, removed.text
+
+
+@pytest.mark.parametrize(
+    "sealed_app", [pytest.param({}, id="org"), pytest.param({"global": True}, id="global")],
+    indirect=True,
+)
+async def test_user_can_load_app_manifest_and_dist_without_source_permission(
+    e2e_client, org1_user, sealed_app,
+):
+    """Opening an app needs the User base role, not source-reading grants.
+
+    Seed static dist directly: no deploy, install, build, or worker jobs.
+    """
+    from src.services.solutions.app_build import SolutionAppBuilder
+
+    builder = SolutionAppBuilder()
+    app_id = sealed_app.app.id
+    await builder._upload_dist(app_id, {
+        "index.html": b'<script type="module" src="assets/main.js"></script>',
+        "assets/main.js": b'export const loaded = true;',
+    })
+    try:
+        response = e2e_client.get(
+            f"/api/applications/{app_id}/bundle-manifest?mode=live",
+            headers=org1_user.headers,
+        )
+        assert response.status_code == 200, response.text
+        manifest = response.json()
+        assert manifest["entry"] == "assets/main.js"
+        asset = e2e_client.get(
+            f'{manifest["base_url"]}/{manifest["entry"]}', headers=org1_user.headers,
+        )
+        assert asset.status_code == 200, asset.text
+        assert asset.text == 'export const loaded = true;'
+        source = e2e_client.get(
+            f"/api/applications/{app_id}/files", headers=org1_user.headers,
+        )
+        assert source.status_code == 403, source.text
+    finally:
+        await builder.delete_dist(app_id)
+
+
+@pytest.mark.parametrize("sealed_app", [{"app_access": "role_based"}], indirect=True)
+async def test_bundle_manifest_preserves_app_sharing(e2e_client, org1_user, sealed_app):
+    response = e2e_client.get(
+        f"/api/applications/{sealed_app.app.id}/bundle-manifest?mode=live",
+        headers=org1_user.headers,
+    )
+    assert response.status_code == 404, response.text
+
+
+async def test_bundle_manifest_preserves_organization_reach(e2e_client, org2_user, sealed_app):
+    response = e2e_client.get(
+        f"/api/applications/{sealed_app.app.id}/bundle-manifest?mode=live",
+        headers=org2_user.headers,
+    )
+    assert response.status_code == 404, response.text

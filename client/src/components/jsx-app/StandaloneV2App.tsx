@@ -11,6 +11,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ApplicationUpdateScreen } from "@/components/ApplicationUpdateScreen";
 import { AppLoadingSkeleton } from "./AppLoadingSkeleton";
 import { BundleLoadFailure } from "./BundleFeedback";
+import { getAppLoadErrorMessage } from "./app-load-error";
 import { useOrgScope } from "@/hooks/useOrgScope";
 import { authFetch } from "@/lib/api-client";
 import { clearAuthTokens, getActiveToken } from "@/lib/auth-token";
@@ -372,7 +373,7 @@ export function StandaloneV2App({
 					},
 				);
 				if (!response.ok) {
-					throw new Error(`Bundle manifest refresh failed: ${response.status}`);
+					throw new Error(getAppLoadErrorMessage(response.status));
 				}
 				const manifest = (await response.json()) as StandaloneBundleManifest;
 				if (manifest.app_model !== "standalone_v2" || !manifest.entry) {

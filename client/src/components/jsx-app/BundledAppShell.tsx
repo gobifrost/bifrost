@@ -41,6 +41,7 @@ import {
 	StandaloneV2App,
 	type StandaloneV2RuntimeContract,
 } from "./StandaloneV2App";
+import { getAppLoadErrorMessage } from "./app-load-error";
 
 // jsDelivr — JSPM's CDN 404s on floating tags (`@2`), only exact versions
 // resolve. Pinned to an exact version for reproducible loads.
@@ -206,10 +207,7 @@ export function prepareAppBundle({
 			{ signal },
 		);
 		if (!response.ok) {
-			const text = await response.text();
-			throw new Error(
-				`Bundle manifest fetch failed: ${response.status} ${text}`,
-			);
+			throw new Error(getAppLoadErrorMessage(response.status));
 		}
 
 		const manifest: BundleManifest = await response.json();
@@ -482,10 +480,7 @@ export function BundledAppShell({
 						{ signal: controller.signal },
 					);
 					if (!resp.ok) {
-						const txt = await resp.text();
-						throw new Error(
-							`Bundle manifest fetch failed: ${resp.status} ${txt}`,
-						);
+						throw new Error(getAppLoadErrorMessage(resp.status));
 					}
 					const manifest: BundleManifest = await resp.json();
 					// inline_v1 always has an entry; a v2 app may have null (handled
