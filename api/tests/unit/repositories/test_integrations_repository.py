@@ -16,6 +16,7 @@ from src.models.contracts.integrations import (
     IntegrationMappingUpdate,
 )
 from src.repositories.integrations import IntegrationsRepository
+from src.services.authorization.reach import EVERYTHING
 
 
 class TestIntegrationsRepository:
@@ -352,7 +353,7 @@ class TestIntegrationsRepository:
         mock_result.unique.return_value = mock_result
         mock_session.execute.return_value = mock_result
 
-        result = await repository.list_mappings(mock_mapping.integration_id)
+        result = await repository.list_mappings(mock_mapping.integration_id, reach=EVERYTHING)
 
         assert len(result) == 1
         assert result[0] == mock_mapping
@@ -366,7 +367,7 @@ class TestIntegrationsRepository:
         mock_result.unique.return_value = mock_result
         mock_session.execute.return_value = mock_result
 
-        result = await repository.list_mappings(uuid4())
+        result = await repository.list_mappings(uuid4(), reach=EVERYTHING)
 
         assert len(result) == 0
 

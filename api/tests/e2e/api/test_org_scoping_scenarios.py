@@ -157,6 +157,49 @@ class TestScenario2a_PlatformAdminBypass:
         assert r.status_code == 200, r.text
         assert r.json() is not None
 
+    def test_platform_admin_lists_every_mapping_and_scope_stays_exact(
+        self, e2e_client, platform_admin, org1, org2
+    ):
+        integration_name = f"admin_list_mappings_{uuid4().hex[:8]}"
+        integration_resp = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={"name": integration_name},
+        )
+        assert integration_resp.status_code == 201, integration_resp.text
+        integration = integration_resp.json()
+
+        try:
+            for org_id, entity_id in (
+                (str(PROVIDER_ORG_ID), "provider-tenant"),
+                (org1["id"], "org1-tenant"),
+                (org2["id"], "org2-tenant"),
+            ):
+                mapping_resp = e2e_client.post(
+                    f"/api/integrations/{integration['id']}/mappings",
+                    headers=platform_admin.headers,
+                    json={"organization_id": org_id, "entity_id": entity_id},
+                )
+                assert mapping_resp.status_code == 201, mapping_resp.text
+
+            def listed(scope: str | None) -> set[str]:
+                r = e2e_client.post(
+                    "/api/sdk/integrations/list_mappings",
+                    headers=platform_admin.headers,
+                    json={"name": integration_name, "scope": scope},
+                )
+                assert r.status_code == 200, r.text
+                return {item["entity_id"] for item in r.json()["items"]}
+
+            assert listed(None) == {"provider-tenant", "org1-tenant", "org2-tenant"}
+            assert listed(str(PROVIDER_ORG_ID)) == {"provider-tenant"}
+            assert listed(org1["id"]) == {"org1-tenant"}
+        finally:
+            e2e_client.delete(
+                f"/api/integrations/{integration['id']}",
+                headers=platform_admin.headers,
+            )
+
 
 # =============================================================================
 # Scenario 2b: Provider-org membership does not grant foreign authority

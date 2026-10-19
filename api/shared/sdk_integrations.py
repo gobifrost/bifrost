@@ -10,7 +10,7 @@ Single implementation used by both entry points:
 
 Both paths share authenticated scope input and resolve it after integration
 lookup, preserving the historical missing-name response. They also share the
-provider-bypass enumerate-all rule, entity-ID lookup boundaries, the
+reach-filtered mapping enumeration, entity-ID lookup boundaries, the
 declared-Solution 424, missing integration/mapping nulls, merged configs,
 external-user behavior, OAuth token cascade/decryption, and the optional
 scope-based token fetch — so HTTP and worker-local results are identical by
@@ -44,8 +44,11 @@ from src.core.log_safety import log_safe
 from src.services.authorization.enforce import (
     Caller,
     allows_permission,
+    operation_reach,
+    permitted_organizations,
     require_permission,
 )
+from src.services.authorization.reach import OrgReach
 
 logger = logging.getLogger(__name__)
 
@@ -532,43 +535,37 @@ async def list_sdk_integration_mappings(
 ) -> list[dict[str, Any]] | None:
     """List mappings for an integration (shared by both paths).
 
+    A list returns the mappings whose organization the caller may read
+    with ``integrations.read``, filtered in SQL like the REST mapping list.
+    An explicit ``scope`` (an organization UUID or ``"global"``) is an exact
+    filter inside that reach; it never widens the result.
+
     Args:
         session: Short-lived parent/HTTP database session.
         name: Integration name.
-        scope: Raw validated scope string (None/"" is UNSET). Only used
-            to distinguish "caller has no org" (empty list) from an
-            explicit bypassed-global request (all mappings) when
-            ``org_id`` is None.
-        caller_org_id: Authenticated caller's organization.
-        external: True for a direct EXTERNAL portal caller — merged
-            configs drop the global tier (NEW-G). Engine executions pass
-            False.
+        scope: Raw validated scope string. None/"" (UNSET) lists every
+            mapping in the caller's reach.
+        caller: Verified principal plus original-user authorization context.
 
     Returns:
-        List of JSON-serializable mapping dicts, ``[]`` for a scopeless
-        caller on UNSET, or None if the integration is not found.
+        List of JSON-serializable mapping dicts, or None if the integration
+        is not found.
     """
     from src.repositories.integrations import IntegrationsRepository
     from shared.sdk_config import resolve_sdk_scope
-    org_id = await resolve_sdk_scope(scope, caller=caller)
-    require_permission(caller, "integrations.read", org_id)
+
+    if scope is None or scope == "":
+        reach = operation_reach(caller, "integrations.mappings.list")
+    else:
+        org_id = await resolve_sdk_scope(scope, caller=caller)
+        require_permission(caller, "integrations.read", org_id)
+        reach = _exact_reach(org_id)
     repo = IntegrationsRepository(session)
     integration = await repo.get_integration_by_name(name)
     if not integration:
         return None
 
-    # Apply the C2 gate outcome: explicit ``scope`` (UUID or "global")
-    # required platform-admin or provider-org bypass before this call.
-    # UNSET (None / "") falls back to the caller's own org.
-    # ``scope="global"`` resolves to None — list all mappings (bypass
-    # already enforced). A resolved provider org is also an enumerate-all
-    # scope for mapping listing: providers need to see every customer
-    # mapping by default.
-    mappings = (
-        []
-        if org_id is None
-        else await repo.list_mappings(integration.id, organization_id=org_id)
-    )
+    mappings = await repo.list_mappings(integration.id, reach=reach)
 
     logger.info(
         f"SDK listed {len(mappings)} mappings for integration '{log_safe(name)}'"
@@ -580,6 +577,13 @@ async def list_sdk_integration_mappings(
         )
         for mapping in mappings
     ]
+
+
+def _exact_reach(organization_id: UUID | None) -> OrgReach:
+    """A reach of exactly one organization, or of Global rows only."""
+    if organization_id is None:
+        return OrgReach(include_global=True)
+    return OrgReach(organization_ids=frozenset({organization_id}))
 
 
 async def get_sdk_integration_mapping_dict(
@@ -596,15 +600,10 @@ async def get_sdk_integration_mapping_dict(
         session: Short-lived parent/HTTP database session.
         name: Integration name.
         scope: Requested scope string.
-        caller_org_id: Authenticated caller's organization.
-        entity_id: External entity ID fallback lookup, scoped by the
-            resolved org: for a global-scoped caller (bypass) the search
-            spans all mappings; otherwise it is restricted to the
-            caller's resolved org so non-bypass callers can't probe
-            other orgs' entity_ids.
-        external: True for a direct EXTERNAL portal caller — merged
-            config drops the global tier (NEW-G). Engine executions pass
-            False.
+        caller: Verified principal plus original-user authorization context.
+        entity_id: External entity ID fallback lookup. An organization
+            scope searches that organization only; a Global scope searches
+            the organizations where the caller holds ``integrations.read``.
 
     Returns:
         JSON-serializable mapping dict, or None if not found.
@@ -626,11 +625,16 @@ async def get_sdk_integration_mapping_dict(
     if org_id is not None:
         mapping = await repo.get_mapping_by_org(integration.id, org_id)
 
-    # entity_id fallback search, scoped by the resolved org.
+    # entity_id fallback search: the resolved org, or for Global every
+    # organization the caller may read.
     if not mapping and entity_id:
         candidates = await repo.list_mappings(
             integration.id,
-            organization_id=org_id,
+            reach=(
+                permitted_organizations(caller, "integrations.read")
+                if org_id is None
+                else _exact_reach(org_id)
+            ),
         )
         for m in candidates:
             if m.entity_id == entity_id:

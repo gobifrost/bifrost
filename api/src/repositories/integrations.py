@@ -25,6 +25,7 @@ from src.models.orm.config import Config
 from src.models.orm.integrations import Integration, IntegrationConfigSchema, IntegrationMapping
 from src.repositories.base import BaseRepository
 from src.repositories.org_scoped import OrgScopedRepository
+from src.services.authorization.reach import OrgReach
 
 logger = logging.getLogger(__name__)
 
@@ -386,18 +387,16 @@ class IntegrationsRepository(BaseRepository[Integration]):
         self,
         integration_id: UUID,
         *,
-        organization_id: UUID | None = None,
+        reach: OrgReach,
     ) -> list[IntegrationMapping]:
         """
-        List mappings for an integration.
+        List an integration's mappings whose organization is in ``reach``.
 
         Args:
             integration_id: Integration UUID
-            organization_id: Optional org filter. When provided, returns only
-                that org's mapping (used by non-bypass callers in the SDK
-                surface so they can't enumerate other orgs' mappings). When
-                ``None``, returns all mappings — reserved for callers that
-                have already gated on platform-admin / provider-org bypass.
+            reach: Organizations to include, filtered in SQL. Callers pass the
+                caller's permitted reach to enumerate, or a single-organization
+                reach for an exact scope.
 
         Returns:
             List of mappings for the integration (possibly empty).
@@ -405,8 +404,9 @@ class IntegrationsRepository(BaseRepository[Integration]):
         stmt = select(IntegrationMapping).where(
             IntegrationMapping.integration_id == integration_id
         )
-        if organization_id is not None:
-            stmt = stmt.where(IntegrationMapping.organization_id == organization_id)
+        predicate = reach.where(IntegrationMapping.organization_id)
+        if predicate is not None:
+            stmt = stmt.where(predicate)
         stmt = stmt.options(
             joinedload(IntegrationMapping.integration)
             .options(joinedload(Integration.oauth_provider)),
