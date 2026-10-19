@@ -110,7 +110,7 @@ async def test_actual_policy_denial_is_recorded_as_enforced(db_session, world) -
     assert note.decision[1].outcome == "failure"
 
 
-async def test_full_policy_authority_does_not_become_a_literal_admin_or_actor_role(
+async def test_full_policy_authority_admits_admin_rules_without_a_role_or_actor_role(
     db_session, world
 ) -> None:
     context = AuthorizationContext(
@@ -144,7 +144,7 @@ async def test_full_policy_authority_does_not_become_a_literal_admin_or_actor_ro
     assert policy_principal.role_ids == []
     assert policy_principal.is_superuser is False
     assert evaluate_action("create", _policies(AUTHORITY_RULE), {}, policy_principal)
-    assert not evaluate_action("create", _policies(ADMIN_RULE), {}, policy_principal)
+    assert evaluate_action("create", _policies(ADMIN_RULE), {}, policy_principal)
     assert not evaluate_action("create", _policies(HR_RULE), {}, policy_principal)
 
 

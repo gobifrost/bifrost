@@ -262,3 +262,66 @@ def test_an_autonomous_identity_cannot_enter_an_unassigned_role_based_agent(
     finally:
         e2e_client.delete(f"/api/events/sources/{source['id']}", headers=admin)
         e2e_client.delete(f"/api/agents/{agent['id']}", headers=admin)
+
+
+LEGACY_ADMIN_PROBE = '''"""Legacy admin-rule probe."""
+from bifrost import tables, workflow
+
+
+@workflow(name="{name}", description="Legacy admin-rule probe")
+async def {name}(table: str):
+    result = await tables.query(table)
+    return {{"rows": len(result.documents)}}
+'''
+
+
+def test_a_full_access_run_satisfies_a_legacy_admin_rule_that_its_person_does_not(
+    e2e_client, platform_admin, org1
+) -> None:
+    """``user.is_platform_admin`` rules admitted every workflow before Zero
+    Trust Automation; a non-admin's Full Access run still reads the table
+    while the same person calling directly is refused."""
+    tag = uuid.uuid4().hex[:8]
+    admin = platform_admin.headers
+    person, person_user = _person(e2e_client, admin, org1["id"], tag=tag, key="legacy")
+    table = _ok(
+        e2e_client.post(
+            "/api/tables",
+            headers=admin,
+            json={
+                "name": f"ac_legacy_{tag}",
+                "organization_id": None,
+                "policies": {
+                    "policies": [
+                        {
+                            "name": "admin_bypass",
+                            "actions": ["read", "create", "update", "delete"],
+                            "when": {"user": "is_platform_admin"},
+                        }
+                    ]
+                },
+            },
+        )
+    )
+    _ok(e2e_client.post(f"/api/tables/{table['id']}/documents", headers=admin, json={"data": {"k": 1}}))
+    name = f"ac_legacy_probe_{tag}"
+    path = f"workflows/{name}.py"
+    probe = write_and_register(
+        e2e_client, admin, path, LEGACY_ADMIN_PROBE.format(name=name), name, organization_id=org1["id"]
+    )
+    try:
+        _ok(e2e_client.patch(f"/api/workflows/{probe['id']}", headers=admin, json={"access_level": "authenticated"}))
+        run = execute_workflow_sync(
+            e2e_client, person_user.headers, probe["id"], {"table": table["name"]}, max_wait=60
+        )
+        assert run["status"] == "Success", run
+        assert run["result"] == {"rows": 1}
+
+        direct = e2e_client.post(
+            f"/api/tables/{table['id']}/documents/query", headers=person_user.headers, json={}
+        )
+        assert direct.status_code == 403 or direct.json()["documents"] == [], direct.text
+    finally:
+        e2e_client.delete(f"/api/files/editor?path={path}", headers=admin)
+        e2e_client.delete(f"/api/tables/{table['id']}", headers=admin)
+        e2e_client.delete(f"/api/users/{person['id']}", headers=admin)

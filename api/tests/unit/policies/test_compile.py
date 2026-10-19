@@ -124,6 +124,14 @@ def test_user_is_platform_admin_resolves_at_compile_time():
     assert "TRUE" in sql_role_admin.upper() or "1 = 1" in sql_role_admin
 
 
+def test_legacy_admin_term_holds_for_a_full_access_run_at_compile_time():
+    sql_full = _compile(
+        {"user": "is_platform_admin"},
+        user=FakeUser(policy_authorities=frozenset({"platform_admin"})),
+    )
+    assert "TRUE" in sql_full.upper() or "1 = 1" in sql_full
+
+
 def test_policy_authority_resolves_at_compile_time():
     sql_full = _compile(
         {"authority": "platform_admin"},

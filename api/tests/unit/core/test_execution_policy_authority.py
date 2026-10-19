@@ -82,9 +82,10 @@ async def test_execution_policy_authority_uses_persisted_workflow_without_changi
     assert user is not None
     assert user.user_id == run_user.user_id
     assert ("platform_admin" in user.policy_authorities) is expected_authority
-    # ``user.is_platform_admin`` in a policy means an actual Platform Admin
-    # role ID.  A Full workflow is a separate internal authority.
-    assert resolve_user_field(user, "is_platform_admin") is False
+    # A Full workflow holds the platform-admin policy authority, which the
+    # legacy ``user.is_platform_admin`` term also honors; it adds no role.
+    assert user.role_ids == []
+    assert resolve_user_field(user, "is_platform_admin") is expected_authority
     assert resolve_policy_authority(user, "platform_admin") is expected_authority
     db.get.assert_awaited_once()
     assert db.get.await_args.args[1] == execution_id
