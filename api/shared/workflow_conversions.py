@@ -61,7 +61,6 @@ from src.services.audit_context import ActorContext
 from src.services.authorization.callers import CallerUnavailable, load_human_caller
 from src.services.authorization.enforce import Caller, require_operation
 from src.services.authorization.evaluator import GLOBAL
-from src.services.identities import IdentityCreate, create_identity
 from src.services.solutions.write_lock import SolutionWriteLockHeld, solution_write_lock
 from src.services.platform_jobs import (
     enqueue_platform_job,
@@ -328,23 +327,6 @@ def _sdk_permission_fingerprint() -> str:
     return sdk_permission_fingerprint()
 
 
-def _broad_identity_warning(
-    base_role_id: UUID,
-    role_rows: list[UUID],
-    boundaries: list[tuple[UUID, str, UUID | None]],
-    role_permissions: list[tuple[UUID, str]],
-) -> bool:
-    """Flag authority that a new User-base identity cannot silently inherit."""
-    from shared.builtin_roles import USER_ROLE_ID
-
-    return (
-        base_role_id != USER_ROLE_ID
-        or bool(role_rows)
-        or bool(boundaries)
-        or any(permission == "*" for _, permission in role_permissions)
-    )
-
-
 async def _authority_snapshot(
     db: AsyncSession, workflow: Workflow
 ) -> tuple[dict, dict | None]:
@@ -430,12 +412,18 @@ async def _authority_snapshot(
             if identity.organization_id
             else None,
             "shared": workflow.run_identity_id is None,
-            "broad_power_warning": _broad_identity_warning(
-                identity.base_role_id, role_rows, boundaries, role_permissions
-            ),
         }
     )
     return snapshot, public
+
+
+def _identity_warnings(identity: dict | None, authority: dict) -> list[str]:
+    """Describe existing run-identity configuration without blocking conversion."""
+    if identity is None:
+        return ["The workflow run identity is unavailable."]
+    if not authority["identity_is_active"]:
+        return ["The workflow run identity is inactive."]
+    return []
 
 
 async def _policy_revision_snapshot(db: AsyncSession, workflow: Workflow) -> dict:
@@ -526,9 +514,16 @@ async def _report_for_workflow(
     source_calls = sorted(set(str(call) for call in analysis.get("sdk_calls", [])))
     # The mapping follows the SDK transport bindings and AccessList, maintained
     # separately from this durable job so source analysis cannot invent powers.
-    from shared.workflow_conversion_sdk import permissions_for_sdk_calls
+    from shared.workflow_conversion_sdk import (
+        permissions_for_sdk_calls,
+        permissions_for_sdk_invocations,
+    )
 
     source_permissions, source_unknowns = permissions_for_sdk_calls(source_calls)
+    source_permissions = sorted(
+        set(source_permissions)
+        | set(permissions_for_sdk_invocations(analysis.get("resource_calls", [])))
+    )
     request = (
         (
             await db.execute(
@@ -553,27 +548,13 @@ async def _report_for_workflow(
     )
     authority, identity = await _authority_snapshot(db, workflow)
     policies = await _policy_revision_snapshot(db, workflow)
-    from shared.workflow_conversion_access import (
-        recorded_identity_requirements,
-        recorded_permission_requirements,
-        source_identity_requirements,
-    )
+    from shared.workflow_conversion_access import recorded_permission_requirements
 
     observed_permissions = sorted(set(observed_permissions) | set(
         await recorded_permission_requirements(
             db, workflow.id, window_days=OBSERVATION_WINDOW_DAYS
         )
     ))
-    dedicated_requirements = await recorded_identity_requirements(
-        db, workflow, window_days=OBSERVATION_WINDOW_DAYS
-    )
-    proposed_permissions = sorted(set(source_permissions) | set(observed_permissions))
-    from shared.workflow_conversion_resources import source_resource_requirements
-
-    resource_requirements = await source_resource_requirements(
-        db, workflow, analysis, proposed_permissions, observed_operations
-    )
-    source_permissions = sorted(set(source_permissions) | set(resource_requirements.permissions))
     proposed_permissions = sorted(set(source_permissions) | set(observed_permissions))
     unknowns = list(
         dict.fromkeys(
@@ -581,28 +562,15 @@ async def _report_for_workflow(
                 *analysis.get("unknowns", []),
                 *source_unknowns,
                 *mapping_unknowns,
-                *dedicated_requirements,
-                *source_identity_requirements(analysis, workflow.organization_id),
-                *resource_requirements.unknowns,
             ]
         )
     )
-    if identity is None:
-        unknowns.append("The workflow run identity is unavailable and needs review.")
-    elif not authority["identity_is_active"]:
-        unknowns.append("The workflow run identity is inactive and needs review.")
+    warnings = _identity_warnings(identity, authority)
     current_mode = (await effective_workflow_permission_mode(db, workflow)).value
     status_value = (
         "already_declared"
         if current_mode == "restricted" and not unknowns
         else ("needs_review" if unknowns else "ready")
-    )
-    warnings = (
-        [
-            "A dedicated identity starts with the User base role and no additional organization reach; recorded requirements need separate review."
-        ]
-        if dedicated_requirements
-        else []
     )
     report = {
         "workflow_id": str(workflow.id),
@@ -1001,17 +969,6 @@ async def run_apply(context: PlatformJobContext, payload) -> dict:
                     "Unresolved source analysis must be explicitly acknowledged",
                     result={"completed": completed},
                 )
-            if (
-                selection.identity_strategy == "keep_current"
-                and current["identity"]
-                and current["identity"].get("broad_power_warning")
-                and not selection.acknowledged_broad_identity
-            ):
-                raise PlatformJobFailure(
-                    "broad_identity_unacknowledged",
-                    "Keeping a broad existing identity must be explicitly acknowledged",
-                    result={"completed": completed},
-                )
             solution_request = None
             if workflow.solution_id is not None:
                 solution_request = (
@@ -1033,20 +990,7 @@ async def run_apply(context: PlatformJobContext, payload) -> dict:
                         result={"completed": completed},
                     )
             await _fenced_job(db, context)
-            created_identity_id = None
-            if selection.identity_strategy == "dedicated":
-                identity = await create_identity(
-                    db,
-                    caller,
-                    IdentityCreate(
-                        name=f"Workflow {workflow.name[:200]} conversion {str(workflow.id)[:8]}",
-                        organization_id=workflow.organization_id,
-                    ),
-                )
-                created_identity_id = str(identity.id)
             if workflow.solution_id is None:
-                if created_identity_id is not None:
-                    workflow.run_identity_id = UUID(created_identity_id)
                 workflow.permission_mode = "restricted"
                 await db.execute(
                     WorkflowPermissionGrant.__table__.delete().where(
@@ -1073,9 +1017,6 @@ async def run_apply(context: PlatformJobContext, payload) -> dict:
                     )
                     .values(
                         permission_mode="restricted",
-                        run_identity_id=UUID(created_identity_id)
-                        if created_identity_id
-                        else workflow.run_identity_id,
                     )
                 )
                 await db.refresh(workflow)
@@ -1134,7 +1075,6 @@ async def run_apply(context: PlatformJobContext, payload) -> dict:
                 details={
                     "analysis_job_id": str(payload.analysis_job_id),
                     "selection_fingerprint": selection.source_fingerprint,
-                    "identity_strategy": selection.identity_strategy,
                     "proposed_permission_count": len(current["proposed_permissions"]),
                     "acknowledged_unknowns": selection.acknowledged_unknowns,
                 },
@@ -1153,10 +1093,7 @@ async def run_apply(context: PlatformJobContext, payload) -> dict:
             report_row.review = {
                 "applied": True,
                 "applied_selection_fingerprint": selection.source_fingerprint,
-                "identity_strategy": selection.identity_strategy,
-                "identity_id": created_identity_id,
                 "acknowledged_unknowns": selection.acknowledged_unknowns,
-                "acknowledged_broad_identity": selection.acknowledged_broad_identity,
             }
             await db.commit()
         completed.append(str(selection.workflow_id))

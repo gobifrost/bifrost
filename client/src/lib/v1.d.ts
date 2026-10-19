@@ -29921,11 +29921,6 @@ export interface components {
              * @default false
              */
             shared: boolean;
-            /**
-             * Broad Power Warning
-             * @default false
-             */
-            broad_power_warning: boolean;
         };
         /** WorkflowConversionReport */
         WorkflowConversionReport: {
@@ -30059,21 +30054,10 @@ export interface components {
             /** Source Fingerprint */
             source_fingerprint: string;
             /**
-             * Identity Strategy
-             * @default dedicated
-             * @enum {string}
-             */
-            identity_strategy: "dedicated" | "keep_current";
-            /**
              * Acknowledged Unknowns
              * @default false
              */
             acknowledged_unknowns: boolean;
-            /**
-             * Acknowledged Broad Identity
-             * @default false
-             */
-            acknowledged_broad_identity: boolean;
         };
         /** WorkflowConversionSolutionRequestSummary */
         WorkflowConversionSolutionRequestSummary: {

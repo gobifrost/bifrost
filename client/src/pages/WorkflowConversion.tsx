@@ -39,7 +39,6 @@ import {
 	SheetHeader,
 	SheetTitle,
 } from "@/components/ui/sheet";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { PaginationFooter } from "@/components/pagination/PaginationFooter";
 import {
 	ConversionWizardFrame,
@@ -61,13 +60,10 @@ import {
 } from "@/services/workflowConversions";
 
 type Item = WorkflowConversionReport["items"][number];
-type IdentityStrategy = "dedicated" | "keep_current";
 type Selection = {
 	workflow_name: string;
 	source_fingerprint: string;
-	identity_strategy: IdentityStrategy;
 	acknowledged_unknowns: boolean;
-	acknowledged_broad_identity: boolean;
 	requires_solution_ack: boolean;
 };
 const PAGE_SIZE = 25;
@@ -194,12 +190,7 @@ function WorkflowConversionWizard() {
 	);
 	const selectionReady =
 		entries.length > 0 &&
-		!entries.some(
-			([, value]) =>
-				!value.acknowledged_unknowns ||
-				(value.identity_strategy === "keep_current" &&
-					!value.acknowledged_broad_identity),
-		);
+		!entries.some(([, value]) => !value.acknowledged_unknowns);
 	const select = (item: Item, checked: boolean) =>
 		setSelected((current) => {
 			const next = { ...current };
@@ -207,9 +198,7 @@ function WorkflowConversionWizard() {
 				next[item.workflow_id] = {
 					workflow_name: item.workflow_name,
 					source_fingerprint: item.source_fingerprint,
-					identity_strategy: "dedicated",
 					acknowledged_unknowns: (item.unknowns ?? []).length === 0,
-					acknowledged_broad_identity: false,
 					requires_solution_ack:
 						item.solution_id != null ||
 						item.solution_permission_request != null,
@@ -269,10 +258,7 @@ function WorkflowConversionWizard() {
 				selections: entries.map(([workflow_id, value]) => ({
 					workflow_id,
 					source_fingerprint: value.source_fingerprint,
-					identity_strategy: value.identity_strategy,
 					acknowledged_unknowns: value.acknowledged_unknowns,
-					acknowledged_broad_identity:
-						value.acknowledged_broad_identity,
 				})),
 				acknowledged_solution_requests: solutionAck,
 			});
@@ -368,7 +354,7 @@ function WorkflowConversionWizard() {
 				description={
 					stage === "scope"
 						? undefined
-						: "Review proposed permissions and run identities before applying changes."
+						: "Review proposed permissions before applying changes."
 				}
 				actions={
 					jobId ? (
@@ -633,7 +619,7 @@ function WorkflowConversionWizard() {
 								<div className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3 border-b px-4 py-3 text-xs font-medium text-muted-foreground">
 									<span>Select</span>
 									<span>
-										Workflow · transition · identity risk
+										Workflow · transition · run identity
 									</span>
 									<span>Readiness</span>
 								</div>
@@ -687,12 +673,9 @@ function WorkflowConversionWizard() {
 														? "Full Access"
 														: "Declared Permissions"}{" "}
 													→ Declared Permissions ·{" "}
-													{item.identity
-														?.broad_power_warning
-														? "Broad identity"
-														: item.identity?.shared
-															? "Shared identity"
-															: "Dedicated identity"}
+													{item.identity?.shared
+														? "Shared identity"
+														: "Dedicated identity"}
 												</p>
 												{item.error && (
 													<p className="mt-1 text-xs text-destructive">
@@ -777,17 +760,14 @@ function WorkflowConversionWizard() {
 				)}
 				{stage === "apply" && <OperationStage operation={operation} />}
 				{!desktop && (
-					<Sheet
-						open={sheetOpen}
-						onOpenChange={(open) => {
-							setSheetOpen(open);
-							if (!open)
-								requestAnimationFrame(() =>
-									reviewTriggerRef.current?.focus(),
-								);
-						}}
-					>
-						<SheetContent className="flex w-full flex-col overflow-hidden sm:max-w-xl">
+					<Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+						<SheetContent
+							className="flex w-full flex-col overflow-hidden sm:max-w-xl"
+							onCloseAutoFocus={(event) => {
+								event.preventDefault();
+								reviewTriggerRef.current?.focus();
+							}}
+						>
 							<SheetHeader className="border-b">
 								<SheetTitle>Workflow details</SheetTitle>
 								<SheetDescription>
@@ -807,19 +787,13 @@ function WorkflowConversionWizard() {
 							<AlertDialogDescription>
 								Apply declared-permission proposals to{" "}
 								{entries.length} selected workflow
-								{entries.length === 1 ? "" : "s"}. This uses
-								exact reviewed fingerprints and does not run
-								workflows.
+								{entries.length === 1 ? "" : "s"}. Their current
+								run identities and reach are preserved.
 							</AlertDialogDescription>
 						</AlertDialogHeader>
 						<ul className="max-h-40 space-y-1 overflow-auto text-sm">
 							{entries.map(([id, value]) => (
-								<li key={id}>
-									{value.workflow_name || id} ·{" "}
-									{value.identity_strategy === "dedicated"
-										? "Dedicated identity"
-										: "Keep current identity"}
-								</li>
+								<li key={id}>{value.workflow_name || id}</li>
 							))}
 						</ul>
 						{solutionRequired && (
@@ -937,8 +911,8 @@ function Scope({
 								: "All workflows you can review"}
 						</h2>
 						<p className="mt-2 text-sm leading-6 text-muted-foreground">
-							Review proposed permissions and run identities.
-							Access changes only when you Apply.
+							Review proposed permissions. Access changes only
+							when you Apply.
 						</p>
 						<p className="mt-6 flex items-start gap-2 text-xs leading-5 text-muted-foreground">
 							<FileCode2
@@ -990,11 +964,6 @@ function Inspector({
 	selection?: Selection;
 	update: (change: Partial<Selection>) => void;
 }) {
-	const reviewedStrategy = item.review?.identity_strategy;
-	const applied =
-		reviewedStrategy === "dedicated" || reviewedStrategy === "keep_current"
-			? reviewedStrategy
-			: null;
 	return (
 		<div className="space-y-5">
 			<div>
@@ -1015,7 +984,7 @@ function Inspector({
 				</p>
 			</div>
 			<div className="border-t pt-4">
-				<h4 className="font-medium">Identity risk</h4>
+				<h4 className="font-medium">Run identity</h4>
 				<p className="mt-2 text-sm">
 					{item.identity?.name ?? "Identity unavailable"}
 				</p>
@@ -1023,22 +992,11 @@ function Inspector({
 					{item.identity?.shared
 						? "Shared identity"
 						: "Dedicated identity"}
-					{item.identity?.broad_power_warning
-						? " · Broad authority"
-						: ""}
 				</p>
 				<p className="mt-2 text-sm text-muted-foreground">
-					Proposed dedicated identity: User base role in this
-					workflow’s organization, with no extra roles.
+					Conversion preserves this identity, its roles, and its
+					organization reach.
 				</p>
-				{applied && (
-					<p className="mt-2 text-sm text-muted-foreground">
-						Applied review:{" "}
-						{applied === "dedicated"
-							? "Dedicated identity"
-							: "Keep current identity"}
-					</p>
-				)}
 				{item.identity?.organization_id && (
 					<details className="mt-2 text-sm text-muted-foreground">
 						<summary>Identity details</summary>
@@ -1066,57 +1024,20 @@ function Inspector({
 					</p>
 				))}
 			</details>
-			{selection && (
+			{selection && (item.unknowns ?? []).length > 0 && (
 				<fieldset className="space-y-3 border-t pt-4">
-					<legend className="font-medium">Identity strategy</legend>
-					<RadioGroup
-						value={selection.identity_strategy}
-						onValueChange={(value) =>
-							update({
-								identity_strategy: value as IdentityStrategy,
-								acknowledged_broad_identity:
-									value === "dedicated"
-										? false
-										: selection.acknowledged_broad_identity,
-							})
-						}
-					>
-						<label className="flex items-center gap-2 text-sm">
-							<RadioGroupItem value="dedicated" />
-							Use a dedicated identity
-						</label>
-						<label className="flex items-center gap-2 text-sm">
-							<RadioGroupItem value="keep_current" />
-							Keep the current identity
-						</label>
-					</RadioGroup>
-					{selection.identity_strategy === "keep_current" && (
-						<label className="flex items-start gap-2 text-sm">
-							<Checkbox
-								checked={selection.acknowledged_broad_identity}
-								onCheckedChange={(value) =>
-									update({
-										acknowledged_broad_identity:
-											value === true,
-									})
-								}
-							/>
-							I acknowledge the existing authority.
-						</label>
-					)}
-					{(item.unknowns ?? []).length > 0 && (
-						<label className="flex items-start gap-2 text-sm">
-							<Checkbox
-								checked={selection.acknowledged_unknowns}
-								onCheckedChange={(value) =>
-									update({
-										acknowledged_unknowns: value === true,
-									})
-								}
-							/>
-							I acknowledge unresolved code paths.
-						</label>
-					)}
+					<legend className="font-medium">Unresolved code</legend>
+					<label className="flex items-start gap-2 text-sm">
+						<Checkbox
+							checked={selection.acknowledged_unknowns}
+							onCheckedChange={(value) =>
+								update({
+									acknowledged_unknowns: value === true,
+								})
+							}
+						/>
+						I acknowledge unresolved code paths.
+					</label>
 				</fieldset>
 			)}
 			<Evidence item={item} />

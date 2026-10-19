@@ -1,6 +1,6 @@
 """Public workflow-conversion contracts keep review state explicit."""
 
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -18,17 +18,25 @@ def test_analyze_request_rejects_an_explicit_empty_selection() -> None:
         WorkflowConversionAnalyzeRequest(workflow_ids=[])
 
 
-def test_apply_selection_requires_review_of_unknown_source() -> None:
+def test_apply_selection_only_records_source_review_acknowledgement() -> None:
     selection = WorkflowConversionSelection(
         workflow_id=uuid4(),
         source_fingerprint="a" * 64,
-        identity_strategy="dedicated",
         acknowledged_unknowns=True,
-        acknowledged_broad_identity=False,
     )
     request = WorkflowConversionApplyRequest(selections=[selection])
 
     assert request.selections == [selection]
+
+
+@pytest.mark.parametrize("field", ["identity_strategy", "acknowledged_broad_identity"])
+def test_apply_selection_rejects_removed_identity_controls(field: str) -> None:
+    with pytest.raises(ValidationError, match=field):
+        WorkflowConversionSelection(
+            workflow_id=uuid4(),
+            source_fingerprint="a" * 64,
+            **{field: "dedicated" if field == "identity_strategy" else True},
+        )
 
 
 def test_recorded_own_resource_operation_does_not_add_elevated_authority() -> None:
@@ -63,12 +71,3 @@ def test_followup_dedupe_key_is_stable_per_analysis_request_and_job_type() -> No
 
     assert first == same
     assert first != cutover
-
-
-def test_keep_current_identity_with_an_additional_role_is_broad() -> None:
-    assert conversion._broad_identity_warning(
-        UUID("00000000-0000-0000-0000-000000000006"),
-        [uuid4()],
-        [],
-        [],
-    )

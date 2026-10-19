@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from src.models.contracts.access_list import AccessClass, AccessEntry
 from src.models.contracts.permissions import parse_permission
@@ -1338,6 +1338,36 @@ def permissions_for_sdk_calls(calls: list[str]) -> tuple[list[str], list[str]]:
                 if not _is_source_transport_route(entry):
                     permissions.add(entry.permission)
     return sorted(permissions), sorted(unknowns)
+
+
+def permissions_for_sdk_invocations(invocations: list[dict[str, Any]]) -> list[str]:
+    """Include named file checks selected by bounded SDK arguments.
+
+    The ordinary workspace-file path checks repository permissions, while
+    other file locations use their existing resource policies. This only
+    identifies named permission candidates; it never evaluates reach, roles,
+    or policies and never constructs a different execution principal.
+    """
+    permissions: set[str] = set()
+    read_paths = {"/api/files/read", "/api/files/stat", "/api/files/exists", "/api/files/list"}
+    write_paths = {"/api/files/write", "/api/files/delete"}
+    for invocation in invocations:
+        selectors = invocation.get("selectors", {})
+        dynamic = set(invocation.get("dynamic_selectors", []))
+        if selectors.get("location") != "workspace" and "location" not in dynamic:
+            continue
+        for route in sdk_route_candidates([invocation["call"]]):
+            if route.path in read_paths:
+                permissions.add("repository.read")
+            elif route.path in write_paths:
+                permissions.add("repository.readwrite")
+            elif route.path == "/api/files/signed-url":
+                methods = {"GET", "PUT"} if "method" in dynamic else {selectors.get("method")}
+                if "GET" in methods:
+                    permissions.add("repository.read")
+                if "PUT" in methods:
+                    permissions.add("repository.readwrite")
+    return sorted(permissions)
 
 
 def permissions_for_recorded_operations(operations: list[str]) -> tuple[list[str], list[str]]:

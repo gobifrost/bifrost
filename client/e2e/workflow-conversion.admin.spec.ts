@@ -126,6 +126,12 @@ test.describe("Workflow conversion", () => {
 		await expect(
 			page.getByText("organizations.read", { exact: true }).first(),
 		).toBeVisible();
+		await expect(page.getByRole("radiogroup")).toHaveCount(0);
+		await expect(
+			page.getByText(
+				"Conversion preserves this identity, its roles, and its organization reach.",
+			),
+		).toBeVisible();
 		await page.screenshot({
 			animations: "disabled",
 			path: testInfo.outputPath("conversion-review-desktop.png"),
@@ -194,6 +200,11 @@ test.describe("Workflow conversion", () => {
 			name: "Confirm reviewed changes",
 		});
 		await expect(confirmation).toBeVisible();
+		await expect(
+			confirmation.getByText(
+				/Their current run identities and reach are preserved\./,
+			),
+		).toBeVisible();
 		await page.screenshot({
 			animations: "disabled",
 			path: testInfo.outputPath("conversion-confirm-desktop.png"),

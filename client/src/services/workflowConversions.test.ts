@@ -56,9 +56,7 @@ describe("workflow conversion service", () => {
 				{
 					workflow_id: "workflow-synthetic",
 					source_fingerprint: "fingerprint",
-					identity_strategy: "dedicated",
 					acknowledged_unknowns: true,
-					acknowledged_broad_identity: true,
 				},
 			],
 			acknowledged_solution_requests: true,

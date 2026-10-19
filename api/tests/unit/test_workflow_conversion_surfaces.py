@@ -52,7 +52,7 @@ def test_cli_report_reads_one_page() -> None:
 
 
 def test_cli_apply_sends_exact_review_file(tmp_path) -> None:
-    body = {"selections": [{"workflow_id": WORKFLOW, "source_fingerprint": "f" * 64, "identity_strategy": "dedicated"}]}
+    body = {"selections": [{"workflow_id": WORKFLOW, "source_fingerprint": "f" * 64}]}
     review = tmp_path / "review.json"
     review.write_text(json.dumps(body))
     client = AsyncMock()

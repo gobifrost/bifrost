@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from src.jobs.platform import runner as platform_runner
 from src.models.contracts.workflow_permissions import (
@@ -20,7 +20,6 @@ from src.models.contracts.workflow_permissions import (
     WorkflowPermissionGrantSpec,
     WorkflowPermissionMode,
 )
-from src.models.enums import IdentityKind
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solution_workflow_permission_requests import (
     SolutionWorkflowPermissionRequest,
@@ -103,6 +102,7 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
     )
     solution_workflow = Workflow(
         id=uuid4(),
+        run_identity_id=platform_admin.user_id,
         solution_id=solution.id,
         name=f"conversion-solution-{suffix}",
         function_name="run",
@@ -115,6 +115,12 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
     db_session.add(solution)
     db_session.add(solution_workflow)
     await db_session.commit()
+    assert platform_admin.user_id is not None
+    existing_identity_ids = {
+        workflow.id: workflow.run_identity_id,
+        solution_workflow.id: solution_workflow.run_identity_id,
+    }
+    users_before_apply = await db_session.scalar(select(func.count()).select_from(User))
     await storage.write(entry_path, source.encode())
     await storage.write(helper_path, helper_source.encode())
     solution_storage = SolutionStorage(solution.id)
@@ -233,16 +239,12 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
                     {
                         "workflow_id": str(workflow.id),
                         "source_fingerprint": item["source_fingerprint"],
-                        "identity_strategy": "dedicated",
                         "acknowledged_unknowns": False,
-                        "acknowledged_broad_identity": False,
                     },
                     {
                         "workflow_id": str(solution_workflow.id),
                         "source_fingerprint": solution_item["source_fingerprint"],
-                        "identity_strategy": "dedicated",
                         "acknowledged_unknowns": False,
-                        "acknowledged_broad_identity": False,
                     },
                 ],
                 "acknowledged_solution_requests": True,
@@ -263,11 +265,14 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
         for workflow_id in (str(workflow.id), str(solution_workflow.id)):
             review = reopened_items[workflow_id]["review"]
             assert review["applied"] is True
-            assert review["identity_strategy"] == "dedicated"
             assert review["acknowledged_unknowns"] is False
 
         await db_session.refresh(workflow)
-        identity = await db_session.get(User, workflow.run_identity_id)
+        await db_session.refresh(solution_workflow)
+        assert workflow.run_identity_id == existing_identity_ids[workflow.id]
+        assert solution_workflow.run_identity_id == existing_identity_ids[solution_workflow.id]
+        assert await db_session.scalar(select(func.count()).select_from(User)) == users_before_apply
+        identity = await db_session.get(User, UUID(item["identity"]["id"]))
         grants = list(
             (
                 await db_session.execute(
@@ -279,9 +284,6 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
         )
         assert workflow.permission_mode == "restricted"
         assert identity is not None
-        assert identity.identity_kind == IdentityKind.CUSTOM.value
-        assert identity.organization_id == workflow.organization_id
-        assert identity.base_role_id == UUID("00000000-0000-0000-0000-000000000006")
         assert sorted(grants) == ["configs.read", "secrets.read"]
 
         # The persisted proposal must pass the runtime's actual named gate,
@@ -299,7 +301,6 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
                 None, permission_entry(permission),
             ).outcome == "success"
 
-        await db_session.refresh(solution_workflow)
         assert solution_workflow.permission_mode == "restricted"
         solution_request = (
             await db_session.execute(

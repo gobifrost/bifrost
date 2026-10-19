@@ -85,6 +85,20 @@ def _workflow():
     )
 
 
+@pytest.mark.parametrize(
+    ("identity", "authority", "expected"),
+    [
+        (None, {"identity_is_active": None}, ["The workflow run identity is unavailable."]),
+        ({"id": str(uuid4())}, {"identity_is_active": False}, ["The workflow run identity is inactive."]),
+        ({"id": str(uuid4())}, {"identity_is_active": True}, []),
+    ],
+)
+def test_current_identity_status_is_informational_only(
+    identity, authority, expected
+) -> None:
+    assert conversion._identity_warnings(identity, authority) == expected
+
+
 @pytest.mark.asyncio
 async def test_target_solution_admission_changes_invalidate_the_review_inputs(db_session):
     from src.models.orm.solutions import Solution
@@ -250,7 +264,7 @@ def test_review_fingerprint_changes_when_observed_operations_or_unknowns_change(
 
 
 @pytest.mark.asyncio
-async def test_apply_resumes_after_commit_without_creating_a_second_identity(
+async def test_apply_resumes_after_commit_without_replaying_the_selection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A persisted applied selection is the idempotency fence before checkpointing."""
@@ -268,9 +282,7 @@ async def test_apply_resumes_after_commit_without_creating_a_second_identity(
         conversion, "load_human_caller", AsyncMock(return_value=_admin())
     )
     report_for_workflow = AsyncMock()
-    create_identity = AsyncMock()
     monkeypatch.setattr(conversion, "_report_for_workflow", report_for_workflow)
-    monkeypatch.setattr(conversion, "create_identity", create_identity)
     context = _context()
     payload = WorkflowConversionApplyPayload(
         analysis_job_id=uuid4(),
@@ -285,7 +297,6 @@ async def test_apply_resumes_after_commit_without_creating_a_second_identity(
 
     assert result == {"completed": [str(workflow_id)]}
     report_for_workflow.assert_not_awaited()
-    create_identity.assert_not_awaited()
 
 
 def test_review_binds_entry_metadata_without_invalidating_on_routine_usage_timestamp():

@@ -8,6 +8,7 @@ import pytest
 from shared.workflow_conversion_sdk import (
     permissions_for_recorded_operations,
     permissions_for_sdk_calls,
+    permissions_for_sdk_invocations,
     recorded_route_candidates,
     sdk_named_permission_candidates,
     sdk_call_contract,
@@ -32,6 +33,24 @@ def test_file_and_document_policy_candidates_do_not_invent_named_grants() -> Non
     assert [candidate.access_class for candidate in sdk_route_candidates([
         "bifrost.files.read", "bifrost.tables.query",
     ])] == ["table_policy", "table_policy"]
+
+
+@pytest.mark.parametrize("call,selectors,dynamic,expected", [
+    ("bifrost.files.read", {"location": "workspace"}, [], ["repository.read"]),
+    ("bifrost.files.write", {"location": "workspace"}, [], ["repository.readwrite"]),
+    ("bifrost.files.read", {"location": "uploads"}, [], []),
+    ("bifrost.files.read", {}, ["location"], ["repository.read"]),
+    ("bifrost.files.get_signed_url", {"location": "workspace", "method": "GET"}, [], ["repository.read"]),
+    ("bifrost.files.get_signed_url", {"location": "workspace", "method": "PUT"}, [], ["repository.readwrite"]),
+    ("bifrost.files.get_signed_url", {"location": "workspace"}, ["method"], ["repository.read", "repository.readwrite"]),
+    ("bifrost.tables.query", {"table": "Contoso Orders"}, [], []),
+])
+def test_bounded_sdk_arguments_select_named_checks_without_an_identity(
+    call, selectors, dynamic, expected
+):
+    assert permissions_for_sdk_invocations([{
+        "call": call, "selectors": selectors, "dynamic_selectors": dynamic,
+    }]) == expected
 
 
 def test_secret_and_personal_route_candidates_remain_available_without_review() -> None:

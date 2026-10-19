@@ -76,7 +76,6 @@ class ProviderCacheWriteResponse(BaseModel):
 
 
 ConversionStatus = Literal["ready", "needs_review", "blocked", "already_declared", "stale"]
-IdentityStrategy = Literal["dedicated", "keep_current"]
 
 
 class WorkflowConversionAnalyzeRequest(BaseModel):
@@ -118,9 +117,7 @@ class WorkflowConversionSelection(BaseModel):
     model_config = ConfigDict(extra="forbid")
     workflow_id: UUID
     source_fingerprint: str = Field(min_length=64, max_length=64)
-    identity_strategy: IdentityStrategy = "dedicated"
     acknowledged_unknowns: bool = False
-    acknowledged_broad_identity: bool = False
 
 
 class WorkflowConversionApplyRequest(BaseModel):
@@ -154,7 +151,6 @@ class WorkflowConversionIdentitySummary(BaseModel):
     identity_kind: str | None = None
     organization_id: UUID | None = None
     shared: bool = False
-    broad_power_warning: bool = False
 
 
 class WorkflowConversionSolutionRequestSummary(BaseModel):

@@ -50,7 +50,7 @@ async def bifrost_workflow_conversion_update(
     selections: list[dict[str, Any]],
     acknowledged_solution_requests: bool = False,
 ) -> ToolResult:
-    """Apply explicit reviewed selections, source fingerprints, identity strategies and acknowledgements."""
+    """Apply explicit reviewed selections, source fingerprints, and acknowledgements."""
     try:
         job_uuid = UUID(job_id)
     except ValueError:
@@ -84,7 +84,7 @@ async def bifrost_workflow_permission_default_update(
 TOOLS = [
     ("bifrost_workflow_conversion_create", "Analyze Workflow Permissions", "Start read-only workflow permission analysis."),
     ("bifrost_workflow_conversion_get", "Get Workflow Conversion", "Read a page of a saved workflow conversion report."),
-    ("bifrost_workflow_conversion_update", "Apply Workflow Conversion", "Apply explicitly reviewed workflow permission and identity proposals."),
+    ("bifrost_workflow_conversion_update", "Apply Workflow Conversion", "Apply explicitly reviewed workflow permission proposals."),
     ("bifrost_workflow_permission_default_update", "Set Workflow Permission Default", "Request the final reviewed platform Declared Permissions cutover."),
 ]
 

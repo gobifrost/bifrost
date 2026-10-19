@@ -85,7 +85,7 @@ describe("WorkflowConversion", () => {
 		).toBeVisible();
 		expect(
 			screen.getByText(
-				/Review proposed permissions and run identities\. Access changes only when you Apply\./,
+				/Review proposed permissions\. Access changes only when you Apply\./,
 			),
 		).toBeVisible();
 		expect(
@@ -168,7 +168,7 @@ describe("WorkflowConversion", () => {
 		).not.toBeInTheDocument();
 	});
 
-	it("shows current identity risk and a persisted applied identity decision", async () => {
+	it("shows the current run identity as preserved context", async () => {
 		useConversionJob.mockReturnValue({
 			job: {
 				id: "job-synthetic",
@@ -195,9 +195,7 @@ describe("WorkflowConversion", () => {
 							name: "Shared synthetic identity",
 							organization_id: "org-synthetic",
 							shared: true,
-							broad_power_warning: true,
 						},
-						review: { identity_strategy: "dedicated" },
 					},
 				],
 				summary: {
@@ -224,11 +222,14 @@ describe("WorkflowConversion", () => {
 		);
 		expect(screen.getByText("Shared synthetic identity")).toBeVisible();
 		expect(
-			screen.getByText(/Shared identity · Broad authority/),
+			screen.getByText("Shared identity", { exact: true }),
 		).toBeVisible();
 		expect(
-			screen.getByText(/Applied review: Dedicated identity/),
+			screen.getByText(
+				/Conversion preserves this identity, its roles, and its organization reach\./,
+			),
 		).toBeVisible();
+		expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
 		await user.click(screen.getByText("Identity details"));
 		expect(screen.getByText(/Organization: org-synthetic/)).toBeVisible();
 	});
@@ -358,6 +359,10 @@ describe("WorkflowConversion", () => {
 							status: "ready",
 							current_permission_mode: "full",
 							proposed_permissions: ["tickets.read"],
+							identity: {
+								name: "Existing synthetic identity",
+								shared: true,
+							},
 						},
 					],
 					summary: {
@@ -391,6 +396,12 @@ describe("WorkflowConversion", () => {
 				}),
 			).toBeVisible();
 			expect(apply).not.toHaveBeenCalled();
+			expect(
+				screen.getByText(
+					/Their current run identities and reach are preserved\./,
+				),
+			).toBeVisible();
+			expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
 			if (isSolution) {
 				expect(
 					screen.getByRole("button", {
@@ -412,9 +423,7 @@ describe("WorkflowConversion", () => {
 					{
 						workflow_id: "workflow-synthetic",
 						source_fingerprint: "fingerprint",
-						identity_strategy: "dedicated",
 						acknowledged_unknowns: true,
-						acknowledged_broad_identity: false,
 					},
 				],
 				acknowledged_solution_requests: isSolution,

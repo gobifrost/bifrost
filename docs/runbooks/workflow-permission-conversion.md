@@ -24,22 +24,17 @@ prove that unobserved branches are safe. The analyzer uses the shipped SDK's
 return contracts to distinguish data methods from further SDK calls; it does
 not trust user annotations as proof of authority.
 
-Static table and file targets are resolved through the ordinary resource
-resolvers. Their current policies are evaluated for the proposed identity
-without Full Access authority. Unavailable targets, denied or conditional
-policies, dynamic scope, unresolved imports, and external effects remain visible
-review requirements. Analysis does not read table documents or file contents,
-change resource policies, or grant additional authority.
+The scan identifies SDK use and named permission requirements. Existing table
+and file policies continue to govern their resources. It does not simulate a
+different identity or treat that hypothetical identity's access as an analysis
+requirement. Missing source and unresolved SDK dispatch remain visible for
+review. No table documents or file contents are read to evaluate access.
 
-Review each proposal before selecting it. The default identity strategy creates
-a dedicated identity with the User base role, the workflow's organization, and
-no additional roles or organization reach. Source and unattended execution
-evidence identify additional reach requirements; human-initiated runs do not
-establish the unattended identity's reach. Policy checks use known facts about
-the proposed identity and leave future user, row, claim, or file metadata
-conditional. Conversion does not grant that additional authority. Keeping an
-existing broad identity requires acknowledgement.
-Conversion never reduces the privileges of a shared identity.
+Review each proposal before selecting it. Conversion preserves the workflow's
+current unattended identity, including use of the organization's default
+identity, and preserves its roles and organization reach. Human callers retain
+their own identities and reach. Conversion creates no identities and changes
+no identity assignments or resource policies.
 
 Apply is atomic per workflow. It sets Declared Permissions and the reviewed
 grant set. Solution workflows require explicit acknowledgement of the exact
@@ -73,7 +68,7 @@ bifrost workflows convert cutover JOB_ID --acknowledge-platform-cutover
 ```
 
 Use the shared Platform Jobs commands to inspect progress. The apply file contains the
-exact workflow IDs, source fingerprints, identity strategies, and review
+exact workflow IDs, source fingerprints, and review
 acknowledgements from the report. For example:
 
 ```json
@@ -81,9 +76,7 @@ acknowledgements from the report. For example:
   "selections": [{
     "workflow_id": "00000000-0000-0000-0000-000000000001",
     "source_fingerprint": "<64-character fingerprint from the report>",
-    "identity_strategy": "dedicated",
-    "acknowledged_unknowns": false,
-    "acknowledged_broad_identity": false
+    "acknowledged_unknowns": false
   }],
   "acknowledged_solution_requests": false
 }
