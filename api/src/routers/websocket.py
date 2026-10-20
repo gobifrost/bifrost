@@ -885,14 +885,13 @@ async def can_access_app(user: UserPrincipal, app_id: str, *, write: bool = Fals
             session=db,
             org_id=caller.ctx.home_organization_id if caller.ctx is not None else None,
             caller=caller,
+            access_mode="write" if write else "read",
         )
         try:
             app = await repo.can_access(id=app_uuid)
         except AccessDeniedError:
             return False
-        return app is not None and (
-            not write or allows_permission(caller, "apps.readwrite", app.organization_id)
-        )
+        return app is not None
 
 
 async def can_access_conversation_current(user: UserPrincipal, conversation_id: str) -> bool:
