@@ -93,6 +93,28 @@ async def test_new_execution_records_queue_impersonation_provenance() -> None:
 
 
 @pytest.mark.asyncio
+async def test_new_execution_records_agent_provenance() -> None:
+    session = AsyncMock()
+    session.add = MagicMock()
+    agent_id = uuid4()
+
+    execution = await ExecutionRepository(session).create_execution(
+        execution_id=str(uuid4()),
+        workflow_name="wf",
+        parameters={},
+        org_id=None,
+        user_id=str(uuid4()),
+        user_name="Test User",
+        lineage=None,
+        execution_origin="agent",
+        agent_id=str(agent_id),
+    )
+
+    assert execution.execution_origin == "agent"
+    assert execution.agent_id == agent_id
+
+
+@pytest.mark.asyncio
 async def test_promoted_row_takes_the_lineage_it_carries() -> None:
     execution_id = uuid4()
     existing = Execution(id=execution_id, workflow_name="wf", executed_by_name="x")

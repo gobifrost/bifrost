@@ -76,6 +76,10 @@ class Execution(Base):
         ForeignKey("users.id", ondelete="SET NULL"), default=None
     )
     root_execution_id: Mapped[UUID | None] = mapped_column(default=None)
+    # Provenance is immutable audit/runtime input.  No foreign key preserves
+    # Agent attribution if that Agent is later removed.
+    execution_origin: Mapped[str | None] = mapped_column(String(16), default=None)
+    agent_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), default=None)
     # Browser impersonation is audit provenance, never execution authority.
     # These are intentionally not foreign keys so deleting an operator does
     # not erase attribution from durable history.

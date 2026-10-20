@@ -96,6 +96,25 @@ async def get_sdk_context(
             "is_provider": org.is_provider,
         }
 
+    runtime = principal.runtime_authority
+    # A normal authenticated person starts a human run.  Runtime credentials
+    # can only inherit a durable workflow provenance; other runtime kinds are
+    # deliberately unknown rather than claiming a human exception.
+    execution_origin = (
+        runtime.execution_origin
+        if runtime is not None and runtime.kind in {"workflow_execution", "agent_run"}
+        else "human"
+        if runtime is None and caller.ctx is not None
+        else "unknown"
+    )
+    agent_id = (
+        str(runtime.agent_id)
+        if runtime is not None
+        and runtime.kind in {"workflow_execution", "agent_run"}
+        and runtime.agent_id is not None
+        else None
+    )
+
     return {
         "user": {
             "id": str(principal.user_id),
@@ -106,4 +125,8 @@ async def get_sdk_context(
         "organization": org_data,
         "default_parameters": {},
         "track_executions": True,
+        "execution_origin": execution_origin,
+        "agent_id": agent_id,
+        "original_user_is_platform_admin": caller.is_platform_admin,
+        "original_user_id": None if caller.ctx is None else str(caller.ctx.user_id),
     }

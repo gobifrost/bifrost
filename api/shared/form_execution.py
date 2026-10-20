@@ -45,6 +45,7 @@ async def create_form_execution_context(
             is_platform_admin=is_platform_admin,
             is_function_key=False,
             execution_id=execution_id,
+            execution_origin="human",
         )
     context.startup = startup
     context.form_inputs = form_inputs or {}

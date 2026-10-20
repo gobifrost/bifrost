@@ -94,6 +94,8 @@ async def insert_scheduled_execution(
     is_platform_admin: bool,
     lineage: RunLineage | None,
     run_as: dict[str, Any] | None,
+    execution_origin: str,
+    agent_id: UUID | None,
 ) -> UUID:
     """Insert a SCHEDULED execution row.
 
@@ -123,6 +125,8 @@ async def insert_scheduled_execution(
             form_id=form_id,
             api_key_id=api_key_id,
             execution_context=execution_context,
+            execution_origin=execution_origin,
+            agent_id=agent_id,
             **lineage_columns(lineage.bound(exec_id) if lineage else None),
             **current_durable_impersonation().columns(),
         )
@@ -281,6 +285,7 @@ async def execute_sdk_workflow(
             is_superuser=False,
             is_external=False,
         )
+
     else:
         from shared.scope_resolver import ScopeNotAllowed, UNSET, resolve_effective_scope
         from src.services.authorization.enforce import load_caller
@@ -303,6 +308,14 @@ async def execute_sdk_workflow(
             is_external=principal.is_external and not principal.embed,
             caller=caller,
         )
+
+    from shared.execution_provenance import execution_provenance
+
+    runtime = principal.runtime_authority
+    provenance = execution_provenance(
+        runtime.execution_origin if runtime is not None else ("unknown" if principal.embed else "human"),
+        runtime.agent_id if runtime is not None else None,
+    )
 
     # A Solution caller's path::fn ref carries no install id (it can't know the
     # per-install uuid5). Derive the install scope from the caller so a path ref
@@ -514,6 +527,8 @@ async def execute_sdk_workflow(
             is_platform_admin=exec_is_admin,
             lineage=lineage,
             run_as=scheduled_run_as,
+            execution_origin=provenance.origin,
+            agent_id=provenance.agent_id,
         )
         return WorkflowExecutionResponse(
             execution_id=str(exec_id),
@@ -561,6 +576,9 @@ async def execute_sdk_workflow(
             is_platform_admin=exec_is_admin,
             is_function_key=False,
             execution_id=str(uuid4()),
+            is_agent=provenance.origin == "agent",
+            execution_origin=provenance.origin,
+            agent_id=None if provenance.agent_id is None else str(provenance.agent_id),
         )
 
     try:

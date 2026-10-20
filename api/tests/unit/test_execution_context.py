@@ -24,6 +24,10 @@ class TestToPublicDict:
             workflow_timeout_seconds=60,
             workflow_name="my_workflow",
             is_agent=False,
+            execution_origin="agent",
+            agent_id="agent-123",
+            original_user_is_platform_admin=True,
+            original_user_id="user-original",
             public_url="https://bifrost.example.com",
             parameters={"ticket_id": 42},
             startup={"preloaded": True},
@@ -45,6 +49,10 @@ class TestToPublicDict:
         assert result["workflow_timeout_seconds"] == 60
         assert result["workflow_name"] == "my_workflow"
         assert result["is_agent"] is False
+        assert result["execution_origin"] == "agent"
+        assert result["agent_id"] == "agent-123"
+        assert result["original_user_is_platform_admin"] is True
+        assert result["original_user_id"] == "user-original"
         assert result["public_url"] == "https://bifrost.example.com"
         assert result["parameters"] == {"ticket_id": 42}
         assert result["startup"] == {"preloaded": True}

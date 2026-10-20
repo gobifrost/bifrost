@@ -16375,6 +16375,20 @@ export interface components {
              * @default true
              */
             track_executions: boolean;
+            /**
+             * Execution Origin
+             * @default unknown
+             */
+            execution_origin: string;
+            /** Agent Id */
+            agent_id?: string | null;
+            /**
+             * Original User Is Platform Admin
+             * @default false
+             */
+            original_user_is_platform_admin: boolean;
+            /** Original User Id */
+            original_user_id?: string | null;
         };
         /**
          * DeviceAuthorizeRequest

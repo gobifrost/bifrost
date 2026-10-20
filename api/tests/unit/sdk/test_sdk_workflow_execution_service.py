@@ -704,6 +704,98 @@ class TestExecuteRunAs:
         assert dispatched["lineage"] == expected_lineage
         assert calls == [(principal, target.id)]
 
+    async def test_agent_runtime_keeps_origin_for_a_nested_workflow(self, db_session):
+        from src.services.authorization.explain import RunUser
+        from src.services.authorization.runtime import RuntimeAuthority
+
+        org = await _seed_org(db_session)
+        principal = _user(org.id)
+        agent_id = uuid4()
+        authority_context = AuthorizationContext(
+            user_id=principal.user_id,
+            home_organization_id=org.id,
+            base_role_id=uuid4(),
+            is_external=False,
+            base_permissions=frozenset({"workflows.execute"}),
+        )
+        principal.runtime_authority = RuntimeAuthority(
+            kind="agent_run",
+            credential_id=uuid4(),
+            run_user=RunUser(principal.user_id, authority_context, None, is_active=True),
+            powers=None,
+            acting_user_id=principal.user_id,
+            organization_id=org.id,
+            workflow_id=None,
+            started_by_user_id=None,
+            root_execution_id=None,
+            execution_origin="agent",
+            agent_id=agent_id,
+        )
+        workflow = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
+
+        dispatched = await self._dispatched_context(
+            db_session, principal, workflow_id=str(workflow.id)
+        )
+
+        context = dispatched["context"]
+        assert context.execution_origin == "agent"
+        assert context.agent_id == str(agent_id)
+
+    async def test_agent_runtime_sdk_dispatch_preserves_provenance_at_the_queue_boundary(
+        self, db_session
+    ):
+        """The SDK execution path must serialize agent provenance for the worker."""
+        from src.services.authorization.explain import RunUser
+        from src.services.authorization.runtime import RuntimeAuthority
+
+        org = await _seed_org(db_session)
+        principal = _user(org.id)
+        agent_id = uuid4()
+        authority_context = AuthorizationContext(
+            user_id=principal.user_id,
+            home_organization_id=org.id,
+            base_role_id=uuid4(),
+            is_external=False,
+            base_permissions=frozenset({"workflows.execute"}),
+        )
+        principal.runtime_authority = RuntimeAuthority(
+            kind="agent_run",
+            credential_id=uuid4(),
+            run_user=RunUser(principal.user_id, authority_context, None, is_active=True),
+            powers=None,
+            acting_user_id=principal.user_id,
+            organization_id=org.id,
+            workflow_id=None,
+            started_by_user_id=None,
+            root_execution_id=None,
+            execution_origin="agent",
+            agent_id=agent_id,
+        )
+        workflow = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
+        redis = AsyncMock()
+
+        with (
+            patch(
+                "src.services.execution.async_executor.get_redis_client",
+                return_value=redis,
+            ),
+            patch("src.services.execution.async_executor.add_to_queue", new=AsyncMock()),
+            patch("src.services.execution.async_executor.publish_message", new=AsyncMock()),
+            patch("src.core.pubsub.publish_execution_update", new=AsyncMock()),
+            patch("src.core.pubsub.publish_history_update", new=AsyncMock()),
+        ):
+            await execute_sdk_workflow(
+                db_session,
+                principal,
+                _request(workflow_id=str(workflow.id), input_data={}),
+                caller_org_id=org.id,
+            )
+
+        pending = redis.set_pending_execution.await_args.kwargs
+        assert pending["is_agent"] is True
+        assert pending["execution_origin"] == "agent"
+        assert pending["agent_id"] == str(agent_id)
+
     @pytest.mark.parametrize("identity_kind", [None, "custom"], ids=["person", "managed_identity"])
     async def test_a_workflow_naming_its_run_user_acts_as_the_run_user(self, db_session, identity_kind):
         from src.core.constants import SYSTEM_USER_ID

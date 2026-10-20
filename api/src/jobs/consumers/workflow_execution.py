@@ -739,6 +739,8 @@ class WorkflowExecutionConsumer(BaseConsumer):
         artifact_workspace_id = pending.get("artifact_workspace_id")
         lineage = pending.get("lineage")
         impersonation_provenance = pending.get("impersonation_provenance")
+        execution_origin = pending.get("execution_origin")
+        agent_id = pending.get("agent_id")
 
         # Immediate async runs have no durable row until this consumer starts.
         # If their lineage user was deleted after enqueueing, record the same
@@ -759,6 +761,8 @@ class WorkflowExecutionConsumer(BaseConsumer):
                     api_key_id=UUID(api_key_id) if api_key_id else None,
                     executed_by_name=user_name,
                     impersonation_provenance=impersonation_provenance,
+                    execution_origin=execution_origin,
+                    agent_id=agent_id,
                 )
                 await db.commit()
             if cancelled:
@@ -819,6 +823,8 @@ class WorkflowExecutionConsumer(BaseConsumer):
                     check_existing=execution_record_exists,
                     lineage=lineage,
                     impersonation_provenance=impersonation_provenance,
+                    execution_origin=execution_origin,
+                    agent_id=agent_id,
                 )
                 await update_execution(
                     execution_id=execution_id,
@@ -926,6 +932,8 @@ class WorkflowExecutionConsumer(BaseConsumer):
                         check_existing=execution_record_exists,
                         lineage=lineage,
                         impersonation_provenance=impersonation_provenance,
+                        execution_origin=execution_origin,
+                        agent_id=agent_id,
                     )
                     await update_execution(
                         execution_id=execution_id,
@@ -971,6 +979,8 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 check_existing=execution_record_exists,
                 lineage=lineage,
                 impersonation_provenance=impersonation_provenance,
+                execution_origin=execution_origin,
+                agent_id=agent_id,
             )
             execution_created_ms = (time.perf_counter() - dispatch_started) * 1000
             if not is_sync:
@@ -1017,6 +1027,27 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 timeout_seconds=timeout_seconds,
             )
 
+            # Runtime authority is the canonical, current source for original
+            # user role facts.  Actor flags carried through the queue cannot
+            # grant this value; an unavailable authority is conservative.
+            original_user_is_platform_admin = False
+            original_user_id: str | None = None
+            try:
+                from src.services.authorization.runtime import load_runtime_authority
+
+                async with get_db_context() as db:
+                    authority = await load_runtime_authority(
+                        db, "workflow_execution", UUID(execution_id)
+                    )
+                original_user_is_platform_admin = authority.run_user.is_platform_admin
+                original_user_id = str(authority.run_user.user_id)
+            except Exception as exc:  # runtime will separately reject invalid credentials
+                logger.warning(
+                    "Could not resolve original-user authority for execution %s: %s",
+                    execution_id,
+                    exc,
+                )
+
             # Build context for worker process
             context_data = {
                 "execution_id": execution_id,
@@ -1036,6 +1067,11 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 "cache_ttl_seconds": cache_ttl_seconds,
                 "transient": False,
                 "is_platform_admin": pending.get("is_platform_admin", False),
+                "is_agent": pending.get("is_agent", False),
+                "execution_origin": execution_origin or "unknown",
+                "agent_id": agent_id,
+                "original_user_is_platform_admin": original_user_is_platform_admin,
+                "original_user_id": original_user_id,
                 "startup": startup,  # Launch workflow results (available via context.startup)
                 "form_inputs": form_inputs,
                 "embed": embed,

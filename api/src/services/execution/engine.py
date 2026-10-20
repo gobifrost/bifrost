@@ -108,6 +108,11 @@ class ExecutionRequest:
     transient: bool = False              # Don't write to DB
     no_cache: bool = False               # For data providers
     is_platform_admin: bool = False       # For platform admin executions
+    is_agent: bool = False
+    execution_origin: str = "unknown"
+    agent_id: str | None = None
+    original_user_is_platform_admin: bool = False
+    original_user_id: str | None = None
 
     # Real-time updates
     broadcaster: Any = None              # WebPubSubBroadcaster for streaming logs
@@ -314,6 +319,11 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
         workflow_deadline=request.workflow_deadline,
         workflow_timeout_seconds=request.timeout_seconds,
         workflow_name=request.name or "",  # Workflow/script name for context
+        is_agent=request.is_agent,
+        execution_origin=request.execution_origin,
+        agent_id=request.agent_id,
+        original_user_is_platform_admin=request.original_user_is_platform_admin,
+        original_user_id=request.original_user_id,
         public_url=get_settings().public_url,
         startup=request.startup,  # Launch workflow results (from form execution)
         form_inputs=request.form_inputs,

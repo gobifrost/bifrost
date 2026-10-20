@@ -13,6 +13,7 @@ from shared.sdk_users import set_platform_admin
 from src.core.constants import SYSTEM_USER_UUID
 from src.models.contracts.workflow_permissions import WorkflowPermissionMode
 from src.models.enums import ExecutionStatus
+from src.models.orm.agents import Agent
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.executions import Execution
 from src.models.orm.organizations import Organization
@@ -137,6 +138,56 @@ async def test_workflow_runtime_retains_durable_impersonation_provenance(db_sess
 
     assert authority.impersonated_by_user_id == execution.impersonated_by_user_id
     assert authority.impersonation_session_id == execution.impersonation_session_id
+
+
+@pytest.mark.asyncio
+async def test_workflow_runtime_retains_agent_origin_for_nested_workflows(
+    db_session: AsyncSession,
+) -> None:
+    organization = await _organization(db_session, "Contoso")
+    user = await _person(db_session, organization, "runtime-user")
+    execution = await _execution(
+        db_session,
+        workflow=None,
+        run_user=user,
+        actor=user,
+        organization_id=organization.id,
+        started_by_user_id=user.id,
+        root_execution_id=uuid4(),
+    )
+    execution.execution_origin = "agent"
+    execution.agent_id = uuid4()
+    await db_session.flush()
+
+    authority = await load_runtime_authority(db_session, "workflow_execution", execution.id)
+
+    assert authority.execution_origin == "agent"
+    assert authority.agent_id == execution.agent_id
+
+
+@pytest.mark.asyncio
+async def test_workflow_runtime_treats_malformed_durable_agent_provenance_as_unknown(
+    db_session: AsyncSession,
+) -> None:
+    organization = await _organization(db_session, "Contoso")
+    user = await _person(db_session, organization, "runtime-user")
+    execution = await _execution(
+        db_session,
+        workflow=None,
+        run_user=user,
+        actor=user,
+        organization_id=organization.id,
+        started_by_user_id=user.id,
+        root_execution_id=uuid4(),
+    )
+    execution.execution_origin = "agent"
+    execution.agent_id = None
+    await db_session.flush()
+
+    authority = await load_runtime_authority(db_session, "workflow_execution", execution.id)
+
+    assert authority.execution_origin == "unknown"
+    assert authority.agent_id is None
 
 
 @pytest.mark.asyncio
@@ -318,6 +369,12 @@ async def test_agent_runtime_uses_pinned_actor_and_never_workflow_powers(
     run_user = await _person(db_session, contoso, "agent-run-user")
     caller = await _person(db_session, contoso, "agent-caller")
     run_as = await _person(db_session, contoso, "agent-run-as")
+    agent = Agent(
+        name=f"runtime-agent-{uuid4().hex[:8]}",
+        system_prompt="test",
+        organization_id=contoso.id,
+        created_by="runtime-test",
+    )
     run_as_run = AgentRun(
         trigger_type="chat",
         status="running",
@@ -328,6 +385,7 @@ async def test_agent_runtime_uses_pinned_actor_and_never_workflow_powers(
         acting_user_id=run_as.id,
     )
     caller_run = AgentRun(
+        agent_id=agent.id,
         trigger_type="chat",
         status="cancelling",
         org_id=contoso.id,
@@ -342,6 +400,9 @@ async def test_agent_runtime_uses_pinned_actor_and_never_workflow_powers(
         run_user_id=run_user.id,
         acting_user_id=run_user.id,
     )
+    db_session.add(agent)
+    await db_session.flush()
+    caller_run.agent_id = agent.id
     db_session.add_all([run_as_run, caller_run, unattended_run])
     await db_session.flush()
 
@@ -356,6 +417,9 @@ async def test_agent_runtime_uses_pinned_actor_and_never_workflow_powers(
     assert run_as_authority.powers is None
     assert run_as_authority.workflow_id is None
     assert run_as_authority.service_id is None
+    assert caller_authority.execution_origin == "agent"
+    assert caller_authority.agent_id == agent.id
+    assert unattended_authority.execution_origin == "unknown"
 
 
 @pytest.mark.asyncio
