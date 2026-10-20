@@ -104,7 +104,8 @@ async def test_autonomous_failure_returns_receipt_without_repeating_workflow():
 
 
 @pytest.mark.asyncio
-async def test_chat_workflow_failure_retains_the_actual_execution_receipt():
+@pytest.mark.parametrize("reported_error", [True, False])
+async def test_chat_workflow_failure_retains_the_actual_execution_receipt(reported_error):
     agent = SimpleNamespace(id=uuid4(), system_tools=[], mcp_connections=[])
     caller = MagicMock()
 
@@ -115,6 +116,8 @@ async def test_chat_workflow_failure_retains_the_actual_execution_receipt():
     executor = AgentExecutor(session_factory)
     workflow_id = uuid4()
     response = _failed_response()
+    if not reported_error:
+        response.error = None
     dispatch = AsyncMock(return_value=response)
     with (
         patch("src.services.agent_executor.authorize_agent_execution", new=AsyncMock(return_value=(caller, agent))),
@@ -125,7 +128,7 @@ async def test_chat_workflow_failure_retains_the_actual_execution_receipt():
             agent, None, caller=caller, workflow_ids={"finish": workflow_id},
         )
 
-    assert result.error == response.error
+    assert result.error == workflow_failure_receipt(response)["error"]
     assert result.result == response.result
     assert result.metadata == workflow_failure_receipt(response)
     dispatch.assert_awaited_once()

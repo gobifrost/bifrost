@@ -631,8 +631,12 @@ async def build_agent_composition(
         session_factory=session_factory,
         caller_user_id=caller_user_id,
         instructions=(
-            "\n\nUse the agent's existing tools first. Load an approved specialist capability only when "
-            "its tools are needed; use delegate_task only for a self-contained isolated child task."
+            "\n\nKeep ownership of this task and its evidence. For specialist work, load an approved "
+            "capability and use its advertised tools in this conversation. Use delegate_task or a "
+            "legacy delegate_to_ tool when a separate child context is useful. Include the necessary "
+            "context, inspect the child receipt, and follow up when more information can unblock it. "
+            "Respect specialist instructions and approval constraints. Verify uncertain effects "
+            "before repeating a write."
         ),
         entry_definitions=adapted_entries,
         bindings=bindings,

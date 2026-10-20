@@ -11,7 +11,13 @@ from pydantic_ai.messages import (
     ModelRequest,
     SystemPromptPart,
     UserPromptPart,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
 )
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Capability
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
@@ -100,6 +106,57 @@ def test_context_breakdown_separates_active_and_deferred_tool_schemas() -> None:
     )
     assert "search_active" not in str(breakdown)
     assert "search_deferred" not in str(breakdown)
+
+
+@pytest.mark.parametrize("resolved", [False, True])
+def test_loaded_tools_are_active_even_though_their_deferred_flag_stays_set(resolved):
+    tool = _tool("loaded_read", deferred=True)
+    parameters = ModelRequestParameters(
+        function_tools=[tool], revealed_tool_names={tool.name},
+        tool_visibility={tool.name: "visible"} if resolved else None,
+    )
+    breakdown = ObservedModel._context_breakdown([], parameters)
+    assert tool.defer_loading is True
+    assert breakdown["active_tools_count"] == 1
+    assert breakdown["deferred_tools_count"] == 0
+
+
+def test_hidden_tool_inventory_does_not_exhaust_the_context_budget():
+    active = _tool("read")
+    hidden = ToolDefinition(
+        name="unloaded", description="Specialist contract. " * 10_000,
+        defer_loading=True,
+    )
+    visible = ObservedModel._context_breakdown([], ModelRequestParameters(function_tools=[active]))
+    with_inventory = ObservedModel._context_breakdown(
+        [], ModelRequestParameters(function_tools=[active, hidden]),
+    )
+    assert with_inventory["tool_schema_bytes"] > visible["tool_schema_bytes"]
+    assert with_inventory["estimated_input_tokens"] == visible["estimated_input_tokens"]
+
+
+@pytest.mark.asyncio
+async def test_native_capability_load_updates_the_observed_active_inventory():
+    def approved_read() -> str:
+        """Read approved evidence."""
+        return "evidence"
+
+    requests = 0
+
+    def model(messages, info):
+        nonlocal requests
+        requests += 1
+        if requests == 1:
+            return ModelResponse(parts=[ToolCallPart("load_capability", {"id": "specialist"}, "load")])
+        return ModelResponse(parts=[TextPart("loaded")])
+
+    observer = AsyncMock()
+    await Agent(
+        ObservedModel(FunctionModel(model), observer),
+        capabilities=[Capability(id="specialist", tools=[approved_read], defer_loading=True)],
+    ).run("Load the specialist.")
+    events = [call.args[0] for call in observer.await_args_list if call.args[0].type == "request"]
+    assert [(event.context_breakdown["active_tools_count"], event.context_breakdown["deferred_tools_count"]) for event in events] == [(1, 1), (2, 0)]
 
 
 class _FixedUsageModel(TestModel):

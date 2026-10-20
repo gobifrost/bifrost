@@ -1525,13 +1525,14 @@ class AgentExecutor:
                     duration_ms=duration_ms,
                 )
             else:
+                receipt = workflow_failure_receipt(execution_response)
                 return ToolResult(
                     tool_call_id=tool_call.id,
                     tool_name=tool_call.name,
                     result=execution_response.result,
-                    error=execution_response.error or "Unknown error",
+                    error=receipt["error"],
                     duration_ms=duration_ms,
-                    metadata=workflow_failure_receipt(execution_response),
+                    metadata=receipt,
                 )
 
         except Exception as e:
@@ -2015,8 +2016,10 @@ class AgentExecutor:
                 "status": outcome.status,
             }
             if not outcome.succeeded:
-                metadata["evidence"] = outcome.evidence
-                metadata["partial_output"] = outcome.output
+                if outcome.evidence is not None:
+                    metadata["evidence"] = outcome.evidence
+                if outcome.output is not None:
+                    metadata["partial_output"] = outcome.output
 
             logger.info(
                 f"Delegation to '{outcome.agent_name}' completed with "

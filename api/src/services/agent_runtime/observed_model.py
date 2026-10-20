@@ -97,9 +97,10 @@ class ObservedModel(WrapperModel):
         can already include them in serialized message history.
 
         ``tool_schema_bytes`` retains its compatibility meaning: all framework
-        function-tool definitions. The active and deferred fields split that
-        total by Pydantic AI's ``defer_loading`` flag, without asserting an
-        exact provider wire representation, cache key, or billed-token split.
+        function-tool definitions. Active/deferred counts follow framework
+        visibility and history reveals: ``defer_loading`` stays set after a
+        capability loads. These are not an exact provider wire representation,
+        cache key, or billed-token split.
         """
 
         categories = {
@@ -148,16 +149,18 @@ class ObservedModel(WrapperModel):
             messages, model_request_parameters
         ) or []
         instruction_bytes = sum(len(part.content.encode()) for part in instructions)
-        active_tools = [
-            tool
-            for tool in model_request_parameters.function_tools
-            if not tool.defer_loading
-        ]
-        deferred_tools = [
-            tool
-            for tool in model_request_parameters.function_tools
-            if tool.defer_loading
-        ]
+        active_tools = []
+        deferred_tools = []
+        for tool in model_request_parameters.function_tools:
+            visibility = model_request_parameters.visibility_of(tool.name)
+            revealed = (
+                model_request_parameters.tool_visibility is None
+                and tool.name in model_request_parameters.revealed_tool_names
+            )
+            if visibility in {"visible", "via_history"} or revealed:
+                active_tools.append(tool)
+            else:
+                deferred_tools.append(tool)
         tool_schema = pydantic_core.to_json(
             model_request_parameters.function_tools,
             fallback=str,
@@ -195,9 +198,12 @@ class ObservedModel(WrapperModel):
         )
         result["estimated_input_tokens"] = ObservedModel._estimated_input_tokens(
             messages_serialized_bytes=len(serialized_messages),
-            tool_schema_bytes=len(tool_schema),
+            # Withheld schemas are discovery inventory, not active context.
+            # Already-revealed schemas may also be represented in history;
+            # counting both remains deliberately conservative.
+            tool_schema_bytes=len(active_tool_schema) if active_tools else 0,
             messages_count=len(messages),
-            tools_count=len(model_request_parameters.function_tools),
+            tools_count=len(active_tools),
         )
         return result
 
