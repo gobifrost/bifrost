@@ -2,6 +2,9 @@
 # Installs dependencies only - all code comes from volume mounts
 # Prevents stale code and bytecode cache issues
 
+# Match the production App build runtime.
+FROM node:24.22.0-bookworm-slim@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5 AS node-toolchain
+
 # =============================================================================
 # Stage 1: Builder
 # =============================================================================
@@ -46,11 +49,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gosu \
     git \
     awscli \
-    nodejs npm \
+    libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
-# Match the production App build toolchain; Debian's npm 9.2.0 crashes while
-# resolving valid V2 App peer dependencies ("edgesOut").
+# Match the production Node runtime and peer-dependency resolver.
+COPY --from=node-toolchain /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-toolchain /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 COPY api/scripts/install-npm.sh /usr/local/bin/install-npm.sh
 RUN sh /usr/local/bin/install-npm.sh && rm /usr/local/bin/install-npm.sh
 

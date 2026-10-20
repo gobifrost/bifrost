@@ -1,9 +1,10 @@
 #!/bin/sh
 set -eu
 
-# npm 10.9.3 integrity from https://registry.npmjs.org/npm/10.9.3
-NPM_VERSION="10.9.3"
-NPM_TARBALL_SHA512="e84875bb943e908557780f1eee5d9cfc7a67145730ae4b77ef10ccba30f96ded6096859af69ea3dc5b2fde60725d79aa247cbed9c12544c30bf28a4d4fbc4825"
+# npm 11.21.1 fixes the peer-set resolver crash affecting App SDK rebuilds.
+# Integrity from https://registry.npmjs.org/npm/11.21.1
+NPM_VERSION="11.21.1"
+NPM_TARBALL_SHA512="613ccbe90044257c87713bb426251ced128ca7e9b3949b65eeb18b98445a5d441e14720c73d6ad76be86f4cf42f2f0d66efe347a9a13400ccd2f6fcfb5954385"
 tarball="$(mktemp --suffix=.tgz)"
 
 cleanup() {
