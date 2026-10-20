@@ -14,6 +14,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -46,7 +47,10 @@ from src.services.execution.agent_helpers import (
     parse_mcp_tool_name,
     resolve_agent_tools,
 )
-from src.services.execution.agent_workflow_tools import execute_agent_workflow_tool
+from src.services.execution.agent_workflow_tools import (
+    execute_agent_workflow_tool,
+    workflow_failure_receipt,
+)
 from src.services.agent_runtime import (
     AgentRunBudget,
     AgentRunCancelled,
@@ -60,6 +64,7 @@ from src.services.agent_runtime import (
     reasoning_tokens,
 )
 from src.services.agent_runtime.empty_output import EmptyOutputCircuitBreaker
+from src.services.agent_runtime.composition import build_agent_composition
 from src.services.llm import ToolCallRequest
 from src.services.llm.factory import get_llm_configs
 from src.services.model_pricing import chain_context_window
@@ -517,6 +522,27 @@ class AutonomousAgentExecutor:
                 db,
                 caller_user_id=self._acting_user_id,
             )
+        composition = None
+        if agent.delegated_agents:
+            try:
+                composition = await build_agent_composition(
+                    agent,
+                    caller=caller,
+                    session_factory=self._session_factory,
+                    caller_user_id=self._acting_user_id,
+                    entry_definitions=tool_definitions,
+                    entry_workflow_ids=self._tool_workflow_id_map,
+                )
+            except AgentRuntimeAuthorizationError as exc:
+                return {
+                    "output": None,
+                    "iterations_used": 0,
+                    "tokens_used": 0,
+                    "status": "failed",
+                    "error": str(exc),
+                    "llm_model": None,
+                }
+            tool_definitions = list(composition.entry_definitions)
         last_response_content = ""
 
         async def record_model_event(event: ModelCallEvent) -> None:
@@ -605,28 +631,47 @@ class AutonomousAgentExecutor:
                 raise AgentRunCancelled("Cancelled by user during tool execution")
             self._last_workflow_execution_id = None
             self._last_workflow_execution_is_error = False
-            if name.startswith("delegate_to_"):
+            if name.startswith("delegate_to_") or name == "delegate_task":
                 self._last_delegation_run_id = None
+            owner = agent
+            workflow_ids = None
+            if composition is not None:
+                binding = await composition.resolve_call(name, arguments)
+                owner = binding.owner
+                name = binding.original_name
+                arguments = binding.arguments
+                workflow_ids = binding.workflow_ids
             return await self._execute_tool(
                 ToolCallRequest(id=tool_call_id, name=name, arguments=arguments),
-                agent,
+                owner,
+                workflow_ids=workflow_ids,
             )
 
         async def record_tool_event(event: ToolEvent) -> None:
             nonlocal step_number
             step_number += 1
             if event.type == "tool_call":
+                self._last_workflow_execution_id = None
+                self._last_workflow_execution_is_error = False
+                self._last_delegation_run_id = None
                 await self._record_step(
                     run_id,
                     step_number,
                     "tool_call",
-                    {"tool_name": event.tool_name, "arguments": event.arguments},
+                    {
+                        "tool_name": event.tool_name,
+                        "arguments": event.arguments,
+                        **((composition.provenance_for(event.tool_name, event.arguments) or {})
+                           if composition is not None else {}),
+                    },
                 )
                 return
 
             content: dict[str, Any] = {
                 "tool_name": event.tool_name,
                 "is_error": event.type == "tool_error" or self._last_workflow_execution_is_error,
+                **((composition.provenance_for(event.tool_name, event.arguments) or {})
+                   if composition is not None else {}),
             }
             if event.type == "tool_error":
                 content["error"] = event.error
@@ -637,7 +682,9 @@ class AutonomousAgentExecutor:
                 content["result"] = result
                 if result_truncated:
                     content["result_truncated"] = True
-            if event.tool_name.startswith("delegate_to_") and self._last_delegation_run_id:
+            if self._last_delegation_run_id and (
+                event.tool_name.startswith("delegate_to_") or event.tool_name == "delegate_task"
+            ):
                 content["child_run_id"] = self._last_delegation_run_id
             if self._last_workflow_execution_id:
                 content["execution_id"] = self._last_workflow_execution_id
@@ -680,11 +727,13 @@ class AutonomousAgentExecutor:
             system_prompt=build_agent_system_prompt(
                 agent,
                 execution_context={"mode": "autonomous"},
-            ),
+            ) + (composition.instructions if composition is not None else ""),
             toolsets=[toolset] if tool_definitions else [],
             capabilities=[
                 *build_runtime_capabilities(budget, context_window=context_window),
                 empty_output_guard,
+                *(composition.capabilities(execute_tool, record_tool_event)
+                  if composition is not None else []),
             ],
             model_settings=chain.primary_settings,
             # One bounded correction for malformed tool names/arguments. The
@@ -835,7 +884,13 @@ class AutonomousAgentExecutor:
     # Tool dispatch
     # ------------------------------------------------------------------
 
-    async def _execute_tool(self, tool_call: ToolCallRequest, agent: Agent) -> str:
+    async def _execute_tool(
+        self,
+        tool_call: ToolCallRequest,
+        agent: Agent,
+        *,
+        workflow_ids: Mapping[str, UUID] | None = None,
+    ) -> str:
         """Execute a tool call, mirroring AgentExecutor's dispatch logic."""
         if self._caller is None:
             raise ToolError("Agent run caller is unavailable")
@@ -878,7 +933,9 @@ class AutonomousAgentExecutor:
             )
 
         # Workflow tools
-        workflow_id = self._tool_workflow_id_map.get(tool_call.name)
+        workflow_id = (
+            self._tool_workflow_id_map if workflow_ids is None else workflow_ids
+        ).get(tool_call.name)
         if not workflow_id:
             raise ToolError(f"Unknown tool: {tool_call.name}")
 
@@ -899,8 +956,7 @@ class AutonomousAgentExecutor:
         self._last_workflow_execution_is_error = response.status.value != "Success"
 
         if self._last_workflow_execution_is_error:
-            error_msg = response.error or f"Tool execution failed with status: {response.status.value}"
-            return f"Error: {error_msg}"
+            return "Error: " + json.dumps(workflow_failure_receipt(response), default=str)
 
         if not response.result:
             return "Tool executed successfully"
@@ -1494,9 +1550,13 @@ class AutonomousAgentExecutor:
             run_as=self._run_as,
         )
         if not outcome.succeeded:
-            raise ToolError(
-                outcome.error or f"Delegation ended with status {outcome.status}"
-            )
+            raise ToolError(json.dumps({
+                "error": outcome.error or f"Delegation ended with status {outcome.status}",
+                "child_run_id": str(outcome.child_run_id),
+                "status": outcome.status,
+                "partial_output": outcome.output,
+                "evidence": outcome.evidence,
+            }, default=str))
         if isinstance(outcome.output, dict):
             return json.dumps(outcome.output)
         if outcome.output is None:

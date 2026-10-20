@@ -88,7 +88,19 @@ class ObservedModel(WrapperModel):
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
     ) -> dict[str, int | str]:
-        """Measure request composition without recording prompt contents."""
+        """Measure request composition without recording prompt contents.
+
+        Byte fields are raw serialized or UTF-8 sizes for observability, not
+        provider token attribution. ``estimated_input_tokens`` remains the
+        existing conservative whole-request budget estimate; instruction bytes
+        are deliberately not added to it because provider instruction handling
+        can already include them in serialized message history.
+
+        ``tool_schema_bytes`` retains its compatibility meaning: all framework
+        function-tool definitions. The active and deferred fields split that
+        total by Pydantic AI's ``defer_loading`` flag, without asserting an
+        exact provider wire representation, cache key, or billed-token split.
+        """
 
         categories = {
             "system_prompt_bytes": 0,
@@ -132,19 +144,45 @@ class ObservedModel(WrapperModel):
                 else:
                     categories["other_history_bytes"] += size
 
+        instructions = Model._get_instruction_parts(
+            messages, model_request_parameters
+        ) or []
+        instruction_bytes = sum(len(part.content.encode()) for part in instructions)
+        active_tools = [
+            tool
+            for tool in model_request_parameters.function_tools
+            if not tool.defer_loading
+        ]
+        deferred_tools = [
+            tool
+            for tool in model_request_parameters.function_tools
+            if tool.defer_loading
+        ]
         tool_schema = pydantic_core.to_json(
             model_request_parameters.function_tools,
             fallback=str,
         )
+        active_tool_schema = pydantic_core.to_json(active_tools, fallback=str)
+        deferred_tool_schema = pydantic_core.to_json(deferred_tools, fallback=str)
         serialized_messages = ModelMessagesTypeAdapter.dump_json(messages)
         result: dict[str, int | str] = {
             **categories,
+            "instruction_bytes": instruction_bytes,
             "tool_schema_bytes": len(tool_schema),
+            "active_tools_count": len(active_tools),
+            "deferred_tools_count": len(deferred_tools),
+            "active_tool_schema_bytes": len(active_tool_schema) if active_tools else 0,
+            "deferred_tool_schema_bytes": len(deferred_tool_schema) if deferred_tools else 0,
             "messages_serialized_bytes": len(serialized_messages),
             "tool_schema_sha256": hashlib.sha256(tool_schema).hexdigest(),
         }
+        # This is an estimated diagnostic prefix, never an asserted provider
+        # cache key or billed-token amount. Deferred schemas remain separately
+        # observable above without being represented as active prompt bytes.
         result["provider_cache_prefix_bytes"] = (
-            categories["system_prompt_bytes"] + len(tool_schema)
+            categories["system_prompt_bytes"]
+            + instruction_bytes
+            + (len(active_tool_schema) if active_tools else 0)
         )
         result["replayed_history_bytes"] = sum(
             categories[key]

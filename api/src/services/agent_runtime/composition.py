@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 from copy import deepcopy
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from typing import Any
 from uuid import UUID
@@ -76,7 +76,12 @@ class ToolBinding:
             "source_path_agent_ids": [str(agent_id) for agent_id in self.path],
             "capability_id": self.capability_id,
             **(
-                {"delegated_agent_id": str(self.delegated_target_path[-1])}
+                {
+                    "delegated_agent_id": str(self.delegated_target_path[-1]),
+                    "delegated_target_path_agent_ids": [
+                        str(agent_id) for agent_id in self.delegated_target_path
+                    ],
+                }
                 if self.delegated_target_path
                 else {}
             ),
@@ -117,7 +122,7 @@ def _capability_id(agent_id: UUID) -> str:
 
 def _qualified_tool_name(agent_id: UUID, original_name: str) -> str:
     """Give each descendant tool a stable unique name under Pydantic's limit."""
-    owner = agent_id.hex[:12]
+    owner = agent_id.hex
     source = _safe_segment(original_name, fallback="tool")
     # The UUID component makes distinct same-named source tools impossible to
     # conflate; retaining source text makes persisted steps understandable.
@@ -128,7 +133,7 @@ def _qualified_tool_name(agent_id: UUID, original_name: str) -> str:
 
 def _delegate_name(agent: Agent) -> str:
     """A unique SubAgents key; names are presentation only, never lookup fallbacks."""
-    return f"{_safe_segment(agent.name, fallback='agent')}_{agent.id.hex[:12]}"[:64]
+    return f"{_safe_segment(agent.name, fallback='agent')[:31]}_{agent.id.hex}"
 
 
 async def _load_approved_child(
@@ -171,6 +176,17 @@ class _CompositionAuthorizationCapability(AbstractCapability[object]):
     ) -> None:
         self._composition = composition
         self._event_handler = event_handler
+
+    async def prepare_tools(
+        self, ctx: RunContext[object], tool_defs: list[PydanticToolDefinition],
+    ) -> list[PydanticToolDefinition]:
+        """Keep child effects under Bifrost's existing per-run effect ordering."""
+        del ctx
+        return [
+            replace(tool, sequential=True)
+            if tool.name == "delegate_task" else tool
+            for tool in tool_defs
+        ]
 
     async def before_model_request(self, ctx: RunContext[object], request_context: Any) -> Any:
         """Do not send already-loaded specialist instructions after revocation."""
@@ -304,10 +320,9 @@ class AgentComposition:
         caller_user_id: UUID | None,
         instructions: str,
         entry_definitions: Sequence[ToolDefinition],
-        entry_workflow_ids: dict[str, UUID],
         bindings: dict[str, ToolBinding],
         deferred: Sequence[_DeferredAgent],
-        direct_delegates: dict[str, ToolBinding],
+        isolated_delegates: dict[str, ToolBinding],
     ) -> None:
         self.root_id = root_id
         self.caller = caller
@@ -315,19 +330,15 @@ class AgentComposition:
         self.caller_user_id = caller_user_id
         self.instructions = instructions
         self.entry_definitions = tuple(entry_definitions)
-        self.entry_workflow_ids = dict(entry_workflow_ids)
         self._bindings = dict(bindings)
         self._deferred = tuple(deferred)
-        self._direct_delegates = dict(direct_delegates)
-
-    def has_binding(self, name: str) -> bool:
-        return name in self._bindings or name == "delegate_task"
+        self._isolated_delegates = dict(isolated_delegates)
 
     def provenance_for(self, name: str, args: dict[str, Any] | None = None) -> dict[str, Any] | None:
         """Return static review metadata without treating it as live authority."""
         if name == "delegate_task":
             agent_name = (args or {}).get("agent_name")
-            binding = self._direct_delegates.get(agent_name)
+            binding = self._isolated_delegates.get(agent_name)
         else:
             binding = self._bindings.get(name)
         return {} if binding is None else binding.provenance
@@ -364,7 +375,7 @@ class AgentComposition:
         if name == "delegate_task":
             agent_name = args.get("agent_name")
             task = args.get("task")
-            binding = self._direct_delegates.get(agent_name)
+            binding = self._isolated_delegates.get(agent_name)
             if binding is None or not isinstance(task, str) or not task.strip():
                 raise AgentCompositionError("Approved agent_name and non-empty task are required")
             arguments = {"task": task}
@@ -453,9 +464,9 @@ class AgentComposition:
                     defer_loading=True,
                 )
             )
-        if self._direct_delegates:
+        if self._isolated_delegates:
             children: list[SubAgent[object]] = []
-            for name, binding in self._direct_delegates.items():
+            for name, binding in self._isolated_delegates.items():
                 children.append(
                     SubAgent(
                         _BifrostChildAgent(
@@ -467,7 +478,8 @@ class AgentComposition:
                         ),
                         name=name,
                         description=(
-                            f"Optional isolated run of approved agent {binding.owner_id}."
+                            "Optional isolated run of approved agent "
+                            f"{binding.delegated_target_path[-1] if binding.delegated_target_path else binding.owner_id}."
                         ),
                     )
                 )
@@ -477,7 +489,11 @@ class AgentComposition:
                     agent_folders=None,
                     forward_usage=True,
                     inherit_tools=False,
-                    tool_retries=0,
+                    # Match the owning runtime's one schema/name correction.
+                    # Operational child errors are ordinary receipts above,
+                    # so this never automatically repeats a business effect.
+                    tool_retries=1,
+                    max_depth=MAX_COMPOSITION_DEPTH,
                 )
             )
         return capabilities
@@ -505,7 +521,8 @@ async def build_agent_composition(
         for definition in entry_definitions
     }
     deferred: list[_DeferredAgent] = []
-    direct_delegates: dict[str, ToolBinding] = {}
+    isolated_delegates: dict[str, ToolBinding] = {}
+    definitions_by_agent: dict[UUID, Sequence[ToolDefinition]] = {root.id: entry_definitions}
 
     async with session_factory() as session:
         refreshed_caller, live_root = await authorize_agent_execution(session, caller, root.id)
@@ -546,6 +563,7 @@ async def build_agent_composition(
                 definitions, workflow_ids = await resolve_agent_tools(
                     child, session, caller_user_id=caller_user_id
                 )
+                definitions_by_agent[child.id] = definitions
                 capability_id = _capability_id(child.id)
                 deferred.append(
                     _DeferredAgent(
@@ -564,6 +582,8 @@ async def build_agent_composition(
                 )
                 for definition in definitions:
                     qualified_name = _qualified_tool_name(child.id, definition.name)
+                    if qualified_name in bindings:
+                        raise AgentCompositionError("Specialist tool names are not unique")
                     bindings[qualified_name] = ToolBinding(
                         name=qualified_name,
                         owner_id=child.id,
@@ -573,24 +593,20 @@ async def build_agent_composition(
                         parameters=deepcopy(definition.parameters),
                         bound_id=workflow_ids.get(definition.name),
                     )
-                if parent.id == live_root.id:
+                legacy_name = agent_delegation_slug(child.name)
+                legacy_definition = next(
+                    (item for item in definitions_by_agent[parent.id] if item.name == legacy_name),
+                    None,
+                )
+                if legacy_definition is not None:
                     delegate_name = _delegate_name(child)
-                    legacy_name = agent_delegation_slug(child.name)
-                    legacy_definition = next(
-                        (item for item in entry_definitions if item.name == legacy_name),
-                        None,
-                    )
-                    direct_delegates[delegate_name] = ToolBinding(
+                    isolated_delegates[delegate_name] = ToolBinding(
                         name="delegate_task",
-                        owner_id=live_root.id,
+                        owner_id=parent.id,
                         original_name=legacy_name,
-                        path=(live_root.id,),
+                        path=path,
                         capability_id=None,
-                        parameters=(deepcopy(legacy_definition.parameters) if legacy_definition else {
-                            "type": "object",
-                            "properties": {"task": {"type": "string"}},
-                            "required": ["task"],
-                        }),
+                        parameters=deepcopy(legacy_definition.parameters),
                         delegated_target_path=child_path,
                     )
                 visited.add(child.id)
@@ -619,8 +635,7 @@ async def build_agent_composition(
             "its tools are needed; use delegate_task only for a self-contained isolated child task."
         ),
         entry_definitions=adapted_entries,
-        entry_workflow_ids=entry_workflow_ids,
         bindings=bindings,
         deferred=deferred,
-        direct_delegates=direct_delegates,
+        isolated_delegates=isolated_delegates,
     )

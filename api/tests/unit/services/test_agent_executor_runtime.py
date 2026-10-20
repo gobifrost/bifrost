@@ -392,6 +392,7 @@ async def test_unknown_capabilities_still_offer_agent_tools(
     config = LLMConfig(provider="openai", model="test-model", api_key="test-key")
     capabilities = ModelCapabilities(source="unknown", tool_calling=False)
     agent = MagicMock()
+    agent.delegated_agents = []
     agent.id = uuid4()
     agent.name = "Test Agent"
     agent.organization_id = None
@@ -467,6 +468,7 @@ async def test_chat_maps_pydantic_tool_events_to_existing_bifrost_contract(
     caller: Caller,
 ) -> None:
     agent = MagicMock()
+    agent.delegated_agents = []
     agent.id = uuid4()
     agent.name = "Ticket Agent"
     agent.max_iterations = 5

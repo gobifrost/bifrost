@@ -18,6 +18,7 @@ from src.models.orm.agent_runs import AgentRun
 from src.repositories.knowledge import KnowledgeDocument
 from src.services.agent_runtime import AgentRunBudget
 from src.services.authorization.enforce import Caller
+from src.services.authorization.agent_runtime import AgentRuntimeAuthorizationError
 from src.services.execution.agent_helpers import find_delegated_agent
 from src.services.execution.autonomous_agent_executor import (
     ActingUser,
@@ -258,7 +259,30 @@ def authorized_agent_runtime(mock_agent):
         None, fallback_organization_id=mock_agent.organization_id
     )
     child_caller = Caller(child_caller.principal, MagicMock())
+
+    async def fixed_composition(agent, **kwargs):
+        """These legacy lifecycle units isolate the newly shared catalog adapter.
+
+        Real composition and live graph authorization have their own focused
+        unit and DB/E2E coverage. Preserve this module's explicit tool scripts.
+        """
+        async def resolve(name, arguments):
+            return SimpleNamespace(
+                owner=agent, original_name=name, arguments=arguments,
+                workflow_ids=kwargs["entry_workflow_ids"],
+            )
+
+        return SimpleNamespace(
+            entry_definitions=kwargs["entry_definitions"], instructions="",
+            resolve_call=resolve, provenance_for=lambda *_: {},
+            capabilities=lambda *_: [],
+        )
+
     with (
+        patch(
+            "src.services.execution.autonomous_agent_executor.build_agent_composition",
+            new=AsyncMock(side_effect=fixed_composition),
+        ),
         patch(
             "src.services.execution.autonomous_agent_executor.authorize_agent_execution",
             new=AsyncMock(side_effect=authorize),
@@ -279,6 +303,25 @@ def authorized_agent_runtime(mock_agent):
 
 
 class TestAutonomousAgentExecutor:
+    @pytest.mark.asyncio
+    async def test_revocation_during_composition_returns_failure_without_model_request(
+        self, mock_session, mock_agent, mock_runtime_config,
+    ):
+        mock_agent.delegated_agents = [SimpleNamespace(id=uuid4())]
+        with (
+            patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools", new=AsyncMock(return_value=([], {}))),
+            patch("src.services.execution.autonomous_agent_executor.build_agent_composition", new=AsyncMock(side_effect=AgentRuntimeAuthorizationError("Agent revoked"))),
+            patch("src.services.agent_runtime.model_factory.create_agent_model") as create_model,
+        ):
+            result = await AutonomousAgentExecutor(mock_session).run(
+                agent=mock_agent, input_data={}, caller=_canonical_caller(None),
+                run_user_id=None, run_as=None,
+            )
+        assert result["status"] == "failed"
+        assert result["error"] == "Agent revoked"
+        assert result["iterations_used"] == 0
+        create_model.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_knowledge_search_deduplicates_evidence_across_queries(
         self,

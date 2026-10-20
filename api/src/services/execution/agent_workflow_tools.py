@@ -21,6 +21,24 @@ class AgentWorkflowAuthorizationError(CallerUnavailable):
     """The caller can no longer launch an agent workflow tool."""
 
 
+def workflow_failure_receipt(response: "WorkflowExecutionResponse") -> dict[str, Any]:
+    """Retain returned execution evidence without inferring unreported effects.
+
+    Workflow result/details may carry failure phase, completed effects, uncertain
+    effects, and verification receipts. A failed status must not discard them.
+    Logs and runtime variables are intentionally outside the tool result contract.
+    """
+    return {
+        "execution_id": response.execution_id,
+        "status": response.status.value,
+        "duration_ms": response.duration_ms,
+        "error": response.error or f"Tool execution failed with status: {response.status.value}",
+        "error_type": response.error_type,
+        "result": response.result,
+        "details": response.details,
+    }
+
+
 async def execute_agent_workflow_tool(
     *,
     agent_id: UUID | str,

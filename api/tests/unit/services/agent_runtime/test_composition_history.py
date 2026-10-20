@@ -48,10 +48,9 @@ def _composition(*, root_id, deferred=(), bindings=None, session_factory=None):
         caller_user_id=uuid4(),
         instructions="Root instructions remain in effect.",
         entry_definitions=(),
-        entry_workflow_ids={},
         bindings=bindings or {},
         deferred=deferred,
-        direct_delegates={},
+        isolated_delegates={},
     )
 
 
