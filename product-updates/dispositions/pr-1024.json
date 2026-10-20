@@ -1,0 +1,15 @@
+{
+  "key": "pr:1024",
+  "classification": "highlight",
+  "entry_ids": [
+    "250a294a-6072-4b82-a2c7-0027b3b5af65"
+  ],
+  "summary": "Agents can use approved specialists' tools in the same run and retain returned failure evidence.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1024",
+      "Reviewed the native capability and child-lifecycle adapters against 194 focused framework, database, runtime, caller-authorization and MCP checks. Copy reviewed using General Writing and Humanizer; no model-quality, cost-reduction or autonomous crash-resume claim is made. Existing caller authority and effect checks remain enforced."
+    ]
+  }
+}
