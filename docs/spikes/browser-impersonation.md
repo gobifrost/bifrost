@@ -143,3 +143,13 @@ python3 scripts/check_skill_mirrors.py
 Results: scheduler 17 passed; combined inventory/generated/scheduler run 100 passed with two newly exposed registry omissions. Registering the original-human resolver's copied actor facts and the ownership-checked personal Exit route fixed those omissions; the final three affected assertions passed. Mirror validation passed. The new auth endpoints are classified as authentication transport, rather than CLI/MCP entity mutations; every new Redis liveness/ownership read is authority-bearing in the inventory.
 
 The next complete backend unit run passed 9,545 tests and exposed one remaining snapshot assumption in `test_permissions.py`: `users.impersonate` was still listed among privileged permissions without a registered operation. Removing it from that exception set tightens the inventory now that the browser start endpoint names the permission. `./test.sh tests/unit/test_permissions.py -v --durations=0` passed all 175 cases. The runtime privileged-permission set is unchanged.
+
+The first merge-queue candidate passed backend/client units, lint/types, both image builds, browser smoke, and E2E shards 2/3 and 3/3. Shard 1 exposed a test ownership defect: the preceding revoke-all-sessions test invalidated the session-scoped administrator refresh token, which the browser impersonation test reused. The server correctly returned 403 rather than minting a support session from a revoked login. An ordered local reproduction produced the same failure (one failed, two passed).
+
+Both browser API tests now create a fresh login from a copy of their user fixture and own a private cookie jar. Cleanup exits impersonation and revokes only that login's refresh JTI. The bearer-only precheck still starts with no cookies, and all authorization, credential-enrollment, marker revocation, and expired-marker recovery assertions remain. Runtime authentication was not changed.
+
+```bash
+./test.sh tests/e2e/api/test_auth.py::TestLogoutAndRevocation::test_revoke_all_sessions tests/e2e/api/test_browser_impersonation.py -v --durations=0
+```
+
+The exposing order passed all three tests (JUnit: zero failures/errors); focused Ruff passed in the Docker test image. No retries, skips, or timeout changes were added. Broader suites are left to the new merge-queue candidate; the test-only correction does not change the API schema or application behavior.
