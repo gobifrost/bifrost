@@ -970,10 +970,8 @@ async def end_browser_impersonation(
         end_actor = current_actor()
         session_id = None
         if marker_payload is not None:
-            try:
-                session_id = UUID(str(marker_payload["impersonation_session_id"]))
-            except (KeyError, TypeError, ValueError):
-                pass
+            # Revocation above only accepts a marker with a valid session UUID.
+            session_id = UUID(str(marker_payload["impersonation_session_id"]))
         await emit_audit(
             db,
             "auth.impersonation.ended",
