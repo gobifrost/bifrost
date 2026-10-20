@@ -11,6 +11,7 @@ import {
 	type EntityType as DependencyEntityType,
 	type DependencyGraph,
 } from "@/hooks/useDependencyGraph";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import { cn } from "@/lib/utils";
 
 import type { EntityType, EntityWithScope, Organization, Role } from "./types";
@@ -65,6 +66,7 @@ export function ResourceTreeTable({
 	onDelete,
 }: ResourceTreeTableProps) {
 	const [expandedKey, setExpandedKey] = useState<string | null>(null);
+	const getOrgName = useOrganizationName(organizations);
 	const expandedEntity = allEntities.find(
 		(entity) => entity.key === expandedKey,
 	);
@@ -151,9 +153,9 @@ export function ResourceTreeTable({
 						))}
 						<ResourceDirectoryRow
 							row={row}
-							organizationName={organizationName(
-								row.entity,
-								organizations,
+							organizationName={getOrgName(
+								row.entity.organizationId,
+								"Unknown organization",
 							)}
 							accessName={accessName(row.entity, roles)}
 							selected={selectedIds.has(row.entity.key)}
@@ -384,16 +386,6 @@ function AccessText({ name }: { name: string }) {
 			<span className="min-w-0 [overflow-wrap:anywhere]">{name}</span>
 		</span>
 	);
-}
-
-function organizationName(
-	entity: EntityWithScope,
-	organizations: Organization[],
-) {
-	return entity.organizationId
-		? (organizations.find((org) => org.id === entity.organizationId)
-				?.name ?? "Unknown organization")
-		: "Global";
 }
 
 function accessName(entity: EntityWithScope, roles: Role[]) {

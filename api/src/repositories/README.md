@@ -95,6 +95,28 @@ data after resource admission.
 
 ## Repository resolution and resource sharing
 
+### Ordinary App, Form, and Agent visibility
+
+`shared.resource_access.ResourceAccessResolver` owns the complete visibility
+decision for Apps, Forms, and Agents. Both discovery and exact reads use its
+`can_read` decision; `filter_readable` applies that same decision to a collection.
+It checks the original user's organization reach, resolves the named read
+permission target, then applies the resource's sharing or management policy.
+Resource adapters must not reconstruct those gates in routers or catalogs.
+
+The resolver retains explicit domain rules: App basic reads require basic
+permission even when management permission supplies sharing access; Form and
+Agent management reads may bypass ordinary sharing; private Agents retain
+owner and `.all` permissions. Inspection and mutation check the persisted
+organization, while ordinary reads retain the existing shared Global fallback.
+
+Queries still own their domain filters and name/slug resolution. Inactive
+resources, publication, active Solutions, execution permissions, and verified
+public/embed capabilities retain their separate gates. A raw repository loader
+does not authorize a caller. The App Caller-aware repository, Form SDK service,
+Agent policy adapters, and Home catalog all delegate ordinary visibility to the
+shared resolver.
+
 Use `OrgScopedRepository` for organization-scoped execution resources. It has
 these lookup methods:
 

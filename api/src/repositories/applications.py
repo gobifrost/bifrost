@@ -10,13 +10,15 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import defer
 
 from shared import access_checks
+from shared.resource_access import ResourceAccessResolver, ResourceKind
+from shared.scope_resolver import UNSET, RequestedScope
 from src.core.log_safety import log_safe
 from src.core.org_filter import OrgFilterType
 from src.models.contracts.applications import (
@@ -58,15 +60,19 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         is_external: bool = False,
         *,
         caller: Caller | None = None,
+        access_mode: Literal["read", "inspect", "write"] = "read",
+        selected_organization_id: RequestedScope = UNSET,
     ) -> None:
         """Build an App repository from a verified caller when available.
 
-        Caller mode keeps normal App sharing for ordinary readers and uses the
-        original user's current context for it. An ``apps.readwrite`` holder
-        may manage an App at the App's real organization, but token claims and
-        an effects actor never become repository authority.
+        Caller mode uses the common resource resolver for complete read,
+        inspection, or write admission. The original user's current context
+        supplies authority; token claims and an effects actor never do.
         """
         self.caller = caller
+        self.access_mode = access_mode
+        self.selected_organization_id = selected_organization_id
+        self.resource_access = ResourceAccessResolver(session, caller) if caller is not None else None
         if caller is not None:
             user_id = caller.ctx.user_id if caller.ctx is not None else None
             is_superuser = False
@@ -98,43 +104,43 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         return entity
 
     async def _can_access_entity(self, entity: Application) -> bool:
-        """Apply App sharing after original-user reach, then management power."""
-        caller = self.caller
-        if caller is None:
+        """Use the same complete decision for lists and exact App reads."""
+        access = self.resource_access
+        if access is None:
             return await super()._can_access_entity(entity)
-
-        from src.services.authorization.enforce import allows_permission, user_reach
-
-        if not user_reach(caller).covers(entity.organization_id):
-            return False
-        if await super()._can_access_entity(entity):
-            return True
-        return (
-            allows_permission(caller, "apps.read", entity.organization_id)
-            or allows_permission(caller, "apps.readwrite", entity.organization_id)
+        if self.access_mode == "write":
+            return access.can_write(ResourceKind.APP, entity)
+        if self.access_mode == "inspect":
+            return access.can_inspect(ResourceKind.APP, entity)
+        return await access.can_read(
+            ResourceKind.APP,
+            entity,
+            selected_organization_id=self.selected_organization_id,
         )
 
-    async def list_applications(self) -> list[Application]:
+    async def list_applications(
+        self,
+        filter_type: OrgFilterType = OrgFilterType.ORG_PLUS_GLOBAL,
+    ) -> list[Application]:
         """
-        List applications with cascade scoping and role-based access.
+        List applications in the requested scope with resource-based access.
 
-        Uses the base class scoping and role checking automatically.
+        Applies the same complete resource decision as direct App reads:
+        original-user reach, named permission, and resource sharing.
 
         Returns:
             List of Application ORM objects
         """
-        # Build base query with cascade scoping
-        query = select(self.model).options(
-            defer(self.model.logo_data),
-            defer(self.model.logo_thumbnail_data),
-        )
-        query = self._apply_cascade_scope(query)
-        query = query.order_by(self.model.name)
+        entities = await self.list_all_in_scope(filter_type)
 
-        result = await self.session.execute(query)
-        entities = list(result.scalars().all())
+        if self.resource_access is not None and self.access_mode == "read":
+            return await self.resource_access.filter_readable(
+                ResourceKind.APP,
+                entities,
+                selected_organization_id=self.selected_organization_id,
+            )
 
-        # Filter by role access for non-superusers with role-based entities
+        # Internal repositories without a Caller retain their ordinary ACL.
         if not self.is_superuser:
             accessible = []
             for entity in entities:

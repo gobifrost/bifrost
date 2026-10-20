@@ -162,6 +162,7 @@ class AuthorizationSummary(BaseModel):
 
     is_platform_admin: bool
     home_organization_id: UUID | None
+    home_organization_name: str | None = None
     provider_organization_id: UUID
     base_role: AuthorizationBaseRole
     grants: list[AuthorizationGrant] = Field(

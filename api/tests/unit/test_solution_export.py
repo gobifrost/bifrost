@@ -189,6 +189,74 @@ def test_export_apps_round_trip_source_and_logo() -> None:
     assert "prebuilt_sdk_metadata" not in manifest
 
 
+def test_export_uses_source_logo_member_when_it_matches_metadata_logo() -> None:
+    bundle = _bundle()
+    logo = base64.b64decode(_PNG)
+    bundle.apps[0]["bin_files"]["app-logo.png"] = base64.b64encode(logo).decode()
+
+    with zipfile.ZipFile(io.BytesIO(build_workspace_zip(bundle))) as archive:
+        logo_path = "apps/dash/app-logo.png"
+        assert archive.namelist().count(logo_path) == 1
+        assert archive.read(logo_path) == logo
+        manifest = archive.read(".bifrost/apps.yaml").decode()
+
+    assert "logo: app-logo.png" in manifest
+
+
+def test_export_preserves_different_source_logo_at_unique_metadata_path() -> None:
+    bundle = _bundle()
+    source_logo = b"user-authored logo bytes"
+    metadata_logo = base64.b64decode(_PNG)
+    bundle.apps[0]["bin_files"]["app-logo.png"] = base64.b64encode(source_logo).decode()
+
+    with zipfile.ZipFile(io.BytesIO(build_workspace_zip(bundle))) as archive:
+        names = archive.namelist()
+        assert len(names) == len(set(names))
+        assert archive.read("apps/dash/app-logo.png") == source_logo
+        assert archive.read("apps/dash/app-logo-metadata.png") == metadata_logo
+        manifest = archive.read(".bifrost/apps.yaml").decode()
+
+    assert "logo: app-logo-metadata.png" in manifest
+
+
+def test_export_uses_next_metadata_logo_path_when_first_is_user_source() -> None:
+    bundle = _bundle()
+    bundle.apps[0]["bin_files"].update({
+        "app-logo.png": base64.b64encode(b"user app logo").decode(),
+        "app-logo-metadata.png": base64.b64encode(b"user metadata logo").decode(),
+    })
+
+    with zipfile.ZipFile(io.BytesIO(build_workspace_zip(bundle))) as archive:
+        assert archive.read("apps/dash/app-logo.png") == b"user app logo"
+        assert archive.read("apps/dash/app-logo-metadata.png") == b"user metadata logo"
+        assert archive.read("apps/dash/app-logo-metadata-2.png") == base64.b64decode(_PNG)
+        manifest = archive.read(".bifrost/apps.yaml").decode()
+
+    assert "logo: app-logo-metadata-2.png" in manifest
+
+
+def test_export_reuses_identical_metadata_logo_path_after_preview_round_trip() -> None:
+    bundle = _bundle()
+    metadata_logo = base64.b64decode(_PNG)
+    bundle.apps[0]["bin_files"].update({
+        "app-logo.png": base64.b64encode(b"user app logo").decode(),
+        "app-logo-metadata.png": base64.b64encode(metadata_logo).decode(),
+    })
+    first = build_workspace_zip(bundle)
+    round_trip = _bundle()
+    round_trip.apps = preview_zip(first).apps
+
+    with zipfile.ZipFile(io.BytesIO(build_workspace_zip(round_trip))) as archive:
+        names = archive.namelist()
+        assert len(names) == len(set(names))
+        assert archive.read("apps/dash/app-logo.png") == b"user app logo"
+        assert archive.read("apps/dash/app-logo-metadata.png") == metadata_logo
+        assert "apps/dash/app-logo-metadata-2.png" not in names
+        manifest = archive.read(".bifrost/apps.yaml").decode()
+
+    assert "logo: app-logo-metadata.png" in manifest
+
+
 def test_export_python_source_verbatim() -> None:
     data = build_workspace_zip(_bundle())
     with zipfile.ZipFile(io.BytesIO(data)) as z:

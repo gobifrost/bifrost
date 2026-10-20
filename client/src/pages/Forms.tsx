@@ -28,6 +28,7 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useForms, useDeleteForm, useUpdateForm } from "@/hooks/useForms";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import { SearchBox } from "@/components/search/SearchBox";
 import { useSearch } from "@/hooks/useSearch";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
@@ -39,8 +40,6 @@ import { orgTarget } from "@/lib/authorization";
 import { useAuthorization } from "@/services/authorization";
 
 type FormPublic = components["schemas"]["FormPublic"];
-type Organization = components["schemas"]["OrganizationPublic"];
-
 export function Forms() {
 	const isDesktop = useIsDesktop();
 	const actionBusy = useRef(false);
@@ -89,12 +88,7 @@ export function Forms() {
 		enabled: authorization.canAnywhere("organizations.read"),
 	});
 
-	// Helper to get organization name from ID
-	const getOrgName = (orgId: string | null | undefined): string => {
-		if (!orgId) return "Global";
-		const org = organizations?.find((o: Organization) => o.id === orgId);
-		return org?.name || orgId;
-	};
+	const getOrgName = useOrganizationName(organizations);
 
 	const canManageForms = authorization.canAnywhere("forms.readwrite");
 	const canManageForm = (form: FormPublic) =>

@@ -4,6 +4,7 @@ import { LayoutGrid, RefreshCw, Table as TableIcon } from "lucide-react";
 
 import { useIsDesktop } from "@/hooks/useMediaQuery";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import { useSearch } from "@/hooks/useSearch";
 import { SearchBox } from "@/components/search/SearchBox";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
@@ -89,21 +90,25 @@ export function Services() {
 			"platform.readwrite",
 			orgTarget(service.organization_id),
 		);
+	const { data: organizations } = useOrganizations({
+		enabled: authorization.canAnywhere("organizations.read"),
+	});
+	const getOrgName = useOrganizationName(organizations);
 	const knownOrganizations = useMemo(() => {
-		const organizations = new Map<string, Organization>();
+		const known = new Map<string, Organization>();
 		for (const service of services) {
 			if (service.organization_id) {
-				organizations.set(service.organization_id, {
+				known.set(service.organization_id, {
 					id: service.organization_id,
-					name: service.organization_id,
+					name: getOrgName(service.organization_id),
 				});
 			}
 		}
 		const summary = authorization.authorization;
 		if (summary?.home_organization_id) {
-			organizations.set(summary.home_organization_id, {
+			known.set(summary.home_organization_id, {
 				id: summary.home_organization_id,
-				name: summary.home_organization_id,
+				name: getOrgName(summary.home_organization_id),
 			});
 		}
 		for (const grant of summary?.grants ?? []) {
@@ -111,23 +116,14 @@ export function Services() {
 				grant.boundary.kind === "organization" &&
 				grant.boundary.organization_id
 			) {
-				organizations.set(grant.boundary.organization_id, {
+				known.set(grant.boundary.organization_id, {
 					id: grant.boundary.organization_id,
-					name: grant.boundary.organization_id,
+					name: getOrgName(grant.boundary.organization_id),
 				});
 			}
 		}
-		return [...organizations.values()];
-	}, [authorization.authorization, services]);
-
-	const { data: organizations } = useOrganizations({
-		enabled: authorization.canAnywhere("organizations.read"),
-	});
-	const getOrgName = (orgId: string | null | undefined): string => {
-		if (!orgId) return "Global";
-		const org = organizations?.find((o: Organization) => o.id === orgId);
-		return org?.name || orgId;
-	};
+		return [...known.values()];
+	}, [authorization.authorization, getOrgName, services]);
 
 	const searchedServices = useSearch(services, searchTerm, [
 		"workflow_name",

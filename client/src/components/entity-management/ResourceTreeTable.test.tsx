@@ -6,11 +6,19 @@ import { ResourceTreeTable } from "./ResourceTreeTable";
 import type { EntityWithScope, Organization, Role } from "./types";
 
 const dependencyGraph = vi.fn();
+const { mockUseAuthorization } = vi.hoisted(() => ({
+	mockUseAuthorization: vi.fn(),
+}));
 
 vi.mock("@/hooks/useDependencyGraph", () => ({
 	useDependencyGraph: (entityType?: string, entityId?: string) =>
 		dependencyGraph(entityType, entityId),
 }));
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockUseAuthorization(),
+}));
+
+mockUseAuthorization.mockReturnValue({ authorization: undefined });
 
 const entities = [
 	entity("app-1", "Covi Portal", "app", "org-1", "role_based"),

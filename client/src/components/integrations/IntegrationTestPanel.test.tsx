@@ -35,6 +35,8 @@ function renderPanel(
 			onClearResult={onClearResult}
 			onTest={onTest}
 			isTestPending={false}
+			canTestAt={() => true}
+			testableOrganizations={[]}
 			{...overrides}
 		/>,
 	);
@@ -92,5 +94,15 @@ describe("IntegrationTestPanel", () => {
 	it("disables the Test button and shows 'Testing...' while pending", () => {
 		renderPanel({ isTestPending: true });
 		expect(screen.getByRole("button", { name: /testing/i })).toBeDisabled();
+	});
+
+	it("offers only an organization-scoped test when Global is not readable", () => {
+		renderPanel({ canTestAt: () => false, testOrgId: "customer-org" });
+		expect(
+			screen.getByText(
+				"Choose an organization to test with its merged configuration and OAuth.",
+			),
+		).toBeVisible();
+		expect(screen.getByRole("button", { name: /^test$/i })).toBeDisabled();
 	});
 });

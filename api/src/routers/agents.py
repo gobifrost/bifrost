@@ -25,6 +25,7 @@ from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.core.org_filter import OrgFilterType
 from shared.scope_resolver import UNSET
+from shared.resource_access import ResourceAccessResolver, ResourceKind
 from src.models.contracts.agent_stats import AgentStatsResponse, FleetStatsResponse
 from src.models.contracts.agents import (
     AgentAccessLevel,
@@ -256,19 +257,18 @@ async def list_agents(
         is_external=user.is_external,
     )
     candidates = await repo.list_all_in_scope(OrgFilterType.ALL, active_only=active_only)
-    agents: list[Agent] = []
+    scoped_candidates: list[Agent] = []
     for agent in candidates:
         if has_explicit_scope and agent.organization_id != requested_org:
             continue
         if discovery_only and agent.organization_id not in (None, caller.ctx.home_organization_id if caller.ctx else None):
             continue
-        if await can_read_agent(
-            db,
-            caller,
-            agent,
-            selected_organization_id=requested_org if has_explicit_scope else UNSET,
-        ):
-            agents.append(agent)
+        scoped_candidates.append(agent)
+    agents = await ResourceAccessResolver(db, caller).filter_readable(
+        ResourceKind.AGENT,
+        scoped_candidates,
+        selected_organization_id=requested_org if has_explicit_scope else UNSET,
+    )
 
     # Batch-compute dependency counts (tool count per agent)
     agent_ids = [a.id for a in agents]

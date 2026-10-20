@@ -2477,7 +2477,19 @@ class TestEveryPowerIsNoted:
             }
             assert loader_calls & {"get_application_or_404", "_get_application_by_id_or_404"}
 
-        application_source = _parse_source(inspect.getsource(applications.get_application_by_id_or_404))
+        for loader, reference in (
+            (applications.get_application_by_id_or_404, "app_id"),
+            (applications.get_application_or_404, "slug"),
+        ):
+            loader_source = _parse_source(inspect.getsource(loader))
+            assert any(
+                isinstance(node, ast.Call)
+                and _terminal_name(node.func) == "_get_application_for_caller"
+                and [_terminal_name(arg) for arg in node.args]
+                == ["ctx", "caller", reference, "permission"]
+                for node in ast.walk(loader_source)
+            )
+        application_source = _parse_source(inspect.getsource(applications._get_application_for_caller))
         require_calls = [
             node
             for node in ast.walk(application_source)

@@ -2,7 +2,7 @@ import { WorkspacePrimaryAction } from "@/components/layout/WorkspacePrimaryActi
 import { MarkdownContent } from "@/components/common/MarkdownContent";
 import { RecordActionsMenu } from "@/components/common/RecordActionsMenu";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
 	Building2,
@@ -33,6 +33,7 @@ import { SearchBox } from "@/components/search/SearchBox";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { ListToolbar } from "@/components/layout/ListToolbar";
 import { useSearch } from "@/hooks/useSearch";
@@ -83,11 +84,7 @@ export function TablesClaimsTab() {
 		null,
 	);
 
-	const orgNameById = useMemo(() => {
-		const m = new Map<string, string>();
-		for (const o of organizations ?? []) m.set(o.id, o.name);
-		return m;
-	}, [organizations]);
+	const getOrgName = useOrganizationName(organizations);
 
 	const apiScope =
 		filterOrgId === undefined || filterOrgId === null
@@ -113,16 +110,14 @@ export function TablesClaimsTab() {
 			if (claim.organization_id) {
 				known.set(claim.organization_id, {
 					id: claim.organization_id,
-					name:
-						orgNameById.get(claim.organization_id) ??
-						claim.organization_id,
+					name: getOrgName(claim.organization_id),
 				});
 			}
 		}
 		if (user?.organizationId) {
 			known.set(user.organizationId, {
 				id: user.organizationId,
-				name: orgNameById.get(user.organizationId) ?? user.organizationId,
+				name: getOrgName(user.organizationId),
 			});
 		}
 		for (const grant of authorization.authorization?.grants ?? []) {
@@ -132,16 +127,12 @@ export function TablesClaimsTab() {
 			) {
 				known.set(grant.boundary.organization_id, {
 					id: grant.boundary.organization_id,
-					name:
-						orgNameById.get(grant.boundary.organization_id) ??
-						grant.boundary.organization_id,
+					name: getOrgName(grant.boundary.organization_id),
 				});
 			}
 		}
 		return [...known.values()];
 	})();
-	const getOrgName = (orgId?: string | null): string =>
-		orgId ? (orgNameById.get(orgId) ?? orgId) : "Global";
 	const getClaimScope = (claim: CustomClaim): string | undefined =>
 		claim.organization_id ?? undefined;
 	const canManageClaim = (claim: CustomClaim) =>

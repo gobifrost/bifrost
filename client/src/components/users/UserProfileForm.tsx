@@ -10,6 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { AlertCircle, Loader2 } from "lucide-react";
 import { useUpdateUser } from "@/hooks/useUsers";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import { useAuth } from "@/contexts/AuthContext";
 import { orgTarget } from "@/lib/authorization";
 import { cn } from "@/lib/utils";
@@ -132,9 +133,9 @@ export function UserProfileForm({
 				id: org.id,
 			}),
 	);
+	const getOrgName = useOrganizationName(organizations);
 	const currentOrgName = user.organization_id
-		? (organizations?.find((org) => org.id === user.organization_id)
-				?.name ?? "Unavailable")
+		? getOrgName(user.organization_id, "Unavailable")
 		: "Global (no organization)";
 
 	const validateForm = (): boolean => {

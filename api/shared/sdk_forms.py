@@ -40,6 +40,7 @@ from src.models import FormRole as FormRoleORM
 from src.models.contracts.forms import FormField, FormSchema
 from shared.logo_processing import is_logo_thumbnail_version
 from shared.scope_resolver import UNSET, RequestedScope, shared_read_organization
+from shared.resource_access import ResourceAccessResolver, ResourceKind
 
 logger = logging.getLogger(__name__)
 
@@ -120,59 +121,12 @@ async def check_form_access(
     *,
     selected_organization_id: RequestedScope = UNSET,
 ) -> bool:
-    """Apply named Form permission plus the ordinary Form ACL.
-
-    A shared Global form is read at the selected organization for a list, or
-    at the caller's original home/runtime organization for a direct read.
-    Explicit Global remains an exact Global permission target.
-    """
-    from src.models.orm.users import UserRole
-    from src.services.authorization.enforce import (
-        allows_permission,
-        user_reach,
-    )
-
-    if not user_reach(caller).covers(form.organization_id):
-        return False
-    permission_org = shared_read_organization(
-        caller,
-        form.organization_id,
+    """Use the common resource resolver for ordinary Form visibility."""
+    return await ResourceAccessResolver(session, caller).can_read(
+        ResourceKind.FORM,
+        form,
         selected_organization_id=selected_organization_id,
     )
-    # Form Read reaches management detail and deliberately bypasses the
-    # everyday sharing ACL at a reachable organization.
-    if allows_permission(caller, "forms.read", permission_org):
-        return True
-    if not allows_permission(caller, "forms.readbasic", permission_org):
-        return False
-    if (
-        form.access_level == "everyone"
-        or getattr(form.access_level, "value", None) == "everyone"
-    ):
-        return True
-    if (
-        form.access_level == "authenticated"
-        or getattr(form.access_level, "value", None) == "authenticated"
-    ):
-        return caller.ctx is not None and not caller.ctx.is_external
-    original_user_id = None if caller.ctx is None else caller.ctx.user_id
-    if original_user_id is None:
-        return False
-    role_ids = (
-        await session.execute(
-            select(UserRole.role_id).where(UserRole.user_id == original_user_id)
-        )
-    ).scalars().all()
-    if not role_ids:
-        return False
-    return (
-        await session.execute(
-            select(FormRoleORM.form_id).where(
-                FormRoleORM.form_id == form.id,
-                FormRoleORM.role_id.in_(role_ids),
-            )
-        )
-    ).scalar_one_or_none() is not None
 
 
 async def load_form_role_ids(session: AsyncSession, form_id: UUID) -> list[UUID]:
@@ -254,6 +208,7 @@ async def list_sdk_forms(
         ).scalars().all()
     )
     forms = []
+    access = ResourceAccessResolver(session, caller)
     scope_is_unset = scope is None or scope == ""
     selected_permission_scope = UNSET if scope_is_unset else selected_org
     for form in candidates:
@@ -274,10 +229,9 @@ async def list_sdk_forms(
             caller, "forms.read", permission_org
         ):
             continue
-        if await check_form_access(
-            session,
+        if await access.can_read(
+            ResourceKind.FORM,
             form,
-            caller,
             selected_organization_id=selected_permission_scope,
         ):
             forms.append(form)

@@ -198,6 +198,46 @@ async def test_solution_success_maps_remapped_id_and_returns_only_target_app(
 
 
 @pytest.mark.asyncio
+async def test_solution_source_resolver_reads_identical_duplicate_logo_without_writing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from src.services import application_source_resolver as resolver
+
+    solution_id = uuid4()
+    manifest_id = uuid4()
+    app = _app(
+        app_id=solution_entity_id(solution_id, manifest_id), solution_id=solution_id
+    )
+    archive_path = tmp_path / "solution.zip"
+    archive_data = _workspace_zip(archive_path, app_ids=[manifest_id, uuid4()])
+    with zipfile.ZipFile(archive_path, "a") as archive:
+        with pytest.warns(UserWarning, match="Duplicate name"):
+            archive.writestr("apps/target/logo.png", b"\x89PNG\r\n\x1a\nTARGET")
+    archive_data = archive_path.read_bytes()
+
+    class Storage:
+        write = AsyncMock(side_effect=AssertionError("source resolution must not write"))
+        write_from_path = AsyncMock(side_effect=AssertionError("source resolution must not write"))
+        delete = AsyncMock(side_effect=AssertionError("source resolution must not write"))
+
+        async def copy_to_path(self, path):
+            path.write_bytes(archive_data)
+            return True
+
+    storage = Storage()
+    monkeypatch.setattr(
+        resolver, "SolutionSourceArtifactStorage", lambda _solution_id: storage
+    )
+
+    source = await resolver.resolve_application_source(app)
+
+    assert source.files["logo.png"] == b"\x89PNG\r\n\x1a\nTARGET"
+    assert storage.write.await_count == 0
+    assert storage.write_from_path.await_count == 0
+    assert storage.delete.await_count == 0
+
+
+@pytest.mark.asyncio
 async def test_solution_preview_runs_through_to_thread_with_exact_archive_path(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

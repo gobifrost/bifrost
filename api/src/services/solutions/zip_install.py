@@ -172,20 +172,40 @@ MAX_SOLUTION_BACKUP_ARCHIVE_BYTES = 32 * 1024 * 1024 * 1024
 MAX_SOLUTION_BACKUP_ENTRY_BYTES = 32 * 1024 * 1024 * 1024
 MAX_SOLUTION_BACKUP_UNCOMPRESSED_BYTES = 64 * 1024 * 1024 * 1024
 _PAYLOAD_PREFIX = ".bifrost/file-payloads/"
+_DUPLICATE_COMPARE_CHUNK_BYTES = 64 * 1024
 
 
-def _validate_zip_members(z: zipfile.ZipFile) -> None:
+def _zip_members_match(
+    z: zipfile.ZipFile, first: zipfile.ZipInfo, duplicate: zipfile.ZipInfo
+) -> bool:
+    """Compare duplicate members without buffering their full contents."""
+    if first.file_size != duplicate.file_size:
+        return False
+    with z.open(first) as first_file, z.open(duplicate) as duplicate_file:
+        while True:
+            first_chunk = first_file.read(_DUPLICATE_COMPARE_CHUNK_BYTES)
+            duplicate_chunk = duplicate_file.read(_DUPLICATE_COMPARE_CHUNK_BYTES)
+            if first_chunk != duplicate_chunk:
+                return False
+            if not first_chunk:
+                return True
+
+
+def _validate_zip_members(z: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
+    """Validate archive budgets and return one canonical member per path.
+
+    Legacy exports may contain duplicate paths. They are accepted only when
+    their uncompressed bytes match, so all readers observe one logical file.
+    Budget checks deliberately account for every physical member before any
+    duplicate bytes are read.
+    """
     infos = z.infolist()
     if len(infos) > MAX_SOLUTION_ARCHIVE_ENTRIES:
         raise ValueError("Solution archive has too many entries")
     backup = any(info.filename == ".bifrost/secrets.enc" for info in infos)
     total = 0
     source_total = 0
-    seen: set[str] = set()
     for info in infos:
-        if info.filename in seen:
-            raise ValueError(f"Solution archive has a duplicate member: {info.filename}")
-        seen.add(info.filename)
         payload = backup and info.filename.startswith(_PAYLOAD_PREFIX)
         entry_limit = MAX_SOLUTION_BACKUP_ENTRY_BYTES if payload else MAX_SOLUTION_ENTRY_BYTES
         if info.file_size > entry_limit:
@@ -201,6 +221,15 @@ def _validate_zip_members(z: zipfile.ZipFile) -> None:
         ):
             raise ValueError("Solution archive expands beyond the allowed size")
 
+    canonical: dict[str, zipfile.ZipInfo] = {}
+    for info in infos:
+        first = canonical.get(info.filename)
+        if first is None:
+            canonical[info.filename] = info
+        elif not _zip_members_match(z, first, info):
+            raise ValueError(f"Solution archive has a conflicting duplicate member: {info.filename}")
+    return list(canonical.values())
+
 
 def _validate_archive_size(z: zipfile.ZipFile, size: int) -> None:
     limit = (
@@ -214,13 +243,13 @@ def _validate_archive_size(z: zipfile.ZipFile, size: int) -> None:
 
 def _extract_workspace(z: zipfile.ZipFile, dest: str) -> None:
     """Validate every member, then extract source/metadata without payload copies."""
-    _validate_zip_members(z)
+    members = _validate_zip_members(z)
     dest_real = os.path.realpath(dest)
     for member in z.namelist():
         target = os.path.realpath(os.path.join(dest, member))
         if not (target == dest_real or target.startswith(dest_real + os.sep)):
             raise ValueError(f"unsafe path in zip: {member}")
-    for info in z.infolist():
+    for info in members:
         if not info.filename.startswith(_PAYLOAD_PREFIX):
             z.extract(info, dest)
 

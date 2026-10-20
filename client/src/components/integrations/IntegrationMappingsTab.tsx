@@ -98,6 +98,8 @@ export interface IntegrationMappingsTabProps {
 	onDisconnectMapping: (org: OrgWithMapping) => void;
 	onRefreshMapping: (org: OrgWithMapping) => void;
 	pendingMappingAction?: PendingMappingAction | null;
+	canManageMapping: (organizationId: string) => boolean;
+	canManageAllMappings: boolean;
 }
 
 export function IntegrationMappingsTab({
@@ -127,6 +129,8 @@ export function IntegrationMappingsTab({
 	onDisconnectMapping,
 	onRefreshMapping,
 	pendingMappingAction = null,
+	canManageMapping,
+	canManageAllMappings,
 }: IntegrationMappingsTabProps) {
 	const hasNonDefaultConfig = (org: OrgWithMapping): boolean => {
 		if (!org.mapping?.config || !configSchema) return false;
@@ -189,21 +193,23 @@ export function IntegrationMappingsTab({
 						</CardDescription>
 					</div>
 					{/* Auto-Match Controls in header */}
-					{hasDataProvider && orgsWithMappings.length > 0 && (
-						<AutoMatchControls
-							onRunAutoMatch={onRunAutoMatch}
-							onAcceptAll={onAcceptAllSuggestions}
-							onClear={onClearSuggestions}
-							matchStats={matchStats}
-							hasSuggestions={autoMatchSuggestions.size > 0}
-							isMatching={isMatching}
-							disabled={
-								isLoadingEntities ||
-								isEntitiesError ||
-								isFetchingEntities
-							}
-						/>
-					)}
+					{hasDataProvider &&
+						canManageAllMappings &&
+						orgsWithMappings.length > 0 && (
+							<AutoMatchControls
+								onRunAutoMatch={onRunAutoMatch}
+								onAcceptAll={onAcceptAllSuggestions}
+								onClear={onClearSuggestions}
+								matchStats={matchStats}
+								hasSuggestions={autoMatchSuggestions.size > 0}
+								isMatching={isMatching}
+								disabled={
+									isLoadingEntities ||
+									isEntitiesError ||
+									isFetchingEntities
+								}
+							/>
+						)}
 				</CardHeader>
 				{orgsWithMappings.length > 0 && (
 					<div className="px-(--card-spacing)">
@@ -346,6 +352,7 @@ export function IntegrationMappingsTab({
 												pendingMappingAction
 											}
 											isActionPending={isActionPending}
+											canManage={canManageMapping(org.id)}
 										/>
 									);
 								})}
@@ -474,6 +481,7 @@ function IntegrationMappingRecord({
 	isDeletePending,
 	pendingMappingAction,
 	isActionPending,
+	canManage,
 }: Pick<
 	IntegrationMappingsTabProps,
 	| "hasDataProvider"
@@ -496,6 +504,7 @@ function IntegrationMappingRecord({
 	availableEntities: Entity[];
 	hasNonDefaultConfig: boolean;
 	isActionPending: boolean;
+	canManage: boolean;
 }) {
 	const connectionState = getConnectionState(org);
 	const isConnectPending =
@@ -507,7 +516,7 @@ function IntegrationMappingRecord({
 	const isRefreshPending =
 		pendingMappingAction?.orgId === org.id &&
 		pendingMappingAction.action === "refresh";
-	const isRowLocked = isActionPending || isDeletePending;
+	const isRowLocked = !canManage || isActionPending || isDeletePending;
 
 	return (
 		/*
@@ -522,6 +531,11 @@ function IntegrationMappingRecord({
 				<h3 className="min-w-0 font-medium [overflow-wrap:anywhere]">
 					{org.name}
 				</h3>
+				{!canManage && (
+					<Badge variant="outline" className="text-xs">
+						Read Only
+					</Badge>
+				)}
 			</section>
 			<fieldset disabled={isRowLocked} className="min-w-0 space-y-1">
 				<h4 className="text-[11px] font-medium uppercase tracking-normal text-muted-foreground lg:sr-only">
@@ -532,12 +546,14 @@ function IntegrationMappingRecord({
 						orgId={org.id}
 						value={org.formData.entity_id}
 						onCommit={onUpdateOrgMapping}
+						disabled={!canManage}
 					/>
 				) : autoMatchSuggestions.has(org.id) ? (
 					<MatchSuggestionBadge
 						suggestion={autoMatchSuggestions.get(org.id)!}
 						onAccept={() => onAcceptSuggestion(org.id)}
 						onReject={() => onRejectSuggestion(org.id)}
+						disabled={!canManage}
 					/>
 				) : (
 					<EntitySelector
@@ -548,6 +564,7 @@ function IntegrationMappingRecord({
 						}
 						isLoading={isLoadingEntities}
 						isError={isEntitiesError}
+						disabled={!canManage}
 						placeholder="Select entity..."
 					/>
 				)}
@@ -620,80 +637,86 @@ function IntegrationMappingRecord({
 					</span>
 				)}
 			</section>
-			<section className="min-w-0 space-y-1 lg:justify-self-end">
-				<h4 className="text-[11px] font-medium uppercase tracking-normal text-muted-foreground lg:sr-only">
-					Actions
-				</h4>
-				<div className="flex flex-wrap gap-2 lg:justify-end">
-					<RecordActionsMenu
-						label={`Mapping actions for ${org.name}`}
-					>
-						<DropdownMenuItem
-							disabled={isRowLocked}
-							onSelect={() => onOpenConfigDialog(org.id)}
+			{canManage && (
+				<section className="min-w-0 space-y-1 lg:justify-self-end">
+					<h4 className="text-[11px] font-medium uppercase tracking-normal text-muted-foreground lg:sr-only">
+						Actions
+					</h4>
+					<div className="flex flex-wrap gap-2 lg:justify-end">
+						<RecordActionsMenu
+							label={`Mapping actions for ${org.name}`}
 						>
-							<Settings className="size-4" /> Configure
-							{hasNonDefaultConfig && (
-								<span
-									className="ml-auto size-2 shrink-0 rounded-full bg-primary"
-									aria-label="Custom configuration"
-								/>
+							<DropdownMenuItem
+								disabled={isRowLocked}
+								onSelect={() => onOpenConfigDialog(org.id)}
+							>
+								<Settings className="size-4" /> Configure
+								{hasNonDefaultConfig && (
+									<span
+										className="ml-auto size-2 shrink-0 rounded-full bg-primary"
+										aria-label="Custom configuration"
+									/>
+								)}
+							</DropdownMenuItem>
+							{hasOAuth && connectionState !== "connected" && (
+								<DropdownMenuItem
+									disabled={isRowLocked || isConnectPending}
+									onSelect={() => onConnectMapping(org)}
+								>
+									{isConnectPending ? (
+										<Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
+									) : (
+										<LinkIcon className="size-4" />
+									)}
+									{isConnectPending
+										? getConnectionActionPendingLabel(
+												connectionState,
+											)
+										: getConnectionActionLabel(
+												connectionState,
+											)}
+								</DropdownMenuItem>
 							)}
-						</DropdownMenuItem>
-						{hasOAuth && connectionState !== "connected" && (
+							{hasOAuth && connectionState === "connected" && (
+								<DropdownMenuItem
+									disabled={isRowLocked || isRefreshPending}
+									onSelect={() => onRefreshMapping(org)}
+								>
+									{isRefreshPending ? (
+										<Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
+									) : (
+										<RefreshCw className="size-4" />
+									)}
+									{isRefreshPending
+										? "Refreshing…"
+										: "Refresh token"}
+								</DropdownMenuItem>
+							)}
+							{org.mapping?.oauth_token_id && (
+								<DropdownMenuItem
+									disabled={
+										isRowLocked || isDisconnectPending
+									}
+									onSelect={() => onDisconnectMapping(org)}
+								>
+									<PlugZap className="size-4" />
+									{isDisconnectPending
+										? "Disconnecting…"
+										: "Disconnect"}
+								</DropdownMenuItem>
+							)}
+							<DropdownMenuSeparator />
 							<DropdownMenuItem
-								disabled={isRowLocked || isConnectPending}
-								onSelect={() => onConnectMapping(org)}
+								variant="destructive"
+								disabled={!org.mapping || isRowLocked}
+								onSelect={() => onDeleteMapping(org)}
 							>
-								{isConnectPending ? (
-									<Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
-								) : (
-									<LinkIcon className="size-4" />
-								)}
-								{isConnectPending
-									? getConnectionActionPendingLabel(
-											connectionState,
-										)
-									: getConnectionActionLabel(connectionState)}
+								<Unlink className="size-4" /> Unlink
 							</DropdownMenuItem>
-						)}
-						{hasOAuth && connectionState === "connected" && (
-							<DropdownMenuItem
-								disabled={isRowLocked || isRefreshPending}
-								onSelect={() => onRefreshMapping(org)}
-							>
-								{isRefreshPending ? (
-									<Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
-								) : (
-									<RefreshCw className="size-4" />
-								)}
-								{isRefreshPending
-									? "Refreshing…"
-									: "Refresh token"}
-							</DropdownMenuItem>
-						)}
-						{org.mapping?.oauth_token_id && (
-							<DropdownMenuItem
-								disabled={isRowLocked || isDisconnectPending}
-								onSelect={() => onDisconnectMapping(org)}
-							>
-								<PlugZap className="size-4" />
-								{isDisconnectPending
-									? "Disconnecting…"
-									: "Disconnect"}
-							</DropdownMenuItem>
-						)}
-						<DropdownMenuSeparator />
-						<DropdownMenuItem
-							variant="destructive"
-							disabled={!org.mapping || isRowLocked}
-							onSelect={() => onDeleteMapping(org)}
-						>
-							<Unlink className="size-4" /> Unlink
-						</DropdownMenuItem>
-					</RecordActionsMenu>
-				</div>
-			</section>
+						</RecordActionsMenu>
+					</div>
+				</section>
+			)}
 		</li>
 	);
 }

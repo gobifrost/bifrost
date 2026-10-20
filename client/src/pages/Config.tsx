@@ -47,12 +47,11 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useAuthorization } from "@/services/authorization";
 import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import type { components } from "@/lib/v1";
 
 type ConfigType = components["schemas"]["ConfigResponse"];
-type Organization = components["schemas"]["OrganizationPublic"];
-
 export function Config() {
 	const addButtonRef = useRef<HTMLButtonElement>(null);
 	const { scope, isGlobalScope } = useOrgScope();
@@ -98,12 +97,7 @@ export function Config() {
 		enabled: canReadOrganizations,
 	});
 
-	// Helper to get organization name from ID
-	const getOrgName = (orgId: string | null | undefined): string => {
-		if (!orgId) return "Global";
-		const org = organizations?.find((o: Organization) => o.id === orgId);
-		return org?.name || orgId;
-	};
+	const getOrgName = useOrganizationName(organizations);
 
 	// Apply weighted search — key matches dominate, integration_name/value/type
 	// still match but rank lower so a specific key search isn't drowned out by
@@ -308,7 +302,7 @@ export function Config() {
 									? [
 											{
 												id: user.organizationId,
-												name: "Home Organization",
+											name: getOrgName(user.organizationId),
 											},
 										]
 									: []

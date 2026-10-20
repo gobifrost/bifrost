@@ -46,6 +46,13 @@ Independent V2 deploys retain a sanitized zip beside each immutable deployment.
 Solution deploys retain the validated deployed Solution archive. SDK rebuilds
 never rely on `node_modules` or an already-built `dist` directory.
 
+Older Solution exports may contain the same logo path twice. The shared archive
+reader accepts repeated paths only when their contents are byte-identical and
+extracts one logical file. It compares duplicates in bounded chunks after
+checking the archive limits, which count every physical member. Conflicting
+contents still fail validation. SDK updates do not rewrite retained archives or
+modify App source to recover from identical duplicates.
+
 Sanitization rejects unsafe archive paths and excludes `.env`, `.env.*`,
 `node_modules`, `dist`, `build`, `out`, `.git`, coverage, framework caches, and
 similar generated directories. Independent App source is capped at 256 MiB

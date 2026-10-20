@@ -37,6 +37,8 @@ import {
 } from "@/components/layout/PageWorkspace";
 import { ImportDialog } from "@/components/ImportDialog";
 import { exportEntities } from "@/services/exportImport";
+import { GLOBAL_TARGET } from "@/lib/authorization";
+import { useAuthorization } from "@/services/authorization";
 import {
 	useDeleteIntegration,
 	useIntegrations,
@@ -48,9 +50,11 @@ import { IntegrationList } from "./Integrations/IntegrationList";
 
 function IntegrationEmptyState({
 	hasSearch,
+	canCreate,
 	onCreate,
 }: {
 	hasSearch: boolean;
+	canCreate: boolean;
 	onCreate: () => void;
 }) {
 	return (
@@ -68,18 +72,22 @@ function IntegrationEmptyState({
 				<p className="mt-2 max-w-md text-sm text-muted-foreground">
 					{hasSearch
 						? "Try adjusting your search term or clear the filter."
-						: "Get started by creating your first integration. Map organizations to external entities with OAuth and configuration schemas."}
+						: canCreate
+							? "Get started by creating your first integration. Map organizations to external entities with OAuth and configuration schemas."
+							: "No integrations are available in your current scope."}
 				</p>
-				<Button
-					type="button"
-					variant="default"
-					size="lg"
-					onClick={onCreate}
-					className="mt-4"
-				>
-					<Plus aria-hidden="true" className="size-4" />
-					Create integration
-				</Button>
+				{canCreate && (
+					<Button
+						type="button"
+						variant="default"
+						size="lg"
+						onClick={onCreate}
+						className="mt-4"
+					>
+						<Plus aria-hidden="true" className="size-4" />
+						Create integration
+					</Button>
+				)}
 			</CardContent>
 		</Card>
 	);
@@ -89,6 +97,12 @@ export function Integrations() {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const isDesktop = useIsDesktop();
+	const authorization = useAuthorization();
+	const canManageDefinitions = authorization.canAt(
+		"integrations.readwrite",
+		GLOBAL_TARGET,
+	);
+	const canExport = authorization.canAt("integrations.read", GLOBAL_TARGET);
 	const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
 	const showTable = isDesktop && viewMode === "table";
 
@@ -118,11 +132,13 @@ export function Integrations() {
 	]);
 
 	const handleCreate = () => {
+		if (!canManageDefinitions) return;
 		setEditIntegrationId(undefined);
 		setIsCreateDialogOpen(true);
 	};
 
 	const handleEdit = (integrationId: string) => {
+		if (!canManageDefinitions) return;
 		setEditIntegrationId(integrationId);
 		setIsCreateDialogOpen(true);
 	};
@@ -132,13 +148,14 @@ export function Integrations() {
 	};
 
 	const handleDelete = (integration: Integration) => {
+		if (!canManageDefinitions) return;
 		setIntegrationToDelete(integration);
 		setDeleteError(null);
 		setDeleteDialogOpen(true);
 	};
 
 	const handleConfirmDelete = async () => {
-		if (!integrationToDelete || isDeleting) return;
+		if (!canManageDefinitions || !integrationToDelete || isDeleting) return;
 
 		setIsDeleting(true);
 		setDeleteError(null);
@@ -205,6 +222,7 @@ export function Integrations() {
 	};
 
 	const handleExport = async () => {
+		if (!canExport) return;
 		const ids = selectedIds.size > 0 ? Array.from(selectedIds) : [];
 		setIsExporting(true);
 		try {
@@ -219,7 +237,8 @@ export function Integrations() {
 
 	const selectedCount = selectedIds.size;
 	const hasSearch = searchTerm.trim().length > 0;
-	const showCardSelectionControls = !showTable && isCardSelectMode;
+	const showCardSelectionControls =
+		canExport && !showTable && isCardSelectMode;
 
 	return (
 		<PageWorkspace className="mx-auto w-full max-w-[1400px]">
@@ -238,15 +257,17 @@ export function Integrations() {
 						>
 							<RefreshCw aria-hidden="true" className="size-4" />
 						</Button>
-						<Button
-							type="button"
-							variant="default"
-							size="lg"
-							onClick={handleCreate}
-						>
-							<Plus aria-hidden="true" className="size-4" />
-							Create integration
-						</Button>
+						{canManageDefinitions && (
+							<Button
+								type="button"
+								variant="default"
+								size="lg"
+								onClick={handleCreate}
+							>
+								<Plus aria-hidden="true" className="size-4" />
+								Create integration
+							</Button>
+						)}
 					</>
 				}
 			/>
@@ -307,7 +328,7 @@ export function Integrations() {
 							{selectedCount} selected
 						</span>
 					)}
-					{!showTable && !isCardSelectMode && (
+					{canExport && !showTable && !isCardSelectMode && (
 						<Button
 							type="button"
 							variant="outline"
@@ -321,18 +342,23 @@ export function Integrations() {
 							Select
 						</Button>
 					)}
-					<Button
-						type="button"
-						variant="outline"
-						size="lg"
-						onClick={handleExport}
-						disabled={isExporting}
-					>
-						<Download aria-hidden="true" className="mr-1 size-4" />
-						{selectedCount > 0
-							? `Export (${selectedCount})`
-							: "Export All"}
-					</Button>
+					{canExport && (
+						<Button
+							type="button"
+							variant="outline"
+							size="lg"
+							onClick={handleExport}
+							disabled={isExporting}
+						>
+							<Download
+								aria-hidden="true"
+								className="mr-1 size-4"
+							/>
+							{selectedCount > 0
+								? `Export (${selectedCount})`
+								: "Export All"}
+						</Button>
+					)}
 					{showCardSelectionControls && (
 						<Button
 							type="button"
@@ -343,15 +369,20 @@ export function Integrations() {
 							Done
 						</Button>
 					)}
-					<Button
-						type="button"
-						variant="outline"
-						size="lg"
-						onClick={() => setIsImportOpen(true)}
-					>
-						<Upload aria-hidden="true" className="mr-1 size-4" />
-						Import
-					</Button>
+					{canManageDefinitions && (
+						<Button
+							type="button"
+							variant="outline"
+							size="lg"
+							onClick={() => setIsImportOpen(true)}
+						>
+							<Upload
+								aria-hidden="true"
+								className="mr-1 size-4"
+							/>
+							Import
+						</Button>
+					)}
 				</div>
 			</ListToolbar>
 
@@ -392,30 +423,36 @@ export function Integrations() {
 						onOpen={handleOpenIntegration}
 						onEdit={handleEdit}
 						onDelete={handleDelete}
+						canManageDefinitions={canManageDefinitions}
 					/>
 				) : (
 					<IntegrationEmptyState
 						hasSearch={hasSearch}
+						canCreate={canManageDefinitions}
 						onCreate={handleCreate}
 					/>
 				)}
 			</PageScrollArea>
 
-			<ImportDialog
-				open={isImportOpen}
-				onOpenChange={setIsImportOpen}
-				entityType="integrations"
-				onImportComplete={() => refetch()}
-			/>
+			{canManageDefinitions && (
+				<ImportDialog
+					open={isImportOpen}
+					onOpenChange={setIsImportOpen}
+					entityType="integrations"
+					onImportComplete={() => refetch()}
+				/>
+			)}
 
-			<CreateIntegrationDialog
-				open={isCreateDialogOpen}
-				onOpenChange={setIsCreateDialogOpen}
-				editIntegrationId={editIntegrationId}
-			/>
+			{canManageDefinitions && (
+				<CreateIntegrationDialog
+					open={isCreateDialogOpen}
+					onOpenChange={setIsCreateDialogOpen}
+					editIntegrationId={editIntegrationId}
+				/>
+			)}
 
 			<AlertDialog
-				open={deleteDialogOpen}
+				open={canManageDefinitions && deleteDialogOpen}
 				onOpenChange={handleDeleteDialogOpenChange}
 			>
 				<AlertDialogContent>
