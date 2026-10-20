@@ -277,6 +277,28 @@ def test_a_note_after_the_collector_closed_is_not_kept() -> None:
         access_checks.stop_collecting(token)
 
 
+def test_suspending_collection_drops_notes_and_restores_after_an_error() -> None:
+    token = access_checks.collect_person(uuid4())
+    try:
+        collector = access_checks.current()
+        assert collector is not None
+
+        try:
+            with access_checks.suspend_collecting():
+                assert access_checks.current() is None
+                access_checks.note_power("users.impersonate", None, subject="user:operator")
+                raise RuntimeError("revalidation denied")
+        except RuntimeError as exc:
+            assert str(exc) == "revalidation denied"
+
+        assert access_checks.current() is collector
+        assert collector.notes == []
+        access_checks.note("scope_switch", None, name="restored")
+        assert collector.notes == [access_checks.Note("scope_switch", None, {"name": "restored"})]
+    finally:
+        access_checks.stop_collecting(token)
+
+
 def test_a_check_that_failed_to_compute_is_noted_as_a_gap() -> None:
     token = access_checks.collect_run(uuid4(), uuid4(), uuid4())
     try:

@@ -74,6 +74,18 @@ def test_browser_impersonation_cookie_overrides_human_credentials_and_exits_fail
     )
     assert device.status_code == 403
 
+    # Temporary support authority cannot enroll a lasting target login.
+    for path, body in (
+        ("/auth/passkeys/register/options", {}),
+        ("/auth/passkeys/register/verify", {"credential": {}}),
+        ("/auth/mfa/totp/setup", {}),
+        ("/auth/mfa/totp/verify", {"code": "123456"}),
+        ("/auth/mfa/recovery-codes/regenerate", {"mfa_code": "123456"}),
+    ):
+        denied = e2e_client.post(path, headers={**platform_admin.headers, "Cookie": active_cookie}, json=body)
+        assert denied.status_code == 403, (path, denied.text)
+        assert "Exit impersonation" in denied.text
+
     token = payload["access_token"]
     nested = e2e_client.post(
         f"/auth/impersonate/{platform_admin.user_id}",
@@ -114,3 +126,19 @@ def test_browser_impersonation_cookie_overrides_human_credentials_and_exits_fail
     expired_cookie = f"impersonation_token={expired_marker}; refresh_token={platform_admin.refresh_token}"
     expired = e2e_client.post("/auth/impersonation/end", headers={"Cookie": expired_cookie})
     assert expired.status_code == 204
+
+
+@pytest.mark.e2e
+def test_browser_impersonation_endpoint_rejects_a_user_without_permission(
+    e2e_client, platform_admin, org1_user,
+) -> None:
+    response = e2e_client.post(
+        f"/auth/impersonate/{platform_admin.user_id}",
+        headers={
+            **org1_user.headers,
+            "Cookie": f"access_token={org1_user.access_token}; refresh_token={org1_user.refresh_token}",
+        },
+    )
+    assert response.status_code == 403
+    assert "permission" in response.json()["detail"].lower()
+    assert "impersonation_token" not in response.cookies

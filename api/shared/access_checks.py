@@ -11,9 +11,10 @@ FastAPI-free: imported by shared resolvers that worker closures load.
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Iterator, Literal
 from uuid import UUID
 
 from shared.system_account_guard import is_system_account
@@ -149,6 +150,16 @@ def stop_collecting(token: Token[Collector | None] | None) -> None:
 
 def current() -> Collector | None:
     return _current.get()
+
+
+@contextmanager
+def suspend_collecting() -> Iterator[None]:
+    """Temporarily discard notes from an internal authorization recheck."""
+    token = _current.set(None)
+    try:
+        yield
+    finally:
+        _current.reset(token)
 
 
 def renew() -> Collector | None:

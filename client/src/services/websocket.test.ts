@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	ACCESS_TOKEN_KEY,
+	EMBED_TOKEN_KEY,
 	setImpersonationToken,
 } from "@/lib/auth-token";
 import { type PlatformJobUpdate, webSocketService } from "./websocket";
@@ -59,14 +60,14 @@ afterEach(async () => {
 });
 
 describe("platform WebSocket authentication", () => {
-	it("sends the tab-scoped impersonation token instead of relying on the operator cookie", async () => {
+	it("keeps the impersonation handshake free of a bearer query token", async () => {
 		localStorage.setItem(ACCESS_TOKEN_KEY, "operator-token");
 		setImpersonationToken("impersonated-token");
 
 		await socketService._connect(["notifications"]);
 
 		const url = new URL(MockWebSocket.urls[0]);
-		expect(url.searchParams.get("token")).toBe("impersonated-token");
+		expect(url.searchParams.has("token")).toBe(false);
 		expect(url.searchParams.getAll("channels")).toEqual(["notifications"]);
 	});
 
@@ -77,6 +78,16 @@ describe("platform WebSocket authentication", () => {
 
 		const url = new URL(MockWebSocket.urls[0]);
 		expect(url.searchParams.has("token")).toBe(false);
+	});
+
+	it("keeps the existing embed token handshake in the query", async () => {
+		const embedToken = `header.${btoa(JSON.stringify({ embed: true }))}.signature`;
+		sessionStorage.setItem(EMBED_TOKEN_KEY, embedToken);
+
+		await socketService._connect(["notifications"]);
+
+		const url = new URL(MockWebSocket.urls[0]);
+		expect(url.searchParams.get("token")).toBe(embedToken);
 	});
 });
 

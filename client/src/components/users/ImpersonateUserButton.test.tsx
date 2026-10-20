@@ -30,6 +30,18 @@ const target = {
 } as components["schemas"]["UserPublic"];
 
 describe("ImpersonateUserButton", () => {
+	it("does not render the action without the impersonation permission", () => {
+		canAt.mockReset().mockReturnValue(false);
+		renderWithProviders(<ImpersonateUserButton user={target} />);
+		expect(screen.queryByRole("button", { name: "Impersonate" })).toBeNull();
+	});
+
+	it("also requires privileged access for a protected target", () => {
+		canAt.mockReset().mockImplementation((permission: string) => permission === "users.impersonate");
+		renderWithProviders(<ImpersonateUserButton user={{ ...target, is_protected: true }} />);
+		expect(screen.queryByRole("button", { name: "Impersonate" })).toBeNull();
+	});
+
 	it("uses the existing impersonation permission at the target organization", async () => {
 		auth.startImpersonation.mockReset().mockResolvedValue(undefined);
 		canAt.mockReset().mockReturnValue(true);

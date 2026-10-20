@@ -133,6 +133,36 @@ async def _exchange(provider: BifrostAuthProvider, code: str) -> tuple[int, dict
     return response.status_code, json.loads(bytes(response.body))
 
 
+@pytest.mark.parametrize("claim", ["impersonated_by_user_id", "impersonation_session_id"])
+async def test_callback_rejects_support_token_in_normal_access_cookie(
+    redis: _FakeRedis, user: SimpleNamespace, claim: str
+) -> None:
+    from src.core.security import create_access_token
+
+    provider = BifrostAuthProvider(base_url="http://test")
+    redis.values[_mcp_state_key("internal")] = json.dumps({
+        "client_id": "client",
+        "redirect_uri": _REDIRECT_URI,
+        "state": "client-state",
+        "code_challenge": _challenge(_VERIFIER),
+        "scope": "mcp:access",
+    })
+    request = SimpleNamespace(
+        query_params={"internal_state": "internal"},
+        cookies={"access_token": create_access_token({"sub": str(user.id), claim: str(uuid4())})},
+        headers={"accept": "application/json"},
+    )
+    with (
+        patch("src.core.cache.get_shared_redis", new=AsyncMock(return_value=redis)),
+        patch.object(provider, "_check_mcp_access", new=AsyncMock(return_value=True)) as access,
+    ):
+        response = await provider._callback(request)  # type: ignore[arg-type]
+
+    assert response.status_code == 403
+    access.assert_not_awaited()
+    assert redis.values == {}
+
+
 async def test_code_round_trip_mints_tokens_for_the_signed_in_user(
     user: SimpleNamespace, redis: _FakeRedis, minted: list[dict[str, Any]]
 ) -> None:

@@ -12,7 +12,7 @@
 
 import type { components } from "@/lib/v1";
 import { refreshAccessToken } from "@/lib/api-client";
-import { getActiveToken, isImpersonating } from "@/lib/auth-token";
+import { getActiveToken } from "@/lib/auth-token";
 import type { ChatStreamEnvelope } from "@/lib/chat-runtime";
 import { useNotificationStore } from "@/stores/notificationStore";
 import type { Notification } from "@/stores/notificationStore";
@@ -542,13 +542,11 @@ class WebSocketService {
 			const params = new URLSearchParams();
 			channels.forEach((ch) => params.append("channels", ch));
 
-			// Embed and browser-wide support tokens need a query parameter because
-			// the browser WebSocket API cannot set custom authorization headers.
+			// Embed tokens need a query parameter because the browser WebSocket API
+			// cannot set custom authorization headers. Browser impersonation uses
+			// its HttpOnly marker cookie, so its bearer never enters the URL.
 			const activeToken = getActiveToken();
-			if (
-				activeToken &&
-				(isEmbedToken(activeToken) || isImpersonating())
-			) {
+			if (activeToken && isEmbedToken(activeToken)) {
 				params.set("token", activeToken);
 			}
 

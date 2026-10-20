@@ -108,3 +108,21 @@ The final live V2 browser check also passed:
 Screenshots and executable browser checks are in `/tmp/bifrost-cli-impersonation-spike/`; the final run log is `/tmp/bifrost-impersonation-browser-wide-demo-verified.log`. The app's optional absent logo returns its existing 404/no-logo state. The catalog's role metadata request returns 403 for the normal target user, enforcing its existing permission boundary; the app identity, read, write, and live-update paths succeeded.
 
 Final TypeScript checking and targeted client lint passed. Generated API types and `git diff --check` passed. The public debug readiness endpoint returned 200. Full suites and merge-queue CI remain unrun; this is a local demo, not a deployment to a shared environment.
+
+### Merge Review
+
+The UI gate now has explicit coverage for a denied impersonation permission and protected targets. Direct unauthorized HTTP starts also return 403. Reviewing the existing demo audit failures found 78 misleading `users.impersonate` observer failures: internal operator revalidation was being judged against the target. Revalidation remains enforced, while its internal notes are excluded from the target collector. Historical audit rows are preserved. The original three `roles.read` denials and wrong-password login were genuine refusals.
+
+The frozen spike security review covered all 72 source inventory items and found two credential-lifetime escape paths (MCP OAuth callback and passkey/MFA enrollment) plus unnecessary support bearer exposure in WebSocket URLs. The callback now rejects support claims regardless of cookie name; support sessions cannot enroll permanent target credentials; ordinary support sockets authenticate with the HttpOnly cookie. The scan's findings and final semantic draft are saved, but report finalization failed and no completed security report is claimed.
+
+Additional focused verification:
+
+```bash
+./test.sh tests/unit/test_access_checks_collector.py tests/unit/services/test_browser_impersonation.py tests/unit/services/test_impersonation.py tests/unit/services/test_access_check_writer.py tests/unit/services/test_mcp_auth.py tests/unit/services/mcp_server/test_auth_code_binding.py tests/e2e/api/test_browser_impersonation.py -v --durations=0
+./test.sh tests/unit/routers/test_browser_impersonation_credentials.py tests/unit/services/test_passkey_service.py tests/unit/test_user_mfa_reset.py tests/e2e/api/test_browser_impersonation.py -v --durations=0
+./test.sh tests/unit/routers/test_browser_impersonation_credentials.py tests/e2e/api/test_browser_impersonation.py -v --durations=0
+```
+
+Results: 107 passed in the first run. The second had 13 passes and one endpoint-test failure: cookie-only writes were correctly stopped by CSRF before reaching the new guard. Matching the browser's explicit bearer transport fixed the test fixture; the final run passed all four cases, including five credential-endpoint refusals. No retries or weakened CSRF checks were added.
+
+The final focused frontend run passed 68 tests across the same nine files listed above. A fresh live V2 demo passed SDK identity, note creation/live updates, reload, cross-tab entry/Exit, and cookie identity restoration after removing the WebSocket query bearer. Its audit response retained operator/session attribution, and a direct database check found no new false `users.impersonate` failures. Genuine `roles.read` denials remain visible. Log: `/tmp/bifrost-impersonation-merge-live-demo.log`.

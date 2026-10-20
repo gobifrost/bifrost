@@ -352,6 +352,12 @@ class BifrostAuthProvider:
                 status_code=401
             )
 
+        if payload.get("impersonated_by_user_id") or payload.get("impersonation_session_id"):
+            return JSONResponse(
+                {"error": "access_denied", "error_description": "Exit impersonation before connecting an MCP client"},
+                status_code=403,
+            )
+
         # Check MCP access permissions (only gates on the master enabled switch)
         if not await self._check_mcp_access(payload):
             return JSONResponse(

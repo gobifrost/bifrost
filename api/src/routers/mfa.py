@@ -25,6 +25,7 @@ from src.core.security import (
 )
 from src.services.mfa_service import MFAService
 from src.services.user_provisioning import get_user_roles
+from shared.browser_impersonation import is_browser_impersonation
 from shared.external_access import (
     resolve_provider_org_claim,
 )
@@ -33,6 +34,15 @@ from shared.identities import refuse_identity_sign_in
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth/mfa", tags=["mfa"])
+
+
+def _refuse_impersonation_enrollment(current_user: CurrentActiveUser) -> None:
+    """Keep temporary support sessions from creating durable MFA credentials."""
+    if is_browser_impersonation(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Exit impersonation before managing MFA credentials",
+        )
 
 
 # =============================================================================
@@ -166,6 +176,7 @@ async def setup_mfa(
     Returns:
         MFA setup data including secret and QR code URI
     """
+    _refuse_impersonation_enrollment(current_user)
     user = await get_current_user_from_db(current_user, db)
     mfa_service = MFAService(db)
 
@@ -206,6 +217,7 @@ async def verify_mfa(
     Raises:
         HTTPException: If verification fails
     """
+    _refuse_impersonation_enrollment(current_user)
     user = await get_current_user_from_db(current_user, db)
     mfa_service = MFAService(db)
 
@@ -337,6 +349,7 @@ async def regenerate_recovery_codes(
     Raises:
         HTTPException: If MFA verification fails
     """
+    _refuse_impersonation_enrollment(current_user)
     user = await get_current_user_from_db(current_user, db)
     mfa_service = MFAService(db)
 

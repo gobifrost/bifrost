@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 import jwt
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared import access_checks
 from src.config import get_settings
 from shared.external_access import resolve_provider_org_claim
 from src.core.cache import get_shared_redis
@@ -170,7 +171,8 @@ async def validate_browser_impersonation(db: AsyncSession, principal: UserPrinci
         is_external=initiator.is_external,
     )
     try:
-        await authorize_run_as(db, initiator_principal, principal.user_id)
+        with access_checks.suspend_collecting():
+            await authorize_run_as(db, initiator_principal, principal.user_id)
     except RunAsError as exc:
         raise BrowserImpersonationError(exc.detail) from exc
 

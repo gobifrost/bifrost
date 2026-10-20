@@ -9,6 +9,7 @@ import pytest_asyncio
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared import access_checks
 from src.core.principal import UserPrincipal
 from src.core.security import decode_token
 from src.core.cache import get_shared_redis
@@ -98,7 +99,15 @@ async def test_browser_session_is_provenanced_and_revocable(db_session: AsyncSes
         impersonated_by_user_id=UUID(claims["impersonated_by_user_id"]),
         impersonation_session_id=UUID(claims["impersonation_session_id"]),
     )
-    await validate_browser_impersonation(db_session, impersonated)
+    token = access_checks.collect_person(target.id)
+    try:
+        await validate_browser_impersonation(db_session, impersonated)
+
+        collector = access_checks.current()
+        assert collector is not None
+        assert collector.notes == []
+    finally:
+        access_checks.stop_collecting(token)
 
     await revoke_browser_impersonation(impersonated)
     with pytest.raises(PermissionError, match="session is no longer active"):
@@ -144,5 +153,17 @@ async def test_browser_session_requires_current_impersonation_permission(db_sess
     await db_session.execute(delete(RolePermission).where(RolePermission.permission == "users.impersonate"))
     await db_session.flush()
 
-    with pytest.raises(BrowserImpersonationError, match="permission to run as"):
-        await validate_browser_impersonation(db_session, principal)
+    token = access_checks.collect_person(target.id)
+    try:
+        with pytest.raises(BrowserImpersonationError, match="permission to run as"):
+            await validate_browser_impersonation(db_session, principal)
+
+        collector = access_checks.current()
+        assert collector is not None
+        assert collector.notes == []
+        access_checks.note("scope_switch", None, name="revalidation-finished")
+        assert collector.notes == [
+            access_checks.Note("scope_switch", None, {"name": "revalidation-finished"})
+        ]
+    finally:
+        access_checks.stop_collecting(token)
