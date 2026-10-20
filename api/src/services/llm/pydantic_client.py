@@ -6,6 +6,7 @@ Pydantic AI without changing those callers while the higher-level chat loop is
 cut over separately.
 """
 
+import json
 from typing import Any, cast
 import logging
 from collections.abc import AsyncGenerator
@@ -14,6 +15,8 @@ from uuid import uuid4
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.messages import (
     BinaryContent,
+    LoadCapabilityCallPart,
+    LoadCapabilityReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -261,20 +264,29 @@ class PydanticAIClient(BaseLLMClient):
     @classmethod
     def convert_messages(cls, messages: list[LLMMessage]) -> list[ModelMessage]:
         """Convert Bifrost's stable message DTOs to provider-neutral history."""
+        capability_load_ids = cls._completed_capability_load_ids(messages)
         converted: list[ModelMessage] = []
         for message in messages:
             if message.role == "assistant":
                 parts = []
                 if message.content:
                     parts.append(TextPart(message.content))
-                parts.extend(
-                    ToolCallPart(
-                        tool_name=call.name,
-                        args=call.arguments,
-                        tool_call_id=call.id,
-                    )
-                    for call in message.tool_calls or []
-                )
+                for call in message.tool_calls or []:
+                    if call.id in capability_load_ids:
+                        parts.append(
+                            LoadCapabilityCallPart(
+                                tool_call_id=call.id,
+                                args=cast(dict[str, str], call.arguments),
+                            )
+                        )
+                    else:
+                        parts.append(
+                            ToolCallPart(
+                                tool_name=call.name,
+                                args=call.arguments,
+                                tool_call_id=call.id,
+                            )
+                        )
                 if parts:
                     converted.append(ModelResponse(parts=parts))
                 continue
@@ -282,11 +294,17 @@ class PydanticAIClient(BaseLLMClient):
             if message.role == "system":
                 request_parts = [SystemPromptPart(message.content or "")]
             elif message.role == "tool":
-                tool_return = ToolReturnPart(
-                    tool_name=message.tool_name or "tool",
-                    content=message.content or "",
-                    tool_call_id=message.tool_call_id or "unknown-tool-call",
-                )
+                if message.tool_call_id in capability_load_ids:
+                    tool_return = LoadCapabilityReturnPart(
+                        content=cls._capability_load_return_content(message.content),
+                        tool_call_id=message.tool_call_id,
+                    )
+                else:
+                    tool_return = ToolReturnPart(
+                        tool_name=message.tool_name or "tool",
+                        content=message.content or "",
+                        tool_call_id=message.tool_call_id or "unknown-tool-call",
+                    )
                 if (
                     converted
                     and isinstance(converted[-1], ModelRequest)
@@ -300,6 +318,54 @@ class PydanticAIClient(BaseLLMClient):
                 request_parts = [UserPromptPart(cls.convert_user_content(message))]
             converted.append(ModelRequest(parts=request_parts))
         return converted
+
+    @staticmethod
+    def _completed_capability_load_ids(messages: list[LLMMessage]) -> set[str]:
+        """Find durable receipts for Pydantic AI's reserved capability loader.
+
+        Chat history intentionally stores Bifrost's provider-neutral tool call
+        shape, rather than Pydantic AI's transient availability-delta parts.
+        Recreate its typed load parts only where the persisted request and
+        receipt exactly match the reserved framework contract. Namesake calls
+        without that receipt retain their generic part type.
+        """
+        candidate_ids: set[str] = set()
+        completed_ids: set[str] = set()
+        for message in messages:
+            if message.role == "assistant":
+                for call in message.tool_calls or []:
+                    if (
+                        call.name == "load_capability"
+                        and isinstance(call.arguments.get("id"), str)
+                        and set(call.arguments) == {"id"}
+                    ):
+                        candidate_ids.add(call.id)
+            elif (
+                message.role == "tool"
+                and message.tool_name == "load_capability"
+                and message.tool_call_id in candidate_ids
+                and PydanticAIClient._is_capability_load_return(message.content)
+            ):
+                completed_ids.add(message.tool_call_id)
+        return completed_ids
+
+    @staticmethod
+    def _is_capability_load_return(content: str | None) -> bool:
+        try:
+            decoded = json.loads(content or "")
+        except json.JSONDecodeError:
+            return False
+        return (
+            isinstance(decoded, dict)
+            and set(decoded).issubset({"instructions"})
+            and ("instructions" not in decoded or isinstance(decoded["instructions"], str))
+        )
+
+    @staticmethod
+    def _capability_load_return_content(content: str | None) -> dict[str, str]:
+        """Decode a receipt already validated by ``_is_capability_load_return``."""
+        decoded = json.loads(content or "")
+        return cast(dict[str, str], decoded)
 
     @staticmethod
     def _convert_response(response: ModelResponse) -> LLMResponse:
