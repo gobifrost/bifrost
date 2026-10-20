@@ -59,6 +59,7 @@ _API_ROOT = Path(__file__).resolve().parents[2]
 _GATE_FUNCS = {
     auth_mod.get_current_user: CurrentGate.AUTHENTICATED,
     auth_mod.get_current_active_user: CurrentGate.AUTHENTICATED,
+    auth_mod.get_original_human_user: CurrentGate.AUTHENTICATED,
     auth_mod.get_execution_context: CurrentGate.AUTHENTICATED,
 }
 
@@ -1963,7 +1964,9 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "shared.sdk_workflow_execution.execute_sdk_workflow": (5, "current_role_derivation"),
     "shared.system_account_guard.is_system_account": (1, "actor_facts"),
     "shared.unattended_execution.create_unattended_context": (2, "actor_facts"),
-    "src.core.auth.get_current_user_optional": (3, "actor_facts"),
+    "shared.browser_impersonation.validate_browser_impersonation": (2, "actor_facts"),
+    "src.core.auth._get_current_user_optional": (3, "actor_facts"),
+    "src.core.auth.get_original_human_user": (2, "actor_facts"),
     "src.core.auth.get_current_user_ws": (3, "actor_facts"),
     "src.jobs.consumers.agent_run._load_acting_user": (2, "actor_facts"),
     "src.jobs.consumers.agent_run._load_run_as": (3, "actor_facts"),
@@ -2052,6 +2055,7 @@ _SITE_KINDS = {
 # what replaces the flag claim: "cutover" (the claim or hand-off goes with
 # the flag checks) or "route" (a token minted with no flag claim).
 _TOKEN_MINTING_SITES: dict[str, str] = {
+    "shared.browser_impersonation.create_browser_impersonation": "cutover",
     "shared.sdk_workflow_execution.insert_scheduled_execution": "cutover",
     "src.core.redis_client.RedisClient.set_pending_execution": "cutover",
     "src.core.security.create_embed_access_token": "route",
@@ -2100,9 +2104,12 @@ _FLAG_POLICY_SEEDS: dict[str, str] = {}
 # cutover.
 _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "bifrost._logging.read_logs_from_stream": (1, "cutover"),
+    "shared.browser_impersonation.revoke_browser_impersonation_marker": (1, "cutover"),
+    "shared.browser_impersonation.validate_browser_impersonation": (2, "cutover"),
     "shared.form_runtime.load_startup_result": (1, "cutover"),
     "shared.form_runtime.validate_embed_upload_references": (1, "cutover"),
     "shared.role_cache.get_user_roles": (1, "cutover"),
+    "src.core.auth.get_original_human_user": (1, "cutover"),
     "shared.sdk_agent_runs.get_sdk_agent_run": (1, "cutover"),
     "src.core.embed_middleware.embed_session_owns_execution": (1, "cutover"),
     "src.core.locks.DistributedLockService.extend_lock": (1, "cutover"),
@@ -2124,6 +2131,7 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "src.repositories.organizations.OrganizationRepository._get_from_cache": (1, "cutover"),
     "src.routers.auth.authorize_device": (2, "cutover"),
     "src.routers.auth.exchange_device_token": (1, "cutover"),
+    "src.routers.auth.has_live_refresh_token_jti": (1, "cutover"),
     "src.routers.oauth_sso.oauth_callback": (1, "cutover"),
     "src.services.app_storage.AppStorageService.get_render_cache": (1, "cutover"),
     "src.services.execution.agent_run_service.wait_for_agent_run_result": (1, "cutover"),
@@ -3029,6 +3037,7 @@ _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("DELETE", "/api/home/collections/{collection_id}"): "Own home-dashboard collection.",
     ("PUT", "/api/home/preferences/{resource_key}"): "Own home-dashboard preference.",
     ("POST", "/auth/logout"): "Own session.",
+    ("POST", "/auth/impersonation/end"): "Own browser-session marker; revocation is restricted to its original authenticated operator.",
     ("POST", "/auth/revoke-all"): "Own sessions.",
     ("POST", "/auth/device/authorize"): "Own device-code authorization.",
     ("POST", "/auth/mfa/totp/setup"): "Own MFA enrollment.",

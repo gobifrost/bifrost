@@ -228,7 +228,7 @@ async def test_reverts_on_publish_failure(db_session):
 
 
 @pytest.mark.asyncio
-async def test_forwards_the_row_lineage(db_session):
+async def test_forwards_the_rows_persisted_actor_attribution(db_session):
     from sqlalchemy import select
 
     from src.models.enums import IdentityKind
@@ -242,6 +242,8 @@ async def test_forwards_the_row_lineage(db_session):
     due.run_user_id = identity
     due.started_by_user_id = identity
     due.root_execution_id = due.id
+    due.impersonated_by_user_id = uuid4()
+    due.impersonation_session_id = uuid4()
     plain = _new_scheduled(datetime.now(timezone.utc) - timedelta(seconds=1))
     db_session.add_all([due, plain])
     await db_session.commit()
@@ -259,6 +261,15 @@ async def test_forwards_the_row_lineage(db_session):
         "root_execution_id": str(due.id),
     }
     assert lineage[str(plain.id)] is None
+    provenance = {
+        call.kwargs["execution_id"]: call.kwargs["impersonation_provenance"]
+        for call in pub.await_args_list
+    }
+    assert provenance[str(due.id)] == {
+        "impersonated_by_user_id": str(due.impersonated_by_user_id),
+        "impersonation_session_id": str(due.impersonation_session_id),
+    }
+    assert provenance[str(plain.id)] is None
 
 
 async def _contoso_person(db_session, **fields):
@@ -635,6 +646,7 @@ async def test_a_row_without_run_as_is_published_as_before(db_session):
         "file_path": None,
         "execution_record_exists": True,
         "lineage": None,
+        "impersonation_provenance": None,
     }
     await db_session.refresh(plain)
     assert (plain.status, plain.error_message, plain.completed_at) == (ExecutionStatus.PENDING, None, None)

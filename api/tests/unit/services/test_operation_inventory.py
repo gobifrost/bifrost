@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from src.main import app
 from src.services.operation_inventory import build_operation_inventory
 
@@ -21,7 +23,7 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
         "cli": 171,
         "manifest": 16,
         "mcp": 94,
-        "rest": 683,
+        "rest": 685,
         "sdk": 21,
     }
     for surface, rows in inventory["uncataloged"].items():
@@ -43,6 +45,30 @@ def test_solution_dev_context_is_authentication_transport() -> None:
     assert row["reason"] == (
         "Issues user-bound context for local Solution development; owns no entity state."
     )
+
+
+@pytest.mark.parametrize(
+    ("path", "reason"),
+    [
+        (
+            "/auth/impersonate/{user_id}",
+            "Starts a browser authentication impersonation session; owns no entity state.",
+        ),
+        (
+            "/auth/impersonation/end",
+            "Ends a browser authentication impersonation session; owns no entity state.",
+        ),
+    ],
+)
+def test_browser_impersonation_routes_are_authentication_transport(
+    path: str, reason: str
+) -> None:
+    inventory = build_operation_inventory(app, REPO_ROOT)
+    row = next(row for row in inventory["uncataloged"]["rest"] if row["path"] == path)
+
+    assert row["method"] == "POST"
+    assert row["status"] == "transport_only"
+    assert row["reason"] == reason
 
 
 def test_organization_listing_is_available_to_application_sdks() -> None:

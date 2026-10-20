@@ -130,3 +130,14 @@ The final focused frontend run passed 68 tests across the same nine files listed
 Final API quality (`./test.sh quality api`) passed with zero errors/warnings and clean Ruff. The shell fix makes the header's bottom border part of its 64px height, moves the banner above the sidebar/header row, and constrains the sidebar to the remaining row height. Live geometry at 1440×1000: both normal dividers at y=64; both impersonated dividers at y=109 below a 45px banner; sidebar bottom y=1000 in both modes. All 26 focused Header/PageShell/Sidebar tests and targeted layout lint passed. Screenshots: `/tmp/bifrost-cli-impersonation-spike/shell-normal.png` and `shell-impersonated.png`.
 
 PR review: CodeQL's two `StorageEvent` warnings (1692/1693) were dismissed as false positives with the installed DOM constructor signature and passing cross-tab tests as evidence. Its empty-except warning (1694) prompted removal of redundant exception handling: revocation already validates the signed marker's session UUID before the audit path. `./test.sh tests/e2e/api/test_browser_impersonation.py -v --durations=0` passed both cases after that cleanup. Final client `npm run tsc` and full `npm run lint` passed.
+
+The full PR backend unit run found nine integration-accounting gaps (9,535 other tests passed): the normal scheduler payload expectation lacked the new nullable attribution field; new browser-auth routes/resolvers/token mint/Redis reads needed authorization inventory entries; generated operation inventory and skill API references were stale. All 3,942 client tests passed in CI. These were fixed without changing the runtime permission model or weakening assertions. Scheduler coverage now also proves persisted operator/session IDs reach the publish payload.
+
+```bash
+./test.sh tests/unit/jobs/schedulers/test_deferred_execution_promoter.py -v --durations=0
+./test.sh tests/unit/test_access_list.py tests/unit/services/test_operation_inventory.py tests/unit/test_skill_appendix_fresh.py tests/unit/jobs/schedulers/test_deferred_execution_promoter.py -v --durations=0
+./test.sh tests/unit/test_access_list.py::TestEveryElevatedCheckHasAScope::test_every_elevated_check_site_names_its_replacement tests/unit/test_access_list.py::test_personal_and_own_agent_writes_are_all_on_the_reviewed_allowlist tests/unit/test_access_list.py::test_allowlist_has_no_unused_entries -v --durations=0
+python3 scripts/check_skill_mirrors.py
+```
+
+Results: scheduler 17 passed; combined inventory/generated/scheduler run 100 passed with two newly exposed registry omissions. Registering the original-human resolver's copied actor facts and the ownership-checked personal Exit route fixed those omissions; the final three affected assertions passed. Mirror validation passed. The new auth endpoints are classified as authentication transport, rather than CLI/MCP entity mutations; every new Redis liveness/ownership read is authority-bearing in the inventory.

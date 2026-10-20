@@ -8955,6 +8955,34 @@
     "reason": "Public/unauthenticated entry point (login, OAuth/device flow, health, CLI download, or inbound webhook)."
   },
   {
+    "access_class": "permission",
+    "boundary": "organization",
+    "current_gate": "authenticated",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "POST",
+    "operation_id": null,
+    "path": "/auth/impersonate/{user_id}",
+    "permission": "users.impersonate",
+    "reason": "Mints a browser impersonation marker only after the original human session and its current users.impersonate reach authorize the target user."
+  },
+  {
+    "access_class": "personal",
+    "boundary": null,
+    "current_gate": "authenticated",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "POST",
+    "operation_id": null,
+    "path": "/auth/impersonation/end",
+    "permission": null,
+    "reason": "The original authenticated browser operator clears their own impersonation marker; a live refresh session may complete the cleanup after access-token expiry."
+  },
+  {
     "access_class": "public",
     "boundary": null,
     "current_gate": "none",

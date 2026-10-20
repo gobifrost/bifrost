@@ -10080,7 +10080,7 @@
     "cli": 171,
     "manifest": 16,
     "mcp": 94,
-    "rest": 683,
+    "rest": 685,
     "sdk": 21
   },
   "schema_version": 1,
@@ -14320,6 +14320,20 @@
         "path": "/auth/device/token",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/auth/impersonate/{user_id}",
+        "reason": "Starts a browser authentication impersonation session; owns no entity state.",
+        "status": "transport_only"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/auth/impersonation/end",
+        "reason": "Ends a browser authentication impersonation session; owns no entity state.",
+        "status": "transport_only"
       },
       {
         "method": "POST",

@@ -626,6 +626,8 @@
 | POST | `/auth/device/authorize` |
 | POST | `/auth/device/code` |
 | POST | `/auth/device/token` |
+| POST | `/auth/impersonate/{user_id}` |
+| POST | `/auth/impersonation/end` |
 | POST | `/auth/login` |
 | POST | `/auth/logout` |
 | GET | `/auth/me` |
