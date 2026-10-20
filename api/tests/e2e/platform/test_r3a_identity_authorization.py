@@ -260,7 +260,10 @@ class TestPlatformOperator:
     def test_own_authorization_summary(self, e2e_client, world, platform_admin) -> None:
         summary = _ok(e2e_client.get("/auth/authorization", headers=world["operator"].headers))
         assert summary["is_platform_admin"] is False
+        assert summary["home_organization_id"] == str(PROVIDER_ORG_ID)
+        assert summary["home_organization_name"]
         assert {"permission": "users.readwrite", "boundary": {"kind": "managed_organizations", "organization_id": None}} in summary["grants"]
+        assert e2e_client.get(f"/api/organizations/{PROVIDER_ORG_ID}", headers=world["operator"].headers).status_code == 403
         admin = _ok(e2e_client.get("/auth/authorization", headers=platform_admin.headers))
         assert admin["is_platform_admin"] is True
         assert {"permission": "*", "boundary": {"kind": "platform", "organization_id": None}} in admin["grants"]

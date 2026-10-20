@@ -58,7 +58,7 @@ import { useAuthorization } from "@/services/authorization";
 import { orgTarget } from "@/lib/authorization";
 import { term, useTerminology } from "@/lib/terminology";
 import { useOrganizations } from "@/hooks/useOrganizations";
-import type { components } from "@/lib/v1";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import {
 	CARD_SURFACE,
 	CHIP_OUTLINE,
@@ -83,8 +83,6 @@ import {
 import { prefetchAgentDetail } from "@/lib/detail-route-loaders";
 
 type ViewMode = "grid" | "table";
-type Organization = components["schemas"]["OrganizationPublic"];
-
 export function FleetPage() {
 	const [reviewOpen, setReviewOpen] = useState(false);
 	const [view, setView] = useState<ViewMode>("grid");
@@ -102,9 +100,6 @@ export function FleetPage() {
 	const canFilterOrganizations = authorization.canAnywhere("agents.read");
 	const canReadOrganizations =
 		authorization.canAnywhere("organizations.read");
-	const knownOrganizations = user?.organizationId
-		? [{ id: user.organizationId, name: "Your organization" }]
-		: [];
 	const terminology = useTerminology();
 
 	const {
@@ -129,11 +124,10 @@ export function FleetPage() {
 	const { data: organizations } = useOrganizations({
 		enabled: canReadOrganizations,
 	});
-	const getOrgName = (orgId: string | null | undefined): string => {
-		if (!orgId) return "Global";
-		const org = organizations?.find((o: Organization) => o.id === orgId);
-		return org?.name || orgId;
-	};
+	const getOrgName = useOrganizationName(organizations);
+	const knownOrganizations = user?.organizationId
+		? [{ id: user.organizationId, name: getOrgName(user.organizationId) }]
+		: [];
 
 	const filtered = useMemo(() => {
 		const q = query.trim().toLowerCase();

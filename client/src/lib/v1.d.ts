@@ -14169,6 +14169,8 @@ export interface components {
             is_platform_admin: boolean;
             /** Home Organization Id */
             home_organization_id: string | null;
+            /** Home Organization Name */
+            home_organization_name?: string | null;
             /**
              * Provider Organization Id
              * Format: uuid

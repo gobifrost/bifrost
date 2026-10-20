@@ -5,10 +5,12 @@ export function ManualEntityIdInput({
 	orgId,
 	value,
 	onCommit,
+	disabled = false,
 }: {
 	orgId: string;
 	value: string;
 	onCommit: (orgId: string, entityId: string, entityName: string) => void;
+	disabled?: boolean;
 }) {
 	// Pristine fields follow refreshed data. Keep an unsaved draft across refetches.
 	const [draft, setDraft] = useState<string | null>(null);
@@ -19,6 +21,7 @@ export function ManualEntityIdInput({
 		<Input
 			aria-label="External entity ID"
 			className="min-h-11"
+			disabled={disabled}
 			value={local}
 			onChange={(e) =>
 				setDraft(e.target.value === value ? null : e.target.value)

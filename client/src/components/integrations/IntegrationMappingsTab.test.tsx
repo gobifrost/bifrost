@@ -41,6 +41,8 @@ function renderTab(
 			matchStats={null}
 			isMatching={false}
 			isDeletePending={false}
+			canManageMapping={() => true}
+			canManageAllMappings
 			{...handlers}
 			{...overrides}
 		/>,
@@ -113,6 +115,39 @@ describe("IntegrationMappingsTab — populated", () => {
 		expect(screen.getByText("Mapped")).toBeInTheDocument();
 		// Beta has no mapping and no entity_id -> Not Mapped
 		expect(screen.getByText("Not Mapped")).toBeInTheDocument();
+	});
+
+	it("keeps an unauthorized mapping read-only while allowing a managed organization to be edited", async () => {
+		const { user, onUpdateOrgMapping } = renderTab({
+			orgsWithMappings: orgs,
+			entities: [
+				{ value: "ent-a", label: "Entity A" },
+				{ value: "ent-b", label: "Entity B" },
+			],
+			canManageMapping: (organizationId) => organizationId === "org-2",
+		});
+
+		const acmeRow = screen.getByText("Acme").closest("li")!;
+		const betaRow = screen.getByText("Beta").closest("li")!;
+		expect(within(acmeRow).getByRole("combobox")).toBeDisabled();
+		expect(
+			within(acmeRow).queryByRole("button", {
+				name: "Mapping actions for Acme",
+			}),
+		).not.toBeInTheDocument();
+		expect(
+			within(betaRow).getByRole("button", {
+				name: "Mapping actions for Beta",
+			}),
+		).toBeInTheDocument();
+
+		await user.click(within(betaRow).getByRole("combobox"));
+		await user.click(screen.getByRole("option", { name: "Entity B" }));
+		expect(onUpdateOrgMapping).toHaveBeenCalledWith(
+			"org-2",
+			"ent-b",
+			"Entity B",
+		);
 	});
 
 	it("shows Mapped for a config-only mapping with an empty entity_id", () => {
@@ -557,7 +592,9 @@ describe("IntegrationMappingsTab — OAuth connection column", () => {
 		await user.click(
 			screen.getByRole("button", { name: "Mapping actions for Org 1" }),
 		);
-		await user.click(screen.getByRole("menuitem", { name: "Refresh token" }));
+		await user.click(
+			screen.getByRole("menuitem", { name: "Refresh token" }),
+		);
 		expect(onRefreshMapping).toHaveBeenCalledWith(
 			props.orgsWithMappings[0],
 		);

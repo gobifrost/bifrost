@@ -114,27 +114,26 @@ class ApplicationRepository(OrgScopedRepository[Application]):
             or allows_permission(caller, "apps.readwrite", entity.organization_id)
         )
 
-    async def list_applications(self) -> list[Application]:
+    async def list_applications(
+        self,
+        filter_type: OrgFilterType = OrgFilterType.ORG_PLUS_GLOBAL,
+    ) -> list[Application]:
         """
-        List applications with cascade scoping and role-based access.
+        List applications in the requested scope with resource-based access.
 
-        Uses the base class scoping and role checking automatically.
+        Applies the same sharing check as direct application reads. In Caller
+        mode, that check retains original-user reach and permits app managers
+        with ``apps.read`` or ``apps.readwrite`` at the application's actual
+        organization.
 
         Returns:
             List of Application ORM objects
         """
-        # Build base query with cascade scoping
-        query = select(self.model).options(
-            defer(self.model.logo_data),
-            defer(self.model.logo_thumbnail_data),
-        )
-        query = self._apply_cascade_scope(query)
-        query = query.order_by(self.model.name)
+        entities = await self.list_all_in_scope(filter_type)
 
-        result = await self.session.execute(query)
-        entities = list(result.scalars().all())
-
-        # Filter by role access for non-superusers with role-based entities
+        # Filter by resource sharing for non-superusers. _can_access_entity
+        # centralizes App role membership, external-tier behavior, caller
+        # reach, and management-permission exceptions.
         if not self.is_superuser:
             accessible = []
             for entity in entities:

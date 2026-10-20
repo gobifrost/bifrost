@@ -35,6 +35,7 @@ import { useAuthorization } from "@/services/authorization";
 import { orgTarget } from "@/lib/authorization";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import { toast } from "sonner";
 import { authFetch } from "@/lib/api-client";
 import { KnowledgeDocumentDrawer } from "@/components/knowledge/KnowledgeDocumentDrawer";
@@ -294,11 +295,7 @@ export function Knowledge() {
 		enabled: canReadOrganizations,
 	});
 
-	const getOrgName = (orgId: string | null | undefined): string => {
-		if (!orgId) return "Global";
-		const org = organizations?.find((o) => o.id === orgId);
-		return org?.name || orgId;
-	};
+	const getOrgName = useOrganizationName(organizations);
 
 	const filtersKey = JSON.stringify([
 		searchTerm,

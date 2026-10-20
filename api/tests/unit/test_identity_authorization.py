@@ -948,6 +948,19 @@ class TestRoleAssignments:
             if g.permission == "secrets.read"
         } == {("platform", None), ("managed_organizations", None), ("organization", PROVIDER_ORG_ID)}
 
+    async def test_authorization_summary_includes_only_the_callers_home_organization_name(
+        self, db_session
+    ) -> None:
+        from src.services.user_role_assignments import authorization_summary
+
+        organization = await _org(db_session)
+        user = await _user(db_session, organization.id)
+
+        summary = await authorization_summary(db_session, user.id)
+
+        assert summary.home_organization_id == organization.id
+        assert summary.home_organization_name == organization.name
+
     async def test_secrets_reader_boundaries_cannot_be_chosen(self, db_session) -> None:
         from src.services.user_role_assignments import (
             SECRETS_READER_BOUNDARY_MESSAGE,

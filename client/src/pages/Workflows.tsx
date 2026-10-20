@@ -20,6 +20,7 @@ import {
 } from "@/hooks/useWorkflows";
 import { useWorkflowKeys } from "@/hooks/useWorkflowKeys";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import { OrphanedWorkflowDialog } from "@/components/workflows/OrphanedWorkflowDialog";
 import { WorkflowEditDialog } from "@/components/workflows/WorkflowEditDialog";
 import { WorkflowSidebar } from "@/components/workflows/WorkflowSidebar";
@@ -48,8 +49,6 @@ type Workflow = BaseWorkflow & {
 	is_orphaned?: boolean;
 	access_level?: "authenticated" | "everyone" | "role_based";
 };
-type Organization = components["schemas"]["OrganizationPublic"];
-
 export function Workflows() {
 	const navigate = useNavigate();
 	const authorization = useAuthorization();
@@ -144,12 +143,7 @@ export function Workflows() {
 		enabled: authorization.canAnywhere("organizations.read"),
 	});
 
-	// Helper to get organization name from ID
-	const getOrgName = (orgId: string | null | undefined): string => {
-		if (!orgId) return "Global";
-		const org = organizations?.find((o: Organization) => o.id === orgId);
-		return org?.name || orgId;
-	};
+	const getOrgName = useOrganizationName(organizations);
 
 	// Fetch workflows with entity filters and org scope
 	const { data, isLoading, isError, isFetching, refetch } =

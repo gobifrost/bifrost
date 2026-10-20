@@ -733,6 +733,13 @@ async def authorization_summary(session: AsyncSession, user_id: UUID) -> Authori
     """The signed-in user's own authorization, read from the database."""
     ctx = await build_authorization_context(session, user_id)
     base_name = await session.scalar(select(Role.name).where(Role.id == ctx.base_role_id))
+    home_organization_name = (
+        await session.scalar(
+            select(Organization.name).where(Organization.id == ctx.home_organization_id)
+        )
+        if ctx.home_organization_id
+        else None
+    )
     grants = [
         AuthorizationGrant(
             permission=permission,
@@ -755,6 +762,7 @@ async def authorization_summary(session: AsyncSession, user_id: UUID) -> Authori
     return AuthorizationSummary(
         is_platform_admin=ctx.is_platform_admin,
         home_organization_id=ctx.home_organization_id,
+        home_organization_name=home_organization_name,
         provider_organization_id=PROVIDER_ORG_ID,
         base_role=AuthorizationBaseRole(id=ctx.base_role_id, name=base_name or ""),
         grants=grants,

@@ -31,6 +31,7 @@ import {
 	PopoverTrigger,
 } from "@/components/ui/popover";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import type { components } from "@/lib/v1";
 
 type Organization = components["schemas"]["OrganizationPublic"];
@@ -113,6 +114,7 @@ export function OrganizationSelect({
 	const organizations = filterOrganizations
 		? choices.filter(filterOrganizations)
 		: choices;
+	const getOrgName = useOrganizationName(choices);
 	const [open, setOpen] = useState(false);
 
 	const selectedOrg = organizations?.find((org) => org.id === value);
@@ -166,6 +168,17 @@ export function OrganizationSelect({
 			);
 		}
 		if (value) {
+			const homeOrganizationName = getOrgName(value);
+			if (homeOrganizationName !== value) {
+				return (
+					<div className="flex min-w-0 items-center gap-2">
+						<Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+						<span className="min-w-0 whitespace-normal text-left [overflow-wrap:anywhere]">
+							{homeOrganizationName}
+						</span>
+					</div>
+				);
+			}
 			return (
 				<div className="flex min-w-0 items-center gap-2">
 					<Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />

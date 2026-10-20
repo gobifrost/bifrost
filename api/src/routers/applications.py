@@ -583,11 +583,7 @@ async def list_applications(
         filter_type, filter_org = OrgFilterType.ALL, None
 
     repo = await _application_repository(ctx, caller, org_id=filter_org)
-    applications = (
-        await repo.list_all_in_scope(filter_type)
-        if filter_type is OrgFilterType.ALL
-        else await repo.list_applications()
-    )
+    applications = await repo.list_applications(filter_type)
     applications = [
         app for app in applications
         if user_reach(caller).covers(app.organization_id)
