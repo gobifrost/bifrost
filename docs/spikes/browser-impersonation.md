@@ -141,3 +141,5 @@ python3 scripts/check_skill_mirrors.py
 ```
 
 Results: scheduler 17 passed; combined inventory/generated/scheduler run 100 passed with two newly exposed registry omissions. Registering the original-human resolver's copied actor facts and the ownership-checked personal Exit route fixed those omissions; the final three affected assertions passed. Mirror validation passed. The new auth endpoints are classified as authentication transport, rather than CLI/MCP entity mutations; every new Redis liveness/ownership read is authority-bearing in the inventory.
+
+The next complete backend unit run passed 9,545 tests and exposed one remaining snapshot assumption in `test_permissions.py`: `users.impersonate` was still listed among privileged permissions without a registered operation. Removing it from that exception set tightens the inventory now that the browser start endpoint names the permission. `./test.sh tests/unit/test_permissions.py -v --durations=0` passed all 175 cases. The runtime privileged-permission set is unchanged.
