@@ -72,6 +72,23 @@ describe("PageShell access contract", () => {
 		).toHaveTextContent("Impersonating Avery Example");
 		expect(screen.getByText("avery@example.test")).toBeInTheDocument();
 	});
+
+	it("places the impersonation banner above the shared sidebar and header row", () => {
+		auth.isImpersonating = true;
+		renderWithProviders(<PageShell />);
+
+		const banner = screen.getByRole("status", {
+			name: "Impersonation session",
+		});
+		const sharedChromeRow = banner.nextElementSibling;
+
+		expect(sharedChromeRow).toContainElement(
+			screen.getByRole("navigation"),
+		);
+		expect(sharedChromeRow).toContainElement(
+			screen.getByText("Workspace header"),
+		);
+	});
 });
 
 it("does not show permission denial while signed out", () => {

@@ -64,34 +64,36 @@ export function PageShell({ padded = false }: { padded?: boolean }) {
 	}
 
 	return (
-		<div className="h-dvh flex bg-background overflow-hidden">
-			{/* Sidebar - full height with logo */}
-			<Sidebar
-				isMobileMenuOpen={isMobileMenuOpen}
-				setIsMobileMenuOpen={setIsMobileMenuOpen}
-				isCollapsed={isSidebarCollapsed}
-			/>
-
-			{/* Main content area with header */}
-			<div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-				<ImpersonationBanner />
-				<Header
-					onMobileMenuToggle={() => setIsMobileMenuOpen(true)}
-					onSidebarToggle={toggleSidebar}
-					isSidebarCollapsed={isSidebarCollapsed}
+		<div className="h-dvh flex flex-col overflow-hidden bg-background">
+			<ImpersonationBanner />
+			<div className="flex min-h-0 flex-1 overflow-hidden">
+				{/* Sidebar - full height with logo */}
+				<Sidebar
+					isMobileMenuOpen={isMobileMenuOpen}
+					setIsMobileMenuOpen={setIsMobileMenuOpen}
+					isCollapsed={isSidebarCollapsed}
 				/>
-				<main
-					className={cn(
-						"min-h-0 min-w-0 flex-1 overflow-auto",
-						padded && "p-4 sm:p-6 lg:p-8",
-					)}
-				>
-					<RouteErrorBoundary>
-						<RouteReadyReveal key={routeRevealKey}>
-							<Outlet />
-						</RouteReadyReveal>
-					</RouteErrorBoundary>
-				</main>
+
+				{/* Main content area with header */}
+				<div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+					<Header
+						onMobileMenuToggle={() => setIsMobileMenuOpen(true)}
+						onSidebarToggle={toggleSidebar}
+						isSidebarCollapsed={isSidebarCollapsed}
+					/>
+					<main
+						className={cn(
+							"min-h-0 min-w-0 flex-1 overflow-auto",
+							padded && "p-4 sm:p-6 lg:p-8",
+						)}
+					>
+						<RouteErrorBoundary>
+							<RouteReadyReveal key={routeRevealKey}>
+								<Outlet />
+							</RouteReadyReveal>
+						</RouteErrorBoundary>
+					</main>
+				</div>
 			</div>
 		</div>
 	);

@@ -300,7 +300,7 @@ export function Sidebar({
 			{/* Desktop Sidebar */}
 			<aside
 				className={cn(
-					"bf-platform-rail relative hidden md:flex shrink-0 flex-col h-dvh border-r bg-sidebar transition-[width] duration-200 motion-reduce:transition-none",
+					"bf-platform-rail relative hidden h-full md:flex shrink-0 flex-col border-r bg-sidebar transition-[width] duration-200 motion-reduce:transition-none",
 					isCollapsed ? "w-16" : "w-[248px]",
 				)}
 			>
