@@ -466,8 +466,13 @@ async def test_native_delegate_task_runs_a_transitive_child_without_a_middle_run
         assert delegation_result.content is not None
         assert delegation_result.content["child_run_id"] == str(child_run.id)
         assert delegation_result.content["result"] == "Durable native child result."
-        assert delegation_result.content["source_agent_id"] == child["id"]
+        assert delegation_result.content["source_agent_id"] == middle["id"]
         assert delegation_result.content["source_path_agent_ids"] == [
+            root["id"],
+            middle["id"],
+        ]
+        assert delegation_result.content["delegated_agent_id"] == child["id"]
+        assert delegation_result.content["delegated_target_path_agent_ids"] == [
             root["id"],
             middle["id"],
             child["id"],
