@@ -32,7 +32,6 @@ from typing import Any
 
 from fastmcp.tools import ToolResult
 
-from shared import access_checks
 from src.services.mcp_server.tool_result import error_result, success_result
 from src.services.mcp_server.tools._http_bridge import call_rest, rest_client
 from src.services.mcp_server.tools.db import get_tool_db
@@ -601,6 +600,10 @@ async def push_files(
 
     try:
         async with get_tool_db(context) as db:
+            from src.services.authorization.enforce import require_named_permission
+            from src.services.mcp_server.authorization import load_mcp_caller
+
+            require_named_permission(await load_mcp_caller(db, context), "repository.readwrite", None)
             # Refuse before any S3 write: file_storage.write_file (_repo) and
             # app_storage.write_preview_file (preview) both write S3 without
             # dirtying the Application row, so the before_flush backstop never
@@ -652,17 +655,6 @@ async def push_files(
                 )
                 existing_paths = {row[0] for row in existing_files.all()}
                 delete_prefix_paths = existing_paths - set(files.keys())
-
-            # Write scope: writing or deleting any `_repo/` path requires a
-            # platform admin — matching REST, where `_repo/` writes are
-            # CurrentSuperuser (files.py's editor routes).
-            if not getattr(context, "is_platform_admin", False):
-                return error_result(
-                    "You don't have permission to write one or more of these paths.",
-                    {"denied_paths": sorted(set(files.keys()) | delete_prefix_paths)},
-                )
-            # The workspace repository is Global.
-            access_checks.note_power("repository.readwrite", None, subject="repository")
 
             file_storage = FileStorageService(db)
             created = 0

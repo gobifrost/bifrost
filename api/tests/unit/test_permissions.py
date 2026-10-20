@@ -212,6 +212,7 @@ def test_privileged_set_is_the_reviewed_list() -> None:
         "repository.readwrite",
         "claims.readwrite",
         "filepolicies.readwrite",
+        "tables.readwrite",
         "policyrules.readwrite",
         "solutions.deploy",
         "agents.readwrite.all",
@@ -234,7 +235,6 @@ def test_every_privileged_permission_is_valid_vocabulary(permission: str) -> Non
 # access-list entry checks (yet).
 _PRIVILEGED_WITHOUT_AN_ENTRY = frozenset(
     {
-        "users.impersonate",
         "privilegedaccess.readwrite",
         "agents.readwrite.all",
         "tableattribution.readwrite",

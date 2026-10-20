@@ -104,6 +104,27 @@ async def _identities(session_factory, contoso_id: str) -> dict[str, str]:
         _reset_loop_singletons()
 
 
+async def _set_role_permissions(
+    session_factory, *, role_id: str, permissions: frozenset[str]
+) -> None:
+    """Give a scenario role precisely the permissions its probe needs."""
+    from src.core.database import close_db
+    from src.services.role_permissions import set_role_permissions
+
+    _reset_loop_singletons()
+    try:
+        async with session_factory() as session:
+            await set_role_permissions(
+                session,
+                role_id=UUID(role_id),
+                permissions=permissions,
+            )
+            await session.commit()
+    finally:
+        await close_db()
+        _reset_loop_singletons()
+
+
 @pytest.fixture(scope="module")
 def scenario_world(
     e2e_client,
@@ -141,14 +162,26 @@ def scenario_world(
         )
     )
     created_roles.append(hr_role["id"])
+    from src.models.contracts.users import RoleCreate
+
+    base_role_request = RoleCreate(
+        name=f"Scenario base {tag}", description="custom base role"
+    )
     base_role = _ok(
         client.post(
             "/api/roles",
             headers=admin.headers,
-            json={"name": f"Scenario base {tag}", "description": "custom base role"},
+            json=base_role_request.model_dump(mode="json"),
         )
     )
     created_roles.append(base_role["id"])
+    asyncio.run(
+        _set_role_permissions(
+            async_session_factory,
+            role_id=base_role["id"],
+            permissions=frozenset({"workflows.execute"}),
+        )
+    )
     hr = _create_person(client, admin, tag=tag, key="hr", org_id=org1["id"])
     _ok(
         client.post(
@@ -208,7 +241,7 @@ def scenario_world(
             {
                 "name": "admin_bypass",
                 "actions": ALL_ACTIONS,
-                "when": {"user": "is_platform_admin"},
+                "when": {"authority": "platform_admin"},
             },
             {"name": "everyone_reads", "actions": ["read"], "when": {"eq": [1, 1]}},
         ]
@@ -333,6 +366,9 @@ def scenario_world(
                 },
             )
         )
+        assert _ok(
+            client.get(f"/api/workflows/{registered['id']}", headers=admin.headers)
+        )["permission_mode"] == "full"
         workflows[home] = registered
 
     # Journey workflows. A stored request in the provider partition is what the
@@ -383,6 +419,9 @@ def scenario_world(
                 },
             )
         )
+        assert _ok(
+            client.get(f"/api/workflows/{registered['id']}", headers=admin.headers)
+        )["permission_mode"] == "full"
         workflows[f"journey_{key}"] = registered
 
     # Entry points other than REST. Event sources: one per home; a source fires
@@ -505,6 +544,15 @@ def scenario_world(
     _ok(
         client.patch(
             f"/api/workflows/{workflows['global']['id']}",
+            headers=admin.headers,
+            json={"run_identity_id": identities[rule.PROBE_MI["global"]]},
+        )
+    )
+    # This is another legacy-global workflow, so its unattended run keeps the
+    # provider identity.  global_new intentionally covers the new-global path.
+    _ok(
+        client.patch(
+            f"/api/workflows/{workflows['journey_global_switch']['id']}",
             headers=admin.headers,
             json={"run_identity_id": identities[rule.PROBE_MI["global"]]},
         )

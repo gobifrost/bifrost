@@ -33,6 +33,8 @@ import { FormPreview } from "@/components/forms/FormPreview";
 import { WorkflowParametersForm } from "@/components/workflows/WorkflowParametersForm";
 import { useOrgScope } from "@/contexts/OrgScopeContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorization } from "@/services/authorization";
+import { orgTarget } from "@/lib/authorization";
 import type { components } from "@/lib/v1";
 import type { FormField } from "@/lib/client-types";
 type FormCreate = components["schemas"]["FormCreate"];
@@ -61,7 +63,8 @@ export function FormBuilder() {
 	const backTo = fromSolution ? `/solutions/${fromSolution}` : "/forms";
 	const isEditing = !!formId;
 	const { scope } = useOrgScope();
-	const { user, isPlatformAdmin } = useAuth();
+	const { user } = useAuth();
+	const authorization = useAuthorization();
 
 	const {
 		data: existingForm,
@@ -89,9 +92,7 @@ export function FormBuilder() {
 	// Solution-managed forms are read-only on the platform (criterion 6).
 	const isSolutionManaged = existingForm?.is_solution_managed ?? false;
 
-	const defaultOrgId = isPlatformAdmin
-		? null
-		: (user?.organizationId ?? null);
+	const defaultOrgId = user?.organizationId ?? null;
 
 	// Lightweight state for form metadata (set when dialog saves, or synced from existingForm)
 	const [formInfo, setFormInfo] = useState<FormInfoValues | null>(null);
@@ -183,13 +184,20 @@ export function FormBuilder() {
 			? (existingForm.organization_id ?? null)
 			: defaultOrgId;
 	const isGlobal = organizationId === null;
+	const canManageForm =
+		authorization.canAt("forms.readwrite", orgTarget(organizationId)) &&
+		(!existingForm ||
+			authorization.canAt(
+				"forms.readwrite",
+				orgTarget(existingForm.organization_id),
+			));
 
 	const handleInfoSave = (info: FormInfoValues) => {
 		setFormInfo(info);
 	};
 
 	const handleSave = async () => {
-		if (saveBusy.current) return;
+		if (saveBusy.current || !canManageForm) return;
 		saveBusy.current = true;
 		setIsSaving(true);
 		setSaveError(null);
@@ -344,6 +352,7 @@ export function FormBuilder() {
 
 	const validationResult = validateRequiredParameters();
 	const isSaveDisabled =
+		!canManageForm ||
 		!formName ||
 		!linkedWorkflow ||
 		fields.length === 0 ||
@@ -508,7 +517,7 @@ export function FormBuilder() {
 						>
 							<ArrowLeft className="h-5 w-5" />
 						</Button>
-						{formId && !isSolutionManaged ? (
+						{formId && !isSolutionManaged && canManageForm ? (
 							<FormLogoEditor
 								formId={formId}
 								logoUrl={existingForm?.logo_url ?? null}
@@ -544,7 +553,9 @@ export function FormBuilder() {
 						<Button
 							variant="outline"
 							size="icon-lg"
-							disabled={isSaving}
+							disabled={
+								isSaving || !canManageForm || isSolutionManaged
+							}
 							onClick={() => setIsInfoDialogOpen(true)}
 							title={formName ? "Edit Info" : "Set Info"}
 							className="rounded-r-none"
@@ -565,7 +576,11 @@ export function FormBuilder() {
 							<Button
 								variant="outline"
 								size="icon-lg"
-								disabled={isSaving}
+								disabled={
+									isSaving ||
+									!canManageForm ||
+									isSolutionManaged
+								}
 								onClick={() => setIsShareDialogOpen(true)}
 								title="Share Form"
 								className="rounded-none border-l-0"
@@ -680,6 +695,7 @@ export function FormBuilder() {
 
 				<TabsContent
 					value="builder"
+					inert={!canManageForm || isSolutionManaged}
 					className="flex-1 lg:min-h-0 lg:overflow-hidden data-[state=active]:flex"
 				>
 					<FieldsPanelDnD

@@ -1,12 +1,17 @@
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException
 
-from shared.sdk_modules import ModuleSourceScope
-from src.core.constants import SYSTEM_USER_UUID
+from shared.sdk_modules import ModuleSourceError, ModuleSourceScope
 from src.core.principal import UserPrincipal
+from src.models.contracts.workflow_permissions import WorkflowPermissionMode
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.explain import Powers, RunUser
+from src.services.authorization.runtime import RuntimeAuthority
 
 SERVICE = "shared.sdk_modules"
 
@@ -20,49 +25,60 @@ def resolver_generation():
         yield
 
 
-def _system_user() -> UserPrincipal:
-    return UserPrincipal(
-        user_id=SYSTEM_USER_UUID,
-        email="engine@bifrost.internal",
+def _runtime_user(*, workflow_id: UUID | None, full: bool = True) -> UserPrincipal:
+    """A concrete typed credential, without legacy claim or sentinel authority."""
+    run_user_id = uuid4()
+    actor_id = uuid4()
+    context = AuthorizationContext(
+        user_id=run_user_id,
+        home_organization_id=None,
+        base_role_id=uuid4(),
+        is_external=False,
+        base_permissions=frozenset({"*"}) if full else frozenset(),
+    )
+    principal = UserPrincipal(
+        user_id=actor_id,
+        email="runtime-actor@example.test",
         organization_id=None,
-        is_superuser=True,
     )
-
-
-def _admin_user() -> UserPrincipal:
-    return UserPrincipal(
-        user_id="11111111-1111-1111-1111-111111111111",
-        email="admin@gobifrost.com",
+    principal.runtime_authority = RuntimeAuthority(
+        kind="workflow_execution",
+        credential_id=uuid4(),
+        run_user=RunUser(run_user_id, context, None, is_active=True),
+        powers=Powers(WorkflowPermissionMode.FULL, ()) if workflow_id is not None else None,
+        acting_user_id=actor_id,
         organization_id=None,
-        is_superuser=True,
+        workflow_id=workflow_id,
+        started_by_user_id=run_user_id,
+        root_execution_id=uuid4(),
     )
+    return principal
 
 
-def _service_user() -> UserPrincipal:
-    """Non-superuser system sentinel: the ``mint_service_token`` shape."""
-    return UserPrincipal(
-        user_id=SYSTEM_USER_UUID,
-        email="service-aaaaaaaaaaaa@bifrost.internal",
-        organization_id="22222222-2222-4222-8222-222222222222",
-        is_superuser=False,
-        service_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-        service_attempt_id="11111111-1111-4111-8111-111111111111",
+def _agent_run_user() -> UserPrincipal:
+    principal = _runtime_user(workflow_id=None)
+    assert principal.runtime_authority is not None
+    principal.runtime_authority = RuntimeAuthority(
+        kind="agent_run",
+        credential_id=uuid4(),
+        run_user=principal.runtime_authority.run_user,
+        powers=None,
+        acting_user_id=principal.user_id,
+        organization_id=None,
+        workflow_id=None,
+        started_by_user_id=None,
+        root_execution_id=None,
     )
+    return principal
 
 
-def _ordinary_user() -> UserPrincipal:
-    return UserPrincipal(
-        user_id="33333333-3333-3333-3333-333333333333",
-        email="user@gobifrost.com",
-        organization_id="22222222-2222-4222-8222-222222222222",
-        is_superuser=False,
-    )
+class _ScopeDb:
+    def __init__(self, workflow: object, solution: object) -> None:
+        self.workflow = workflow
+        self.solution = solution
 
-
-def _request_with_bearer(token: str = "signed-token") -> MagicMock:
-    request = MagicMock()
-    request.headers = {"authorization": f"Bearer {token}"}
-    return request
+    async def get(self, model, _identity):
+        return self.workflow if model.__name__ == "Workflow" else self.solution
 
 
 async def test_requirements_http_contract_is_retained():
@@ -73,7 +89,7 @@ async def test_requirements_http_contract_is_retained():
         new_callable=AsyncMock,
         return_value={"content": "example==1\n", "hash": "digest"},
     ):
-        response = await fetch_requirements(_admin_user())
+        response = await fetch_requirements(_runtime_user(workflow_id=None), MagicMock())
     assert response.status_code == 200
     assert response.body == b'{"content":"example==1\\n","hash":"digest"}'
 
@@ -85,327 +101,61 @@ async def test_requirements_http_contract_is_retained():
         ),
         pytest.raises(HTTPException) as exc,
     ):
-        await fetch_requirements(_admin_user())
+        await fetch_requirements(_runtime_user(workflow_id=None), MagicMock())
     assert exc.value.status_code == 404
 
 
-# --- Router: engine proof ---
+async def test_runtime_workflow_scope_uses_its_durable_workflow_not_query_scope():
+    from shared.sdk_modules import module_scope_for_principal
 
-
-async def test_system_caller_without_bearer_token_is_rejected():
-    from src.routers.sdk_modules import resolve_module
-
-    request = MagicMock()
-    request.headers = {"authorization": ""}
-
-    with pytest.raises(HTTPException) as exc:
-        await resolve_module(
-            request=request,
-            user=_system_user(),
-            name="modules.missing",
-        )
-    assert exc.value.status_code == 403
-    assert exc.value.detail == "Execution-scoped engine token required"
-
-
-async def test_system_caller_without_execution_id_claim_is_rejected():
-    from src.routers.sdk_modules import fetch_module
-
-    request = _request_with_bearer()
-
-    with (
-        patch(
-            "src.routers.sdk_modules.decode_token",
-            return_value={"engine_solution_id": SOLUTION_A},
-        ),
-        pytest.raises(HTTPException) as exc,
-    ):
-        await fetch_module(
-            path="modules/ok.py",
-            request=request,
-            user=_system_user(),
-        )
-    assert exc.value.status_code == 403
-    assert exc.value.detail == "Execution-scoped engine token required"
-
-
-async def test_system_caller_with_undecodable_token_is_rejected():
-    from src.routers.sdk_modules import resolve_module
-
-    with (
-        patch("src.routers.sdk_modules.decode_token", return_value=None),
-        pytest.raises(HTTPException) as exc,
-    ):
-        await resolve_module(
-            request=_request_with_bearer(),
-            user=_system_user(),
-            name="modules.missing",
-        )
-    assert exc.value.status_code == 403
-
-
-async def test_system_resolver_uses_signed_scope_not_query_scope():
-    from src.routers.sdk_modules import resolve_module
-
-    request = _request_with_bearer()
-
-    with (
-        patch(
-            "src.routers.sdk_modules.decode_token",
-            return_value={
-                "engine_execution_id": "execution-1",
-                "engine_solution_id": SOLUTION_A,
-                "engine_global_repo_access": False,
-            },
-        ),
-        patch(
-            "src.routers.sdk_modules.resolve_module_name",
-            new_callable=AsyncMock,
-            return_value={"kind": "not_found", "path": "modules/missing"},
-        ) as resolver,
-    ):
-        await resolve_module(
-            request=request,
-            user=_system_user(),
-            name="modules.missing",
-            solution_id=SOLUTION_B,
-            global_repo_access=True,
-        )
-
-    resolver.assert_awaited_once_with(
-        "modules.missing",
-        scope=ModuleSourceScope(solution_id=SOLUTION_A, global_repo_access=False),
+    workflow_id = uuid4()
+    db = _ScopeDb(
+        SimpleNamespace(id=workflow_id, solution_id=UUID(SOLUTION_A)),
+        SimpleNamespace(status="active", organization_id=None, allow_outbound_access=False),
     )
 
-
-async def test_human_admin_keeps_query_scope():
-    from src.routers.sdk_modules import resolve_module
-
-    request = MagicMock()
-    request.headers = {}
-
-    with (
-        patch(
-            "src.routers.sdk_modules.resolve_module_name",
-            new_callable=AsyncMock,
-            return_value={"kind": "not_found", "path": "modules/missing"},
-        ) as resolver,
-    ):
-        await resolve_module(
-            request=request,
-            user=_admin_user(),
-            name="modules.missing",
-            solution_id=SOLUTION_B,
-            global_repo_access=True,
-        )
-
-    resolver.assert_awaited_once_with(
-        "modules.missing",
-        scope=ModuleSourceScope(solution_id=SOLUTION_B, global_repo_access=True),
+    scope = await module_scope_for_principal(
+        db, _runtime_user(workflow_id=workflow_id), solution_id=SOLUTION_B, global_repo_access=True,
     )
 
-
-async def test_resolver_maps_invalid_name_to_400():
-    from src.routers.sdk_modules import resolve_module
-
-    with pytest.raises(HTTPException) as exc:
-        await resolve_module(
-            request=MagicMock(),
-            user=_admin_user(),
-            name="not a module!",
-        )
-    assert exc.value.status_code == 400
+    assert scope == ModuleSourceScope(solution_id=SOLUTION_A, global_repo_access=False)
 
 
-async def test_resolver_maps_invalid_solution_id_to_400():
-    from src.routers.sdk_modules import resolve_module
+async def test_agent_runtime_cannot_load_workflow_source():
+    from shared.sdk_modules import module_scope_for_principal
 
-    with pytest.raises(HTTPException) as exc:
-        await resolve_module(
-            request=MagicMock(),
-            user=_admin_user(),
-            name="modules.ok",
-            solution_id="not-a-uuid",
-        )
-    assert exc.value.status_code == 400
-    assert exc.value.detail == "Invalid solution_id"
-
-
-# --- Router: caller gate (admin or system sentinel) ---
-
-
-async def test_module_source_caller_admits_admin_and_system_sentinel():
-    from src.routers.sdk_modules import _module_source_caller
-
-    admin = _admin_user()
-    service = _service_user()
-    engine = _system_user()
-    assert await _module_source_caller(admin) is admin
-    assert await _module_source_caller(service) is service
-    assert await _module_source_caller(engine) is engine
-
-
-async def test_module_source_caller_rejects_ordinary_user():
-    from src.routers.sdk_modules import _module_source_caller
-
-    with pytest.raises(HTTPException) as exc:
-        await _module_source_caller(_ordinary_user())
+    with pytest.raises(ModuleSourceError, match="workflow source scope") as exc:
+        await module_scope_for_principal(MagicMock(), _agent_run_user())
     assert exc.value.status_code == 403
-    assert exc.value.detail == "Superuser privileges required"
 
 
-async def test_service_principal_fetches_its_repo_module_over_socket():
-    """A service child cold-loading its own module must not need superuser.
+async def test_inline_runtime_loads_workspace_source_only_with_global_repository_permission():
+    from shared.sdk_modules import module_scope_for_principal
 
-    ``mint_service_token`` clears the superuser bit but keeps the sentinel
-    subject and signed execution claims; the module route admits it and
-    ``_engine_module_scope`` derives the scope from those claims.
-    """
-    from src.routers.sdk_modules import fetch_module
+    scope = await module_scope_for_principal(
+        MagicMock(), _runtime_user(workflow_id=None), solution_id=SOLUTION_A, global_repo_access=False,
+    )
 
-    path = "workflows/e2e_svc_tables.py"
-    with (
-        patch(
-            "src.routers.sdk_modules.decode_token",
-            return_value={
-                "engine_execution_id": "attempt-1",
-                "engine_solution_id": None,
-                "engine_global_repo_access": False,
-            },
-        ),
-        patch(
-            f"{SERVICE}.get_module",
-            new_callable=AsyncMock,
-            return_value={"content": "X = 1", "path": path, "hash": "h"},
-        ),
-    ):
-        response = await fetch_module(
-            path=path,
-            request=_request_with_bearer(),
-            user=_service_user(),
-        )
-    assert response.status_code == 200
+    assert scope == ModuleSourceScope(solution_id=None, global_repo_access=True)
 
 
-# --- Router: direct fetch scope rules ---
+async def test_inline_runtime_cannot_spoof_workspace_source_permission():
+    from shared.sdk_modules import module_scope_for_principal
 
-
-def _engine_claims(solution_id: str | None, global_repo_access: bool = False) -> dict:
-    return {
-        "engine_execution_id": "execution-1",
-        "engine_solution_id": solution_id,
-        "engine_global_repo_access": global_repo_access,
-    }
-
-
-async def test_fetch_module_allows_own_solution_path():
-    from src.routers.sdk_modules import fetch_module
-
-    path = f"_solutions/{SOLUTION_A}/modules/ok.py"
-    with (
-        patch(
-            "src.routers.sdk_modules.decode_token",
-            return_value=_engine_claims(SOLUTION_A),
-        ),
-        patch(
-            f"{SERVICE}.get_module",
-            new_callable=AsyncMock,
-            return_value={"content": "X = 1", "path": path, "hash": "h"},
-        ),
-    ):
-        response = await fetch_module(
-            path=path,
-            request=_request_with_bearer(),
-            user=_system_user(),
-        )
-    assert response.status_code == 200
-
-
-async def test_fetch_module_forbids_sibling_solution_path():
-    from src.routers.sdk_modules import fetch_module
-
-    with (
-        patch(
-            "src.routers.sdk_modules.decode_token",
-            return_value=_engine_claims(SOLUTION_A),
-        ),
-        pytest.raises(HTTPException) as exc,
-    ):
-        await fetch_module(
-            path=f"_solutions/{SOLUTION_B}/modules/no.py",
-            request=_request_with_bearer(),
-            user=_system_user(),
+    with pytest.raises(ModuleSourceError, match="Workspace source access") as exc:
+        await module_scope_for_principal(
+            MagicMock(), _runtime_user(workflow_id=None, full=False),
+            solution_id=SOLUTION_A, global_repo_access=True,
         )
     assert exc.value.status_code == 403
-    assert exc.value.detail == "Module path is outside execution scope"
 
 
-async def test_fetch_module_forbids_bare_repo_path_when_sealed():
-    from src.routers.sdk_modules import fetch_module
-
-    with (
-        patch(
-            "src.routers.sdk_modules.decode_token",
-            return_value=_engine_claims(SOLUTION_A, global_repo_access=False),
-        ),
-        pytest.raises(HTTPException) as exc,
-    ):
-        await fetch_module(
-            path="modules/no.py",
-            request=_request_with_bearer(),
-            user=_system_user(),
-        )
-    assert exc.value.status_code == 403
-    assert exc.value.detail == "Workspace module access is disabled for this Solution"
-
-
-async def test_fetch_module_allows_bare_repo_path_with_global_access():
-    from src.routers.sdk_modules import fetch_module
-
-    with (
-        patch(
-            "src.routers.sdk_modules.decode_token",
-            return_value=_engine_claims(SOLUTION_A, global_repo_access=True),
-        ),
-        patch(
-            f"{SERVICE}.get_module",
-            new_callable=AsyncMock,
-            return_value={"content": "X = 1", "path": "modules/ok.py", "hash": "h"},
-        ),
-    ):
-        response = await fetch_module(
-            path="modules/ok.py",
-            request=_request_with_bearer(),
-            user=_system_user(),
-        )
-    assert response.status_code == 200
-
-
-async def test_fetch_module_maps_traversal_to_400():
+async def test_router_maps_typed_scope_failure_to_403():
     from src.routers.sdk_modules import fetch_module
 
     with pytest.raises(HTTPException) as exc:
-        await fetch_module(
-            path="../escape.py",
-            request=MagicMock(),
-            user=_admin_user(),
-        )
-    assert exc.value.status_code == 400
-
-
-async def test_fetch_module_maps_miss_to_404():
-    from src.routers.sdk_modules import fetch_module
-
-    with (
-        patch(f"{SERVICE}.get_module", new_callable=AsyncMock, return_value=None),
-        pytest.raises(HTTPException) as exc,
-    ):
-        await fetch_module(
-            path="modules/missing.py",
-            request=MagicMock(),
-            user=_admin_user(),
-        )
-    assert exc.value.status_code == 404
+        await fetch_module("modules/blocked.py", _agent_run_user(), MagicMock())
+    assert exc.value.status_code == 403
 
 
 # --- Shared service: scope rules ---

@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from shared import home
+from shared.sdk_users import set_platform_admin
 from src.core.principal import UserPrincipal
 from src.models.enums import AgentAccessLevel, AppAccessLevel, FormAccessLevel
 from src.models.contracts.home import HomeCollectionWrite, HomePreferenceWrite
@@ -45,17 +46,20 @@ async def _org(db, name: str) -> Organization:
 
 
 async def _user(
-    db, org: Organization | None, name: str, *, superuser: bool = False
+    db, org: Organization | None, name: str, *, superuser: bool = False, external: bool = False
 ) -> User:
     row = User(
         email=f"{uuid4().hex}@example.com",
         name=name,
         is_superuser=superuser,
+        is_external=external,
         is_verified=True,
         organization_id=org.id if org else None,
     )
     db.add(row)
     await db.flush()
+    if superuser:
+        await set_platform_admin(db, row, True, assigned_by="test")
     return row
 
 
@@ -219,7 +223,7 @@ async def test_private_and_shared_collection_boundaries(db_session):
     peer = await _user(db_session, org1, "Peer")
     outsider = await _user(db_session, org2, "Outsider")
     admin = await _user(db_session, None, "Admin", superuser=True)
-    external = await _user(db_session, org1, "External")
+    external = await _user(db_session, org1, "External", external=True)
 
     private = HomeCollection(
         owner_id=owner.id,
@@ -281,7 +285,7 @@ async def test_private_and_shared_collection_boundaries(db_session):
     }
 
 
-async def test_only_admin_can_publish_or_edit_shared_collections(db_session):
+async def test_shared_collection_writes_require_named_authority(db_session):
     org = await _org(db_session, "Shared Edit Org")
     admin = await _user(db_session, None, "Admin", superuser=True)
     user = await _user(db_session, org, "User")
@@ -336,10 +340,16 @@ async def test_shared_to_private_collection_becomes_current_admin_private_collec
 
     assert result.shared is False
     assert row.owner_id == editor_admin.id
+    # The old owner now needs explicit Read All Home authority. Platform
+    # Admin holds that power through the wildcard, rather than ownership.
+    assert await home.get_collection(
+        db_session, _principal(owner_admin, is_superuser=True), row.id
+    ) is row
+    from shared.sdk_users import set_platform_admin
+    owner_admin.organization_id = (await _org(db_session, "Contoso Former Owner")).id
+    await set_platform_admin(db_session, owner_admin, False, assigned_by="test")
     with pytest.raises(HTTPException) as owner_denied:
-        await home.get_collection(
-            db_session, _principal(owner_admin, is_superuser=True), row.id
-        )
+        await home.get_collection(db_session, _principal(owner_admin), row.id)
     assert owner_denied.value.status_code == 404
 
 
@@ -510,3 +520,51 @@ async def test_preference_open_and_pin_persist_for_available_resource(db_session
     assert pref is not None
     assert pref.pinned is True
     assert pref.last_opened_at is not None
+
+
+async def test_home_writes_use_named_scope_and_ignore_actor_admin_claim(db_session):
+    from src.models.orm.users import Role, RolePermission, UserRole, UserRoleBoundary
+
+    org = await _org(db_session, "Contoso")
+    target = await _org(db_session, "Fabrikam")
+    user = await _user(db_session, org, "Contoso User")
+    forged = _principal(user, is_superuser=True)
+    with pytest.raises(HTTPException) as denied:
+        await home.save_collection(db_session, forged, _collection_write(shared=True, organization_id=target.id))
+    assert denied.value.status_code == 403
+
+    role = Role(name=f"Contoso Home Editor {uuid4().hex}", created_by="test")
+    db_session.add(role)
+    await db_session.flush()
+    db_session.add_all([
+        RolePermission(role_id=role.id, permission="home.readwrite"),
+        UserRole(user_id=user.id, role_id=role.id, assigned_by="test"),
+        UserRoleBoundary(user_id=user.id, role_id=role.id, kind="organization", organization_id=target.id),
+    ])
+    await db_session.flush()
+    saved = await home.save_collection(db_session, _principal(user), _collection_write(shared=True, organization_id=target.id))
+    assert saved.organization_id == target.id and saved.can_edit
+    with pytest.raises(HTTPException) as wrong_boundary:
+        await home.save_collection(db_session, forged, _collection_write(shared=True, organization_id=org.id))
+    assert wrong_boundary.value.status_code == 403
+
+
+async def test_home_private_owner_and_all_permissions_use_original_user_and_reach():
+    from src.services.authorization.context import AuthorizationContext, Boundary, BoundaryKind, RoleGrant
+    from src.services.authorization.enforce import Caller
+    original_id, home_org, target_org = uuid4(), uuid4(), uuid4()
+    actor = UserPrincipal(user_id=uuid4(), email="actor@contoso.example", organization_id=home_org, is_superuser=True)
+    caller = Caller(actor, AuthorizationContext(
+        user_id=original_id, home_organization_id=home_org, base_role_id=uuid4(),
+        is_external=False, base_permissions=frozenset(), role_grants=(
+            RoleGrant(uuid4(), frozenset({"home.read.all", "home.readwrite.all"}), (Boundary(BoundaryKind.ORGANIZATION, target_org),)),
+        ),
+    ))
+    own = HomeCollection(owner_id=original_id, organization_id=None, shared=False)
+    actor_owned = HomeCollection(owner_id=actor.user_id, organization_id=None, shared=False)
+    scoped = HomeCollection(owner_id=uuid4(), organization_id=target_org, shared=False)
+    foreign = HomeCollection(owner_id=uuid4(), organization_id=uuid4(), shared=False)
+    assert home.can_read_collection(own, caller) and home.can_edit_collection(own, caller)
+    assert not home.can_read_collection(actor_owned, caller)
+    assert home.can_read_collection(scoped, caller) and home.can_edit_collection(scoped, caller)
+    assert not home.can_read_collection(foreign, caller) and not home.can_edit_collection(foreign, caller)

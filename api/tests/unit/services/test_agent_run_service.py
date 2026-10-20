@@ -6,6 +6,7 @@ import pytest
 
 from src.services.execution import agent_run_service
 from src.services.execution.agent_run_service import enqueue_agent_run
+from src.services.audit_context import ActorContext, clear_actor, set_actor
 
 
 @pytest.fixture
@@ -34,6 +35,33 @@ def _redis_context(mock_get_redis):
 
 
 class TestEnqueueAgentRun:
+    @pytest.mark.asyncio
+    @patch("src.services.execution.agent_run_service.publish_message")
+    @patch("src.services.execution.agent_run_service.get_redis")
+    async def test_persists_current_impersonation_provenance(
+        self, mock_get_redis, _mock_publish, db_session
+    ):
+        _redis_context(mock_get_redis)
+        operator_id, session_id = uuid4(), uuid4()
+        token = set_actor(
+            ActorContext(
+                user_id=uuid4(),
+                organization_id=uuid4(),
+                impersonated_by_user_id=operator_id,
+                impersonation_session_id=session_id,
+            )
+        )
+        try:
+            await enqueue_agent_run(
+                agent_id=str(uuid4()), trigger_type="api", lineage=None
+            )
+        finally:
+            clear_actor(token)
+
+        row = db_session.add.call_args.args[0]
+        assert row.impersonated_by_user_id == operator_id
+        assert row.impersonation_session_id == session_id
+
     @pytest.mark.asyncio
     @patch("src.services.execution.agent_run_service.publish_message")
     @patch("src.services.execution.agent_run_service.get_redis")
@@ -107,6 +135,35 @@ class TestEnqueueAgentRun:
     @pytest.mark.asyncio
     @patch("src.services.execution.agent_run_service.publish_message")
     @patch("src.services.execution.agent_run_service.get_redis")
+    async def test_enqueue_serializes_caller_scope_claims(
+        self, mock_get_redis, _mock_publish, db_session
+    ):
+        redis = _redis_context(mock_get_redis)
+
+        await enqueue_agent_run(
+            agent_id=str(uuid4()),
+            trigger_type="sdk",
+            caller_is_superuser=True,
+            caller_is_external=True,
+            caller_is_provider_org=True,
+            lineage=None,
+        )
+
+        context = json.loads(redis.set.call_args.args[1])
+        assert context["caller"] == {
+            "user_id": None,
+            "email": None,
+            "name": None,
+            "organization_id": None,
+            "is_superuser": True,
+            "is_external": True,
+            "is_provider_org": True,
+            "roles": [],
+        }
+
+    @pytest.mark.asyncio
+    @patch("src.services.execution.agent_run_service.publish_message")
+    @patch("src.services.execution.agent_run_service.get_redis")
     async def test_run_as_is_recorded_on_the_row_only(
         self, mock_get_redis, mock_publish, db_session
     ):
@@ -130,6 +187,43 @@ class TestEnqueueAgentRun:
         assert (plain_row.run_as_user_id, run_as_row.run_as_user_id) == (None, acting_user_id)
         assert run_as_context == plain_context
         assert run_as_message == plain_message
+
+    @pytest.mark.asyncio
+    @patch("src.services.execution.agent_run_service.publish_message")
+    @patch("src.services.execution.agent_run_service.get_redis")
+    async def test_enqueue_binds_the_callers_actor_id(
+        self, mock_get_redis, _mock_publish, db_session
+    ):
+        _redis_context(mock_get_redis)
+        caller_id = uuid4()
+
+        await enqueue_agent_run(
+            agent_id=str(uuid4()),
+            trigger_type="api",
+            caller_user_id=str(caller_id),
+            lineage=None,
+        )
+
+        assert db_session.add.call_args.args[0].acting_user_id == caller_id
+
+    @pytest.mark.asyncio
+    @patch("src.services.execution.agent_run_service.publish_message")
+    @patch("src.services.execution.agent_run_service.get_redis")
+    async def test_enqueue_binds_the_authorized_run_as_actor_id(
+        self, mock_get_redis, _mock_publish, db_session
+    ):
+        _redis_context(mock_get_redis)
+        run_as_user_id = uuid4()
+
+        await enqueue_agent_run(
+            agent_id=str(uuid4()),
+            trigger_type="api",
+            caller_user_id=str(uuid4()),
+            run_as_user_id=run_as_user_id,
+            lineage=None,
+        )
+
+        assert db_session.add.call_args.args[0].acting_user_id == run_as_user_id
 
     @pytest.mark.asyncio
     @patch("src.services.execution.agent_run_service.publish_message")
@@ -237,4 +331,6 @@ async def test_queued_run_records_its_run_user(mock_get_redis, mock_publish, db_
         lineage=person_lineage(person),
     )
 
-    assert db_session.add.call_args.args[0].run_user_id == person
+    queued_run = db_session.add.call_args.args[0]
+    assert queued_run.run_user_id == person
+    assert queued_run.acting_user_id == person

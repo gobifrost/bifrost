@@ -9,13 +9,17 @@ Routes user messages to the appropriate agent based on:
 import logging
 import re
 from contextlib import asynccontextmanager
-from uuid import UUID
-
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.log_safety import log_safe
 from src.models.orm import Agent
-from src.repositories.agents import AgentRepository
+from src.services.agent_write_policy import agent_query_in_reach
+from src.services.authorization.callers import refresh_caller
+from src.services.authorization.enforce import Caller
+from src.services.authorization.agent_runtime import (
+    AgentRuntimeAuthorizationError,
+    authorize_agent_execution,
+)
 from src.services.llm import get_llm_client, LLMMessage
 
 logger = logging.getLogger(__name__)
@@ -40,14 +44,10 @@ class AgentRouter:
         self,
         session_factory: async_sessionmaker[AsyncSession],
         *,
-        user_id: UUID | None = None,
-        org_id: UUID | None = None,
-        is_external: bool = False,
+        caller: Caller,
     ):
         self._session_factory = session_factory
-        self._user_id = user_id
-        self._org_id = org_id
-        self._is_external = is_external
+        self._caller = caller
 
     @asynccontextmanager
     async def _db(self):
@@ -201,19 +201,24 @@ Your response (agent name or DIRECT):"""
 
     async def get_available_agents(self) -> list[Agent]:
         """Get active agents available to the current user for routing."""
-        if self._user_id is None:
-            logger.warning("Agent routing requested without user context; no agents are routable")
-            return []
-
         async with self._db() as session:
-            repo = AgentRepository(
-                session=session,
-                org_id=self._org_id,
-                user_id=self._user_id,
-                is_superuser=False,
-                is_external=self._is_external,
-            )
-            return await repo.list_agents(active_only=True)
+            caller = await refresh_caller(session, self._caller)
+            candidates = (
+                await session.execute(
+                    agent_query_in_reach(caller).where(Agent.is_active.is_(True))
+                )
+            ).scalars().all()
+            available: list[Agent] = []
+            for candidate in candidates:
+                try:
+                    caller, agent = await authorize_agent_execution(
+                        session, caller, candidate.id
+                    )
+                except AgentRuntimeAuthorizationError:
+                    continue
+                available.append(agent)
+            self._caller = caller
+            return available
 
     def strip_mention(self, message: str) -> str:
         """

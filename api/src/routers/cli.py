@@ -17,13 +17,11 @@ MUST:
   inline cascade queries (`WHERE organization_id == x OR
   organization_id IS NULL`). The lint test
   `test_no_inline_org_scoping_in_routers` catches this.
-- Pass `is_superuser=True` to the repository — the engine sentinel is
-  the authenticated principal here, and the SDK has already resolved
-  scope before the call reaches us.
-- Receive the scope as a request body field; trust it as-is. The engine
-  did the platform-admin-or-own-org check via
-  `api/shared/scope_resolver.py::resolve_effective_scope` before
-  calling us.
+- Resolve a current `Caller` and authorize the requested scope through
+  `api/shared/scope_resolver.py::resolve_effective_scope`.
+- Enforce the named operation permission before repository access. Typed
+  runtime credentials reload their original user's authority on the server;
+  request fields and actor flags do not grant access.
 
 Endpoints that do NOT touch execution-resolution entities (auth,
 context, health, download, CLI session management) are exempt. Document
@@ -60,7 +58,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared import access_checks
-from src.core.auth import Context, CurrentEngineOrBypassUser, CurrentUser
+from src.core.auth import Context, CurrentActiveUser, CurrentUser
 from src.core.principal import UserPrincipal
 from src.core.database import get_db, get_db_context
 from src.core.log_safety import log_safe
@@ -103,6 +101,7 @@ from src.models.contracts.artifacts import (
     VideoArtifactSpec,
 )
 from src.models.contracts.platform_jobs import PlatformJobAccepted
+from src.services.authorization.enforce import load_caller
 
 logger = logging.getLogger(__name__)
 
@@ -161,10 +160,9 @@ async def get_dev_context(
 ) -> DeveloperContextResponse:
     """Get development context for CLI initialization.
 
-    Returns the authenticated user and their ``organization_id``-resolved
-    org. The optional ``org_id`` query parameter lets platform admins and
-    provider-org members target another org for the session — gated by
-    the same C2 rule the scope resolver applies elsewhere.
+    Returns actor facts and a selected organization within the original
+    caller's current role reach. Every later SDK request authorizes its
+    operation independently.
 
     Context behavior lives in the shared service (``shared.sdk_context``),
     which a worker-local engine child can call with the same inputs.
@@ -219,14 +217,10 @@ async def _resolve_sdk_org_id(
     from fastapi import HTTPException
 
     from shared.sdk_config import ScopeResolutionError, resolve_sdk_scope
+    from src.services.authorization.enforce import load_caller
 
     try:
-        resolved = await resolve_sdk_scope(
-            scope,
-            caller_org_id=current_user.organization_id,
-            is_platform_admin=current_user.is_superuser,
-            session=db,
-        )
+        resolved = await resolve_sdk_scope(scope, caller=await load_caller(db, current_user))
     except ScopeResolutionError as e:
         raise HTTPException(
             status_code=e.status_code,
@@ -243,7 +237,7 @@ async def _resolve_sdk_org_id(
 )
 async def cli_get_config(
     request: CLIConfigGetRequest,
-    current_user: CurrentEngineOrBypassUser,
+    current_user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> CLIConfigValue | None:
     """Get a config value via CLI API."""
@@ -252,14 +246,12 @@ async def cli_get_config(
         get_sdk_config_value,
         resolve_sdk_scope,
     )
+    from src.services.authorization.enforce import load_caller
+
+    caller = await load_caller(db, current_user)
 
     try:
-        org_uuid = await resolve_sdk_scope(
-            request.scope,
-            caller_org_id=current_user.organization_id,
-            is_platform_admin=current_user.is_superuser,
-            session=db,
-        )
+        org_uuid = await resolve_sdk_scope(request.scope, caller=caller)
     except ScopeResolutionError as e:
         raise HTTPException(
             status_code=e.status_code,
@@ -270,7 +262,7 @@ async def cli_get_config(
         db,
         key=request.key,
         org_id=org_uuid,
-        external=current_user.is_external,
+        caller=caller,
     )
 
 
@@ -281,7 +273,7 @@ async def cli_get_config(
 )
 async def cli_set_config(
     request: CLIConfigSetRequest,
-    current_user: CurrentEngineOrBypassUser,
+    current_user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     """Set a config value via CLI API."""
@@ -290,14 +282,12 @@ async def cli_set_config(
         resolve_sdk_scope,
         set_sdk_config_value,
     )
+    from src.services.authorization.enforce import load_caller
+
+    caller = await load_caller(db, current_user)
 
     try:
-        org_uuid = await resolve_sdk_scope(
-            request.scope,
-            caller_org_id=current_user.organization_id,
-            is_platform_admin=current_user.is_superuser,
-            session=db,
-        )
+        org_uuid = await resolve_sdk_scope(request.scope, caller=caller)
     except ScopeResolutionError as e:
         raise HTTPException(
             status_code=e.status_code,
@@ -310,7 +300,7 @@ async def cli_set_config(
         value=request.value,
         is_secret=request.is_secret,
         org_id=org_uuid,
-        actor_email=current_user.email,
+        caller=caller,
     )
 
 
@@ -320,7 +310,7 @@ async def cli_set_config(
 )
 async def cli_list_config(
     request: CLIConfigListRequest,
-    current_user: CurrentEngineOrBypassUser,
+    current_user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict[str, Any]:
     """List all config values via CLI API."""
@@ -329,14 +319,12 @@ async def cli_list_config(
         list_sdk_config_values,
         resolve_sdk_scope,
     )
+    from src.services.authorization.enforce import load_caller
+
+    caller = await load_caller(db, current_user)
 
     try:
-        org_uuid = await resolve_sdk_scope(
-            request.scope,
-            caller_org_id=current_user.organization_id,
-            is_platform_admin=current_user.is_superuser,
-            session=db,
-        )
+        org_uuid = await resolve_sdk_scope(request.scope, caller=caller)
     except ScopeResolutionError as e:
         raise HTTPException(
             status_code=e.status_code,
@@ -347,7 +335,7 @@ async def cli_list_config(
     return await list_sdk_config_values(
         db,
         org_id=org_uuid,
-        external=current_user.is_external,
+        caller=caller,
     )
 
 
@@ -357,7 +345,7 @@ async def cli_list_config(
 )
 async def cli_delete_config(
     request: CLIConfigDeleteRequest,
-    current_user: CurrentEngineOrBypassUser,
+    current_user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> bool:
     """Delete a config value via CLI API."""
@@ -366,14 +354,12 @@ async def cli_delete_config(
         delete_sdk_config_value,
         resolve_sdk_scope,
     )
+    from src.services.authorization.enforce import load_caller
+
+    caller = await load_caller(db, current_user)
 
     try:
-        org_uuid = await resolve_sdk_scope(
-            request.scope,
-            caller_org_id=current_user.organization_id,
-            is_platform_admin=current_user.is_superuser,
-            session=db,
-        )
+        org_uuid = await resolve_sdk_scope(request.scope, caller=caller)
     except ScopeResolutionError as e:
         raise HTTPException(
             status_code=e.status_code,
@@ -384,7 +370,7 @@ async def cli_delete_config(
         db,
         key=request.key,
         org_id=org_uuid,
-        actor_email=current_user.email,
+        caller=caller,
     )
 
 
@@ -400,7 +386,7 @@ async def cli_delete_config(
 )
 async def sdk_integrations_get(
     request: SDKIntegrationsGetRequest,
-    current_user: CurrentEngineOrBypassUser,
+    current_user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> SDKIntegrationsGetResponse | None:
     """Get integration mapping data for an organization via SDK.
@@ -420,14 +406,12 @@ async def sdk_integrations_get(
         IntegrationServiceError,
         get_sdk_integration_dict,
     )
+    from src.services.authorization.enforce import load_caller
+
+    caller = await load_caller(db, current_user)
 
     try:
-        org_uuid = await resolve_sdk_scope(
-            request.scope,
-            caller_org_id=current_user.organization_id,
-            is_platform_admin=current_user.is_superuser,
-            session=db,
-        )
+        org_uuid = await resolve_sdk_scope(request.scope, caller=caller)
     except ScopeResolutionError as e:
         raise HTTPException(
             status_code=e.status_code,
@@ -441,7 +425,7 @@ async def sdk_integrations_get(
             org_id=org_uuid,
             oauth_scope=request.oauth_scope,
             solution_id=request.solution,
-            external=current_user.is_external,
+            caller=caller,
         )
     except IntegrationServiceError as e:
         raise HTTPException(
@@ -453,7 +437,7 @@ async def sdk_integrations_get(
         raise
     except Exception as e:
         logger.error(f"SDK integrations.get failed: {log_safe(e)}")
-        return None
+        raise HTTPException(status_code=500, detail="Failed to retrieve integration") from None
 
     if result is None:
         return None
@@ -467,35 +451,33 @@ async def sdk_integrations_get(
 )
 async def sdk_integrations_list_mappings(
     request: SDKIntegrationsListMappingsRequest,
-    current_user: CurrentEngineOrBypassUser,
+    current_user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> SDKIntegrationsListMappingsResponse | None:
     """List all mappings for an integration via SDK.
 
-    Scope resolution and response construction live in the shared
+    Reach filtering and response construction live in the shared
     integrations service (``shared.sdk_integrations``), which the
-    worker-local engine child calls for the same inputs.
+    worker-local engine child calls for the same inputs. ``request.scope``
+    is ignored: the list returns every mapping the caller may read.
     """
-    from shared.sdk_config import ScopeResolutionError
     from shared.sdk_integrations import list_sdk_integration_mappings
+    from src.services.authorization.enforce import load_caller
+
+    caller = await load_caller(db, current_user)
 
     try:
         items = await list_sdk_integration_mappings(
             db,
             name=request.name,
-            scope=request.scope,
-            caller_org_id=current_user.organization_id,
-            is_platform_admin=current_user.is_superuser,
-            external=current_user.is_external,
+            caller=caller,
         )
-    except ScopeResolutionError as e:
-        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
     except HTTPException:
         # Authorization failures must surface to the client.
         raise
     except Exception as e:
         logger.error(f"SDK integrations.list_mappings failed: {log_safe(e)}")
-        return None
+        raise HTTPException(status_code=500, detail="Failed to list integration mappings") from None
 
     if items is None:
         return None
@@ -509,7 +491,7 @@ async def sdk_integrations_list_mappings(
 )
 async def sdk_integrations_get_mapping(
     request: SDKIntegrationsGetMappingRequest,
-    current_user: CurrentEngineOrBypassUser,
+    current_user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> SDKIntegrationsMappingItem | None:
     """Get a specific integration mapping by org_id or entity_id via SDK.
@@ -520,16 +502,17 @@ async def sdk_integrations_get_mapping(
     """
     from shared.sdk_config import ScopeResolutionError
     from shared.sdk_integrations import get_sdk_integration_mapping_dict
+    from src.services.authorization.enforce import load_caller
+
+    caller = await load_caller(db, current_user)
 
     try:
         result = await get_sdk_integration_mapping_dict(
             db,
             name=request.name,
             scope=request.scope,
-            caller_org_id=current_user.organization_id,
-            is_platform_admin=current_user.is_superuser,
+            caller=caller,
             entity_id=request.entity_id,
-            external=current_user.is_external,
         )
     except ScopeResolutionError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
@@ -538,7 +521,7 @@ async def sdk_integrations_get_mapping(
         raise
     except Exception as e:
         logger.error(f"SDK integrations.get_mapping failed: {log_safe(e)}")
-        return None
+        raise HTTPException(status_code=500, detail="Failed to retrieve integration mapping") from None
 
     if result is None:
         return None
@@ -552,7 +535,7 @@ async def sdk_integrations_get_mapping(
 )
 async def sdk_integrations_upsert_mapping(
     request: SDKIntegrationsUpsertMappingRequest,
-    current_user: CurrentEngineOrBypassUser,
+    current_user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> SDKIntegrationsMappingItem:
     """Create or update an integration mapping for an organization via SDK.
@@ -566,19 +549,19 @@ async def sdk_integrations_upsert_mapping(
         IntegrationServiceError,
         upsert_sdk_integration_mapping,
     )
+    from src.services.authorization.enforce import load_caller
+
+    caller = await load_caller(db, current_user)
 
     try:
         result = await upsert_sdk_integration_mapping(
             db,
             name=request.name,
             scope=request.scope,
-            caller_org_id=current_user.organization_id,
-            is_platform_admin=current_user.is_superuser,
-            external=current_user.is_external,
+            caller=caller,
             entity_id=request.entity_id,
             entity_name=request.entity_name,
             config=request.config,
-            actor_email=current_user.email,
         )
     except ScopeResolutionError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
@@ -602,7 +585,7 @@ async def sdk_integrations_upsert_mapping(
 )
 async def sdk_integrations_delete_mapping(
     request: SDKIntegrationsDeleteMappingRequest,
-    current_user: CurrentEngineOrBypassUser,
+    current_user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict:
     """Delete an integration mapping for an organization via SDK.
@@ -613,14 +596,16 @@ async def sdk_integrations_delete_mapping(
     """
     from shared.sdk_config import ScopeResolutionError
     from shared.sdk_integrations import delete_sdk_integration_mapping
+    from src.services.authorization.enforce import load_caller
+
+    caller = await load_caller(db, current_user)
 
     try:
         return await delete_sdk_integration_mapping(
             db,
             name=request.name,
             scope=request.scope,
-            caller_org_id=current_user.organization_id,
-            is_platform_admin=current_user.is_superuser,
+            caller=caller,
         )
     except ScopeResolutionError as e:
         # Auth/scope failures must surface.
@@ -630,7 +615,7 @@ async def sdk_integrations_delete_mapping(
         raise
     except Exception as e:
         logger.error(f"SDK integrations.delete_mapping failed: {log_safe(e)}")
-        return {"deleted": False}
+        raise HTTPException(status_code=500, detail="Failed to delete integration mapping") from None
 
 
 @router.post(
@@ -640,7 +625,7 @@ async def sdk_integrations_delete_mapping(
 )
 async def sdk_integrations_refresh_token(
     request: SDKIntegrationsRefreshTokenRequest,
-    current_user: CurrentEngineOrBypassUser,
+    current_user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> SDKIntegrationsRefreshTokenResponse:
     """Programmatically refresh an OAuth token for an integration.
@@ -662,15 +647,16 @@ async def sdk_integrations_refresh_token(
         IntegrationServiceError,
         refresh_sdk_oauth_token,
     )
+    from src.services.authorization.enforce import load_caller
+
+    caller = await load_caller(db, current_user)
 
     try:
         result = await refresh_sdk_oauth_token(
             db,
             connection_name=request.connection_name,
             scope=request.scope,
-            caller_org_id=current_user.organization_id,
-            is_platform_admin=current_user.is_superuser,
-            external=current_user.is_external,
+            caller=caller,
         )
     except ScopeResolutionError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
@@ -712,7 +698,7 @@ async def sdk_store_artifact(
     content_type = file.content_type or "application/octet-stream"
     content = await file.read()
     return await _store(
-        ArtifactCaller(user=current_user, db=db),
+        ArtifactCaller(caller=await load_caller(db, current_user), db=db),
         filename=filename,
         content_type=content_type,
         content=content,
@@ -730,7 +716,7 @@ async def sdk_list_artifacts(
     from shared.sdk_artifacts import ArtifactCaller, sdk_list_artifacts as _list
 
     return await _list(
-        ArtifactCaller(user=current_user, db=db),
+        ArtifactCaller(caller=await load_caller(db, current_user), db=db),
         workspace_id=workspace_id,
     )
 
@@ -750,7 +736,7 @@ async def sdk_render_document_artifact(
 
     try:
         return await _render_document(
-            ArtifactCaller(user=current_user, db=db),
+            ArtifactCaller(caller=await load_caller(db, current_user), db=db),
             spec=request,
             workspace_id=workspace_id,
         )
@@ -774,7 +760,7 @@ async def sdk_render_spreadsheet_artifact(
     from shared.sdk_artifacts import ArtifactCaller
 
     return await _render_spreadsheet(
-        ArtifactCaller(user=current_user, db=db),
+        ArtifactCaller(caller=await load_caller(db, current_user), db=db),
         spec=request,
         workspace_id=workspace_id,
     )
@@ -794,7 +780,7 @@ async def sdk_render_text_artifact(
     from shared.sdk_artifacts import ArtifactCaller
 
     return await _render_text(
-        ArtifactCaller(user=current_user, db=db),
+        ArtifactCaller(caller=await load_caller(db, current_user), db=db),
         spec=request,
         workspace_id=workspace_id,
     )
@@ -815,7 +801,7 @@ async def sdk_generate_image_artifact(
     from shared.sdk_artifacts import ArtifactCaller
 
     return await _generate_image(
-        ArtifactCaller(user=current_user, db=db),
+        ArtifactCaller(caller=await load_caller(db, current_user), db=db),
         spec=request,
         workspace_id=workspace_id,
         execution_id=execution_id,
@@ -837,18 +823,22 @@ async def sdk_generate_video_artifact(
 ) -> PlatformJobAccepted:
     """Queue durable video generation into canonical artifact storage."""
     from shared.sdk_video import (
+        SdkVideoJobError,
         enqueue_sdk_video_job,
         finalize_sdk_video_job,
         sdk_video_job_accepted,
     )
 
-    job, reused = await enqueue_sdk_video_job(
-        db,
-        current_user,
-        spec=request,
-        workspace_id=workspace_id,
-        execution_id=execution_id,
-    )
+    try:
+        job, reused = await enqueue_sdk_video_job(
+            db,
+            await load_caller(db, current_user),
+            spec=request,
+            workspace_id=workspace_id,
+            execution_id=execution_id,
+        )
+    except SdkVideoJobError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     await finalize_sdk_video_job(db, job)
     response.headers["Location"] = f"/api/platform-jobs/{job.id}"
     return sdk_video_job_accepted(job, reused)
@@ -870,7 +860,7 @@ async def sdk_read_artifact(
 
     try:
         result = await _read(
-            ArtifactCaller(user=current_user, db=db),
+            ArtifactCaller(caller=await load_caller(db, current_user), db=db),
             artifact_id=artifact_id,
             preview=preview,
         )
@@ -914,7 +904,7 @@ async def sdk_artifact_download_url(
 
     try:
         return await _download_url(
-            ArtifactCaller(user=current_user, db=db),
+            ArtifactCaller(caller=await load_caller(db, current_user), db=db),
             artifact_id=artifact_id,
         )
     except SdkArtifactError as exc:
@@ -929,7 +919,7 @@ async def sdk_artifact_download_url(
 )
 async def cli_ai_complete(
     request: "CLIAICompleteRequest",
-    current_user: CurrentUser,
+    current_user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> "CLIAICompleteResponse":
     """Generate an AI completion using platform-configured LLM.
@@ -968,7 +958,7 @@ async def cli_ai_complete(
 )
 async def cli_ai_stream(
     request: CLIAICompleteRequest,
-    current_user: CurrentUser,
+    current_user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> StreamingResponse:
     """Generate a streaming AI completion using SSE.
@@ -983,12 +973,14 @@ async def cli_ai_stream(
     done payload.
     """
     from shared.sdk_ai import stream_sdk_ai
+    from src.services.authorization.enforce import load_caller, require_permission
 
     # Resolve scope upfront against the authenticated user so the
     # streaming body doesn't have to re-derive bypass after CurrentUser
     # falls out of scope. 403/422 here stay HTTP errors (headers not
     # yet sent); later failures are SSE error events.
     resolved_org_id = await _resolve_sdk_org_id(current_user, request.org_id, db)
+    require_permission(await load_caller(db, current_user), "ai.execute", UUID(resolved_org_id) if resolved_org_id else None)
     # AI is used in the caller's organization; a scope only attributes usage.
     access_checks.note_launch("ai.execute", None, current_user.organization_id, subject="ai:stream")
 
@@ -1029,7 +1021,7 @@ async def cli_ai_stream(
     summary="Get AI model information",
 )
 async def cli_ai_info(
-    current_user: CurrentUser,
+    current_user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> "CLIAIInfoResponse":
     """Get information about the configured LLM.
@@ -1056,20 +1048,45 @@ async def cli_ai_info(
 # =============================================================================
 
 
-def _deny_external_knowledge(current_user: UserPrincipal) -> None:
-    """403 an external principal off the direct knowledge surface.
+SDK_KNOWLEDGE_STORE_OPERATION = "POST /api/sdk/knowledge/store"
+SDK_KNOWLEDGE_STORE_MANY_OPERATION = "POST /api/sdk/knowledge/store-many"
+SDK_KNOWLEDGE_SEARCH_OPERATION = "POST /api/sdk/knowledge/search"
+SDK_KNOWLEDGE_DELETE_OPERATION = "POST /api/sdk/knowledge/delete"
+SDK_KNOWLEDGE_DELETE_NAMESPACE_OPERATION = "DELETE /api/sdk/knowledge/namespace/{namespace}"
+SDK_KNOWLEDGE_NAMESPACES_OPERATION = "GET /api/sdk/knowledge/namespaces"
+SDK_KNOWLEDGE_GET_OPERATION = "GET /api/sdk/knowledge/get"
 
-    The knowledge store has no grant axis (no roles, no access_level, no row
-    policies), so its direct endpoints are implicitly "any signed-in user" —
-    a tier external (portal/guest) users are excluded from. Externals reach
-    knowledge content only THROUGH workflows/agents they were granted (the
-    engine sentinel keeps the full cascade).
-    """
-    if current_user.is_external:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="External users cannot access the knowledge store directly",
-        )
+
+async def _authorize_sdk_knowledge(
+    db: AsyncSession,
+    current_user: UserPrincipal,
+    operation: str,
+    scope: str | None,
+):
+    """Resolve one SDK knowledge target from the original caller's authority."""
+    from shared.sdk_knowledge import (
+        KnowledgeAuthorizationError,
+        require_direct_knowledge_access,
+        resolve_knowledge_scope,
+    )
+    from src.services.authorization.enforce import Caller, load_caller, org_target, require_operation
+
+    # Direct external credentials never need a context lookup: the shared
+    # helper rejects them before any knowledge query. Typed runtime calls
+    # still load their durable original-user context below.
+    if current_user.is_external and current_user.runtime_authority is None:
+        try:
+            require_direct_knowledge_access(Caller(current_user, None))
+        except KnowledgeAuthorizationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+    caller = await load_caller(db, current_user)
+    try:
+        require_direct_knowledge_access(caller)
+        organization_id = resolve_knowledge_scope(scope, caller=caller)
+    except KnowledgeAuthorizationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+    require_operation(caller, operation, org_target(organization_id))
+    return caller, organization_id
 
 
 @router.post(
@@ -1078,19 +1095,15 @@ def _deny_external_knowledge(current_user: UserPrincipal) -> None:
 )
 async def cli_knowledge_store(
     request: "CLIKnowledgeStoreRequest",
-    current_user: CurrentEngineOrBypassUser,
+    current_user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict:
     """Store a document with its embedding in the knowledge store."""
-    _deny_external_knowledge(current_user)
     from shared.sdk_knowledge import SDKKnowledgeError, store_knowledge_document
 
-    try:
-        org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
-    except HTTPException:
-        # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
-        raise
-    org_uuid = UUID(org_id) if org_id else None
+    _, org_id = await _authorize_sdk_knowledge(
+        db, current_user, SDK_KNOWLEDGE_STORE_OPERATION, request.scope
+    )
 
     try:
         return await store_knowledge_document(
@@ -1099,7 +1112,7 @@ async def cli_knowledge_store(
             namespace=request.namespace,
             key=request.key,
             metadata=request.metadata,
-            org_id=org_uuid,
+            org_id=org_id,
             created_by=current_user.user_id,
         )
     except SDKKnowledgeError as e:
@@ -1112,29 +1125,25 @@ async def cli_knowledge_store(
 )
 async def cli_knowledge_store_many(
     request: "CLIKnowledgeStoreManyRequest",
-    current_user: CurrentEngineOrBypassUser,
+    current_user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict:
     """Store multiple documents with batch embedding."""
-    _deny_external_knowledge(current_user)
     from shared.sdk_knowledge import (
         SDKKnowledgeError,
         store_many_knowledge_documents,
     )
 
-    try:
-        org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
-    except HTTPException:
-        # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
-        raise
-    org_uuid = UUID(org_id) if org_id else None
+    _, org_id = await _authorize_sdk_knowledge(
+        db, current_user, SDK_KNOWLEDGE_STORE_MANY_OPERATION, request.scope
+    )
 
     try:
         return await store_many_knowledge_documents(
             db,
             documents=request.documents,
             namespace=request.namespace,
-            org_id=org_uuid,
+            org_id=org_id,
             created_by=current_user.user_id,
         )
     except SDKKnowledgeError as e:
@@ -1147,19 +1156,15 @@ async def cli_knowledge_store_many(
 )
 async def cli_knowledge_search(
     request: "CLIKnowledgeSearchRequest",
-    current_user: CurrentUser,
+    current_user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> list[CLIKnowledgeDocumentResponse]:
     """Search knowledge using fused lexical and vector rankings."""
-    _deny_external_knowledge(current_user)
     from shared.sdk_knowledge import SDKKnowledgeError, search_knowledge_documents
 
-    try:
-        org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
-    except HTTPException:
-        # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
-        raise
-    org_uuid = UUID(org_id) if org_id else None
+    _, org_id = await _authorize_sdk_knowledge(
+        db, current_user, SDK_KNOWLEDGE_SEARCH_OPERATION, request.scope
+    )
 
     try:
         items = await search_knowledge_documents(
@@ -1170,7 +1175,7 @@ async def cli_knowledge_search(
             min_score=request.min_score,
             metadata_filter=request.metadata_filter,
             fallback=request.fallback,
-            org_id=org_uuid,
+            org_id=org_id,
         )
     except SDKKnowledgeError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
@@ -1184,26 +1189,22 @@ async def cli_knowledge_search(
 )
 async def cli_knowledge_delete(
     request: "CLIKnowledgeDeleteRequest",
-    current_user: CurrentEngineOrBypassUser,
+    current_user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict:
     """Delete a document by key from the knowledge store."""
-    _deny_external_knowledge(current_user)
     from shared.sdk_knowledge import SDKKnowledgeError, delete_knowledge_document
 
-    try:
-        org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
-    except HTTPException:
-        # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
-        raise
-    org_uuid = UUID(org_id) if org_id else None
+    _, org_id = await _authorize_sdk_knowledge(
+        db, current_user, SDK_KNOWLEDGE_DELETE_OPERATION, request.scope
+    )
 
     try:
         return await delete_knowledge_document(
             db,
             key=request.key,
             namespace=request.namespace,
-            org_id=org_uuid,
+            org_id=org_id,
         )
     except SDKKnowledgeError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
@@ -1216,25 +1217,21 @@ async def cli_knowledge_delete(
 async def cli_knowledge_delete_namespace(
     namespace: str,
     scope: str | None = None,
-    current_user: CurrentEngineOrBypassUser = None,
+    current_user: CurrentActiveUser = None,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict:
     """Delete all documents in a namespace."""
-    _deny_external_knowledge(current_user)
     from shared.sdk_knowledge import SDKKnowledgeError, delete_knowledge_namespace
 
-    try:
-        org_id = await _resolve_sdk_org_id(current_user, scope, db)
-    except HTTPException:
-        # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
-        raise
-    org_uuid = UUID(org_id) if org_id else None
+    _, org_id = await _authorize_sdk_knowledge(
+        db, current_user, SDK_KNOWLEDGE_DELETE_NAMESPACE_OPERATION, scope
+    )
 
     try:
         return await delete_knowledge_namespace(
             db,
             namespace=namespace,
-            org_id=org_uuid,
+            org_id=org_id,
         )
     except SDKKnowledgeError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
@@ -1247,24 +1244,20 @@ async def cli_knowledge_delete_namespace(
 async def cli_knowledge_list_namespaces(
     scope: str | None = None,
     include_global: bool = True,
-    current_user: CurrentUser = None,
+    current_user: CurrentActiveUser = None,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> list[CLIKnowledgeNamespaceInfo]:
     """List all namespaces with document counts per scope."""
-    _deny_external_knowledge(current_user)
     from shared.sdk_knowledge import SDKKnowledgeError, list_knowledge_namespaces
 
-    try:
-        org_id = await _resolve_sdk_org_id(current_user, scope, db)
-    except HTTPException:
-        # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
-        raise
-    org_uuid = UUID(org_id) if org_id else None
+    _, org_id = await _authorize_sdk_knowledge(
+        db, current_user, SDK_KNOWLEDGE_NAMESPACES_OPERATION, scope
+    )
 
     try:
         items = await list_knowledge_namespaces(
             db,
-            org_id=org_uuid,
+            org_id=org_id,
             include_global=include_global,
         )
     except SDKKnowledgeError as e:
@@ -1281,25 +1274,22 @@ async def cli_knowledge_get(
     key: str,
     namespace: str = "default",
     scope: str | None = None,
-    current_user: CurrentUser = None,
+    current_user: CurrentActiveUser = None,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> CLIKnowledgeDocumentResponse | None:
     """Get a document by key from the knowledge store."""
-    _deny_external_knowledge(current_user)
     from shared.sdk_knowledge import SDKKnowledgeError, get_knowledge_document
 
-    try:
-        org_id = await _resolve_sdk_org_id(current_user, scope, db)
-    except HTTPException:
-        raise
-    org_uuid = UUID(org_id) if org_id else None
+    _, org_id = await _authorize_sdk_knowledge(
+        db, current_user, SDK_KNOWLEDGE_GET_OPERATION, scope
+    )
 
     try:
         item = await get_knowledge_document(
             db,
             key=key,
             namespace=namespace,
-            org_id=org_uuid,
+            org_id=org_id,
         )
     except SDKKnowledgeError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
@@ -1417,7 +1407,7 @@ async def download_sdk() -> Response:
 async def cli_create_table(
     request: SDKTableCreateRequest,
     ctx: Context,
-    current_user: CurrentEngineOrBypassUser,
+    current_user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> SDKTableInfo:
     """Create a new table via SDK."""
@@ -1428,6 +1418,9 @@ async def cli_create_table(
         ensure_sdk_table_create_allowed,
     )
     from src.services.solution_scope import solution_context_id
+    from src.services.authorization.enforce import load_caller
+
+    caller = await load_caller(db, current_user)
 
     # A solution execution context (?solution= or X-Bifrost-App, resolved by
     # auth onto ctx) may not create tables ad hoc — tables are declared by the
@@ -1443,12 +1436,7 @@ async def cli_create_table(
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
     try:
-        org_uuid = await resolve_sdk_scope(
-            request.scope,
-            caller_org_id=current_user.organization_id,
-            is_platform_admin=current_user.is_superuser,
-            session=db,
-        )
+        org_uuid = await resolve_sdk_scope(request.scope, caller=caller)
     except ScopeResolutionError as e:
         raise HTTPException(
             status_code=e.status_code,
@@ -1462,7 +1450,7 @@ async def cli_create_table(
             table_schema=request.table_schema,
             description=request.description,
             org_id=org_uuid,
-            actor_email=current_user.email,
+            caller=caller,
             solution_present=solution_present,
         )
     except SDKTableMetadataError as e:
@@ -1480,28 +1468,24 @@ async def cli_create_table(
 )
 async def cli_list_tables(
     request: SDKTableListRequest,
-    current_user: CurrentEngineOrBypassUser,
+    current_user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> list[SDKTableInfo]:
     """List tables via SDK.
 
-    Engine sentinel: the SDK has already resolved scope, so non-external
-    principals get is_superuser=True and we trust the org_uuid. The base
-    class handles the cascade (org + global) for us. EXTERNAL principals
-    do not inherit sentinel trust (OPEN-B) — they get the normal user
-    cascade (org + global table names/schemas; row data is policy-gated).
+    Current authority decides the requested scope and metadata permission.
+    Organization metadata includes the shared Global fallback; table row
+    access remains governed by its policies.
     """
     # Local import keeps the router file's top-level imports lean.
     from shared.sdk_config import ScopeResolutionError, resolve_sdk_scope
     from shared.sdk_table_metadata import list_sdk_tables
+    from src.services.authorization.enforce import load_caller
+
+    caller = await load_caller(db, current_user)
 
     try:
-        org_uuid = await resolve_sdk_scope(
-            request.scope,
-            caller_org_id=current_user.organization_id,
-            is_platform_admin=current_user.is_superuser,
-            session=db,
-        )
+        org_uuid = await resolve_sdk_scope(request.scope, caller=caller)
     except ScopeResolutionError as e:
         raise HTTPException(
             status_code=e.status_code,
@@ -1511,7 +1495,7 @@ async def cli_list_tables(
     items = await list_sdk_tables(
         db,
         org_id=org_uuid,
-        external=current_user.is_external,
+        caller=caller,
     )
 
     return [SDKTableInfo(**item) for item in items]

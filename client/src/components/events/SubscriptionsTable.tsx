@@ -45,6 +45,7 @@ import { EditSubscriptionDialog } from "./EditSubscriptionDialog";
 
 interface SubscriptionsTableProps {
 	sourceId: string;
+	canManage?: boolean;
 }
 
 function getSubscriptionMeta(subscription: EventSubscription) {
@@ -99,10 +100,12 @@ function SubscriptionActiveControl({
 	subscription,
 	onToggleActive,
 	pending,
+	canManage,
 }: {
 	subscription: EventSubscription;
 	onToggleActive: (subscription: EventSubscription) => void;
 	pending: boolean;
+	canManage: boolean;
 }) {
 	const labelId = useId();
 	const switchId = useId();
@@ -117,7 +120,7 @@ function SubscriptionActiveControl({
 				htmlFor={switchId}
 				className="inline-flex min-h-11 cursor-pointer select-none items-center text-xs font-medium uppercase tracking-wide text-muted-foreground"
 				onClick={(event) => {
-					if (pending) return;
+					if (pending || !canManage) return;
 					event.preventDefault();
 					onToggleActive(subscription);
 				}}
@@ -133,7 +136,7 @@ function SubscriptionActiveControl({
 				checked={subscription.is_active}
 				onCheckedChange={() => onToggleActive(subscription)}
 				onClick={(event) => event.stopPropagation()}
-				disabled={pending}
+				disabled={pending || !canManage}
 				className="after:-inset-y-3"
 			/>
 		</div>
@@ -245,17 +248,22 @@ function SubscriptionDesktopRow({
 	onOpenDelete,
 	onToggleActive,
 	pending,
+	canManage,
 }: {
 	subscription: EventSubscription;
 	onOpenEdit: (subscription: EventSubscription) => void;
 	onOpenDelete: (subscription: EventSubscription) => void;
 	onToggleActive: (subscription: EventSubscription) => void;
 	pending: boolean;
+	canManage: boolean;
 }) {
 	const { isAgent, successRate } = getSubscriptionMeta(subscription);
 
 	return (
-		<DataTableRow clickable onClick={() => onOpenEdit(subscription)}>
+		<DataTableRow
+			clickable={canManage}
+			onClick={canManage ? () => onOpenEdit(subscription) : undefined}
+		>
 			<DataTableCell>
 				<SubscriptionKindBadge isAgent={isAgent} />
 			</DataTableCell>
@@ -301,20 +309,25 @@ function SubscriptionDesktopRow({
 					<span className="text-muted-foreground">—</span>
 				)}
 			</DataTableCell>
-			<DataTableCell className="text-right">
-				<SubscriptionActiveControl
-					subscription={subscription}
-					onToggleActive={onToggleActive}
-					pending={pending}
-				/>
-			</DataTableCell>
-			<DataTableCell className="text-right">
-				<SubscriptionActionsMenu
-					subscription={subscription}
-					onOpenEdit={onOpenEdit}
-					onOpenDelete={onOpenDelete}
-				/>
-			</DataTableCell>
+			{canManage && (
+				<>
+					<DataTableCell className="text-right">
+						<SubscriptionActiveControl
+							subscription={subscription}
+							onToggleActive={onToggleActive}
+							pending={pending}
+									canManage={canManage}
+						/>
+					</DataTableCell>
+					<DataTableCell className="text-right">
+						<SubscriptionActionsMenu
+							subscription={subscription}
+							onOpenEdit={onOpenEdit}
+							onOpenDelete={onOpenDelete}
+						/>
+					</DataTableCell>
+				</>
+			)}
 		</DataTableRow>
 	);
 }
@@ -325,12 +338,14 @@ function SubscriptionMobileRecord({
 	onOpenDelete,
 	onToggleActive,
 	pending,
+	canManage,
 }: {
 	subscription: EventSubscription;
 	onOpenEdit: (subscription: EventSubscription) => void;
 	onOpenDelete: (subscription: EventSubscription) => void;
 	onToggleActive: (subscription: EventSubscription) => void;
 	pending: boolean;
+	canManage: boolean;
 }) {
 	const { isAgent, successRate } = getSubscriptionMeta(subscription);
 
@@ -338,27 +353,28 @@ function SubscriptionMobileRecord({
 		<li className="space-y-4 rounded-[var(--bf-radius-surface)] border border-border bg-card p-[var(--bf-surface-pad)] shadow-sm">
 			<div className="flex items-start justify-between gap-3">
 				<SubscriptionKindBadge isAgent={isAgent} />
-				<div className="text-right">
+				{canManage && <div className="text-right">
 					<SubscriptionActiveControl
 						subscription={subscription}
 						onToggleActive={onToggleActive}
 						pending={pending}
+							canManage={canManage}
 					/>
-				</div>
+				</div>}
 			</div>
 
 			<div className="flex items-start justify-between gap-3">
-				<SubscriptionResourceButton
+				{canManage ? <SubscriptionResourceButton
 					subscription={subscription}
 					onOpenEdit={onOpenEdit}
-				/>
-				<div className="shrink-0">
+				/> : <span className="font-medium">{getSubscriptionMeta(subscription).resourceName}</span>}
+				{canManage && <div className="shrink-0">
 					<SubscriptionActionsMenu
 						subscription={subscription}
 						onOpenEdit={onOpenEdit}
 						onOpenDelete={onOpenDelete}
 					/>
-				</div>
+				</div>}
 			</div>
 
 			<dl className="grid gap-3 sm:grid-cols-2">
@@ -407,7 +423,10 @@ function SubscriptionMobileRecord({
 	);
 }
 
-export function SubscriptionsTable({ sourceId }: SubscriptionsTableProps) {
+export function SubscriptionsTable({
+	sourceId,
+	canManage = false,
+}: SubscriptionsTableProps) {
 	const [createDialogOpen, setCreateDialogOpen] = useState(false);
 	const [editDialogOpen, setEditDialogOpen] = useState(false);
 	const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -424,11 +443,13 @@ export function SubscriptionsTable({ sourceId }: SubscriptionsTableProps) {
 	const hasCachedSubscriptions = data !== undefined;
 
 	const handleOpenEdit = (subscription: EventSubscription) => {
+		if (!canManage) return;
 		setSelectedSubscription(subscription);
 		setEditDialogOpen(true);
 	};
 
 	const handleToggleActive = async (subscription: EventSubscription) => {
+		if (!canManage) return;
 		try {
 			await updateMutation.mutateAsync({
 				params: {
@@ -450,13 +471,14 @@ export function SubscriptionsTable({ sourceId }: SubscriptionsTableProps) {
 	};
 
 	const handleOpenDelete = (subscription: EventSubscription) => {
+		if (!canManage) return;
 		setSelectedSubscription(subscription);
 		setDeleteError(null);
 		setDeleteDialogOpen(true);
 	};
 
 	const handleConfirmDelete = async () => {
-		if (!selectedSubscription) return;
+		if (!canManage || !selectedSubscription) return;
 
 		setDeleteError(null);
 		try {
@@ -531,14 +553,14 @@ export function SubscriptionsTable({ sourceId }: SubscriptionsTableProps) {
 					<p className="text-sm text-muted-foreground">
 						Workflows and agents triggered when events are received
 					</p>
-					<Button
+					{canManage && <Button
 						type="button"
 						className="min-h-11 gap-2"
 						onClick={() => setCreateDialogOpen(true)}
 					>
 						<Plus aria-hidden="true" className="size-4" />
 						Add Subscription
-					</Button>
+					</Button>}
 				</div>
 
 				{isError && hasCachedSubscriptions ? (
@@ -564,14 +586,14 @@ export function SubscriptionsTable({ sourceId }: SubscriptionsTableProps) {
 							Add a subscription to trigger workflows or agents
 							when events arrive.
 						</p>
-						<Button
+						{canManage && <Button
 							type="button"
 							className="min-h-11 gap-2"
 							onClick={() => setCreateDialogOpen(true)}
 						>
 							<Plus aria-hidden="true" className="size-4" />
 							Add Subscription
-						</Button>
+						</Button>}
 					</div>
 				) : (
 					<>
@@ -592,10 +614,10 @@ export function SubscriptionsTable({ sourceId }: SubscriptionsTableProps) {
 										<DataTableHead className="text-right">
 											Success Rate
 										</DataTableHead>
-										<DataTableHead className="w-[120px] text-right">
-											Status
-										</DataTableHead>
-										<DataTableHead className="w-[120px] text-right" />
+										{canManage && <>
+											<DataTableHead className="w-[120px] text-right">Status</DataTableHead>
+											<DataTableHead className="w-[120px] text-right" />
+										</>}
 									</DataTableRow>
 								</DataTableHeader>
 								<DataTableBody>
@@ -607,13 +629,14 @@ export function SubscriptionsTable({ sourceId }: SubscriptionsTableProps) {
 											onOpenDelete={handleOpenDelete}
 											onToggleActive={handleToggleActive}
 											pending={updateMutation.isPending}
+											canManage={canManage}
 										/>
 									))}
 								</DataTableBody>
 							</DataTable>
 						</div>
 
-						<ul className="grid gap-3 @[64rem]/subscriptions:hidden">
+						<ul className="grid gap-3 lg:min-h-0 lg:overflow-auto @[64rem]/subscriptions:hidden">
 							{subscriptions.map((subscription) => (
 								<SubscriptionMobileRecord
 									key={subscription.id}
@@ -622,6 +645,7 @@ export function SubscriptionsTable({ sourceId }: SubscriptionsTableProps) {
 									onOpenDelete={handleOpenDelete}
 									onToggleActive={handleToggleActive}
 									pending={updateMutation.isPending}
+									canManage={canManage}
 								/>
 							))}
 						</ul>

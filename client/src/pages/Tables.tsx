@@ -21,6 +21,8 @@ import { RecordActionsMenu } from "@/components/common/RecordActionsMenu";
 import { TableRecordList } from "@/components/tables/TableRecordList";
 import { useSearch } from "@/hooks/useSearch";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorization } from "@/services/authorization";
+import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { useTables, useDeleteTable } from "@/services/tables";
 import { TableDialog } from "@/components/tables/TableDialog";
@@ -38,7 +40,15 @@ export function Tables() {
 	const frameRef = useRef<HTMLDivElement>(null);
 	const navigate = useNavigate();
 	const [activeTab, setActiveTab] = useState("tables");
-	const { isPlatformAdmin } = useAuth();
+	const authorization = useAuthorization();
+	const { user } = useAuth();
+	const canTransferTables = authorization.canAt(
+		"platform.readwrite",
+		GLOBAL_TARGET,
+	);
+	const canManageAnyTables = authorization.canAnywhere("tables.readwrite");
+	const canReadOrganizations =
+		authorization.canAnywhere("organizations.read");
 	const [selectedTable, setSelectedTable] = useState<
 		TablePublic | undefined
 	>();
@@ -80,7 +90,7 @@ export function Tables() {
 
 	// Fetch organizations for the org name lookup (platform admins only)
 	const { data: organizations } = useOrganizations({
-		enabled: isPlatformAdmin,
+		enabled: canReadOrganizations,
 	});
 
 	// Helper to get organization name from ID
@@ -91,6 +101,21 @@ export function Tables() {
 	};
 
 	const tables = data?.tables ?? [];
+	const knownOrganizations = [
+		...(user?.organizationId
+			? [{ id: user.organizationId, name: "Home Organization" }]
+			: []),
+		...tables.flatMap((table) =>
+			table.organization_id
+				? [
+						{
+							id: table.organization_id,
+							name: getOrgName(table.organization_id),
+						},
+					]
+				: [],
+		),
+	];
 
 	// Apply search filter
 	const filteredTables = useSearch(tables, searchTerm, [
@@ -98,20 +123,25 @@ export function Tables() {
 		"description",
 	]);
 
+	const canManageTable = (table: TablePublic) =>
+		authorization.canAt(
+			"tables.readwrite",
+			orgTarget(table.organization_id),
+		);
 	const handleEdit = (table: TablePublic) => {
-		if (editorBusy) return;
+		if (editorBusy || !canManageTable(table)) return;
 		setSelectedTable(table);
 		setIsDialogOpen(true);
 	};
 
 	const handleAdd = () => {
-		if (editorBusy) return;
+		if (editorBusy || !canManageAnyTables) return;
 		setSelectedTable(undefined);
 		setIsDialogOpen(true);
 	};
 
 	const handleDelete = (table: TablePublic) => {
-		if (editorBusy) return;
+		if (editorBusy || !canManageTable(table)) return;
 		setTableToDelete(table);
 		setIsDeleteDialogOpen(true);
 	};
@@ -199,13 +229,14 @@ export function Tables() {
 		});
 	};
 
-	const renderTableActions = (table: TablePublic) => (
-		<TableActionsMenu
-			table={table}
-			onEdit={() => handleEdit(table)}
-			onDelete={() => handleDelete(table)}
-		/>
-	);
+	const renderTableActions = (table: TablePublic) =>
+		canManageTable(table) ? (
+			<TableActionsMenu
+				table={table}
+				onEdit={() => handleEdit(table)}
+				onDelete={() => handleDelete(table)}
+			/>
+		) : null;
 
 	return (
 		<PageWorkspace className="mx-auto w-full max-w-[1600px] gap-4">
@@ -256,13 +287,24 @@ export function Tables() {
 						)}
 					>
 						<ListToolbar className="shrink-0 gap-0 border-b border-border/70 bg-muted/20 p-0">
-							{isPlatformAdmin && (
+							{authorization.canAnywhere("tables.read") && (
 								<div className="w-full shrink-0 border-b sm:w-56 sm:self-stretch sm:border-b-0 sm:border-r">
 									<OrganizationSelect
 										value={filterOrgId}
 										onChange={setFilterOrgId}
 										showAll={true}
-										showGlobal={true}
+										showGlobal={authorization.canAt(
+											"tables.read",
+											GLOBAL_TARGET,
+										)}
+										loadOrganizations={canReadOrganizations}
+										knownOrganizations={knownOrganizations}
+										filterOrganizations={(org) =>
+											authorization.canAt(
+												"tables.read",
+												orgTarget(org.id),
+											)
+										}
 										placeholder="All Organizations"
 										aria-label="Tables scope"
 										disabled={editorBusy}
@@ -279,7 +321,7 @@ export function Tables() {
 									className="min-w-0 w-full max-sm:m-3 max-sm:w-[calc(100%-1.5rem)] sm:min-w-40 sm:flex-1 [&>input]:h-10 sm:[&>input]:h-12 sm:[&>input]:rounded-none sm:[&>input]:border-0 sm:[&>input]:bg-transparent sm:[&>input]:shadow-none sm:[&>input]:focus-visible:ring-inset"
 								/>
 								<div className="flex min-w-0 flex-wrap items-center gap-1 self-stretch pl-3 max-sm:w-full sm:ml-auto sm:gap-2 sm:border-l sm:border-border">
-									{isPlatformAdmin && (
+									{canTransferTables && (
 										<label className="flex min-h-10 items-center gap-2 text-sm sm:min-h-12">
 											<Switch
 												aria-label="Select"
@@ -314,7 +356,7 @@ export function Tables() {
 											)}
 										/>
 									</Button>
-									{isPlatformAdmin && (
+									{canTransferTables && (
 										<RecordActionsMenu label="Tables actions">
 											<DropdownMenuItem
 												onSelect={handleExport}
@@ -341,7 +383,9 @@ export function Tables() {
 									<WorkspacePrimaryAction
 										ref={createButtonRef}
 										onClick={handleAdd}
-										disabled={editorBusy}
+										disabled={
+											editorBusy || !canManageAnyTables
+										}
 									>
 										<Plus className="size-4" />
 										New Table
@@ -405,7 +449,9 @@ export function Tables() {
 									{filteredTables.length > 0 ? (
 										<TableRecordList
 											tables={filteredTables}
-											isPlatformAdmin={isPlatformAdmin}
+											showOrganizationName={
+												canReadOrganizations
+											}
 											selectionMode={selectionMode}
 											selectedIds={selectedIds}
 											allVisibleSelected={

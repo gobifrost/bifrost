@@ -1192,10 +1192,9 @@ class ManifestResolver:
 
             # Sync MCP connection grants. The manifest carries the grants
             # the agent had at export time; round-trip is byte-stable
-            # because the IDs are sorted in the serializer. Connections
-            # whose UUIDs aren't present in the target environment are
-            # silently skipped — the manifest cannot create connections,
-            # only grant existing ones.
+            # because the IDs are sorted in the serializer. The manifest
+            # cannot create connections; an absent or cross-org reference is
+            # rejected by the repository before it can change existing grants.
             mcp_ids = list(getattr(magent, "mcp_connection_ids", None) or [])
             if mcp_ids or _agent_has_inline_content(magent):
                 from src.repositories.agents import AgentRepository
@@ -1204,7 +1203,6 @@ class ManifestResolver:
                     session=self.db,
                     org_id=org_id_uuid,
                     user_id=None,
-                    is_superuser=True,
                 )
                 try:
                     parsed_ids = [UUID(cid) for cid in mcp_ids]
@@ -1217,7 +1215,7 @@ class ManifestResolver:
                 # ``granted_by=None`` flags the grant as system-driven so
                 # the audit log distinguishes manifest sync from explicit
                 # admin grants.
-                await repo.set_mcp_connection_grants(
+                await repo.set_trusted_manifest_mcp_connection_grants(
                     agent_id_uuid,
                     parsed_ids,
                     granted_by=None,

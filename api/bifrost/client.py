@@ -13,9 +13,11 @@ import sys
 import threading
 import time
 import webbrowser
+from contextvars import ContextVar
+from contextlib import asynccontextmanager
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import httpx
 
@@ -32,6 +34,16 @@ from .credentials import (
 )
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from bifrost.solution_dev.session import SolutionDevSession
+
+# A local function host must retain its explicitly selected instance even when
+# the shell's default profile points elsewhere. ContextVar isolates overlapping
+# local invocations without changing the engine's process-wide injection.
+_local_dev_client: ContextVar["BifrostClient | None"] = ContextVar(
+    "bifrost_local_dev_client", default=None
+)
 
 # Global client injection for platform mode
 _injected_client: Optional["BifrostClient"] = None
@@ -575,6 +587,7 @@ class BifrostClient:
         """
         self.api_url = api_url.rstrip("/")
         self._access_token = access_token
+        self._solution_dev_session: SolutionDevSession | None = None
         # Async client is created lazily per event loop to handle thread workers
         # that create new event loops via asyncio.run() on each execution
         self._http: httpx.AsyncClient | None = None
@@ -933,15 +946,21 @@ class BifrostClient:
         use_engine = engine_local and _engine_socket_path is not None
 
         def _send() -> httpx.Response:
+            request_kwargs = dict(kwargs)
+            session = self._solution_dev_session
+            if not use_engine and session is not None and path != session.endpoint:
+                request_kwargs["headers"] = {
+                    **request_kwargs.get("headers", {}), **session.headers_sync()
+                }
             http = self._sync_http_for(engine_local=engine_local)
             observed_access_token = self._access_token
-            response = http.request(method.upper(), path, **kwargs)
+            response = http.request(method.upper(), path, **request_kwargs)
             if (
                 not use_engine
                 and response.status_code == 401
                 and self._refresh_and_update_sync(observed_access_token)
             ):
-                response = self._sync_http.request(method.upper(), path, **kwargs)
+                response = self._sync_http.request(method.upper(), path, **request_kwargs)
             return response
 
         return _send_sync_with_retry(method, _send, retry_transient=retry_transient)
@@ -964,16 +983,22 @@ class BifrostClient:
         use_engine = engine_local and _engine_socket_path is not None
 
         async def _send() -> httpx.Response:
+            request_kwargs = dict(kwargs)
+            session = self._solution_dev_session
+            if not use_engine and session is not None and path != session.endpoint:
+                request_kwargs["headers"] = {
+                    **request_kwargs.get("headers", {}), **await session.headers()
+                }
             http = self._async_http_for(engine_local=engine_local)
             observed_access_token = self._access_token
-            response = await getattr(http, method)(path, **kwargs)
+            response = await getattr(http, method)(path, **request_kwargs)
             if (
                 not use_engine
                 and response.status_code == 401
                 and await self._refresh_and_update(observed_access_token)
             ):
                 http = self._get_async_client()
-                response = await getattr(http, method)(path, **kwargs)
+                response = await getattr(http, method)(path, **request_kwargs)
             return response
 
         return await _send_with_retry(method, _send, retry_transient=retry_transient)
@@ -1036,13 +1061,19 @@ class BifrostClient:
         retry_transient = kwargs.pop("retry_transient", False)
 
         async def _send() -> httpx.Response:
+            request_kwargs = dict(kwargs)
+            session = self._solution_dev_session
+            if session is not None and path != session.endpoint:
+                request_kwargs["headers"] = {
+                    **request_kwargs.get("headers", {}), **await session.headers()
+                }
             http = self._get_async_client()
             observed_access_token = self._access_token
-            response = await http.request(method.upper(), path, **kwargs)
+            response = await http.request(method.upper(), path, **request_kwargs)
             if response.status_code == 401:
                 if await self._refresh_and_update(observed_access_token):
                     http = self._get_async_client()
-                    response = await http.request(method.upper(), path, **kwargs)
+                    response = await http.request(method.upper(), path, **request_kwargs)
             return response
 
         return await _send_with_retry(method, _send, retry_transient=retry_transient)
@@ -1056,7 +1087,17 @@ class BifrostClient:
                 async for line in response.aiter_lines():
                     process(line)
         """
+        if self._solution_dev_session is not None:
+            return self._dev_stream(method, path, **kwargs)
         return self._get_async_client().stream(method, path, **kwargs)
+
+    @asynccontextmanager
+    async def _dev_stream(self, method: str, path: str, **kwargs):
+        session = self._solution_dev_session
+        assert session is not None
+        kwargs["headers"] = {**kwargs.get("headers", {}), **await session.headers()}
+        async with self._get_async_client().stream(method, path, **kwargs) as response:
+            yield response
 
     def engine_stream(self, method: str, path: str, **kwargs):
         """Open a streaming request over the engine-local transport.
@@ -1073,6 +1114,8 @@ class BifrostClient:
         channel deadline is added here; a slow provider that keeps sending
         within that gap runs to completion.
         """
+        if _engine_socket_path is None and self._solution_dev_session is not None:
+            return self._dev_stream(method, path, **kwargs)
         http = self._async_http_for(engine_local=True)
         return http.stream(method, path, **kwargs)
 
@@ -1139,6 +1182,10 @@ def get_client() -> BifrostClient:
         RuntimeError: If no injected client and no credentials file
     """
     global _injected_client
+
+    local_client = _local_dev_client.get()
+    if local_client is not None:
+        return local_client
 
     # Platform mode: use injected client
     if _injected_client is not None:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -178,7 +179,10 @@ async def test_solution_sdk_update_batch_uses_bounded_set_based_queries() -> Non
     ctx = SimpleNamespace(db=db)
     user = SimpleNamespace()
 
-    response = await batch_update_solution_app_sdks(request, ctx, user)
+    # Authorization is covered at the route boundary; this unit asserts the
+    # batch query shape without making the fake DB emulate caller loading.
+    with patch("src.routers.solutions.authorize_solution", new=AsyncMock()):
+        response = await batch_update_solution_app_sdks(request, ctx, user)
 
     assert isinstance(response, SolutionSdkUpdateBatchResponse)
     assert response.accepted == []

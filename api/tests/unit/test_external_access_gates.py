@@ -1,36 +1,19 @@
-"""
-External-user access rules: claim mint + tier-gate tests.
+"""Provider claim resolution and external access-level gates.
 
-Two things live here:
-
-1. ``resolve_external_claim`` — the token-mint helper that neutralizes the
-   raw ``User.is_external`` flag for bypass principals
-   (``is_platform_admin OR is_provider_org`` — the canonical C2 rule).
-2. The access-level gates that live OUTSIDE ``OrgScopedRepository``: the
-   agents-router tool-attach validation and the MCP agent access check.
-   The rule: ``authenticated`` ("Everyone except external users") does not
-   grant to externals; ``everyone`` does; ``role_based`` grants externals
-   exactly what it grants anyone with the role.
-
-``is_external`` deliberately plays NO part in org cascade scoping — the
-cascade is pure org→global for every principal (see
-api/src/repositories/README.md). Only the access-level check is external-aware.
+External account flags are preserved at token mint; authenticated resources
+exclude external callers unless explicitly shared by role.
 """
 
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException
 
-from shared.external_access import (
-    resolve_external_claim,
-    resolve_provider_org_claim,
-)
-
-# =============================================================================
-# 1. resolve_external_claim (token mint)
-# =============================================================================
+from shared.external_access import resolve_provider_org_claim
+from src.core.principal import UserPrincipal
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
 
 
 def _user(is_external=True, is_superuser=False, organization_id=...):
@@ -41,43 +24,12 @@ def _user(is_external=True, is_superuser=False, organization_id=...):
     return u
 
 
-class TestResolveExternalClaim:
-    async def test_non_external_user_is_false(self):
-        db = AsyncMock()
-        assert await resolve_external_claim(db, _user(is_external=False)) is False
-        db.scalar.assert_not_awaited()
-
-    async def test_platform_admin_is_neutralized(self):
-        db = AsyncMock()
-        assert (
-            await resolve_external_claim(db, _user(is_superuser=True)) is False
-        )
-        db.scalar.assert_not_awaited()
-
-    async def test_provider_org_member_is_neutralized(self):
-        db = AsyncMock()
-        db.scalar.return_value = True  # org.is_provider
-        assert await resolve_external_claim(db, _user()) is False
-
-    async def test_regular_org_external_is_true(self):
-        db = AsyncMock()
-        db.scalar.return_value = False
-        assert await resolve_external_claim(db, _user()) is True
-
-    async def test_orgless_external_is_false(self):
-        db = AsyncMock()
-        assert (
-            await resolve_external_claim(db, _user(organization_id=None)) is False
-        )
-        db.scalar.assert_not_awaited()
-
-
 class TestResolveProviderOrgClaim:
     """``resolve_provider_org_claim`` — the is_provider_org token-mint helper.
 
     Returns True iff the user's org has ``is_provider`` set. Org-less / system
-    users are False (no org row → no provider membership). Mirrors the single
-    indexed SELECT of ``resolve_external_claim``.
+    users are False (no org row → no provider membership). Uses a single
+    indexed organization lookup.
     """
 
     async def test_provider_org_member_is_true(self):
@@ -110,105 +62,146 @@ class TestResolveProviderOrgClaim:
 # =============================================================================
 
 
-def _rows_result(values):
-    result = MagicMock()
-    result.scalars.return_value.all.return_value = values
-    return result
+def _caller(*, user_id, home, is_external: bool) -> Caller:
+    principal = UserPrincipal(
+        user_id=user_id,
+        email="tool-owner@contoso.example",
+        organization_id=home,
+    )
+    return Caller(
+        principal,
+        AuthorizationContext(
+            user_id=user_id,
+            home_organization_id=home,
+            base_role_id=uuid4(),
+            is_external=is_external,
+            base_permissions=frozenset(),
+        ),
+    )
 
 
-def _scalar_result(value):
-    result = MagicMock()
-    result.scalar_one_or_none = MagicMock(return_value=value)
-    return result
-
-
-def _workflow(access_level: str):
+def _workflow(access_level: str, organization_id):
     wf = MagicMock()
     wf.is_active = True
     wf.access_level = access_level
     wf.name = "wf"
+    wf.organization_id = organization_id
+    wf.type = "tool"
     return wf
 
 
+def _tool_repository(monkeypatch, workflow):
+    """Install the canonical repository seam used by tool attachment."""
+    observed = {}
+
+    class Repository:
+        def __init__(self, db, org_id, *, caller):
+            observed["db"] = db
+            observed["org_id"] = org_id
+            observed["caller"] = caller
+
+        async def get(self, *, id):
+            observed["id"] = id
+            return workflow
+
+    monkeypatch.setattr("src.services.agent_write_policy.WorkflowRepository", Repository)
+    return observed
+
+
 class TestValidateUserToolAccessExternal:
-    async def test_authenticated_workflow_denied_for_external_without_role(self):
+    async def test_authenticated_workflow_denied_when_canonical_policy_refuses(
+        self, monkeypatch
+    ):
         from src.services.agent_write_policy import validate_user_tool_access
 
         tool_id = str(uuid4())
+        home = uuid4()
+        caller = _caller(user_id=uuid4(), home=home, is_external=True)
         db = AsyncMock()
-        db.execute.side_effect = [
-            _rows_result([]),  # user's roles: none
-            _scalar_result(_workflow("authenticated")),  # the workflow
-            _rows_result([]),  # workflow's roles: none
-        ]
+        _tool_repository(monkeypatch, None)
         with pytest.raises(HTTPException) as exc:
-            await validate_user_tool_access(
-                db, uuid4(), [tool_id], is_external=True
-            )
+            await validate_user_tool_access(db, caller, [tool_id])
         assert exc.value.status_code == 403
 
-    async def test_authenticated_workflow_allowed_for_regular_user(self):
+    async def test_authenticated_workflow_uses_canonical_policy_for_regular_user(
+        self, monkeypatch
+    ):
         from src.services.agent_write_policy import validate_user_tool_access
 
         tool_id = str(uuid4())
+        home = uuid4()
+        caller = _caller(user_id=uuid4(), home=home, is_external=False)
         db = AsyncMock()
-        db.execute.side_effect = [
-            _rows_result([]),  # user's roles: none
-            _scalar_result(_workflow("authenticated")),
-            _rows_result([]),  # workflow's roles: none (unused — access_level grants first)
-        ]
-        await validate_user_tool_access(db, uuid4(), [tool_id])
+        observed = _tool_repository(monkeypatch, _workflow("authenticated", home))
+        await validate_user_tool_access(db, caller, [tool_id])
+        assert observed["id"] == UUID(tool_id)
+        assert observed["caller"].ctx is caller.ctx
+        assert observed["caller"].principal.user_id == caller.principal.user_id
+        assert observed["caller"].principal.runtime_authority is None
 
-    async def test_role_based_workflow_allowed_for_external_with_role(self):
+    async def test_role_based_workflow_allowed_when_canonical_policy_allows(
+        self, monkeypatch
+    ):
         from src.services.agent_write_policy import validate_user_tool_access
 
-        role_id = uuid4()
         tool_id = str(uuid4())
+        home = uuid4()
+        caller = _caller(user_id=uuid4(), home=home, is_external=True)
         db = AsyncMock()
-        db.execute.side_effect = [
-            _rows_result([role_id]),  # user's roles
-            _scalar_result(_workflow("role_based")),
-            _rows_result([role_id]),  # workflow's roles
-        ]
-        await validate_user_tool_access(db, uuid4(), [tool_id], is_external=True)
+        _tool_repository(monkeypatch, _workflow("role_based", home))
+        await validate_user_tool_access(db, caller, [tool_id])
 
+    async def test_foreign_tool_is_refused_by_canonical_repository(self, monkeypatch):
+        from src.services.agent_write_policy import validate_user_tool_access
 
-# =============================================================================
-# 2b. MCP: _check_agent_access
-# =============================================================================
+        tool_id = str(uuid4())
+        caller = _caller(user_id=uuid4(), home=uuid4(), is_external=False)
+        db = AsyncMock()
+        _tool_repository(monkeypatch, None)
 
+        with pytest.raises(HTTPException) as exc:
+            await validate_user_tool_access(db, caller, [tool_id])
 
-class TestMCPAgentAccessExternal:
-    def _agent(self, access_level, role_names=()):
-        from src.models.enums import AgentAccessLevel
+        assert exc.value.status_code == 403
 
-        agent = MagicMock()
-        agent.access_level = AgentAccessLevel(access_level)
-        agent.roles = [MagicMock(name=n) for n in role_names]
-        for role, n in zip(agent.roles, role_names):
-            role.name = n
-        return agent
+    async def test_runtime_powers_are_not_used_for_agent_tool_configuration(
+        self, monkeypatch
+    ):
+        from src.services.agent_write_policy import validate_user_tool_access
 
-    def _check(self, agent, user_roles, is_superuser=False, is_external=False):
-        from src.services.mcp_server.tool_access import MCPToolAccessService
+        tool_id = str(uuid4())
+        home = uuid4()
+        caller = _caller(user_id=uuid4(), home=home, is_external=False)
+        caller.principal.runtime_authority = MagicMock()
+        observed = _tool_repository(monkeypatch, _workflow("authenticated", home))
 
-        return MCPToolAccessService._check_agent_access(
-            agent, user_roles, is_superuser, is_external
-        )
+        await validate_user_tool_access(AsyncMock(), caller, [tool_id])
 
-    def test_authenticated_agent_denied_for_external(self):
-        agent = self._agent("authenticated")
-        assert self._check(agent, [], is_external=True) is False
+        assert observed["caller"].principal.runtime_authority is None
 
-    def test_authenticated_agent_allowed_for_regular_user(self):
-        agent = self._agent("authenticated")
-        assert self._check(agent, []) is True
+    @pytest.mark.parametrize(
+        ("active", "workflow_type", "expected"),
+        [
+            (False, "tool", "inactive"),
+            (True, "workflow", "not a tool"),
+        ],
+    )
+    async def test_resolved_tool_must_be_active_and_have_tool_type(
+        self, monkeypatch, active, workflow_type, expected
+    ):
+        from src.services.agent_write_policy import validate_user_tool_access
 
-    def test_authenticated_agent_allowed_for_external_superuser(self):
-        agent = self._agent("authenticated")
-        assert self._check(agent, [], is_superuser=True, is_external=True) is True
+        home = uuid4()
+        workflow = _workflow("authenticated", home)
+        workflow.is_active = active
+        workflow.type = workflow_type
+        _tool_repository(monkeypatch, workflow)
 
-    def test_role_based_agent_allowed_for_external_with_role(self):
-        agent = self._agent("role_based", role_names=("Portal User",))
-        assert self._check(agent, ["Portal User"], is_external=True) is True
+        with pytest.raises(HTTPException, match=expected) as exc:
+            await validate_user_tool_access(
+                AsyncMock(),
+                _caller(user_id=uuid4(), home=home, is_external=False),
+                [str(uuid4())],
+            )
 
+        assert exc.value.status_code == 422

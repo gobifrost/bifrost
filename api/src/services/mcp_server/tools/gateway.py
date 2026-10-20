@@ -27,9 +27,8 @@ complete is false—or when no matching tool is returned—assume more tools may
 exist and search again with the same agent_id plus a different or narrower
 query. Do not conclude that a capability is absent from a partial result.
 Use discovery_scope='all' only when the user explicitly requests discovery
-across organizations or otherwise inaccessible agents. This requires
-platform/provider impersonation authority; never select it merely because the
-caller may be an administrator.
+across organizations. Broader discovery still respects the original user's
+current roles and reach; it does not grant access to additional organizations.
 
 After selecting an agent, call bifrost_search_capabilities again with agent_id
 to load its live instructions. Follow those instructions as task-specific
@@ -67,8 +66,8 @@ async def bifrost_search_capabilities(
         Field(
             description=(
                 "Use 'accessible' for normal organization and role discovery. "
-                "Use 'all' only when the user explicitly requests cross-organization "
-                "discovery; it requires platform/provider impersonation authority."
+                "Use 'all' when the user explicitly requests broader discovery. "
+                "Results still respect the original user's current roles and reach."
             )
         ),
     ] = "accessible",
@@ -232,8 +231,8 @@ TOOLS = [
         "Search accessible agents and tools through one bounded, progressive "
         "surface. Results explicitly disclose omitted tools. Reuse this tool with "
         "agent_id to load instructions and tool_ref to load one exact schema. "
-        "Impersonation-capable callers may explicitly set discovery_scope='all' "
-        "to search across organizations.",
+        "Set discovery_scope='all' only when the user requests broader discovery; "
+        "it does not add permissions or organization reach.",
     ),
     (
         "bifrost_execute_tool",

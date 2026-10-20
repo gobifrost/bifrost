@@ -10,6 +10,12 @@ Covered here (all require process control the API suite cannot express):
 
 * child SIGKILL → crash detected → new attempt restarts (failed accounting)
 * owner death (loop + pool stopped) → lease expiry → second worker takes over
+* a full stack-worker service capacity receives a concurrent stop burst and
+  reaches terminal state before its slots are released
+
+The claim-loop unit regression covers the complementary transaction boundary:
+a child completion callback can finish while its stop is awaited after the
+claim tick has released its database session.
 
 The API-observable behavior (claim/ready/logs/stop/restart/
 crash-loop/token scopes) runs in test_service_worker_mode.py.
@@ -183,9 +189,30 @@ def slot_fillers(e2e_client, platform_admin):
             f"stack slots never filled (STACK_SERVICE_SLOTS={STACK_SERVICE_SLOTS}): {states}"
         )
     yield filler_ids
+
+    # Keep the concurrent stop burst that exercises the worker's full service
+    # capacity, then wait until every attempt is terminal before this fixture
+    # releases the slots to later files.
     for fid in filler_ids:
-        e2e_client.post(f"/api/services/{fid}/stop", headers=headers)
-        e2e_client.post(f"/api/services/{fid}/disable", headers=headers)
+        stopped = e2e_client.post(f"/api/services/{fid}/stop", headers=headers)
+        assert stopped.status_code == 200, stopped.text
+    for fid in filler_ids:
+        disabled = e2e_client.post(f"/api/services/{fid}/disable", headers=headers)
+        assert disabled.status_code == 200, disabled.text
+
+    pending = set(filler_ids)
+    last: dict[str, dict] = {}
+    deadline = time.monotonic() + 120.0
+    while pending and time.monotonic() < deadline:
+        for fid in tuple(pending):
+            response = e2e_client.get(f"/api/services/{fid}", headers=headers)
+            assert response.status_code == 200, response.text
+            last[fid] = response.json()
+            if last[fid]["observed_state"] == "stopped":
+                pending.remove(fid)
+        if pending:
+            time.sleep(0.5)
+    assert not pending, {fid: last.get(fid) for fid in pending}
 
 
 @pytest.fixture

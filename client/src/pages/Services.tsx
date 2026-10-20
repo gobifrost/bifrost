@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { LayoutGrid, RefreshCw, Table as TableIcon } from "lucide-react";
 
 import { useIsDesktop } from "@/hooks/useMediaQuery";
-import { useAuth } from "@/contexts/AuthContext";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { useSearch } from "@/hooks/useSearch";
 import { SearchBox } from "@/components/search/SearchBox";
@@ -40,9 +39,14 @@ import type {
 } from "@/services/services";
 import { serviceDetailHref } from "@/pages/ServiceDetail";
 import { getErrorMessage } from "@/lib/api-error";
+import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
+import { useAuthorization } from "@/services/authorization";
 import type { components } from "@/lib/v1";
 
-type Organization = components["schemas"]["OrganizationPublic"];
+type Organization = Pick<
+	components["schemas"]["OrganizationPublic"],
+	"id" | "name"
+>;
 
 /**
  * Supervised services list (live).
@@ -54,7 +58,7 @@ type Organization = components["schemas"]["OrganizationPublic"];
  */
 export function Services() {
 	const navigate = useNavigate();
-	const { isPlatformAdmin } = useAuth();
+	const authorization = useAuthorization();
 	const isDesktop = useIsDesktop();
 
 	const [searchTerm, setSearchTerm] = useState("");
@@ -75,9 +79,49 @@ export function Services() {
 		() => servicesData?.items ?? [],
 		[servicesData],
 	);
+	const canReadServices = authorization.canAnywhere("platform.read");
+	const canManageAnyServices = authorization.canAnywhere(
+		"platform.readwrite",
+	);
+	const canManageService = (service: ServiceListItem) =>
+		!service.solution_id &&
+		authorization.canAt(
+			"platform.readwrite",
+			orgTarget(service.organization_id),
+		);
+	const knownOrganizations = useMemo(() => {
+		const organizations = new Map<string, Organization>();
+		for (const service of services) {
+			if (service.organization_id) {
+				organizations.set(service.organization_id, {
+					id: service.organization_id,
+					name: service.organization_id,
+				});
+			}
+		}
+		const summary = authorization.authorization;
+		if (summary?.home_organization_id) {
+			organizations.set(summary.home_organization_id, {
+				id: summary.home_organization_id,
+				name: summary.home_organization_id,
+			});
+		}
+		for (const grant of summary?.grants ?? []) {
+			if (
+				grant.boundary.kind === "organization" &&
+				grant.boundary.organization_id
+			) {
+				organizations.set(grant.boundary.organization_id, {
+					id: grant.boundary.organization_id,
+					name: grant.boundary.organization_id,
+				});
+			}
+		}
+		return [...organizations.values()];
+	}, [authorization.authorization, services]);
 
 	const { data: organizations } = useOrganizations({
-		enabled: isPlatformAdmin,
+		enabled: authorization.canAnywhere("organizations.read"),
 	});
 	const getOrgName = (orgId: string | null | undefined): string => {
 		if (!orgId) return "Global";
@@ -227,14 +271,27 @@ export function Services() {
 						</SelectItem>
 					</SelectContent>
 				</Select>
-				{isPlatformAdmin && (
+					{canReadServices && (
 					<div className="w-full min-w-0 sm:w-64">
 						<OrganizationSelect
 							aria-label="Service organization scope"
 							value={filterOrgId}
 							onChange={setFilterOrgId}
 							showAll={true}
-							showGlobal={true}
+								showGlobal={authorization.canAt(
+									"platform.read",
+									GLOBAL_TARGET,
+								)}
+								knownOrganizations={knownOrganizations}
+								loadOrganizations={authorization.canAnywhere(
+									"organizations.read",
+								)}
+								filterOrganizations={(organization) =>
+									authorization.canAt(
+										"platform.read",
+										orgTarget(organization.id),
+									)
+								}
 							placeholder="All organizations"
 						/>
 					</div>
@@ -279,7 +336,9 @@ export function Services() {
 						services={filteredServices}
 						viewMode={isDesktop ? viewMode : "grid"}
 						isLoading={isLoading}
-						isPlatformAdmin={isPlatformAdmin}
+						showOrganization={canReadServices}
+						canManageAnyServices={canManageAnyServices}
+						canManageService={canManageService}
 						getOrgName={getOrgName}
 						onSelect={(service) =>
 							navigate(serviceDetailHref(service))

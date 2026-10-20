@@ -40,8 +40,7 @@ from shared.table_resolution import (
     get_table_or_404,
     resolve_target_org_safe as _resolve_target_org_safe,
 )
-from src.core.auth import Context, CurrentSuperuser
-from src.core.org_filter import resolve_org_filter
+from src.core.auth import Context, CurrentActiveUser
 from src.models.contracts.policies import (
     PolicyRuleRef,
     PolicyValidationError,
@@ -75,6 +74,13 @@ from src.core.pubsub import (
     publish_policy_changed,
 )
 from src.services.operation_catalog import operation_route
+from src.services.authorization.enforce import (
+    load_caller,
+    operation_reach,
+    org_target,
+    require_operation,
+    user_reach,
+)
 
 router = APIRouter(prefix="/api/tables", tags=["Tables"])
 
@@ -179,7 +185,7 @@ async def _validate_table_target_org(
 async def create_table(
     data: TableCreate,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     scope: str | None = Query(
         default=None,
         description="Target scope: 'global' or org UUID. Defaults to current org.",
@@ -196,9 +202,13 @@ async def create_table(
     if "organization_id" in (data.model_fields_set or set()):
         target_org_id = data.organization_id
     elif scope is not None:
-        target_org_id = _resolve_target_org_safe(ctx, scope)
+        target_org_id = await _resolve_target_org_safe(ctx, scope)
     else:
         target_org_id = ctx.org_id
+    caller = await load_caller(ctx.db, ctx.user)
+    if not user_reach(caller).covers(target_org_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Requested scope is outside the caller's organization reach")
+    require_operation(caller, "tables.create", org_target(target_org_id))
     await _validate_table_target_org(ctx.db, target_org_id)
     try:
         await _validate_table_policy_claim_refs(ctx.db, target_org_id, data.policies)
@@ -239,23 +249,25 @@ async def create_table(
 **operation_route("tables.list"))
 async def list_tables(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     scope: str | None = Query(
         default=None,
         description="Filter scope: 'global' for global only, org UUID for specific org.",
     ),
 ) -> TableListResponse:
-    """List all tables in the current scope (platform admin only)."""
-    try:
-        filter_type, filter_org = resolve_org_filter(ctx.user, scope)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(e),
-        )
-
-    repo = TableRepository(ctx.db, filter_org, is_superuser=True)
-    tables = await repo.list_tables(filter_type)
+    """List table metadata only where the caller holds ``tables.read``."""
+    caller = await load_caller(ctx.db, ctx.user)
+    reach = operation_reach(caller, "tables.list")
+    stmt = select(Table)
+    if scope is not None:
+        target_org_id = await _resolve_target_org_safe(ctx, scope)
+        require_operation(caller, "tables.list", org_target(target_org_id))
+        stmt = stmt.where(Table.organization_id == target_org_id)
+    else:
+        predicate = reach.where(Table.organization_id)
+        if predicate is not None:
+            stmt = stmt.where(predicate)
+    tables = (await ctx.db.execute(stmt.order_by(Table.name))).scalars().all()
 
     return TableListResponse(
         tables=[TablePublic.model_validate(t) for t in tables],
@@ -317,7 +329,7 @@ def _split_value_error_msg(msg: str) -> tuple[str, bool, str]:
 )
 async def validate_policies(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     body: Any = Body(...),
 ) -> PolicyValidationResponse:
     """Validate a candidate ``TablePolicies`` payload.
@@ -336,11 +348,13 @@ async def validate_policies(
     ``actions``) goes through the standard ``loc``-tuple → path conversion
     via ``_loc_to_path``.
 
-    Auth: matches the rest of the tables router (``CurrentSuperuser``).
-    The validator does not touch any tenant data, but tables are
-    superuser-only resources so the endpoint should not be reachable to
-    non-admin callers either.
+    Auth: requires ``tables.readwrite`` at the current organization target.
     """
+    require_operation(
+        await load_caller(ctx.db, ctx.user),
+        "POST /api/tables/policies/validate",
+        org_target(ctx.org_id),
+    )
     if not isinstance(body, dict):
         return PolicyValidationResponse(
             ok=False,
@@ -443,16 +457,23 @@ async def validate_policies(
 async def get_table(
     table_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> TablePublic:
-    """Get table metadata by UUID (platform admin only)."""
-    result = await ctx.db.execute(select(Table).where(Table.id == table_id))
+    """Get table metadata at its actual organization target."""
+    caller = await load_caller(ctx.db, ctx.user)
+    reach = operation_reach(caller, "tables.get")
+    stmt = select(Table).where(Table.id == table_id)
+    predicate = reach.where(Table.organization_id)
+    if predicate is not None:
+        stmt = stmt.where(predicate)
+    result = await ctx.db.execute(stmt)
     table = result.scalar_one_or_none()
     if not table:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Table '{table_id}' not found",
         )
+    require_operation(caller, "tables.get", org_target(table.organization_id))
     return TablePublic.model_validate(table)
 
 
@@ -465,22 +486,29 @@ async def update_table(
     table_id: UUID,
     data: TableUpdate,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> TablePublic:
     """Update table metadata by ID (platform admin only).
 
     Solution-managed tables are read-only here: deploy owns schema + policies.
     Row DATA (documents) stays editable — that's runtime state (criterion 7).
     """
-    await assert_entity_id_not_solution_managed(ctx.db, Table, table_id)
-    existing_table = (
-        await ctx.db.execute(select(Table).where(Table.id == table_id))
-    ).scalar_one_or_none()
+    caller = await load_caller(ctx.db, ctx.user)
+    reach = operation_reach(caller, "tables.update")
+    stmt = select(Table).where(Table.id == table_id)
+    predicate = reach.where(Table.organization_id)
+    if predicate is not None:
+        stmt = stmt.where(predicate)
+    existing_table = (await ctx.db.execute(stmt)).scalar_one_or_none()
     if existing_table is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Table '{table_id}' not found",
         )
+    require_operation(
+        caller, "tables.update", org_target(existing_table.organization_id)
+    )
+    await assert_entity_id_not_solution_managed(ctx.db, Table, table_id)
     policy_or_scope_changed = bool(
         {"policies", "organization_id"} & data.model_fields_set
     )
@@ -490,6 +518,7 @@ async def update_table(
             if "organization_id" in data.model_fields_set
             else existing_table.organization_id
         )
+        require_operation(caller, "tables.update", org_target(effective_org_id))
         effective_policies = (
             data.policies
             if "policies" in data.model_fields_set
@@ -573,19 +602,31 @@ async def update_table(
 async def delete_table(
     table_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> None:
     """Delete a table and all its documents by ID (platform admin only)."""
     from shared.sdk_table_metadata import SDKTableMetadataError, delete_sdk_table
-
-    existing_table = (
-        await ctx.db.execute(select(Table).where(Table.id == table_id))
-    ).scalar_one_or_none()
+    caller = await load_caller(ctx.db, ctx.user)
+    reach = operation_reach(caller, "tables.delete")
+    stmt = select(Table).where(Table.id == table_id)
+    predicate = reach.where(Table.organization_id)
+    if predicate is not None:
+        stmt = stmt.where(predicate)
+    existing_table = (await ctx.db.execute(stmt)).scalar_one_or_none()
     table_name = existing_table.name if existing_table else None
+
+    if existing_table is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Table '{table_id}' not found",
+        )
 
     try:
         success = await delete_sdk_table(
-            ctx.db, table_id=table_id, org_id=ctx.org_id
+            ctx.db,
+            table_id=table_id,
+            org_id=existing_table.organization_id,
+            caller=caller,
         )
     except SDKTableMetadataError as e:
         raise HTTPException(

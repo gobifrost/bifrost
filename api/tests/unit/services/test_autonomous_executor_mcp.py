@@ -20,6 +20,9 @@ from uuid import UUID, uuid4
 import pytest
 
 from tests.unit.services.agent_runtime_fakes import LegacyMockModel
+from src.core.principal import UserPrincipal
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
 from src.services.execution.agent_helpers import MCP_TOOL_PREFIX
 from src.services.execution.autonomous_agent_executor import (
     ActingUser,
@@ -32,6 +35,27 @@ from src.services.mcp_client.errors import (
     NeedsReauthError,
     ToolDispatchError,
 )
+
+
+def _caller(organization_id, user_id=None) -> Caller:
+    user_id = user_id or uuid4()
+    return Caller(
+        UserPrincipal(user_id=user_id, email="agent@contoso.example", organization_id=organization_id),
+        AuthorizationContext(user_id=user_id, home_organization_id=organization_id, base_role_id=uuid4(), is_external=False, base_permissions=frozenset()),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _authorize_agent(mock_agent):
+    async def authorize(_db, caller, agent_id):
+        assert agent_id == mock_agent.id
+        return caller, mock_agent
+
+    with patch(
+        "src.services.execution.autonomous_agent_executor.authorize_agent_execution",
+        new=AsyncMock(side_effect=authorize),
+    ):
+        yield
 
 
 @pytest.fixture
@@ -263,8 +287,6 @@ async def test_execute_tool_routes_mcp_prefix(mock_session_factory):
     """The tool dispatcher in _execute_tool routes ``mcp__<uuid>__<tool>``
     to _execute_mcp_tool BEFORE workflow-id lookup."""
     executor = AutonomousAgentExecutor(mock_session_factory)
-    executor._acting_user_id = uuid4()
-
     connection_id = uuid4()
     fake_envelope = {"content": [], "is_error": False}
 
@@ -272,11 +294,26 @@ async def test_execute_tool_routes_mcp_prefix(mock_session_factory):
     agent.system_tools = []
     agent.knowledge_sources = []
     agent.organization_id = uuid4()
+    agent.id = uuid4()
+    agent.mcp_connections = [MagicMock(id=connection_id)]
+    caller = _caller(agent.organization_id)
+    executor._caller = caller
+    executor._acting_user_id = caller.principal.user_id
 
-    with patch(
-        "src.services.execution.autonomous_agent_executor.mcp_dispatch.invoke",
-        new=AsyncMock(return_value=fake_envelope),
-    ) as mock_invoke:
+    async def authorize(_db, authorized_caller, agent_id):
+        assert agent_id == agent.id
+        return authorized_caller, agent
+
+    with (
+        patch(
+            "src.services.execution.autonomous_agent_executor.authorize_agent_execution",
+            new=AsyncMock(side_effect=authorize),
+        ),
+        patch(
+            "src.services.execution.autonomous_agent_executor.mcp_dispatch.invoke",
+            new=AsyncMock(return_value=fake_envelope),
+        ) as mock_invoke,
+    ):
         await executor._execute_tool(
             ToolCallRequest(
                 id="tc-6",
@@ -331,7 +368,7 @@ async def test_run_threads_user_id_from_caller(
         agent=mock_agent,
         input_data={"task": "x"},
         run_id=str(uuid4()),
-        _caller={"user_id": str(user_id), "email": "a@b"},
+        caller=_caller(mock_agent.organization_id, user_id),
         run_user_id=None,
         run_as=None,
     )
@@ -376,14 +413,14 @@ async def test_run_treats_missing_caller_as_autonomous(
         agent=mock_agent,
         input_data={"task": "x"},
         run_id=str(uuid4()),
-        _caller=None,
+        caller=_caller(mock_agent.organization_id),
         run_user_id=None,
         run_as=None,
     )
 
-    assert executor._acting_user_id is None
+    assert executor._acting_user_id is not None
     assert mock_resolve_tools.await_args is not None
-    assert mock_resolve_tools.await_args.kwargs["caller_user_id"] is None
+    assert mock_resolve_tools.await_args.kwargs["caller_user_id"] == executor._acting_user_id
 
 
 @pytest.mark.asyncio
@@ -418,14 +455,14 @@ async def test_run_treats_caller_without_user_id_as_autonomous(
         agent=mock_agent,
         input_data={"task": "x"},
         run_id=str(uuid4()),
-        _caller={"email": "webhook@source.example", "name": "webhook"},
+        caller=_caller(mock_agent.organization_id),
         run_user_id=None,
         run_as=None,
     )
 
-    assert executor._acting_user_id is None
+    assert executor._acting_user_id is not None
     assert mock_resolve_tools.await_args is not None
-    assert mock_resolve_tools.await_args.kwargs["caller_user_id"] is None
+    assert mock_resolve_tools.await_args.kwargs["caller_user_id"] == executor._acting_user_id
 
 
 @pytest.mark.asyncio
@@ -460,15 +497,15 @@ async def test_run_invalid_user_id_falls_back_to_autonomous(
         agent=mock_agent,
         input_data={"task": "x"},
         run_id=str(uuid4()),
-        _caller={"user_id": "not-a-uuid"},
+        caller=_caller(mock_agent.organization_id),
         run_user_id=None,
         run_as=None,
     )
 
     assert result["status"] == "completed"
-    assert executor._acting_user_id is None
+    assert executor._acting_user_id is not None
     assert mock_resolve_tools.await_args is not None
-    assert mock_resolve_tools.await_args.kwargs["caller_user_id"] is None
+    assert mock_resolve_tools.await_args.kwargs["caller_user_id"] == executor._acting_user_id
 
 
 @pytest.mark.asyncio
@@ -511,7 +548,7 @@ async def test_run_as_user_reaches_tool_resolution_and_mcp_dispatch(
         agent=mock_agent,
         input_data={"task": "x"},
         run_id=str(uuid4()),
-        _caller={"user_id": str(uuid4()), "email": "helpdesk.lead@contoso.example"},
+        caller=_caller(mock_agent.organization_id),
         run_user_id=None,
         run_as=run_as,
     )

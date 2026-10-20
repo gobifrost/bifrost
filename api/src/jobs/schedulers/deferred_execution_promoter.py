@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared import access_checks
 from shared.run_lineage import RunLineage
+from shared.run_cancellation import RUN_USER_DELETED_ERROR
 from src.core.database import get_db_context
 from src.core.log_safety import log_safe
 from src.models.enums import ExecutionStatus
@@ -78,6 +79,7 @@ async def promote_due_executions() -> tuple[int, int]:
         if not rows:
             return 0, 0
 
+        rows = _cancel_rows_with_deleted_run_user(rows)
         rows = await _fail_rows_no_longer_permitted(db, rows)
         if not rows:
             await db.commit()
@@ -119,6 +121,14 @@ async def promote_due_executions() -> tuple[int, int]:
                         if row.run_user_id is not None
                         else None
                     ),
+                    impersonation_provenance={
+                        key: str(value)
+                        for key, value in (
+                            ("impersonated_by_user_id", row.impersonated_by_user_id),
+                            ("impersonation_session_id", row.impersonation_session_id),
+                        )
+                        if value is not None
+                    } or None,
                 )
                 promoted += 1
             except Exception:
@@ -140,6 +150,31 @@ async def promote_due_executions() -> tuple[int, int]:
             extra={"promoted": promoted, "failures": failures},
         )
         return promoted, failures
+
+
+def _cancel_rows_with_deleted_run_user(rows: list[Execution]) -> list[Execution]:
+    """Cancel scheduled rows whose preserved run user was removed.
+
+    Deletion normally cancels the row before PostgreSQL clears
+    ``run_user_id``. Some existing scheduled rows also retain their original
+    run user in execution context; never promote those rows after the foreign
+    key has been cleared, because the worker would otherwise fall back to a
+    system caller.
+    """
+    promotable: list[Execution] = []
+    for row in rows:
+        context = row.execution_context or {}
+        if row.run_user_id is not None or context.get("run_user_id") is None:
+            promotable.append(row)
+            continue
+        row.status = ExecutionStatus.CANCELLED
+        row.error_message = RUN_USER_DELETED_ERROR
+        row.completed_at = datetime.now(timezone.utc)
+        logger.warning(
+            "deferred_execution_promoter: cancelled row whose run user was deleted",
+            extra={"execution_id": log_safe(row.id)},
+        )
+    return promotable
 
 
 async def _fail_rows_no_longer_permitted(db: AsyncSession, rows: list[Execution]) -> list[Execution]:

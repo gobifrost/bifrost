@@ -21,8 +21,7 @@ from uuid import UUID
 
 from sqlalchemy import select, text
 
-from shared import access_checks
-from src.services.access_check_policies import check_file
+from src.services.access_check_policies import record_file_policy
 from src.services.audit import emit_file_policy_deny
 
 if TYPE_CHECKING:
@@ -66,6 +65,8 @@ class FileCaller:
     solution_id: str | None = None
     caller_solution_id: str | None = None
     app_id: str | None = None
+    # Server-validated local-dev provenance.  Never populated from an SDK DTO.
+    dev_solution_id: str | None = None
 
     @classmethod
     def from_context(cls, ctx: Any) -> FileCaller:
@@ -77,22 +78,26 @@ class FileCaller:
             solution_id=ctx.solution_id,
             caller_solution_id=getattr(ctx, "caller_solution_id", None),
             app_id=getattr(ctx, "app_id", None),
+            dev_solution_id=getattr(ctx, "dev_solution_id", None),
         )
 
 
-def file_org_id(caller_or_ctx: Any, location: str, requested_scope: str | None) -> UUID | None:
-    """Resolve the target org — same rule the Tables SDK uses.
-
-    A non-superuser is pinned to their own org and the requested ``scope``
-    is ignored; a superuser honors ``scope``. ``workspace`` is unscoped.
-    """
-    from src.core.org_filter import resolve_target_org
-
-    user = caller_or_ctx.user
-    org_id = getattr(caller_or_ctx, "org_id", None)
+async def file_org_id(
+    caller_or_ctx: Any, location: str, requested_scope: str | None
+) -> UUID | None:
+    """Resolve a non-workspace target through the verified caller reach."""
     if location == "workspace":
         return None
-    return resolve_target_org(user, requested_scope, org_id)
+    from shared.sdk_config import ScopeResolutionError, resolve_sdk_scope
+    from src.services.authorization.enforce import load_caller
+
+    try:
+        return await resolve_sdk_scope(
+            requested_scope,
+            caller=await load_caller(caller_or_ctx.db, caller_or_ctx.user),
+        )
+    except ScopeResolutionError as exc:
+        raise FileServiceError(exc.status_code, exc.detail) from None
 
 
 def storage_scope(org_id: UUID | None) -> str:
@@ -100,7 +105,7 @@ def storage_scope(org_id: UUID | None) -> str:
     return str(org_id) if org_id is not None else "global"
 
 
-def resolve_effective_scope(
+async def resolve_effective_scope(
     caller_or_ctx: Any, location: str, requested_scope: str | None
 ) -> str | None:
     """Storage-scope string with solution-context priority.
@@ -109,25 +114,40 @@ def resolve_effective_scope(
     explicit ``requested_scope``). Raises :class:`FileServiceError` 400 for
     the workspace-in-solution case.
     """
-    solution_id = getattr(caller_or_ctx, "solution_id", None)
+    raw_solution_id = getattr(caller_or_ctx, "solution_id", None)
+    solution_id = ctx_solution_id(caller_or_ctx, location)
+    if raw_solution_id is not None and solution_id is None:
+        raise FileServiceError(404, "Solution file context not found")
     if solution_id is not None:
         if location == "workspace":
             raise FileServiceError(
                 400, "workspace is not available in solution file context"
             )
-        return str(solution_id)
-    return storage_scope(file_org_id(caller_or_ctx, location, requested_scope))
+        from src.services.authorization.enforce import load_caller, user_reach
+        from src.services.solution_scope import get_active_solution
+
+        solution = await get_active_solution(caller_or_ctx.db, solution_id)
+        caller = await load_caller(caller_or_ctx.db, caller_or_ctx.user)
+        if solution is None or not user_reach(caller).covers(solution.organization_id):
+            # Match the normal solution resolver: foreign, inactive, and
+            # unknown installs are all indistinguishable to the caller.
+            raise FileServiceError(404, "Solution file context not found")
+        return str(solution.id)
+    return storage_scope(await file_org_id(caller_or_ctx, location, requested_scope))
 
 
 def ctx_solution_id(caller_or_ctx: Any, location: str) -> UUID | None:
     """Install UUID from context. Canonical parse lives in solution_scope."""
     from src.services.solution_scope import parse_ctx_solution_id
 
-    return parse_ctx_solution_id(caller_or_ctx)
+    parsed = parse_ctx_solution_id(caller_or_ctx)
+    if getattr(caller_or_ctx, "solution_id", None) and parsed is None:
+        raise FileServiceError(400, "Invalid solution file context")
+    return parsed
 
 
 async def install_org_id(caller_or_ctx: Any, solution_id: UUID | None) -> UUID | None:
-    """Install's ``organization_id`` from the DB (fallback: caller org)."""
+    """Resolve the persisted install organization; missing installs fail closed."""
     if solution_id is None:
         return getattr(caller_or_ctx, "org_id", None)
     from src.models.orm.solutions import Solution as SolutionORM
@@ -138,9 +158,9 @@ async def install_org_id(caller_or_ctx: Any, solution_id: UUID | None) -> UUID |
             select(SolutionORM).where(SolutionORM.id == solution_id)
         )
     ).scalar_one_or_none()
-    return row.organization_id if row is not None else getattr(
-        caller_or_ctx, "org_id", None
-    )
+    if row is None:
+        raise FileServiceError(404, "Solution file context not found")
+    return row.organization_id
 
 
 async def authorize_file_policy(
@@ -162,14 +182,14 @@ async def authorize_file_policy(
     user = caller_or_ctx.user
     db = caller_or_ctx.db
     if location == "workspace":
-        if not user.is_superuser:
-            return False
-        # The workspace repository is Global.
-        access_checks.note_power(
-            "repository.read" if action in ("read", "exists", "signed_get", "list") else "repository.readwrite",
-            None,
-            subject="repository",
+        from src.services.authorization.enforce import load_caller, require_permission
+
+        permission = (
+            "repository.read"
+            if action in ("read", "exists", "signed_get", "list")
+            else "repository.readwrite"
         )
+        require_permission(await load_caller(db, user), permission, None)
         return True
 
     policy_organization_id: UUID | None = None
@@ -198,7 +218,7 @@ async def authorize_file_policy(
     }.get(action, action)
 
     service = FilePolicyService(db)
-    allowed = await service.is_allowed(
+    decision = await service.evaluate(
         cast(FileAction, policy_action),
         organization_id=policy_organization_id,
         location=location,
@@ -207,17 +227,18 @@ async def authorize_file_policy(
         solution_id=resolved_solution_id,
         cache=policy_cache,
     )
-    await check_file(
+    await record_file_policy(
         db,
-        policy_action,
         organization_id=policy_organization_id,
         location=location,
         path=path,
         solution_id=resolved_solution_id,
-        allowed_today=allowed,
-        policy_cache=policy_cache,
+        action=policy_action,
+        policies=decision.policies,
+        principal=decision.principal,
+        allowed=decision.allowed,
     )
-    return allowed
+    return decision.allowed
 
 
 async def deny_file_policy(

@@ -26,20 +26,32 @@ from src.repositories.policy_rule import PolicyRuleRepository
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class FilePolicyDecision:
+    """The single policy evaluation used for enforcement and Access Checks."""
+
+    allowed: bool
+    principal: Any
+    policies: FilePolicies
+
+
 @dataclass
 class FilePolicyEvalCache:
     """Request-scoped memo for evaluating many paths in one location.
 
     Used by the ``files.move`` enqueue, which runs up to three policy checks
-    per item. It memoizes the policy rows each cascade arm loads, each policy
-    row's validated and ref-resolved policies, claim pre-resolution per
-    (principal, policy row), and metadata rows per path. Decisions are
-    identical to uncached evaluation: the canonical cascade and evaluator
-    still run.
+    per item. It memoizes the enforced policy principal per caller, the policy
+    rows each cascade arm loads, each policy row's validated and ref-resolved
+    policies, claim pre-resolution per (principal, policy row), and metadata
+    rows per path. Decisions are identical to uncached evaluation: the
+    canonical cascade and evaluator still run.
     """
 
+    principals: dict[int, tuple[Any, Any]] = field(default_factory=dict)
     policy_rows: dict[tuple[Any, ...], list[FilePolicy]] = field(default_factory=dict)
-    resolved: dict[tuple[UUID | None, UUID], FilePolicies | None] = field(default_factory=dict)
+    resolved: dict[tuple[UUID | None, UUID], tuple[FilePolicies, bool]] = field(
+        default_factory=dict
+    )
     preresolved: set[tuple[int, UUID]] = field(default_factory=set)
     metadata: dict[tuple[Any, ...], FileMetadata | None] = field(default_factory=dict)
 
@@ -457,7 +469,7 @@ class FilePolicyService:
         global_match = select_longest_prefix(global_rows, location, path)  # type: ignore[arg-type]
         return cast("FilePolicy | None", global_match)
 
-    async def is_allowed(
+    async def evaluate(
         self,
         action: FileAction,
         *,
@@ -467,10 +479,9 @@ class FilePolicyService:
         user: Any,
         solution_id: UUID | None = None,
         cache: "FilePolicyEvalCache | None" = None,
-    ) -> bool:
-        if not self._principal_matches_org(user, organization_id):
-            return False
-
+    ) -> FilePolicyDecision:
+        user = await self._enforced_principal(user, cache)
+        empty_policies = FilePolicies.model_validate({"policies": []})
         policy_row = await self.load_policy(
             organization_id=organization_id,
             location=location,
@@ -479,19 +490,20 @@ class FilePolicyService:
             cache=cache,
         )
         if policy_row is None:
-            return False
+            return FilePolicyDecision(False, user, empty_policies)
 
         resolved_key = (organization_id, policy_row.id)
         if cache is not None and resolved_key in cache.resolved:
-            policies = cache.resolved[resolved_key]
+            policies, usable = cache.resolved[resolved_key]
         else:
-            policies = await self._resolved_policies(policy_row, organization_id)
+            policies, usable = await self._resolved_policies(policy_row, organization_id)
             if cache is not None:
-                cache.resolved[resolved_key] = policies
-        if policies is None:
-            return False
+                cache.resolved[resolved_key] = (policies, usable)
+        if not usable:
+            return FilePolicyDecision(False, user, policies)
 
-        # Keyed by object identity: the principal must outlive the cache.
+        # Keyed by object identity: the cache holds the principal (see
+        # ``_enforced_principal``), so the id cannot be reused while it lives.
         preresolve_key = (id(user), policy_row.id)
         if cache is None or preresolve_key not in cache.preresolved:
             await preresolve_for_policies(
@@ -528,12 +540,33 @@ class FilePolicyService:
             created_by=metadata.created_by if metadata is not None else None,
             created_at=metadata.created_at if metadata is not None else None,
         )
-        return evaluate_file_action(action, policies, context, user)
+        return FilePolicyDecision(
+            evaluate_file_action(action, policies, context, user), user, policies
+        )
+
+    async def _enforced_principal(
+        self, user: Any, cache: "FilePolicyEvalCache | None"
+    ) -> Any:
+        """The policy principal for ``user``, built once per cache."""
+        from src.services.access_check_policies import enforced_policy_principal
+
+        if cache is None:
+            return await enforced_policy_principal(self.db, user)
+        entry = cache.principals.get(id(user))
+        if entry is not None and entry[0] is user:
+            return entry[1]
+        principal = await enforced_policy_principal(self.db, user)
+        cache.principals[id(user)] = (user, principal)
+        return principal
 
     async def _resolved_policies(
         self, policy_row: FilePolicy, organization_id: UUID | None
-    ) -> FilePolicies | None:
-        """Validated, ref-resolved policies for a row, or ``None`` to deny."""
+    ) -> tuple[FilePolicies, bool]:
+        """Validated, ref-resolved policies for a row, and whether they can grant.
+
+        A malformed row yields empty policies; an unresolvable ref yields the
+        row's policies (for missing-role diagnostics). Both deny.
+        """
         try:
             policies = FilePolicies.model_validate(policy_row.policies)
         except ValidationError as exc:
@@ -541,9 +574,9 @@ class FilePolicyService:
                 "malformed file policies; denying file access: %s",
                 exc.__class__.__name__,
             )
-            return None
+            return FilePolicies.model_validate({"policies": []}), False
 
-        rule_repo = PolicyRuleRepository(self.db, org_id=organization_id, is_superuser=True)
+        rule_repo = PolicyRuleRepository(self.db, org_id=organization_id)
         try:
             await resolve_policy_refs(policies, repo=rule_repo, action_domain="file")
         except (PolicyRuleNotFound, PolicyRuleDomainMismatch) as exc:
@@ -551,8 +584,30 @@ class FilePolicyService:
                 "unresolvable file policy ref; denying file access: %s",
                 exc.__class__.__name__,
             )
-            return None
-        return policies
+            return policies, False
+        return policies, True
+
+    async def is_allowed(
+        self,
+        action: FileAction,
+        *,
+        organization_id: UUID | None,
+        location: str,
+        path: str,
+        user: Any,
+        solution_id: UUID | None = None,
+    ) -> bool:
+        """Compatibility boolean view of :meth:`evaluate`."""
+        return (
+            await self.evaluate(
+                action,
+                organization_id=organization_id,
+                location=location,
+                path=path,
+                user=user,
+                solution_id=solution_id,
+            )
+        ).allowed
 
     async def _get_policy_exact(
         self,
@@ -574,24 +629,6 @@ class FilePolicyService:
             FilePolicy.solution_id.is_(None),
         )
         return (await self.db.execute(stmt)).scalar_one_or_none()
-
-    def _principal_matches_org(
-        self,
-        user: Any,
-        organization_id: UUID | None,
-    ) -> bool:
-        if organization_id is None:
-            return True
-        # Bypass = is_platform_admin OR is_provider_org (repositories/README.md):
-        # provider-org members (portal-hopping platform staff) reach any org's
-        # files, same as platform admins.
-        if getattr(user, "is_platform_admin", False) or getattr(
-            user, "is_provider_org", False
-        ):
-            return True
-        user_org = getattr(user, "organization_id", None)
-        return user_org is not None and str(user_org) == str(organization_id)
-
 
 def _coerce_uuid(value: UUID | str | None) -> UUID | None:
     if value is None or isinstance(value, UUID):

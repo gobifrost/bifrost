@@ -78,6 +78,7 @@ describe("DeliveriesTable — retry", () => {
 	it("dispatches retry for failed deliveries (admin only)", async () => {
 		const { user } = renderWithProviders(
 			<DeliveriesTable
+				canManage
 				deliveries={[
 					makeDelivery({
 						status: "failed",
@@ -119,6 +120,7 @@ describe("DeliveriesTable — not_delivered", () => {
 	it("shows a Send button for not_delivered and dispatches createDelivery", async () => {
 		const { user } = renderWithProviders(
 			<DeliveriesTable
+				canManage
 				deliveries={[
 					makeDelivery({
 						id: undefined,
@@ -203,6 +205,7 @@ describe("DeliveriesTable — recovery", () => {
 		mockRetry.mockRejectedValueOnce(new Error("offline"));
 		const { user } = renderWithProviders(
 			<DeliveriesTable
+				canManage
 				deliveries={[makeDelivery({ status: "failed" })]}
 			/>,
 		);

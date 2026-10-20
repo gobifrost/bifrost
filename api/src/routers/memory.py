@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
 
-from src.core.auth import CurrentActiveUser, RequirePlatformAdmin
+from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
 from src.models.contracts.memory import (
     MemoryDeleteResponse,
@@ -24,12 +24,13 @@ from src.services.memory import (
     MemoryDisabledError,
     MemoryService,
 )
+from src.services.authorization.enforce import load_caller, require_operation
+from src.services.authorization.evaluator import GLOBAL
 
 router = APIRouter(prefix="/api/memory", tags=["Memory"])
 admin_router = APIRouter(
     prefix="/api/admin/memory",
     tags=["Memory"],
-    dependencies=[RequirePlatformAdmin],
 )
 
 
@@ -67,6 +68,9 @@ async def get_platform_memory_settings(
     db: DbSession,
     current_user: CurrentActiveUser,
 ) -> MemoryPlatformSettings:
+    require_operation(
+        await load_caller(db, current_user), "GET /api/admin/memory/settings", GLOBAL
+    )
     return MemoryPlatformSettings(enabled=await _service(db, current_user).platform_enabled())
 
 
@@ -76,6 +80,9 @@ async def update_platform_memory_settings(
     db: DbSession,
     current_user: CurrentActiveUser,
 ) -> MemoryPlatformSettings:
+    require_operation(
+        await load_caller(db, current_user), "PUT /api/admin/memory/settings", GLOBAL
+    )
     service = _service(db, current_user)
     await service.set_platform_enabled(request.enabled, updated_by=current_user.email)
     await db.commit()

@@ -23,7 +23,7 @@ import os
 import time
 from typing import Any
 from unittest.mock import AsyncMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -161,8 +161,6 @@ async def test_forked_child_config_crud_over_worker_socket(
     engine_execution_id = str(uuid4())
     engine_token, _ = mint_engine_token(
         execution_id=engine_execution_id,
-        solution_id=None,
-        global_repo_access=True,
         timeout_seconds=120,
     )
     from tests.helpers.live_execution import create_live_execution
@@ -361,6 +359,7 @@ async def _cleanup_committed_integration(async_session_factory, seed) -> None:
         IntegrationMapping as MappingModel,
     )
     from src.models.orm.oauth import OAuthProvider, OAuthToken
+    from src.models.orm.audit import AuditLog
     from src.models.orm.organizations import Organization as OrganizationModel
 
     integration_id = seed["integration_id"]
@@ -404,6 +403,12 @@ async def _cleanup_committed_integration(async_session_factory, seed) -> None:
         )
         await session.execute(
             delete(IntegrationModel).where(IntegrationModel.id == integration_id)
+        )
+        # Worker-socket requests are audited using the requested organization.
+        # AuditLog intentionally keeps its organization FK, so remove these
+        # test-owned observations before removing the temporary organizations.
+        await session.execute(
+            delete(AuditLog).where(AuditLog.organization_id.in_(org_ids))
         )
         await session.execute(
             delete(OrganizationModel).where(OrganizationModel.id.in_(org_ids))
@@ -515,12 +520,15 @@ async def test_forked_child_integrations_over_worker_socket(
     engine_execution_id = str(uuid4())
     engine_token, _ = mint_engine_token(
         execution_id=engine_execution_id,
-        solution_id=None,
-        global_repo_access=True,
         timeout_seconds=120,
     )
     from tests.helpers.live_execution import create_live_execution
-    await create_live_execution(async_session_factory, engine_execution_id)
+    await create_live_execution(
+        async_session_factory,
+        engine_execution_id,
+        organization_id=UUID(seed["org_id"]),
+        platform_admin=False,
+    )
     organization = {"id": seed["org_id"], "name": "Fork Org"}
 
     server = WorkerSdkHttpServer()
@@ -630,9 +638,13 @@ async def _seed_committed_org(async_session_factory) -> str:
 async def _cleanup_committed_org(async_session_factory, org_id: str) -> None:
     from sqlalchemy import delete
 
+    from src.models.orm.audit import AuditLog
     from src.models.orm.organizations import Organization as OrganizationModel
 
     async with async_session_factory() as session:
+        await session.execute(
+            delete(AuditLog).where(AuditLog.organization_id == org_id)
+        )
         await session.execute(
             delete(OrganizationModel).where(OrganizationModel.id == org_id)
         )
@@ -785,8 +797,6 @@ async def test_forked_child_tables_over_worker_socket(
     engine_execution_id = str(uuid4())
     engine_token, _ = mint_engine_token(
         execution_id=engine_execution_id,
-        solution_id=None,
-        global_repo_access=True,
         timeout_seconds=120,
     )
     from tests.helpers.live_execution import create_live_execution
@@ -977,8 +987,6 @@ async def test_forked_child_files_over_worker_socket(monkeypatch, async_session_
     engine_execution_id = str(uuid4())
     engine_token, _ = mint_engine_token(
         execution_id=engine_execution_id,
-        solution_id=None,
-        global_repo_access=True,
         timeout_seconds=120,
     )
     from tests.helpers.live_execution import create_live_execution
@@ -1126,8 +1134,6 @@ async def test_forked_child_artifacts_over_worker_socket(monkeypatch, async_sess
     engine_execution_id = str(uuid4())
     engine_token, _ = mint_engine_token(
         execution_id=engine_execution_id,
-        solution_id=None,
-        global_repo_access=True,
         timeout_seconds=120,
     )
     from tests.helpers.live_execution import create_live_execution
@@ -1313,8 +1319,6 @@ async def test_forked_child_events_and_forms_over_worker_socket(
     engine_execution_id = str(uuid4())
     engine_token, _ = mint_engine_token(
         execution_id=engine_execution_id,
-        solution_id=None,
-        global_repo_access=True,
         timeout_seconds=120,
     )
     from tests.helpers.live_execution import create_live_execution

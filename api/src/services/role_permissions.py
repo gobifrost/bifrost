@@ -11,13 +11,18 @@ from the API yet.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.builtin_roles import BUILTIN_ROLE_IDS, WILDCARD_PERMISSION
 from src.models.contracts.permissions import parse_permission
+
+if TYPE_CHECKING:
+    from src.services.authorization.enforce import Caller
 
 
 class RolePermissionError(Exception):
@@ -57,6 +62,13 @@ async def set_role_permissions(
         raise RolePermissionError(409, "Builtin roles cannot be modified")
     for permission in permissions:
         validate_permission(permission)
+
+    from shared.account_guards import AccountGuardError, assert_role_permissions_allowed
+
+    try:
+        await assert_role_permissions_allowed(session, role_id=role_id, permissions=permissions)
+    except AccountGuardError as exc:
+        raise RolePermissionError(exc.status_code, exc.detail) from None
 
     from src.models import RolePermission as RolePermissionORM
 
@@ -149,15 +161,24 @@ async def describe_role_permissions(session: AsyncSession, *, role_id: UUID):
 
 
 async def replace_identity_permissions(
-    session: AsyncSession, *, role_id: UUID, permissions: list[str]
+    session: AsyncSession, *, caller: Caller, role_id: UUID, permissions: list[str]
 ):
     """Replace the role's identity permissions, keeping every other
     permission it holds. 422 for anything outside the identity set, 409 for
     a builtin role, 404 for a missing one."""
     from src.models import Role as RoleORM
     from src.services.audit import emit_audit
+    from src.services.authorization.enforce import require_permission
+    from src.services.authorization.privilege import is_privileged_principal
 
-    role = await session.get(RoleORM, role_id)
+    # Serialize this decision with permission writes before reading the current
+    # set. ``set_role_permissions`` applies its holder invariant to the actual
+    # resulting permissions under the same row lock.
+    role = (
+        await session.execute(
+            select(RoleORM).where(RoleORM.id == role_id).with_for_update()
+        )
+    ).scalar_one_or_none()
     if role is None:
         raise RolePermissionError(404, "Role not found")
     if role_id in BUILTIN_ROLE_IDS or role.is_builtin:
@@ -171,13 +192,21 @@ async def replace_identity_permissions(
             )
     held = await get_role_permissions(session, role_id=role_id)
     kept = {p for p in held if parse_permission(p).domain not in IDENTITY_PERMISSION_DOMAINS}
+    resulting = frozenset(kept | set(permissions))
+    if is_privileged_principal(held) or is_privileged_principal(resulting):
+        try:
+            require_permission(caller, "privilegedaccess.readwrite", None)
+        except HTTPException as exc:
+            raise RolePermissionError(
+                exc.status_code, "Global privileged access is required to edit a privileged role"
+            ) from None
     before = sorted(held)
-    await set_role_permissions(session, role_id=role_id, permissions=frozenset(kept | set(permissions)))
+    await set_role_permissions(session, role_id=role_id, permissions=resulting)
     await emit_audit(
         session,
         "role.permissions_updated",
         resource_type="role",
         resource_id=role_id,
-        details={"before": before, "after": sorted(kept | set(permissions))},
+        details={"before": before, "after": sorted(resulting)},
     )
     return await describe_role_permissions(session, role_id=role_id)

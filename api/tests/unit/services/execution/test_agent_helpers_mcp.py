@@ -58,11 +58,13 @@ async def _make_org(db: AsyncSession) -> Organization:
     return org
 
 
-async def _make_provider(db: AsyncSession) -> OAuthProvider:
+async def _make_provider(
+    db: AsyncSession, *, flow: str = "client_credentials"
+) -> OAuthProvider:
     provider = OAuthProvider(
         id=uuid4(),
         provider_name=f"mcp-prov-{uuid4().hex[:8]}",
-        oauth_flow_type="client_credentials",
+        oauth_flow_type=flow,
         client_id="cid",
         encrypted_client_secret=encrypt_secret("csec").encode(),
         token_url="https://example.com/oauth/token",
@@ -72,11 +74,14 @@ async def _make_provider(db: AsyncSession) -> OAuthProvider:
     return provider
 
 
-async def _make_server(db: AsyncSession) -> MCPServer:
+async def _make_server(
+    db: AsyncSession, provider: OAuthProvider | None = None
+) -> MCPServer:
     server = MCPServer(
         id=uuid4(),
         name=f"mcp-srv-{uuid4().hex[:8]}",
         server_url="https://vendor.example.com/mcp",
+        oauth_provider_id=provider.id if provider is not None else None,
         is_active=True,
     )
     db.add(server)
@@ -114,6 +119,10 @@ async def _make_connection(
     available_to_autonomous: bool = False,
     service_oauth_token: OAuthToken | None = None,
 ) -> MCPConnection:
+    if service_oauth_token is not None:
+        assert server.oauth_provider_id == service_oauth_token.provider_id
+        service_oauth_token.organization_id = org.id
+
     conn = MCPConnection(
         id=uuid4(),
         server_id=server.id,
@@ -256,10 +265,10 @@ async def test_chat_includes_all_enabled_mcp_tools(
     ``mcp_connections`` — multiple connections per (server, org) is
     explicitly rejected by the schema."""
     org = await _make_org(db_session)
-    provider = await _make_provider(db_session)
-    server_chat = await _make_server(db_session)
-    server_both = await _make_server(db_session)
-    server_auto = await _make_server(db_session)
+    provider = await _make_provider(db_session, flow="authorization_code")
+    server_chat = await _make_server(db_session, provider)
+    server_both = await _make_server(db_session, provider)
+    server_auto = await _make_server(db_session, provider)
 
     # Connection 1: chat-flag only, no service token. Three tools — one
     # enabled-with-schema, one enabled-without-schema, one disabled.
@@ -390,10 +399,10 @@ async def test_autonomous_filters_to_flag_and_healthy_service_token(
     """
     org = await _make_org(db_session)
     provider = await _make_provider(db_session)
-    server_healthy = await _make_server(db_session)
-    server_no_token = await _make_server(db_session)
-    server_chat = await _make_server(db_session)
-    server_expired = await _make_server(db_session)
+    server_healthy = await _make_server(db_session, provider)
+    server_no_token = await _make_server(db_session, provider)
+    server_chat = await _make_server(db_session, provider)
+    server_expired = await _make_server(db_session, provider)
 
     # 1. Healthy autonomous connection
     healthy_token = await _make_oauth_token(db_session, provider)
@@ -486,7 +495,7 @@ async def test_autonomous_includes_tool_with_recently_expired_token(
     """
     org = await _make_org(db_session)
     provider = await _make_provider(db_session)
-    server = await _make_server(db_session)
+    server = await _make_server(db_session, provider)
 
     just_expired = await _make_oauth_token(
         db_session,

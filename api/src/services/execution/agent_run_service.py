@@ -15,6 +15,7 @@ from src.core.database import get_session_factory
 from src.core.log_safety import log_safe
 from src.jobs.rabbitmq import publish_message
 from src.models.orm.agent_runs import AgentRun
+from src.services.durable_impersonation import current_durable_impersonation
 
 if TYPE_CHECKING:
     from shared.run_lineage import RunLineage
@@ -23,6 +24,23 @@ logger = logging.getLogger(__name__)
 
 QUEUE_NAME = "agent-runs"
 REDIS_PREFIX = "bifrost:agent_run"
+
+
+def _acting_user_id(
+    *,
+    caller_user_id: str | None,
+    lineage: RunLineage | None,
+    run_as_user_id: UUID | None,
+) -> UUID | None:
+    """Select the durable actor once, without consulting queued context."""
+    if run_as_user_id is not None:
+        return run_as_user_id
+    if caller_user_id is not None:
+        try:
+            return UUID(caller_user_id)
+        except ValueError:
+            pass
+    return lineage.run_user_id if lineage is not None else None
 
 
 async def enqueue_agent_run(
@@ -54,7 +72,8 @@ async def enqueue_agent_run(
     its run user. None when it can't be known.
 
     ``run_as_user_id`` is the authorized user the run acts as when it isn't
-    the caller. Only the row records it; the queued context stays the same.
+    the caller. The selected actor is recorded on the row; queued context is
+    never an authority source.
 
     The database row is committed before the queue message is published so a
     returned run ID is immediately queryable. If Redis or RabbitMQ rejects the
@@ -65,6 +84,12 @@ async def enqueue_agent_run(
         run_id = str(uuid4())
 
     run_uuid = UUID(run_id)
+    acting_user_id = _acting_user_id(
+        caller_user_id=caller_user_id,
+        lineage=lineage,
+        run_as_user_id=run_as_user_id,
+    )
+    impersonation = current_durable_impersonation()
     session_factory = get_session_factory()
     async with session_factory() as db:
         db.add(
@@ -86,6 +111,8 @@ async def enqueue_agent_run(
                 caller_name=caller_name,
                 run_user_id=lineage.run_user_id if lineage else None,
                 run_as_user_id=run_as_user_id,
+                acting_user_id=acting_user_id,
+                **impersonation.columns(),
             )
         )
         await db.commit()

@@ -1,306 +1,89 @@
-"""Unit tests for shared.scope_resolver.
+"""SDK scopes select only targets in the original user's reach."""
 
-The resolver is the single security boundary for "which org_id does this
-operation run against?" Tests here are the contract — they must assert the
-four rules unambiguously, including cross-tenant rejection and the
-unspecified-vs-explicit-None distinction.
-"""
-
-from __future__ import annotations
-
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
-from shared.scope_resolver import (
-    UNSET,
-    ScopeNotAllowed,
-    resolve_effective_scope,
-)
+from shared import access_checks
+from shared.builtin_roles import USER_BASE_PERMISSIONS, USER_ROLE_ID
+from shared.scope_resolver import ScopeNotAllowed, UNSET, resolve_effective_scope, shared_read_organization
+from src.core.principal import UserPrincipal
+from src.services.authorization.context import AuthorizationContext, Boundary, BoundaryKind, RoleGrant
+from src.services.authorization.enforce import Caller
+from src.services.authorization.explain import RunUser
+from src.services.authorization.runtime import RuntimeAuthority
+
+ORG_A = uuid4()
+ORG_B = uuid4()
 
 
-ORG_A = UUID("11111111-1111-1111-1111-111111111111")
-ORG_B = UUID("22222222-2222-2222-2222-222222222222")
-
-
-# ---------------------------------------------------------------------------
-# Rule 1: UNSET → caller's default org. Always allowed.
-# ---------------------------------------------------------------------------
-
-
-class TestUnsetReturnsCallerDefault:
-    def test_org_user_unset_returns_their_org(self) -> None:
-        result = resolve_effective_scope(
-            caller_org_id=ORG_A,
-            is_platform_admin=False,
-            requested_scope=UNSET,
+def _caller(*, home=ORG_A, runtime_org=None, placed_at_b=False, managed=False):
+    grants = ()
+    if placed_at_b or managed:
+        boundary = Boundary(BoundaryKind.MANAGED_ORGANIZATIONS) if managed else Boundary(BoundaryKind.ORGANIZATION, ORG_B)
+        grants = (RoleGrant(uuid4(), frozenset(), (boundary,)),)
+    user_id = uuid4()
+    context = AuthorizationContext(
+        user_id=user_id, home_organization_id=home, base_role_id=USER_ROLE_ID,
+        base_permissions=USER_BASE_PERMISSIONS, is_external=False, role_grants=grants,
+    )
+    principal = UserPrincipal(user_id=user_id, email="scope@example.test", organization_id=home)
+    if runtime_org is not None:
+        principal.runtime_authority = RuntimeAuthority(
+            kind="workflow_execution", credential_id=uuid4(),
+            run_user=RunUser(user_id, context, None, True), powers=None,
+            acting_user_id=user_id, organization_id=runtime_org, workflow_id=None,
+            started_by_user_id=user_id, root_execution_id=uuid4(),
         )
-        assert result == ORG_A
-
-    def test_platform_admin_unset_returns_their_org(self) -> None:
-        result = resolve_effective_scope(
-            caller_org_id=ORG_A,
-            is_platform_admin=True,
-            requested_scope=UNSET,
-        )
-        assert result == ORG_A
-
-    def test_admin_with_no_org_unset_returns_none(self) -> None:
-        # Platform admin not tied to any org. UNSET means "use my default,"
-        # and the default is "no org" — that's global.
-        result = resolve_effective_scope(
-            caller_org_id=None,
-            is_platform_admin=True,
-            requested_scope=UNSET,
-        )
-        assert result is None
-
-    def test_unset_is_default_argument(self) -> None:
-        # Calling without requested_scope keyword should behave as UNSET.
-        result = resolve_effective_scope(
-            caller_org_id=ORG_A,
-            is_platform_admin=False,
-        )
-        assert result == ORG_A
+    return Caller(principal, context)
 
 
-# ---------------------------------------------------------------------------
-# Rule 2: explicit None → global. Platform admin only.
-# ---------------------------------------------------------------------------
+def test_unset_uses_human_home_when_it_is_in_reach() -> None:
+    assert resolve_effective_scope(caller=_caller(), requested_scope=UNSET) == ORG_A
 
 
-class TestExplicitGlobalRequiresPlatformAdmin:
-    def test_platform_admin_can_request_global(self) -> None:
-        result = resolve_effective_scope(
-            caller_org_id=ORG_A,
-            is_platform_admin=True,
-            requested_scope=None,
-        )
-        assert result is None
+def test_unset_uses_typed_runtime_target() -> None:
+    assert resolve_effective_scope(caller=_caller(runtime_org=ORG_B, placed_at_b=True), requested_scope=UNSET) == ORG_B
 
-    def test_org_user_cannot_request_global(self) -> None:
+
+def test_explicit_global_is_a_reachable_target() -> None:
+    assert resolve_effective_scope(caller=_caller(), requested_scope=None) is None
+
+
+def test_other_organization_outside_reach_is_refused_and_recorded_as_enforced() -> None:
+    caller = _caller()
+    token = access_checks.collect_person(caller.principal.user_id)
+    try:
         with pytest.raises(ScopeNotAllowed):
-            resolve_effective_scope(
-                caller_org_id=ORG_A,
-                is_platform_admin=False,
-                requested_scope=None,
-            )
-
-    def test_org_user_with_no_org_cannot_request_global(self) -> None:
-        # A non-admin caller with no org is anomalous but should still fail
-        # closed on an explicit global request.
-        with pytest.raises(ScopeNotAllowed):
-            resolve_effective_scope(
-                caller_org_id=None,
-                is_platform_admin=False,
-                requested_scope=None,
-            )
+            resolve_effective_scope(caller=caller, requested_scope=ORG_B)
+        collector = access_checks.current()
+        assert collector is not None
+        [note] = collector.notes
+        assert note.facts["enforced"] is True
+        assert note.decision is not None and note.decision[1].outcome == "failure"
+        assert note.target == ORG_B
+    finally:
+        access_checks.stop_collecting(token)
 
 
-# ---------------------------------------------------------------------------
-# Rule 3: requested == caller's own org → always allowed.
-# ---------------------------------------------------------------------------
+def test_managed_reach_selects_customer_scope_without_provider_bypass() -> None:
+    assert resolve_effective_scope(caller=_caller(managed=True), requested_scope=ORG_B) == ORG_B
 
 
-class TestCallerOwnOrgAlwaysAllowed:
-    def test_org_user_can_request_own_org(self) -> None:
-        result = resolve_effective_scope(
-            caller_org_id=ORG_A,
-            is_platform_admin=False,
-            requested_scope=ORG_A,
-        )
-        assert result == ORG_A
-
-    def test_platform_admin_can_request_own_org(self) -> None:
-        result = resolve_effective_scope(
-            caller_org_id=ORG_A,
-            is_platform_admin=True,
-            requested_scope=ORG_A,
-        )
-        assert result == ORG_A
+def test_unset_is_singleton_and_falsy() -> None:
+    assert not UNSET
+    assert repr(UNSET) == "UNSET"
 
 
-# ---------------------------------------------------------------------------
-# Rule 4: requested == some OTHER org → platform admin only.
-# This is the cross-tenant security boundary.
-# ---------------------------------------------------------------------------
+def test_shared_global_read_uses_selected_organization_but_explicit_global_does_not() -> None:
+    caller = _caller()
+    assert shared_read_organization(caller, None) == ORG_A
+    assert shared_read_organization(caller, None, selected_organization_id=ORG_B) == ORG_B
+    assert shared_read_organization(caller, None, selected_organization_id=None) is None
+    assert shared_read_organization(caller, ORG_B) == ORG_B
 
 
-class TestCrossTenantRequiresPlatformAdmin:
-    def test_platform_admin_can_request_other_org(self) -> None:
-        result = resolve_effective_scope(
-            caller_org_id=ORG_A,
-            is_platform_admin=True,
-            requested_scope=ORG_B,
-        )
-        assert result == ORG_B
-
-    def test_org_user_cannot_request_other_org(self) -> None:
-        # The core cross-tenant guard. If this test ever passes silently,
-        # the resolver has a critical bug.
-        with pytest.raises(ScopeNotAllowed):
-            resolve_effective_scope(
-                caller_org_id=ORG_A,
-                is_platform_admin=False,
-                requested_scope=ORG_B,
-            )
-
-    def test_org_user_with_no_org_cannot_request_any_org(self) -> None:
-        with pytest.raises(ScopeNotAllowed):
-            resolve_effective_scope(
-                caller_org_id=None,
-                is_platform_admin=False,
-                requested_scope=ORG_A,
-            )
-
-    def test_admin_with_no_org_can_request_any_org(self) -> None:
-        result = resolve_effective_scope(
-            caller_org_id=None,
-            is_platform_admin=True,
-            requested_scope=ORG_A,
-        )
-        assert result == ORG_A
-
-
-# ---------------------------------------------------------------------------
-# Bypass is TWO independent flags: is_platform_admin OR is_provider_org.
-# A provider-org member who is NOT a platform admin gets the same cross-org /
-# global reach. (repositories/README.md — "Why two independent bypass flags?")
-# ---------------------------------------------------------------------------
-
-
-class TestProviderOrgBypassIsIndependent:
-    def test_provider_org_member_can_request_global(self) -> None:
-        # Not a platform admin, but a provider-org member: bypass granted.
-        result = resolve_effective_scope(
-            caller_org_id=ORG_A,
-            is_platform_admin=False,
-            is_provider_org=True,
-            requested_scope=None,
-        )
-        assert result is None
-
-    def test_provider_org_member_can_request_other_org(self) -> None:
-        result = resolve_effective_scope(
-            caller_org_id=ORG_A,
-            is_platform_admin=False,
-            is_provider_org=True,
-            requested_scope=ORG_B,
-        )
-        assert result == ORG_B
-
-    def test_neither_flag_still_pins_to_own_org(self) -> None:
-        # Plain org user (neither bypass flag) cannot reach another org.
-        with pytest.raises(ScopeNotAllowed):
-            resolve_effective_scope(
-                caller_org_id=ORG_A,
-                is_platform_admin=False,
-                is_provider_org=False,
-                requested_scope=ORG_B,
-            )
-
-    def test_provider_org_member_unset_still_returns_own_org(self) -> None:
-        # Bypass widens what you MAY request; it does not change the UNSET
-        # default, which is still the caller's own org.
-        result = resolve_effective_scope(
-            caller_org_id=ORG_A,
-            is_platform_admin=False,
-            is_provider_org=True,
-            requested_scope=UNSET,
-        )
-        assert result == ORG_A
-
-
-# ---------------------------------------------------------------------------
-# UNSET vs explicit None must NOT be collapsed.
-#
-# This is the bug class this resolver exists to prevent: adapters must not
-# treat "didn't pass scope" and "passed scope=null" the same way, because they
-# have different security semantics.
-# ---------------------------------------------------------------------------
-
-
-class TestUnsetAndExplicitNoneAreDistinct:
-    def test_org_user_unset_succeeds_but_explicit_none_fails(self) -> None:
-        # Same caller, two requests. UNSET → their org. None → ScopeNotAllowed.
-        unset_result = resolve_effective_scope(
-            caller_org_id=ORG_A,
-            is_platform_admin=False,
-            requested_scope=UNSET,
-        )
-        assert unset_result == ORG_A
-
-        with pytest.raises(ScopeNotAllowed):
-            resolve_effective_scope(
-                caller_org_id=ORG_A,
-                is_platform_admin=False,
-                requested_scope=None,
-            )
-
-    def test_admin_no_org_unset_returns_none_explicit_none_returns_none(
-        self,
-    ) -> None:
-        # For platform admins without an org, both paths return None, but
-        # for DIFFERENT reasons: UNSET because their default is None;
-        # explicit None because they were authorized to ask for global.
-        unset_result = resolve_effective_scope(
-            caller_org_id=None,
-            is_platform_admin=True,
-            requested_scope=UNSET,
-        )
-        explicit_result = resolve_effective_scope(
-            caller_org_id=None,
-            is_platform_admin=True,
-            requested_scope=None,
-        )
-        assert unset_result is None
-        assert explicit_result is None
-
-
-# ---------------------------------------------------------------------------
-# Defense-in-depth: a random UUID should not be coerced into something benign.
-# The resolver fails closed on any unauthorized request.
-# ---------------------------------------------------------------------------
-
-
-class TestNeverSilentlyCoerces:
-    def test_unauthorized_request_raises_not_returns_default(self) -> None:
-        # If a non-admin asks for another org, we must NOT silently return
-        # caller_org_id as a "safe default." That would hide the breach.
-        random_other_org = uuid4()
-        with pytest.raises(ScopeNotAllowed):
-            resolve_effective_scope(
-                caller_org_id=ORG_A,
-                is_platform_admin=False,
-                requested_scope=random_other_org,
-            )
-
-    def test_unauthorized_global_raises_not_returns_caller_org(self) -> None:
-        with pytest.raises(ScopeNotAllowed):
-            resolve_effective_scope(
-                caller_org_id=ORG_A,
-                is_platform_admin=False,
-                requested_scope=None,
-            )
-
-
-# ---------------------------------------------------------------------------
-# UNSET sentinel sanity checks.
-# ---------------------------------------------------------------------------
-
-
-class TestUnsetSentinel:
-    def test_unset_is_falsy(self) -> None:
-        # Falsy so `if requested_scope:` doesn't accidentally treat UNSET as
-        # "present." This is belt-and-suspenders — the resolver uses
-        # isinstance, not truthiness — but the sentinel's __bool__ exists
-        # specifically to prevent foot-guns elsewhere.
-        assert not UNSET
-
-    def test_unset_is_singleton(self) -> None:
-        from shared.scope_resolver import _Unset
-
-        assert _Unset() is UNSET
-
-    def test_unset_repr(self) -> None:
-        assert repr(UNSET) == "UNSET"
+def test_runtime_shared_read_uses_runtime_scope_without_changing_original_home() -> None:
+    caller = _caller(runtime_org=ORG_B, placed_at_b=True)
+    assert shared_read_organization(caller, None) == ORG_B
+    assert caller.ctx.home_organization_id == ORG_A

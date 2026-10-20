@@ -19,6 +19,7 @@ from src.services.role_permissions import (
     set_role_permissions,
     validate_permission,
 )
+from tests.helpers.authorization import admin_caller
 
 
 def test_validate_permission_accepts_known_domain_and_action():
@@ -144,7 +145,7 @@ async def test_a_custom_role_cannot_be_given_the_wildcard(db_session):
     assert exc_info.value.status_code == 422
     with pytest.raises(RolePermissionError) as exc_info:
         await replace_identity_permissions(
-            db_session, role_id=role.id, permissions=[WILDCARD_PERMISSION]
+            db_session, caller=admin_caller(), role_id=role.id, permissions=[WILDCARD_PERMISSION]
         )
     assert exc_info.value.status_code == 422
     assert await get_role_permissions(db_session, role_id=role.id) == frozenset()
@@ -174,7 +175,7 @@ async def test_impersonate_users_is_editable_on_a_custom_role_and_flagged_privil
     role = await _seed_role(db_session)
 
     described = await replace_identity_permissions(
-        db_session, role_id=role.id, permissions=["users.impersonate"]
+        db_session, caller=admin_caller(), role_id=role.id, permissions=["users.impersonate"]
     )
 
     held = {item.permission: item for item in described.permissions}

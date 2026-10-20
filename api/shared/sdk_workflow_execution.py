@@ -39,10 +39,9 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared import access_checks
-from shared.execution_visibility import is_own_execution
 from shared.run_lineage import RunLineage, lineage_columns, principal_lineage
-from src.core.org_filter import resolve_target_org
 from src.core.principal import UserPrincipal
+from src.services.durable_impersonation import current_durable_impersonation
 
 if TYPE_CHECKING:
     from src.models import WorkflowExecutionRequest, WorkflowExecutionResponse
@@ -125,6 +124,7 @@ async def insert_scheduled_execution(
             api_key_id=api_key_id,
             execution_context=execution_context,
             **lineage_columns(lineage.bound(exec_id) if lineage else None),
+            **current_durable_impersonation().columns(),
         )
     )
     await db.commit()
@@ -136,6 +136,7 @@ def _server_caller_context(
     context_solution_id: str | None,
     context_app_id: str | None,
     context_caller_solution_id: str | None,
+    context_dev_solution_id: str | None = None,
 ) -> SimpleNamespace:
     """Trusted request-context shim for Solution scope derivation.
 
@@ -148,29 +149,70 @@ def _server_caller_context(
         solution_id=context_solution_id,
         app_id=context_app_id,
         caller_solution_id=context_caller_solution_id,
+        dev_solution_id=context_dev_solution_id,
     )
 
 
-async def _note_entry(session: AsyncSession, principal: UserPrincipal, workflow: Any) -> None:
-    """Report-only: an agent run nobody started opens the workflow as its own user.
+async def _verified_app_embed_capability(
+    session: AsyncSession,
+    principal: UserPrincipal,
+    request: WorkflowExecutionRequest,
+) -> Any | None:
+    """Load the app resource a signed embed token is bound to.
 
-    Today the MCP bridge opens it as the system account; the model opens it
-    as the agent run's user (``principal.run_user_id``), like a person.
-    Children of a run (engine tokens) do not consult workflow access.
+    App embeds are resource capabilities, rather than user-role sessions.  The
+    current database row is authoritative: claims only identify the app and
+    its original scope.  Request parent identifiers may describe a normal SDK
+    caller, but cannot attest an embed parent.
     """
-    if access_checks.current() is None or principal.engine_execution_id is not None:
-        return
-    if principal.run_user_id is None or principal.run_user_id == principal.user_id:
-        return
-    from src.repositories import WorkflowRepository
-    from src.services.access_check_entry import run_user_may_open
-
+    if not principal.embed:
+        return None
+    if principal.embed_kind != "app" or principal.app_id is None:
+        raise SdkWorkflowExecutionError(403, "Invalid app embed session")
     try:
-        allowed = await run_user_may_open(session, WorkflowRepository, principal.run_user_id, workflow.id)
-    except Exception as exc:
-        access_checks.note_failure("entry", workflow.organization_id, exc)
-        return
-    access_checks.note("entry", workflow.organization_id, allowed=allowed, subject=f"workflow:{workflow.id}")
+        app_id = UUID(principal.app_id)
+    except ValueError:
+        raise SdkWorkflowExecutionError(403, "Invalid app embed session") from None
+
+    from src.models.orm.applications import Application
+    from src.services.solution_scope import get_active_solution
+
+    app = await session.get(Application, app_id)
+    if app is None:
+        raise SdkWorkflowExecutionError(404, "Application not found")
+    if app.organization_id != principal.organization_id:
+        raise SdkWorkflowExecutionError(403, "App embed scope is invalid")
+
+    if request.code is not None or request.run_as is not None:
+        raise SdkWorkflowExecutionError(403, "App embeds may only execute workflows")
+
+    # A signed app capability is its sole parent attestation.  A body or
+    # transport parent can only repeat the signed app's own identity; it can
+    # never select a form, another app, or another install.
+    if request.form_id is not None:
+        raise SdkWorkflowExecutionError(404, "Workflow not found")
+    if request.app_id is not None and request.app_id != str(app.id):
+        raise SdkWorkflowExecutionError(404, "Workflow not found")
+    if (
+        request.solution_id is not None
+        and request.solution_id != str(app.solution_id)
+    ):
+        raise SdkWorkflowExecutionError(404, "Workflow not found")
+    if request.caller_solution_id is not None:
+        raise SdkWorkflowExecutionError(404, "Workflow not found")
+    if request.org_id is not None:
+        try:
+            requested_org_id = UUID(request.org_id)
+        except ValueError:
+            raise SdkWorkflowExecutionError(404, "Workflow not found") from None
+        if requested_org_id != app.organization_id:
+            raise SdkWorkflowExecutionError(404, "Workflow not found")
+
+    if app.solution_id is not None:
+        solution = await get_active_solution(session, app.solution_id)
+        if solution is None or solution.organization_id != app.organization_id:
+            raise SdkWorkflowExecutionError(404, "Application not found")
+    return app
 
 
 async def execute_sdk_workflow(
@@ -182,6 +224,7 @@ async def execute_sdk_workflow(
     context_solution_id: str | None = None,
     context_app_id: str | None = None,
     context_caller_solution_id: str | None = None,
+    context_dev_solution_id: str | None = None,
 ) -> WorkflowExecutionResponse:
     """Execute a workflow, data provider, or inline script.
 
@@ -212,28 +255,54 @@ async def execute_sdk_workflow(
         solution_allows_global,
     )
 
-    # Resolve org scope for workflow lookup — superusers/provider-org members
-    # may pass org_id to search that org; regular users always use their own.
-    # ValueError propagates for the global 422 handler (pre-dispatch, as
-    # before extraction).
-    lookup_org_id = resolve_target_org(
-        user=principal,
-        scope=request.org_id,
-        default_org_id=caller_org_id,
-    )
+    app_embed = await _verified_app_embed_capability(session, principal, request)
+    if app_embed is not None:
+        signed_solution_id = (
+            str(app_embed.solution_id) if app_embed.solution_id is not None else None
+        )
+        if (
+            context_app_id not in (None, str(app_embed.id))
+            or context_solution_id not in (None, signed_solution_id)
+            or context_caller_solution_id is not None
+            or context_dev_solution_id is not None
+        ):
+            # These transport fields are request context for ordinary SDK
+            # callers.  An embed cannot use one to replace its signed parent.
+            raise SdkWorkflowExecutionError(404, "Workflow not found")
+    caller = None
+    if app_embed is not None:
+        # The signed app's persisted scope is exact, including Global.  Do
+        # not inherit the request context or a synthetic embed identity.
+        lookup_org_id = app_embed.organization_id
+        workflow_repo = WorkflowRepository(
+            session=session,
+            org_id=lookup_org_id,
+            user_id=None,
+            is_superuser=False,
+            is_external=False,
+        )
+    else:
+        from shared.scope_resolver import ScopeNotAllowed, UNSET, resolve_effective_scope
+        from src.services.authorization.enforce import load_caller
 
-    workflow_repo = WorkflowRepository(
-        session=session,
-        org_id=lookup_org_id,
-        user_id=principal.user_id,
-        is_superuser=principal.is_superuser,
-        # Embed principals carry is_external=True (OPEN-D: external-equivalent
-        # for the config/knowledge/table data gates), but workflow execution
-        # is the HMAC-pre-authorized app function-call channel — deliberately
-        # allowlisted by EmbedScopeMiddleware and execution-scoped by jti.
-        # Keep the pre-OPEN-D resolution semantics for embed sessions here.
-        is_external=principal.is_external and not principal.embed,
-    )
+        caller = await load_caller(session, principal)
+        requested_scope = UUID(request.org_id) if request.org_id else UNSET
+        try:
+            lookup_org_id = resolve_effective_scope(
+                caller=caller, requested_scope=requested_scope
+            )
+        except ScopeNotAllowed as exc:
+            raise SdkWorkflowExecutionError(403, str(exc)) from None
+
+        # REST entry evaluates the original run user's workflow sharing. Children
+        # already passed their parent resource gate, so retain their established
+        # no-second-ACL behavior while named permissions and reach remain enforced.
+        workflow_repo = WorkflowRepository(
+            session=session,
+            org_id=lookup_org_id,
+            is_external=principal.is_external and not principal.embed,
+            caller=caller,
+        )
 
     # A Solution caller's path::fn ref carries no install id (it can't know the
     # per-install uuid5). Derive the install scope from the caller so a path ref
@@ -243,24 +312,34 @@ async def execute_sdk_workflow(
     # An explicitly denied/sealed target raises SolutionInboundDenied — 404
     # WITHOUT shared fallback (a denied install must never execute a loose
     # same-path workflow).
-    server_ctx = _server_caller_context(
-        principal, context_solution_id, context_app_id, context_caller_solution_id
-    )
-    try:
-        solution_scope = await derive_execution_solution_scope(
-            session,
-            server_ctx,
-            solution_id=request.solution_id,
-            form_id=request.form_id,
-            app_id=request.app_id,
-            target_org_id=lookup_org_id,
-            caller_solution_id=request.caller_solution_id,
+    if app_embed is not None:
+        # Use only the current signed app row as the parent capability.  It is
+        # not a request attestation and therefore does not take an inbound
+        # cross-install path.
+        solution_scope = app_embed.solution_id
+    else:
+        server_ctx = _server_caller_context(
+            principal,
+            context_solution_id,
+            context_app_id,
+            context_caller_solution_id,
+            context_dev_solution_id,
         )
-    except SolutionInboundDenied:
-        raise SdkWorkflowExecutionError(
-            404,
-            {"message": f"Workflow '{request.workflow_id}' not found"},
-        ) from None
+        try:
+            solution_scope = await derive_execution_solution_scope(
+                session,
+                server_ctx,
+                solution_id=request.solution_id,
+                form_id=request.form_id,
+                app_id=request.app_id,
+                target_org_id=lookup_org_id,
+                caller_solution_id=request.caller_solution_id,
+            )
+        except SolutionInboundDenied:
+            raise SdkWorkflowExecutionError(
+                404,
+                {"message": f"Workflow '{request.workflow_id}' not found"},
+            ) from None
     allow_shared_workflow = (
         solution_scope is None
         or await solution_allows_global(session, solution_scope)
@@ -294,15 +373,9 @@ async def execute_sdk_workflow(
                 },
             )
 
-    # Authorization check
-    if request.code:
-        # Inline code execution requires platform admin
-        if not principal.is_superuser:
-            raise SdkWorkflowExecutionError(
-                403,
-                "Inline code execution requires platform admin access",
-            )
-    elif request.workflow_id:
+    # REST workflow entry retains its resource-level access check. Inline
+    # source has no workflow object; its named permissions are enforced below.
+    if not request.code and request.workflow_id:
         # UUID resolution already goes through repository.get(), including its
         # org and role access checks. Portable name/path refs use specialized
         # resolution and still need the explicit access assertion below.
@@ -315,20 +388,10 @@ async def execute_sdk_workflow(
                     403,
                     "Access denied to execute this workflow",
                 ) from None
-    else:
+    elif not request.code:
         raise SdkWorkflowExecutionError(
             400,
             "Either workflow_id or code must be provided",
-        )
-
-    if workflow is not None:
-        await _note_entry(session, principal, workflow)
-
-    # The org_id override stays platform-admin only.
-    if request.org_id and not principal.is_superuser:
-        raise SdkWorkflowExecutionError(
-            403,
-            "org_id and run_as overrides require platform admin",
         )
 
     # The acting user: the caller, or the run_as user when the caller may act as them.
@@ -356,32 +419,72 @@ async def execute_sdk_workflow(
 
     # Who the run is for: the authenticated caller, never the run_as user.
     lineage = await principal_lineage(session, principal)
+    embed_shared_ctx = None
+    if app_embed is not None:
+        if lineage is None:
+            raise SdkWorkflowExecutionError(500, "App embed execution has no identity")
+        from shared.unattended_execution import create_unattended_context
+
+        # Embed tokens identify a capability, never an actor.  Effects and
+        # scheduled audit fields therefore use the signed app scope's default
+        # identity, selected by the single lineage computation above.
+        embed_shared_ctx = await create_unattended_context(
+            session,
+            lineage=lineage,
+            execution_id=str(uuid4()),
+            org_id=str(lookup_org_id) if lookup_org_id else None,
+            is_function_key=False,
+        )
+        embed_shared_ctx.solution_id = (
+            str(app_embed.solution_id) if app_embed.solution_id is not None else None
+        )
+        embed_shared_ctx.embed = principal.verified_context or {}
+        exec_user_id = embed_shared_ctx.user_id
+        exec_user_name = embed_shared_ctx.name
+        exec_user_email = embed_shared_ctx.email
+        exec_is_admin = embed_shared_ctx.is_platform_admin
 
     # Determine execution org_id
     # Priority order:
-    # 0. Explicit org_id override (admin only, checked above)
+    # 0. Explicit org_id override, already constrained to caller reach.
     # 1. Org-scoped workflow: use workflow's organization_id (enforces workflow isolation)
     # 2. Global workflow / inline code: use caller's org context (caller_org_id).
     #    Platform admins and provider-org members targeting a non-default
     #    org must pass request.org_id explicitly per call.
     if request.org_id:
-        execution_org_id = UUID(request.org_id)
+        execution_org_id = lookup_org_id
         logger.info(f"Using explicit org_id override: {execution_org_id}")
     elif workflow and workflow.organization_id:
         # Org-scoped workflow - execution MUST use workflow's org for data isolation
         execution_org_id = workflow.organization_id
         logger.info(f"Using workflow's organization: {execution_org_id}")
     else:
-        execution_org_id = caller_org_id
+        execution_org_id = lookup_org_id
+    if app_embed is None:
+        from src.services.authorization.enforce import (
+            PermissionDenied,
+            require_named_permission,
+            user_reach,
+        )
+
+        assert caller is not None
+        if not user_reach(caller).covers(execution_org_id):
+            raise SdkWorkflowExecutionError(
+                403, "Execution organization is outside the caller's organization reach"
+            )
+        try:
+            require_named_permission(caller, "workflows.execute", execution_org_id)
+            if request.code:
+                require_named_permission(caller, "repository.readwrite", execution_org_id)
+        except PermissionDenied as exc:
+            raise SdkWorkflowExecutionError(exc.status_code, exc.detail) from None
     access_checks.note("child_run", execution_org_id)
-    if request.code:
-        access_checks.note_power("repository.readwrite", execution_org_id, subject="inline_code")
     # The execution organization is already the workflow's, or the caller's
     # for a Global workflow or inline code.
     access_checks.note_launch(
         "workflows.execute",
         execution_org_id,
-        caller_org_id,
+        lookup_org_id,
         subject="inline_code" if workflow is None else f"workflow:{workflow.id}",
     )
 
@@ -438,24 +541,27 @@ async def execute_sdk_workflow(
         run_workflow,
     )
 
-    org = None
-    if execution_org_id:
-        org = Organization(id=str(execution_org_id), name="", is_active=True)
+    if embed_shared_ctx is not None:
+        shared_ctx = embed_shared_ctx
+    else:
+        org = None
+        if execution_org_id:
+            org = Organization(id=str(execution_org_id), name="", is_active=True)
 
-    logger.info(
-        f"Building execution context: org_id={execution_org_id}, user={exec_user_id}, is_superuser={exec_is_admin}, scope={'GLOBAL' if not execution_org_id else str(execution_org_id)}"
-    )
+        logger.info(
+            f"Building execution context: org_id={execution_org_id}, user={exec_user_id}, is_superuser={exec_is_admin}, scope={'GLOBAL' if not execution_org_id else str(execution_org_id)}"
+        )
 
-    shared_ctx = SharedContext(
-        user_id=exec_user_id,
-        name=exec_user_name,
-        email=exec_user_email,
-        scope=str(execution_org_id) if execution_org_id else "GLOBAL",
-        organization=org,
-        is_platform_admin=exec_is_admin,
-        is_function_key=False,
-        execution_id=str(uuid4()),
-    )
+        shared_ctx = SharedContext(
+            user_id=exec_user_id,
+            name=exec_user_name,
+            email=exec_user_email,
+            scope=str(execution_org_id) if execution_org_id else "GLOBAL",
+            organization=org,
+            is_platform_admin=exec_is_admin,
+            is_function_key=False,
+            execution_id=str(uuid4()),
+        )
 
     try:
         if request.code:
@@ -473,26 +579,41 @@ async def execute_sdk_workflow(
             # request (e.g. manual "Execute" from the workflows page) expects a
             # tracked execution row to navigate to — returning a synthetic
             # execution_id would 404 the history detail page.
-            if request.transient and workflow.cache_ttl_seconds > 0:
-                from src.core.cache import get_cached_data_provider
+            if request.transient and lineage is not None:
+                from shared.sdk_provider_cache import ProviderCacheScopeError, build_provider_cache_scope
+                from src.core.cache.data_provider_cache import get_cached_result
 
-                cached_result = await get_cached_data_provider(
-                    str(execution_org_id) if execution_org_id else None,
-                    workflow.name,
-                    request.input_data,
-                )
-                if cached_result:
-                    from src.models import WorkflowExecutionResponse
-
-                    return WorkflowExecutionResponse(
-                        execution_id=shared_ctx.execution_id,
-                        workflow_id=str(workflow.id),
-                        workflow_name=workflow.name,
-                        status=ExecutionStatus.SUCCESS,
-                        result=cached_result.get("data"),
-                        duration_ms=0,
-                        is_transient=True,
+                try:
+                    cache_scope = await build_provider_cache_scope(
+                        session,
+                        workflow=workflow,
+                        organization_id=execution_org_id,
+                        run_user_id=lineage.run_user_id,
+                        acting_user_id=UUID(exec_user_id),
                     )
+                except ProviderCacheScopeError:
+                    # Cache reuse is optional, but only a fully provable
+                    # current lineage may read it.
+                    cache_scope = None
+                if cache_scope is not None and cache_scope.ttl_seconds > 0:
+                    cached_result = await get_cached_result(
+                        None if execution_org_id is None else str(execution_org_id),
+                        str(cache_scope.workflow_id),
+                        cache_scope.authority_fingerprint,
+                        request.input_data,
+                    )
+                    if cached_result:
+                        from src.models import WorkflowExecutionResponse
+
+                        return WorkflowExecutionResponse(
+                            execution_id=shared_ctx.execution_id,
+                            workflow_id=str(workflow.id),
+                            workflow_name=workflow.name,
+                            status=ExecutionStatus.SUCCESS,
+                            result=cached_result.get("data"),
+                            duration_ms=0,
+                            is_transient=True,
+                        )
 
             # Reuse one hardened dispatch snapshot for the queue boundary. It
             # includes the active-Solution gate and global-repo policy, so the
@@ -605,7 +726,7 @@ async def cancel_scheduled_sdk_execution(
     principal: UserPrincipal,
     execution_id: UUID,
     *,
-    caller_org_id: UUID | None,
+    caller_org_id: UUID | None = None,
 ) -> dict:
     """Cancel a SCHEDULED execution via a status-guarded UPDATE.
 
@@ -614,17 +735,20 @@ async def cancel_scheduled_sdk_execution(
     exactly, including the 404/403/409 precedence:
 
     - 404 when the row is missing,
-    - 403 when a non-admin reaches across orgs or cancels a row that is
-      not their own (``execution_visibility.is_own_execution``: they act in
-      it, or started it as its root, as with Run As),
+    - 403 when the original run user cannot reach the row or neither owns it
+      nor holds scoped ``executions.readwrite.all``,
     - 409 with the current status when the row is no longer SCHEDULED
       (the promoter or a concurrent cancel won the race).
 
     Raises:
         SdkWorkflowExecutionError: 404/403/409 with the historical detail.
     """
+    del caller_org_id
+
     from sqlalchemy.engine import CursorResult
 
+    from src.services.authorization.enforce import load_caller
+    from src.services.authorization.execution_access import execution_cancel_allowed
     from src.models.enums import ExecutionStatus
     from src.models.orm.executions import Execution
 
@@ -632,29 +756,8 @@ async def cancel_scheduled_sdk_execution(
     if row is None:
         raise SdkWorkflowExecutionError(404, "Execution not found")
 
-    # Org-scoped access: row's org must match caller's org, unless admin.
-    if (
-        not principal.is_superuser
-        and row.organization_id is not None
-        and row.organization_id != caller_org_id
-    ):
+    if not execution_cancel_allowed(await load_caller(session, principal), row):
         raise SdkWorkflowExecutionError(403, "Access denied")
-
-    # Non-admin can only cancel their own scheduled rows.
-    if not is_own_execution(
-        principal.user_id,
-        execution_id=row.id,
-        executed_by=row.executed_by,
-        started_by_user_id=row.started_by_user_id,
-        root_execution_id=row.root_execution_id,
-    ):
-        if not principal.is_superuser:
-            raise SdkWorkflowExecutionError(
-                403, "Only the submitter or an admin may cancel"
-            )
-        access_checks.note_power(
-            "executions.readwrite.all", row.organization_id, subject=f"execution:{execution_id}"
-        )
 
     # Status-guarded UPDATE (wins or loses atomically vs. the promoter).
     result = cast(

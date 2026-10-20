@@ -295,6 +295,15 @@ SDK_ROUTE_PATHS: frozenset[str] = (
 )
 
 
+SDK_RUNTIME_ROUTE_METHODS: dict[str, frozenset[str]] = {
+    "/api/sdk/runtime/logs": frozenset({"POST"}),
+    "/api/sdk/runtime/service-control": frozenset({"POST"}),
+    "/api/sdk/runtime/logs/{execution_id}": frozenset({"GET"}),
+    "/api/sdk/runtime/data-provider-cache/read": frozenset({"POST"}),
+    "/api/sdk/runtime/data-provider-cache/write": frozenset({"POST"}),
+}
+
+
 def build_worker_sdk_app() -> Any:
     """Build a minimal ASGI app mounting only the existing SDK routes.
 
@@ -324,6 +333,7 @@ def build_worker_sdk_app() -> Any:
     from src.routers.platform_jobs import router as platform_jobs_router
     from src.routers.roles import router as roles_router
     from src.routers.sdk_modules import router as sdk_modules_router
+    from src.routers.sdk_runtime import router as sdk_runtime_router
     from src.routers.tables import router as tables_router
     from src.routers.users import router as users_router
     from src.routers.workflows import router as workflows_router
@@ -553,6 +563,14 @@ def build_worker_sdk_app() -> Any:
     expected += sum(
         len(methods) for methods in SDK_MODULES_ROUTE_METHODS.values()
     )
+    for route in sdk_runtime_router.routes:
+        wanted = SDK_RUNTIME_ROUTE_METHODS.get(getattr(route, "path", None), frozenset())
+        methods = getattr(route, "methods", None) or frozenset()
+        if wanted and methods & wanted:
+            app.router.routes.append(route)
+            selected += 1
+    expected += sum(len(methods) for methods in SDK_RUNTIME_ROUTE_METHODS.values())
+
 
     if selected != expected:
         raise RuntimeError(

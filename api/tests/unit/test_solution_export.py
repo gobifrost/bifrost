@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID, DECRYPTION_ROLE_ID
+from src.models.orm.users import UserRole, UserRoleBoundary
 from src.core.auth import ExecutionContext
 from src.core.principal import UserPrincipal
 from src.models.orm.solutions import Solution
@@ -104,12 +106,16 @@ def _bundle() -> SolutionBundle:
     )
 
 
-def _admin(db) -> tuple[ExecutionContext, UserPrincipal]:
+async def _admin(db, seeded_user, *, secrets=False) -> tuple[ExecutionContext, UserPrincipal]:
+    for role_id in [PLATFORM_ADMIN_ROLE_ID, *([DECRYPTION_ROLE_ID] if secrets else [])]:
+        db.add_all([
+            UserRole(user_id=seeded_user.id, role_id=role_id, assigned_by="test"),
+            UserRoleBoundary(user_id=seeded_user.id, role_id=role_id, kind="platform"),
+        ])
+    await db.flush()
     user = UserPrincipal(
-        user_id=uuid.uuid4(),
-        email="admin@example.com",
-        organization_id=None,
-        is_superuser=True,
+        user_id=seeded_user.id, email=seeded_user.email,
+        organization_id=seeded_user.organization_id,
     )
     return ExecutionContext(user=user, org_id=None, db=db), user
 
@@ -308,7 +314,7 @@ async def test_full_stored_source_export_overlays_readme_and_runtime(tmp_path: P
 
 
 @pytest.mark.e2e
-async def test_shareable_export_returns_stored_source_artifact(db_session) -> None:
+async def test_shareable_export_returns_stored_source_artifact(db_session, seed_user) -> None:
     sol = Solution(
         id=uuid.uuid4(),
         slug=f"stored-{uuid.uuid4().hex[:8]}",
@@ -322,7 +328,7 @@ async def test_shareable_export_returns_stored_source_artifact(db_session) -> No
     source_zip = build_workspace_zip(source_bundle)
     await SolutionSourceArtifactStorage(sol.id).write(source_zip)
 
-    ctx, user = _admin(db_session)
+    ctx, user = await _admin(db_session, seed_user)
     response = await export_solution(sol.id, ctx, user, mode="shareable")
 
     assert _response_bytes(response) == source_zip
@@ -332,6 +338,7 @@ async def test_shareable_export_returns_stored_source_artifact(db_session) -> No
 async def test_full_export_overlays_live_payload_on_stored_source(
     db_session,
     monkeypatch,
+    seed_user,
 ) -> None:
     from src.services.solutions.capture import SolutionCaptureService
 
@@ -356,7 +363,7 @@ async def test_full_export_overlays_live_payload_on_stored_source(
 
     monkeypatch.setattr(SolutionCaptureService, "bundle_for", _fake_bundle_for)
 
-    ctx, user = _admin(db_session)
+    ctx, user = await _admin(db_session, seed_user, secrets=True)
     response = await export_solution(
         sol.id,
         ctx,

@@ -9,10 +9,7 @@ import {
 	MoreHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-	ContextMenu,
-	ContextMenuTrigger,
-} from "@/components/ui/context-menu";
+import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import {
 	DropdownMenu,
 	DropdownMenuItem,
@@ -33,9 +30,11 @@ export type ShareTreeAction =
 
 interface ShareTreeProps {
 	scope: string | null;
+	solution?: string;
 	selectedLocation: string | null;
 	selectedPrefix: string;
 	readOnly?: boolean;
+	policyReadOnly?: boolean;
 	onSelect: (location: string, prefix: string) => void;
 	onContextAction: (
 		action: ShareTreeAction,
@@ -50,6 +49,21 @@ interface NodeProps extends ShareTreeProps {
 	name: string;
 	depth: number;
 	branchLast?: boolean;
+}
+
+function loadStructure(
+	location: string,
+	prefix: string,
+	scope: string | null,
+	solution?: string,
+) {
+	return solution
+		? listStructure(location, prefix, scope, solution)
+		: listStructure(location, prefix, scope);
+}
+
+function loadShares(scope: string | null, solution?: string) {
+	return solution ? listShares(scope, solution) : listShares(scope);
 }
 
 function LoadError({
@@ -83,7 +97,9 @@ function BrowseNode(props: NodeProps) {
 		name,
 		depth,
 		scope,
+		solution,
 		readOnly,
+		policyReadOnly = false,
 		selectedLocation,
 		selectedPrefix,
 		onSelect,
@@ -96,8 +112,8 @@ function BrowseNode(props: NodeProps) {
 	);
 	const selected = active && selectedPrefix === prefix;
 	const children = useQuery({
-		queryKey: ["file-structure", scope, location, prefix],
-		queryFn: () => listStructure(location, prefix, scope),
+		queryKey: ["file-structure", scope, solution, location, prefix],
+		queryFn: () => loadStructure(location, prefix, scope, solution),
 		enabled: expanded,
 		retry: false,
 	});
@@ -105,7 +121,9 @@ function BrowseNode(props: NodeProps) {
 		children.data?.filter((entry) => entry.kind === "folder") ?? [];
 	const actions: ShareTreeAction[] = readOnly
 		? ["effective", "test"]
-		: ["effective", "test", "upload", "newPolicy"];
+		: policyReadOnly
+			? ["effective", "test", "upload"]
+			: ["effective", "test", "upload", "newPolicy"];
 	const Icon = prefix === "" ? HardDrive : Folder;
 	const rowIndent = `calc(var(--share-tree-indent) * ${Math.min(depth, 4)})`;
 
@@ -117,9 +135,11 @@ function BrowseNode(props: NodeProps) {
 					"before:absolute before:left-[var(--row-indent)] before:top-0 before:h-full before:w-px before:bg-border/80 after:absolute after:left-[var(--row-indent)] after:top-5 after:h-px after:w-4 after:bg-border/80",
 				branchLast && "before:h-5",
 			)}
-			style={{
-				"--row-indent": rowIndent,
-			} as React.CSSProperties}
+			style={
+				{
+					"--row-indent": rowIndent,
+				} as React.CSSProperties
+			}
 		>
 			<ContextMenu>
 				<ContextMenuTrigger asChild>
@@ -257,7 +277,10 @@ function BrowseNode(props: NodeProps) {
 						</p>
 					)}
 					{folders.length > 0 && (
-						<ol aria-label={`Folders in ${name}`} className="min-w-0">
+						<ol
+							aria-label={`Folders in ${name}`}
+							className="min-w-0"
+						>
 							{folders.map((folder, index) => (
 								<BrowseNode
 									{...props}
@@ -278,8 +301,8 @@ function BrowseNode(props: NodeProps) {
 
 function ShareNavigation(props: ShareTreeProps) {
 	const shares = useQuery({
-		queryKey: ["file-shares", props.scope],
-		queryFn: () => listShares(props.scope),
+		queryKey: ["file-shares", props.scope, props.solution],
+		queryFn: () => loadShares(props.scope, props.solution),
 		retry: false,
 	});
 	return (
@@ -324,5 +347,10 @@ function ShareNavigation(props: ShareTreeProps) {
 }
 
 export function ShareTree(props: ShareTreeProps) {
-	return <ShareNavigation key={props.scope ?? "global"} {...props} />;
+	return (
+		<ShareNavigation
+			key={`${props.scope ?? "global"}:${props.solution ?? ""}`}
+			{...props}
+		/>
+	);
 }

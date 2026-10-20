@@ -13,6 +13,36 @@ from uuid import uuid4
 import pytest
 
 from src.services.mcp_server.agent_scope import AgentScopeMCPMiddleware
+from src.core.principal import UserPrincipal
+from src.services.authorization.context import AuthorizationContext, Boundary, BoundaryKind, RoleGrant
+from src.services.authorization.enforce import Caller
+
+
+def _caller(*, home, permissions=(), boundary=None, actor_platform_admin=False) -> Caller:
+    principal = UserPrincipal(
+        user_id=uuid4(),
+        email="mcp-agent-scope@contoso.example",
+        organization_id=home,
+        is_superuser=actor_platform_admin,
+    )
+    grants = () if boundary is None else (
+        RoleGrant(
+            uuid4(),
+            frozenset(permissions),
+            (Boundary(BoundaryKind.ORGANIZATION, boundary),),
+        ),
+    )
+    return Caller(
+        principal,
+        AuthorizationContext(
+            user_id=principal.user_id,
+            home_organization_id=home,
+            base_role_id=uuid4(),
+            is_external=False,
+            base_permissions=frozenset(),
+            role_grants=grants,
+        ),
+    )
 
 
 # =============================================================================
@@ -115,162 +145,73 @@ class TestAgentScopeMCPMiddleware:
 
 
 class TestGetToolsForAgent:
-    """Tests for agent-scoped tool access."""
+    """Tests for Caller-backed agent-scoped tool access."""
 
-    @pytest.fixture
-    def mock_agent(self):
-        """Create a mock agent."""
-        agent = MagicMock()
-        agent.id = uuid4()
-        agent.name = "Test Agent"
-        agent.access_level = MagicMock()
-        agent.access_level.__eq__ = lambda self, other: str(self) == str(other)
-        agent.system_tools = ["bifrost_workflow_execute", "bifrost_workflow_list"]
-        agent.tools = []
-        agent.roles = []
-        agent.knowledge_sources = ["docs", "wiki"]
-        agent.is_active = True
-        return agent
+    @staticmethod
+    def _query() -> MagicMock:
+        query = MagicMock()
+        query.options.return_value = query
+        query.where.return_value = query
+        return query
 
     @pytest.mark.asyncio
-    async def test_returns_tools_for_accessible_agent(self, mock_agent):
-        """Returns tools when user has access to the agent."""
+    async def test_returns_tools_for_reachable_agent_after_policy_accepts_caller(self):
         from src.models.enums import AgentAccessLevel
+        from src.services.mcp_server.tool_access import MCPToolAccessService
 
-        mock_agent.access_level = AgentAccessLevel.AUTHENTICATED
+        home = uuid4()
+        caller = _caller(home=home, permissions={"agents.readbasic"}, boundary=home)
+        agent = MagicMock()
+        agent.id = uuid4()
+        agent.access_level = AgentAccessLevel.AUTHENTICATED
+        agent.system_tools = ["bifrost_workflow_execute", "bifrost_workflow_list"]
+        agent.tools = []
+        agent.knowledge_sources = ["docs", "wiki"]
+        agent.is_active = True
+        result_row = MagicMock()
+        result_row.scalars.return_value.unique.return_value.first.return_value = agent
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=result_row)
+        query = self._query()
 
-        mock_session = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.unique.return_value.first.return_value = mock_agent
-        mock_session.execute = AsyncMock(return_value=mock_result)
-
-        with patch(
-            "src.services.mcp_server.tool_access.MCPConfigService"
-        ) as mock_config_cls:
-            mock_config = MagicMock()
-            mock_config.allowed_tool_ids = None
-            mock_config.blocked_tool_ids = None
-            mock_config_cls.return_value.get_config = AsyncMock(return_value=mock_config)
-
-            from src.services.mcp_server.tool_access import MCPToolAccessService
-
-            service = MCPToolAccessService(mock_session)
-            result = await service.get_tools_for_agent(
-                agent_id=mock_agent.id,
-                user_roles=["admin"],
-                is_superuser=False,
-            )
+        with (
+            patch("src.services.mcp_server.tool_access.agent_query_in_reach", return_value=query),
+            patch("src.services.mcp_server.tool_access.can_read_agent", new=AsyncMock(return_value=True)) as can_read,
+            patch("src.services.mcp_server.tool_access.MCPConfigService") as config_service,
+        ):
+            config = MagicMock(allowed_tool_ids=None, blocked_tool_ids=None)
+            config_service.return_value.get_config = AsyncMock(return_value=config)
+            result = await MCPToolAccessService(session).get_tools_for_agent(agent.id, caller)
 
         assert result is not None
         assert result.accessible_namespaces == ["docs", "wiki"]
-        # bifrost_workflow_execute and bifrost_workflow_list from system_tools, plus
-        # search_knowledge auto-injected because knowledge_sources is non-empty
-        # (mirrors the native chat path in agent_helpers.py).
-        tool_ids = {t.id for t in result.tools}
-        assert tool_ids == {"bifrost_workflow_execute", "bifrost_workflow_list", "search_knowledge"}
+        assert {tool.id for tool in result.tools} == {
+            "bifrost_workflow_execute", "bifrost_workflow_list", "search_knowledge"
+        }
+        can_read.assert_awaited_once_with(session, caller, agent)
 
     @pytest.mark.asyncio
-    async def test_returns_none_for_nonexistent_agent(self):
-        """Returns None when agent doesn't exist."""
-        mock_session = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.unique.return_value.first.return_value = None
-        mock_session.execute = AsyncMock(return_value=mock_result)
-
+    async def test_actor_admin_flag_cannot_grant_access_without_policy(self):
+        from src.models.enums import AgentAccessLevel
         from src.services.mcp_server.tool_access import MCPToolAccessService
 
-        service = MCPToolAccessService(mock_session)
-        result = await service.get_tools_for_agent(
-            agent_id=uuid4(),
-            user_roles=["admin"],
-            is_superuser=False,
-        )
+        home = uuid4()
+        caller = _caller(home=home, actor_platform_admin=True)
+        agent = MagicMock(id=uuid4(), access_level=AgentAccessLevel.AUTHENTICATED)
+        result_row = MagicMock()
+        result_row.scalars.return_value.unique.return_value.first.return_value = agent
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=result_row)
+        query = self._query()
+
+        with (
+            patch("src.services.mcp_server.tool_access.agent_query_in_reach", return_value=query),
+            patch("src.services.mcp_server.tool_access.can_read_agent", new=AsyncMock(return_value=False)) as can_read,
+        ):
+            result = await MCPToolAccessService(session).get_tools_for_agent(agent.id, caller)
 
         assert result is None
-
-    @pytest.mark.asyncio
-    async def test_returns_none_when_access_denied(self, mock_agent):
-        """Returns None when user doesn't have access to the agent."""
-        from src.models.enums import AgentAccessLevel
-
-        mock_agent.access_level = AgentAccessLevel.ROLE_BASED
-        mock_role = MagicMock()
-        mock_role.name = "special_role"
-        mock_agent.roles = [mock_role]
-
-        mock_session = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.unique.return_value.first.return_value = mock_agent
-        mock_session.execute = AsyncMock(return_value=mock_result)
-
-        from src.services.mcp_server.tool_access import MCPToolAccessService
-
-        service = MCPToolAccessService(mock_session)
-        result = await service.get_tools_for_agent(
-            agent_id=mock_agent.id,
-            user_roles=["other_role"],  # Doesn't match agent's role
-            is_superuser=False,
-        )
-
-        assert result is None
-
-
-# =============================================================================
-# MCPToolAccessService._check_agent_access Tests
-# =============================================================================
-
-
-class TestCheckAgentAccess:
-    """Tests for static agent access checking."""
-
-    def test_authenticated_access_level(self):
-        """AUTHENTICATED agents are accessible to any user."""
-        from src.models.enums import AgentAccessLevel
-        from src.services.mcp_server.tool_access import MCPToolAccessService
-
-        agent = MagicMock()
-        agent.access_level = AgentAccessLevel.AUTHENTICATED
-        agent.roles = []
-
-        assert MCPToolAccessService._check_agent_access(agent, [], False) is True
-        assert MCPToolAccessService._check_agent_access(agent, ["admin"], True) is True
-
-    def test_role_based_with_matching_role(self):
-        """ROLE_BASED agents are accessible when user has a matching role."""
-        from src.models.enums import AgentAccessLevel
-        from src.services.mcp_server.tool_access import MCPToolAccessService
-
-        agent = MagicMock()
-        agent.access_level = AgentAccessLevel.ROLE_BASED
-        mock_role = MagicMock()
-        mock_role.name = "admin"
-        agent.roles = [mock_role]
-
-        assert MCPToolAccessService._check_agent_access(agent, ["admin"], False) is True
-        assert MCPToolAccessService._check_agent_access(agent, ["user"], False) is False
-
-    def test_role_based_no_roles_superuser_only(self):
-        """ROLE_BASED with no roles = only superusers can access."""
-        from src.models.enums import AgentAccessLevel
-        from src.services.mcp_server.tool_access import MCPToolAccessService
-
-        agent = MagicMock()
-        agent.access_level = AgentAccessLevel.ROLE_BASED
-        agent.roles = []
-
-        assert MCPToolAccessService._check_agent_access(agent, [], True) is True
-        assert MCPToolAccessService._check_agent_access(agent, [], False) is False
-
-    def test_unknown_access_level_denied(self):
-        """Unknown access levels are denied."""
-        from src.services.mcp_server.tool_access import MCPToolAccessService
-
-        agent = MagicMock()
-        agent.access_level = "unknown"
-        agent.roles = []
-
-        assert MCPToolAccessService._check_agent_access(agent, [], False) is False
-        assert MCPToolAccessService._check_agent_access(agent, [], True) is False
+        can_read.assert_awaited_once_with(session, caller, agent)
 
 
 # =============================================================================

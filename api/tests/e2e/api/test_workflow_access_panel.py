@@ -21,7 +21,6 @@ from tests.e2e.fixtures.users import E2EUser
 pytestmark = pytest.mark.e2e
 
 USER_ROLE_ID = "00000000-0000-0000-0000-000000000006"
-PLATFORM_OPERATOR_ROLE_ID = "00000000-0000-0000-0000-000000000007"
 
 _SOURCE = '''
 from bifrost import workflow
@@ -122,11 +121,26 @@ def world(e2e_client, platform_admin, async_session_factory):
     fabrikam = _ok(e2e_client.post("/api/organizations", headers=admin, json={"name": f"Fabrikam-{tag}"}), 201)
     hr = _ok(e2e_client.post("/api/roles", headers=admin, json={"name": f"HR {tag}"}), 201)
     writer_role = _ok(e2e_client.post("/api/roles", headers=admin, json={"name": f"Writer {tag}"}), 201)
+    workflow_manager_role = _ok(
+        e2e_client.post("/api/roles", headers=admin, json={"name": f"Workflow Manager {tag}"}), 201
+    )
     _ok(
         e2e_client.put(
             f"/api/roles/{writer_role['id']}/permissions", headers=admin, json={"permissions": ["userlifecycle.readwrite"]}
         )
     )
+
+    async def grant_workflow_management(session) -> None:
+        from src.models.orm.users import RolePermission
+
+        session.add(
+            RolePermission(
+                role_id=uuid.UUID(workflow_manager_role["id"]),
+                permission="workflows.readwrite",
+            )
+        )
+
+    asyncio.run(_with_session(async_session_factory, grant_workflow_management))
     custom = _create_identity(e2e_client, admin, f"Nightly {tag}", contoso["id"])
     powerful = _create_identity(e2e_client, admin, f"Powerful {tag}", contoso["id"])
     _grant(
@@ -155,19 +169,13 @@ def world(e2e_client, platform_admin, async_session_factory):
         e2e_client,
         admin,
         created["id"],
-        [{"role_id": PLATFORM_OPERATOR_ROLE_ID, "boundaries": [{"kind": "managed_organizations"}]}],
+        [
+            {
+                "role_id": workflow_manager_role["id"],
+                "boundaries": [{"kind": "organization", "organization_id": contoso["id"]}],
+            }
+        ],
     )
-
-    async def flag_superuser(session) -> None:
-        from src.models.orm.users import User
-
-        user = await session.get(User, uuid.UUID(created["id"]))
-        assert user is not None
-        user.is_superuser = True
-
-    # The workflow routes still admit only superuser tokens; this person is
-    # one without holding Platform Admin, which is what delegation tells apart.
-    asyncio.run(_with_session(async_session_factory, flag_superuser))
     operator = _register_and_authenticate_user(operator)
 
     yield {
@@ -185,7 +193,7 @@ def world(e2e_client, platform_admin, async_session_factory):
     for identity in (custom, powerful, global_custom):
         e2e_client.delete(f"/api/identities/{identity['id']}", headers=admin)
     e2e_client.delete(f"/api/users/{created['id']}", headers=admin)
-    for role in (hr, writer_role):
+    for role in (hr, writer_role, workflow_manager_role):
         e2e_client.delete(f"/api/roles/{role['id']}", headers=admin)
     for organization in (contoso, fabrikam):
         e2e_client.delete(f"/api/organizations/{organization['id']}", headers=admin)
@@ -243,7 +251,6 @@ def test_setting_an_identity_takes_the_powers_it_holds(e2e_client, platform_admi
 
     refused = e2e_client.patch(url, headers=operator, json={"run_identity_id": world["powerful"]["id"]})
     assert refused.status_code == 403, refused.text
-    assert world["powerful"]["name"] in refused.json()["detail"]
     assert _ok(e2e_client.get(url, headers=admin))["run_identity_id"] is None
 
     plain = _ok(e2e_client.patch(url, headers=operator, json={"run_identity_id": world["custom"]["id"]}))
@@ -388,7 +395,7 @@ def test_unknown_workflow_is_not_found_and_people_are_refused(e2e_client, platfo
 
     for route in ("run-identities", "recommended-access"):
         assert e2e_client.get(f"/api/workflows/{missing}/{route}", headers=platform_admin.headers).status_code == 404
-        assert e2e_client.get(f"/api/workflows/{workflow['id']}/{route}", headers=org1_user.headers).status_code == 403
+        assert e2e_client.get(f"/api/workflows/{workflow['id']}/{route}", headers=org1_user.headers).status_code == 404
 
 
 def test_a_platform_admin_identity_needs_no_workflow_role(e2e_client, platform_admin, world, async_session_factory) -> None:

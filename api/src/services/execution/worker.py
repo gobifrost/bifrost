@@ -115,22 +115,15 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
     from src.sdk.context import Caller, Organization
     from src.services.execution.engine import ExecutionRequest, execute
     from src.models.enums import ExecutionStatus
-    from bifrost.credentials import is_token_expired
 
     service_cfg = context_data.get("service")
     if service_cfg:
         return await run_service(service_cfg, context_data)
 
-    # Engine credentials: prefer the pre-minted token handed down from the
-    # consumer via context_data["engine_token"].  This keeps SECRET_KEY out of
-    # the child process entirely.
-    # Fall back to authenticate_engine() only for callers (e.g. direct engine
-    # tests) that bypass the consumer and do not supply a pre-minted token.
-    if not _set_process_engine_credentials(context_data) and is_token_expired(
-        buffer_seconds=3600
-    ):
-        from src.core.security import authenticate_engine
-        authenticate_engine()
+    # Every SDK-capable execution must receive a pre-minted, typed runtime
+    # credential from its parent. There is no process-wide engine fallback.
+    if not _set_process_engine_credentials(context_data):
+        raise RuntimeError("Missing pre-minted runtime credential for execution")
 
     start_time = datetime.now(timezone.utc)
 
@@ -484,7 +477,7 @@ async def run_service(
             tags=["service"],
             timeout_seconds=0,
             parameters={},
-            is_platform_admin=False,
+            is_platform_admin=context_data.get("is_platform_admin", False),
             broadcaster=None,
             solution_id=context_data.get("solution_id"),
             artifact_workspace_id=context_data.get("artifact_workspace_id"),

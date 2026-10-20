@@ -97,6 +97,14 @@ CMD_GET_EXIT_STATUSES = "get_exit_statuses"
 CMD_SHUTDOWN = "shutdown"
 
 
+def _clear_pre_fork_source_clients() -> None:
+    """Drop parent source-loader clients before a child inherits template memory."""
+    from src.core.module_cache_sync import _close_http_client, reset_sync_redis
+
+    _close_http_client()
+    reset_sync_redis()
+
+
 def _reap_children(exit_statuses: dict[int, int]) -> None:
     """Reap exited fork children and retain their exit status for the consumer."""
     while True:
@@ -155,11 +163,6 @@ def _template_main(
         except ImportError:
             logger.warning("pydantic not available — skipping preload")
 
-        try:
-            import redis  # noqa: F401
-        except ImportError:
-            logger.warning("redis not available — skipping preload")
-
         # Execution infrastructure
         try:
             from src.services.execution.virtual_import import install_virtual_import_hook
@@ -215,6 +218,13 @@ def _template_main(
         "BIFROST_DATABASE_URL",
         "BIFROST_DATABASE_URL_SYNC",
         "BIFROST_RABBITMQ_URL",
+        "BIFROST_REDIS_URL",
+        "REDIS_URL",
+        "REDIS_HOST",
+        "REDIS_PORT",
+        "REDIS_USERNAME",
+        "REDIS_PASSWORD",
+        "CACHE_REDIS_URL",
         # S3 credentials: child uses API endpoint fallback (Phase 2 step 2).
         "BIFROST_S3_ACCESS_KEY",
         "BIFROST_S3_SECRET_KEY",
@@ -238,21 +248,23 @@ def _template_main(
 
     # BIFROST_SECRET_KEY needs more than deletion: Settings.secret_key is
     # required (min_length=32, no default), and child code calls get_settings()
-    # on every execution (engine.py reads settings.public_url; the SDK redis
-    # helpers read settings.redis_url). Deleting the var outright would crash
-    # Settings construction in every fork; keeping it would hand every child
-    # the JWT-signing key. So: swap in an inert sentinel, prime the
-    # get_settings() cache from the now-scrubbed env, then delete the var.
+    # on every execution (for example engine.py reads settings.public_url).
+    # Deleting the var outright would crash Settings construction in every
+    # fork; keeping it would hand every child the JWT-signing key. Prime the
+    # cache with inert values, then delete them from the environment.
     # Forks inherit the cached object via COW: get_settings() keeps working
     # everywhere in the child, but its secret_key is the sentinel and its
-    # DB/RabbitMQ/S3 fields are localhost defaults. The real key exists in
-    # neither the child's env nor its memory; tokens are pre-minted by the
-    # parent (token hand-down), so nothing in the child signs JWTs.
+    # DB/RabbitMQ/S3 fields are localhost defaults and Redis is an unreachable
+    # endpoint. Real platform credentials exist in neither the child's env nor
+    # its memory; tokens are pre-minted by the parent, so nothing in the child
+    # signs JWTs.
     os.environ["BIFROST_SECRET_KEY"] = "scrubbed-execution-children-hold-no-platform-credentials"
+    os.environ["BIFROST_REDIS_URL"] = "redis://127.0.0.1:0/0"
     get_settings.cache_clear()
     get_settings()
     del os.environ["BIFROST_SECRET_KEY"]
-    logger.info("SECRET_KEY scrubbed: settings cache primed with inert sentinel, env var removed")
+    del os.environ["BIFROST_REDIS_URL"]
+    logger.info("settings cache primed with inert secret and Redis values, env vars removed")
 
     # Preload the platform execution runtime after credential scrubbing. Every
     # execution runs in a fresh one-shot fork; leaving this import to the child
@@ -383,6 +395,10 @@ def _handle_fork_request(
         sdk_socket_path: Worker-local Unix socket the child should use for
             engine SDK HTTP calls, or None when no socket is served.
     """
+    # The virtual import hook preloads a parent-side HTTP client. Clear that
+    # and any sync Redis source-cache client immediately before fork so the
+    # child reconstructs only its injected worker-UDS transport.
+    _clear_pre_fork_source_clients()
     child_pid = os.fork()
 
     if child_pid > 0:

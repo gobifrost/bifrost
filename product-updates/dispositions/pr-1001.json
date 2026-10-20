@@ -1,0 +1,14 @@
+{
+  "key": "pr:1001",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Restore authorized users' workflow and data access from sealed Solution apps without rebuilding their apps.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1001",
+      "Codex reviewed this routine-fix summary on 2026-10-18 under the user's authorization to ship the repair. No customer upgrade action or security disclosure is required."
+    ]
+  }
+}

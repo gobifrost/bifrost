@@ -22,7 +22,6 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
-import { useAuth } from "@/contexts/AuthContext";
 import {
 	useUpdateEventSource,
 	useWebhookAdapters,
@@ -30,6 +29,8 @@ import {
 } from "@/services/events";
 import { DynamicConfigForm, type ConfigSchema } from "./DynamicConfigForm";
 import { authFetch } from "@/lib/api-client";
+import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
+import { useAuthorization } from "@/services/authorization";
 
 import type { components } from "@/lib/v1";
 
@@ -66,7 +67,8 @@ function EditEventSourceDialogContent({
 	updateMutation: ReturnType<typeof useUpdateEventSource>;
 	onOpenChange: (open: boolean) => void;
 }) {
-	const { isPlatformAdmin } = useAuth();
+	const authorization = useAuthorization();
+	const canChooseOrganization = authorization.canAnywhere("events.readwrite");
 	const formId = useId();
 
 	// Fetch adapter metadata for dynamic config
@@ -232,7 +234,18 @@ function EditEventSourceDialogContent({
 						}
 					: undefined,
 			};
-			if (isPlatformAdmin) {
+		if (canChooseOrganization) {
+			if (
+				!authorization.canAt(
+					"events.readwrite",
+					orgTarget(organizationId),
+				)
+			) {
+				setErrors([
+					"Select an organization where you can manage event sources",
+				]);
+				return;
+			}
 				body.organization_id = organizationId ?? null;
 			}
 
@@ -291,7 +304,7 @@ function EditEventSourceDialogContent({
 					)}
 
 					{/* Organization (Platform Admin Only) */}
-					{isPlatformAdmin && (
+					{canChooseOrganization && (
 						<div className="min-w-0 space-y-2">
 							<Label htmlFor={`${formId}-organization`}>
 								Organization
@@ -304,7 +317,29 @@ function EditEventSourceDialogContent({
 								onChange={(value) =>
 									setOrganizationId(value ?? null)
 								}
-								showGlobal
+							showGlobal={authorization.canAt(
+								"events.readwrite",
+								GLOBAL_TARGET,
+							)}
+							knownOrganizations={[
+								...(source.organization_id
+									? [{
+											id: source.organization_id,
+											name:
+												source.organization_name ??
+												source.organization_id,
+										}]
+									: []),
+							]}
+							loadOrganizations={authorization.canAnywhere(
+								"organizations.read",
+							)}
+							filterOrganizations={(organization) =>
+								authorization.canAt(
+									"events.readwrite",
+									orgTarget(organization.id),
+								)
+							}
 							/>
 							<p className="text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
 								Leave as Global to make this source available to

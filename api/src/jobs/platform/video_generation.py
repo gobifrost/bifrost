@@ -200,7 +200,7 @@ async def run_sdk_video_generation(
             report=report,
         )
         async with get_db_context() as db:
-            stored = await ArtifactService(db).store(
+            stored = await ArtifactService(db).store_trusted_job(
                 filename=artifact.filename,
                 content_type=artifact.content_type,
                 content=artifact.content,

@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -25,6 +26,9 @@ from src.models.contracts.applications import (
 from src.models.orm.app_roles import AppRole
 from src.models.orm.applications import Application
 from src.repositories.org_scoped import OrgScopedRepository
+
+if TYPE_CHECKING:
+    from src.services.authorization.enforce import Caller
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +48,71 @@ class ApplicationRepository(OrgScopedRepository[Application]):
     model = Application
     role_table = AppRole
     role_entity_id_column = "app_id"
+
+    def __init__(
+        self,
+        session,
+        org_id: UUID | str | None,
+        user_id: UUID | str | None = None,
+        is_superuser: bool = False,
+        is_external: bool = False,
+        *,
+        caller: Caller | None = None,
+    ) -> None:
+        """Build an App repository from a verified caller when available.
+
+        Caller mode keeps normal App sharing for ordinary readers and uses the
+        original user's current context for it. An ``apps.readwrite`` holder
+        may manage an App at the App's real organization, but token claims and
+        an effects actor never become repository authority.
+        """
+        self.caller = caller
+        if caller is not None:
+            user_id = caller.ctx.user_id if caller.ctx is not None else None
+            is_superuser = False
+            if not caller.principal.embed:
+                is_external = (
+                    caller.ctx.is_external
+                    if caller.ctx is not None
+                    else caller.principal.is_external
+                )
+        super().__init__(session, org_id, user_id, is_superuser, is_external)
+
+    async def get(
+        self, *, include_solution_managed: bool = False, **filters: Any
+    ) -> Application | None:
+        """Resolve an App ID against the row's real organization in Caller mode."""
+        if self.caller is None or "id" not in filters:
+            return await super().get(
+                include_solution_managed=include_solution_managed, **filters
+            )
+
+        query = select(Application)
+        for key, value in filters.items():
+            column = getattr(Application, key, None)
+            if column is not None:
+                query = query.where(column == value)
+        entity = (await self.session.execute(query)).scalar_one_or_none()
+        if entity is None or not await self._can_access_entity(entity):
+            return None
+        return entity
+
+    async def _can_access_entity(self, entity: Application) -> bool:
+        """Apply App sharing after original-user reach, then management power."""
+        caller = self.caller
+        if caller is None:
+            return await super()._can_access_entity(entity)
+
+        from src.services.authorization.enforce import allows_permission, user_reach
+
+        if not user_reach(caller).covers(entity.organization_id):
+            return False
+        if await super()._can_access_entity(entity):
+            return True
+        return (
+            allows_permission(caller, "apps.read", entity.organization_id)
+            or allows_permission(caller, "apps.readwrite", entity.organization_id)
+        )
 
     async def list_applications(self) -> list[Application]:
         """
@@ -219,7 +288,7 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         app_id: UUID,
         data: ApplicationUpdate,
         updated_by: str,
-        is_platform_admin: bool = False,
+        allow_scope_change: bool = False,
     ) -> Application | None:
         """Update application metadata and access control by ID."""
         application = await self.get(id=app_id)
@@ -243,8 +312,8 @@ class ApplicationRepository(OrgScopedRepository[Application]):
                 raise ValueError(f"Application with slug '{data.slug}' already exists")
             application.slug = data.slug
 
-        # Handle scope change (platform admin only)
-        if data.scope is not None and is_platform_admin:
+        # Scope movement is authorized by the router at both boundaries.
+        if data.scope is not None and allow_scope_change:
             if data.scope == "global":
                 application.organization_id = None
             else:

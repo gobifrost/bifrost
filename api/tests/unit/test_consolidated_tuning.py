@@ -29,6 +29,7 @@ from src.services.execution.tuning_service import (
     dry_run_consolidated,
     propose_consolidated_tuning,
 )
+from src.services.authorization.enforce import load_caller
 
 
 def _build_mock_llm_response(content: str, model: str = "claude-sonnet-4-6"):
@@ -59,8 +60,12 @@ def _superuser_principal(user) -> UserPrincipal:  # type: ignore[no-untyped-def]
     )
 
 
+async def _caller(db, user):  # type: ignore[no-untyped-def]
+    return await load_caller(db, _superuser_principal(user))
+
+
 @pytest_asyncio.fixture
-async def seed_agent_with_flagged_runs(db_session, seed_agent):
+async def seed_agent_with_flagged_runs(db_session, seed_agent, seed_user):
     """Seed three thumbs-down completed runs for ``seed_agent``."""
     runs: list[AgentRun] = []
     for i in range(3):
@@ -76,26 +81,29 @@ async def seed_agent_with_flagged_runs(db_session, seed_agent):
             verdict="down",
             verdict_note=f"wrong because {i}",
             verdict_set_at=datetime.now(timezone.utc),
+            caller_user_id=str(seed_user.id),
         )
         db_session.add(run)
         runs.append(run)
     await db_session.commit()
+    run_ids = [run.id for run in runs]
+    agent_id = seed_agent.id
 
     yield seed_agent, runs
 
-    for run in runs:
+    for run_id in run_ids:
         await db_session.execute(
             delete(AgentRunFlagConversation).where(
-                AgentRunFlagConversation.run_id == run.id
+                AgentRunFlagConversation.run_id == run_id
             )
         )
         await db_session.execute(
-            delete(AIUsage).where(AIUsage.agent_run_id == run.id)
+            delete(AIUsage).where(AIUsage.agent_run_id == run_id)
         )
-        await db_session.execute(delete(AgentRun).where(AgentRun.id == run.id))
+        await db_session.execute(delete(AgentRun).where(AgentRun.id == run_id))
     await db_session.execute(
         delete(AgentPromptHistory).where(
-            AgentPromptHistory.agent_id == seed_agent.id
+            AgentPromptHistory.agent_id == agent_id
         )
     )
     await db_session.commit()
@@ -124,7 +132,7 @@ async def test_propose_returns_proposal_with_flagged_runs(
         proposal = await propose_consolidated_tuning(
             agent.id,
             db_session,
-            _superuser_principal(seed_user),
+            await _caller(db_session, seed_user),
         )
 
     assert proposal.summary == "Routing is too eager."
@@ -140,7 +148,7 @@ async def test_propose_no_flagged_runs_raises(db_session, seed_agent, seed_user)
         await propose_consolidated_tuning(
             seed_agent.id,
             db_session,
-            _superuser_principal(seed_user),
+            await _caller(db_session, seed_user),
         )
 
 
@@ -157,9 +165,8 @@ async def test_apply_updates_prompt_creates_history_resets_verdicts(
         agent_id=agent.id,
         new_prompt=new_prompt,
         reason="Consolidated tuning from 3 flagged runs.",
-        user_id=seed_user.id,
         db=db_session,
-        user=_superuser_principal(seed_user),
+        caller=await _caller(db_session, seed_user),
     )
     await db_session.commit()
 
@@ -223,6 +230,7 @@ async def test_dry_run_caps_at_limit(db_session, seed_agent, seed_user):
             input={"message": f"q{i}"},
             output={"text": f"a{i}"},
             verdict="down",
+            caller_user_id=str(seed_user.id),
         )
         db_session.add(run)
         runs.append(run)
@@ -246,7 +254,7 @@ async def test_dry_run_caps_at_limit(db_session, seed_agent, seed_user):
                 proposed_prompt="Stricter prompt.",
                 db=db_session,
                 session_factory=MagicMock(),
-                user=_superuser_principal(seed_user),
+                caller=await _caller(db_session, seed_user),
             )
 
         assert len(results) == CONSOLIDATED_DRY_RUN_LIMIT

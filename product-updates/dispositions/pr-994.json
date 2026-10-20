@@ -1,0 +1,14 @@
+{
+  "key": "pr:994",
+  "classification": "highlight",
+  "entry_ids": [
+    "ac0cc537-02ca-4357-849f-3e8ece879782"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/994",
+      "Release review: verified Auditing tabs, report-only wording, compact record selection, Aggregate Off behavior, retention defaults, linked screenshot, and passing UI coverage. Maintainer authorized merge and rollout on 2026-10-17."
+    ]
+  }
+}

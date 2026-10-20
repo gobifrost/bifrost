@@ -84,6 +84,7 @@ from src.routers.mcp_connections import (
 )
 from src.routers.mcp_oauth_callback import router as mcp_oauth_callback_router
 from src.routers.sdk_modules import router as sdk_modules_router
+from src.routers.sdk_runtime import router as sdk_runtime_router
 from src.routers.policy_rules import router as policy_rules_router
 from src.routers.product_updates import router as product_updates_router
 
@@ -169,6 +170,7 @@ __all__ = [
     "mcp_me_connections_router",
     "mcp_oauth_callback_router",
     "sdk_modules_router",
+    "sdk_runtime_router",
     "policy_rules_router",
     "product_updates_router",
 ]

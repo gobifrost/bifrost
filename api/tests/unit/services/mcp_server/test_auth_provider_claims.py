@@ -52,3 +52,19 @@ def test_http_bridge_fallback_preserves_provider_org_claim():
 
     assert payload is not None
     assert payload["is_provider_org"] is True
+
+
+def test_agent_bridge_token_preserves_run_id_and_external_account_flag():
+    from src.core.security import decode_token
+
+    person, run = uuid4(), uuid4()
+    context = MCPContext(
+        user_id=person, org_id=uuid4(), run_user_id=person, agent_run_id=str(run),
+        is_external=True, is_provider_org=True,
+    )
+    payload = decode_token(_token_from_context(context), expected_type="access")
+    assert payload is not None
+    assert payload["sub"] == str(person)
+    assert payload["engine_agent_run_id"] == str(run)
+    assert payload["engine_run_user_id"] == str(person)
+    assert payload["is_external"] is True

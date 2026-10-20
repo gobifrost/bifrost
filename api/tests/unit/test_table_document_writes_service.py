@@ -23,9 +23,16 @@ from shared.table_batch_writes import (
     ConcurrentBatchWrite,
     DuplicateBatchIds,
 )
-from src.core.constants import SYSTEM_USER_UUID
 from src.core.principal import UserPrincipal
 from src.models.orm.tables import Document, Table
+from src.models.contracts.policies import TablePolicies
+from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID, USER_BASE_PERMISSIONS, USER_ROLE_ID
+from src.models.contracts.workflow_permissions import WorkflowPermissionMode
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
+from src.services.authorization.explain import Powers, RunUser
+from src.services.authorization.runtime import RuntimeAuthority
+from tests.helpers.authorization import platform_admin_grant
 
 
 def _user(**kwargs) -> UserPrincipal:
@@ -35,16 +42,39 @@ def _user(**kwargs) -> UserPrincipal:
         "organization_id": uuid4(),
     }
     base.update(kwargs)
+    if base.get("is_superuser") and "role_ids" not in kwargs:
+        base["role_ids"] = [PLATFORM_ADMIN_ROLE_ID]
     return UserPrincipal(**base)
 
 
-def _engine_user() -> UserPrincipal:
-    return UserPrincipal(
-        user_id=SYSTEM_USER_UUID,
-        email="engine@local",
-        organization_id=None,
-        is_superuser=True,
+def _role_context(user: UserPrincipal) -> AuthorizationContext:
+    return AuthorizationContext(
+        user_id=user.user_id, home_organization_id=user.organization_id,
+        base_role_id=USER_ROLE_ID, base_permissions=USER_BASE_PERMISSIONS,
+        is_external=False,
+        role_grants=(platform_admin_grant(),) if PLATFORM_ADMIN_ROLE_ID in user.role_ids else (),
     )
+
+
+@pytest.fixture(autouse=True)
+def _current_role_context(monkeypatch):
+    async def caller_for(_db, user):
+        context = _role_context(user) if user.runtime_authority is None else user.runtime_authority.run_user.ctx
+        return Caller(user, context)
+    monkeypatch.setattr("src.services.authorization.enforce.load_caller", caller_for)
+
+
+def _engine_user() -> UserPrincipal:
+    user = _user(organization_id=None)
+    context = _role_context(user)
+    user.runtime_authority = RuntimeAuthority(
+        kind="workflow_execution", credential_id=uuid4(),
+        run_user=RunUser(user.user_id, context, None, True),
+        powers=Powers(WorkflowPermissionMode.FULL, ()),
+        acting_user_id=user.user_id, organization_id=None, workflow_id=uuid4(),
+        started_by_user_id=user.user_id, root_execution_id=uuid4(),
+    )
+    return user
 
 
 def _table() -> Table:
@@ -83,41 +113,38 @@ class _FakeDb:
 # --- attribution ---
 
 
-def test_resolve_attribution_defaults_to_caller():
+@pytest.mark.asyncio
+async def test_resolve_attribution_defaults_to_caller():
     user = _user()
-    created_by, updated_by = writes.resolve_attribution(user, None, None)
-    assert created_by == str(user.user_id)
-    assert updated_by == str(user.user_id)
+    assert await writes.resolve_attribution(user, None, None, db=_FakeDb(), organization_id=user.organization_id) == (
+        str(user.user_id), str(user.user_id),
+    )
 
 
-def test_resolve_attribution_created_by_mirrors_updated_by():
+@pytest.mark.asyncio
+async def test_resolve_attribution_created_by_mirrors_updated_by():
     user = _user(is_superuser=True)
-    created_by, updated_by = writes.resolve_attribution(user, "someone", None)
-    assert created_by == "someone"
-    assert updated_by == "someone"
+    assert await writes.resolve_attribution(user, "someone", None, db=_FakeDb(), organization_id=user.organization_id) == (
+        "someone", "someone",
+    )
 
 
-def test_resolve_attribution_override_forbidden_for_ordinary_caller():
-    user = _user()
+@pytest.mark.asyncio
+async def test_resolve_attribution_override_forbidden_for_unprivileged_role_even_with_admin_flag():
+    user = _user(is_superuser=True, role_ids=[])
     with pytest.raises(writes.TableWriteForbidden) as exc_info:
-        writes.resolve_attribution(user, None, "forged")
+        await writes.resolve_attribution(user, None, "forged", db=_FakeDb(), organization_id=user.organization_id)
     assert exc_info.value.status_code == 403
-    assert "engine or platform-admin" in str(exc_info.value.detail)
 
 
-def test_resolve_attribution_override_allowed_for_engine():
-    created_by, updated_by = writes.resolve_attribution(
-        _engine_user(), "creator", "updater"
+@pytest.mark.asyncio
+async def test_full_workflow_attribution_power_does_not_widen_reach():
+    user = _engine_user()
+    assert await writes.resolve_attribution(user, "creator", "updater", db=_FakeDb(), organization_id=None) == (
+        "creator", "updater",
     )
-    assert (created_by, updated_by) == ("creator", "updater")
-
-
-def test_resolve_attribution_override_allowed_for_superuser():
-    user = _user(is_superuser=True)
-    created_by, updated_by = writes.resolve_attribution(
-        user, "creator", "updater"
-    )
-    assert (created_by, updated_by) == ("creator", "updater")
+    with pytest.raises(writes.TableWriteForbidden):
+        await writes.resolve_attribution(user, "creator", None, db=_FakeDb(), organization_id=uuid4())
 
 
 # --- single insert ---
@@ -362,7 +389,7 @@ async def test_update_policy_deny_audits_commits_and_403s(monkeypatch):
 
     monkeypatch.setattr(writes, "DocumentRepository", FakeRepo)
     monkeypatch.setattr(
-        writes, "load_resolved_table_policies", AsyncMock(return_value=object())
+        writes, "load_resolved_table_policies", AsyncMock(return_value=TablePolicies())
     )
     monkeypatch.setattr(writes, "preresolve_for_policies", AsyncMock())
     monkeypatch.setattr(writes, "evaluate_action", lambda *args: False)
@@ -447,7 +474,7 @@ async def test_batch_duplicate_ids_422_without_commit(monkeypatch):
     user = _user()
     db = _FakeDb()
     monkeypatch.setattr(
-        writes, "load_resolved_table_policies", AsyncMock(return_value=object())
+        writes, "load_resolved_table_policies", AsyncMock(return_value=TablePolicies())
     )
     monkeypatch.setattr(writes, "preresolve_for_policies", AsyncMock())
 
@@ -474,7 +501,7 @@ async def test_batch_policy_denial_atomic_403_without_commit_or_publish(monkeypa
     user = _user()
     db = _FakeDb()
     monkeypatch.setattr(
-        writes, "load_resolved_table_policies", AsyncMock(return_value=object())
+        writes, "load_resolved_table_policies", AsyncMock(return_value=TablePolicies())
     )
     monkeypatch.setattr(writes, "preresolve_for_policies", AsyncMock())
 
@@ -504,7 +531,7 @@ async def test_batch_concurrent_conflict_rolls_back_and_409s(monkeypatch):
     user = _user()
     db = _FakeDb()
     monkeypatch.setattr(
-        writes, "load_resolved_table_policies", AsyncMock(return_value=object())
+        writes, "load_resolved_table_policies", AsyncMock(return_value=TablePolicies())
     )
     monkeypatch.setattr(writes, "preresolve_for_policies", AsyncMock())
 
@@ -535,7 +562,7 @@ async def test_batch_commits_before_invalidate_and_preserves_order(monkeypatch):
     seen = {}
 
     monkeypatch.setattr(
-        writes, "load_resolved_table_policies", AsyncMock(return_value=object())
+        writes, "load_resolved_table_policies", AsyncMock(return_value=TablePolicies())
     )
     monkeypatch.setattr(writes, "preresolve_for_policies", AsyncMock())
 
@@ -576,7 +603,7 @@ async def test_batch_privilege_override_denies_whole_batch(monkeypatch):
     user = _user()
     db = _FakeDb()
     monkeypatch.setattr(
-        writes, "load_resolved_table_policies", AsyncMock(return_value=object())
+        writes, "load_resolved_table_policies", AsyncMock(return_value=TablePolicies())
     )
     monkeypatch.setattr(writes, "preresolve_for_policies", AsyncMock())
     called = False
@@ -626,7 +653,7 @@ async def test_batch_delete_skips_missing_and_returns_input_order(monkeypatch):
 
     monkeypatch.setattr(writes, "DocumentRepository", FakeRepo)
     monkeypatch.setattr(
-        writes, "load_resolved_table_policies", AsyncMock(return_value=object())
+        writes, "load_resolved_table_policies", AsyncMock(return_value=TablePolicies())
     )
     monkeypatch.setattr(writes, "preresolve_for_policies", AsyncMock())
     monkeypatch.setattr(writes, "evaluate_action", lambda *args: True)
@@ -665,7 +692,7 @@ async def test_batch_delete_denied_aborts_without_writes(monkeypatch):
 
     monkeypatch.setattr(writes, "DocumentRepository", FakeRepo)
     monkeypatch.setattr(
-        writes, "load_resolved_table_policies", AsyncMock(return_value=object())
+        writes, "load_resolved_table_policies", AsyncMock(return_value=TablePolicies())
     )
     monkeypatch.setattr(writes, "preresolve_for_policies", AsyncMock())
     monkeypatch.setattr(

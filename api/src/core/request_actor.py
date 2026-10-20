@@ -9,16 +9,15 @@ token and calls :func:`actor_from_token_payload` to turn its claims into the
 mapping in one pure function means HTTP and worker-local (Unix socket)
 requests audit identically.
 
-The engine token's ``engine_caller_*`` claims are audit attribution only:
-they are never read for authorization, and they do not change ``sub``,
-``is_superuser``, or the request's :class:`UserPrincipal`.
+Human and embed claims supply attribution only. Runtime requests use
+:func:`actor_from_runtime_principal` after durable credential verification.
 """
 
 from __future__ import annotations
 
 from uuid import UUID
 
-from src.core.constants import SYSTEM_USER_ID, SYSTEM_USER_UUID
+from src.core.principal import UserPrincipal
 from src.services.audit_context import ActorContext
 
 
@@ -87,15 +86,8 @@ def actor_from_token_payload(
       :func:`resolve_self_reported_surface`).
     - Embed session token (``embed`` claim): ``source`` ``"http"``,
       ``surface`` ``"embed"``.
-    - Service token (``service_id`` claim): the service acts for the system
-      sentinel user, ``source`` ``"service"``, ``surface`` ``"service"``,
-      ``execution_id`` from ``engine_execution_id``.
-    - Engine token (``engine_execution_id`` claim) with a signed human
-      caller: the caller's claims attribute the event to the person whose
-      workflow ran, ``source`` ``"workflow"``, ``surface`` ``"workflow"``.
-    - Engine token without a human caller (absent or sentinel
-      ``engine_caller_user_id``): the system sentinel user, ``source``
-      ``"workflow"``, ``surface`` ``"workflow"``.
+    - Runtime credential claims: no actor is accepted here. The middleware
+      verifies the durable runtime record, then uses its resolved principal.
 
     Invalid UUID strings in any of those claims are treated as absent
     (never raise).
@@ -105,47 +97,11 @@ def actor_from_token_payload(
 
     email = payload.get("email")
     name = payload.get("name")
+    impersonated_by_user_id = _uuid_or_none(payload.get("impersonated_by_user_id"))
+    impersonation_session_id = _uuid_or_none(payload.get("impersonation_session_id"))
 
-    if "service_id" in payload:
-        return ActorContext(
-            user_id=SYSTEM_USER_UUID,
-            organization_id=_uuid_or_none(payload.get("org_id")),
-            email=email,
-            name=name,
-            ip_address=ip_address,
-            user_agent=user_agent,
-            source="service",
-            execution_id=_uuid_or_none(payload.get("engine_execution_id")),
-            surface="service",
-        )
-
-    if "engine_execution_id" in payload:
-        caller_user_id = payload.get("engine_caller_user_id")
-        if caller_user_id and caller_user_id != SYSTEM_USER_ID:
-            return ActorContext(
-                user_id=_uuid_or_none(caller_user_id),
-                organization_id=_uuid_or_none(
-                    payload.get("engine_caller_org_id")
-                ),
-                email=payload.get("engine_caller_email"),
-                name=payload.get("engine_caller_name"),
-                ip_address=ip_address,
-                user_agent=user_agent,
-                source="workflow",
-                execution_id=_uuid_or_none(payload.get("engine_execution_id")),
-                surface="workflow",
-            )
-        return ActorContext(
-            user_id=SYSTEM_USER_UUID,
-            organization_id=_uuid_or_none(payload.get("engine_caller_org_id")),
-            email=email,
-            name=name,
-            ip_address=ip_address,
-            user_agent=user_agent,
-            source="workflow",
-            execution_id=_uuid_or_none(payload.get("engine_execution_id")),
-            surface="workflow",
-        )
+    if any(key in payload for key in ("credential_kind", "engine_execution_id", "service_id", "engine_agent_run_id")):
+        return None
 
     if payload.get("embed"):
         return ActorContext(
@@ -158,6 +114,8 @@ def actor_from_token_payload(
             source="http",
             execution_id=None,
             surface="embed",
+            impersonated_by_user_id=impersonated_by_user_id,
+            impersonation_session_id=impersonation_session_id,
         )
 
     return ActorContext(
@@ -170,4 +128,24 @@ def actor_from_token_payload(
         source="http",
         execution_id=None,
         surface=resolve_self_reported_surface(surface_header),
+        impersonated_by_user_id=impersonated_by_user_id,
+        impersonation_session_id=impersonation_session_id,
+    )
+
+
+def actor_from_runtime_principal(
+    principal: UserPrincipal, *, ip_address: str | None, user_agent: str | None,
+) -> ActorContext:
+    """Runtime attribution comes from verified durable identity, never extra claims."""
+    authority = principal.runtime_authority
+    if authority is None:
+        raise ValueError("Runtime authority required")
+    surface = {"workflow_execution": "workflow", "service_attempt": "service", "agent_run": "agent"}[authority.kind]
+    return ActorContext(
+        user_id=principal.user_id, organization_id=authority.organization_id,
+        email=principal.email, name=principal.name, ip_address=ip_address,
+        user_agent=user_agent, source=surface, surface=surface,
+        execution_id=authority.credential_id if authority.kind != "agent_run" else None,
+        impersonated_by_user_id=authority.impersonated_by_user_id,
+        impersonation_session_id=authority.impersonation_session_id,
     )

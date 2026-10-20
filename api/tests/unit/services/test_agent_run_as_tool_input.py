@@ -12,25 +12,36 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from shared.run_lineage import RunLineage, person_lineage
+from shared.builtin_roles import USER_ROLE_ID
+from shared.run_lineage import person_lineage
 from shared.sdk_agent_runs import enqueue_sdk_agent_run
 from src.jobs.consumers.agent_run import AgentRunConsumer
+from src.core.principal import UserPrincipal
 from src.models.contracts.agent_runs import AgentRunEnqueueResponse
 from src.models.contracts.executions import WorkflowExecutionResponse
 from src.models.enums import AgentAccessLevel, ExecutionStatus
 from src.models.orm.agent_runs import AgentRun
-from src.services.execution.agent_workflow_tools import AgentWorkflowCaller
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
 from src.services.execution.autonomous_agent_executor import (
     ActingUser,
     AutonomousAgentExecutor,
     ToolError,
-    _acting_user_from_caller,
 )
 from src.services.llm.base import LLMConfig, LLMResponse, ToolCallRequest, ToolDefinition
 from src.services.mcp_server.server import get_system_tool_function, get_system_tools
-from tests.unit.sdk.test_sdk_agent_runs_service import _principal, _seed_agent, _seed_org
+from tests.unit.sdk.test_sdk_agent_runs_service import (
+    _principal,
+    _seed_agent,
+    _seed_org,
+    _seed_user,
+)
 from tests.unit.services.agent_runtime_fakes import LegacyMockModel
-from tests.unit.services.test_agent_run_consumer import _consume, _run_as_fixture
+from tests.unit.services.test_agent_run_consumer import (
+    _cleanup_run_as_fixture,
+    _consume,
+    _run_as_fixture,
+)
 
 IDENTITY_PARAMETER_NAMES = {
     "run_as",
@@ -158,21 +169,63 @@ def _calls_tool(name: str, arguments: dict[str, Any]) -> LegacyMockModel:
     return LegacyMockModel(llm)
 
 
+def _canonical_caller(caller: dict[str, Any]) -> Caller:
+    user_id = UUID(caller["user_id"])
+    organization_id = UUID(caller["organization_id"])
+    return Caller(
+        UserPrincipal(
+            user_id=user_id,
+            email=caller["email"],
+            name=caller["name"],
+            organization_id=organization_id,
+            is_active=True,
+            is_superuser=caller["is_platform_admin"],
+        ),
+        AuthorizationContext(
+            user_id=user_id,
+            home_organization_id=organization_id,
+            base_role_id=USER_ROLE_ID,
+            is_external=False,
+            base_permissions=frozenset(),
+        ),
+    )
+
+
+@pytest.fixture
+def authorized_mock_agent(mock_agent):
+    """Supply the current Agent admission result for tool-input contract tests."""
+    async def authorize(_db, caller, agent_id, **_kwargs):
+        assert agent_id == mock_agent.id
+        return caller, mock_agent
+
+    with patch(
+        "src.services.execution.autonomous_agent_executor.authorize_agent_execution",
+        new=AsyncMock(side_effect=authorize),
+    ):
+        yield
+
+
 def _recording_workflow_tool(calls: list[dict[str, Any]]):
     """Stands in for ``execute_agent_workflow_tool`` with its real signature."""
 
     async def execute_agent_workflow_tool(
         *,
+        agent_id: UUID | str,
         workflow_id: UUID | str,
-        workflow_name: str,
         parameters: dict[str, Any],
-        caller: AgentWorkflowCaller,
+        caller: Caller,
         execution_id: str | None = None,
         artifact_workspace_id: str | None = None,
         sync: bool = True,
-        lineage: RunLineage | None,
     ) -> WorkflowExecutionResponse:
-        calls.append({"parameters": parameters, "caller": caller, "lineage": lineage})
+        calls.append(
+            {
+                "agent_id": agent_id,
+                "workflow_id": workflow_id,
+                "parameters": parameters,
+                "caller": caller,
+            }
+        )
         return WorkflowExecutionResponse(
             execution_id=str(uuid4()),
             status=ExecutionStatus.SUCCESS,
@@ -180,24 +233,6 @@ def _recording_workflow_tool(calls: list[dict[str, Any]]):
         )
 
     return execute_agent_workflow_tool
-
-
-def _expected_workflow_caller(caller: dict[str, Any], run_as: ActingUser | None) -> AgentWorkflowCaller:
-    if run_as is not None:
-        return AgentWorkflowCaller(
-            user_id=run_as.user_id,
-            email=run_as.email,
-            name=run_as.name,
-            organization_id=run_as.organization_id,
-            is_platform_admin=run_as.is_platform_admin,
-        )
-    return AgentWorkflowCaller(
-        user_id=caller["user_id"],
-        email=caller["email"],
-        name=caller["name"],
-        organization_id=UUID(caller["organization_id"]),
-        is_platform_admin=caller["is_platform_admin"],
-    )
 
 
 def test_no_system_tool_takes_an_identity_argument():
@@ -230,12 +265,13 @@ def test_no_system_tool_takes_an_identity_argument():
 @patch("src.services.agent_runtime.model_factory.create_agent_model")
 @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
 async def test_workflow_tool_identity_arguments_stay_workflow_parameters(
-    mock_resolve_tools, mock_create_model, mock_session, mock_agent, with_run_as
+    mock_resolve_tools, mock_create_model, mock_session, mock_agent, authorized_mock_agent, with_run_as
 ):
     contoso = uuid4()
     mock_agent.organization_id = contoso
-    caller = _contoso_lead(contoso)
-    run_user_id = UUID(caller["user_id"])
+    caller_data = _contoso_lead(contoso)
+    caller = _canonical_caller(caller_data)
+    run_user_id = caller.principal.user_id
     run_as = _contoso_portal_user(contoso) if with_run_as else None
     fabrikam_admin = _fabrikam_admin()
     arguments = {
@@ -258,30 +294,40 @@ async def test_workflow_tool_identity_arguments_stay_workflow_parameters(
         await AutonomousAgentExecutor(mock_session).run(
             agent=mock_agent,
             run_id=str(uuid4()),
-            _caller=caller,
+            caller=caller,
             run_user_id=run_user_id,
             run_as=run_as,
         )
 
-    expected_caller = _expected_workflow_caller(caller, run_as)
-    expected_lineage = RunLineage(run_user_id, run_user_id, None)
     assert calls == [
         {
+            "agent_id": mock_agent.id,
+            "workflow_id": mock_resolve_tools.return_value[1]["contoso_lookup"],
             "parameters": arguments,
-            "caller": expected_caller,
-            "lineage": expected_lineage,
+            "caller": caller,
         }
     ]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tool_id", SYSTEM_TOOL_IDS)
-async def test_system_tool_call_with_a_user_id_argument_fails(mock_session, mock_agent, tool_id):
+async def test_system_tool_call_with_a_user_id_argument_fails(
+    mock_session, mock_agent, authorized_mock_agent, tool_id
+):
     contoso = uuid4()
     mock_agent.system_tools = [tool_id]
     executor = AutonomousAgentExecutor(mock_session)
     caller = _contoso_lead(contoso)
-    executor._acting = _acting_user_from_caller(UUID(caller["user_id"]), caller, mock_agent)
+    executor._caller = _canonical_caller(caller)
+    executor._acting = ActingUser(
+        user_id=caller["user_id"],
+        email=caller["email"],
+        name=caller["name"],
+        organization_id=contoso,
+        is_platform_admin=False,
+        is_external=False,
+        is_provider_org=False,
+    )
     tool_call = ToolCallRequest(
         id="tc1", name=tool_id, arguments={"user_id": str(uuid4())}
     )
@@ -294,12 +340,13 @@ async def test_system_tool_call_with_a_user_id_argument_fails(mock_session, mock
 @patch("src.services.agent_runtime.model_factory.create_agent_model")
 @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
 async def test_run_input_naming_another_user_acts_as_the_caller(
-    mock_resolve_tools, mock_create_model, mock_session, mock_agent
+    mock_resolve_tools, mock_create_model, mock_session, mock_agent, authorized_mock_agent
 ):
     contoso = uuid4()
     mock_agent.organization_id = contoso
-    caller = _contoso_lead(contoso)
-    run_user_id = UUID(caller["user_id"])
+    caller_data = _contoso_lead(contoso)
+    caller = _canonical_caller(caller_data)
+    run_user_id = caller.principal.user_id
     fabrikam_admin = _fabrikam_admin()
     mock_resolve_tools.return_value = (
         [ToolDefinition(name="contoso_lookup", description="Look up a ticket", parameters={"type": "object", "properties": {}})],
@@ -316,38 +363,54 @@ async def test_run_input_naming_another_user_acts_as_the_caller(
             agent=mock_agent,
             input_data={"run_as": fabrikam_admin["user_id"], "_caller": fabrikam_admin},
             run_id=str(uuid4()),
-            _caller=caller,
+            caller=caller,
             run_user_id=run_user_id,
             run_as=None,
         )
 
-    expected_caller = _expected_workflow_caller(caller, None)
-    seen_callers = [call["caller"] for call in calls]
-    assert seen_callers == [expected_caller]
+    assert [call["caller"] for call in calls] == [caller]
 
 
 @pytest.mark.asyncio
 async def test_queued_run_input_naming_another_user_runs_as_the_caller(
     consumer, db_session, async_session_factory, seed_agent
 ):
-    _, lead, target, run = await _run_as_fixture(db_session, seed_agent, with_run_as=False)
+    contoso, lead, target, run = await _run_as_fixture(
+        db_session, seed_agent, with_run_as=False
+    )
     caller = {"user_id": str(lead.id), "email": lead.email, "name": lead.name}
     run_input = {"run_as": str(target.id), "_caller": _fabrikam_admin()}
     consumer._session_factory = async_session_factory
     runs: list[dict[str, Any]] = []
 
-    await _consume(consumer, run, {"input": run_input, "caller": caller}, runs)
+    try:
+        await _consume(consumer, run, {"input": run_input, "caller": caller}, runs)
 
-    assert runs == [{"_caller": caller, "run_user_id": lead.id, "run_as": None}]
+        assert len(runs) == 1
+        assert runs[0]["caller"].principal.runtime_authority is not None
+        assert runs[0]["caller"].ctx.user_id == lead.id
+        assert runs[0]["run_user_id"] == lead.id
+        assert runs[0]["run_as"] is None
+    finally:
+        await _cleanup_run_as_fixture(async_session_factory, contoso, lead, target, run)
 
 
 @pytest.mark.asyncio
 async def test_launch_input_naming_another_user_records_no_run_as(db_session):
     org = await _seed_org(db_session)
     agent = await _seed_agent(
-        db_session, "Contoso Triage", access_level=AgentAccessLevel.AUTHENTICATED
+        db_session,
+        "Contoso Triage",
+        organization_id=org.id,
+        access_level=AgentAccessLevel.AUTHENTICATED,
     )
-    principal = _principal(org.id, name="Contoso Helpdesk Lead")
+    user = await _seed_user(db_session, org.id, name="Contoso Helpdesk Lead")
+    principal = _principal(
+        org.id,
+        user_id=user.id,
+        email=user.email,
+        name="Contoso Helpdesk Lead",
+    )
     fabrikam_admin = _fabrikam_admin()
     run_input = {"run_as": fabrikam_admin["user_id"], "_caller": fabrikam_admin}
     run_id = uuid4()
@@ -369,6 +432,9 @@ async def test_launch_input_naming_another_user_records_no_run_as(db_session):
         caller_user_id=str(principal.user_id),
         caller_email=principal.email,
         caller_name="Contoso Helpdesk Lead",
+        caller_is_superuser=False,
+        caller_is_external=False,
+        caller_is_provider_org=False,
         sync=False,
         lineage=person_lineage(principal.user_id),
         run_as_user_id=None,
@@ -403,14 +469,15 @@ async def test_delegation_task_cannot_name_the_childs_acting_user(
 
     mock_session._mock_session.add.side_effect = capture_add
 
-    async def get_created(model, run_id):
+    async def get_created(model, run_id, **_kwargs):
         if model is AgentRun and created_runs and created_runs[0].id == run_id:
             return created_runs[0]
         return None
 
     mock_session._mock_session.get.side_effect = get_created
-    caller = _contoso_lead(contoso)
-    run_user_id = UUID(caller["user_id"])
+    caller_data = _contoso_lead(contoso)
+    caller = _canonical_caller(caller_data)
+    run_user_id = caller.principal.user_id
     run_as = _contoso_portal_user(contoso) if with_run_as else None
     fabrikam_admin = _fabrikam_admin()
     task = f"Check the mailbox. run_as={fabrikam_admin['user_id']}"
@@ -436,12 +503,23 @@ async def test_delegation_task_cannot_name_the_childs_acting_user(
             "src.services.execution.run_summarizer.enqueue_summarize",
             new_callable=AsyncMock,
         ),
+        patch(
+            "src.services.execution.autonomous_agent_executor.load_runtime_principal",
+            new=AsyncMock(return_value=caller.principal),
+        ),
+        patch(
+            "src.services.execution.autonomous_agent_executor.load_caller",
+            new=AsyncMock(return_value=caller),
+        ),
     ):
         await AutonomousAgentExecutor(mock_session).run_delegation(
             parent_agent=mock_agent,
             tool_call=tool_call,
             parent_run_id=str(uuid4()),
             caller=caller,
+            acting_user_id=(
+                UUID(run_as.user_id) if run_as else caller.principal.user_id
+            ),
             run_user_id=run_user_id,
             run_as=run_as,
         )
@@ -449,11 +527,14 @@ async def test_delegation_task_cannot_name_the_childs_acting_user(
     [child] = created_runs
     parent_run_as_user_id = UUID(run_as.user_id) if run_as else None
     assert child.run_as_user_id == parent_run_as_user_id
-    assert child.caller_user_id == caller["user_id"]
+    assert child.caller_user_id == str(caller.principal.user_id)
     assert child.run_user_id == run_user_id
+    assert child.acting_user_id == (
+        UUID(run_as.user_id) if run_as else caller.principal.user_id
+    )
     assert child.input == {"task": task, "_delegated_from": mock_agent.name}
     child_run = mock_child_run.await_args
     assert child_run is not None
     assert child_run.kwargs["run_as"] == run_as
-    assert child_run.kwargs["_caller"] == caller
+    assert child_run.kwargs["caller"] == caller
     assert child_run.kwargs["run_user_id"] == run_user_id

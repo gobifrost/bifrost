@@ -35,8 +35,15 @@ vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => ({ isPlatformAdmin: false }),
 }));
 
+const mockAuthorization = vi.fn();
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockAuthorization(),
+}));
+
 vi.mock("@/components/agents/SummaryBackfillButton", () => ({
-	SummaryBackfillButton: () => null,
+	SummaryBackfillButton: ({ agentId }: { agentId?: string }) => (
+		<div data-testid="summary-backfill" data-agent-id={agentId} />
+	),
 }));
 
 // Stub the three tab components to thin probes — we test them in their own
@@ -84,10 +91,15 @@ const existingAgent = {
 	delegated_agent_ids: [],
 	role_ids: [],
 	knowledge_sources: [],
+	organization_id: "org-agent",
 };
 
 beforeEach(() => {
 	mockUseAgent.mockReturnValue({ data: existingAgent, isLoading: false });
+	mockAuthorization.mockReturnValue({
+		canAt: () => false,
+		canAnywhere: () => false,
+	});
 });
 
 // -----------------------------------------------------------------------------
@@ -166,6 +178,23 @@ describe("AgentDetailPage — edit mode", () => {
 		await user.click(screen.getByRole("tab", { name: /settings/i }));
 		const settings = await screen.findByTestId("settings-tab");
 		expect(settings).toHaveAttribute("data-mode", "edit");
+	});
+
+	it("does not offer a backfill for an agent outside the named run-write scope", async () => {
+		mockAuthorization.mockReturnValue({
+			canAt: (
+				permission: string,
+				target: { kind: string; id?: string },
+			) =>
+				permission === "agentruns.readwrite.all" &&
+				target.kind === "org" &&
+				target.id === "org-other",
+			canAnywhere: () => true,
+		});
+		await renderAtRoute("/agents/agent-1");
+		expect(
+			screen.queryByTestId("summary-backfill"),
+		).not.toBeInTheDocument();
 	});
 });
 
@@ -257,7 +286,9 @@ it("uses the creation form even when a disabled tab is in the URL", async () => 
 	);
 });
 
- it("does not show a status-update failure on a fresh New Agent page", async () => {
- await renderAtRoute("/agents/new");
- expect(screen.queryByText("Could not update the agent status. Try again.")).not.toBeInTheDocument();
- });
+it("does not show a status-update failure on a fresh New Agent page", async () => {
+	await renderAtRoute("/agents/new");
+	expect(
+		screen.queryByText("Could not update the agent status. Try again."),
+	).not.toBeInTheDocument();
+});

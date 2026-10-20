@@ -39,7 +39,7 @@ def mutation_context(monkeypatch):
 
     monkeypatch.setattr(
         "shared.sdk_files.resolve_effective_scope",
-        lambda *_args: str(SOLUTION_ID),
+        AsyncMock(return_value=str(SOLUTION_ID)),
     )
     monkeypatch.setattr(
         "shared.sdk_files.ctx_solution_id", lambda *_args: SOLUTION_ID

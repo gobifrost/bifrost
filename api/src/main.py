@@ -99,6 +99,7 @@ from src.routers import (
     mcp_me_connections_router,
     mcp_oauth_callback_router,
     sdk_modules_router,
+    sdk_runtime_router,
     policy_rules_router,
     product_updates_router,
 )
@@ -139,10 +140,6 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Initializing database connection...")
     await init_db()
     logger.info("Database connection established")
-
-    # Register entity change hooks for real-time manifest sync
-    from src.core.entity_change_hook import register_entity_change_hooks
-    register_entity_change_hooks()
 
     # Register dynamic workflow endpoints for OpenAPI documentation
     logger.info("Registering workflow endpoints...")
@@ -471,6 +468,7 @@ def create_app() -> FastAPI:
     app.include_router(mcp_me_connections_router)
     app.include_router(mcp_oauth_callback_router)
     app.include_router(sdk_modules_router)
+    app.include_router(sdk_runtime_router)
     app.include_router(policy_rules_router)
     app.include_router(product_updates_router)
 

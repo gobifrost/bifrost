@@ -20,12 +20,7 @@ from shared.claims.registry import (
     find_cycle,
     referenced_claim_names,
 )
-from src.core.auth import Context, CurrentSuperuser
-from src.core.org_filter import (
-    OrgFilterType,
-    resolve_org_filter,
-    resolve_target_org,
-)
+from src.core.auth import Context, CurrentActiveUser
 from src.models.contracts.claims import (
     ClaimsList,
     CustomClaim as ClaimDTO,
@@ -35,11 +30,19 @@ from src.models.contracts.claims import (
 from src.models.orm.custom_claims import CustomClaim as ClaimORM
 from src.models.orm.tables import Table
 from src.services.operation_catalog import operation_route
+from src.services.authorization.enforce import (
+    load_caller,
+    operation_reach,
+    org_target,
+    require_operation,
+)
 
 router = APIRouter(prefix="/api/claims", tags=["Claims"])
 
 
-def _resolve_target_org(ctx: Context, scope: str | None) -> UUID:
+async def _resolve_target_org(
+    ctx: Context, user: CurrentActiveUser, scope: str | None, operation: str
+) -> UUID:
     """Resolve the target org for write/scoped operations.
 
     Loose Custom Claims created through this endpoint are always tied to a
@@ -48,18 +51,22 @@ def _resolve_target_org(ctx: Context, scope: str | None) -> UUID:
     home org and ``scope`` is ignored. Solution-owned claims may be global, but
     deploy is their writer.
     """
-    try:
-        target = resolve_target_org(ctx.user, scope, ctx.org_id)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        ) from exc
+    if scope in (None, ""):
+        target = ctx.org_id
+    elif scope == "global":
+        target = None
+    else:
+        try:
+            target = UUID(scope)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     if target is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Custom Claims must target a specific organization (set scope=<org_uuid>)",
         )
+    caller = await load_caller(ctx.db, user)
+    require_operation(caller, operation, org_target(target))
     return target
 
 
@@ -159,7 +166,7 @@ async def _tables_referencing_claim(
 @router.get("", response_model=ClaimsList, summary="List custom claims", **operation_route("claims.list"))
 async def list_claims(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     scope: str | None = Query(
         default=None,
         description="Filter scope: omit to list across all orgs (superuser default), or pass an org UUID.",
@@ -169,22 +176,24 @@ async def list_claims(
 
     Platform admins see claims across every org by default — the
     organization column lets them filter in the UI. Non-superusers don't
-    reach this endpoint (gated by ``CurrentSuperuser``).
+    reach this endpoint (gated by ``CurrentActiveUser``).
     """
-    try:
-        filter_type, filter_org = resolve_org_filter(ctx.user, scope)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        ) from exc
-
     stmt = select(ClaimORM).order_by(ClaimORM.organization_id, ClaimORM.name)
-    if filter_type == OrgFilterType.GLOBAL_ONLY:
+    if scope == "global":
         # Claims are always org-scoped — no rows match "global only".
         return ClaimsList(claims=[])
-    if filter_type in (OrgFilterType.ORG_ONLY, OrgFilterType.ORG_PLUS_GLOBAL):
-        stmt = stmt.where(ClaimORM.organization_id == filter_org)
+    caller = await load_caller(ctx.db, user)
+    if scope:
+        try:
+            target = UUID(scope)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        require_operation(caller, "claims.list", org_target(target))
+        stmt = stmt.where(ClaimORM.organization_id == target)
+    else:
+        predicate = operation_reach(caller, "claims.list").where(ClaimORM.organization_id)
+        if predicate is not None:
+            stmt = stmt.where(predicate)
     rows = (await ctx.db.execute(stmt)).scalars().all()
     return ClaimsList(claims=[ClaimDTO.model_validate(r) for r in rows])
 
@@ -193,13 +202,13 @@ async def list_claims(
 async def get_claim(
     name: str,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     scope: str | None = Query(
         default=None,
         description="Target organization scope (org UUID). Defaults to caller's home org.",
     ),
 ) -> ClaimDTO:
-    org_id = _resolve_target_org(ctx, scope)
+    org_id = await _resolve_target_org(ctx, user, scope, operation="claims.get")
     row = (
         await ctx.db.execute(
             select(ClaimORM).where(
@@ -223,13 +232,13 @@ async def get_claim(
 async def create_claim(
     body: CustomClaimCreate,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     scope: str | None = Query(
         default=None,
         description="Target organization scope (org UUID). Defaults to caller's home org.",
     ),
 ) -> ClaimDTO:
-    org_id = _resolve_target_org(ctx, scope)
+    org_id = await _resolve_target_org(ctx, user, scope, operation="claims.create")
     await _check_source_table_exists(ctx.db, org_id, body.query.table)
     await _check_known_claim_refs(
         ctx.db, org_id, body.query.where, exclude_name=body.name
@@ -271,13 +280,13 @@ async def update_claim(
     name: str,
     body: CustomClaimUpdate,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     scope: str | None = Query(
         default=None,
         description="Target organization scope (org UUID). Defaults to caller's home org.",
     ),
 ) -> ClaimDTO:
-    org_id = _resolve_target_org(ctx, scope)
+    org_id = await _resolve_target_org(ctx, user, scope, operation="claims.update")
     row = (
         await ctx.db.execute(
             select(ClaimORM).where(
@@ -321,13 +330,13 @@ async def update_claim(
 async def delete_claim(
     name: str,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     scope: str | None = Query(
         default=None,
         description="Target organization scope (org UUID). Defaults to caller's home org.",
     ),
 ) -> None:
-    org_id = _resolve_target_org(ctx, scope)
+    org_id = await _resolve_target_org(ctx, user, scope, operation="claims.delete")
     row = (
         await ctx.db.execute(
             select(ClaimORM).where(

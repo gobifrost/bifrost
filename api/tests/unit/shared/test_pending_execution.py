@@ -1,11 +1,14 @@
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
 from shared.pending_execution import get_pending_execution_fallback
+from shared.builtin_roles import WILDCARD_PERMISSION
 from src.core.principal import UserPrincipal
 from src.models.enums import ExecutionStatus
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
 
 
 EXECUTION_ID = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
@@ -13,12 +16,22 @@ USER_ID = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 OTHER_USER_ID = UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
 
 
-def _principal(*, user_id: UUID = USER_ID, is_superuser: bool = False) -> UserPrincipal:
-    return UserPrincipal(
+def _principal(*, user_id: UUID = USER_ID, is_superuser: bool = False) -> Caller:
+    principal = UserPrincipal(
         user_id=user_id,
         email="user@example.com",
         organization_id=None,
         is_superuser=is_superuser,
+    )
+    return Caller(
+        principal=principal,
+        ctx=AuthorizationContext(
+            user_id=user_id,
+            home_organization_id=None,
+            base_role_id=uuid4(),
+            is_external=False,
+            base_permissions=(frozenset({WILDCARD_PERMISSION}) if is_superuser else frozenset()),
+        ),
     )
 
 

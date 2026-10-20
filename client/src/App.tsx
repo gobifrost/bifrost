@@ -352,7 +352,11 @@ const routeElements = (
 			loader={applicationDetailLoader(true)}
 			errorElement={<RouteLoadError />}
 			element={
-				<ProtectedRoute requirePlatformAdmin>
+				<ProtectedRoute
+					requirePermission={{
+						permission: "apps.read",
+					}}
+				>
 					<ApplicationPreview />
 				</ProtectedRoute>
 			}
@@ -364,7 +368,11 @@ const routeElements = (
 			loader={applicationDetailLoader(false)}
 			errorElement={<RouteLoadError />}
 			element={
-				<ProtectedRoute requireOrgUser>
+				<ProtectedRoute
+					requirePermission={{
+						permission: "apps.readbasic",
+					}}
+				>
 					<ApplicationRunner />
 				</ProtectedRoute>
 			}
@@ -387,12 +395,17 @@ const routeElements = (
 		/>
 
 		<Route path="/" element={<Layout />}>
-			{/* Home is available to authenticated users; metrics remain admin-only. */}
+			{/* Home is available to authenticated users. */}
 			<Route index element={<Home />} />
 			<Route
 				path="whats-new"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "settings.read",
+							at: "global",
+						}}
+					>
 						<ProductUpdates />
 					</ProtectedRoute>
 				}
@@ -400,17 +413,25 @@ const routeElements = (
 			<Route
 				path="dashboard"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "metrics.read",
+						}}
+					>
 						<Dashboard />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Workflows - PlatformAdmin only */}
+			{/* Workflows */}
 			<Route
 				path="workflows"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "workflows.read",
+						}}
+					>
 						<Workflows />
 					</ProtectedRoute>
 				}
@@ -418,7 +439,11 @@ const routeElements = (
 			<Route
 				path="services"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "platform.read",
+						}}
+					>
 						<Services />
 					</ProtectedRoute>
 				}
@@ -426,7 +451,11 @@ const routeElements = (
 			<Route
 				path="services/:serviceId"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "platform.read",
+						}}
+					>
 						<ServiceDetail />
 					</ProtectedRoute>
 				}
@@ -434,17 +463,25 @@ const routeElements = (
 			<Route
 				path="workflows/:workflowName/execute"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "workflows.execute",
+						}}
+					>
 						<ExecuteWorkflow />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Forms - PlatformAdmin or OrgUser */}
+			{/* Forms */}
 			<Route
 				path="forms"
 				element={
-					<ProtectedRoute requireOrgUser>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "forms.readbasic",
+						}}
+					>
 						<Forms />
 					</ProtectedRoute>
 				}
@@ -452,17 +489,25 @@ const routeElements = (
 			<Route
 				path="execute/:formId"
 				element={
-					<ProtectedRoute requireOrgUser>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "forms.readbasic",
+						}}
+					>
 						<RunFormRoute />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Form Builder - PlatformAdmin only */}
+			{/* Form Builder */}
 			<Route
 				path="forms/new"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "forms.readwrite",
+						}}
+					>
 						<FormBuilder />
 					</ProtectedRoute>
 				}
@@ -470,17 +515,25 @@ const routeElements = (
 			<Route
 				path="forms/:formId/edit"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "forms.readwrite",
+						}}
+					>
 						<FormBuilder />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* History - PlatformAdmin or OrgUser */}
+			{/* History */}
 			<Route
 				path="history"
 				element={
-					<ProtectedRoute requireOrgUser>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "executions.readbasic",
+						}}
+					>
 						<ExecutionHistory />
 					</ProtectedRoute>
 				}
@@ -581,11 +634,15 @@ const routeElements = (
 				}
 			/>
 
-			{/* Solutions - PlatformAdmin only */}
+			{/* Solutions */}
 			<Route
 				path="solutions"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "solutions.read",
+						}}
+					>
 						<Solutions />
 					</ProtectedRoute>
 				}
@@ -593,27 +650,39 @@ const routeElements = (
 			<Route
 				path="solutions/:solutionId"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "solutions.read",
+						}}
+					>
 						<SolutionDetail />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Config - PlatformAdmin only */}
+			{/* Config */}
 			<Route
 				path="config"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "configs.read",
+						}}
+					>
 						<Config />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Data Tables - PlatformAdmin only */}
+			{/* Data Tables */}
 			<Route
 				path="tables"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "tables.read",
+						}}
+					>
 						<Tables />
 					</ProtectedRoute>
 				}
@@ -621,27 +690,39 @@ const routeElements = (
 			<Route
 				path="tables/:tableId"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "tables.read",
+						}}
+					>
 						<TableDetail />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Files - PlatformAdmin only */}
+			{/* Files */}
 			<Route
 				path="files"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "filepolicies.read",
+						}}
+					>
 						<Files />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Applications List - OrgUser access (with sidebar) */}
+			{/* Applications */}
 			<Route
 				path="apps"
 				element={
-					<ProtectedRoute requireOrgUser>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "apps.readbasic",
+						}}
+					>
 						<Applications />
 					</ProtectedRoute>
 				}
@@ -649,7 +730,11 @@ const routeElements = (
 			<Route
 				path="apps/new"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "apps.readwrite",
+						}}
+					>
 						<AppCodeEditorPage />
 					</ProtectedRoute>
 				}
@@ -657,17 +742,25 @@ const routeElements = (
 			<Route
 				path="apps/:applicationId/edit/*"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "apps.readwrite",
+						}}
+					>
 						<AppCodeEditorPage />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Agents - All authenticated users */}
+			{/* Agents */}
 			<Route
 				path="agents"
 				element={
-					<ProtectedRoute>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "agents.readbasic",
+						}}
+					>
 						<FleetPage />
 					</ProtectedRoute>
 				}
@@ -685,7 +778,11 @@ const routeElements = (
 				loader={agentDetailLoader}
 				errorElement={<RouteLoadError />}
 				element={
-					<ProtectedRoute>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "agents.readbasic",
+						}}
+					>
 						<AgentDetailPage />
 					</ProtectedRoute>
 				}
@@ -693,7 +790,11 @@ const routeElements = (
 			<Route
 				path="agents/:id/review"
 				element={
-					<ProtectedRoute>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "agents.readbasic",
+						}}
+					>
 						<AgentReviewPage />
 					</ProtectedRoute>
 				}
@@ -709,36 +810,59 @@ const routeElements = (
 			<Route
 				path="agents/:agentId/runs/:runId"
 				element={
-					<ProtectedRoute>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "agents.readbasic",
+						}}
+					>
 						<AgentRunDetailPage />
 					</ProtectedRoute>
 				}
 			/>
-			{/* Knowledge - PlatformAdmin only */}
+			{/* Knowledge */}
 			<Route
 				path="knowledge"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "knowledge.read",
+						}}
+					>
 						<Knowledge />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Entity Management - PlatformAdmin only */}
+			{/* Entity Management */}
 			<Route
 				path="entity-management"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							allOf: [
+								{ permission: "workflows.read" },
+								{ permission: "forms.readbasic" },
+								{ permission: "agents.readbasic" },
+								{ permission: "apps.readbasic" },
+								{ permission: "organizations.read" },
+								{ permission: "roles.read", at: "global" },
+							],
+						}}
+					>
 						<EntityManagement />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Integrations - PlatformAdmin only */}
+			{/* Integrations */}
 			<Route
 				path="integrations"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "integrations.read",
+						}}
+					>
 						<Integrations />
 					</ProtectedRoute>
 				}
@@ -746,17 +870,25 @@ const routeElements = (
 			<Route
 				path="integrations/:id"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "integrations.read",
+						}}
+					>
 						<IntegrationDetail />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* MCP Servers - PlatformAdmin only */}
+			{/* MCP Servers */}
 			<Route
 				path="mcp-servers"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "mcp.readbasic",
+						}}
+					>
 						<MCPServers />
 					</ProtectedRoute>
 				}
@@ -764,7 +896,11 @@ const routeElements = (
 			<Route
 				path="mcp-servers/:id"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "mcp.readbasic",
+						}}
+					>
 						<MCPServerDetail />
 					</ProtectedRoute>
 				}
@@ -772,17 +908,25 @@ const routeElements = (
 			<Route
 				path="mcp-servers/:serverId/connections/:connectionId/edit"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "mcp.readwrite",
+						}}
+					>
 						<MCPConnectionEdit />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Event Sources - PlatformAdmin only */}
+			{/* Event Sources */}
 			<Route
 				path="event-sources"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "events.read",
+						}}
+					>
 						<Events />
 					</ProtectedRoute>
 				}
@@ -790,7 +934,11 @@ const routeElements = (
 			<Route
 				path="event-sources/:sourceId"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "events.read",
+						}}
+					>
 						<Events />
 					</ProtectedRoute>
 				}
@@ -798,17 +946,26 @@ const routeElements = (
 			<Route
 				path="event-sources/:sourceId/events/:eventId"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "events.read",
+						}}
+					>
 						<Events />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Settings - PlatformAdmin only */}
+			{/* Settings */}
 			<Route
 				path="settings"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "settings.read",
+							at: "global",
+						}}
+					>
 						<Settings />
 					</ProtectedRoute>
 				}
@@ -816,27 +973,43 @@ const routeElements = (
 			<Route
 				path="settings/:tab"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "settings.read",
+							at: "global",
+						}}
+					>
 						<Settings />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Diagnostics - PlatformAdmin only */}
+			{/* Diagnostics */}
 			<Route
 				path="diagnostics"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							allOf: [
+								{ permission: "metrics.read", at: "global" },
+								{ permission: "platform.read", at: "global" },
+							],
+						}}
+					>
 						<DiagnosticsPage />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Audit Log - PlatformAdmin only */}
+			{/* Audit Log */}
 			<Route
 				path="audit"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "roleassignments.read",
+						}}
+					>
 						<AuditLogPage />
 					</ProtectedRoute>
 				}
@@ -856,11 +1029,15 @@ const routeElements = (
 				}
 			/>
 
-			{/* Reports - PlatformAdmin only */}
+			{/* Reports */}
 			<Route
 				path="reports/roi"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "reports.read",
+						}}
+					>
 						<ROIReports />
 					</ProtectedRoute>
 				}
@@ -868,13 +1045,18 @@ const routeElements = (
 			<Route
 				path="reports/usage"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "metrics.read",
+							at: "global",
+						}}
+					>
 						<UsageReports />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* User Settings - All authenticated users */}
+			{/* User Settings */}
 			<Route
 				path="user-settings"
 				element={
@@ -895,7 +1077,7 @@ const routeElements = (
 
 		{/* ContentLayout - Pages without default padding */}
 		<Route path="/" element={<ContentLayout />}>
-			{/* Chat - All authenticated users */}
+			{/* Chat */}
 			<Route
 				path="chat/:conversationId?"
 				element={
@@ -912,11 +1094,16 @@ const routeElements = (
 					</ProtectedRoute>
 				}
 			/>
-			{/* Execution Details - PlatformAdmin or OrgUser */}
+			{/* Execution Details */}
 			<Route
 				path="history/:executionId"
 				element={
-					<ProtectedRoute requireOrgUser>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "executions.readbasic",
+						}}
+						allowHmacFormExecutionResult
+					>
 						<ExecutionDetails />
 					</ProtectedRoute>
 				}

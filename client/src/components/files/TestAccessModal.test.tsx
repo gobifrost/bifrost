@@ -67,7 +67,7 @@ describe("TestAccessModal", () => {
 		expect(screen.getAllByText("Allowed").length).toBe(2);
 		expect(screen.getAllByText("Denied").length).toBe(2);
 		expect(
-			screen.getByText("Allowed by Administrator Access."),
+			screen.getByText("Allowed by Platform Admin Access."),
 		).toBeInTheDocument();
 	});
 	it("does not show an older user's results after the selection changes", async () => {

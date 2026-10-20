@@ -678,6 +678,8 @@ class ProcessPoolManager:
                 "Cannot fork worker: template process is not running. "
                 "ProcessPoolManager.start() must complete before forking workers."
             )
+        if self._sdk_http is None or not self._sdk_http.socket_path:
+            raise RuntimeError("Cannot fork worker: authenticated SDK socket is unavailable")
 
         self._process_counter += 1
         process_id = f"process-{self._process_counter}"
@@ -687,9 +689,7 @@ class ProcessPoolManager:
         child_pid, work_queue, result_queue = self._template.fork(
             worker_id=process_id,
             persistent=False,
-            sdk_socket_path=(
-                self._sdk_http.socket_path if self._sdk_http is not None else None
-            ),
+            sdk_socket_path=self._sdk_http.socket_path,
         )
 
         handle = ProcessHandle(

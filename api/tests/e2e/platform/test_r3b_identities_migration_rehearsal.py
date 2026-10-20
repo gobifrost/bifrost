@@ -15,7 +15,9 @@ Ids and expectations are frozen here, like the migration's own SQL.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib.util
+import json
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -39,6 +41,7 @@ pytestmark = pytest.mark.e2e
 
 PREVIOUS_REVISION = "20261003_r3_operator_secrets"
 REVISION = "20261003_r3b_identities"
+CAPABILITIES_PREVIOUS_REVISION = "20261017_agent_actor"
 
 PLATFORM_ADMIN_ROLE_ID = UUID("00000000-0000-0000-0000-000000000005")
 USER_ROLE_ID = UUID("00000000-0000-0000-0000-000000000006")
@@ -148,6 +151,78 @@ async def _edit_default_identity_name(database_url: str, organization_id: str, n
     await _run_in_database(database_url, edit)
 
 
+async def _seed_legacy_capabilities(database_url: str, ids: dict[str, str]) -> None:
+    """Seed pre-normalization capability and approved Solution consent rows."""
+
+    async def seed(connection: AsyncConnection) -> None:
+        await connection.execute(
+            sa.text(
+                "INSERT INTO solutions (id, slug, name) "
+                "VALUES (CAST(:id AS uuid), 'rehearsal-capabilities', 'Capabilities rehearsal')"
+            ),
+            {"id": ids["solution"]},
+        )
+        for boundary in ("platform", "managed_organizations"):
+            await connection.execute(
+                sa.text(
+                    "INSERT INTO workflow_permission_grants "
+                    "(id, workflow_id, permission, boundary_kind, organization_id) "
+                    "VALUES (gen_random_uuid(), CAST(:workflow AS uuid), 'secrets.read', :boundary, NULL)"
+                ),
+                {"workflow": ids["g_sched"], "boundary": boundary},
+            )
+        await connection.execute(
+            sa.text(
+                "INSERT INTO solution_workflow_permission_requests "
+                "(id, solution_id, workflow_id, requested_mode, requested_grants, request_digest, "
+                "status, approved_digest, decided_by, decided_at) "
+                "VALUES (gen_random_uuid(), CAST(:solution AS uuid), CAST(:workflow AS uuid), "
+                "'restricted', CAST(:grants AS jsonb), 'legacy', 'approved', 'legacy', 'rehearsal', NOW())"
+            ),
+            {
+                "solution": ids["solution"],
+                "workflow": ids["g_sched"],
+                "grants": json.dumps(
+                    [
+                        {"permission": "secrets.read", "boundary_kind": "platform"},
+                        {
+                            "permission": "secrets.read",
+                            "boundary_kind": "managed_organizations",
+                        },
+                    ]
+                ),
+            },
+        )
+
+    await _run_in_database(database_url, seed)
+
+
+async def _capability_state(database_url: str, workflow_id: str) -> dict:
+    async def read(connection: AsyncConnection) -> dict:
+        grants = (
+            await connection.execute(
+                sa.text(
+                    "SELECT permission FROM workflow_permission_grants "
+                    "WHERE workflow_id = CAST(:workflow AS uuid) ORDER BY permission"
+                ),
+                {"workflow": workflow_id},
+            )
+        ).scalars().all()
+        request = (
+            await connection.execute(
+                sa.text(
+                    "SELECT requested_grants, request_digest, status, approved_digest, decided_by, decided_at "
+                    "FROM solution_workflow_permission_requests "
+                    "WHERE workflow_id = CAST(:workflow AS uuid)"
+                ),
+                {"workflow": workflow_id},
+            )
+        ).one()
+        return {"grants": grants, "request": request}
+
+    return await _run_in_database(database_url, read)
+
+
 def _named(state: dict, names: dict[str, str]) -> dict:
     """``state`` with the identities named as ``names`` says (by current name)."""
     identities = {(row[0], row[1], names.get(row[2], row[2]), *row[3:]) for row in state["identities"]}
@@ -249,11 +324,14 @@ async def _state(database_url: str) -> dict:
     return await _run_in_database(database_url, read)
 
 
-def test_identities_are_created_and_unattended_global_workflows_point_at_the_provider_identity() -> None:
+def test_identity_assignment_survives_capability_normalization_and_reconsent() -> None:
     database_name = f"bifrost_r2b_rehearsal_{uuid4().hex[:12]}"
     _assert_safe_database_name(database_name)
     database_url = _direct_database_url(database_name)
-    ids = {key: str(uuid4()) for key in (*_WORKFLOWS, "org_a", "org_b", "source")}
+    ids = {
+        key: str(uuid4())
+        for key in (*_WORKFLOWS, "org_a", "org_b", "source", "solution")
+    }
     provider = str(PROVIDER_ORG_ID)
 
     try:
@@ -318,8 +396,16 @@ def test_identities_are_created_and_unattended_global_workflows_point_at_the_pro
         asyncio.run(_edit_default_identity_name(database_url, ids["org_b"], "Billing Robot"))
         edited = asyncio.run(_state(database_url))
         assert {row[2] for row in edited["identities"]} >= {"Billing Robot", "Global identity", "Rehearsal A identity"}
+
+        # Seed rows at the direct predecessor of the capability migration,
+        # then upgrade to head. This keeps the earlier identity assignment in
+        # the same disposable rehearsal while proving capability collapse and
+        # consent invalidation against real pre-head schema.
+        _upgrade(database_url, CAPABILITIES_PREVIOUS_REVISION)
+        asyncio.run(_seed_legacy_capabilities(database_url, ids))
         _upgrade(database_url, "head")
         at_head = asyncio.run(_state(database_url))
+        capabilities = asyncio.run(_capability_state(database_url, ids["g_sched"]))
         assert at_head["constraint"] == (
             "CHECK (((organization_id IS NOT NULL) OR (is_superuser = true) OR (identity_kind IS NOT NULL)))"
         )
@@ -338,6 +424,19 @@ def test_identities_are_created_and_unattended_global_workflows_point_at_the_pro
         assert _named({**at_head, **unchanged}, {}) == _named(
             edited, every_default
         )
+        assert at_head["run_identities"][ids["g_sched"]] == provider_identity
+        assert capabilities["grants"] == ["secrets.read"]
+        requested_grants, request_digest, status, approved_digest, decided_by, decided_at = capabilities["request"]
+        assert requested_grants == [{"permission": "secrets.read"}]
+        expected_digest = hashlib.sha256(
+            json.dumps(
+                {"mode": "restricted", "grants": requested_grants},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        assert request_digest == expected_digest
+        assert (status, approved_digest, decided_by, decided_at) == ("pending", None, None, None)
         asyncio.run(_rerun_data_step(database_url))
         assert asyncio.run(_state(database_url)) == at_head
 

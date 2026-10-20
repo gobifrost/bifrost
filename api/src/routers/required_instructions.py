@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
 
-from src.core.auth import CurrentActiveUser, RequirePlatformAdmin
+from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
 from src.models.contracts.required_instructions import (
     RequiredInstructionsResponse,
@@ -12,12 +12,13 @@ from src.models.contracts.required_instructions import (
 )
 from src.services.memory import MemoryService
 from src.services.required_instructions import RequiredInstructionsService
+from src.services.authorization.enforce import load_caller, require_operation, org_target
+from src.services.authorization.evaluator import GLOBAL
 
 router = APIRouter(prefix="/api/required-instructions", tags=["Required Instructions"])
 admin_router = APIRouter(
     prefix="/api/admin/required-instructions",
     tags=["Required Instructions"],
-    dependencies=[RequirePlatformAdmin],
 )
 
 
@@ -57,6 +58,9 @@ async def get_global_required_instructions(
     db: DbSession,
     current_user: CurrentActiveUser,
 ) -> RequiredInstructionsSettings:
+    require_operation(
+        await load_caller(db, current_user), "GET /api/admin/required-instructions", GLOBAL
+    )
     instructions = await _service(db, current_user.organization_id).configured(None)
     return RequiredInstructionsSettings(instructions=instructions)
 
@@ -67,6 +71,9 @@ async def update_global_required_instructions(
     db: DbSession,
     current_user: CurrentActiveUser,
 ) -> RequiredInstructionsSettings:
+    require_operation(
+        await load_caller(db, current_user), "PUT /api/admin/required-instructions", GLOBAL
+    )
     instructions = await _service(db, current_user.organization_id).set_configured(
         request.instructions,
         organization_id=None,
@@ -85,6 +92,11 @@ async def get_organization_required_instructions(
     db: DbSession,
     current_user: CurrentActiveUser,
 ) -> RequiredInstructionsSettings:
+    require_operation(
+        await load_caller(db, current_user),
+        "GET /api/admin/required-instructions/organizations/{organization_id}",
+        org_target(organization_id),
+    )
     service = _service(db, current_user.organization_id)
     await _require_organization(service, organization_id)
     instructions = await service.configured(organization_id)
@@ -101,6 +113,11 @@ async def update_organization_required_instructions(
     db: DbSession,
     current_user: CurrentActiveUser,
 ) -> RequiredInstructionsSettings:
+    require_operation(
+        await load_caller(db, current_user),
+        "PUT /api/admin/required-instructions/organizations/{organization_id}",
+        org_target(organization_id),
+    )
     service = _service(db, current_user.organization_id)
     await _require_organization(service, organization_id)
     instructions = await service.set_configured(

@@ -20,6 +20,7 @@ from __future__ import annotations
 import uuid
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -27,8 +28,18 @@ from src.services.solutions.guard import (
     SOLUTION_MANAGED_MESSAGE,
     install_solution_write_guard,
 )
+from tests.helpers.authorization import admin_caller
 
 pytestmark = pytest.mark.e2e
+
+
+@pytest.fixture(autouse=True)
+def _current_mcp_caller(monkeypatch):
+    """MCP tools resolve durable authority instead of trusting context flags."""
+    monkeypatch.setattr(
+        "src.services.mcp_server.authorization.load_mcp_caller",
+        AsyncMock(return_value=admin_caller()),
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -66,7 +77,7 @@ async def test_mcp_update_table_refuses_managed(monkeypatch):
 
     monkeypatch.setattr(mcp_tables, "_assemble_table_body", _fake_assemble)
 
-    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
+    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4(), runtime_credential_kind=None)
     result = await mcp_tables.bifrost_table_update(context, table_ref=str(tid), name="hijacked-via-mcp")
 
     text = str(result.model_dump() if hasattr(result, "model_dump") else result)
@@ -129,7 +140,7 @@ async def test_mcp_push_files_refuses_managed_without_s3_write(db_session, monke
     monkeypatch.setattr(FileStorageService, "write_file", _boom_write_file)
     monkeypatch.setattr(AppStorageService, "write_preview_file", _boom_write_preview)
 
-    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
+    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4(), runtime_credential_kind=None)
     result = await mcp_apps.push_files(
         context,
         files={"apps/managed-push/pages/index.tsx": "export default () => null;"},
@@ -176,7 +187,7 @@ async def test_mcp_push_files_delete_sweep_refuses_managed(db_session, monkeypat
 
     monkeypatch.setattr(FileStorageService, "delete_file", _track_delete)
 
-    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
+    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4(), runtime_credential_kind=None)
     result = await mcp_apps.push_files(
         context,
         files={},
@@ -213,7 +224,7 @@ async def test_mcp_push_files_delete_sweep_refuses_parent_of_managed(db_session,
 
     monkeypatch.setattr(FileStorageService, "delete_file", _track_delete)
 
-    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
+    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4(), runtime_credential_kind=None)
     result = await mcp_apps.push_files(
         context,
         files={},
@@ -252,7 +263,7 @@ async def test_mcp_push_files_delete_sweep_allows_unmanaged(db_session, monkeypa
 
     monkeypatch.setattr(FileStorageService, "delete_file", _ok_delete)
 
-    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
+    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4(), runtime_credential_kind=None)
     result = await mcp_apps.push_files(
         context,
         files={},
@@ -284,7 +295,7 @@ async def test_mcp_push_files_allows_unmanaged(db_session, monkeypatch):
     monkeypatch.setattr(FileStorageService, "write_file", _ok_write_file)
     monkeypatch.setattr(AppStorageService, "write_preview_file", _noop_write_preview)
 
-    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
+    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4(), runtime_credential_kind=None)
     result = await mcp_apps.push_files(
         context,
         files={"apps/adhoc-app/pages/index.tsx": "export default () => null;"},
@@ -364,7 +375,7 @@ async def test_mcp_update_form_forwards_managed_refusal_from_rest(monkeypatch):
 
     monkeypatch.setattr(mcp_forms, "_assemble_form_body", _fake_assemble)
 
-    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
+    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4(), runtime_credential_kind=None)
     result = await mcp_forms.bifrost_form_update(context, form_ref=str(fid), name="new name")
 
     text = str(result.model_dump() if hasattr(result, "model_dump") else result)
@@ -399,7 +410,7 @@ async def test_mcp_delete_table_refuses_managed(monkeypatch):
 
     monkeypatch.setattr(mcp_tables, "_resolve_ref", _fake_resolve_ref)
 
-    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
+    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4(), runtime_credential_kind=None)
     result = await mcp_tables.bifrost_table_delete(context, table_ref=str(tid))
 
     text = str(result.model_dump() if hasattr(result, "model_dump") else result)
@@ -441,7 +452,7 @@ async def test_mcp_app_write_forwards_managed_refusal_from_rest(
     monkeypatch.setattr(mcp_apps, "call_rest", _fake_call_rest)
     monkeypatch.setattr(mcp_apps, "rest_client", _no_http)
 
-    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
+    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4(), runtime_credential_kind=None)
     ref_kw = "app_ref" if tool == "bifrost_app_update" else "app_id"
     result = await getattr(mcp_apps, tool)(context, **{ref_kw: app_id}, **kwargs)
 

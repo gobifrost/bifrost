@@ -49,6 +49,9 @@ class PlatformJob(Base):
     requested_by_user_id: Mapped[str] = mapped_column(String(36), nullable=False)
     requested_by_email: Mapped[str] = mapped_column(String(255), nullable=False)
     requested_by_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Audit provenance retained independently of the effective requester.
+    impersonated_by_user_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    impersonation_session_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     resource_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     resource_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)

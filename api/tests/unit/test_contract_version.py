@@ -31,6 +31,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from bifrost.contract_version import CONTRACT_VERSION as CLI_CONTRACT_VERSION  # noqa: E402
 from shared.contract_version import CONTRACT_VERSION as SERVER_CONTRACT_VERSION  # noqa: E402
+from shared import models as _shared_contracts  # noqa: E402
 
 # DTOs the CLI sends/receives. Server-canonical classes (the wire truth).
 from src.models.contracts.agent_runs import (  # noqa: E402
@@ -158,15 +159,17 @@ _COMMAND_DTOS: list[type] = [
 
 #: Every request/response DTO the in-workflow SDK sends/parses against
 #: ``/api/sdk/*`` lives in ``src.models.contracts.cli``. We pull them in
-#: programmatically so a NEW SDK DTO is automatically fingerprinted — no manual
+#: programmatically, including shared runtime transport models, so a NEW SDK DTO
+#: is automatically fingerprinted — no manual
 #: list to forget to update. A retype on any of these silently breaks running
 #: workflows on a stale CLI, so they belong in the contract.
 _SDK_DTOS: list[type] = [
     obj
-    for _name, obj in inspect.getmembers(_cli_contracts, inspect.isclass)
+    for module in (_cli_contracts, _shared_contracts)
+    for _name, obj in inspect.getmembers(module, inspect.isclass)
     if issubclass(obj, BaseModel)
     and obj is not BaseModel
-    and obj.__module__ == _cli_contracts.__name__
+    and obj.__module__ == module.__name__
 ]
 
 #: Request/response DTOs the CLI/SDK sends or parses. Type-aware via JSON Schema.
@@ -375,7 +378,24 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # AgentRunEnqueueResponse (which echoes `run_as_user_id`), and
     # AgentRunCreateRequest is the /execute body. ADDITIVE: old clients omit
     # `run_as` and ignore the echo. Fingerprint refreshed only.
-    "800eaf4ec90f2d182b580d79fe6d7ec239507af10a2b38e08732a707bb48212d"
+    # Solution local development context request/response (2026-10-16).
+    # ADDITIVE: new capability endpoint; existing DTOs are unchanged.
+    # Combined with the compatible audit-surface description in PR #992.
+    # Shared runtime logging, service control and provider-cache DTOs are now
+    # fingerprinted alongside Solution preview and SDK command contracts.
+    # These transports are additive and ship with the existing 1.4.2 floor;
+    # the legacy contract marker remains frozen. The execution scope description
+    # now documents original reach and the named execution permission.
+    # SDKIntegrationsListMappingsRequest.scope is documented as accepted and
+    # ignored (description only; the field is unchanged).
+    # AuditLogEntry and AuditLogActor gained optional browser-impersonation
+    # provenance (2026-10-19). ADDITIVE: existing CLI audit readers ignore
+    # unknown fields, so the compatible 1.4.2 floor remains unchanged.
+    # The existing users.impersonate catalog description also names browser sessions.
+    #
+    # File move request/response DTOs for `bifrost files move` (2026-10-20).
+    # ADDITIVE: new CLI command and routes; existing DTOs are unchanged.
+    "ff39a5a6350ecc40fa2f74a63a896213a938522a459c1a65a63664ce85abfbde"
 )
 
 

@@ -32,6 +32,27 @@ def _caller(*, solution_id: UUID | None = SOLUTION_ID, is_superuser: bool = Fals
     )
 
 
+@pytest.fixture(autouse=True)
+def _verified_caller_context(monkeypatch):
+    """Scope resolution loads the caller and the active install from the DB."""
+    from shared.builtin_roles import USER_BASE_PERMISSIONS, USER_ROLE_ID
+    from src.services.authorization.context import AuthorizationContext
+    from src.services.authorization.enforce import Caller
+
+    async def load_verified_caller(_db, user):
+        return Caller(user, AuthorizationContext(
+            user_id=user.user_id, home_organization_id=user.organization_id,
+            base_role_id=USER_ROLE_ID, base_permissions=USER_BASE_PERMISSIONS,
+            is_external=user.is_external,
+        ))
+
+    monkeypatch.setattr("src.services.authorization.enforce.load_caller", load_verified_caller)
+    monkeypatch.setattr(
+        "src.services.solution_scope.get_active_solution",
+        AsyncMock(return_value=SimpleNamespace(id=SOLUTION_ID, organization_id=ORG_ID)),
+    )
+
+
 @pytest.fixture
 def env(monkeypatch):
     denied: set[tuple[str, str]] = set()
@@ -181,13 +202,13 @@ async def test_undeclared_solution_location_is_404(env) -> None:
     assert caught.value.status_code == 404
 
 
-async def test_invalid_superuser_scope_is_400(env) -> None:
+async def test_malformed_scope_is_422_like_other_file_operations(env) -> None:
     with pytest.raises(FileServiceError) as caught:
         await sdk_enqueue_file_moves(
             _caller(solution_id=None, is_superuser=True),
             items=[("a", "b")], location="docs", scope="not-a-uuid",
         )
-    assert caught.value.status_code == 400
+    assert caught.value.status_code == 422
 
 
 async def test_org_scope_keys_metadata_by_scope(env) -> None:

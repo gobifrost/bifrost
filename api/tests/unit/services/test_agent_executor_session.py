@@ -10,8 +10,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from tests.unit.services.agent_runtime_fakes import LegacyMockModel
+from src.core.principal import UserPrincipal
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
 from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
 from src.services.llm.base import LLMConfig
+
+
+_AGENTS = {}
 
 
 @pytest.fixture(autouse=True)
@@ -86,7 +92,27 @@ def _make_mock_agent():
     agent.system_tools = []
     agent.knowledge_sources = []
     agent.organization_id = uuid4()
+    _AGENTS[agent.id] = agent
     return agent
+
+
+def _caller(organization_id):
+    user_id = uuid4()
+    return Caller(
+        UserPrincipal(user_id=user_id, email="agent@contoso.example", organization_id=organization_id),
+        AuthorizationContext(user_id=user_id, home_organization_id=organization_id, base_role_id=uuid4(), is_external=False, base_permissions=frozenset()),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _authorize_agent(monkeypatch):
+    async def authorize(_db, caller, agent_id):
+        return caller, _AGENTS[agent_id]
+
+    monkeypatch.setattr(
+        "src.services.execution.autonomous_agent_executor.authorize_agent_execution",
+        AsyncMock(side_effect=authorize),
+    )
 
 
 def _make_mock_llm_response(content="Hello!", tool_calls=None):
@@ -138,7 +164,7 @@ class TestNoSessionDuringLLMCall:
             new_callable=AsyncMock,
         ):
             executor = AutonomousAgentExecutor(factory, redis_client=mock_redis)
-            result = await executor.run(agent=agent, input_data={"task": "say hello"}, run_user_id=None, run_as=None)
+            result = await executor.run(agent=agent, input_data={"task": "say hello"}, caller=_caller(agent.organization_id), run_user_id=None, run_as=None)
 
         assert result["status"] == "completed"
         # The LLM was called at least once
@@ -177,7 +203,7 @@ class TestStepsBufferedToRedis:
             new_callable=AsyncMock,
         ):
             executor = AutonomousAgentExecutor(factory, redis_client=mock_redis)
-            result = await executor.run(agent=agent, input_data={"task": "say hello"}, run_user_id=None, run_as=None)
+            result = await executor.run(agent=agent, input_data={"task": "say hello"}, caller=_caller(agent.organization_id), run_user_id=None, run_as=None)
 
         assert result["status"] == "completed"
 
@@ -222,7 +248,7 @@ class TestFlushToDb:
             new_callable=AsyncMock,
         ):
             executor = AutonomousAgentExecutor(factory, redis_client=mock_redis)
-            await executor.run(agent=agent, input_data={"task": "say hello"}, run_user_id=None, run_as=None)
+            await executor.run(agent=agent, input_data={"task": "say hello"}, caller=_caller(agent.organization_id), run_user_id=None, run_as=None)
 
         # Now flush to a fresh mock session
         flush_session = AsyncMock()
@@ -276,6 +302,8 @@ class TestDelegationUsesFactory:
             "llm_model": "test",
         }
 
+        caller = _caller(agent.organization_id)
+
         with patch.object(
             AutonomousAgentExecutor,
             "run",
@@ -284,8 +312,18 @@ class TestDelegationUsesFactory:
         ), patch(
             "src.services.execution.run_summarizer.enqueue_summarize",
             new_callable=AsyncMock,
+        ), patch(
+            "src.services.execution.autonomous_agent_executor.load_runtime_principal",
+            new=AsyncMock(return_value=caller.principal),
+        ), patch(
+            "src.services.execution.autonomous_agent_executor.load_caller",
+            new=AsyncMock(return_value=caller),
         ):
             executor = AutonomousAgentExecutor(factory, redis_client=mock_redis)
+            executor._caller = caller
+            executor._acting_user_id = caller.principal.user_id
+            executor._run_user_id = None
+            executor._run_as = None
             executor._current_run_id = str(uuid4())
 
             tool_call = MagicMock()

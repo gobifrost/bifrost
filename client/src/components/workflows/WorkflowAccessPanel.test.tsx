@@ -206,6 +206,18 @@ async function chooseIdentity(
 }
 
 describe("WorkflowAccessPanel", () => {
+	it("labels Full Access and explains its permissions stay within existing reach", () => {
+		render(<WorkflowAccessPanel workflow={makeWorkflow()} />);
+		expect(screen.getByText("Full Access")).toBeVisible();
+		expect(screen.getByText("Full Access adds every permission, including Secrets, within the run user's organization reach.")).toBeVisible();
+	});
+
+	it("labels Declared Permissions and explains it does not expand organization reach", () => {
+		render(<WorkflowAccessPanel workflow={makeWorkflow({ permission_mode: "restricted" })} />);
+		expect(screen.getByText("Declared Permissions")).toBeVisible();
+		expect(screen.getByText("Declared Permissions adds the workflow's configured permissions to the run user's own roles. It does not add organizations to their reach.")).toBeVisible();
+	});
+
 	it("runs as its organization's default identity when it names none, saying where it belongs", () => {
 		render(<WorkflowAccessPanel workflow={makeWorkflow()} />);
 
@@ -693,7 +705,7 @@ describe("WorkflowAccessPanel", () => {
 		render(<WorkflowAccessPanel workflow={makeWorkflow()} />);
 
 		expect(screen.getByText("Access Mode")).toBeInTheDocument();
-		expect(screen.getByText("Full")).toBeInTheDocument();
+		expect(screen.getByText("Full Access")).toBeInTheDocument();
 	});
 
 	it("tests access as the identity, starting from this workflow and its organization", () => {

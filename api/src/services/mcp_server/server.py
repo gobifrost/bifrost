@@ -23,11 +23,10 @@ from uuid import UUID
 
 from fastmcp.tools import ToolResult
 
-from shared import access_checks
-from shared.scope_resolver import has_scope_bypass
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
+    from src.core.principal import UserPrincipal
 
 from src.services.mcp_server.agent_scope import (
     get_scoped_agent_id as _get_agent_id_from_scope,
@@ -138,15 +137,20 @@ class MCPContext:
     org_id: UUID | str | None = None
     is_platform_admin: bool = False
     is_provider_org: bool = False
-    # External (portal/guest) principal — no global tier, no authenticated-
-    # tier entitlement. Mirrors UserPrincipal.is_external (the claim is
-    # already bypass-neutralized at token mint).
+    # External account flag, preserved from User.is_external at token mint.
     is_external: bool = False
     user_email: str = ""
     user_name: str = ""
     # Who an agent run is for (its run lineage). The REST bridge carries it as
     # a token claim so child runs and access checks see the agent run's user.
     run_user_id: UUID | str | None = None
+    # Audit attribution only; never used for authorization.
+    agent_run_id: UUID | str | None = None
+    # A durable runtime credential to forward through the REST bridge. These
+    # are identifiers only; HTTP auth resolves their authority from the DB.
+    runtime_credential_kind: str | None = None
+    runtime_credential_id: UUID | str | None = None
+    runtime_service_id: UUID | str | None = None
 
     # Knowledge namespaces accessible to this user (from agent.knowledge_sources)
     accessible_namespaces: list[str] = field(default_factory=list)
@@ -164,19 +168,39 @@ class MCPContext:
             self.org_id = UUID(self.org_id)
         if isinstance(self.run_user_id, str) and self.run_user_id:
             self.run_user_id = UUID(self.run_user_id)
+        if isinstance(self.agent_run_id, str) and self.agent_run_id:
+            self.agent_run_id = UUID(self.agent_run_id)
+        if isinstance(self.runtime_credential_id, str) and self.runtime_credential_id:
+            self.runtime_credential_id = UUID(self.runtime_credential_id)
+        if isinstance(self.runtime_service_id, str) and self.runtime_service_id:
+            self.runtime_service_id = UUID(self.runtime_service_id)
 
-    @property
-    def has_scope_bypass(self) -> bool:
-        """Whether this caller may cross organization scope boundaries."""
-        return has_scope_bypass(
-            is_platform_admin=self.is_platform_admin,
-            is_provider_org=self.is_provider_org,
-        )
 
 
 # =============================================================================
 # Context Helper Functions (for FastMCP authentication)
 # =============================================================================
+
+
+def context_from_principal(principal: "UserPrincipal") -> MCPContext:
+    """Carry verified identity and durable runtime provenance into MCP."""
+    runtime = principal.runtime_authority
+    return MCPContext(
+        user_id=principal.user_id,
+        org_id=principal.organization_id,
+        is_platform_admin=principal.is_superuser,
+        is_provider_org=principal.is_provider_org,
+        is_external=principal.is_external,
+        user_email=principal.email,
+        user_name=principal.name,
+        run_user_id=principal.run_user_id,
+        runtime_credential_kind=None if runtime is None else runtime.kind,
+        runtime_credential_id=None if runtime is None else runtime.credential_id,
+        runtime_service_id=None if runtime is None else runtime.service_id,
+        agent_run_id=(
+            runtime.credential_id if runtime is not None and runtime.kind == "agent_run" else None
+        ),
+    )
 
 
 def _get_context_from_token() -> MCPContext:
@@ -208,6 +232,9 @@ def _get_context_from_token() -> MCPContext:
         is_external=token.claims.get("is_external", False),
         user_email=token.claims.get("email", ""),
         user_name=token.claims.get("name", ""),
+        runtime_credential_kind=token.claims.get("runtime_credential_kind"),
+        runtime_credential_id=token.claims.get("runtime_credential_id"),
+        runtime_service_id=token.claims.get("runtime_service_id"),
     )
 
 
@@ -228,17 +255,15 @@ async def _get_runtime_context() -> MCPContext:
 
     from src.core.database import get_db_context
     from src.services.mcp_server.tool_access import MCPToolAccessService
+    from src.services.mcp_server.authorization import load_mcp_caller
 
     token = get_access_token()
     if token is None:
         raise ToolError("Authentication required")
 
-    user_roles = token.claims.get("roles", [])
     is_superuser = token.claims.get("is_superuser", False)
     is_provider_org = token.claims.get("is_provider_org", False)
     is_external = token.claims.get("is_external", False)
-    user_id = token.claims.get("user_id")
-    org_id = token.claims.get("org_id")
     agent_id = _get_agent_id_from_scope()
 
     accessible_namespaces: list[str] = []
@@ -248,12 +273,8 @@ async def _get_runtime_context() -> MCPContext:
                 service = MCPToolAccessService(db)
                 agent_result = await service.get_tools_for_agent(
                     agent_id=agent_id,
-                    user_roles=user_roles,
-                    is_superuser=is_superuser,
-                    is_provider_org=is_provider_org,
-                    user_id=user_id,
-                    org_id=org_id,
-                    is_external=is_external,
+                    caller=await load_mcp_caller(db, _get_context_from_token()),
+                    for_execution=True,
                 )
                 if agent_result is not None:
                     accessible_namespaces = list(agent_result.accessible_namespaces)
@@ -268,6 +289,9 @@ async def _get_runtime_context() -> MCPContext:
         is_external=is_external,
         user_email=token.claims.get("email", ""),
         user_name=token.claims.get("name", ""),
+        runtime_credential_kind=token.claims.get("runtime_credential_kind"),
+        runtime_credential_id=token.claims.get("runtime_credential_id"),
+        runtime_service_id=token.claims.get("runtime_service_id"),
         accessible_namespaces=accessible_namespaces,
     )
 
@@ -609,11 +633,7 @@ if HAS_FASTMCP:
 
                         from mcp.types import ImageContent, ResourceLink, TextContent
 
-                        from src.core.database import get_db_context
-                        from src.services.artifacts import (
-                            ArtifactAccessError,
-                            ArtifactService,
-                        )
+                        from src.services.mcp_server.tools._http_bridge import rest_client
 
                         content_blocks: list[Any] = [
                             TextContent(
@@ -621,42 +641,29 @@ if HAS_FASTMCP:
                                 text=f"Created {len(artifact_refs)} artifact(s).",
                             )
                         ]
-                        async with get_db_context() as db:
-                            artifact_service = ArtifactService(db)
+                        async with rest_client(context) as client:
                             for ref in artifact_refs:
-                                try:
-                                    artifact = await artifact_service.get_authorized(
-                                        UUID(ref.id),
-                                        user_id=UUID(str(context.user_id)),
-                                        bypass=context.has_scope_bypass,
-                                    )
-                                except (ArtifactAccessError, ValueError):
+                                endpoint = "content" if ref.content_type.startswith("image/") else "download-url"
+                                response = await client.get(f"/api/sdk/artifacts/{ref.id}/{endpoint}")
+                                if response.status_code != 200:
                                     return error_result(
                                         "ArtifactRef output was not found or is outside this MCP scope.",
                                         result,
                                     )
-                                if artifact.created_by_user_id != UUID(str(context.user_id)):
-                                    access_checks.note_power(
-                                        "artifacts.read.all", artifact.organization_id, subject=f"artifact:{artifact.id}"
-                                    )
                                 if ref.content_type.startswith("image/"):
-                                    data = await artifact_service.read(artifact)
                                     content_blocks.append(
                                         ImageContent(
                                             type="image",
-                                            data=base64.b64encode(data).decode("ascii"),
+                                            data=base64.b64encode(response.content).decode("ascii"),
                                             mimeType=ref.content_type,
                                         )
                                     )
                                 else:
-                                    url = await artifact_service.generate_download_url(
-                                        artifact
-                                    )
                                     content_blocks.append(
                                         ResourceLink(
                                             type="resource_link",
                                             name=ref.filename,
-                                            uri=url,
+                                            uri=response.json()["url"],
                                             mimeType=ref.content_type,
                                             size=ref.size_bytes,
                                         )
@@ -706,52 +713,32 @@ async def _execute_workflow_tool_impl(
     workflow_name: str,
     **inputs: Any,
 ) -> Any:
-    """Execute a specific workflow tool by ID."""
-    from shared.run_lineage import person_lineage
+    """Launch a currently bound tool through its parent Agent's shared gate."""
+    from fastapi import HTTPException
     from src.core.database import get_db_context
-    from src.repositories.workflows import WorkflowRepository
-    from src.services.execution.service import execute_tool
+    from src.services.execution.agent_workflow_tools import (
+        execute_agent_workflow_tool,
+    )
+    from src.services.authorization.callers import CallerUnavailable
+    from src.services.mcp_server.authorization import load_mcp_caller
 
+    agent_id = _get_agent_id_from_scope()
+    if agent_id is None:
+        return {"error": "Workflow tools require an Agent-scoped MCP session"}
     try:
         async with get_db_context() as db:
-            # Use context for proper org scoping and role-based access
-            repo = WorkflowRepository(
-                db,
-                org_id=context.org_id,
-                user_id=context.user_id,
-                is_superuser=context.has_scope_bypass,
-                is_external=context.is_external,
-            )
-            workflow = await repo.get(id=workflow_id)
-
-            if not workflow:
-                return f"Error: Workflow '{workflow_name}' not found"
-
-            if not workflow.is_active:
-                return f"Error: Workflow '{workflow_name}' is not active"
-
-            # Execute the workflow
-            result = await execute_tool(
-                workflow_id=str(workflow.id),
-                workflow_name=workflow.name,
-                parameters=inputs,
-                user_id=str(context.user_id),
-                user_email=context.user_email,
-                user_name=context.user_name or "MCP User",
-                org_id=str(context.org_id) if context.org_id else None,
-                is_platform_admin=context.is_platform_admin,
-                lineage=person_lineage(context.user_id),
-            )
-
-            success = result.status.value == "Success"
-            if success:
-                return result.result
-            else:
-                return f"Error: {result.error}"
-
-    except Exception as e:
-        logger.exception(f"Error executing workflow tool {workflow_name}: {e}")
-        return f"Error executing workflow: {e}"
+            caller = await load_mcp_caller(db, context)
+        response = await execute_agent_workflow_tool(
+            agent_id=agent_id, workflow_id=workflow_id, parameters=inputs,
+            caller=caller, sync=True,
+        )
+    except HTTPException as exc:
+        return {"error": exc.detail}
+    except CallerUnavailable as exc:
+        return {"error": str(exc)}
+    if response.status.value == "Success":
+        return response.result
+    return {"error": response.error or f"Workflow '{workflow_name}' failed"}
 
 
 async def _notify_duplicate_workflow_names(duplicates: dict[str, list]) -> None:

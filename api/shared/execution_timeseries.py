@@ -3,15 +3,18 @@
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from typing import Literal
+from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.org_filter import OrgFilterType, resolve_org_filter
+from shared.scope_resolver import UNSET, resolve_effective_scope
 from src.core.principal import UserPrincipal
 from src.models.enums import ExecutionStatus
 from src.models.orm.executions import Execution
+from src.services.authorization.enforce import load_caller, require_permission
+from src.services.authorization.execution_access import execution_list_filter
 
 ExecutionChartWindow = Literal["24h", "7d", "30d"]
 
@@ -117,6 +120,11 @@ async def get_execution_time_series(
 ) -> ExecutionTimeSeriesData:
     """Aggregate terminal execution outcomes without loading individual rows."""
 
+    caller = await load_caller(db, user)
+    requested = UNSET if not scope else None if scope == "global" else UUID(scope)
+    permission_org = resolve_effective_scope(caller=caller, requested_scope=requested)
+    require_permission(caller, "metrics.read", permission_org)
+
     now_utc = _normalize_utc(now or datetime.now(timezone.utc))
     bucket_starts = build_execution_bucket_starts(
         window,
@@ -133,13 +141,14 @@ async def get_execution_time_series(
         Execution.started_at >= bucket_starts[0],
         Execution.started_at <= now_utc,
         Execution.status.in_(_TERMINAL_STATUSES),
+        execution_list_filter(caller, Execution),
     ]
 
-    filter_type, filter_org = resolve_org_filter(user, scope)
-    if filter_type in (OrgFilterType.ORG_ONLY, OrgFilterType.ORG_PLUS_GLOBAL):
-        conditions.append(Execution.organization_id == filter_org)
-    if not user.is_superuser:
-        conditions.append(Execution.executed_by == user.user_id)
+    if scope:
+        conditions.append(
+            Execution.organization_id.is_(None)
+            if scope == "global" else Execution.organization_id == permission_org
+        )
 
     query = (
         select(

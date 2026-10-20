@@ -126,7 +126,7 @@ def test_privileged_lists_the_domains_privileged_permissions() -> None:
     assert catalog["users"].privileged == ["users.impersonate", "users.readwrite"]
     assert catalog["userlifecycle"].privileged == ["userlifecycle.readwrite"]
     assert catalog["platform"].privileged == ["platform.read", "platform.readwrite"]
-    assert catalog["tables"].privileged == []
+    assert catalog["tables"].privileged == ["tables.readwrite"]
 
 
 def test_user_lifecycle_entries_do_not_count_toward_users() -> None:
@@ -247,7 +247,7 @@ def test_users_describes_impersonate_users() -> None:
     description = _by_domain([])["users"].description
     impersonation = description.partition("to sign out. ")[2]
     assert impersonation == (
-        "Impersonate Users runs a workflow or an agent as another user in an organization where the "
-        "holder has this permission. Running as a user who holds privileged access also needs Read "
-        "and Write Privileged Access."
+        "Impersonate Users allows browser sessions and workflow or agent runs "
+        "as another user in an organization where the holder has this permission. "
+        "Running as a user who holds privileged access also needs Read and Write Privileged Access."
     )

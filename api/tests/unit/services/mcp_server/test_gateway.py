@@ -10,6 +10,9 @@ import pytest
 from src.models.enums import ExecutionStatus
 from src.models.orm.agents import Agent
 from src.models.orm.executions import Execution
+from src.core.principal import UserPrincipal
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
 from src.services.llm import ToolDefinition
 from src.services.mcp_server.config_service import MCPConfig
 from src.services.mcp_server.gateway import (
@@ -27,6 +30,39 @@ def _context() -> MCPContext:
         org_id=uuid4(),
         user_email="robot@example.com",
         user_name="Robot",
+    )
+
+
+def _caller(context: MCPContext, *, permissions: frozenset[str] = frozenset()) -> Caller:
+    principal = UserPrincipal(
+        user_id=context.user_id,
+        email=context.user_email,
+        name=context.user_name,
+        organization_id=context.org_id,
+        # This is an actor fact only. The AuthorizationContext below remains
+        # the sole source of authority in these gateway tests.
+        is_superuser=context.is_platform_admin,
+        is_provider_org=context.is_provider_org,
+    )
+    return Caller(
+        principal,
+        AuthorizationContext(
+            user_id=principal.user_id,
+            home_organization_id=context.org_id,
+            base_role_id=uuid4(),
+            is_external=False,
+            base_permissions=permissions,
+        ),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _current_mcp_caller(monkeypatch):
+    async def load(_db, context: MCPContext) -> Caller:
+        return _caller(context, permissions=frozenset({"agents.execute"}))
+
+    monkeypatch.setattr(
+        "src.services.mcp_server.authorization.load_mcp_caller", load
     )
 
 
@@ -69,13 +105,17 @@ def _resolved_tool(
 
 
 @pytest.mark.asyncio
-async def test_provider_discovery_does_not_use_scope_bypass():
+async def test_discovery_all_uses_current_caller_reach_not_provider_claim():
     context = _context()
     context.is_provider_org = True
     service = MCPAgentGatewayService(context)
     db = MagicMock()
-    repo = MagicMock()
-    repo.list_agents = AsyncMock(return_value=[])
+    query = MagicMock()
+    query.options.return_value = query
+    query.where.return_value = query
+    result = MagicMock()
+    result.scalars.return_value.unique.return_value.all.return_value = []
+    db.execute = AsyncMock(return_value=result)
 
     @asynccontextmanager
     async def db_context():
@@ -84,80 +124,73 @@ async def test_provider_discovery_does_not_use_scope_bypass():
     with (
         patch("src.core.database.get_db_context", return_value=db_context()),
         patch(
-            "src.services.mcp_server.gateway.AgentRepository",
-            return_value=repo,
-        ) as repo_cls,
-    ):
-        assert await service._list_accessible_agents() == []
-
-    assert repo_cls.call_args.kwargs["is_superuser"] is False
-    repo.list_agents.assert_awaited_once_with(active_only=True)
-
-
-def test_provider_explicit_target_uses_scope_bypass():
-    context = _context()
-    context.is_provider_org = True
-    service = MCPAgentGatewayService(context)
-
-    with patch(
-        "src.services.mcp_server.gateway.AgentRepository",
-    ) as repo_cls:
-        service._agent_repo(MagicMock())
-
-    assert repo_cls.call_args.kwargs["is_superuser"] is True
-
-
-@pytest.mark.asyncio
-async def test_provider_can_explicitly_discover_all_agents():
-    context = _context()
-    context.is_provider_org = True
-    service = MCPAgentGatewayService(context)
-    db = MagicMock()
-    repo = MagicMock()
-    repo.list_all_in_scope = AsyncMock(return_value=[])
-
-    @asynccontextmanager
-    async def db_context():
-        yield db
-
-    with (
-        patch("src.core.database.get_db_context", return_value=db_context()),
-        patch(
-            "src.services.mcp_server.gateway.AgentRepository",
-            return_value=repo,
-        ) as repo_cls,
+            "src.services.agent_write_policy.agent_query_in_reach",
+            return_value=query,
+        ) as reach_query,
     ):
         assert await service._list_discovery_agents("all") == []
 
-    assert repo_cls.call_args.kwargs["is_superuser"] is True
-    repo.list_all_in_scope.assert_awaited_once()
+    reach_query.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_ordinary_caller_cannot_discover_all_agents():
-    service = MCPAgentGatewayService(_context())
+async def test_discovery_filters_candidates_through_named_agent_read_policy():
+    context = _context()
+    service = MCPAgentGatewayService(context)
+    db = MagicMock()
+    query = MagicMock()
+    query.options.return_value = query
+    query.where.return_value = query
+    result = MagicMock()
+    candidate = _agent()
+    result.scalars.return_value.unique.return_value.all.return_value = [candidate]
+    db.execute = AsyncMock(return_value=result)
 
-    with pytest.raises(GatewayError) as exc_info:
-        await service._list_discovery_agents("all")
-
-    assert exc_info.value.code == "IMPERSONATION_FORBIDDEN"
-
-
-@pytest.mark.asyncio
-async def test_ordinary_caller_cannot_combine_all_scope_with_exact_agent():
-    service = MCPAgentGatewayService(_context())
+    @asynccontextmanager
+    async def db_context():
+        yield db
 
     with (
-        patch.object(service, "get_agent_snapshot", new_callable=AsyncMock) as snapshot,
-        pytest.raises(GatewayError) as exc_info,
+        patch("src.core.database.get_db_context", return_value=db_context()),
+        patch("src.services.agent_write_policy.agent_query_in_reach", return_value=query),
+        patch("src.services.agent_write_policy.can_read_agent", new=AsyncMock(return_value=False)) as can_read,
+    ):
+        assert await service._list_discovery_agents("all") == []
+
+    can_read.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_discovery_all_does_not_treat_actor_flags_as_authority():
+    service = MCPAgentGatewayService(_context())
+    service.context.is_platform_admin = True
+    service.context.is_provider_org = True
+
+    with patch.object(service, "_list_agents", new_callable=AsyncMock, return_value=[]) as listed:
+        assert await service._list_discovery_agents("all") == []
+
+    listed.assert_awaited_once_with(all_scopes=True)
+
+
+@pytest.mark.asyncio
+async def test_exact_agent_snapshot_ignores_discovery_scope():
+    service = MCPAgentGatewayService(_context())
+    snapshot_value = AgentToolSnapshot(agent=_agent(), tools=[])
+
+    with (
+        patch.object(
+            service,
+            "get_agent_snapshot",
+            new_callable=AsyncMock,
+            return_value=snapshot_value,
+        ) as snapshot,
     ):
         await service.search_capabilities(
             agent_id=str(uuid4()),
             discovery_scope="all",
         )
 
-    assert exc_info.value.code == "IMPERSONATION_FORBIDDEN"
-    snapshot.assert_not_awaited()
+    snapshot.assert_awaited_once()
 
 
 def test_workflow_reference_is_stable_across_display_name_change():
@@ -419,7 +452,7 @@ async def test_get_execution_authorizes_redis_only_pending_receipt():
 
     with (
         patch("src.core.database.get_db_context", return_value=db_context),
-        patch("src.core.redis_client.get_redis_client", return_value=redis),
+        patch("shared.pending_execution.get_redis_client", return_value=redis),
     ):
         result = await service.get_execution(execution_id)
 
@@ -446,7 +479,8 @@ async def test_get_execution_hides_another_users_redis_only_receipt():
 
     with (
         patch("src.core.database.get_db_context", return_value=db_context),
-        patch("src.core.redis_client.get_redis_client", return_value=redis),
+        patch("shared.pending_execution.get_redis_client", return_value=redis),
+        patch("src.services.mcp_server.gateway.run_not_found_suffix", new=AsyncMock(return_value="")),
     ):
         with pytest.raises(GatewayError) as exc_info:
             await service.get_execution(execution_id)
@@ -545,7 +579,7 @@ async def test_get_execution_authorizes_the_initiator_of_a_pending_root_run():
 
     with (
         patch("src.core.database.get_db_context", return_value=_workflow_row_db(None)),
-        patch("src.core.redis_client.get_redis_client", return_value=redis),
+        patch("shared.pending_execution.get_redis_client", return_value=redis),
     ):
         result = await service.get_execution(execution_id)
 
@@ -571,7 +605,7 @@ async def test_get_execution_missing_everywhere_names_the_retention_window():
 
     with (
         patch("src.core.database.get_db_context", return_value=db_context),
-        patch("src.core.redis_client.get_redis_client", return_value=redis),
+        patch("shared.pending_execution.get_redis_client", return_value=redis),
         patch("src.services.mcp_server.gateway.run_not_found_suffix", suffix),
     ):
         with pytest.raises(GatewayError) as exc_info:
@@ -657,23 +691,28 @@ async def test_get_execution_returns_completed_owned_agent_run():
 
 
 @pytest.mark.asyncio
-async def test_get_execution_hides_another_users_agent_run():
-    service = MCPAgentGatewayService(_context())
-    workflow_result = MagicMock()
-    workflow_result.scalar_one_or_none.return_value = None
-    agent_run_result = MagicMock()
-    agent_run = MagicMock()
-    agent_run.caller_user_id = str(uuid4())
-    agent_run_result.scalar_one_or_none.return_value = agent_run
-    db = AsyncMock()
-    db.execute.side_effect = [workflow_result, agent_run_result]
-    db_context = MagicMock()
-    db_context.__aenter__ = AsyncMock(return_value=db)
-    db_context.__aexit__ = AsyncMock(return_value=None)
+async def test_get_execution_hides_another_users_agent_run(db_session):
+    from src.models.orm.agent_runs import AgentRun
 
-    with patch("src.core.database.get_db_context", return_value=db_context):
+    service = MCPAgentGatewayService(_context())
+    agent_run = AgentRun(
+        trigger_type="chat", status="completed", org_id=None,
+        caller_user_id=str(uuid4()), output={"text": "Private output"},
+    )
+    db_session.add(agent_run)
+    await db_session.flush()
+
+    @asynccontextmanager
+    async def session():
+        yield db_session
+
+    with (
+        patch("src.core.database.get_db_context", session),
+        patch("shared.pending_execution.get_pending_execution_fallback", new=AsyncMock(return_value=(None, "NotFound"))),
+        patch("src.services.mcp_server.gateway.run_not_found_suffix", new=AsyncMock(return_value="")),
+    ):
         with pytest.raises(GatewayError) as exc_info:
-            await service.get_execution(str(uuid4()))
+            await service.get_execution(str(agent_run.id))
 
     assert exc_info.value.code == "EXECUTION_NOT_FOUND_OR_FORBIDDEN"
 
@@ -708,7 +747,7 @@ async def test_capability_search_stops_before_the_serialized_response_budget(
     with (
         patch.object(
             service,
-            "_list_accessible_agents",
+            "_list_discovery_agents",
             new=AsyncMock(return_value=agents),
         ),
         patch.object(
@@ -879,13 +918,14 @@ async def test_workflow_dispatch_returns_only_the_workflow_result():
     response.error_type = None
 
     with patch(
-        "src.services.execution.service.execute_tool",
+        "src.services.mcp_server.gateway.execute_agent_workflow_tool",
         new=AsyncMock(return_value=response),
     ) as execute:
-        result = await service._dispatch_workflow(tool, {"ticket_id": 42}, lineage=None)
+        result = await service._dispatch_workflow(_agent(), tool, {"ticket_id": 42})
 
     assert result == [{"ticket": 42}]
-    assert execute.await_args.kwargs["org_id"] == str(context.org_id)
+    assert execute.await_args.kwargs["caller"].ctx.user_id == context.user_id
+    assert execute.await_args.kwargs["workflow_id"] == tool.source_id
 
 
 @pytest.mark.asyncio
@@ -902,14 +942,14 @@ async def test_async_workflow_dispatch_returns_immediate_execution_receipt():
     response.error_type = None
 
     with patch(
-        "src.services.execution.service.execute_tool",
+        "src.services.mcp_server.gateway.execute_agent_workflow_tool",
         new=AsyncMock(return_value=response),
     ) as execute:
         result = await service._dispatch_workflow(
+            _agent(),
             tool,
             {"ticket_id": 42},
             async_execution=True,
-            lineage=None,
         )
 
     assert result == {
@@ -949,6 +989,7 @@ async def test_async_delegation_enqueues_agent_run():
     delegated = _agent()
     delegated.name = "Process Agent"
     delegated.is_active = True
+    delegated.organization_id = context.org_id
     tool = replace(
         _resolved_tool(
             name="delegate_to_process_agent",
@@ -961,19 +1002,20 @@ async def test_async_delegation_enqueues_agent_run():
         source="delegation",
         source_id=delegated.id,
     )
+    db = AsyncMock()
+    query = MagicMock()
+    query.where.return_value = query
+    delegated_result = MagicMock()
+    delegated_result.scalar_one_or_none.return_value = delegated
+    db.execute = AsyncMock(return_value=delegated_result)
     db_context = MagicMock()
-    db_context.__aenter__ = AsyncMock(return_value=AsyncMock())
+    db_context.__aenter__ = AsyncMock(return_value=db)
     db_context.__aexit__ = AsyncMock(return_value=None)
-    repository = MagicMock()
-    repository.get_agent = AsyncMock(return_value=delegated)
     execution_id = str(uuid4())
 
     with (
         patch("src.core.database.get_db_context", return_value=db_context),
-        patch(
-            "src.services.mcp_server.gateway.AgentRepository",
-            return_value=repository,
-        ),
+        patch("src.services.agent_write_policy.agent_query_in_reach", return_value=query),
         patch(
             "src.services.execution.agent_run_service.enqueue_agent_run",
             new=AsyncMock(return_value=execution_id),
@@ -1004,6 +1046,7 @@ async def test_sync_delegation_waits_for_queued_agent_run_result():
     delegated = _agent()
     delegated.name = "Process Agent"
     delegated.is_active = True
+    delegated.organization_id = service.context.org_id
     delegated.max_run_timeout = 240
     tool = replace(
         _resolved_tool(
@@ -1017,19 +1060,20 @@ async def test_sync_delegation_waits_for_queued_agent_run_result():
         source="delegation",
         source_id=delegated.id,
     )
+    db = AsyncMock()
+    query = MagicMock()
+    query.where.return_value = query
+    delegated_result = MagicMock()
+    delegated_result.scalar_one_or_none.return_value = delegated
+    db.execute = AsyncMock(return_value=delegated_result)
     db_context = MagicMock()
-    db_context.__aenter__ = AsyncMock(return_value=AsyncMock())
+    db_context.__aenter__ = AsyncMock(return_value=db)
     db_context.__aexit__ = AsyncMock(return_value=None)
-    repository = MagicMock()
-    repository.get_agent = AsyncMock(return_value=delegated)
     execution_id = str(uuid4())
 
     with (
         patch("src.core.database.get_db_context", return_value=db_context),
-        patch(
-            "src.services.mcp_server.gateway.AgentRepository",
-            return_value=repository,
-        ),
+        patch("src.services.agent_write_policy.agent_query_in_reach", return_value=query),
         patch(
             "src.services.execution.agent_run_service.enqueue_agent_run",
             new=AsyncMock(return_value=execution_id),
@@ -1076,11 +1120,11 @@ async def test_workflow_dispatch_keeps_execution_details_on_failure():
     response.error_type = "UserError"
 
     with patch(
-        "src.services.execution.service.execute_tool",
+        "src.services.mcp_server.gateway.execute_agent_workflow_tool",
         new=AsyncMock(return_value=response),
     ):
         with pytest.raises(GatewayError) as exc_info:
-            await service._dispatch_workflow(tool, {"ticket_id": 42}, lineage=None)
+            await service._dispatch_workflow(_agent(), tool, {"ticket_id": 42})
 
     error = exc_info.value
     assert error.message == "HaloPSA rejected the query"
@@ -1140,7 +1184,7 @@ def test_external_dispatch_preserves_structured_error_details():
 
 
 @pytest.mark.asyncio
-async def test_gateway_workflow_tool_runs_with_the_callers_lineage():
+async def test_gateway_workflow_tool_passes_current_caller_instead_of_supplied_lineage():
     from shared.run_lineage import RunLineage
 
     service = MCPAgentGatewayService(_context())
@@ -1156,4 +1200,5 @@ async def test_gateway_workflow_tool_runs_with_the_callers_lineage():
     ) as execute:
         await service._dispatch(_agent(), tool, {"ticket_id": 1}, lineage=lineage)
 
-    assert execute.await_args.kwargs["lineage"] == lineage
+    assert "lineage" not in execute.await_args.kwargs
+    assert execute.await_args.kwargs["caller"].ctx.user_id == service.context.user_id

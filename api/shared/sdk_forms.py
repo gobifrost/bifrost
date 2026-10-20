@@ -8,7 +8,7 @@ Single implementation for both entry points:
   engine socket.
 
 Both paths can share scope resolution input (an explicit trusted principal),
-the superuser/org-user query split, the 404-before-403 error precedence,
+the original-caller authorization decision, the 404-before-403 error precedence,
 the embed binding gate, logo enrichment, and dependency counts — so HTTP
 and worker-local results are identical by construction.
 
@@ -29,18 +29,17 @@ import logging
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.orm import defer, selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared import access_checks
 from src.core.log_safety import log_safe
-from src.core.org_filter import filter_target, resolve_org_filter
 from src.core.principal import UserPrincipal
 from src.models import Form as FormORM
 from src.models import FormPublic
 from src.models import FormRole as FormRoleORM
 from src.models.contracts.forms import FormField, FormSchema
-from src.repositories.forms import FormRepository
 from shared.logo_processing import is_logo_thumbnail_version
+from shared.scope_resolver import UNSET, RequestedScope, shared_read_organization
 
 logger = logging.getLogger(__name__)
 
@@ -117,29 +116,63 @@ def embed_can_access_form(principal: UserPrincipal, form: FormORM) -> bool:
 async def check_form_access(
     session: AsyncSession,
     form: FormORM,
-    user_id: UUID,
-    user_org_id: UUID | None,
-    is_superuser: bool,
-    is_external: bool = False,
+    caller,
+    *,
+    selected_organization_id: RequestedScope = UNSET,
 ) -> bool:
-    """Check if a user has access to a form.
+    """Apply named Form permission plus the ordinary Form ACL.
 
-    Delegates to ``FormRepository.get(id=...)``, which is the single
-    org+role+access_level gate shared with the UI listing path and every
-    other org-scoped entity (workflows, agents, tables, etc.). Returning
-    None from the repo means "form doesn't exist OR caller doesn't have
-    access" — for an existing form (the caller already loaded it via raw
-    lookup), None definitively means "access denied".
+    A shared Global form is read at the selected organization for a list, or
+    at the caller's original home/runtime organization for a direct read.
+    Explicit Global remains an exact Global permission target.
     """
-    repo = FormRepository(
-        session,
-        org_id=user_org_id,
-        user_id=user_id,
-        is_superuser=is_superuser,
-        is_external=is_external,
+    from src.models.orm.users import UserRole
+    from src.services.authorization.enforce import (
+        allows_permission,
+        user_reach,
     )
-    accessible = await repo.get(id=form.id)
-    return accessible is not None
+
+    if not user_reach(caller).covers(form.organization_id):
+        return False
+    permission_org = shared_read_organization(
+        caller,
+        form.organization_id,
+        selected_organization_id=selected_organization_id,
+    )
+    # Form Read reaches management detail and deliberately bypasses the
+    # everyday sharing ACL at a reachable organization.
+    if allows_permission(caller, "forms.read", permission_org):
+        return True
+    if not allows_permission(caller, "forms.readbasic", permission_org):
+        return False
+    if (
+        form.access_level == "everyone"
+        or getattr(form.access_level, "value", None) == "everyone"
+    ):
+        return True
+    if (
+        form.access_level == "authenticated"
+        or getattr(form.access_level, "value", None) == "authenticated"
+    ):
+        return caller.ctx is not None and not caller.ctx.is_external
+    original_user_id = None if caller.ctx is None else caller.ctx.user_id
+    if original_user_id is None:
+        return False
+    role_ids = (
+        await session.execute(
+            select(UserRole.role_id).where(UserRole.user_id == original_user_id)
+        )
+    ).scalars().all()
+    if not role_ids:
+        return False
+    return (
+        await session.execute(
+            select(FormRoleORM.form_id).where(
+                FormRoleORM.form_id == form.id,
+                FormRoleORM.role_id.in_(role_ids),
+            )
+        )
+    ).scalar_one_or_none() is not None
 
 
 async def load_form_role_ids(session: AsyncSession, form_id: UUID) -> list[UUID]:
@@ -183,40 +216,71 @@ async def list_sdk_forms(
 ) -> list[FormPublic]:
     """List all forms visible to the principal.
 
-    - Platform admins see all forms (or filter by scope if provided);
-      role checks are bypassed and inactive forms are included.
-    - Org users see their org's forms + global forms (org_id IS NULL),
-      active only, further filtered by access_level (authenticated,
-      role_based).
+    The omitted scope resolves to the verified caller's default organization
+    and includes the Global fallback (a Platform Admin retains its established
+    all-organizations listing). ``global`` is exact; an explicit organization
+    retains the Global fallback. Every row is still checked at its applicable
+    named Form permission target and ordinary form ACL.
 
     Args:
         session: Database session.
         principal: The auth-verified trusted principal.
-        scope: Filter scope — omit for all (superusers), ``'global'`` for
-            global only, or an org UUID for a specific org (org users
-            always resolve to their own org + global; scope ignored).
+        scope: ``None`` selects the caller's default org plus its Global
+            fallback (or every org for a Platform Admin); ``'global'`` selects
+            Global only; an org UUID selects that organization plus Global.
 
     Raises:
         SdkFormError: 422 for a malformed scope value.
     """
+    from shared.sdk_config import ScopeResolutionError, resolve_sdk_scope
+    from src.services.authorization.enforce import allows_permission, load_caller, user_reach
+
+    caller = await load_caller(session, principal)
     try:
-        filter_type, filter_org = resolve_org_filter(principal, scope)
-    except ValueError as e:
-        raise SdkFormError(422, str(e)) from None
-
-    repo = FormRepository(
-        session=session,
-        org_id=filter_org,
-        user_id=principal.user_id if not principal.is_superuser else None,
-        is_superuser=principal.is_superuser,
-        is_external=principal.is_external,
+        selected_org = await resolve_sdk_scope(scope, caller=caller)
+    except ScopeResolutionError as e:
+        raise SdkFormError(e.status_code, e.detail) from None
+    candidates = list(
+        (
+            await session.execute(
+                select(FormORM)
+                .options(
+                    selectinload(FormORM.fields),
+                    defer(FormORM.logo_data),
+                    defer(FormORM.logo_thumbnail_data),
+                )
+                .order_by(FormORM.name)
+            )
+        ).scalars().all()
     )
-
-    if principal.is_superuser:
-        forms = await repo.list_all_in_scope(filter_type=filter_type, active_only=False)
-        access_checks.note_power("forms.read", filter_target(filter_type, filter_org), subject="forms")
-    else:
-        forms = await repo.list_forms(active_only=True)
+    forms = []
+    scope_is_unset = scope is None or scope == ""
+    selected_permission_scope = UNSET if scope_is_unset else selected_org
+    for form in candidates:
+        if scope == "global":
+            if form.organization_id is not None:
+                continue
+        elif not scope_is_unset:
+            if form.organization_id not in (selected_org, None):
+                continue
+        elif not user_reach(caller).covers(form.organization_id):
+            continue
+        permission_org = shared_read_organization(
+            caller,
+            form.organization_id,
+            selected_organization_id=selected_permission_scope,
+        )
+        if not form.is_active and not allows_permission(
+            caller, "forms.read", permission_org
+        ):
+            continue
+        if await check_form_access(
+            session,
+            form,
+            caller,
+            selected_organization_id=selected_permission_scope,
+        ):
+            forms.append(form)
 
     result = [attach_form_logo_fields(FormPublic.model_validate(f), f) for f in forms]
     _apply_dependency_counts(result)
@@ -232,11 +296,11 @@ async def get_sdk_form(
 
     Error precedence (unchanged from the HTTP handler):
     1. Missing form → 404 ``"Form not found"``.
-    2. Platform admins see all forms.
-    3. Embed principals bound to another resource → 404 (never reveal a
+    2. Embed principals bound to another resource → 404 (never reveal a
        cross-tenant form's existence).
-    4. Inactive form for non-admins → 404.
-    5. Org/role/access_level gate failure → 403 ``"Access denied to form"``.
+    3. Inactive forms → 404 unless the caller holds ``forms.read`` at the
+       form's actual organization.
+    4. Org/role/access_level gate failure → 403 ``"Access denied to form"``.
 
     Args:
         session: Database session.
@@ -247,39 +311,31 @@ async def get_sdk_form(
         SdkFormError: 404 when the form is missing, inactive, or outside
             the principal's embed binding; 403 when access is denied.
     """
-    repo = FormRepository(
-        session=session,
-        org_id=None,
-        user_id=principal.user_id if not principal.is_superuser else None,
-        is_superuser=principal.is_superuser,
-        is_external=principal.is_external,
-    )
-    form = await repo.get_form(form_id)
+    form = (
+        await session.execute(
+            select(FormORM)
+            .options(selectinload(FormORM.fields))
+            .where(FormORM.id == form_id)
+        )
+    ).scalar_one_or_none()
 
     if not form:
         logger.warning(f"Form {log_safe(form_id)} not found in database")
         raise SdkFormError(404, "Form not found")
-
-    if principal.is_superuser:
-        access_checks.note_power("forms.read", form.organization_id, subject=f"form:{form.id}")
-        return await _to_public(session, form)
 
     if principal.embed:
         if embed_can_access_form(principal, form):
             return await _to_public(session, form)
         raise SdkFormError(404, "Form not found")
 
-    if not form.is_active:
+    from src.services.authorization.enforce import allows_permission, load_caller
+
+    caller = await load_caller(session, principal)
+    permission_org = shared_read_organization(caller, form.organization_id)
+    if not form.is_active and not allows_permission(caller, "forms.read", permission_org):
         raise SdkFormError(404, "Form not found")
 
-    if not await check_form_access(
-        session,
-        form,
-        principal.user_id,
-        principal.organization_id,
-        principal.is_superuser,
-        is_external=principal.is_external,
-    ):
+    if not await check_form_access(session, form, caller):
         raise SdkFormError(403, "Access denied to form")
 
     return await _to_public(session, form)

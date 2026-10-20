@@ -9,7 +9,7 @@ import { renderWithProviders, screen, waitFor } from "@/test-utils";
 const mockUseTables = vi.fn();
 const mockUseDeleteTable = vi.fn();
 const mockUseNavigate = vi.fn();
-let mockIsPlatformAdmin = false;
+const mockCanAt = vi.fn();
 
 vi.mock("react-router-dom", async () => {
 	const actual =
@@ -28,7 +28,18 @@ vi.mock("@/services/tables", () => ({
 }));
 
 vi.mock("@/contexts/AuthContext", () => ({
-	useAuth: () => ({ isPlatformAdmin: mockIsPlatformAdmin }),
+	useAuth: () => ({
+		isPlatformAdmin: false,
+		user: { organizationId: "home" },
+	}),
+}));
+
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => ({
+		canAt: mockCanAt,
+		canAnywhere: (permission: string) =>
+			permission !== "organizations.read",
+	}),
 }));
 
 vi.mock("@/hooks/useOrganizations", () => ({
@@ -57,7 +68,7 @@ const regularTable = {
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	mockIsPlatformAdmin = false;
+	mockCanAt.mockReturnValue(true);
 	mockUseTables.mockReturnValue({
 		data: { tables: [regularTable] },
 		isLoading: false,
@@ -183,7 +194,6 @@ describe("Tables — solution-managed rows are read-only (audit U1)", () => {
 
 describe("Tables — catalog selection", () => {
 	it("opens rows normally and does not render selection checkboxes", async () => {
-		mockIsPlatformAdmin = true;
 		const { user } = await renderPage();
 
 		expect(
@@ -199,7 +209,6 @@ describe("Tables — catalog selection", () => {
 	});
 
 	it("toggles whole rows in explicit Select mode", async () => {
-		mockIsPlatformAdmin = true;
 		const { user } = await renderPage();
 
 		await user.click(screen.getByRole("switch", { name: "Select" }));
@@ -210,4 +219,23 @@ describe("Tables — catalog selection", () => {
 		expect(rowButton).toHaveAttribute("aria-pressed", "true");
 		expect(screen.getByText("1 selected")).toBeInTheDocument();
 	});
+});
+
+it("keeps data navigation while a named writer lacks metadata authority at the actual table", async () => {
+	mockCanAt.mockImplementation(
+		(permission: string, target: { kind: string; id?: string }) =>
+			permission === "tables.read" ||
+			(target.kind === "org" && target.id === "other"),
+	);
+	await renderPage();
+	expect(screen.getByRole("link", { name: "Customers" })).toHaveAttribute(
+		"href",
+		"/tables/tbl-1",
+	);
+	expect(
+		screen.queryByRole("button", { name: "Customers actions" }),
+	).not.toBeInTheDocument();
+	expect(
+		screen.queryByRole("switch", { name: "Select" }),
+	).not.toBeInTheDocument();
 });

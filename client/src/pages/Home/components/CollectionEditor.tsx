@@ -24,11 +24,12 @@ import type {
 } from "@/services/home";
 import { ResourceIcon } from "@/components/ResourceIcon";
 import { CollectionIconPicker } from "./CollectionIconPicker";
+import { useAuthorization } from "@/services/authorization";
+import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
 
 export function CollectionEditor({
 	collection,
 	resources,
-	isAdmin,
 	onClose,
 	onSave,
 	onDelete,
@@ -38,7 +39,6 @@ export function CollectionEditor({
 }: {
 	collection?: HomeCollection;
 	resources: HomeResource[];
-	isAdmin: boolean;
 	onClose: () => void;
 	onSave: (data: HomeCollectionWrite) => void;
 	onDelete: () => void;
@@ -46,6 +46,7 @@ export function CollectionEditor({
 	error: string;
 	initialConfirmDelete?: boolean;
 }) {
+	const { authorization, canAnywhere, canAt } = useAuthorization();
 	const [name, setName] = useState(collection?.name ?? "");
 	const [description, setDescription] = useState(
 		collection?.description ?? "",
@@ -59,6 +60,42 @@ export function CollectionEditor({
 	const [selected, setSelected] = useState(collection?.resource_keys ?? []);
 	const [search, setSearch] = useState("");
 	const [confirmDelete, setConfirmDelete] = useState(initialConfirmDelete);
+	const canSave =
+		audience === "personal" ||
+		canAt(
+			"home.readwrite",
+			orgTarget(audience === "global" ? null : audience),
+		);
+	const knownOrganizations = [
+		...new Map(
+			resources
+				.flatMap((resource) =>
+					resource.organization_id
+						? [
+								{
+									id: resource.organization_id,
+									name:
+										resource.organization_name ??
+										"Organization",
+								},
+							]
+						: [],
+				)
+				.map((organization) => [organization.id, organization]),
+		).values(),
+	];
+	if (
+		authorization?.home_organization_id &&
+		!knownOrganizations.some(
+			(organization) =>
+				organization.id === authorization.home_organization_id,
+		)
+	) {
+		knownOrganizations.push({
+			id: authorization.home_organization_id,
+			name: "Home organization",
+		});
+	}
 	const available = resources.filter(
 		(resource) =>
 			audience === "personal" ||
@@ -104,6 +141,7 @@ export function CollectionEditor({
 					className="flex min-h-0 flex-col overflow-hidden"
 					onSubmit={(event) => {
 						event.preventDefault();
+						if (!canSave) return;
 						onSave({
 							name: name.trim(),
 							description,
@@ -145,7 +183,7 @@ export function CollectionEditor({
 								placeholder="What belongs in this collection?"
 							/>
 						</div>
-						{isAdmin && (
+						{canAnywhere("home.readwrite") && (
 							<div className="space-y-2">
 								<Label htmlFor="collection-audience">
 									Who is this for?
@@ -154,6 +192,20 @@ export function CollectionEditor({
 									id="collection-audience"
 									label="Who is this for?"
 									showPersonal
+									showGlobal={canAt(
+										"home.readwrite",
+										GLOBAL_TARGET,
+									)}
+									filterOrganizations={(organization) =>
+										canAt(
+											"home.readwrite",
+											orgTarget(organization.id),
+										)
+									}
+									knownOrganizations={knownOrganizations}
+									loadOrganizations={canAnywhere(
+										"organizations.read",
+									)}
 									value={
 										audience === "personal"
 											? PERSONAL_SCOPE
@@ -186,9 +238,7 @@ export function CollectionEditor({
 									}}
 								/>
 								<p className="text-xs text-muted-foreground">
-									Shared collections are curated by
-									administrators. Members see only resources
-									they can access.
+									Members see only resources they can access.
 								</p>
 							</div>
 						)}
@@ -359,7 +409,7 @@ export function CollectionEditor({
 							</Button>
 							<Button
 								type="submit"
-								disabled={busy || !name.trim()}
+								disabled={busy || !name.trim() || !canSave}
 							>
 								{busy ? "Saving…" : "Save collection"}
 							</Button>

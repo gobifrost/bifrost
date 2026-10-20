@@ -14,10 +14,18 @@ from uuid import uuid4
 
 import pytest
 
+from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID, WILDCARD_PERMISSION
 from shared.sdk_context import SdkContextError, get_sdk_context
 from shared.sdk_forms import SdkFormError, get_sdk_form, list_sdk_forms
 from src.core.principal import UserPrincipal
 from src.models.enums import FormAccessLevel
+from src.services.authorization.context import (
+    AuthorizationContext,
+    Boundary,
+    BoundaryKind,
+    RoleGrant,
+)
+from src.services.authorization.enforce import Caller
 
 
 def _principal(org_id=None, **kwargs) -> UserPrincipal:
@@ -32,6 +40,44 @@ def _principal(org_id=None, **kwargs) -> UserPrincipal:
         app_id=kwargs.get("app_id"),
         form_id=kwargs.get("form_id"),
     )
+
+
+@pytest.fixture(autouse=True)
+def _form_caller_context(monkeypatch):
+    """Keep the legacy SDK fixture principals backed by evaluator contexts."""
+    from src.services.authorization import enforce
+
+    async def _load_caller(_session, principal):
+        if principal.is_superuser:
+            return Caller(
+                principal,
+                AuthorizationContext(
+                    user_id=principal.user_id,
+                    home_organization_id=None,
+                    base_role_id=USER_ROLE_ID,
+                    is_external=principal.is_external,
+                    base_permissions=frozenset(),
+                    role_grants=(
+                        RoleGrant(
+                            PLATFORM_ADMIN_ROLE_ID,
+                            frozenset({WILDCARD_PERMISSION}),
+                            (Boundary(BoundaryKind.PLATFORM),),
+                        ),
+                    ),
+                ),
+            )
+        return Caller(
+            principal,
+            AuthorizationContext(
+                user_id=principal.user_id,
+                home_organization_id=principal.organization_id,
+                base_role_id=USER_ROLE_ID,
+                is_external=principal.is_external,
+                base_permissions=frozenset({"forms.readbasic"}),
+            ),
+        )
+
+    monkeypatch.setattr(enforce, "load_caller", _load_caller)
 
 
 async def _seed_org(db_session, *, is_provider=False, is_active=True):
@@ -214,6 +260,14 @@ class TestGetSdkForm:
 
         assert exc_info.value.status_code == 404
 
+    async def test_org_user_gets_shared_global_form_by_id(self, db_session) -> None:
+        org = await _seed_org(db_session)
+        form = await _seed_form(db_session, "shared-global-by-id")
+
+        result = await get_sdk_form(db_session, _principal(org.id), form.id)
+
+        assert result.id == form.id
+
     async def test_org_user_other_org_form_is_403(self, db_session) -> None:
         org1 = await _seed_org(db_session)
         org2 = await _seed_org(db_session)
@@ -286,17 +340,12 @@ class TestGetSdkContext:
 
         assert exc_info.value.status_code == 403
 
-    async def test_provider_org_member_can_target_other_org(
-        self, db_session
-    ) -> None:
+    async def test_provider_membership_alone_cannot_target_other_org(self, db_session) -> None:
         provider = await _seed_org(db_session, is_provider=True)
         other = await _seed_org(db_session)
-
-        data = await get_sdk_context(
-            db_session, _principal(provider.id), org_id=other.id
-        )
-
-        assert data["organization"]["id"] == str(other.id)
+        with pytest.raises(SdkContextError) as error:
+            await get_sdk_context(db_session, _principal(provider.id), org_id=other.id)
+        assert error.value.status_code == 403
 
     async def test_defaults_to_caller_org(self, db_session) -> None:
         org = await _seed_org(db_session)

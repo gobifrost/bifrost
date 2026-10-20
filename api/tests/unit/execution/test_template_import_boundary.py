@@ -4,11 +4,27 @@ import json
 import subprocess
 import sys
 import textwrap
+from unittest.mock import patch
+
+
+def test_pre_fork_source_client_cleanup_uses_module_cache_reset_apis():
+    """A child inherits no cached module-source connection from the template."""
+    from src.services.execution.template_process import _clear_pre_fork_source_clients
+
+    with (
+        patch("src.core.module_cache_sync._close_http_client") as close_http,
+        patch("src.core.module_cache_sync.reset_sync_redis") as reset_redis,
+    ):
+        _clear_pre_fork_source_clients()
+
+    close_http.assert_called_once_with()
+    reset_redis.assert_called_once_with()
 
 
 def test_ready_template_keeps_engine_warm_without_database_or_http_server():
     probe = textwrap.dedent('''
         import json
+        import os
         import sys
         from src.services.execution import simple_worker
         # The supervisor installs packages before starting/restarting a template.
@@ -17,6 +33,8 @@ def test_ready_template_keeps_engine_warm_without_database_or_http_server():
             installs.append(True)
             return simple_worker.RequirementsInstallResult()
         simple_worker.install_requirements = install_requirements
+        os.environ["BIFROST_REDIS_URL"] = "redis://user:password@redis:6379/0"
+        os.environ["REDIS_URL"] = "redis://user:password@redis:6379/0"
         from src.services.execution.template_process import _template_main
 
         class StartupPipe:
@@ -28,7 +46,14 @@ def test_ready_template_keeps_engine_warm_without_database_or_http_server():
                 return {'action': 'shutdown'}
 
         _template_main(StartupPipe())
-        print(json.dumps({"loaded": sorted(sys.modules), "installs": installs}))
+        from src.config import get_settings
+        print(json.dumps({
+            "loaded": sorted(sys.modules),
+            "installs": installs,
+            "redis_env_present": "BIFROST_REDIS_URL" in os.environ,
+            "redis_alias_present": "REDIS_URL" in os.environ,
+            "settings_redis_url": get_settings().redis_url,
+        }))
     ''')
     result = subprocess.run(
         [sys.executable, "-c", probe], capture_output=True, text=True, timeout=30,
@@ -42,3 +67,6 @@ def test_ready_template_keeps_engine_warm_without_database_or_http_server():
     assert {"bifrost.client", "bifrost.models", "src.sdk.decorators"}.issubset(loaded)
     forbidden = {"sqlalchemy", "src.models.orm", "src.core.database", "fastapi", "requests"}
     assert not loaded.intersection(forbidden)
+    assert observed["redis_env_present"] is False
+    assert observed["redis_alias_present"] is False
+    assert observed["settings_redis_url"] == "redis://127.0.0.1:0/0"

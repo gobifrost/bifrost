@@ -21,6 +21,7 @@ from .base import entity_group, output_result, pass_resolver, run_async
 audit_group = entity_group("audit", "Read the audit log and explain access decisions.")
 
 _GROUP_BY = ["workflow", "action", "resource_type", "outcome", "user", "organization"]
+_AGGREGATES = ["1h", "6h", "24h"]
 
 _NOW_UNAVAILABLE = {
     "rows_not_stored": "table row decisions can't be re-run: the rows aren't stored",
@@ -51,8 +52,19 @@ def _group_label(group_by: str, group: dict[str, Any]) -> str:
     return group["key"] or "-"
 
 
-def _print_list(response: dict[str, Any], group_by: str | None) -> None:
-    if group_by is not None:
+def _print_list(response: dict[str, Any], group_by: str | None, aggregate: str | None) -> None:
+    if aggregate is not None:
+        rows = [
+            [
+                str(g["count"]),
+                f"{g['first_seen']} – {g['last_seen']}",
+                g["sample"]["actor"]["user_email"] or "-",
+                g["sample"]["actor"]["organization_name"] or "-",
+                g["sample"]["operation_id"] or "-",
+            ]
+            for g in response["groups"]
+        ]
+    elif group_by is not None:
         rows = [[str(g["count"]), _group_label(group_by, g), g["last_seen"]] for g in response["groups"]]
     else:
         rows = [
@@ -69,7 +81,7 @@ def _print_list(response: dict[str, Any], group_by: str | None) -> None:
     if rows:
         click.echo("\n".join(_columns(rows, "  ")))
     else:
-        click.echo("No groups." if group_by is not None else "No entries.")
+        click.echo("No groups." if group_by is not None or aggregate is not None else "No entries.")
 
 
 @audit_group.command("list")
@@ -88,6 +100,7 @@ def _print_list(response: dict[str, Any], group_by: str | None) -> None:
     type=click.Choice(_GROUP_BY),
     help="Count matching events per value instead of listing them.",
 )
+@click.option("--aggregate", type=click.Choice(_AGGREGATES), help="Group exact access checks into fixed UTC windows.")
 @click.option("--limit", type=click.IntRange(1, 500), help="Maximum entries to return (server default 50).")
 @click.pass_context
 @pass_resolver
@@ -105,12 +118,15 @@ async def list_audit(
     until: str | None,
     search: str | None,
     group_by: str | None,
+    aggregate: str | None,
     limit: int | None,
     *,
     client: BifrostClient,
     resolver: RefResolver,
 ) -> None:
-    """List audit log entries, or count them with --group-by."""
+    """List audit log entries, group them, or aggregate access checks by time."""
+    if group_by is not None and aggregate is not None:
+        raise click.UsageError("--group-by and --aggregate cannot be used together.", ctx)
     params: dict[str, Any] = {}
     if action is not None:
         params["action"] = action
@@ -134,12 +150,14 @@ async def list_audit(
         params["search"] = search
     if group_by is not None:
         params["group_by"] = group_by
+    if aggregate is not None:
+        params["aggregate"] = aggregate
     if limit is not None:
         params["limit"] = limit
 
     response = await client.get("/api/audit", params=params)
     response.raise_for_status()
-    output_result(response.json(), ctx=ctx, human=lambda r: _print_list(r, group_by))
+    output_result(response.json(), ctx=ctx, human=lambda r: _print_list(r, group_by, aggregate))
 
 
 def _cell(step: dict[str, Any]) -> str:

@@ -55,6 +55,11 @@ from src.services.mcp_server.config_service import (
     MCPConfigService,
     invalidate_mcp_config_cache,
 )
+from src.services.authorization.enforce import (
+    allows_permission,
+    load_caller,
+    require_permission,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,19 +71,9 @@ router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 def _gateway_service(current_user: CurrentActiveUser):
     """Create the canonical gateway service for an authenticated REST caller."""
     from src.services.mcp_server.gateway import MCPAgentGatewayService
-    from src.services.mcp_server.server import MCPContext
+    from src.services.mcp_server.server import context_from_principal
 
-    return MCPAgentGatewayService(
-        MCPContext(
-            user_id=current_user.user_id,
-            org_id=current_user.organization_id,
-            is_platform_admin=current_user.is_superuser,
-            is_provider_org=current_user.is_provider_org,
-            is_external=current_user.is_external,
-            user_email=current_user.email,
-            user_name=current_user.name,
-        )
-    )
+    return MCPAgentGatewayService(context_from_principal(current_user))
 
 
 async def _require_mcp_enabled(db: DbSession) -> None:
@@ -98,6 +93,8 @@ def _raise_gateway_http_error(exc: Exception) -> NoReturn:
     if not isinstance(exc, GatewayError):
         raise exc
     status_code = {
+        "AUTHENTICATION_REQUIRED": status.HTTP_401_UNAUTHORIZED,
+        "AUTHORIZATION_FORBIDDEN": status.HTTP_403_FORBIDDEN,
         "INVALID_ARGUMENTS": status.HTTP_422_UNPROCESSABLE_ENTITY,
         "INVALID_CAPABILITY_SEARCH": status.HTTP_422_UNPROCESSABLE_ENTITY,
         "IMPERSONATION_FORBIDDEN": status.HTTP_403_FORBIDDEN,
@@ -411,12 +408,7 @@ async def get_mcp_config(
     Returns the current configuration for external MCP access,
     including whether it's enabled and what restrictions apply.
     """
-    # Only platform admins can view MCP config
-    if not current_user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only platform administrators can view MCP configuration"
-        )
+    require_permission(await load_caller(db, current_user), "mcp.read", None)
 
     service = MCPConfigService(db)
     config = await service.get_config()
@@ -445,12 +437,7 @@ async def update_mcp_config(
     - Whether platform admin is required
     - Which tools are allowed/blocked
     """
-    # Only platform admins can update MCP config
-    if not current_user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only platform administrators can update MCP configuration"
-        )
+    require_permission(await load_caller(db, current_user), "mcp.readwrite", None)
 
     service = MCPConfigService(db)
     config = await service.save_config(
@@ -488,12 +475,7 @@ async def delete_mcp_config(
     - enabled: True
     - all tools allowed
     """
-    # Only platform admins can delete MCP config
-    if not current_user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only platform administrators can delete MCP configuration"
-        )
+    require_permission(await load_caller(db, current_user), "mcp.readwrite", None)
 
     service = MCPConfigService(db)
     deleted = await service.delete_config()
@@ -525,7 +507,13 @@ async def list_mcp_tools(
     config_service = MCPConfigService(db)
     config = await config_service.get_config()
 
-    if not config.enabled and not current_user.is_superuser:
+    caller = await load_caller(db, current_user)
+    for_configuration = allows_permission(caller, "mcp.read", None)
+    if not for_configuration:
+        from shared.scope_resolver import resolve_effective_scope
+
+        require_permission(caller, "mcp.readbasic", resolve_effective_scope(caller=caller))
+    if not config.enabled and not for_configuration:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="External MCP access is disabled",
@@ -534,14 +522,7 @@ async def list_mcp_tools(
     # This REST inventory backs the platform settings allow/block controls.
     # Normal MCP discovery remains role-scoped in the protocol gateway.
     tool_service = MCPToolAccessService(db)
-    result = await tool_service.get_accessible_tools(
-        user_roles=current_user.roles,
-        is_superuser=current_user.is_superuser,
-        user_id=current_user.user_id,
-        org_id=current_user.organization_id,
-        is_external=current_user.is_external,
-        for_configuration=current_user.is_superuser,
-    )
+    result = await tool_service.get_accessible_tools(caller, for_configuration=for_configuration)
 
     # Convert ToolInfo to MCPToolInfo for response
     tools = [

@@ -54,6 +54,7 @@ export interface ApplicationListSurfaceProps {
 	isLoading?: boolean;
 	isPlatformAdmin: boolean;
 	canManageApps: boolean;
+	canManageApp?: (app: ApplicationListItem) => boolean;
 	getOrgName: (orgId: string | null | undefined) => string;
 	onLaunch: (app: ApplicationListItem) => void;
 	onPreview?: (app: ApplicationListItem) => void;
@@ -235,6 +236,7 @@ export function ApplicationListSurface({
 	isLoading = false,
 	isPlatformAdmin,
 	canManageApps,
+	canManageApp: canManageAppAt,
 	getOrgName,
 	onLaunch,
 	onPreview,
@@ -251,7 +253,10 @@ export function ApplicationListSurface({
 	emptySearchActive = false,
 }: ApplicationListSurfaceProps) {
 	const terminology = useTerminology();
+	const canManageApp = (app: ApplicationListItem) =>
+		canManageAppAt?.(app) ?? canManageApps;
 	const isSelectable = (app: ApplicationListItem) =>
+		canManageApp(app) &&
 		canUpdateApplicationSdk(app, getSdkUpdateState?.(app) ?? "idle");
 	const selectableApps = apps.filter(isSelectable);
 	const allVisibleSelected =
@@ -391,6 +396,7 @@ export function ApplicationListSurface({
 					</DataTableHeader>
 					<DataTableBody>
 						{apps.map((app) => {
+							const canManage = canManageApp(app);
 							const selectable = isSelectable(app);
 							const opensPreview =
 								!isV2App(app) &&
@@ -543,7 +549,7 @@ export function ApplicationListSurface({
 													solutionId={app.solution_id}
 												/>
 											)}
-											{canManageApps &&
+											{canManage &&
 												(!app.is_solution_managed ||
 													sdkStatusNeedsMenu) && (
 													<ApplicationActions
@@ -587,6 +593,7 @@ export function ApplicationListSurface({
 	return (
 		<div className="grid grid-cols-1 gap-4 sm:grid-cols-[repeat(auto-fill,minmax(min(100%,320px),1fr))]">
 			{apps.map((app) => {
+				const canManage = canManageApp(app);
 				const selectable = isSelectable(app);
 				const selected = selectedIds.has(app.id);
 				const opensPreview =
@@ -647,7 +654,7 @@ export function ApplicationListSurface({
 												solutionId={app.solution_id}
 											/>
 										) : null}
-										{canManageApps ? (
+										{canManage ? (
 											<ApplicationActions
 												app={app}
 												onLaunch={onLaunch}

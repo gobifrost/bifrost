@@ -23,6 +23,8 @@ async def test_runner_restores_requesting_actor_for_handler(monkeypatch) -> None
     lease_token = uuid4()
     organization_id = uuid4()
     user_id = uuid4()
+    operator_id = uuid4()
+    impersonation_session_id = uuid4()
     job = SimpleNamespace(
         id=job_id,
         lease_token=lease_token,
@@ -35,6 +37,8 @@ async def test_runner_restores_requesting_actor_for_handler(monkeypatch) -> None
         requested_by_user_id=str(user_id),
         requested_by_email="operator@example.com",
         requested_by_name="Operator",
+        impersonated_by_user_id=operator_id,
+        impersonation_session_id=impersonation_session_id,
         result=None,
     )
     db = AsyncMock()
@@ -53,6 +57,8 @@ async def test_runner_restores_requesting_actor_for_handler(monkeypatch) -> None
         assert actor.organization_id == organization_id
         assert actor.email == "operator@example.com"
         assert actor.source == "platform_job"
+        assert actor.impersonated_by_user_id == operator_id
+        assert actor.impersonation_session_id == impersonation_session_id
         return {"ok": True}
 
     definition = PlatformJobDefinition(

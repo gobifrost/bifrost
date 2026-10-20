@@ -377,8 +377,8 @@ class WorkflowExecutionConsumer(BaseConsumer):
         roi_time_saved = roi_data.get("time_saved", 0)
         roi_value = roi_data.get("value", 0.0)
 
-        # DB operations + flush — single short-lived session
-        # (flush functions do Redis reads internally but DB writes share the session)
+        # DB operations and log flush — single short-lived session
+        # (log flush reads Redis internally but DB writes share the session)
         session_factory = get_session_factory()
         async with session_factory() as session:
             await update_execution(
@@ -408,16 +408,6 @@ class WorkflowExecutionConsumer(BaseConsumer):
                         f"Failed to update event delivery for {execution_id[:8]}...: {e}"
                     )
 
-            # Flush pending changes and logs (Redis read + DB write in same session)
-            try:
-                from bifrost._sync import flush_pending_changes
-                changes_count = await flush_pending_changes(execution_id, session=session)
-                if changes_count > 0:
-                    logger.info(f"Flushed {changes_count} pending changes for {execution_id[:8]}...")
-            except Exception as e:
-                logger.warning(f"Failed to flush pending changes for {execution_id[:8]}...: {e}")
-            changes_flushed_ms = (time.perf_counter() - completion_started) * 1000
-
             if result.get("logs"):
                 try:
                     from bifrost._logging import flush_logs_to_postgres
@@ -437,8 +427,8 @@ class WorkflowExecutionConsumer(BaseConsumer):
             await session.commit()
         durable_ms = (time.perf_counter() - completion_started) * 1000
 
-        # Wake sync callers as soon as their result and buffered SDK writes are
-        # durably committed.  Everything below is terminal-event fan-out or
+        # Wake sync callers as soon as their result is durably committed.
+        # Everything below is terminal-event fan-out or
         # cleanup and must not add latency to the request/response path.
         if is_sync:
             await self._redis_client.push_result(
@@ -501,12 +491,11 @@ class WorkflowExecutionConsumer(BaseConsumer):
 
         logger.debug(
             "Completion timing %s: metadata=%.1fms execution_update=%.1fms "
-            "changes=%.1fms logs=%.1fms durable=%.1fms result_ready=%.1fms "
+            "logs=%.1fms durable=%.1fms result_ready=%.1fms "
             "metrics=%.1fms total=%.1fms",
             execution_id[:8],
             metadata_read_ms,
             execution_update_ms,
-            changes_flushed_ms,
             logs_flushed_ms,
             durable_ms,
             result_ready_ms,
@@ -567,7 +556,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
         else:
             status = ExecutionStatus.FAILED
 
-        # DB operations + flush — single short-lived session
+        # DB operations and log flush — single short-lived session
         session_factory = get_session_factory()
         async with session_factory() as session:
             # Forward resource metrics when the pool reports them (timeout,
@@ -598,14 +587,6 @@ class WorkflowExecutionConsumer(BaseConsumer):
                     logger.warning(
                         f"Failed to update event delivery for {execution_id[:8]}...: {e}"
                     )
-
-            try:
-                from bifrost._sync import flush_pending_changes
-                changes_count = await flush_pending_changes(execution_id, session=session)
-                if changes_count > 0:
-                    logger.info(f"Flushed {changes_count} pending changes for failed {execution_id[:8]}...")
-            except Exception as e:
-                logger.warning(f"Failed to flush pending changes for {execution_id[:8]}...: {e}")
 
             if result.get("logs"):
                 try:
@@ -743,7 +724,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
             return
         pending_ready_ms = (time.perf_counter() - dispatch_started) * 1000
 
-        # Extract context from Redis pending record
+        # Extract context from Redis pending record.
         parameters = pending["parameters"]
         org_id = pending["org_id"]
         user_id = pending["user_id"]
@@ -757,6 +738,53 @@ class WorkflowExecutionConsumer(BaseConsumer):
         event_data = pending.get("event")  # EventContext dict if event-triggered
         artifact_workspace_id = pending.get("artifact_workspace_id")
         lineage = pending.get("lineage")
+        impersonation_provenance = pending.get("impersonation_provenance")
+
+        # Immediate async runs have no durable row until this consumer starts.
+        # If their lineage user was deleted after enqueueing, record the same
+        # terminal cancellation that deletion applies to durable queued rows.
+        if not execution_record_exists and lineage is not None:
+            from shared.run_cancellation import cancel_redis_queued_run_if_user_deleted
+
+            async with get_db_context() as db:
+                cancelled = await cancel_redis_queued_run_if_user_deleted(
+                    db,
+                    execution_id=UUID(execution_id),
+                    run_user_id=UUID(lineage["run_user_id"]),
+                    workflow_name=script_name or "workflow",
+                    parameters=parameters,
+                    organization_id=UUID(org_id) if org_id else None,
+                    workflow_id=UUID(workflow_id) if workflow_id else None,
+                    form_id=UUID(form_id) if form_id else None,
+                    api_key_id=UUID(api_key_id) if api_key_id else None,
+                    executed_by_name=user_name,
+                    impersonation_provenance=impersonation_provenance,
+                )
+                await db.commit()
+            if cancelled:
+                logger.info(
+                    "Discarding Redis-queued execution whose run user was deleted",
+                    extra={"execution_id": execution_id},
+                )
+                await self._redis_client.delete_pending_execution(execution_id)
+                return
+
+        # Scheduled runs have a durable row before their queue message exists.
+        # Claim it atomically before dispatch so a deletion-side cancellation
+        # cannot be overwritten by this consumer after promotion commits.
+        if execution_record_exists:
+            from shared.run_cancellation import claim_pending_run_for_dispatch
+
+            async with get_db_context() as db:
+                claimed = await claim_pending_run_for_dispatch(db, UUID(execution_id))
+                await db.commit()
+            if not claimed:
+                logger.info(
+                    "Discarding queued execution whose durable row was not pending",
+                    extra={"execution_id": execution_id},
+                )
+                await self._redis_client.delete_pending_execution(execution_id)
+                return
 
         # Determine if this is a code or workflow execution
         is_script = bool(code_base64)
@@ -790,6 +818,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
                     workflow_id=workflow_id,
                     check_existing=execution_record_exists,
                     lineage=lineage,
+                    impersonation_provenance=impersonation_provenance,
                 )
                 await update_execution(
                     execution_id=execution_id,
@@ -896,6 +925,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
                         workflow_id=workflow_id,
                         check_existing=execution_record_exists,
                         lineage=lineage,
+                        impersonation_provenance=impersonation_provenance,
                     )
                     await update_execution(
                         execution_id=execution_id,
@@ -940,6 +970,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 workflow_id=workflow_id,
                 check_existing=execution_record_exists,
                 lineage=lineage,
+                impersonation_provenance=impersonation_provenance,
             )
             execution_created_ms = (time.perf_counter() - dispatch_started) * 1000
             if not is_sync:
@@ -983,15 +1014,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
             from src.core.security import mint_engine_token
             engine_token, _ = mint_engine_token(
                 execution_id=execution_id,
-                solution_id=solution_id,
-                global_repo_access=solution_global_repo_access,
                 timeout_seconds=timeout_seconds,
-                caller_user_id=str(user_id) if user_id else None,
-                caller_organization_id=str(org_id) if org_id else None,
-                caller_email=user_email,
-                caller_name=user_name,
-                engine_workflow_id=workflow_id,
-                lineage=lineage,
             )
 
             # Build context for worker process

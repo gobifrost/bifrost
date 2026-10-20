@@ -20,11 +20,12 @@ from typing import Any, get_type_hints, get_origin, get_args, Union
 
 from pydantic import BaseModel
 
+from bifrost._runtime_io import write_log
+
 from src.sdk.context import Caller, ExecutionContext, Organization
 from src.sdk.error_handling import WorkflowError
 from src.sdk.errors import UserError, WorkflowExecutionException
 from src.models.enums import ExecutionStatus
-from src.core.cache import get_cached_data_provider, cache_data_provider_result
 from src.core.error_messages import format_exception_message
 from src.core.secret_string import redact_secrets
 
@@ -40,14 +41,6 @@ def _human_size(num_bytes: int) -> str:
     return f"{num_bytes:.1f}TB"
 
 
-# Import unified log streaming (Redis Stream + PubSub)
-try:
-    from bifrost._logging import log_and_broadcast
-    STREAM_LOGGING_AVAILABLE = True
-except ImportError:
-    STREAM_LOGGING_AVAILABLE = False
-    log_and_broadcast = None  # type: ignore
-
 # Import bifrost context management for SDK support
 project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:
@@ -60,16 +53,6 @@ except ImportError:
     logger.warning(
         "Bifrost SDK not available - user workflows cannot use bifrost SDK")
     BIFROST_CONTEXT_AVAILABLE = False
-
-# Import write buffer for SDK writes
-try:
-    from bifrost._write_buffer import WriteBuffer, set_write_buffer, clear_write_buffer
-    WRITE_BUFFER_AVAILABLE = True
-except ImportError:
-    WRITE_BUFFER_AVAILABLE = False
-    WriteBuffer = None  # type: ignore
-    set_write_buffer = None  # type: ignore
-    clear_write_buffer = None  # type: ignore
 
 @dataclass
 class ServiceRunConfig:
@@ -366,20 +349,17 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
     captured_variables: dict[str, Any] = {}  # Initialize to empty dict
     cache_expires_at_str: str | None = None  # For data providers
 
-    # Note: SDK authentication is handled by authenticate_engine() in worker.py
-    # which installs process-scoped SDK credentials for this one-shot child.
+    # SDK authentication uses the pre-minted runtime credential installed by
+    # worker.py for this one-shot child.
     # The SDK's get_client() finds these credentials automatically.
 
     try:
         with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-            # Check Redis cache for data providers
+            # The child has no Redis credentials. The authenticated worker SDK
+            # transport derives this execution's workflow, current authority
+            # partition, and TTL on the server.
             if is_data_provider and not request.no_cache:
-                org_id = request.organization.id if request.organization else None
-                cached_result = await get_cached_data_provider(
-                    org_id,
-                    request.name or "",
-                    request.parameters
-                )
+                cached_result = await _read_runtime_data_provider_cache(request.parameters)
                 if cached_result:
                     return _build_cached_result(
                         request.execution_id,
@@ -405,17 +385,10 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
                 broadcaster=request.broadcaster
             )
 
-            # Cache result to Redis if data provider
-            if is_data_provider and request.cache_ttl_seconds > 0:
-                org_id = request.organization.id if request.organization else None
-                expires_at = await cache_data_provider_result(
-                    org_id,
-                    request.name or "",
-                    request.parameters,
-                    result,
-                    request.cache_ttl_seconds
-                )
-                cache_expires_at_str = expires_at.isoformat()
+            if is_data_provider and not request.no_cache:
+                expires_at = await _write_runtime_data_provider_cache(request.parameters, result)
+                if expires_at is not None:
+                    cache_expires_at_str = expires_at
 
         # Process captured logs (from scripts or workflows with platform admin)
         logger.info(
@@ -690,7 +663,7 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
         )
 
     finally:
-        # NOTE: flush_pending_changes, flush_logs_to_postgres, and cleanup_execution_cache
+        # NOTE: flush_logs_to_postgres and cleanup_execution_cache
         # are now called from workflow_execution.py's _process_execution_result() callback.
         # This avoids event loop issues when running in thread workers (each thread creates
         # its own event loop via asyncio.run(), which breaks shared async Redis connections).
@@ -702,10 +675,6 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
             logger.debug(
                 f"Cleared bifrost execution context for execution {request.execution_id}")
 
-        # Clear write buffer context
-        if WRITE_BUFFER_AVAILABLE and clear_write_buffer:
-            clear_write_buffer()
-
         # Close broadcaster to prevent resource leaks
         if request.broadcaster is not None:
             try:
@@ -713,10 +682,6 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
                 logger.debug(f"Closed broadcaster for execution {request.execution_id}")
             except Exception as e:
                 logger.warning(f"Error closing broadcaster: {e}")
-
-
-# Maximum age of a cached rotation token before the supervisor re-reads it.
-_SERVICE_TOKEN_REFRESH_SECONDS = 60.0
 
 
 async def execute_service(
@@ -765,7 +730,7 @@ async def execute_service(
         name=request.caller.name,
         scope=request.organization.id if request.organization else "GLOBAL",
         organization=request.organization,
-        is_platform_admin=False,
+        is_platform_admin=request.is_platform_admin,
         is_function_key=False,
         execution_id=cfg.attempt_id,
         workflow_name=request.name or "",
@@ -898,60 +863,34 @@ async def execute_service(
 async def _service_supervisor(
     cfg: ServiceRunConfig, stop_event: asyncio.Event
 ) -> None:
-    """Bridge process-local supervision state and the parent's Redis keys.
+    """Exchange only this attempt's control state over its authenticated API."""
+    from bifrost._service_runtime import install_service_credentials, take_ready_report
+    from bifrost.client import get_client, raise_for_status_with_detail
 
-    1s tick: drain ``service.ready()`` reports to the ready key; mirror the
-    parent's stop key into the stop event. Every 60s: install a fresher
-    rotation token from the parent's handoff when one arrived.
-    """
-    import json as _json
-
-    from src.core.cache import get_redis
-    from src.core.cache.keys import (
-        service_ready_key,
-        service_stop_key,
-        service_token_key,
-    )
-    from bifrost._service_runtime import (
-        install_service_credentials,
-        take_ready_report,
-    )
-
-    current_expires_at = cfg.token_expires_at
-    last_token_check = 0.0
+    ready_pending = False
     while not stop_event.is_set():
         try:
-            async with get_redis() as r:
-                if take_ready_report():
-                    await r.setex(
-                        service_ready_key(cfg.attempt_id), 120, "1"
-                    )
-                stop_flag = await r.get(service_stop_key(cfg.attempt_id))
-                if stop_flag:
-                    stop_event.set()
-                    break
-                now = asyncio.get_running_loop().time()
-                if now - last_token_check >= _SERVICE_TOKEN_REFRESH_SECONDS:
-                    last_token_check = now
-                    raw = await r.get(service_token_key(cfg.attempt_id))
-                    if raw:
-                        try:
-                            payload = _json.loads(raw)
-                        except (ValueError, TypeError):
-                            payload = None
-                        if (
-                            isinstance(payload, dict)
-                            and payload.get("token")
-                            and payload.get("expires_at", "")
-                            > current_expires_at
-                        ):
-                            install_service_credentials(payload["token"])
-                            current_expires_at = payload["expires_at"]
-                            cfg.token_expires_at = current_expires_at
+            ready_pending = ready_pending or take_ready_report()
+            response = await get_client().engine_request(
+                "POST", "/api/sdk/runtime/service-control",
+                json={"ready": ready_pending, "token_expires_at": cfg.token_expires_at},
+            )
+            if response.status_code in {401, 403}:
+                stop_event.set()
+                break
+            raise_for_status_with_detail(response)
+            payload = response.json()
+            ready_pending = False
+            if payload["stop_requested"]:
+                stop_event.set()
+                break
+            if payload["access_token"] is not None:
+                install_service_credentials(payload["access_token"])
+                cfg.token_expires_at = payload["token_expires_at"]
         except asyncio.CancelledError:
             break
-        except Exception as e:
-            logger.debug("service supervisor tick failed: %s", e)
+        except Exception as exc:
+            logger.debug("service supervisor tick failed: %s", exc)
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=1.0)
         except asyncio.TimeoutError:
@@ -970,13 +909,15 @@ async def _execute_service_with_trace(
     Returns (result, service_logs, stopped). No variable tracing: services
     never persist ``variables``/``execution_context`` snapshots.
     """
-    from bifrost._logging import publish_service_log
+    from bifrost._runtime_io import write_log
 
     service_logs: list[dict[str, Any]] = []
     workflow_module_file = func.__code__.co_filename
 
     class ServiceLogHandler(logging.Handler):
-        def emit(self, record: logging.LogRecord) -> None:
+        def filter(self, record: logging.LogRecord) -> bool:
+            if getattr(record, "_bifrost_log_transport", False):
+                return False
             workflow_basename = os.path.basename(workflow_module_file)
             record_basename = os.path.basename(record.pathname)
             is_workspace_log = (
@@ -988,12 +929,15 @@ async def _execute_service_with_trace(
             is_service_system = record.name == getattr(
                 func, "__module__", None
             )
-            if (
-                record_basename != workflow_basename
-                and not is_workspace_log
-                and not is_service_system
-            ):
-                return
+            # Reject infrastructure logs before Handler.handle acquires its lock.
+            # Transport refresh may log from a thread while a service log is sent.
+            return (
+                record_basename == workflow_basename
+                or is_workspace_log
+                or is_service_system
+            )
+
+        def emit(self, record: logging.LogRecord) -> None:
             message = record.getMessage()
             current_secrets = context._collect_secret_values()
             if current_secrets:
@@ -1002,11 +946,9 @@ async def _execute_service_with_trace(
                 {"level": record.levelname, "message": message}
             )
             try:
-                publish_service_log(
-                    cfg.service_id, cfg.attempt_id, record.levelname, message
-                )
+                write_log(record.levelname, message)
             except Exception as e:
-                logger.debug("service log publish failed: %s", e)
+                logger.debug("service log publish failed: %s", e, extra={"_bifrost_log_transport": True})
 
     handler = ServiceLogHandler()
     handler.setLevel(logging.DEBUG)
@@ -1251,33 +1193,24 @@ async def _execute_workflow_with_trace(
 
     # Set up logging capture for the workflow
     class WorkflowLogHandler(logging.Handler):
-        def emit(self, record: logging.LogRecord) -> None:
-            # Fast reject known noisy third-party loggers
+        def filter(self, record: logging.LogRecord) -> bool:
+            if getattr(record, "_bifrost_log_transport", False):
+                return False
             if record.name.split(".")[0] in _NOISY_LOGGERS:
-                return
-
-            # Always capture TRACEBACK level (admin-only error details)
+                return False
             is_traceback = record.levelname == "TRACEBACK"
-
-            # Check if this is a script logger (logger name starts with 'script.')
-            is_script_log = record.name.startswith('script.')
-
-            # Only capture logs that originate from the workflow's file or workspace
-            # This prevents capturing third-party SDK, aiohttp, and infrastructure logs
-            # Use basename comparison since dynamically loaded modules may have different path formats
+            is_script_log = record.name.startswith("script.")
             workflow_basename = os.path.basename(workflow_module_file)
             record_basename = os.path.basename(record.pathname)
+            is_workspace_log = "workspace" in record.pathname or "/repo/" in record.pathname
+            # Keep transport/internal logs outside the handler lock, including
+            # logs emitted on a credential-refresh thread while sending a row.
+            return (
+                is_traceback or is_script_log
+                or record_basename == workflow_basename or is_workspace_log
+            )
 
-            # Also check if it's from workspace directory (for user workflows)
-            is_workspace_log = 'workspace' in record.pathname or '/repo/' in record.pathname
-            is_workflow_file = record_basename == workflow_basename
-
-            # Don't log from inside the handler to avoid infinite recursion
-            # Just filter and process
-
-            if not (is_traceback or is_script_log or is_workflow_file or is_workspace_log):
-                return
-
+        def emit(self, record: logging.LogRecord) -> None:
             # Format: [LEVEL] message
             message = record.getMessage()
             _current_secrets = context._collect_secret_values()
@@ -1313,20 +1246,14 @@ async def _execute_workflow_with_trace(
                 # - PubSub delivers immediately to WebSocket clients
                 # - Background worker persists from Stream to Postgres
                 try:
-                    if STREAM_LOGGING_AVAILABLE and log_and_broadcast:
-                        log_and_broadcast(
-                            execution_id=execution_id,
-                            level=record.levelname,
-                            message=message,
-                        )
-                    # Fallback: logs are still captured in log_buffer for batch save at end
+                    write_log(level=record.levelname, message=message)
                 except Exception as e:
                     # Log errors but don't fail workflow execution
                     # Real-time updates are non-critical
                     logger.error(
                         f"Failed to stream log (non-fatal): {str(e)}",
                         exc_info=True,
-                        extra={"execution_id": execution_id}
+                        extra={"execution_id": execution_id, "_bifrost_log_transport": True}
                     )
 
     # Configure logging for workflows
@@ -1503,16 +1430,6 @@ async def _execute_workflow_with_trace(
         if BIFROST_CONTEXT_AVAILABLE:
             set_execution_context(context)
 
-        # Initialize write buffer for SDK writes
-        if WRITE_BUFFER_AVAILABLE and WriteBuffer and set_write_buffer:
-            org_id = context.org_id if context.org_id != "GLOBAL" else None
-            buffer = WriteBuffer(
-                execution_id=execution_id or "",
-                org_id=org_id,
-                user_id=context.user_id,
-            )
-            set_write_buffer(buffer)
-
         # Set up trace function for variable capture
         sys.settrace(chained_trace_func if existing_trace else trace_func)
         try:
@@ -1524,9 +1441,6 @@ async def _execute_workflow_with_trace(
             # Clear context
             if BIFROST_CONTEXT_AVAILABLE:
                 clear_execution_context()
-            # Clear write buffer
-            if WRITE_BUFFER_AVAILABLE and clear_write_buffer:
-                clear_write_buffer()
     except TypeError as e:
         # Check if this is the "got multiple values" error caused by missing context parameter
         if "got multiple values for argument" in str(e):
@@ -1598,6 +1512,50 @@ async def _execute_workflow_with_trace(
         raise exception_to_raise
 
     return result, captured_vars, workflow_logs
+
+
+async def _read_runtime_data_provider_cache(
+    parameters: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Read this child workflow's cache entry through its runtime credential."""
+    from bifrost.client import get_client
+
+    try:
+        response = await get_client().engine_request(
+            "POST", "/api/sdk/runtime/data-provider-cache/read", json={"parameters": parameters},
+        )
+        if not response.is_success:
+            logger.debug("Data-provider cache read was unavailable: HTTP %s", response.status_code)
+            return None
+        payload = response.json()
+        if not payload.get("hit"):
+            return None
+        expires_at = payload.get("expires_at")
+        return {"data": payload.get("result"), "expires_at": expires_at}
+    except Exception as exc:
+        logger.debug("Data-provider cache read was unavailable: %s", type(exc).__name__)
+        return None
+
+
+async def _write_runtime_data_provider_cache(
+    parameters: dict[str, Any], result: Any,
+) -> str | None:
+    """Write this child workflow's result through its runtime credential."""
+    from bifrost.client import get_client
+
+    try:
+        response = await get_client().engine_request(
+            "POST", "/api/sdk/runtime/data-provider-cache/write",
+            json={"parameters": parameters, "result": result},
+        )
+        if not response.is_success:
+            logger.debug("Data-provider cache write was unavailable: HTTP %s", response.status_code)
+            return None
+        expires_at = response.json().get("expires_at")
+        return None if expires_at is None else str(expires_at)
+    except Exception as exc:
+        logger.debug("Data-provider cache write was unavailable: %s", type(exc).__name__)
+        return None
 
 
 def _build_cached_result(

@@ -1,30 +1,8 @@
-"""Enforcing the authorization evaluator on cut-over routes (R3a).
+"""Enforce operation permissions from current role assignments.
 
-A route is cut over when its access-list entry has
-``current_gate=evaluator``: its dependency is ``CurrentActiveUser`` and the
-handler (or the service it calls) decides with this module, naming the
-entry by its operation key (``operation_key``: the operation-catalog id, or
-``"<METHOD> <path>"`` for an uncatalogued route).
-
-Callers. ``load_caller`` reads the person's ``AuthorizationContext`` from the
-database on every request, so Platform Admin is whoever holds the wildcard
-permission at the platform boundary as stored now, not the token's
-``is_superuser`` claim. Execution credentials are the exception, decided by one explicit, staged rule (see ``decide_for``).
-
-Targets. A row-level target is the target object's own organization:
-``org_target(user.organization_id)`` for a user,
-``org_target(org.id)`` for an organization, ``GLOBAL`` for Global users and
-for platform-boundary entries (role definitions, creating organizations).
-
-Existence before permission. A caller with no reach at all for the
-operation's permission gets 403 before anything is looked up, so they learn
-nothing about which rows exist. A caller with reach somewhere gets 404 for a
-missing row and 403 for a row outside their reach.
-
-Protected targets. A user who holds any privileged permission at any
-boundary, or the Platform Admin wildcard, can only be changed (support,
-lifecycle, role assignment, invites, signing out) by a Platform Admin
-(``require_unprotected``).
+Typed runtime credentials keep the original user's roles and organization
+reach, adding only the configured workflow capabilities. Acting identity is
+separate. Lists use the same permission reach before counting or paging.
 """
 
 from __future__ import annotations
@@ -48,7 +26,7 @@ from src.services.authorization.context import (
     BoundaryKind,
     build_authorization_context,
 )
-from src.services.authorization.evaluator import GLOBAL, Decision, Target, cross_org, decide
+from src.services.authorization.evaluator import GLOBAL, Decision, Target, TargetKind, cross_org, decide
 from src.services.authorization.privilege import is_privileged_principal
 from src.services.authorization.reach import EVERYTHING, NOWHERE, OrgReach
 
@@ -82,7 +60,7 @@ _ACTION_PHRASES: dict[str, str] = {
 }
 
 PROTECTED_TARGET_MESSAGE = (
-    "Only a Platform Admin can change a Platform Admin or another user with privileged access"
+    "You need Read and Write Privileged Access to change this account"
 )
 
 
@@ -120,29 +98,29 @@ def entry_for_operation(operation: str, permission: str | None = None) -> Access
 
 @dataclass(frozen=True)
 class Caller:
-    """Who is asking: a person (with their context), or an execution
-    credential (engine or service token, no context)."""
+    """The verified principal and original user's current role context."""
 
     principal: UserPrincipal
-    # None for execution credentials and embed sessions, and for a token
-    # whose user no longer exists.
+    # None for embed sessions or an unknown user.
     ctx: AuthorizationContext | None
 
     @property
     def is_execution_credential(self) -> bool:
-        return bool(self.principal.engine_execution_id or self.principal.service_id)
+        return self.principal.runtime_authority is not None
 
     @property
     def is_platform_admin(self) -> bool:
         if self.principal.embed:
             return False
-        if self.is_execution_credential:
-            return self.principal.is_superuser
         return self.ctx is not None and self.ctx.is_platform_admin
 
 
 async def load_caller(db: AsyncSession, principal: UserPrincipal) -> Caller:
-    if principal.embed or principal.engine_execution_id or principal.service_id:
+    if principal.embed:
+        return Caller(principal, None)
+    if principal.runtime_authority is not None:
+        return Caller(principal, principal.runtime_authority.run_user.ctx)
+    if principal.engine_execution_id or principal.service_id or principal.service_attempt_id:
         return Caller(principal, None)
     try:
         ctx = await build_authorization_context(db, principal.user_id)
@@ -152,25 +130,40 @@ async def load_caller(db: AsyncSession, principal: UserPrincipal) -> Caller:
 
 
 def decide_for(caller: Caller, entry: AccessEntry, target: Target) -> Decision:
-    """The enforced decision for ``caller`` on an evaluator entry.
-
-    Execution credentials (a token carrying ``engine_execution_id`` or
-    ``service_id``) are decided exactly as the superuser dependency these
-    routes had decided them: allowed iff the token is a superuser token. A
-    workflow's engine token (the system user, superuser) keeps reaching the
-    SDK user/role/organization routes over the worker socket; a supervised
-    service token (never superuser) keeps being refused. This is staged
-    enforcement: R3b replaces it with a typed engine execution principal.
-    """
+    """Decide from current user roles and any verified workflow powers."""
     if caller.principal.embed:
         return Decision(False, "denied:embed_session_only")
-    if caller.is_execution_credential:
-        if caller.principal.is_superuser:
-            return Decision(True, "execution_credential:superuser")
-        return Decision(False, "denied:execution_credential_not_superuser")
+    runtime = caller.principal.runtime_authority
+    if runtime is not None:
+        from src.services.authorization.explain import check_target
+
+        organization_id = runtime.organization_id if target.kind == TargetKind.HOME else target.organization_id
+        trace = check_target(runtime.run_user, runtime.powers, organization_id, entry)
+        stopped = next((step for step in trace.steps if step.status == "stopped"), None)
+        return Decision(trace.outcome == "success", "runtime:allowed" if stopped is None else f"denied:{stopped.reason}")
     if caller.ctx is None:
         return Decision(False, "denied:unknown_user")
     return decide(caller.ctx, entry, target)
+
+
+def _note_enforced_decision(caller: Caller, entry: AccessEntry, target: Target) -> None:
+    if caller.ctx is None or entry.permission is None:
+        return
+    from src.services.authorization.explain import RunUser, check_target
+
+    runtime = caller.principal.runtime_authority
+    run_user = (
+        RunUser(caller.ctx.user_id, caller.ctx, None, is_active=caller.principal.is_active)
+        if runtime is None else runtime.run_user
+    )
+    powers = None if runtime is None else runtime.powers
+    organization_id = (
+        caller.ctx.home_organization_id if runtime is None else runtime.organization_id
+    ) if target.kind == TargetKind.HOME else target.organization_id
+    access_checks.note_decision(
+        "permission", organization_id, run_user=run_user,
+        trace=check_target(run_user, powers, organization_id, entry), permission=entry.permission,
+    )
 
 
 def denial_message(permission: str | None) -> str:
@@ -211,6 +204,7 @@ def require_operation(
         target,
         decision.rule,
     )
+    _note_enforced_decision(caller, entry, target)
     if not decision.allowed:
         raise _denied(entry.permission)
     return decision
@@ -236,15 +230,15 @@ def org_target(organization_id: UUID | None) -> Target:
     return GLOBAL if organization_id is None else cross_org(organization_id)
 
 
-def require_unprotected(caller: Caller, target_is_privileged: bool) -> None:
+def require_unprotected(caller: Caller, target_is_privileged: bool, target_organization_id: UUID | None) -> None:
     if not target_is_privileged:
         return
-    if not caller.is_platform_admin:
+    from src.services.authorization.explain import permission_entry
+
+    entry = permission_entry("privilegedaccess.readwrite")
+    _note_enforced_decision(caller, entry, org_target(target_organization_id))
+    if not allows_permission(caller, "privilegedaccess.readwrite", target_organization_id):
         raise HTTPException(status.HTTP_403_FORBIDDEN, PROTECTED_TARGET_MESSAGE)
-    # The target user's organization is not known here; noted at the caller's.
-    access_checks.note_power(
-        "privilegedaccess.readwrite", caller.principal.organization_id, subject="user:privileged"
-    )
 
 
 def permitted_organizations(caller: Caller, permission: str) -> OrgReach:
@@ -252,8 +246,14 @@ def permitted_organizations(caller: Caller, permission: str) -> OrgReach:
     organization-boundary entry of an evaluator-gated operation."""
     if caller.principal.embed:
         return NOWHERE
-    if caller.is_execution_credential:
-        return EVERYTHING if caller.principal.is_superuser else NOWHERE
+    runtime = caller.principal.runtime_authority
+    if runtime is not None and runtime.powers is not None:
+        from src.models.contracts.workflow_permissions import WorkflowPermissionMode
+
+        if runtime.powers.mode == WorkflowPermissionMode.FULL or any(
+            grant.permission == permission for grant in runtime.powers.grants
+        ):
+            return user_reach(caller)
     ctx = caller.ctx
     if ctx is None:
         return NOWHERE
@@ -282,6 +282,67 @@ def permitted_organizations(caller: Caller, permission: str) -> OrgReach:
         managed=managed,
         include_global=include_global,
     )
+
+
+def user_reach(caller: Caller) -> OrgReach:
+    """Permission-independent reach of the original user, including Global."""
+    ctx = caller.ctx
+    if ctx is None or caller.principal.embed:
+        return NOWHERE
+    if ctx.is_platform_admin:
+        return EVERYTHING
+    organizations = set() if ctx.home_organization_id is None else {ctx.home_organization_id}
+    managed = False
+    for grant in ctx.role_grants:
+        for boundary in grant.boundaries:
+            if boundary.kind == BoundaryKind.ORGANIZATION and boundary.organization_id is not None:
+                organizations.add(boundary.organization_id)
+            elif boundary.kind == BoundaryKind.MANAGED_ORGANIZATIONS:
+                managed = True
+    return OrgReach(organization_ids=frozenset(organizations), managed=managed, include_global=True)
+
+
+def allows_permission(caller: Caller, permission: str, organization_id: UUID | None) -> bool:
+    """Check a named power at the actual target, including runtime capabilities."""
+    from src.services.authorization.explain import permission_entry
+
+    return decide_for(caller, permission_entry(permission), org_target(organization_id)).allowed
+
+
+class PermissionDenied(Exception):
+    """A named authorization refusal shared by business services and HTTP adapters."""
+
+    status_code = 403
+
+    def __init__(self, permission: str) -> None:
+        self.permission = permission
+        self.detail = denial_message(permission)
+        super().__init__(self.detail)
+
+
+def require_named_permission(caller: Caller, permission: str, organization_id: UUID | None) -> None:
+    """Enforce and record a named permission without an HTTP-specific exception."""
+    from src.services.authorization.explain import permission_entry
+
+    entry = permission_entry(permission)
+    target = org_target(organization_id)
+    _note_enforced_decision(caller, entry, target)
+    if not decide_for(caller, entry, target).allowed:
+        raise PermissionDenied(permission)
+
+
+def require_permission(caller: Caller, permission: str, organization_id: UUID | None) -> None:
+    try:
+        require_named_permission(caller, permission, organization_id)
+    except PermissionDenied as exc:
+        raise HTTPException(exc.status_code, exc.detail) from exc
+
+
+def external_credential_restrictions(caller: Caller) -> bool:
+    """Direct external callers retain credential restrictions; workflow powers are explicit."""
+    runtime = caller.principal.runtime_authority
+    original_external = caller.ctx.is_external if caller.ctx is not None else caller.principal.is_external
+    return original_external and (runtime is None or runtime.powers is None)
 
 
 def operation_reach(caller: Caller, operation: str, *, permission: str | None = None) -> OrgReach:

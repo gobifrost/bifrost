@@ -69,6 +69,8 @@ class PlatformJobContext:
     requested_by_user_id: str
     requested_by_email: str
     requested_by_name: str
+    impersonated_by_user_id: UUID | None = None
+    impersonation_session_id: UUID | None = None
     checkpoint: dict[str, Any] | None = None
 
     async def report(

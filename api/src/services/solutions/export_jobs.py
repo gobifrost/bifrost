@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import String, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.security import decrypt_secret, encrypt_secret
@@ -18,6 +18,9 @@ from src.models.contracts.solutions import SolutionExportJobPublic, SolutionExpo
 from src.models.orm.solution_export_jobs import SolutionExportJob
 from src.models.orm.solution_config_schema import SolutionConfigSchema
 from src.models.orm.solutions import Solution
+from src.models.orm.platform_jobs import PlatformJob
+from src.services.authorization.enforce import Caller
+from src.services.platform_job_access import platform_job_visibility_filter
 from src.services.file_storage import FileStorageService
 from src.services.solutions.capture import SolutionCaptureService
 from src.services.solutions.export import (
@@ -101,6 +104,7 @@ async def create_export_job(
         progress_percent=0,
         message="queued",
         encrypted_options=encrypt_export_options(options),
+        contains_secrets=options.include_secrets,
         artifact_filename=export_artifact_filename(solution),
     )
     db.add(row)
@@ -113,13 +117,20 @@ async def list_export_jobs(
     db: AsyncSession,
     solution_id: UUID,
     *,
+    caller: Caller,
     limit: int = 50,
 ) -> list[SolutionExportJobPublic]:
     """Return recent export jobs for a Solution, newest first."""
     rows = (
         await db.execute(
             select(SolutionExportJob)
-            .where(SolutionExportJob.solution_id == solution_id)
+            .join(PlatformJob, PlatformJob.resource_id == cast(SolutionExportJob.id, String))
+            .where(
+                SolutionExportJob.solution_id == solution_id,
+                PlatformJob.job_type == "solution.export",
+                PlatformJob.resource_type == "solution_export",
+                platform_job_visibility_filter(caller),
+            )
             .order_by(SolutionExportJob.created_at.desc())
             .limit(limit)
         )
@@ -132,6 +143,7 @@ def export_options_to_capture_flags(options: SolutionExportOptions) -> dict[str,
     return {
         "include_imports": True,
         "include_values": options.include_configs or options.include_secrets,
+        "include_secret_values": options.include_secrets,
         "include_data": options.include_tables,
         "include_files": options.include_files,
     }
@@ -176,7 +188,7 @@ async def apply_config_value_selection(
     options: SolutionExportOptions,
     config_values: dict[str, str],
 ) -> dict[str, str]:
-    """Filter captured config values after capture decrypts secret values."""
+    """Apply the selected config and secret toggles to the captured values."""
     if not config_values:
         return config_values
     secret_keys = await solution_secret_config_keys(db, solution.id)

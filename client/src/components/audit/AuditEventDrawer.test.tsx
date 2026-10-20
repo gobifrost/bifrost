@@ -146,7 +146,12 @@ describe("AuditEventDrawer", () => {
 		renderDrawer(accessCheck);
 
 		const dialog = screen.getByRole("dialog", { name: "Access Check" });
-		expect(field("Action")).toHaveTextContent("access.check");
+		expect(within(dialog).getAllByRole("term")[0]).toHaveTextContent(
+			"Organization",
+		);
+		expect(
+			within(dialog).queryByText("Action", { selector: "dt" }),
+		).not.toBeInTheDocument();
 		expect(field("Outcome")).toHaveTextContent("success");
 		expect(field("Organization")).toHaveTextContent("Fabrikam");
 		expect(field("Resource")).toHaveTextContent("Workflow or Agent Access");
@@ -155,6 +160,22 @@ describe("AuditEventDrawer", () => {
 			within(dialog).getByRole("list", { name: "Then" }),
 		).toHaveTextContent("Contoso is their home organization.");
 		expect(explain.calls.every(([, enabled]) => !enabled)).toBe(true);
+	});
+
+	it("identifies an enforced check without describing it as report-only", () => {
+		renderDrawer({
+			...accessCheck,
+			details: {
+				...accessCheck.details,
+				trace: { ...then, enforced: true },
+			},
+		});
+		expect(
+			screen.getByText("The access decision enforced for this request."),
+		).toBeVisible();
+		expect(
+			screen.queryByText(/Nothing was blocked/),
+		).not.toBeInTheDocument();
 	});
 
 	it("names the permission a permission check needed, even where the trace stopped first", () => {

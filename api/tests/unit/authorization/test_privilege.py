@@ -1,5 +1,4 @@
-"""Privileged principals, the Platform Operator's role-assignment rule, and
-the R3a grant ceiling (``src.services.authorization.privilege``)."""
+"""Privileged principals and privileged role-assignment decisions."""
 
 from __future__ import annotations
 
@@ -8,9 +7,7 @@ from uuid import UUID, uuid4
 from shared.builtin_roles import (
     DECRYPTION_ROLE_ID,
     DECRYPTION_ROLE_PERMISSIONS,
-    PLATFORM_ADMIN_ROLE_ID,
     PLATFORM_OPERATOR_PERMISSIONS,
-    PLATFORM_OPERATOR_ROLE_ID,
     USER_BASE_PERMISSIONS,
     USER_ROLE_ID,
     WILDCARD_PERMISSION,
@@ -24,8 +21,7 @@ from src.services.authorization.context import (
 )
 from src.services.authorization.privilege import (
     is_privileged_principal,
-    may_change_role_assignment,
-    operator_assignable_role,
+    role_assignment_requires_privileged_access,
 )
 
 ORG_A = UUID("00000000-0000-0000-0000-00000000a001")
@@ -104,79 +100,18 @@ class TestHeldPermissions:
         assert WILDCARD_PERMISSION in _ctx(admin=True).held_permissions
 
 
-class TestOperatorAssignableRole:
-    ordinary_target = USER_BASE_PERMISSIONS
-
-    def test_permissionless_custom_role_on_ordinary_user(self) -> None:
-        assert operator_assignable_role(
-            role_id=uuid4(), role_permissions=frozenset(), target_permissions=self.ordinary_target
+class TestPrivilegedRoleAssignments:
+    def test_ordinary_permission_role_on_an_ordinary_user_needs_no_privileged_access(self) -> None:
+        assert not role_assignment_requires_privileged_access(
+            role_permissions={"forms.read"}, target_permissions=USER_BASE_PERMISSIONS
         )
 
-    def test_role_with_any_permission_is_refused(self) -> None:
-        for permission in ("forms.read", "agentruns.read.all", "users.readwrite"):
-            assert not operator_assignable_role(
-                role_id=uuid4(),
-                role_permissions=frozenset({permission}),
-                target_permissions=self.ordinary_target,
-            ), permission
-
-    def test_builtin_roles_are_refused_even_without_stored_permissions(self) -> None:
-        # Platform Admin stores no permission rows (its access is the
-        # wildcard in code), so the permission check alone would admit it.
-        for role_id in (PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID, PLATFORM_OPERATOR_ROLE_ID, DECRYPTION_ROLE_ID):
-            assert not operator_assignable_role(
-                role_id=role_id, role_permissions=frozenset(), target_permissions=self.ordinary_target
-            ), role_id
-
-    def test_privileged_target_is_refused(self) -> None:
-        assert not operator_assignable_role(
-            role_id=uuid4(),
-            role_permissions=frozenset(),
-            target_permissions=frozenset({"users.readwrite"}),
+    def test_privileged_role_needs_privileged_access(self) -> None:
+        assert role_assignment_requires_privileged_access(
+            role_permissions={"users.readwrite"}, target_permissions=USER_BASE_PERMISSIONS
         )
 
-    def test_target_privileged_at_another_org_is_refused(self) -> None:
-        at_b = _grant({"configs.readwrite"}, Boundary(BoundaryKind.ORGANIZATION, ORG_B))
-        assert not operator_assignable_role(
-            role_id=uuid4(), role_permissions=frozenset(), target_permissions=_ctx(at_b).held_permissions
+    def test_privileged_target_needs_privileged_access(self) -> None:
+        assert role_assignment_requires_privileged_access(
+            role_permissions=set(), target_permissions={"configs.readwrite"}
         )
-
-    def test_platform_admin_target_is_refused(self) -> None:
-        assert not operator_assignable_role(
-            role_id=uuid4(),
-            role_permissions=frozenset(),
-            target_permissions=_ctx(admin=True).held_permissions,
-        )
-
-
-class TestGrantCeiling:
-    """Every actor who is not a Platform Admin is held to the Operator rule,
-    whatever identity permissions their roles give them."""
-
-    def _may(self, *, admin: bool, role_id=None, permissions=frozenset(), target=USER_BASE_PERMISSIONS) -> bool:
-        return may_change_role_assignment(
-            actor_is_platform_admin=admin,
-            role_id=role_id or uuid4(),
-            role_permissions=frozenset(permissions),
-            target_permissions=target,
-        )
-
-    def test_platform_admin_may_change_anything(self) -> None:
-        assert self._may(admin=True, role_id=PLATFORM_OPERATOR_ROLE_ID)
-        assert self._may(admin=True, role_id=PLATFORM_ADMIN_ROLE_ID)
-        assert self._may(admin=True, permissions={"userlifecycle.readwrite"}, target={"configs.readwrite"})
-
-    def test_delegate_may_change_a_permissionless_custom_role_on_an_ordinary_user(self) -> None:
-        assert self._may(admin=False)
-
-    def test_delegate_may_not_change_a_role_with_permissions(self) -> None:
-        for permission in ("forms.read", "users.read", "roleassignments.readwrite"):
-            assert not self._may(admin=False, permissions={permission}), permission
-
-    def test_delegate_may_not_change_builtin_roles(self) -> None:
-        for role_id in (PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID, PLATFORM_OPERATOR_ROLE_ID, DECRYPTION_ROLE_ID):
-            assert not self._may(admin=False, role_id=role_id), role_id
-
-    def test_delegate_may_not_change_a_privileged_user(self) -> None:
-        assert not self._may(admin=False, target=frozenset({"users.readwrite"}))
-        assert not self._may(admin=False, target=_ctx(admin=True).held_permissions)

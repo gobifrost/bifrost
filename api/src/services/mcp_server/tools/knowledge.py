@@ -85,12 +85,19 @@ async def search_knowledge(
 
     try:
         async with get_tool_db(context) as db:
+            from shared.scope_resolver import resolve_effective_scope
+            from src.services.authorization.enforce import require_named_permission
+            from src.services.mcp_server.authorization import load_mcp_caller
+
+            caller = await load_mcp_caller(db, context)
+            organization_id = resolve_effective_scope(caller=caller)
+            require_named_permission(caller, "knowledge.read", organization_id)
             # Generate query embedding
             embedding_client = await get_embedding_client(db)
             query_embedding = await embedding_client.embed_single(query)
 
             repo = KnowledgeRepository(
-                db, org_id=context.org_id if context.org_id else None, is_superuser=True
+                db, org_id=organization_id
             )
             results = await repo.search(
                 query_embedding=query_embedding,

@@ -42,7 +42,6 @@ import { ListToolbar } from "@/components/layout/ListToolbar";
 import { ListLoadError } from "@/components/layout/ListLoadError";
 import { PageWorkspace } from "@/components/layout/PageWorkspace";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
-import { useAuth } from "@/contexts/AuthContext";
 import {
 	useDeleteEventSource,
 	useEventSources,
@@ -57,11 +56,13 @@ import { formatDistanceToNow } from "date-fns";
 import { getErrorMessage } from "@/lib/api-error";
 import { isMicrosoftGraphSource } from "@/lib/graph-source";
 import { EventSourceCard } from "./events/EventSourceCard";
+import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
+import { useAuthorization } from "@/services/authorization";
 
 type StatusFilter = "all" | "active" | "inactive";
 
 export function Events() {
-	const { isPlatformAdmin } = useAuth();
+	const authorization = useAuthorization();
 	const { sourceId } = useParams<{ sourceId?: string }>();
 	const navigate = useNavigate();
 	const compactLayout = useMediaQuery("(max-width: 1023px)");
@@ -82,17 +83,24 @@ export function Events() {
 
 	const updateMutation = useUpdateEventSource();
 	const deleteMutation = useDeleteEventSource();
+	const canReadAnySources = authorization.canAnywhere("events.read");
+	const canManageAnySources = authorization.canAnywhere("events.readwrite");
+	const canManageSource = (source: EventSource) =>
+		authorization.canAt(
+			"events.readwrite",
+			orgTarget(source.organization_id),
+		);
 
 	const { data, isLoading, isError, isFetching, refetch } = useEventSources(
-		isPlatformAdmin
-			? {
+		filterOrgId === undefined
+			? undefined
+			: {
 					scope: filterOrgId === null ? "global" : undefined,
 					organizationId:
 						typeof filterOrgId === "string"
 							? filterOrgId
 							: undefined,
-				}
-			: undefined,
+				},
 	);
 
 	const sources = useMemo(() => data?.items || [], [data?.items]);
@@ -112,12 +120,43 @@ export function Events() {
 		return { total, active, inactive: total - active };
 	}, [sources]);
 	const hasCachedSources = data !== undefined;
+	const knownOrganizations = useMemo(() => {
+		const organizations = new Map<string, { id: string; name: string }>();
+		for (const source of sources) {
+			if (source.organization_id) {
+				organizations.set(source.organization_id, {
+					id: source.organization_id,
+					name: source.organization_name ?? source.organization_id,
+				});
+			}
+		}
+		const summary = authorization.authorization;
+		if (summary?.home_organization_id) {
+			organizations.set(summary.home_organization_id, {
+				id: summary.home_organization_id,
+				name: summary.home_organization_id,
+			});
+		}
+		for (const grant of summary?.grants ?? []) {
+			if (
+				grant.boundary.kind === "organization" &&
+				grant.boundary.organization_id
+			) {
+				organizations.set(grant.boundary.organization_id, {
+					id: grant.boundary.organization_id,
+					name: grant.boundary.organization_id,
+				});
+			}
+		}
+		return [...organizations.values()];
+	}, [authorization.authorization, sources]);
 
 	const handleToggleActive = async (
 		source: EventSource,
 		e: React.MouseEvent,
 	) => {
 		e.stopPropagation();
+		if (!canManageSource(source)) return;
 		try {
 			await updateMutation.mutateAsync({
 				params: { path: { source_id: source.id } },
@@ -135,6 +174,7 @@ export function Events() {
 
 	const handleEdit = (source: EventSource, e: React.MouseEvent) => {
 		e.stopPropagation();
+		if (!canManageSource(source)) return;
 		setSourceToEdit(source);
 		setEditDialogOpen(true);
 	};
@@ -146,6 +186,7 @@ export function Events() {
 
 	const handleDelete = (source: EventSource, e: React.MouseEvent) => {
 		e.stopPropagation();
+		if (!canManageSource(source)) return;
 		setSourceToDelete(source);
 		setDeleteError(null);
 		setDeleteDialogOpen(true);
@@ -213,7 +254,7 @@ export function Events() {
 							/>
 							<span>Refresh</span>
 						</Button>
-						{isPlatformAdmin && (
+						{canManageAnySources && (
 							<Button
 								variant="outline"
 								className="min-h-11 gap-2 px-4"
@@ -234,13 +275,26 @@ export function Events() {
 					placeholder="Search event sources..."
 					className="w-full sm:flex-1"
 				/>
-				{isPlatformAdmin && (
+				{canReadAnySources && (
 					<div className="w-full sm:w-64">
 						<OrganizationSelect
 							value={filterOrgId}
 							onChange={setFilterOrgId}
 							showAll={true}
-							showGlobal={true}
+							showGlobal={authorization.canAt(
+								"events.read",
+								GLOBAL_TARGET,
+							)}
+							knownOrganizations={knownOrganizations}
+							loadOrganizations={authorization.canAnywhere(
+								"organizations.read",
+							)}
+							filterOrganizations={(organization) =>
+								authorization.canAt(
+									"events.read",
+									orgTarget(organization.id),
+								)
+							}
 							placeholder="All organizations"
 						/>
 					</div>
@@ -293,7 +347,7 @@ export function Events() {
 										? "Try adjusting your search term or filter"
 										: "Create your first event source to start receiving webhooks."}
 								</p>
-								{isPlatformAdmin &&
+								{canManageAnySources &&
 									!searchTerm &&
 									statusFilter === "all" && (
 										<Button
@@ -315,7 +369,7 @@ export function Events() {
 								<EventSourceCard
 									key={source.id}
 									source={source}
-									isPlatformAdmin={isPlatformAdmin}
+										canManage={canManageSource(source)}
 									onToggleActive={handleToggleActive}
 									onEdit={handleEdit}
 									onDelete={handleDelete}
@@ -327,7 +381,7 @@ export function Events() {
 						<DataTable className="max-h-full">
 							<DataTableHeader>
 								<DataTableRow>
-									{isPlatformAdmin && (
+									{canReadAnySources && (
 										<DataTableHead className="w-0 whitespace-nowrap">
 											Organization
 										</DataTableHead>
@@ -345,7 +399,7 @@ export function Events() {
 									<DataTableHead className="w-0 whitespace-nowrap">
 										Created
 									</DataTableHead>
-									{isPlatformAdmin && (
+										{canManageAnySources && (
 										<>
 											<DataTableHead className="w-0 whitespace-nowrap text-right">
 												Status
@@ -370,7 +424,7 @@ export function Events() {
 												)
 											}
 										>
-											{isPlatformAdmin && (
+											{canManageSource(source) && (
 												<DataTableCell className="w-0 whitespace-nowrap">
 													{source.organization_id ? (
 														<Badge
@@ -482,7 +536,7 @@ export function Events() {
 													{ addSuffix: true },
 												)}
 											</DataTableCell>
-											{isPlatformAdmin && (
+											{canManageSource(source) && (
 												<>
 													<DataTableCell className="w-0 whitespace-nowrap text-right">
 														<Switch
@@ -526,6 +580,7 @@ export function Events() {
 				open={isCreateDialogOpen}
 				onOpenChange={setIsCreateDialogOpen}
 				onSuccess={handleCreateSuccess}
+				knownOrganizations={knownOrganizations}
 			/>
 			<EditEventSourceDialog
 				source={sourceToEdit}

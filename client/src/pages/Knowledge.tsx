@@ -31,7 +31,8 @@ import { ListPageHeader } from "@/components/layout/ListPageHeader";
 import { ListToolbar } from "@/components/layout/ListToolbar";
 import { PageWorkspace } from "@/components/layout/PageWorkspace";
 import { RecordActionsMenu } from "@/components/common/RecordActionsMenu";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorization } from "@/services/authorization";
+import { orgTarget } from "@/lib/authorization";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { toast } from "sonner";
@@ -97,7 +98,7 @@ function KnowledgePagination({
 }
 
 function KnowledgeToolbarActions({
-	isPlatformAdmin,
+	canManageKnowledge,
 	selectionMode,
 	selectedCount,
 	isExporting,
@@ -111,7 +112,7 @@ function KnowledgeToolbarActions({
 	onCreate,
 	createRef,
 }: {
-	isPlatformAdmin: boolean;
+	canManageKnowledge: boolean;
 	selectionMode: boolean;
 	selectedCount: number;
 	isExporting: boolean;
@@ -127,7 +128,7 @@ function KnowledgeToolbarActions({
 }) {
 	return (
 		<div className="flex min-w-0 flex-1 flex-wrap items-center gap-1 self-stretch pl-3 sm:ml-auto sm:gap-2">
-			{isPlatformAdmin && (
+			{canManageKnowledge && (
 				<>
 					<label className="flex min-h-11 items-center gap-2 text-sm">
 						<Switch
@@ -171,7 +172,7 @@ function KnowledgeToolbarActions({
 					)}
 				/>
 			</Button>
-			{isPlatformAdmin && (
+			{canManageKnowledge && (
 				<RecordActionsMenu label="Knowledge actions">
 					<DropdownMenuItem
 						onSelect={onExport}
@@ -182,10 +183,7 @@ function KnowledgeToolbarActions({
 							? `Export (${selectedCount})`
 							: "Export"}
 					</DropdownMenuItem>
-					<DropdownMenuItem
-						onSelect={onImport}
-						disabled={busy}
-					>
+					<DropdownMenuItem onSelect={onImport} disabled={busy}>
 						<Upload className="size-4" />
 						Import
 					</DropdownMenuItem>
@@ -195,7 +193,7 @@ function KnowledgeToolbarActions({
 			<WorkspacePrimaryAction
 				ref={createRef}
 				onClick={onCreate}
-				disabled={busy}
+				disabled={busy || !canManageKnowledge}
 			>
 				<Plus className="size-4" />
 				Add Document
@@ -222,10 +220,12 @@ function KnowledgeEmptyState({
 	page,
 	onCreate,
 	onFirstPage,
+	canCreate,
 }: {
 	page: number;
 	onCreate: () => void;
 	onFirstPage: () => void;
+	canCreate: boolean;
 }) {
 	return (
 		<div className="flex min-h-[22rem] flex-1 flex-col items-center justify-center px-6 py-12 text-center">
@@ -241,6 +241,7 @@ function KnowledgeEmptyState({
 			<Button
 				variant="outline"
 				onClick={page > 0 ? onFirstPage : onCreate}
+				disabled={page === 0 && !canCreate}
 				className="mt-4"
 			>
 				{page > 0 ? (
@@ -257,7 +258,7 @@ function KnowledgeEmptyState({
 }
 
 export function Knowledge() {
-	const { isPlatformAdmin } = useAuth();
+	const authorization = useAuthorization();
 	const compactFilters = useMediaQuery("(max-width: 767px)");
 	const inlineEditor = useMediaQuery("(min-width: 1280px)");
 	const [searchTerm, setSearchTerm] = useState("");
@@ -277,12 +278,20 @@ export function Knowledge() {
 	const [editorBusy, setEditorBusy] = useState(false);
 	const [selectionMode, setSelectionMode] = useState(false);
 	const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-	const [bulkScopeIds, setBulkScopeIds] = useState<string[] | null>(null);
+	const [selectedDocuments, setSelectedDocuments] = useState<
+		Map<string, DocumentSummary>
+	>(new Map());
+	const [bulkScopeDocuments, setBulkScopeDocuments] = useState<
+		DocumentSummary[] | null
+	>(null);
 	const [isImportOpen, setIsImportOpen] = useState(false);
 	const [isExporting, setIsExporting] = useState(false);
+	const canManageKnowledge = authorization.canAnywhere("knowledge.readwrite");
+	const canReadOrganizations =
+		authorization.canAnywhere("organizations.read");
 
 	const { data: organizations } = useOrganizations({
-		enabled: isPlatformAdmin,
+		enabled: canReadOrganizations,
 	});
 
 	const getOrgName = (orgId: string | null | undefined): string => {
@@ -339,6 +348,12 @@ export function Knowledge() {
 		retry: false,
 	});
 	const documents = documentQuery.data ?? [];
+	const canManageDocument = (document: DocumentSummary) =>
+		authorization.canAt(
+			"knowledge.readwrite",
+			orgTarget(document.organization_id),
+		);
+	const manageableDocuments = documents.filter(canManageDocument);
 	const namespaces = namespaceQuery.data ?? [];
 	const isInitialLoading = documentQuery.isPending && !documentQuery.data;
 	const hasMore = documents.length === PAGE_SIZE;
@@ -389,24 +404,40 @@ export function Knowledge() {
 	};
 
 	const toggleSelect = (id: string) => {
+		const document = documents.find((item) => item.id === id);
+		if (!document || !canManageDocument(document)) return;
 		setSelectedIds((prev) => {
 			const next = new Set(prev);
 			if (next.has(id)) next.delete(id);
 			else next.add(id);
 			return next;
 		});
+		setSelectedDocuments((previous) => {
+			const next = new Map(previous);
+			if (next.has(id)) next.delete(id);
+			else next.set(id, document);
+			return next;
+		});
 	};
 
 	const allVisibleSelected =
-		documents.length > 0 &&
-		documents.every((doc) => selectedIds.has(doc.id));
+		manageableDocuments.length > 0 &&
+		manageableDocuments.every((doc) => selectedIds.has(doc.id));
 
 	const toggleSelectAll = () => {
 		setSelectedIds((previous) => {
 			const next = new Set(previous);
-			for (const doc of documents) {
+			for (const doc of manageableDocuments) {
 				if (allVisibleSelected) next.delete(doc.id);
 				else next.add(doc.id);
+			}
+			return next;
+		});
+		setSelectedDocuments((previous) => {
+			const next = new Map(previous);
+			for (const document of manageableDocuments) {
+				if (allVisibleSelected) next.delete(document.id);
+				else next.set(document.id, document);
 			}
 			return next;
 		});
@@ -442,7 +473,7 @@ export function Knowledge() {
 				)}
 			>
 				<ListToolbar className="shrink-0 gap-0 border-b border-border/70 bg-muted/20 p-0">
-					{isPlatformAdmin && (
+					{canReadOrganizations && (
 						<div className="w-full shrink-0 border-b sm:w-56 sm:self-stretch sm:border-b-0 sm:border-r">
 							<OrganizationSelect
 								value={filterOrgId}
@@ -520,7 +551,7 @@ export function Knowledge() {
 							)}
 						>
 							<KnowledgeToolbarActions
-								isPlatformAdmin={isPlatformAdmin}
+								canManageKnowledge={canManageKnowledge}
 								selectionMode={selectionMode}
 								selectedCount={selectedIds.size}
 								isExporting={isExporting}
@@ -531,11 +562,15 @@ export function Knowledge() {
 								busy={externalBusy}
 								onToggleSelectionMode={() => {
 									setSelectionMode((value) => !value);
-									if (selectionMode)
+									if (selectionMode) {
 										setSelectedIds(new Set());
+										setSelectedDocuments(new Map());
+									}
 								}}
 								onChangeScope={() =>
-									setBulkScopeIds(Array.from(selectedIds))
+									setBulkScopeDocuments(
+										Array.from(selectedDocuments.values()),
+									)
 								}
 								onExport={() => void handleExport()}
 								onImport={() => setIsImportOpen(true)}
@@ -618,7 +653,7 @@ export function Knowledge() {
 									documents={documents}
 									selectedDocId={viewDocId}
 									selectionMode={selectionMode}
-									isPlatformAdmin={isPlatformAdmin}
+									canManageDocument={canManageDocument}
 									selectedIds={selectedIds}
 									allVisibleSelected={allVisibleSelected}
 									getOrgName={getOrgName}
@@ -643,6 +678,7 @@ export function Knowledge() {
 								page={page}
 								onFirstPage={() => setPage(0)}
 								onCreate={() => setIsCreating(true)}
+								canCreate={canManageKnowledge}
 							/>
 						)}
 					</div>
@@ -685,14 +721,20 @@ export function Knowledge() {
 				/>
 			)}
 
-			{bulkScopeIds && (
+			{bulkScopeDocuments && (
 				<KnowledgeScopeDialog
-					documentIds={bulkScopeIds}
+					documentIds={bulkScopeDocuments.map(
+						(document) => document.id,
+					)}
+					sourceOrganizationIds={bulkScopeDocuments.map(
+						(document) => document.organization_id,
+					)}
 					returnFocusRef={createRef}
-					onClose={() => setBulkScopeIds(null)}
+					onClose={() => setBulkScopeDocuments(null)}
 					onSaved={(updated) => {
 						toast.success(`Updated scope for ${updated} documents`);
 						setSelectedIds(new Set());
+						setSelectedDocuments(new Map());
 						setSelectionMode(false);
 						void fetchDocuments();
 					}}

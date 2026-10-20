@@ -1,11 +1,4 @@
-"""Pin `shared.builtin_roles`'s frozen literals against their derivation.
-
-`USER_BASE_PERMISSIONS` is a frozen copy the R2b migration seeds (migrations
-must not import live/derived code — see the module docstring). This test
-fails loudly the moment `derive_user_base_permissions(ACCESS_LIST)` would
-produce something different, forcing an explicit decision: correct the
-frozen copy in a new migration, or fix the access-list entry that drifted.
-"""
+"""Pin seeded role permissions to migrations and valid operation contracts."""
 
 from __future__ import annotations
 
@@ -22,7 +15,6 @@ from shared.builtin_roles import (
     USER_BASE_PERMISSIONS,
     USER_ROLE_ID,
     WILDCARD_PERMISSION,
-    derive_user_base_permissions,
     is_builtin_role_id,
 )
 from src.core.constants import PROVIDER_ORG_ID
@@ -32,12 +24,10 @@ from src.services.authorization.context import Boundary, BoundaryKind
 from src.services.user_role_assignments import SECRETS_READER_BOUNDARIES
 
 
-def test_seeded_user_permissions_match_derivation():
-    assert USER_BASE_PERMISSIONS == derive_user_base_permissions(ACCESS_LIST), (
-        "USER_BASE_PERMISSIONS drifted from derive_user_base_permissions(ACCESS_LIST). "
-        "Either the frozen literal is stale (fix it in a NEW migration, not this one) "
-        "or an access-list entry moved out of the User base role's criteria."
-    )
+def test_seeded_user_permissions_have_operation_contracts():
+    """Enforcement changes cannot silently expand the migration-pinned set."""
+    operation_permissions = {entry.permission for entry in ACCESS_LIST if entry.permission}
+    assert USER_BASE_PERMISSIONS <= operation_permissions
 
 
 _ALL_BUILTIN = (PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID, PLATFORM_OPERATOR_ROLE_ID, DECRYPTION_ROLE_ID)
@@ -76,14 +66,10 @@ def test_platform_admin_wildcard_is_stored_data_in_the_admin_additional_migratio
     assert migration.WILDCARD_PERMISSION == WILDCARD_PERMISSION == "*"
 
 
-def test_derived_permissions_read_or_launch_only():
-    """Sanity check on the derivation's own filter, independent of the
-    frozen copy: every permission it derives reads or launches, never
-    writes or reaches other people's items (see access_list.py's own
-    'never grant a write permission to the User base role' principle)."""
-    derived = derive_user_base_permissions(ACCESS_LIST)
-    assert derived, "expected at least one derived permission"
-    for permission in derived:
+def test_seeded_user_permissions_read_or_launch_only():
+    """The User role never seeds writes or access to other people's items."""
+    assert USER_BASE_PERMISSIONS
+    for permission in USER_BASE_PERMISSIONS:
         parsed = parse_permission(permission)
         assert parsed.action in {"read", "readbasic", "execute"}, permission
         assert not parsed.extended, permission

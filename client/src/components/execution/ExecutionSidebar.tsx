@@ -28,8 +28,8 @@ interface ExecutionSidebarProps {
 	inputData?: unknown;
 	/** Whether the execution is complete */
 	isComplete: boolean;
-	/** Whether the current user is a platform admin */
-	isPlatformAdmin: boolean;
+	/** Whether diagnostic execution data is readable for this run */
+	canReadDiagnostics: boolean;
 	/** Whether data is still loading */
 	isLoading: boolean;
 	/** Runtime variables (admin only) */
@@ -95,7 +95,7 @@ export function ExecutionSidebar({
 	completedAt,
 	inputData,
 	isComplete,
-	isPlatformAdmin,
+	canReadDiagnostics,
 	isLoading,
 	variablesData,
 	peakMemoryBytes,
@@ -149,13 +149,13 @@ export function ExecutionSidebar({
 				</>
 			)}
 
-			{/* Execution Context - Platform admins only */}
-			{executionContext && (
+			{/* Execution Context - callers with diagnostic access */}
+			{canReadDiagnostics && executionContext && (
 				<motion.div {...revealMotion}>
 					<InspectorSection
 						title="Execution Context"
 						icon={Workflow}
-						description="The context object available to this workflow (admin only)"
+						description="The context object available to this workflow"
 						action={<ExecutionContextHelp />}
 					>
 						<div className="min-w-0 rounded-[var(--bf-radius-surface)] border border-border bg-muted/50 p-3">
@@ -169,13 +169,13 @@ export function ExecutionSidebar({
 				</motion.div>
 			)}
 
-			{/* Runtime Variables - Platform admins only */}
-			{isPlatformAdmin && isComplete && (
+			{/* Runtime Variables - callers with diagnostic access */}
+			{canReadDiagnostics && isComplete && (
 				<motion.div {...revealMotion}>
 					<InspectorSection
 						title="Runtime Variables"
 						icon={Braces}
-						description="Variables captured from script namespace (admin only)"
+						description="Variables captured from the script namespace"
 					>
 						<div className="min-w-0 rounded-[var(--bf-radius-surface)] border border-border bg-muted/50 p-3">
 							<AnimatePresence mode="wait">
@@ -249,7 +249,7 @@ export function ExecutionSidebar({
 
 			{/* Usage Card - Compute resources (admin) + AI usage (all users) */}
 			{isComplete &&
-				((isPlatformAdmin &&
+				((canReadDiagnostics &&
 					(peakMemoryBytes != null || cpuTotalSeconds != null)) ||
 					(aiUsage && aiUsage.length > 0)) && (
 					<motion.div {...revealMotion}>
@@ -260,7 +260,7 @@ export function ExecutionSidebar({
 						>
 							<div className="min-w-0 rounded-[var(--bf-radius-surface)] border border-border bg-muted/50 p-3 space-y-3">
 								{/* Compute Resources - Platform admins only */}
-								{isPlatformAdmin &&
+								{canReadDiagnostics &&
 									(peakMemoryBytes != null ||
 										cpuTotalSeconds != null) && (
 										<div className="space-y-3">
@@ -293,7 +293,7 @@ export function ExecutionSidebar({
 									)}
 
 								{/* Divider when both sections are shown */}
-								{isPlatformAdmin &&
+								{canReadDiagnostics &&
 									(peakMemoryBytes != null ||
 										cpuTotalSeconds != null) &&
 									aiUsage &&

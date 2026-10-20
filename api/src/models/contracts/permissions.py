@@ -85,9 +85,9 @@ PERMISSION_DOMAINS: dict[str, PermissionDomain] = {
             "users: inviting an ordinary user into an organization, sending, "
             "resending, regenerating and revoking invites, changing a name, "
             "resetting a password or MFA, deactivating, and forcing sessions "
-            "to sign out. Impersonate Users runs a workflow or an agent as "
-            "another user in an organization where the holder has this "
-            "permission. Running as a user who holds privileged access also "
+            "to sign out. Impersonate Users allows browser sessions and "
+            "workflow or agent runs as another user in an organization where "
+            "the holder has this permission. Running as a user who holds privileged access also "
             "needs Read and Write Privileged Access."
         ),
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role. The Platform Operator role gets user support at Managed organizations, never Impersonate Users.",
@@ -485,6 +485,7 @@ PRIVILEGED_PERMISSIONS: frozenset[str] = frozenset(
         "repository.readwrite",
         "claims.readwrite",
         "filepolicies.readwrite",
+        "tables.readwrite",
         "policyrules.readwrite",
         "solutions.deploy",
         "agents.readwrite.all",

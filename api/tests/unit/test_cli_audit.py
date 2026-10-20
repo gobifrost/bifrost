@@ -12,6 +12,7 @@ import json
 from typing import Any
 from uuid import uuid4
 
+import click
 import httpx
 import pytest
 from click.testing import CliRunner, Result
@@ -189,6 +190,47 @@ class TestAuditList:
             ["12", "access.check", "2026-10-05T10:00:00+00:00"],
             ["3", "-", "2026-10-04T09:00:00+00:00"],
         ]
+
+    def test_aggregate_sends_the_param_and_renders_access_check_summary(self, fake_client: _FakeClient) -> None:
+        fake_client.respond(
+            "/api/audit",
+            {
+                "entries": [],
+                "groups": [
+                    {
+                        "key": "opaque-selector",
+                        "count": 12,
+                        "first_seen": "2026-10-05T10:02:00+00:00",
+                        "last_seen": "2026-10-05T10:59:00+00:00",
+                        "window_start": "2026-10-05T10:00:00+00:00",
+                        "window_end": "2026-10-05T11:00:00+00:00",
+                        "sample": _entry(operation_id="workflows.run"),
+                    }
+                ],
+                "continuation_token": None,
+            },
+        )
+
+        result = _invoke(["list", "--aggregate", "1h"])
+
+        assert fake_client.calls == [("GET", "/api/audit", {"aggregate": "1h"})]
+        assert "12" in result.output
+        assert "2026-10-05T10:02:00+00:00" in result.output
+        assert "ada@contoso.test" in result.output
+        assert "Contoso" in result.output
+        assert "workflows.run" in result.output
+        assert "opaque-selector" not in result.output
+
+    def test_rejects_group_by_with_aggregate(self, fake_client: _FakeClient) -> None:
+        result = CliRunner().invoke(
+            audit_group,
+            ["list", "--group-by", "action", "--aggregate", "1h"],
+            standalone_mode=False,
+        )
+
+        assert isinstance(result.exception, click.UsageError)
+        assert "cannot be used together" in str(result.exception)
+        assert fake_client.calls == []
 
     def test_workflow_and_organization_groups_are_named(self, fake_client: _FakeClient) -> None:
         workflow_id, deleted_id, contoso_id = str(uuid4()), str(uuid4()), str(uuid4())

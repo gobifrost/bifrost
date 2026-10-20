@@ -71,6 +71,9 @@ class PendingExecution(TypedDict):
     # Run lineage bound to this execution (shared.run_lineage). Absent on
     # records written before lineage was recorded.
     lineage: NotRequired[dict[str, str] | None]
+    # Browser-impersonation attribution copied from a trusted actor before
+    # crossing the API/worker process boundary.
+    impersonation_provenance: NotRequired[dict[str, str] | None]
     created_at: str  # ISO format
     cancelled: bool
 
@@ -137,6 +140,7 @@ class RedisClient:
         artifact_workspace_id: str | None = None,
         *,
         lineage: dict[str, str] | None,
+        impersonation_provenance: dict[str, str] | None = None,
     ) -> None:
         """
         Store pending execution in Redis.
@@ -181,6 +185,7 @@ class RedisClient:
             "event": event,
             "artifact_workspace_id": artifact_workspace_id,
             "lineage": lineage,
+            "impersonation_provenance": impersonation_provenance,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "cancelled": False,
         }

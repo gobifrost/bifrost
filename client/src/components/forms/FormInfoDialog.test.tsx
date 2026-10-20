@@ -20,6 +20,12 @@ const mockAuth = vi.fn();
 vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockAuth(),
 }));
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => ({
+		canAnywhere: () => mockAuth().isPlatformAdmin,
+		canAt: () => true,
+	}),
+}));
 
 const mockWorkflows = vi.fn();
 vi.mock("@/hooks/useWorkflows", () => ({

@@ -10,8 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared import access_checks
 from shared.identities import ensure_default_identity
-from shared.scope_resolver import UNSET, resolve_effective_scope
-from src.core.org_filter import resolve_org_filter, resolve_target_org
+import shared.scope_resolver as scope_resolver
+from src.services.authorization.reach import OrgReach
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
+from shared.builtin_roles import USER_ROLE_ID
 from src.core.principal import UserPrincipal
 from src.models.orm.organizations import Organization
 from src.models.orm.users import User
@@ -19,14 +22,9 @@ from src.models.orm.workflows import Workflow
 from src.repositories.workflows import WorkflowRepository
 from src.services.access_check_entry import run_user_may_open
 
-ENGINE = UserPrincipal(user_id=uuid4(), email="engine@x.example", organization_id=None, is_superuser=True)
-
-
 @pytest.fixture
 def collector():
-    token = access_checks.start_collecting(
-        {"sub": str(uuid4()), "is_superuser": True, "engine_execution_id": str(uuid4()), "engine_run_user_id": str(uuid4())}
-    )
+    token = access_checks.collect_run(uuid4(), uuid4(), uuid4())
     try:
         yield access_checks.current()
     finally:
@@ -37,35 +35,22 @@ def _targets(collector) -> list:
     return [(note.kind, note.target) for note in collector.notes]
 
 
-def test_resolve_target_org_notes_where_the_write_lands(collector) -> None:
-    org, default = uuid4(), uuid4()
-
-    assert resolve_target_org(ENGINE, str(org), default) == org
-    assert resolve_target_org(ENGINE, "global", default) is None
-    assert resolve_target_org(ENGINE, None, default) == default
-
-    assert _targets(collector) == [("scope_switch", org), ("scope_switch", None), ("scope_switch", default)]
-
-
-def test_resolve_effective_scope_notes_the_resolved_scope(collector) -> None:
+def test_resolve_effective_scope_notes_the_resolved_scope(collector, monkeypatch) -> None:
     org = uuid4()
+    monkeypatch.setattr(scope_resolver, "user_reach", lambda caller: OrgReach(organization_ids=frozenset({org}), include_global=True))
+    user_id = uuid4()
+    caller = Caller(
+        UserPrincipal(user_id=user_id, email="person@contoso.example", organization_id=org, is_active=True),
+        AuthorizationContext(
+            user_id=user_id, home_organization_id=org, base_role_id=USER_ROLE_ID,
+            is_external=False, base_permissions=frozenset(),
+        ),
+    )
 
-    resolve_effective_scope(caller_org_id=None, is_platform_admin=True, requested_scope=org)
-    resolve_effective_scope(caller_org_id=org, is_platform_admin=True, requested_scope=UNSET)
+    scope_resolver.resolve_effective_scope(caller=caller, requested_scope=org)
+    scope_resolver.resolve_effective_scope(caller=caller, requested_scope=scope_resolver.UNSET)
 
     assert _targets(collector) == [("scope_switch", org), ("scope_switch", org)]
-
-
-def test_a_list_with_no_scope_targets_every_org(collector) -> None:
-    resolve_org_filter(ENGINE, None)
-    resolve_org_filter(ENGINE, "global")
-
-    assert _targets(collector) == [("scope_switch", "*"), ("scope_switch", None)]
-
-
-def test_resolvers_note_nothing_outside_a_run() -> None:
-    resolve_target_org(ENGINE, str(uuid4()), None)
-    assert access_checks.current() is None
 
 
 @pytest_asyncio.fixture
@@ -98,4 +83,8 @@ async def test_a_run_user_opens_only_what_their_own_access_allows(db_session: As
         return await run_user_may_open(db_session, WorkflowRepository, user_id, workflow.id)
 
     assert await opens(person.id) is False  # role_based, no role
+    assert await opens(admin.id) is False  # A copied flag supplies no role authority.
+    from shared.sdk_users import set_platform_admin
+
+    await set_platform_admin(db_session, admin, True, assigned_by="entry-test")
     assert await opens(admin.id) is True

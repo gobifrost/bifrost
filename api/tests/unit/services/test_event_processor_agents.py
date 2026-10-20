@@ -16,7 +16,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from shared.builtin_roles import USER_ROLE_ID
+from src.core.principal import UserPrincipal
 from src.models.enums import EventDeliveryStatus
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
 
 if TYPE_CHECKING:
     from src.services.events.processor import EventProcessor
@@ -91,6 +95,24 @@ def _create_processor() -> "EventProcessor":
         processor._subscription_repo = MagicMock()
         processor._webhook_repo = MagicMock()
         return processor
+
+
+def _identity_caller(user_id: uuid.UUID, organization_id: uuid.UUID) -> Caller:
+    """The current human caller reloaded before an event may run an Agent."""
+    return Caller(
+        UserPrincipal(
+            user_id=user_id,
+            email="identity@contoso.example",
+            organization_id=organization_id,
+        ),
+        AuthorizationContext(
+            user_id=user_id,
+            home_organization_id=organization_id,
+            base_role_id=USER_ROLE_ID,
+            is_external=False,
+            base_permissions=frozenset(),
+        ),
+    )
 
 
 @pytest.mark.asyncio
@@ -202,12 +224,19 @@ async def test_queue_agent_run_calls_enqueue():
     delivery = _make_delivery(target_type="agent", agent=agent)
     event = _make_event(data={"ticket_id": "456", "priority": "high"})
     run_id = uuid.uuid4()
+    identity = uuid.uuid4()
+    caller = _identity_caller(identity, agent.organization_id)
 
-    with patch(
-        "src.services.execution.agent_run_service.enqueue_agent_run",
-        new_callable=AsyncMock,
-        return_value=str(run_id),
-    ) as mock_enqueue:
+    with (
+        patch("shared.run_lineage.identity_lineage", new=AsyncMock(return_value=MagicMock(run_user_id=identity))),
+        patch("src.services.authorization.callers.load_human_caller", new=AsyncMock(return_value=caller)) as load,
+        patch("src.services.authorization.agent_runtime.authorize_agent_execution", new=AsyncMock()) as authorize,
+        patch(
+            "src.services.execution.agent_run_service.enqueue_agent_run",
+            new_callable=AsyncMock,
+            return_value=str(run_id),
+        ) as mock_enqueue,
+    ):
         await processor._queue_agent_run(delivery, event)
 
         mock_enqueue.assert_awaited_once()
@@ -230,6 +259,8 @@ async def test_queue_agent_run_calls_enqueue():
         assert input_data["_event"]["body"] == event.data
         assert input_data["_event"]["headers"] == event.headers
         assert input_data["_event"]["source_ip"] == event.source_ip
+        load.assert_awaited_once_with(processor.session, identity)
+        authorize.assert_awaited_once_with(processor.session, caller, agent.id)
 
 
 @pytest.mark.asyncio
@@ -243,12 +274,19 @@ async def test_queue_agent_run_receives_trusted_byte_exact_raw_webhook_body():
     raw_body = b'{"a":1, "_event":{"raw_body_base64":"caller-spoofed"}}'
     event = _make_event(data={"a": 1, "_event": {"raw_body_base64": "caller-spoofed"}})
     event.raw_body = raw_body
+    identity = uuid.uuid4()
+    caller = _identity_caller(identity, agent.organization_id)
 
-    with patch(
-        "src.services.execution.agent_run_service.enqueue_agent_run",
-        new_callable=AsyncMock,
-        return_value=str(uuid.uuid4()),
-    ) as mock_enqueue:
+    with (
+        patch("shared.run_lineage.identity_lineage", new=AsyncMock(return_value=MagicMock(run_user_id=identity))),
+        patch("src.services.authorization.callers.load_human_caller", new=AsyncMock(return_value=caller)),
+        patch("src.services.authorization.agent_runtime.authorize_agent_execution", new=AsyncMock()),
+        patch(
+            "src.services.execution.agent_run_service.enqueue_agent_run",
+            new_callable=AsyncMock,
+            return_value=str(uuid.uuid4()),
+        ) as mock_enqueue,
+    ):
         await processor._queue_agent_run(delivery, event)
 
     input_data = mock_enqueue.await_args.kwargs["input_data"]
@@ -295,9 +333,12 @@ async def test_event_agent_run_is_for_the_agent_organization_identity():
     delivery = _make_delivery(target_type="agent", agent=agent)
     identity = uuid.uuid4()
     lineage = RunLineage(identity, identity, None)
+    caller = _identity_caller(identity, agent.organization_id)
 
     with (
         patch("shared.run_lineage.identity_lineage", new=AsyncMock(return_value=lineage)) as resolve,
+        patch("src.services.authorization.callers.load_human_caller", new=AsyncMock(return_value=caller)) as load,
+        patch("src.services.authorization.agent_runtime.authorize_agent_execution", new=AsyncMock()) as authorize,
         patch(
             "src.services.execution.agent_run_service.enqueue_agent_run",
             new_callable=AsyncMock,
@@ -307,4 +348,6 @@ async def test_event_agent_run_is_for_the_agent_organization_identity():
         await processor._queue_agent_run(delivery, _make_event())
 
     resolve.assert_awaited_once_with(processor.session, agent.organization_id)
+    load.assert_awaited_once_with(processor.session, identity)
+    authorize.assert_awaited_once_with(processor.session, caller, agent.id)
     assert mock_enqueue.call_args.kwargs["lineage"] == lineage

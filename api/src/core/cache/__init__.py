@@ -25,7 +25,6 @@ from .keys import (
     TTL_CONFIG,
     TTL_FORMS,
     TTL_ORGS,
-    TTL_PENDING,
     TTL_ROLES,
     config_hash_key,
     config_key,
@@ -39,7 +38,6 @@ from .keys import (
     forms_hash_key,
     org_key,
     orgs_list_key,
-    pending_changes_key,
     role_forms_key,
     role_key,
     role_users_key,
@@ -76,13 +74,9 @@ from .invalidation import (
 # Data provider cache
 from .data_provider_cache import (
     TTL_DATA_PROVIDER,
-    cache_result as cache_data_provider_result,
     compute_param_hash,
     data_provider_cache_key,
-    get_cached_result as get_cached_data_provider,
     invalidate_data_provider,
-    acquire_compute_lock,
-    release_compute_lock,
 )
 
 __all__ = [
@@ -98,7 +92,6 @@ __all__ = [
     "role_forms_key",
     "org_key",
     "orgs_list_key",
-    "pending_changes_key",
     "execution_logs_stream_key",
     "service_logs_stream_key",
     "service_logs_cursor_key",    "service_ready_key",
@@ -109,7 +102,6 @@ __all__ = [
     "TTL_FORMS",
     "TTL_ROLES",
     "TTL_ORGS",
-    "TTL_PENDING",
     # Redis client
     "get_redis",
     "get_shared_redis",
@@ -134,9 +126,5 @@ __all__ = [
     "TTL_DATA_PROVIDER",
     "data_provider_cache_key",
     "compute_param_hash",
-    "get_cached_data_provider",
-    "cache_data_provider_result",
     "invalidate_data_provider",
-    "acquire_compute_lock",
-    "release_compute_lock",
 ]

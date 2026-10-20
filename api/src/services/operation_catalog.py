@@ -620,7 +620,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         cli=CliOperationBinding(path=("apps", "get-dependencies")),
         mcp=McpOperationBinding(name="bifrost_app_dependencies_get"),
         native_builder=True,
-        action_scopes=("apps.readbasic",),
+        action_scopes=("apps.read",),
         authorization_resolver="ApplicationRepository access check",
         exclusions={
             "manifest": "The read does not mutate the Application manifest.",
@@ -1677,7 +1677,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         mcp=McpOperationBinding(name="bifrost_execution_list"),
         native_builder=True,
         action_scopes=("executions.readbasic",),
-        authorization_resolver="ExecutionRepository.list_executions and caller scope resolver",
+        authorization_resolver="shared.sdk_execution_reads.list_sdk_executions and caller scope resolver",
         exclusions={
             "manifest": "Execution history is runtime state, not portable manifest content.",
             "sdk": "Application runtimes follow their own execution by ID rather than enumerate platform history.",
@@ -1696,7 +1696,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         mcp=McpOperationBinding(name="bifrost_execution_get"),
         native_builder=True,
         action_scopes=("executions.readbasic",),
-        authorization_resolver="ExecutionRepository.get_execution access check",
+        authorization_resolver="shared.sdk_execution_reads.get_sdk_execution access check",
         exclusions={
             "manifest": "Execution results are runtime state, not portable manifest content.",
             "sdk": "The v2 runtime uses an execution-ID wire binding with a transport-specific path parameter name.",

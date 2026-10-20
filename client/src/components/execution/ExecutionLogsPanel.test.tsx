@@ -168,9 +168,7 @@ describe("ExecutionLogsPanel — rendering logs", () => {
 			/>,
 		);
 		expect(screen.getByText("pager-node")).toBeInTheDocument();
-		expect(
-			screen.getByText("Following live updates"),
-		).toBeInTheDocument();
+		expect(screen.getByText("Following live updates")).toBeInTheDocument();
 	});
 
 	it("pauses into Back to Top inside the bar, without a floating duplicate", () => {
@@ -226,22 +224,22 @@ describe("ExecutionLogsPanel — rendering logs", () => {
 		expect(screen.getByText("Following paused")).toBeInTheDocument();
 	});
 
-	it("hides the level-filter note when the viewer is a platform admin", () => {
+	it("hides the level-filter note when the viewer can read diagnostics", () => {
 		renderWithProviders(
 			<ExecutionLogsPanel
 				status="Success"
 				logs={[log("INFO", "hi")]}
-				isPlatformAdmin={true}
+				canReadDiagnostics={true}
 			/>,
 		);
 		expect(screen.queryByText(/INFO and above/i)).not.toBeInTheDocument();
 	});
-	it("tells non-admin viewers which levels are filtered", () => {
+	it("tells viewers without diagnostic access which levels are filtered", () => {
 		renderWithProviders(
 			<ExecutionLogsPanel
 				status="Success"
 				logs={[log("INFO", "hi")]}
-				isPlatformAdmin={false}
+				canReadDiagnostics={false}
 			/>,
 		);
 		expect(screen.getByText(/INFO and above/i)).toBeInTheDocument();

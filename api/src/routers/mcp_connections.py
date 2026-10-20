@@ -7,16 +7,14 @@ encrypted client_secret, the visibility flags
 shared service token that backs both flags.
 
 Authorization model:
-- Org admin (or platform admin) for CRUD; for v1 we accept any user in
-  the connection's org plus platform admins. The frontend gates the page
-  to admins; locking down further is a Phase 5 job once the role lattice
-  is finalized.
-- ``/connect`` requires the same scope plus the ability to initiate
-  OAuth on behalf of the org (admin path).
-- Per-user routes under ``/api/me/mcp-connections/...`` only require
-  that the connection is in the caller's org and that
-  ``available_in_chat`` is set on it (otherwise per-user delegation is
-  meaningless — the user would never use the resulting token).
+- Shared connection reads require ``mcp.readbasic`` and mutations require
+  ``mcp.readwrite`` at the connection's persisted organization. Detail
+  lookups mask connections outside the caller's operation reach as not found.
+- Shared service-token connect and catalog refresh use the same persisted-org
+  ``mcp.readwrite`` authorization as other mutations.
+- Per-user OAuth connect requires visibility of the shared connection through
+  ``mcp.readbasic``; credential enumeration and disconnect remain restricted
+  to the caller's own credential rows.
 """
 
 from __future__ import annotations
@@ -29,11 +27,12 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from shared.scope_resolver import has_scope_bypass
+from shared.scope_resolver import shared_read_organization
 from src.config import get_settings
-from src.core.auth import Context
+from src.core.auth import Context, CurrentActiveUser
 from src.core.log_safety import log_safe
 from src.core.security import decrypt_secret, encrypt_secret
 from src.models.contracts.external_mcp import (
@@ -49,6 +48,7 @@ from src.repositories.external_mcp import (
     MCPServerRepository,
 )
 from src.services.mcp_client import catalog_sync
+from src.services.mcp_client.auth_resolution import service_token_binding_error
 from src.services.mcp_client.oauth_state import (
     encode_state,
     generate_pkce_verifier,
@@ -60,6 +60,13 @@ from src.services.oauth_provider import (
     get_url_resolution_defaults,
     resolve_url_template,
 )
+from src.services.authorization.enforce import (
+    load_caller,
+    operation_reach,
+    org_target,
+    require_operation,
+)
+from src.services.authorization.reach import NOWHERE
 
 logger = logging.getLogger(__name__)
 
@@ -161,54 +168,29 @@ def _connection_to_public(connection: MCPConnection) -> MCPConnectionPublic:
     return public
 
 
-async def _get_connection_or_404(
-    ctx: Context, connection_id: UUID
+async def _get_shared_connection_or_404(
+    ctx: Context,
+    user: CurrentActiveUser,
+    connection_id: UUID,
+    operation: str,
 ) -> MCPConnection:
-    """Resolve a connection and enforce org-scope access.
-
-    Platform admins may fetch any connection. Org users may only fetch
-    connections in their own org.
-    """
-    repo = MCPConnectionRepository(
-        session=ctx.db,
-        org_id=ctx.org_id,
-        user_id=ctx.user.user_id,
-        is_superuser=ctx.user.is_platform_admin,
-        is_external=ctx.user.is_external,
-    )
+    """Load and authorize a shared connection at its persisted organization."""
+    caller = await load_caller(ctx.db, user)
+    reach = operation_reach(caller, operation)
+    repo = MCPConnectionRepository(session=ctx.db, org_id=None)
     connection = await repo.get_connection(connection_id)
-    if connection is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="MCP connection not found",
-        )
-    if not ctx.user.is_platform_admin and connection.organization_id != ctx.org_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="MCP connection not found",
-        )
+    if connection is None or not reach.covers(connection.organization_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="MCP connection not found")
+    require_operation(caller, operation, org_target(connection.organization_id))
     return connection
 
 
-def _enforce_can_write_org(ctx: Context, organization_id: UUID) -> None:
-    """Org write scope check.
-
-    Every org-level MCP connection mutation (create/update/delete, tool
-    toggle, refresh tools, service-token connect) requires scope bypass
-    (platform admin or provider-org member) — own-org membership alone is
-    not sufficient. Per-user credential connect/disconnect under
-    ``/api/me/...`` is unaffected by this check.
-    """
-    del organization_id  # write scope no longer depends on the target org
-    if has_scope_bypass(
-        is_platform_admin=ctx.user.is_platform_admin,
-        is_provider_org=ctx.user.is_provider_org,
-    ):
-        return
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Only a platform admin or provider-org member can manage MCP connections",
-    )
+async def _enforce_can_write_org(
+    ctx: Context, user: CurrentActiveUser, organization_id: UUID, operation: str
+) -> None:
+    """Authorize a shared connection mutation at the destination organization."""
+    caller = await load_caller(ctx.db, user)
+    require_operation(caller, operation, org_target(organization_id))
 
 
 def _build_callback_redirect_uri() -> str:
@@ -219,6 +201,25 @@ def _build_callback_redirect_uri() -> str:
     """
     public_url = get_settings().public_url.rstrip("/")
     return f"{public_url}/api/mcp/oauth/callback"
+
+
+async def _load_service_token_for_connection_or_422(
+    db: AsyncSession, connection: MCPConnection, token_id: UUID
+) -> OAuthToken:
+    """Load a PATCH-supplied service token after enforcing its binding.
+
+    The relation is checked against the connection's persisted organization
+    and server template rather than the caller's selected scope.
+    """
+    result = await db.execute(select(OAuthToken).where(OAuthToken.id == token_id))
+    token = result.scalar_one_or_none()
+    if service_token_binding_error(connection, token) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Service OAuth token is not valid for this connection",
+        )
+    assert token is not None
+    return token
 
 
 async def _load_provider_or_400(
@@ -306,6 +307,16 @@ async def _activate_client_credentials(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="OAuth provider missing token_url; cannot exchange",
         )
+
+    if connection.service_oauth_token_id is not None:
+        binding_error = service_token_binding_error(
+            connection, connection.service_oauth_token
+        )
+        if binding_error is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Existing service OAuth token is not valid for this connection",
+            )
 
     # Decrypt the per-org client_secret from the connection row.
     try:
@@ -426,6 +437,7 @@ async def _activate_client_credentials(
 )
 async def list_mcp_connections(
     ctx: Context,
+    user: CurrentActiveUser,
     server_id: UUID | None = Query(default=None),
     scope: str | None = Query(
         default=None,
@@ -441,39 +453,22 @@ async def list_mcp_connections(
     to filter to a single org. Org users see only their own org's
     connections regardless of the ``scope`` parameter.
     """
-    if ctx.user.is_platform_admin:
-        # Admin path: show all connections (optionally narrowed by scope/server)
-        from sqlalchemy import select
-        from sqlalchemy.orm import joinedload, selectinload
-
-        query = select(MCPConnection).options(
-            joinedload(MCPConnection.server),
-            selectinload(MCPConnection.tools),
-            joinedload(MCPConnection.service_oauth_token),
-        )
-        if server_id is not None:
-            query = query.where(MCPConnection.server_id == server_id)
-        if scope is not None:
-            try:
-                scope_org = UUID(scope)
-            except ValueError:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Invalid scope value: {scope}",
-                )
-            query = query.where(MCPConnection.organization_id == scope_org)
-        query = query.order_by(MCPConnection.created_at)
-        result = await ctx.db.execute(query)
-        connections = list(result.scalars().unique().all())
-    else:
-        # Org user path: strict org-only via repo
-        repo = MCPConnectionRepository(
-            session=ctx.db,
-            org_id=ctx.org_id,
-            user_id=ctx.user.user_id,
-            is_superuser=False,
-        )
-        connections = await repo.list_connections(server_id=server_id)
+    caller = await load_caller(ctx.db, user)
+    reach = operation_reach(caller, "GET /api/mcp-connections")
+    scope_org: UUID | None = None
+    if scope is not None:
+        try:
+            scope_org = UUID(scope)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid scope value: {scope}",
+            ) from exc
+        require_operation(caller, "GET /api/mcp-connections", org_target(scope_org))
+    repo = MCPConnectionRepository(session=ctx.db, org_id=None)
+    connections = await repo.list_connections(
+        reach=reach, server_id=server_id, organization_id=scope_org
+    )
 
     return [MCPConnectionSummary.model_validate(c) for c in connections]
 
@@ -487,36 +482,40 @@ async def list_mcp_connections(
 async def create_mcp_connection(
     request: MCPConnectionCreateRequest,
     ctx: Context,
+    user: CurrentActiveUser,
 ) -> MCPConnectionPublic:
     """Create a per-org connection under a server template.
 
     Encrypts the client_secret at rest using the same envelope encryption
     as ``oauth_providers.encrypted_client_secret``.
     """
-    _enforce_can_write_org(ctx, request.organization_id)
+    await _enforce_can_write_org(
+        ctx, user, request.organization_id, operation="POST /api/mcp-connections"
+    )
 
     server_repo = MCPServerRepository(
         session=ctx.db,
         org_id=request.organization_id,
-        user_id=ctx.user.user_id,
-        is_superuser=ctx.user.is_platform_admin,
-        is_external=ctx.user.is_external,
+        user_id=user.user_id,
     )
-    server = await server_repo.get_server(request.server_id)
+    server = await server_repo.get_server(request.server_id, connection_reach=NOWHERE)
     if server is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="MCP server template not found",
         )
-
-    # Org users may only target platform-level (org_id NULL) templates or
-    # their own org's templates.
-    if not ctx.user.is_platform_admin:
-        if server.organization_id is not None and server.organization_id != ctx.org_id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="MCP server template not found",
+    caller = await load_caller(ctx.db, user)
+    require_operation(
+        caller,
+        "GET /api/mcp-servers/{server_id}",
+        org_target(
+            shared_read_organization(
+                caller,
+                server.organization_id,
+                selected_organization_id=request.organization_id,
             )
+        ),
+    )
 
     connection = MCPConnection(
         server_id=request.server_id,
@@ -533,9 +532,7 @@ async def create_mcp_connection(
     conn_repo = MCPConnectionRepository(
         session=ctx.db,
         org_id=request.organization_id,
-        user_id=ctx.user.user_id,
-        is_superuser=ctx.user.is_platform_admin,
-        is_external=ctx.user.is_external,
+        user_id=user.user_id,
     )
     refreshed = await conn_repo.get_connection(connection.id)
     assert refreshed is not None  # we just inserted it
@@ -554,9 +551,12 @@ async def create_mcp_connection(
 async def get_mcp_connection(
     connection_id: UUID,
     ctx: Context,
+    user: CurrentActiveUser,
 ) -> MCPConnectionPublic:
     """Get a single connection with its tool catalog."""
-    connection = await _get_connection_or_404(ctx, connection_id)
+    connection = await _get_shared_connection_or_404(
+        ctx, user, connection_id, operation="GET /api/mcp-connections/{connection_id}"
+    )
     return _connection_to_public(connection)
 
 
@@ -569,16 +569,24 @@ async def update_mcp_connection(
     connection_id: UUID,
     request: MCPConnectionUpdateRequest,
     ctx: Context,
+    user: CurrentActiveUser,
 ) -> MCPConnectionPublic:
     """Update a connection.
 
     If ``client_secret`` is supplied it is re-encrypted before persist.
     All other fields are passed through verbatim.
     """
-    connection = await _get_connection_or_404(ctx, connection_id)
-    _enforce_can_write_org(ctx, connection.organization_id)
+    connection = await _get_shared_connection_or_404(
+        ctx, user, connection_id, operation="PATCH /api/mcp-connections/{connection_id}"
+    )
 
     update_fields = request.model_dump(exclude_unset=True)
+    service_token_id = update_fields.get("service_oauth_token_id")
+    if service_token_id is not None:
+        await _load_service_token_for_connection_or_422(
+            ctx.db, connection, service_token_id
+        )
+
     plaintext_secret = update_fields.pop("client_secret", None)
     if plaintext_secret is not None:
         connection.encrypted_client_secret = encrypt_secret(plaintext_secret)
@@ -588,7 +596,9 @@ async def update_mcp_connection(
     connection.updated_at = datetime.now(timezone.utc)
 
     await ctx.db.flush()
-    refreshed = await _get_connection_or_404(ctx, connection_id)
+    refreshed = await _get_shared_connection_or_404(
+        ctx, user, connection_id, operation="GET /api/mcp-connections/{connection_id}"
+    )
     logger.info("Updated MCP connection %s", log_safe(str(connection_id)))
     return _connection_to_public(refreshed)
 
@@ -605,10 +615,12 @@ async def update_mcp_connection(
 async def delete_mcp_connection(
     connection_id: UUID,
     ctx: Context,
+    user: CurrentActiveUser,
 ) -> None:
     """Delete a connection (cascade)."""
-    connection = await _get_connection_or_404(ctx, connection_id)
-    _enforce_can_write_org(ctx, connection.organization_id)
+    await _get_shared_connection_or_404(
+        ctx, user, connection_id, operation="DELETE /api/mcp-connections/{connection_id}"
+    )
 
     await ctx.db.execute(delete(MCPConnection).where(MCPConnection.id == connection_id))
     await ctx.db.flush()
@@ -652,12 +664,14 @@ async def update_mcp_connection_tool(
     tool_id: UUID,
     request: MCPToolPatchRequest,
     ctx: Context,
+    user: CurrentActiveUser,
 ) -> MCPConnectionToolPublic:
     """Update one tool's enabled flag on a connection's catalog."""
     from src.models.orm.external_mcp import MCPConnectionTool
 
-    connection = await _get_connection_or_404(ctx, connection_id)
-    _enforce_can_write_org(ctx, connection.organization_id)
+    await _get_shared_connection_or_404(
+        ctx, user, connection_id, operation="PATCH /api/mcp-connections/{connection_id}/tools/{tool_id}"
+    )
 
     tool_q = await ctx.db.execute(
         select(MCPConnectionTool).where(
@@ -706,10 +720,12 @@ async def update_mcp_connection_tool(
 async def refresh_tools(
     connection_id: UUID,
     ctx: Context,
+    user: CurrentActiveUser,
 ) -> MCPConnectionRefreshToolsResponse:
     """Refresh the per-connection tool catalog."""
-    connection = await _get_connection_or_404(ctx, connection_id)
-    _enforce_can_write_org(ctx, connection.organization_id)
+    connection = await _get_shared_connection_or_404(
+        ctx, user, connection_id, operation="POST /api/mcp-connections/{connection_id}/refresh-tools"
+    )
 
     try:
         tools = await catalog_sync.sync_catalog(connection, ctx.db)
@@ -752,10 +768,12 @@ async def refresh_tools(
 async def connect_service_token(
     connection_id: UUID,
     ctx: Context,
+    user: CurrentActiveUser,
 ) -> MCPConnectResponse:
     """Begin or complete the service-token flow."""
-    connection = await _get_connection_or_404(ctx, connection_id)
-    _enforce_can_write_org(ctx, connection.organization_id)
+    connection = await _get_shared_connection_or_404(
+        ctx, user, connection_id, operation="POST /api/mcp-connections/{connection_id}/connect"
+    )
 
     provider = await _load_provider_or_400(ctx, connection)
 
@@ -806,7 +824,12 @@ async def connect_user_credential(
     ctx: Context,
 ) -> MCPConnectAuthorizeResponse:
     """Begin a per-user OAuth flow for the caller."""
-    connection = await _get_connection_or_404(ctx, connection_id)
+    connection = await _get_shared_connection_or_404(
+        ctx,
+        ctx.user,
+        connection_id,
+        "GET /api/mcp-connections/{connection_id}",
+    )
     # No write-org enforcement for the per-user path: the user is
     # connecting their own credentials, which they're entitled to do
     # provided they can see the connection.

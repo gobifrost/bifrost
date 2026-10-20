@@ -2084,7 +2084,7 @@ def test_fork_process_injects_worker_socket_path():
     )
 
 
-def test_fork_process_without_socket_passes_none():
+def test_fork_process_requires_authenticated_socket():
     pool = ProcessPoolManager(max_workers=1)
     template = MagicMock()
     template.is_alive.return_value = True
@@ -2092,7 +2092,6 @@ def test_fork_process_without_socket_passes_none():
     pool._template = template
     assert pool._sdk_http is None
 
-    handle = pool._fork_process()
-
-    assert handle.pid == 4243
-    assert template.fork.call_args.kwargs["sdk_socket_path"] is None
+    with pytest.raises(RuntimeError, match="authenticated SDK socket is unavailable"):
+        pool._fork_process()
+    template.fork.assert_not_called()

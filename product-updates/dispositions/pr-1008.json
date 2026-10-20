@@ -1,0 +1,14 @@
+{
+  "key": "pr:1008",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Restore workflows' ability to list every integration mapping their roles reach, and keep mapping lookups by entity within that reach.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1008",
+      "Claude drafted this routine-fix summary on 2026-10-19 under Jack's approval of the fix plan and explicit authorization to merge and deploy. The change adds no organization-based permission and keeps per-mapping secret restrictions. No customer upgrade action is required."
+    ]
+  }
+}

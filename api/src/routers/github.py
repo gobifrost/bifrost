@@ -9,9 +9,11 @@ import logging
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Request, HTTPException, Query, Response, status
 
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context, CurrentActiveUser
+from src.services.authorization.enforce import authorize_operation
+from src.services.authorization.evaluator import GLOBAL
 from src.core.db_deps import DbSession
 from src.models import (
     CommitHistoryResponse,
@@ -69,7 +71,14 @@ from src.services.platform_jobs import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/github", tags=["GitHub"])
+async def _authorize_global_route(
+    request: Request, user: CurrentActiveUser, db: DbSession
+) -> None:
+    await authorize_operation(
+        db, user, f"{request.method} {request.scope['route'].path}", GLOBAL
+    )
+
+router = APIRouter(prefix="/api/github", tags=["GitHub"], dependencies=[Depends(_authorize_global_route)])
 
 
 # =============================================================================
@@ -110,7 +119,7 @@ async def _enqueue_git_operation(
         "fetch", "status", "commit", "sync", "resolve", "discard", "abort_merge", "diff", "connect"
     ],
     organization_id,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     job_id: uuid.UUID | None,
     options: dict | None = None,
     response: Response | None = None,
@@ -165,7 +174,7 @@ async def _enqueue_git_operation(
 )
 async def get_config_endpoint(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> GitHubConfigResponse:
     """Get current GitHub configuration."""
@@ -205,7 +214,7 @@ async def get_config_endpoint(
 )
 async def get_github_status(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> GitRefreshStatusResponse:
     """
@@ -293,7 +302,7 @@ async def get_github_status(
 )
 async def get_repo_status(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> RepoStatusResponse:
     """Fast repo status check used by CLI push to gate on dirty state."""
@@ -317,7 +326,7 @@ async def get_repo_status(
 async def validate_github_token(
     request: ValidateTokenRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> GitHubReposResponse:
     """Validate GitHub token, save to database, and list repositories."""
@@ -387,7 +396,7 @@ async def validate_github_token(
 )
 async def list_github_repos(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> GitHubReposResponse:
     """List user's GitHub repositories using saved token."""
@@ -440,7 +449,7 @@ async def list_github_repos(
 )
 async def list_github_branches(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
     repo: str = Query(..., description="Repository full name (owner/repo)"),
 ) -> GitHubBranchesResponse:
@@ -499,7 +508,7 @@ async def list_github_branches(
 async def create_github_repository(
     request: CreateRepoRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> CreateRepoResponse:
     """Create new GitHub repository."""
@@ -545,7 +554,7 @@ async def create_github_repository(
 )
 async def disconnect_github(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> dict:
     """Disconnect GitHub integration."""
@@ -578,7 +587,7 @@ async def disconnect_github(
 )
 async def get_commits(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
     limit: int = Query(20, description="Number of commits to return"),
     offset: int = Query(0, description="Offset for pagination"),
@@ -666,7 +675,7 @@ async def get_commits(
 async def preview_git_connect(
     body: GitConnectPreviewRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> GitConnectPreview:
     """Compare the detached workspace with a remote branch without changing either."""
@@ -712,7 +721,7 @@ async def enqueue_git_connect(
     body: GitConnectRequest,
     response: Response,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> PlatformJobAccepted:
     """Validate a requester-bound preview, then run it through ``workspace.git``."""
@@ -767,7 +776,7 @@ async def enqueue_git_connect(
 )
 async def git_fetch(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
     request: GitOpRequest | None = None,
 ) -> PlatformJobAccepted:
@@ -795,7 +804,7 @@ async def git_fetch(
 async def git_commit(
     request: CommitRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> PlatformJobAccepted:
     """Queue a git commit."""
@@ -822,7 +831,7 @@ async def git_commit(
 )
 async def git_sync(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
     request: SyncRequest | None = None,
 ) -> PlatformJobAccepted:
@@ -884,7 +893,7 @@ async def git_sync(
 )
 async def git_abort_merge(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
     request: GitOpRequest | None = None,
 ) -> PlatformJobAccepted:
@@ -911,7 +920,7 @@ async def git_abort_merge(
 )
 async def git_changes(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
     request: GitOpRequest | None = None,
 ) -> PlatformJobAccepted:
@@ -939,7 +948,7 @@ async def git_changes(
 async def git_resolve(
     request: ResolveRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> PlatformJobAccepted:
     """Queue conflict resolution."""
@@ -967,7 +976,7 @@ async def git_resolve(
 async def git_diff(
     request: DiffRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> PlatformJobAccepted:
     """Queue a file diff."""
@@ -995,7 +1004,7 @@ async def git_diff(
 async def git_discard(
     request: DiscardRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> PlatformJobAccepted:
     """Queue a discard operation."""

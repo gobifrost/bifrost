@@ -1,4 +1,4 @@
-import { BundledAppShell } from "./BundledAppShell";
+import { BundledAppShell, prepareAppBundle } from "./BundledAppShell";
 /**
  * Component tests for BundledAppShell.
  *
@@ -179,17 +179,44 @@ describe("BundledAppShell — loading", () => {
 });
 
 describe("BundledAppShell — error path", () => {
-	it("renders the 'Bundle Load Error' panel when the manifest fetch fails", async () => {
-		// Silence the expected console.error from the failed dynamic import.
-		vi.spyOn(console, "error").mockImplementation(() => {});
-		mockManifestError(500, "manifest broken");
+	it.each([
+		[401, "Sign in again to open this app."],
+		[403, "You do not have permission to open this app."],
+		[404, "This app is unavailable."],
+		[500, "The app could not be loaded. Please try again."],
+	])(
+		"shows a safe message for a %i manifest response",
+		async (status, expectedMessage) => {
+			// Silence the expected console.error from the failed dynamic import.
+			vi.spyOn(console, "error").mockImplementation(() => {});
+			mockManifestError(
+				status,
+				'{"detail":"internal deployment metadata"}',
+			);
 
-		await renderShell();
+			await renderShell();
 
-		expect(
-			await screen.findByText(/bundle load error/i),
-		).toBeInTheDocument();
-		expect(screen.getByText(/manifest broken/i)).toBeInTheDocument();
+			expect(
+				await screen.findByText(/bundle load error/i),
+			).toBeInTheDocument();
+			expect(
+				screen.getByLabelText("Bundle error details"),
+			).toHaveTextContent(expectedMessage);
+			expect(
+				screen.queryByText(/internal deployment metadata/i),
+			).not.toBeInTheDocument();
+			expect(
+				screen.queryByText(new RegExp(`\\b${status}\\b`)),
+			).not.toBeInTheDocument();
+		},
+	);
+
+	it("does not expose a manifest response body while preparing a bundle", async () => {
+		mockManifestError(403, '{"detail":"internal deployment metadata"}');
+
+		await expect(
+			prepareAppBundle({ appId: "prepared-forbidden", isPreview: false }),
+		).rejects.toThrow("You do not have permission to open this app.");
 	});
 });
 

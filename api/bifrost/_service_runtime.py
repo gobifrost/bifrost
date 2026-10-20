@@ -18,7 +18,8 @@ callables are attached to the ``service`` decorator object in
 Parent communication (ready flag, stop key, rotation token) travels over
 Redis keys owned by the worker parent — this module is process-local only
 and never touches the network. ``ready()`` sets a thread-safe flag the
-engine supervisor drains to Redis; the stop event is an ``asyncio.Event``
+engine supervisor sends over the authenticated attempt transport; the stop
+event is an ``asyncio.Event``
 the engine sets on SIGTERM or when the parent mirrors ``stop_requested``.
 """
 

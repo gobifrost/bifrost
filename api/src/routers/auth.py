@@ -15,8 +15,9 @@ Key Features:
 """
 
 import logging
+from dataclasses import replace
 from datetime import datetime, timezone
-from typing import NoReturn
+from typing import Annotated, NoReturn
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -24,6 +25,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.models import BrowserImpersonationTokenResponse
 from src.core.cache import get_shared_redis
 from src.core.cache.keys import (
     device_code_key,
@@ -51,12 +53,24 @@ from src.models.contracts.passkeys import (
     SetupPasskeyVerifyResponse,
 )
 from src.config import get_settings
-from src.core.auth import CurrentActiveUser
+from src.core.auth import CurrentActiveUser, get_original_human_user
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
+from src.core.principal import UserPrincipal
 from src.core.rate_limit import auth_limiter, device_token_limiter, mfa_limiter, get_client_ip
 from src.services.audit import emit_audit
 from src.services.audit_context import ActorContext, current_actor
+from shared.browser_impersonation import (
+    BrowserImpersonationError,
+    IMPERSONATION_COOKIE_NAME,
+    IMPERSONATION_MARKER_MAX_AGE_SECONDS,
+    create_browser_impersonation,
+    decode_browser_impersonation_marker,
+    is_browser_impersonation,
+    revoke_browser_impersonation_marker,
+    revoke_browser_impersonation,
+)
+from src.services.authorization.impersonation import RunAsError
 from src.core.security import (
     create_access_token,
     create_mfa_token,
@@ -70,7 +84,6 @@ from src.core.security import (
 from src.repositories.users import UserRepository
 from src.services.user_provisioning import ensure_user_provisioned, get_user_roles
 from shared.external_access import (
-    resolve_external_claim,
     resolve_provider_org_claim,
 )
 from shared.identities import is_identity, refuse_identity_sign_in
@@ -95,6 +108,9 @@ def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
     Also sets a CSRF token cookie that JavaScript can read and send as a header.
     """
     settings = get_settings()
+    # A new login or refresh starts an ordinary session. Never leave an old
+    # browser-wide impersonation marker able to override it.
+    clear_browser_impersonation_cookie(response)
 
     # Determine if we're in production (HTTPS)
     # Only use secure cookies in production - dev and testing use HTTP
@@ -140,6 +156,27 @@ def clear_auth_cookies(response: Response):
     response.delete_cookie(key="access_token", path="/")
     response.delete_cookie(key="refresh_token", path="/")
     response.delete_cookie(key="csrf_token", path="/")
+    clear_browser_impersonation_cookie(response)
+
+
+def set_browser_impersonation_cookie(response: Response, token: str) -> None:
+    """Set the opaque browser-wide impersonation marker."""
+    response.set_cookie(
+        key=IMPERSONATION_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        secure=get_settings().is_production,
+        samesite="lax",
+        # Deliberately longer than the signed token: expiry must fail closed
+        # instead of revealing the ordinary administrator session.
+        max_age=IMPERSONATION_MARKER_MAX_AGE_SECONDS,
+        path="/",
+    )
+
+
+def clear_browser_impersonation_cookie(response: Response) -> None:
+    """Clear an active, expired, or revoked impersonation marker."""
+    response.delete_cookie(key=IMPERSONATION_COOKIE_NAME, path="/")
 
 
 # =============================================================================
@@ -177,6 +214,12 @@ async def validate_and_revoke_refresh_token_jti(user_id: str, jti: str) -> bool:
     # Atomically check and delete
     result = await r.delete(key)
     return result > 0
+
+
+async def has_live_refresh_token_jti(user_id: str, jti: str) -> bool:
+    """Check a refresh session without rotating or revoking it."""
+    r = await get_shared_redis()
+    return bool(await r.exists(refresh_token_jti_key(user_id, jti)))
 
 
 async def revoke_all_user_refresh_tokens(user_id: str) -> int:
@@ -632,7 +675,7 @@ async def mfa_initial_verify(
         "email": user.email,
         "name": user.name or user.email.split("@")[0],
         "is_superuser": user.is_superuser,
-        "is_external": await resolve_external_claim(db, user),
+        "is_external": bool(user.is_external),
         "is_provider_org": await resolve_provider_org_claim(db, user),
         "org_id": str(user.organization_id) if user.organization_id else None,
         "roles": roles,
@@ -783,7 +826,7 @@ async def _generate_login_tokens(user, db, response: Response | None = None) -> 
         "email": user.email,
         "name": user.name or user.email.split("@")[0],
         "is_superuser": user.is_superuser,
-        "is_external": await resolve_external_claim(db, user),
+        "is_external": bool(user.is_external),
         "is_provider_org": await resolve_provider_org_claim(db, user),
         "org_id": str(user.organization_id) if user.organization_id else None,
         "roles": roles,
@@ -840,6 +883,118 @@ async def _generate_login_tokens(user, db, response: Response | None = None) -> 
     )
 
 
+@router.post("/impersonate/{user_id}", response_model=BrowserImpersonationTokenResponse)
+async def start_browser_impersonation(
+    user_id: UUID,
+    request: Request,
+    response: Response,
+    current_user: CurrentActiveUser,
+    db: DbSession,
+) -> BrowserImpersonationTokenResponse:
+    """Mint a browser-wide, original-session-bound impersonation marker."""
+    if (
+        current_user.embed
+        or current_user.runtime_authority is not None
+        or is_browser_impersonation(current_user)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Browser impersonation requires an original human session",
+        )
+
+    refresh_token = request.cookies.get("refresh_token")
+    refresh_payload = decode_token(refresh_token, expected_type="refresh") if refresh_token else None
+    refresh_jti = refresh_payload.get("jti") if refresh_payload else None
+    if (
+        not isinstance(refresh_jti, str)
+        or refresh_payload.get("sub") != str(current_user.user_id)
+        or not await has_live_refresh_token_jti(str(current_user.user_id), refresh_jti)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Browser impersonation requires the original browser refresh session",
+        )
+    try:
+        credential = await create_browser_impersonation(
+            db,
+            current_user,
+            user_id,
+            initiator_refresh_jti=refresh_jti,
+        )
+    except RunAsError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except BrowserImpersonationError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+    start_actor = current_actor()
+    await emit_audit(
+        db,
+        "auth.impersonation.started",
+        resource_type="user",
+        resource_id=user_id,
+        details={
+            "impersonated_by_user_id": str(current_user.user_id),
+            "impersonation_session_id": str(credential.session_id),
+        },
+        actor_override=(
+            replace(
+                start_actor,
+                impersonated_by_user_id=current_user.user_id,
+                impersonation_session_id=credential.session_id,
+            )
+            if start_actor is not None
+            else None
+        ),
+    )
+    set_browser_impersonation_cookie(response, credential.access_token)
+    return BrowserImpersonationTokenResponse(access_token=credential.access_token)
+
+
+@router.post("/impersonation/end", status_code=status.HTTP_204_NO_CONTENT)
+async def end_browser_impersonation(
+    request: Request,
+    response: Response,
+    original_operator: Annotated[UserPrincipal, Depends(get_original_human_user)],
+    db: DbSession,
+) -> None:
+    """Exit using the original operator, even after marker expiry or revocation."""
+    marker = request.cookies.get(IMPERSONATION_COOKIE_NAME)
+    marker_payload = decode_browser_impersonation_marker(marker) if marker is not None else None
+    target_user_id = (
+        await revoke_browser_impersonation_marker(marker, original_operator.user_id)
+        if marker is not None
+        else None
+    )
+    clear_browser_impersonation_cookie(response)
+    if target_user_id is not None:
+        end_actor = current_actor()
+        session_id = None
+        if marker_payload is not None:
+            # Revocation above only accepts a marker with a valid session UUID.
+            session_id = UUID(str(marker_payload["impersonation_session_id"]))
+        await emit_audit(
+            db,
+            "auth.impersonation.ended",
+            resource_type="user",
+            resource_id=target_user_id,
+            details={"impersonated_by_user_id": str(original_operator.user_id)},
+            actor_override=(
+                replace(
+                    end_actor,
+                    user_id=original_operator.user_id,
+                    organization_id=original_operator.organization_id,
+                    email=original_operator.email,
+                    name=original_operator.name,
+                    impersonated_by_user_id=original_operator.user_id,
+                    impersonation_session_id=session_id,
+                )
+                if end_actor is not None
+                else None
+            ),
+        )
+    return None
+
+
 @router.post("/refresh", response_model=Token)
 async def refresh_token(
     request: Request,
@@ -876,6 +1031,15 @@ async def refresh_token(
     # Rate limiting
     client_ip = get_client_ip(request)
     await auth_limiter.check("refresh", client_ip)
+
+    # Do not rotate the original browser session out from under an active or
+    # expired marker. The operator must explicitly Exit before refreshing.
+    if IMPERSONATION_COOKIE_NAME in request.cookies:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Exit browser impersonation before refreshing",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     # Get refresh token from body (API clients) or cookie (browser clients)
     refresh_token_value = None
@@ -952,7 +1116,7 @@ async def refresh_token(
         "email": user.email,
         "name": user.name or user.email.split("@")[0],
         "is_superuser": user.is_superuser,
-        "is_external": await resolve_external_claim(db, user),
+        "is_external": bool(user.is_external),
         "is_provider_org": await resolve_provider_org_claim(db, user),
         "org_id": str(user.organization_id) if user.organization_id else None,
         "roles": roles,
@@ -1060,6 +1224,8 @@ async def logout(
             )
 
     # Clear cookies
+    if is_browser_impersonation(current_user):
+        await revoke_browser_impersonation(current_user)
     clear_auth_cookies(response)
 
     logger.info(f"User logged out: {current_user.email}")
@@ -1163,7 +1329,7 @@ async def admin_revoke_user_sessions(
             detail="User not found",
         )
     require_operation(caller, operation, org_target(target_user.organization_id))
-    require_unprotected(caller, target_user.id in await privileged_user_ids(db, [target_user.id]))
+    require_unprotected(caller, target_user.id in await privileged_user_ids(db, [target_user.id]), target_user.organization_id)
 
     # Revoke all sessions for target user
     count = await revoke_all_user_refresh_tokens(revoke_data.user_id)
@@ -1717,7 +1883,7 @@ async def setup_passkey_verify(
         "email": user.email,
         "name": user.name or user.email.split("@")[0],
         "is_superuser": user.is_superuser,
-        "is_external": await resolve_external_claim(db, user),
+        "is_external": bool(user.is_external),
         "is_provider_org": await resolve_provider_org_claim(db, user),
         "org_id": str(user.organization_id) if user.organization_id else None,
         "roles": roles,
@@ -1765,6 +1931,12 @@ async def authorize_device(
         HTTPException: If user_code is invalid or expired
     """
     import json
+
+    if is_browser_impersonation(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Exit impersonation before authorizing a CLI login",
+        )
 
     r = await get_shared_redis()
 

@@ -1,0 +1,18 @@
+{
+  "key": "pr:998",
+  "classification": "highlight",
+  "entry_ids": [
+    "c3e5b1a6-d2a4-49ce-9d25-2d0996382ee4"
+  ],
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/998"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/998",
+      "Reviewed current digest-bound consent, scoped service-token ownership, signed embed context and document reach against 202 focused unit tests and 75 E2E tests. Full Access defaults and stored mode values are retained. Copy remains the approved feature notice."
+    ]
+  }
+}

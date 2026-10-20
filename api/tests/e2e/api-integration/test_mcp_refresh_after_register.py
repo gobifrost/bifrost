@@ -25,24 +25,15 @@ import uuid
 import pytest
 import requests
 
-from tests.fixtures.auth import create_test_jwt
-
 TEST_API_URL = os.getenv("TEST_API_URL", "http://api:8000")
 MCP_ACCEPT_HEADER = "application/json, text/event-stream"
 
 
-def _mcp_headers(token: str) -> dict[str, str]:
+def _mcp_headers(headers: dict[str, str]) -> dict[str, str]:
     return {
-        "Authorization": f"Bearer {token}",
+        **headers,
         "Content-Type": "application/json",
         "Accept": MCP_ACCEPT_HEADER,
-    }
-
-
-def _admin_headers(token: str) -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
     }
 
 
@@ -51,14 +42,13 @@ class TestMCPRefreshAfterRegister:
     """A workflow registered via POST /api/workflows/register must appear in
     MCP tools/list immediately, without an API restart."""
 
-    def test_registered_tool_appears_in_mcp_tools_list_immediately(self):
+    def test_registered_tool_appears_in_mcp_tools_list_immediately(self, platform_admin):
         suffix = uuid.uuid4().hex[:8]
         path = f"workflows/test_mcp_refresh_{suffix}.py"
         function_name = f"test_mcp_refresh_{suffix}"
 
-        admin_token = create_test_jwt(is_superuser=True)
-        admin_h = _admin_headers(admin_token)
-        mcp_h = _mcp_headers(admin_token)
+        admin_h = platform_admin.headers
+        mcp_h = _mcp_headers(platform_admin.headers)
 
         agent_id: str | None = None
         workflow_id: str | None = None
@@ -157,15 +147,14 @@ def {function_name}(message: str) -> dict:
                 params={"path": path},
             )
 
-    def test_updated_workflow_name_replaces_mcp_tool_name_immediately(self):
+    def test_updated_workflow_name_replaces_mcp_tool_name_immediately(self, platform_admin):
         suffix = uuid.uuid4().hex[:8]
         path = f"workflows/test_mcp_rename_{suffix}.py"
         function_name = f"test_mcp_rename_{suffix}"
         renamed_tool_name = f"renamed_tool_{suffix}"
 
-        admin_token = create_test_jwt(is_superuser=True)
-        admin_h = _admin_headers(admin_token)
-        mcp_h = _mcp_headers(admin_token)
+        admin_h = platform_admin.headers
+        mcp_h = _mcp_headers(platform_admin.headers)
 
         agent_id: str | None = None
         workflow_id: str | None = None

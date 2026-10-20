@@ -4,12 +4,11 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, true
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
-from shared import access_checks
-from shared.access_checks import ALL_ORGS
 from src.core.principal import UserPrincipal
 from src.models.contracts.home import (
     HomeCollectionPublic,
@@ -21,9 +20,14 @@ from src.models.contracts.home import (
 from shared.logo_processing import is_logo_thumbnail_version
 from src.models.orm.home import HomeCollection, HomeResourcePreference
 from src.models.orm.organizations import Organization
-from src.repositories.agents import AgentRepository
+from src.models.orm.agents import Agent
 from src.repositories.applications import ApplicationRepository
-from src.repositories.forms import FormRepository
+from src.models.orm.forms import Form
+from src.models.orm.applications import Application
+from shared.scope_resolver import shared_read_organization
+from shared.sdk_forms import check_form_access
+from src.services.agent_write_policy import agent_query_in_reach, can_read_agent, caller_user_id
+from src.services.authorization.enforce import Caller, allows_permission, load_caller, permitted_organizations, require_permission, user_reach
 
 
 def _logo_url(prefix: str, entity) -> str | None:
@@ -40,30 +44,27 @@ def _logo_version(entity) -> str | None:
     return version if is_logo_thumbnail_version(version) else None
 
 
-def can_edit_collection(collection: HomeCollection, user: UserPrincipal) -> bool:
-    if not collection.shared:
-        return collection.owner_id == user.user_id
-    if not user.is_platform_admin:
+def can_edit_collection(collection: HomeCollection, caller: Caller) -> bool:
+    if not user_reach(caller).covers(collection.organization_id):
         return False
-    access_checks.note_power(
-        "home.readwrite" if collection.owner_id == user.user_id else "home.readwrite.all",
-        collection.organization_id,
-        subject=f"home_collection:{collection.id}",
-    )
-    return True
+    own = collection.owner_id == caller_user_id(caller)
+    if not collection.shared and own:
+        return True
+    permission = "home.readwrite" if own else "home.readwrite.all"
+    return allows_permission(caller, permission, collection.organization_id)
 
 
-def can_read_collection(collection: HomeCollection, user: UserPrincipal) -> bool:
-    if not collection.shared:
-        return collection.owner_id == user.user_id
-    if collection.organization_id == user.organization_id or (
-        collection.organization_id is None and not user.is_external
+def can_read_collection(collection: HomeCollection, caller: Caller) -> bool:
+    if caller.ctx is None or not user_reach(caller).covers(collection.organization_id):
+        return False
+    if collection.owner_id == caller.ctx.user_id:
+        return True
+    if collection.shared and (
+        collection.organization_id == caller.ctx.home_organization_id
+        or (collection.organization_id is None and not caller.ctx.is_external)
     ):
         return True
-    if not user.is_platform_admin:
-        return False
-    access_checks.note_power("home.read.all", collection.organization_id, subject=f"home_collection:{collection.id}")
-    return True
+    return allows_permission(caller, "home.read.all", collection.organization_id)
 
 
 def collection_audience(
@@ -72,37 +73,35 @@ def collection_audience(
     return shared, organization_id
 
 
-async def catalog(db: AsyncSession, user: UserPrincipal) -> list[HomeResource]:
-    """Only launchable resources; shared collection membership does not widen this set."""
-    apps_repo = ApplicationRepository(
-        db,
-        user.organization_id,
-        user_id=user.user_id,
-        is_superuser=user.is_platform_admin,
-        is_external=user.is_external,
-    )
-    forms_repo = FormRepository(
-        db,
-        user.organization_id,
-        user_id=user.user_id,
-        is_superuser=user.is_platform_admin,
-        is_external=user.is_external,
-    )
-    agents_repo = AgentRepository(
-        db,
-        user.organization_id,
-        user_id=user.user_id,
-        is_superuser=user.is_platform_admin,
-        is_external=user.is_external,
-    )
-    if user.is_platform_admin:
-        apps = await apps_repo.list_all_in_scope()
-        forms = await forms_repo.list_all_in_scope(active_only=True)
-        agents = await agents_repo.list_all_in_scope(active_only=True)
-    else:
-        apps = await apps_repo.list_applications()
-        forms = await forms_repo.list_forms()
-        agents = await agents_repo.list_agents()
+async def catalog(db: AsyncSession, caller: Caller) -> list[HomeResource]:
+    """Reuse each resource's read gate; collections confer no resource access."""
+    if caller.ctx is None:
+        raise HTTPException(403, "Home requires a current user")
+    reach = user_reach(caller)
+    app_query = select(Application).options(defer(Application.logo_data), defer(Application.logo_thumbnail_data))
+    form_query = select(Form).options(defer(Form.logo_data), defer(Form.logo_thumbnail_data)).where(Form.is_active.is_(True))
+    app_reach = reach.where(Application.organization_id)
+    form_reach = reach.where(Form.organization_id)
+    if app_reach is not None:
+        app_query = app_query.where(app_reach)
+    if form_reach is not None:
+        form_query = form_query.where(form_reach)
+    app_repo = ApplicationRepository(db, caller.ctx.home_organization_id, caller=caller)
+    apps = [
+        app for app in (await db.scalars(app_query)).all()
+        if allows_permission(caller, "apps.readbasic", shared_read_organization(caller, app.organization_id))
+        and await app_repo._can_access_entity(app)
+    ]
+    forms = [
+        form for form in (await db.scalars(form_query)).all()
+        if await check_form_access(db, form, caller)
+    ]
+    agents = [
+        agent for agent in (await db.scalars(
+            agent_query_in_reach(caller).options(defer(Agent.logo_data), defer(Agent.logo_thumbnail_data)).where(Agent.is_active.is_(True))
+        )).all()
+        if await can_read_agent(db, caller, agent)
+    ]
     org_ids = {
         entity.organization_id
         for entity in [*apps, *forms, *agents]
@@ -171,7 +170,7 @@ async def catalog(db: AsyncSession, user: UserPrincipal) -> list[HomeResource]:
     preferences = (
         await db.scalars(
             select(HomeResourcePreference).where(
-                HomeResourcePreference.user_id == user.user_id
+                HomeResourcePreference.user_id == caller.ctx.user_id
             )
         )
     ).all()
@@ -187,7 +186,7 @@ async def catalog(db: AsyncSession, user: UserPrincipal) -> list[HomeResource]:
 
 
 async def public_collection(
-    db: AsyncSession, row: HomeCollection, user: UserPrincipal, allowed: set[str]
+    db: AsyncSession, row: HomeCollection, caller: Caller, allowed: set[str]
 ) -> HomeCollectionPublic:
     org_name = (
         await db.scalar(
@@ -205,39 +204,34 @@ async def public_collection(
         organization_id=row.organization_id,
         organization_name=org_name,
         resource_keys=[key for key in row.resource_keys if key in allowed],
-        can_edit=can_edit_collection(row, user),
+        can_edit=can_edit_collection(row, caller),
     )
 
 
 async def get_home(db: AsyncSession, user: UserPrincipal) -> HomeResponse:
-    resources = await catalog(db, user)
+    caller = await load_caller(db, user)
+    if caller.ctx is None:
+        raise HTTPException(403, "Home requires a current user")
+    resources = await catalog(db, caller)
     shared_scope = or_(
-        HomeCollection.organization_id == user.organization_id,
-        HomeCollection.organization_id.is_(None) if not user.is_external else False,
+        HomeCollection.organization_id == caller.ctx.home_organization_id,
+        HomeCollection.organization_id.is_(None) if not caller.ctx.is_external else False,
     )
-    query = (
-        select(HomeCollection)
-        .where(
-            or_(
-                and_(
-                    HomeCollection.shared.is_(False),
-                    HomeCollection.owner_id == user.user_id,
-                ),
-                and_(
-                    HomeCollection.shared.is_(True),
-                    True if user.is_platform_admin else shared_scope,
-                ),
-            )
-        )
-        .order_by(HomeCollection.name, HomeCollection.id)
-    )
+    read_all = permitted_organizations(caller, "home.read.all").where(HomeCollection.organization_id)
+    reach = user_reach(caller).where(HomeCollection.organization_id)
+    query = select(HomeCollection).where(
+        or_(
+            HomeCollection.owner_id == caller.ctx.user_id,
+            and_(HomeCollection.shared.is_(True), shared_scope),
+            true() if read_all is None else read_all,
+        ),
+        true() if reach is None else reach,
+    ).order_by(HomeCollection.name, HomeCollection.id)
     rows = (await db.scalars(query)).all()
-    if user.is_platform_admin:
-        access_checks.note_power("home.readwrite", ALL_ORGS, subject="home_collections")
     allowed = {resource.key for resource in resources}
     return HomeResponse(
         resources=resources,
-        collections=[await public_collection(db, row, user, allowed) for row in rows],
+        collections=[await public_collection(db, row, caller, allowed) for row in rows],
     )
 
 
@@ -248,10 +242,14 @@ async def get_collection(
     *,
     require_edit: bool = False,
 ) -> HomeCollection:
+    caller = await load_caller(db, user)
     row = await db.get(HomeCollection, collection_id)
-    if row is None or not can_read_collection(row, user):
+    if row is None or not (
+        can_read_collection(row, caller)
+        or (require_edit and can_edit_collection(row, caller))
+    ):
         raise HTTPException(404, "Collection not found")
-    if require_edit and not can_edit_collection(row, user):
+    if require_edit and not can_edit_collection(row, caller):
         raise HTTPException(403, "You cannot edit this collection")
     return row
 
@@ -262,17 +260,18 @@ async def save_collection(
     data: HomeCollectionWrite,
     collection_id: UUID | None = None,
 ) -> HomeCollectionPublic:
+    caller = await load_caller(db, user)
+    if caller.ctx is None:
+        raise HTTPException(403, "Home requires a current user")
     row = (
         await get_collection(db, user, collection_id, require_edit=True)
         if collection_id
         else None
     )
-    if data.shared:
-        if not user.is_platform_admin:
-            raise HTTPException(
-                403, "Only platform administrators can publish shared collections"
-            )
-        access_checks.note_power("home.readwrite", data.organization_id, subject="home_collections")
+    if data.shared and (row is None or not row.shared or row.organization_id != data.organization_id):
+        require_permission(caller, "home.readwrite", data.organization_id)
+        if not user_reach(caller).covers(data.organization_id):
+            raise HTTPException(403, "Access denied")
     if not data.shared and data.organization_id is not None:
         raise HTTPException(
             422, "Personal collections do not have an organization scope"
@@ -281,7 +280,7 @@ async def save_collection(
         Organization, data.organization_id
     ):
         raise HTTPException(422, "Organization not found")
-    resources = await catalog(db, user)
+    resources = await catalog(db, caller)
     allowed = {resource.key for resource in resources}
 
     existing_keys = row.resource_keys if row is not None else []
@@ -323,20 +322,23 @@ async def save_collection(
                 "Organization collections can contain only that organization's or global resources",
             )
     if row is None:
-        row = HomeCollection(owner_id=user.user_id)
+        row = HomeCollection(owner_id=caller.ctx.user_id)
         db.add(row)
     elif row.shared and not data.shared:
-        row.owner_id = user.user_id
+        row.owner_id = caller.ctx.user_id
     for key, value in data.model_dump().items():
         setattr(row, key, value)
     await db.flush()
-    return await public_collection(db, row, user, allowed)
+    return await public_collection(db, row, caller, allowed)
 
 
 async def save_preference(
     db: AsyncSession, user: UserPrincipal, resource_key: str, data: HomePreferenceWrite
 ) -> None:
-    if resource_key not in {resource.key for resource in await catalog(db, user)}:
+    caller = await load_caller(db, user)
+    if caller.ctx is None:
+        raise HTTPException(403, "Home requires a current user")
+    if resource_key not in {resource.key for resource in await catalog(db, caller)}:
         raise HTTPException(404, "Resource not found")
     values: dict = {}
     if data.pinned is not None:
@@ -345,7 +347,7 @@ async def save_preference(
         values["last_opened_at"] = datetime.now(timezone.utc)
     if values:
         statement = insert(HomeResourcePreference).values(
-            user_id=user.user_id, resource_key=resource_key, **values
+            user_id=caller.ctx.user_id, resource_key=resource_key, **values
         )
         await db.execute(
             statement.on_conflict_do_update(

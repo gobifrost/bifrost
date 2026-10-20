@@ -73,6 +73,18 @@ function renderSurface(
 }
 
 describe("ApplicationListSurface SDK update affordances", () => {
+	it("hides mutation actions when the app's organization is outside the grant", () => {
+		renderSurface({
+			canManageApps: true,
+			canManageApp: () => false,
+			onOpenSettings: vi.fn(),
+		});
+
+		expect(
+			screen.queryByRole("button", { name: "Dispatch Board actions" }),
+		).not.toBeInTheDocument();
+	});
+
 	it("renders published app names as native links while preserving normal launch callbacks", async () => {
 		const user = userEvent.setup();
 		const onLaunch = vi.fn();

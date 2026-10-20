@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from src.models.orm.agent_runs import AgentRun
 
@@ -203,19 +203,40 @@ async def test_backfill_endpoint_enqueues_durable_platform_job(async_session_fac
     from unittest.mock import patch
     from uuid import uuid4
 
+    from shared.builtin_roles import USER_ROLE_ID
     from src.core.principal import UserPrincipal
     from src.models.contracts.agent_runs import BackfillSummariesRequest
     from src.models.orm.agent_runs import AgentRun
     from src.models.orm.agents import Agent
+    from src.models.orm.organizations import Organization
     from src.models.orm.summary_backfill_job import SummaryBackfillJob
+    from src.models.orm.users import Role, RolePermission, User, UserRole, UserRoleBoundary
     from src.routers.agent_runs import backfill_summaries
 
     agent_id = uuid4()
     run_id = uuid4()
     created_backfill_job_id: UUID | None = None
+    user_id = uuid4()
+    role_id = uuid4()
+    organization_id = uuid4()
 
     # Seed an agent + a pending run so the endpoint has something to enqueue.
     async with async_session_factory() as db:
+        organization = Organization(id=organization_id, name=f"Backfill {organization_id}", created_by="test")
+        user = User(
+            id=user_id,
+            email=f"backfill-{user_id}@test.local",
+            organization_id=organization.id,
+            base_role_id=USER_ROLE_ID,
+        )
+        role = Role(id=role_id, name=f"Backfill writer {role_id}", created_by="test")
+        db.add_all([organization, user, role])
+        await db.flush()
+        db.add_all([
+            UserRole(user_id=user.id, role_id=role.id, assigned_by="test"),
+            UserRoleBoundary(user_id=user.id, role_id=role.id, kind="platform"),
+            RolePermission(role_id=role.id, permission="agentruns.readwrite.all"),
+        ])
         db.add(
             Agent(
                 id=agent_id,
@@ -240,11 +261,11 @@ async def test_backfill_endpoint_enqueues_durable_platform_job(async_session_fac
         await db.commit()
 
     admin = UserPrincipal(
-        user_id=uuid4(),
+        user_id=user_id,
         email="admin@test.local",
-        organization_id=None,
+        organization_id=organization_id,
         name="Test Admin",
-        is_superuser=True,
+        is_superuser=False,
     )
 
     try:
@@ -287,6 +308,9 @@ async def test_backfill_endpoint_enqueues_durable_platform_job(async_session_fac
                 AgentRun.__table__.delete().where(AgentRun.id == run_id)
             )
             await db.execute(Agent.__table__.delete().where(Agent.id == agent_id))
+            await db.execute(delete(User).where(User.id == user_id))
+            await db.execute(delete(Role).where(Role.id == role_id))
+            await db.execute(delete(Organization).where(Organization.id == organization_id))
             await db.commit()
 
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import replace
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -15,16 +14,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.util import EMPTY_DICT
 
 from shared import access_checks
+from shared.builtin_roles import USER_ROLE_ID
 from shared.identities import ensure_default_identity
 from shared.sdk_users import set_platform_admin
 from src.core.cache.redis_client import close_shared_redis
 from src.core.constants import PROVIDER_ORG_ID, SYSTEM_USER_UUID
 from src.core.principal import UserPrincipal
+from src.models.contracts.workflow_permissions import WorkflowPermissionMode
 from src.models.enums import IdentityKind
 from src.models.orm.audit import AuditLog
 from src.models.orm.organizations import Organization
 from src.models.orm.users import Role, RolePermission, User, UserRole, UserRoleBoundary
 from src.services.access_check_writer import flush
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.explain import Powers, RunUser
 from src.services.authorization.impersonation import (
     DENIED_MESSAGE,
     RunAsError,
@@ -32,6 +35,7 @@ from src.services.authorization.impersonation import (
     authorize_run_as,
     scheduled_run_as,
 )
+from src.services.authorization.runtime import RuntimeAuthority
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -113,14 +117,31 @@ def _person(user: User) -> UserPrincipal:
     return UserPrincipal(user_id=user.id, email=user.email, organization_id=user.organization_id)
 
 
-def _engine(run_user_id: UUID | None) -> UserPrincipal:
+def _workflow_credential(run_user: User, *, workflow_id: UUID | None = None) -> UserPrincipal:
+    """A verified workflow credential carrying its original run-user facts."""
+    context = AuthorizationContext(
+        user_id=run_user.id,
+        home_organization_id=run_user.organization_id,
+        base_role_id=USER_ROLE_ID,
+        is_external=False,
+        base_permissions=frozenset(),
+    )
+    authority = RuntimeAuthority(
+        kind="workflow_execution",
+        credential_id=uuid4(),
+        run_user=RunUser(run_user.id, context, None, is_active=run_user.is_active),
+        powers=Powers(WorkflowPermissionMode.FULL, ()),
+        acting_user_id=run_user.id,
+        organization_id=run_user.organization_id,
+        workflow_id=workflow_id,
+        started_by_user_id=run_user.id,
+        root_execution_id=uuid4(),
+    )
     return UserPrincipal(
-        user_id=SYSTEM_USER_UUID,
-        email="system@internal.gobifrost.com",
-        organization_id=None,
-        is_superuser=True,
-        engine_execution_id=str(uuid4()),
-        run_user_id=run_user_id,
+        user_id=run_user.id,
+        email=run_user.email,
+        organization_id=run_user.organization_id,
+        runtime_authority=authority,
     )
 
 
@@ -339,37 +360,31 @@ async def test_naming_yourself_is_not_impersonation(db_session: AsyncSession) ->
 
     with _collecting(person.id) as collector:
         mine = await authorize_run_as(db_session, _person(person), person.id)
-        runs = await authorize_run_as(db_session, _engine(person.id), person.id)
+        runs = await authorize_run_as(db_session, _workflow_credential(person), person.id)
 
     assert (mine, runs) == (None, None)
     assert collector.notes == []
 
 
-async def test_a_workflow_runs_as_a_user_report_only(db_session: AsyncSession) -> None:
+async def test_a_workflow_run_as_uses_its_original_user_and_workflow_powers(db_session: AsyncSession) -> None:
     contoso = await _org(db_session, "Contoso")
     run_user, colleague = await _user(db_session, contoso), await _user(db_session, contoso)
     inactive = await _user(db_session, contoso, is_active=False)
-    token = access_checks.start_collecting(
-        {"engine_execution_id": str(uuid4()), "is_superuser": True, "engine_run_user_id": str(run_user.id)}
-    )
-    collector = access_checks.current()
-    try:
-        target = await authorize_run_as(db_session, _engine(run_user.id), colleague.id)
+    credential = _workflow_credential(run_user, workflow_id=uuid4())
+
+    with _collecting(run_user.id) as collector:
+        target = await authorize_run_as(db_session, credential, colleague.id)
         missing_id = uuid4()
-        missing = await _status(db_session, _engine(run_user.id), missing_id)
-        unusable = await _status(db_session, _engine(run_user.id), inactive.id)
-    finally:
-        access_checks.stop_collecting(token)
+        missing = await _status(db_session, credential, missing_id)
+        unusable = await _status(db_session, credential, inactive.id)
 
     assert target is not None and target.user_id == colleague.id
-    assert (missing, unusable) == (404, 400)
-    assert collector is not None
-    # Refusals are noted report-only too; an unknown user by its id alone.
+    assert (missing, unusable) == (403, 400)
     run_as = [(note.target, note.facts) for note in collector.notes if note.kind == "run_as"]
     assert run_as == [
-        (contoso.id, {"run_as_user_id": colleague.id}),
-        (None, {"run_as_user_id": missing_id}),
-        (contoso.id, {"run_as_user_id": inactive.id}),
+        (contoso.id, {"run_as_user_id": colleague.id, "enforced": True}),
+        (contoso.id, {"run_as_user_id": missing_id, "enforced": True, "outside_reach": True}),
+        (contoso.id, {"run_as_user_id": inactive.id, "enforced": True}),
     ]
 
 
@@ -445,21 +460,25 @@ async def test_a_scheduled_row_keeps_who_decided_and_whether_it_is_enforced(db_s
     colleague = await _user(db_session, contoso)
     target = await authorize_run_as(db_session, _person(holder), colleague.id)
     assert target is not None
-    engine = replace(_engine(holder.id), workflow_id=uuid4())
+    workflow_id = uuid4()
+    credential = _workflow_credential(holder, workflow_id=workflow_id)
 
     by_person = scheduled_run_as(_person(holder), target)
-    by_engine = scheduled_run_as(engine, target)
-    by_its_run_user = scheduled_run_as(_engine(colleague.id), target)
+    by_workflow = scheduled_run_as(credential, target)
+    by_its_run_user = scheduled_run_as(_workflow_credential(colleague), target)
 
-    colleague_id, holder_id, engine_id = str(colleague.id), str(holder.id), str(SYSTEM_USER_UUID)
-    assert by_person == {"user_id": colleague_id, "authorized_by": holder_id, "enforced": True}
-    assert by_engine == {
+    colleague_id, holder_id = str(colleague.id), str(holder.id)
+    assert by_person == {
         "user_id": colleague_id,
-        "authorized_by": engine_id,
-        "enforced": False,
-        "run_user_id": holder_id,
-        "workflow_id": str(engine.workflow_id),
-        "execution_id": engine.engine_execution_id,
+        "authorized_by": holder_id,
+        "enforced": True,
+        "workflow_id": None,
+    }
+    assert by_workflow == {
+        "user_id": colleague_id,
+        "authorized_by": holder_id,
+        "enforced": True,
+        "workflow_id": str(workflow_id),
     }
     assert by_its_run_user is None
 
@@ -472,12 +491,12 @@ async def test_a_launch_acts_as_the_run_user_it_names(db_session: AsyncSession) 
 
     mine = await acting_target(cast(AsyncSession, counting), _person(run_user), run_user.id)
     looked_up = counting.looked_up(run_user.id)
-    runs = await acting_target(db_session, _engine(run_user.id), run_user.id)
+    runs = await acting_target(db_session, _workflow_credential(run_user), run_user.id)
     with pytest.raises(RunAsError) as exc_info:
-        await acting_target(db_session, _engine(stranger), stranger)
+        await acting_target(db_session, _workflow_credential(run_user), stranger)
 
     # A person naming themselves changes nothing; a run naming its run user acts as them.
     assert (mine, looked_up) == (None, False)
     assert runs is not None and runs.user_id == run_user.id
     refusal = (exc_info.value.status_code, exc_info.value.detail)
-    assert refusal == (404, f"Run As user '{stranger}' not found")
+    assert refusal == (403, DENIED_MESSAGE)

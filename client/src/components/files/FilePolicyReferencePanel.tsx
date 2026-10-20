@@ -27,7 +27,10 @@ const USER_FIELDS: RefRow[] = [
 	{ term: "user_id", def: "UUID of the calling user." },
 	{ term: "email", def: "Email address of the calling user." },
 	{ term: "organization_id", def: "Org UUID the user belongs to." },
-	{ term: "is_platform_admin", def: "Boolean. True for platform admins." },
+	{
+		term: "is_platform_admin",
+		def: "Boolean. True when the user holds the Platform Admin role.",
+	},
 	{
 		term: "is_provider_org",
 		def: "Boolean. True when the user belongs to the provider organization (platform staff). Together with is_platform_admin, grants cross-org / global scope.",
@@ -38,6 +41,13 @@ const USER_FIELDS: RefRow[] = [
 	},
 	{ term: "role_ids", def: "List of role UUIDs the user holds." },
 	{ term: "role_names", def: "List of role names the user holds." },
+];
+
+const AUTHORITIES: RefRow[] = [
+	{
+		term: "Platform Admin Access",
+		def: 'Expression `{ authority: "platform_admin" }`. True for Platform Admin role holders and Full workflow executions. Full adds powers within the run user’s existing reach.',
+	},
 ];
 
 const FILE_FIELDS: RefRow[] = [
@@ -74,14 +84,15 @@ interface WorkedExample {
 const EXAMPLES: WorkedExample[] = [
 	{
 		heading: "admin_bypass",
-		description: "Platform admins can do anything.",
+		description:
+			"Allows Platform Admin role holders and Full workflow executions within their existing reach.",
 		policy: {
 			policies: [
 				{
 					name: "admin_bypass",
-					description: "Platform admins bypass all checks.",
+					description: "Platform Admin Access bypasses all checks.",
 					actions: ["read", "write", "delete", "list"],
-					when: { user: "is_platform_admin" },
+					when: { authority: "platform_admin" },
 				},
 			],
 		},
@@ -179,8 +190,8 @@ const FOOTGUNS: FootgunEntry[] = [
 		body: "If no policy rule grants an action, it's denied. A path with no policy at all denies everyone (except via a seeded admin_bypass).",
 	},
 	{
-		title: "Deleting admin_bypass locks admins out.",
-		body: "The seeded admin_bypass rule is the only admin escape hatch — remove it and platform admins are governed by the remaining rules like anyone else.",
+		title: "Deleting admin_bypass removes Platform Admin Access.",
+		body: "The seeded admin_bypass rule is the only Platform Admin Access escape hatch. Remove it and Platform Admins and Full workflow executions are governed by the remaining rules like anyone else.",
 	},
 	{
 		title: "`null` in eq is invalid.",
@@ -233,6 +244,7 @@ export function FilePolicyReferencePanel() {
 		<HelpSlideout title="File policy reference">
 			<RefTable title="Actions" rows={ACTIONS} />
 			<RefTable title="User fields ({user: ...})" rows={USER_FIELDS} />
+			<RefTable title="Authorities" rows={AUTHORITIES} />
 			<RefTable title="File fields ({file: ...})" rows={FILE_FIELDS} />
 			<RefTable title="Functions" rows={FUNCTIONS} />
 			<RefTable title="Operators" rows={OPERATORS} />

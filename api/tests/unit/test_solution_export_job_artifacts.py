@@ -42,6 +42,7 @@ def test_export_options_encryption_hides_password_and_round_trips() -> None:
             {
                 "include_imports": True,
                 "include_values": True,
+                "include_secret_values": False,
                 "include_data": False,
                 "include_files": False,
             },
@@ -57,6 +58,7 @@ def test_export_options_encryption_hides_password_and_round_trips() -> None:
             {
                 "include_imports": True,
                 "include_values": True,
+                "include_secret_values": True,
                 "include_data": True,
                 "include_files": True,
             },
@@ -72,6 +74,7 @@ def test_export_options_encryption_hides_password_and_round_trips() -> None:
             {
                 "include_imports": True,
                 "include_values": False,
+                "include_secret_values": False,
                 "include_data": True,
                 "include_files": False,
             },
@@ -216,6 +219,7 @@ async def test_build_zip_overlays_stored_source_with_live_backup_content(
         solution,
         include_imports=True,
         include_values=True,
+        include_secret_values=False,
         include_data=True,
         include_files=False,
     )

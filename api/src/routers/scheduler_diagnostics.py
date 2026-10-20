@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Request, HTTPException, Query, status
 from sqlalchemy import or_, select
 
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context, CurrentActiveUser
+from src.core.database import AsyncSession, get_db
+from src.services.authorization.enforce import authorize_operation
+from src.services.authorization.evaluator import GLOBAL
 from src.models.contracts.scheduler_diagnostics import (
     SchedulerCapacityStatus,
     SchedulerDiagnosticsResponse,
@@ -35,7 +38,14 @@ from src.services.scheduler_diagnostics import (
     utcnow,
 )
 
-router = APIRouter(prefix="/api/platform/scheduler", tags=["Platform Scheduler"])
+async def _authorize_global_route(
+    request: Request, user: CurrentActiveUser, db: AsyncSession = Depends(get_db, scope="function")
+) -> None:
+    await authorize_operation(
+        db, user, f"{request.method} {request.scope['route'].path}", GLOBAL
+    )
+
+router = APIRouter(prefix="/api/platform/scheduler", tags=["Platform Scheduler"], dependencies=[Depends(_authorize_global_route)])
 
 
 def _run_status(
@@ -69,7 +79,7 @@ def _run_status(
 @router.get("", response_model=SchedulerDiagnosticsResponse)
 async def get_scheduler_diagnostics(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> SchedulerDiagnosticsResponse:
     now = utcnow()
     lease = await ctx.db.get(SchedulerLease, TRIGGER_LEASE_NAME)
@@ -220,7 +230,7 @@ async def get_scheduler_diagnostics(
 async def get_scheduler_task_history(
     task_id: str,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     limit: int = Query(default=10, ge=1, le=25),
 ) -> SchedulerTaskHistoryResponse:
     definition = SCHEDULED_TASKS_BY_ID.get(task_id)

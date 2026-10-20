@@ -30,6 +30,7 @@ This module exposes:
 import json
 import logging
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
@@ -37,7 +38,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.log_safety import log_safe
-from src.core.principal import UserPrincipal
 from src.jobs.queue_names import TUNE_CHAT_QUEUE
 from src.jobs.rabbitmq import publish_message
 from src.models.orm.agent_prompt_history import AgentPromptHistory
@@ -50,6 +50,9 @@ from src.services.execution.agent_run_access import agent_run_visibility_conditi
 from src.services.execution.dry_run import evaluate_against_prompt
 from src.services.execution.model_selection import get_tuning_client
 from src.services.llm import LLMMessage
+
+if TYPE_CHECKING:
+    from src.services.authorization.enforce import Caller
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +219,7 @@ class AppliedTuning:
 async def _load_flagged_runs_with_conversations(
     agent_id: UUID,
     db: AsyncSession,
-    user: UserPrincipal,
+    caller: "Caller",
 ) -> list[tuple[AgentRun, AgentRunFlagConversation | None]]:
     """Load all completed thumbs-down runs for ``agent_id`` and their conversations."""
     runs = (
@@ -226,7 +229,7 @@ async def _load_flagged_runs_with_conversations(
                 .where(AgentRun.agent_id == agent_id)
                 .where(AgentRun.verdict == "down")
                 .where(AgentRun.status == "completed")
-                .where(*agent_run_visibility_conditions(user))
+                .where(*agent_run_visibility_conditions(caller))
                 .order_by(AgentRun.created_at)
             )
         )
@@ -255,7 +258,7 @@ async def _load_flagged_runs_with_conversations(
 async def propose_consolidated_tuning(
     agent_id: UUID,
     db: AsyncSession,
-    user: UserPrincipal,
+    caller: "Caller",
 ) -> ConsolidatedProposal:
     """Single LLM call across all flagged runs; returns one consolidated proposal.
 
@@ -267,7 +270,7 @@ async def propose_consolidated_tuning(
     if agent is None:
         raise LookupError(f"Agent {agent_id} not found")
 
-    pairs = await _load_flagged_runs_with_conversations(agent_id, db, user)
+    pairs = await _load_flagged_runs_with_conversations(agent_id, db, caller)
     if not pairs:
         raise LookupError(
             f"Agent {agent_id} has no flagged (thumbs-down) runs to tune"
@@ -333,14 +336,14 @@ async def dry_run_consolidated(
     proposed_prompt: str,
     db: AsyncSession,
     session_factory: async_sessionmaker[AsyncSession],
-    user: UserPrincipal,
+    caller: "Caller",
 ) -> list[tuple[UUID, bool, str, float]]:
     """Run :func:`evaluate_against_prompt` for each flagged run (capped).
 
     Returns a list of ``(run_id, would_still_decide_same, reasoning, confidence)``
     tuples, capped at :data:`CONSOLIDATED_DRY_RUN_LIMIT` runs to bound cost.
     """
-    pairs = await _load_flagged_runs_with_conversations(agent_id, db, user)
+    pairs = await _load_flagged_runs_with_conversations(agent_id, db, caller)
     capped = pairs[:CONSOLIDATED_DRY_RUN_LIMIT]
     results: list[tuple[UUID, bool, str, float]] = []
     for run, _conv in capped:
@@ -364,9 +367,8 @@ async def apply_consolidated_tuning(
     agent_id: UUID,
     new_prompt: str,
     reason: str | None,
-    user_id: UUID | None,
     db: AsyncSession,
-    user: UserPrincipal,
+    caller: "Caller",
 ) -> AppliedTuning:
     """Apply a consolidated tuning proposal.
 
@@ -380,7 +382,7 @@ async def apply_consolidated_tuning(
     if agent is None:
         raise LookupError(f"Agent {agent_id} not found")
 
-    pairs = await _load_flagged_runs_with_conversations(agent_id, db, user)
+    pairs = await _load_flagged_runs_with_conversations(agent_id, db, caller)
     affected_ids = [r.id for r, _ in pairs]
 
     previous_prompt = agent.system_prompt
@@ -391,7 +393,7 @@ async def apply_consolidated_tuning(
         agent_id=agent.id,
         previous_prompt=previous_prompt,
         new_prompt=new_prompt,
-        changed_by=user_id,
+        changed_by=caller.principal.user_id,
         changed_at=now,
         reason=reason,
     )
@@ -405,7 +407,7 @@ async def apply_consolidated_tuning(
         run.verdict = None
         run.verdict_note = None
         run.verdict_set_at = now
-        run.verdict_set_by = user_id
+        run.verdict_set_by = caller.principal.user_id
 
     await db.flush()
 

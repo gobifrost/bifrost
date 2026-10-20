@@ -7,10 +7,8 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared import access_checks
 from shared.artifact_generation import (
     GeneratedArtifact,
     generate_document,
@@ -26,8 +24,9 @@ from src.models.contracts.artifacts import (
     TextArtifactSpec,
     VideoArtifactSpec,
 )
-from src.models.orm import Artifact, Conversation, Message, MessageAttachment, User
-from src.services.artifacts import ArtifactService, artifact_ref
+from src.models.orm import Conversation, Message, MessageAttachment
+from src.services.artifacts import ArtifactAccessError, ArtifactService, artifact_ref
+from src.services.authorization.enforce import Caller
 from src.services.chat_attachments import ChatAttachmentService
 from src.services.llm import ToolDefinition
 from src.services.media_generation import generate_image, record_media_usage
@@ -136,6 +135,7 @@ def artifact_tool_definitions(
 async def execute_artifact_tool(
     db: AsyncSession,
     *,
+    caller: Caller,
     tool_name: str,
     arguments: dict[str, Any],
     conversation_id: UUID,
@@ -143,23 +143,19 @@ async def execute_artifact_tool(
 ) -> tuple[MessageAttachment | None, ArtifactRef | dict[str, Any]]:
     """Validate, generate, and durably attach one artifact to a tool-call message."""
     generated: GeneratedArtifact
+    service = ArtifactService(db)
+    if tool_name in ARTIFACT_TOOL_NAMES:
+        caller, _ = await service.authorize_workspace_write_for_caller(
+            caller, workspace_id=conversation_id
+        )
     if tool_name == LIST_ARTIFACTS_TOOL:
         conversation = await db.get(Conversation, conversation_id)
         if conversation is None:
             raise ValueError("The Chat conversation no longer exists.")
-        user = await db.get(User, conversation.user_id)
-        if user is None:
-            raise ValueError("The Chat user no longer exists.")
-        artifacts = await ArtifactService(db).list_workspace(
+        artifacts = await service.list_workspace_for_caller(
             conversation_id,
-            user_id=user.id,
-            bypass=user.is_superuser,
+            caller=caller,
         )
-        others = next((item for item in artifacts if item.created_by_user_id != user.id), None)
-        if others is not None:
-            access_checks.note_power(
-                "artifacts.read.all", others.organization_id, subject=f"artifact_workspace:{conversation_id}"
-            )
         return None, {
             "workspace_id": str(conversation_id),
             "files": [artifact_ref(item).model_dump(mode="json") for item in artifacts],
@@ -170,26 +166,17 @@ async def execute_artifact_tool(
             conversation = await db.get(Conversation, conversation_id)
             if conversation is None:
                 raise ValueError("The Chat conversation no longer exists.")
-            user = await db.get(User, conversation.user_id)
-            if user is None:
-                raise ValueError("The Chat user no longer exists.")
-            service = ArtifactService(db)
             image_content: dict[str, bytes] = {}
             for image in (
                 image
                 for section in spec.sections
                 for image in section.images
             ):
-                artifact = await service.resolve_workspace_path(
+                artifact = await service.resolve_workspace_path_for_caller(
                     conversation_id,
                     image.path,
-                    user_id=user.id,
-                    bypass=user.is_superuser,
+                    caller=caller,
                 )
-                if artifact.created_by_user_id != user.id:
-                    access_checks.note_power(
-                        "artifacts.read.all", artifact.organization_id, subject=f"artifact:{artifact.id}"
-                    )
                 if not artifact.content_type.startswith("image/"):
                     raise ValueError(f"{image.path} is not an image artifact.")
                 image_content[image.path] = await service.read(artifact)
@@ -218,10 +205,6 @@ async def execute_artifact_tool(
         conversation = await db.get(Conversation, conversation_id)
         if conversation is None:
             raise ValueError("The Chat conversation no longer exists.")
-        user = await db.get(User, conversation.user_id)
-        if user is None:
-            raise ValueError("The Chat user no longer exists.")
-
         from src.jobs.platform.video_generation import (
             VIDEO_GENERATION_DEFINITION,
             VideoGenerationPayload,
@@ -242,10 +225,10 @@ async def execute_artifact_tool(
                 prompt=spec.prompt,
             ),
             dedupe_key=str(message_id),
-            organization_id=user.organization_id,
-            requested_by_user_id=user.id,
-            requested_by_email=user.email,
-            requested_by_name=user.name or user.email,
+            organization_id=caller.principal.organization_id,
+            requested_by_user_id=caller.principal.user_id,
+            requested_by_email=caller.principal.email,
+            requested_by_name=caller.principal.name or caller.principal.email,
             resource_type="chat_conversation",
             resource_id=str(conversation_id),
             title=f"Generating {spec.filename}",
@@ -284,15 +267,14 @@ async def execute_artifact_tool(
     )
     if generated.provider is not None:
         conversation = await db.get(Conversation, conversation_id)
-        user = await db.get(User, conversation.user_id) if conversation else None
-        if conversation is not None and user is not None:
+        if conversation is not None:
             await record_media_usage(
                 db,
                 generated,
                 conversation_id=conversation_id,
                 message_id=message_id,
-                organization_id=user.organization_id,
-                user_id=user.id,
+                organization_id=caller.principal.organization_id,
+                user_id=caller.principal.user_id,
             )
             tool_message = await db.get(Message, message_id)
             if tool_message is not None:
@@ -321,36 +303,26 @@ def find_artifact_refs(value: Any) -> list[ArtifactRef]:
 async def promote_artifact_refs(
     db: AsyncSession,
     *,
+    caller: Caller,
     result: Any,
     conversation_id: UUID,
-    conversation_user_id: UUID,
     message_id: UUID,
-    agent_organization_id: UUID | None,
 ) -> list[ArtifactRef]:
     """Associate authorized workflow outputs with Chat without changing identity."""
     refs = find_artifact_refs(result)
     if not refs:
         return []
 
-    user_org = (
-        await db.execute(select(User.organization_id).where(User.id == conversation_user_id))
-    ).scalar_one_or_none()
     promoted: list[ArtifactRef] = []
     for ref in refs:
-        allowed = [Artifact.created_by_user_id == conversation_user_id]
-        if user_org is not None:
-            allowed.append(Artifact.organization_id == user_org)
-        if agent_organization_id is not None:
-            allowed.append(Artifact.organization_id == agent_organization_id)
-        artifact = (
-            await db.execute(
-                select(Artifact).where(Artifact.id == UUID(ref.id)).where(or_(*allowed))
+        try:
+            artifact = await ArtifactService(db).get_for_caller(
+                UUID(ref.id), caller=caller
             )
-        ).scalar_one_or_none()
-        if artifact is None:
+        except ArtifactAccessError as exc:
             raise ValueError(
                 "Workflow artifact was not found or is outside this Chat scope."
-            )
+            ) from exc
         await ChatAttachmentService(db).attach_artifact(
             artifact=artifact,
             conversation_id=conversation_id,

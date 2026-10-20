@@ -30,18 +30,89 @@ from shared.sdk_agent_runs import (
 )
 from src.core.principal import UserPrincipal
 from src.models.contracts.agent_runs import AgentRunEnqueueResponse, PausedResponse
+from src.services.authorization.context import AuthorizationContext, Boundary, BoundaryKind, RoleGrant
+from src.services.authorization.enforce import Caller
 from src.services.authorization.explain import RunAsTarget
 from src.services.authorization.impersonation import RunAsError
+from src.services.authorization.runtime import load_runtime_authority
 
 
-def _principal(org_id=None, **kwargs) -> UserPrincipal:
-    return UserPrincipal(
+@pytest.fixture(autouse=True)
+def _canonical_agent_run_caller(monkeypatch):
+    async def load(_session, principal):
+        if principal.runtime_authority is not None:
+            return Caller(principal, principal.runtime_authority.run_user.ctx)
+
+        base_permissions = frozenset({"agents.read", "agents.execute"})
+        role_grants = tuple(getattr(principal, "_test_role_grants", ()))
+        return Caller(
+            principal,
+            AuthorizationContext(
+                user_id=principal.user_id,
+                home_organization_id=principal.organization_id,
+                base_role_id=uuid4(),
+                is_external=False,
+                base_permissions=base_permissions,
+                role_grants=role_grants,
+            ),
+        )
+
+    mock = AsyncMock(side_effect=load)
+    monkeypatch.setattr("shared.sdk_agent_runs.load_caller", mock)
+    monkeypatch.setattr("src.routers.agent_runs.load_caller", mock)
+
+
+
+def _principal(org_id=None, *, role_grants=(), **kwargs) -> UserPrincipal:
+    principal = UserPrincipal(
         user_id=kwargs.get("user_id", uuid4()),
         email=kwargs.get("email", "sdk-agent-runs@test.local"),
         organization_id=org_id,
         name=kwargs.get("name", "SDK Agent Runs"),
         is_superuser=kwargs.get("is_superuser", False),
     )
+    setattr(principal, "_test_role_grants", tuple(role_grants))
+    return principal
+
+
+def _grant_at(organization_id, *permissions: str) -> RoleGrant:
+    return RoleGrant(
+        uuid4(),
+        frozenset(permissions),
+        (Boundary(BoundaryKind.ORGANIZATION, organization_id),),
+    )
+
+
+def _grant_global(*permissions: str) -> RoleGrant:
+    return RoleGrant(
+        uuid4(),
+        frozenset(permissions),
+        (Boundary(BoundaryKind.PLATFORM),),
+    )
+
+
+def _global_agent_principal() -> UserPrincipal:
+    return _principal(role_grants=(_grant_global("agents.read", "agents.execute"),))
+
+
+def _assert_execute_permission_note(notes, *, organization_id, user_id) -> None:
+    assert len(notes) == 1
+    note = notes[0]
+    assert (note.kind, note.target, note.facts) == (
+        "permission",
+        organization_id,
+        {"permission": "agents.execute", "enforced": True},
+    )
+    assert note.decision is not None
+    run_user, trace = note.decision
+    assert run_user.user_id == user_id
+    assert trace.outcome == "success"
+    assert [(step.key, step.status, step.reason) for step in trace.steps] == [
+        ("run_user", "passed", "person"),
+        ("powers", "not_applicable", "no_workflow"),
+        ("target", "passed", "home"),
+        ("permission", "passed", "base_role:agents.execute"),
+    ]
 
 
 async def _seed_org(db_session, **kwargs):
@@ -249,6 +320,9 @@ class TestEnqueueSdkAgentRun:
             caller_user_id=str(principal.user_id),
             caller_email=principal.email,
             caller_name="Caller Name",
+            caller_is_superuser=principal.is_superuser,
+            caller_is_external=principal.is_external,
+            caller_is_provider_org=principal.is_provider_org,
             sync=False,
             lineage=person_lineage(principal.user_id),
             run_as_user_id=None,
@@ -265,7 +339,7 @@ class TestEnqueueSdkAgentRun:
         ) as mock_enqueue:
             result = await enqueue_sdk_agent_run(
                 db_session,
-                _principal(is_superuser=True),
+                _global_agent_principal(),
                 agent_name="ticket agent",
             )
 
@@ -280,7 +354,7 @@ class TestEnqueueSdkAgentRun:
             with pytest.raises(SdkAgentRunError) as exc_info:
                 await enqueue_sdk_agent_run(
                     db_session,
-                    _principal(is_superuser=True),
+                    _principal(),
                     agent_name="No Such Agent",
                 )
 
@@ -297,7 +371,7 @@ class TestEnqueueSdkAgentRun:
         ) as mock_enqueue:
             result = await enqueue_sdk_agent_run(
                 db_session,
-                _principal(is_superuser=True),
+                _global_agent_principal(),
                 agent_name="Paused Agent",
             )
 
@@ -321,7 +395,7 @@ class TestEnqueueSdkAgentRun:
             with pytest.raises(SdkAgentRunError) as exc_info:
                 await enqueue_sdk_agent_run(
                     db_session,
-                    _principal(is_superuser=True),
+                    _global_agent_principal(),
                     agent_name="Solution Agent",
                 )
 
@@ -345,7 +419,7 @@ class TestEnqueueSdkAgentRun:
         ) as mock_enqueue:
             result = await enqueue_sdk_agent_run(
                 db_session,
-                _principal(is_superuser=True),
+                _global_agent_principal(),
                 agent_name="Live Solution Agent",
             )
 
@@ -387,6 +461,9 @@ class TestEnqueueRunAs:
             caller_user_id=str(principal.user_id),
             caller_email=principal.email,
             caller_name="Contoso Initiator",
+            caller_is_superuser=principal.is_superuser,
+            caller_is_external=principal.is_external,
+            caller_is_provider_org=principal.is_provider_org,
             sync=False,
             lineage=person_lineage(principal.user_id),
             run_as_user_id=target.id,
@@ -402,7 +479,10 @@ class TestEnqueueRunAs:
         with authorize, _patch_enqueue() as mock_enqueue:
             await enqueue_sdk_agent_run(
                 db_session,
-                _principal(contoso.id, is_superuser=True),
+                _principal(
+                    contoso.id,
+                    role_grants=(_grant_at(fabrikam.id, "agents.read", "agents.execute"),),
+                ),
                 agent_name="Global Agent",
                 run_as=target.id,
             )
@@ -421,7 +501,7 @@ class TestEnqueueRunAs:
         with authorize, _patch_enqueue() as mock_enqueue, pytest.raises(SdkAgentRunError) as exc_info:
             await enqueue_sdk_agent_run(
                 db_session,
-                _principal(contoso.id, is_superuser=True),
+                _principal(contoso.id),
                 agent_name="Contoso Only Agent",
                 run_as=target.id,
             )
@@ -443,7 +523,7 @@ class TestEnqueueRunAs:
     )
     async def test_a_refused_run_as_keeps_its_status_and_queues_nothing(self, db_session, error):
         await _seed_agent(db_session, "Refusing Agent")
-        principal = _principal(is_superuser=True)
+        principal = _global_agent_principal()
         other = uuid4()
         authorize, calls = _patch_authorize_run_as(raises=error)
 
@@ -479,13 +559,10 @@ class TestEnqueueRunAs:
         provider = await _seed_org(db_session, is_provider=True)
         contoso = await _seed_org(db_session)
         await _seed_agent(db_session, "Contoso Self Agent", organization_id=contoso.id)
-        admin = UserPrincipal(
-            user_id=uuid4(),
-            email="admin@provider.example",
-            organization_id=provider.id,
-            name="Provider Admin",
-            is_superuser=True,
-            is_provider_org=True,
+        admin = _principal(
+            provider.id,
+            name="Provider Administrator",
+            role_grants=(_grant_at(contoso.id, "agents.read", "agents.execute"),),
         )
         receipt_id = uuid4()
         launches = []
@@ -508,27 +585,52 @@ class TestEnqueueRunAs:
         assert self_kwargs == plain_kwargs
         assert (self_kwargs["org_id"], self_kwargs["run_as_user_id"]) == expected_actor
         assert self_result == plain_result
-        assert self_notes == plain_notes
+        _assert_execute_permission_note(plain_notes, organization_id=provider.id, user_id=admin.user_id)
+        _assert_execute_permission_note(self_notes, organization_id=provider.id, user_id=admin.user_id)
         assert "run_as" not in noted_kinds
 
     async def test_a_workflow_naming_its_run_user_acts_as_the_run_user(self, db_session):
-        from src.core.constants import SYSTEM_USER_ID
+        from src.models.enums import ExecutionStatus
+        from src.models.orm.executions import Execution
+        from src.models.orm.workflows import Workflow
 
         contoso = await _seed_org(db_session)
         person = await _seed_user(db_session, contoso.id)
+        actor = await _seed_user(db_session, contoso.id)
         await _seed_agent(db_session, "Workflow Agent", organization_id=contoso.id)
+        workflow = Workflow(
+            name=f"sdk-agent-runs-workflow-{uuid4().hex[:8]}",
+            function_name="run",
+            path="workflows/sdk_agent_runs.py",
+            organization_id=contoso.id,
+            permission_mode="full",
+        )
+        db_session.add(workflow)
+        await db_session.flush()
+        execution = Execution(
+            workflow_name=workflow.name,
+            executed_by_name=actor.name or "Contoso Workflow Actor",
+            workflow_id=workflow.id,
+            run_user_id=person.id,
+            executed_by=actor.id,
+            organization_id=contoso.id,
+            status=ExecutionStatus.RUNNING,
+            started_by_user_id=person.id,
+            root_execution_id=uuid4(),
+        )
+        db_session.add(execution)
+        await db_session.flush()
+        authority = await load_runtime_authority(db_session, "workflow_execution", execution.id)
         engine = UserPrincipal(
-            user_id=UUID(SYSTEM_USER_ID),
+            user_id=actor.id,
             email="engine@internal",
             organization_id=contoso.id,
-            is_superuser=True,
-            engine_execution_id=str(uuid4()),
-            run_user_id=person.id,
+            runtime_authority=authority,
         )
 
         receipt_id = uuid4()
         expected_receipt = AgentRunEnqueueResponse(run_id=receipt_id, run_as_user_id=person.id)
-        expected_launch = (str(contoso.id), SYSTEM_USER_ID, person.id)
+        expected_launch = (str(contoso.id), str(actor.id), person.id)
 
         with _patch_enqueue(str(receipt_id)) as mock_enqueue:
             result = await enqueue_sdk_agent_run(
@@ -547,11 +649,24 @@ class TestRerunKeepsRunAs:
 
         return await rerun_agent_run(run.id, db_session, principal)
 
+    def _principal(self, organization_id, *role_grants):
+        return _principal(
+            organization_id,
+            role_grants=(
+                _grant_at(
+                    organization_id,
+                    "agentruns.read.all",
+                    "agentruns.readwrite.all",
+                ),
+                *role_grants,
+            ),
+        )
+
     async def test_a_rerun_acts_as_the_same_user_decided_again(self, db_session):
         contoso = await _seed_org(db_session)
         target = await _seed_user(db_session, contoso.id)
         agent = await _seed_agent(db_session, "Rerun Agent", organization_id=contoso.id)
-        principal = _principal(contoso.id, is_superuser=True)
+        principal = self._principal(contoso.id)
         run = await _seed_run(
             db_session,
             agent.id,
@@ -576,8 +691,14 @@ class TestRerunKeepsRunAs:
         fabrikam = await _seed_org(db_session)
         moved = await _seed_user(db_session, fabrikam.id)
         agent = await _seed_agent(db_session, "Moved User Agent", organization_id=contoso.id)
-        principal = _principal(contoso.id, is_superuser=True)
-        run = await _seed_run(db_session, agent.id, org_id=contoso.id, run_as_user_id=moved.id)
+        principal = self._principal(contoso.id)
+        run = await _seed_run(
+            db_session,
+            agent.id,
+            org_id=contoso.id,
+            caller_user_id=str(principal.user_id),
+            run_as_user_id=moved.id,
+        )
         authorize, _calls = _patch_authorize_run_as(returns=_run_as_target(moved))
 
         with authorize, patch(
@@ -596,8 +717,14 @@ class TestRerunKeepsRunAs:
         fabrikam = await _seed_org(db_session)
         moved = await _seed_user(db_session, fabrikam.id)
         agent = await _seed_agent(db_session, "Global Rerun Agent")
-        principal = _principal(contoso.id, is_superuser=True)
-        run = await _seed_run(db_session, agent.id, org_id=contoso.id, run_as_user_id=moved.id)
+        principal = self._principal(contoso.id, _grant_at(fabrikam.id, "agents.execute"))
+        run = await _seed_run(
+            db_session,
+            agent.id,
+            org_id=contoso.id,
+            caller_user_id=str(principal.user_id),
+            run_as_user_id=moved.id,
+        )
         authorize, _calls = _patch_authorize_run_as(returns=_run_as_target(moved))
 
         with authorize, patch(
@@ -613,8 +740,14 @@ class TestRerunKeepsRunAs:
         contoso = await _seed_org(db_session)
         target = await _seed_user(db_session, contoso.id)
         agent = await _seed_agent(db_session, "Refused Rerun Agent", organization_id=contoso.id)
-        principal = _principal(contoso.id, is_superuser=True)
-        run = await _seed_run(db_session, agent.id, org_id=contoso.id, run_as_user_id=target.id)
+        principal = self._principal(contoso.id)
+        run = await _seed_run(
+            db_session,
+            agent.id,
+            org_id=contoso.id,
+            caller_user_id=str(principal.user_id),
+            run_as_user_id=target.id,
+        )
         authorize, _calls = _patch_authorize_run_as(
             raises=RunAsError(403, "You don't have permission to run as this user")
         )
@@ -633,8 +766,10 @@ class TestRerunKeepsRunAs:
     async def test_a_rerun_without_run_as_decides_nothing(self, db_session):
         contoso = await _seed_org(db_session)
         agent = await _seed_agent(db_session, "Plain Rerun Agent", organization_id=contoso.id)
-        principal = _principal(contoso.id, is_superuser=True)
-        run = await _seed_run(db_session, agent.id, org_id=contoso.id)
+        principal = self._principal(contoso.id)
+        run = await _seed_run(
+            db_session, agent.id, org_id=contoso.id, caller_user_id=str(principal.user_id)
+        )
         authorize, calls = _patch_authorize_run_as()
 
         with authorize, patch(
@@ -667,7 +802,6 @@ class TestExecuteAgentRun:
         return response, mock_enqueue.await_args.kwargs, notes
 
     async def test_without_run_as_the_response_and_notes_are_unchanged(self, db_session):
-        from shared.access_checks import Note
         from src.models.contracts.agent_runs import AgentRunCreateRequest
         from src.models.enums import AgentAccessLevel
 
@@ -680,9 +814,6 @@ class TestExecuteAgentRun:
         )
         principal = _principal(contoso.id, name="Contoso Caller")
         result_data = {"status": "completed", "output": {"answer": 42}}
-        expected_notes = [
-            Note("permission", contoso.id, {"permission": "agents.execute", "subject": f"agent:{agent.id}"})
-        ]
         authorize, calls = _patch_authorize_run_as()
 
         with authorize:
@@ -699,13 +830,16 @@ class TestExecuteAgentRun:
             "caller_user_id": str(principal.user_id),
             "caller_email": principal.email,
             "caller_name": "Contoso Caller",
+            "caller_is_superuser": principal.is_superuser,
+            "caller_is_external": principal.is_external,
+            "caller_is_provider_org": principal.is_provider_org,
             "sync": True,
             "lineage": person_lineage(principal.user_id),
             "run_as_user_id": None,
         }
         assert response == {"status": "completed", "output": {"answer": 42}}
         assert kwargs == expected_kwargs
-        assert notes == expected_notes
+        _assert_execute_permission_note(notes, organization_id=contoso.id, user_id=principal.user_id)
         assert calls == []
 
     async def test_run_as_is_recorded_and_echoed(self, db_session):
@@ -714,7 +848,7 @@ class TestExecuteAgentRun:
         contoso = await _seed_org(db_session)
         target = await _seed_user(db_session, contoso.id)
         await _seed_agent(db_session, "Sync Run As Agent", organization_id=contoso.id)
-        principal = _principal(contoso.id, is_superuser=True)
+        principal = _principal(contoso.id)
         request = AgentRunCreateRequest(agent_name="Sync Run As Agent", run_as=target.id)
         expected = {"status": "completed", "run_as_user_id": str(target.id)}
         authorize, _calls = _patch_authorize_run_as(returns=_run_as_target(target))
@@ -735,7 +869,7 @@ class TestGetSdkAgentRun:
         missing = uuid4()
         with pytest.raises(SdkAgentRunError) as exc_info:
             await get_sdk_agent_run(
-                db_session, _principal(is_superuser=True), run_id=missing
+                db_session, _principal(), run_id=missing
             )
 
         assert exc_info.value.status_code == 404
@@ -744,9 +878,12 @@ class TestGetSdkAgentRun:
     async def test_completed_run_returns_db_steps_children_and_usage(
         self, db_session
     ):
+        principal = _principal()
         agent = await _seed_agent(db_session, "History Agent")
         child_agent = await _seed_agent(db_session, "Child Agent")
-        run = await _seed_run(db_session, agent.id, status="completed")
+        run = await _seed_run(
+            db_session, agent.id, status="completed", caller_user_id=str(principal.user_id)
+        )
         await _seed_step(db_session, run.id, 1)
         await _seed_step(db_session, run.id, 2)
         child = await _seed_run(
@@ -760,7 +897,7 @@ class TestGetSdkAgentRun:
         await _seed_usage(db_session, run.id, input_tokens=200, output_tokens=25)
 
         detail = await get_sdk_agent_run(
-            db_session, _principal(is_superuser=True), run_id=run.id
+            db_session, principal, run_id=run.id
         )
 
         assert detail.id == run.id
@@ -815,8 +952,11 @@ class TestGetSdkAgentRun:
         assert exc_info.value.status_code == 404
 
     async def test_in_progress_run_reads_steps_from_redis(self, db_session):
+        principal = _principal()
         agent = await _seed_agent(db_session, "Running Agent")
-        run = await _seed_run(db_session, agent.id, status="running")
+        run = await _seed_run(
+            db_session, agent.id, status="running", caller_user_id=str(principal.user_id)
+        )
         step_id = uuid4()
 
         entries = [
@@ -840,7 +980,7 @@ class TestGetSdkAgentRun:
             return_value=_redis_stream_context(entries),
         ):
             detail = await get_sdk_agent_run(
-                db_session, _principal(is_superuser=True), run_id=run.id
+                db_session, principal, run_id=run.id
             )
 
         assert len(detail.steps) == 1
@@ -849,8 +989,11 @@ class TestGetSdkAgentRun:
         assert detail.steps[0].tokens_used == 10
 
     async def test_in_progress_redis_failure_falls_back_to_db(self, db_session):
+        principal = _principal()
         agent = await _seed_agent(db_session, "Fallback Agent")
-        run = await _seed_run(db_session, agent.id, status="queued")
+        run = await _seed_run(
+            db_session, agent.id, status="queued", caller_user_id=str(principal.user_id)
+        )
         await _seed_step(db_session, run.id, 1)
 
         with patch(
@@ -858,7 +1001,7 @@ class TestGetSdkAgentRun:
             side_effect=RuntimeError("redis down"),
         ):
             detail = await get_sdk_agent_run(
-                db_session, _principal(is_superuser=True), run_id=run.id
+                db_session, principal, run_id=run.id
             )
 
         assert [s.step_number for s in detail.steps] == [1]

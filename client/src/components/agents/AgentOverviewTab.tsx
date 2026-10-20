@@ -1,6 +1,5 @@
 /** Agent overview: activity, recent runs, review queue, configuration and budgets. */
 
-import { useAuth } from "@/contexts/AuthContext";
 import { Link, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -39,6 +38,8 @@ import {
 	type AgentRunNavigationOrigin,
 } from "@/lib/agent-run-navigation";
 import { cn, formatCost, formatDuration, formatNumber } from "@/lib/utils";
+import { GLOBAL_TARGET } from "@/lib/authorization";
+import { useAuthorization } from "@/services/authorization";
 import type { components } from "@/lib/v1";
 
 type AgentRun = components["schemas"]["AgentRunResponse"];
@@ -49,12 +50,12 @@ export interface AgentOverviewTabProps {
 
 export function AgentOverviewTab({ agentId }: AgentOverviewTabProps) {
 	const location = useLocation();
-	const { isPlatformAdmin } = useAuth();
+	const authorization = useAuthorization();
 	const { data: agent } = useAgent(agentId);
 	const { data: modelProfiles } = useQuery({
 		queryKey: ["ai", "model-profiles"],
 		queryFn: listModelProfiles,
-		enabled: isPlatformAdmin,
+		enabled: authorization.canAt("settings.read", GLOBAL_TARGET),
 	});
 	const {
 		data: stats,

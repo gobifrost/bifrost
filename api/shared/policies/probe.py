@@ -110,7 +110,7 @@ def make_seed_admin_bypass() -> dict:
                 "name": "admin_bypass",
                 "description": "Platform admins bypass all checks. Edit or delete to enforce stricter audit.",
                 "actions": ["read", "create", "update", "delete"],
-                "when": {"user": "is_platform_admin"},
+                "when": {"authority": "platform_admin"},
             }
         ]
     }

@@ -329,6 +329,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/impersonate/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Browser Impersonation
+         * @description Mint a browser-wide, original-session-bound impersonation marker.
+         */
+        post: operations["start_browser_impersonation_auth_impersonate__user_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/impersonation/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End Browser Impersonation
+         * @description Exit using the original operator, even after marker expiry or revocation.
+         */
+        post: operations["end_browser_impersonation_auth_impersonation_end_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/refresh": {
         parameters: {
             query?: never;
@@ -1987,8 +2027,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List execution logs (admin only)
-         * @description List logs across all executions with filtering and pagination. Admin only.
+         * List execution logs
+         * @description List reachable execution logs with filtering and pagination.
          */
         get: operations["list_logs_api_executions_logs_get"];
         put?: never;
@@ -2068,7 +2108,7 @@ export interface paths {
         };
         /**
          * Get execution variables only
-         * @description Get only the variables of a specific execution (platform admin only)
+         * @description Get only the variables of a specific execution (requires Read Executions)
          */
         get: operations["get_execution_variables_api_executions__execution_id__variables_get"];
         put?: never;
@@ -2108,7 +2148,7 @@ export interface paths {
         };
         /**
          * Get stuck executions
-         * @description Get executions that have been running, pending, or cancelling too long (Platform admin only)
+         * @description Get reachable executions that have been pending, running, or cancelling too long
          */
         get: operations["get_stuck_executions_api_executions_cleanup_stuck_get"];
         put?: never;
@@ -2130,7 +2170,7 @@ export interface paths {
         put?: never;
         /**
          * Trigger execution cleanup
-         * @description Clean up stuck executions by marking them as timed out or cancelled (Platform admin only)
+         * @description Clean up stuck executions by marking them as timed out or cancelled
          */
         post: operations["trigger_cleanup_api_executions_cleanup_trigger_post"];
         delete?: never;
@@ -2150,7 +2190,7 @@ export interface paths {
         put?: never;
         /**
          * Cleanup orphaned Redis pending executions
-         * @description Clean up Redis pending executions that are too old (Platform admin only)
+         * @description Clean up Redis pending executions that are too old
          */
         post: operations["cleanup_redis_orphans_api_executions_cleanup_redis_orphans_post"];
         delete?: never;
@@ -4513,10 +4553,9 @@ export interface paths {
          * Get developer context
          * @description Get development context for CLI initialization.
          *
-         *     Returns the authenticated user and their ``organization_id``-resolved
-         *     org. The optional ``org_id`` query parameter lets platform admins and
-         *     provider-org members target another org for the session — gated by
-         *     the same C2 rule the scope resolver applies elsewhere.
+         *     Returns actor facts and a selected organization within the original
+         *     caller's current role reach. Every later SDK request authorizes its
+         *     operation independently.
          *
          *     Context behavior lives in the shared service (``shared.sdk_context``),
          *     which a worker-local engine child can call with the same inputs.
@@ -4653,9 +4692,10 @@ export interface paths {
          * List all mappings for an integration
          * @description List all mappings for an integration via SDK.
          *
-         *     Scope resolution and response construction live in the shared
+         *     Reach filtering and response construction live in the shared
          *     integrations service (``shared.sdk_integrations``), which the
-         *     worker-local engine child calls for the same inputs.
+         *     worker-local engine child calls for the same inputs. ``request.scope``
+         *     is ignored: the list returns every mapping the caller may read.
          */
         post: operations["sdk_integrations_list_mappings_api_sdk_integrations_list_mappings_post"];
         delete?: never;
@@ -5202,11 +5242,9 @@ export interface paths {
          * List tables
          * @description List tables via SDK.
          *
-         *     Engine sentinel: the SDK has already resolved scope, so non-external
-         *     principals get is_superuser=True and we trust the org_uuid. The base
-         *     class handles the cascade (org + global) for us. EXTERNAL principals
-         *     do not inherit sentinel trust (OPEN-B) — they get the normal user
-         *     cascade (org + global table names/schemas; row data is policy-gated).
+         *     Current authority decides the requested scope and metadata permission.
+         *     Organization metadata includes the shared Global fallback; table row
+         *     access remains governed by its policies.
          */
         post: operations["cli_list_tables_api_sdk_tables_list_post"];
         delete?: never;
@@ -7694,7 +7732,7 @@ export interface paths {
          * @description Get current ROI settings.
          *
          *     Returns current settings or defaults if not configured.
-         *     Requires platform admin access.
+         *     Requires Reports Read at Global.
          */
         get: operations["get_roi_settings_api_admin_roi_settings_get"];
         put?: never;
@@ -7702,7 +7740,7 @@ export interface paths {
          * Update Roi Settings
          * @description Update ROI settings.
          *
-         *     Requires platform admin access.
+         *     Requires Reports Read and Write at Global.
          */
         post: operations["update_roi_settings_api_admin_roi_settings_post"];
         delete?: never;
@@ -7720,7 +7758,7 @@ export interface paths {
         };
         /**
          * Get ROI summary
-         * @description Get overall ROI summary for a date range. Platform admin only.
+         * @description Get overall ROI summary for a date range.
          */
         get: operations["get_roi_summary_api_reports_roi_summary_get"];
         put?: never;
@@ -7740,7 +7778,7 @@ export interface paths {
         };
         /**
          * Get ROI by workflow
-         * @description Get workflow breakdown of ROI for a date range. Platform admin only.
+         * @description Get workflow breakdown of ROI for a date range.
          */
         get: operations["get_roi_by_workflow_api_reports_roi_by_workflow_get"];
         put?: never;
@@ -7760,7 +7798,7 @@ export interface paths {
         };
         /**
          * Get ROI by organization
-         * @description Get organization breakdown of ROI for a date range. Platform admin only.
+         * @description Get organization breakdown of ROI for a date range.
          */
         get: operations["get_roi_by_organization_api_reports_roi_by_organization_get"];
         put?: never;
@@ -7780,7 +7818,7 @@ export interface paths {
         };
         /**
          * Get ROI trends
-         * @description Get ROI trends over time. Platform admin only.
+         * @description Get ROI trends over time.
          */
         get: operations["get_roi_trends_api_reports_roi_trends_get"];
         put?: never;
@@ -7800,7 +7838,7 @@ export interface paths {
         };
         /**
          * Get usage report
-         * @description Get AI usage report for a date range. Platform admin only.
+         * @description Get AI usage report for a date range.
          */
         get: operations["get_usage_report_api_reports_usage_get"];
         put?: never;
@@ -7820,7 +7858,7 @@ export interface paths {
         };
         /**
          * Get workflow resource report
-         * @description Get per-execution workflow resource usage for a time window. Platform admin only.
+         * @description Get per-execution workflow resource usage for a time window.
          */
         get: operations["get_workflow_resource_report_api_reports_workflow_resources_get"];
         put?: never;
@@ -8595,7 +8633,7 @@ export interface paths {
         };
         /**
          * Get service
-         * @description Get a service definition with observed state (platform admin only).
+         * @description Get a service definition with observed state.
          */
         get: operations["get_service_api_services__service_id__get"];
         put?: never;
@@ -8783,7 +8821,7 @@ export interface paths {
         };
         /**
          * List tables
-         * @description List all tables in the current scope (platform admin only).
+         * @description List table metadata only where the caller holds ``tables.read``.
          */
         get: operations["tables.list"];
         put?: never;
@@ -8827,7 +8865,7 @@ export interface paths {
         };
         /**
          * Get table metadata
-         * @description Get table metadata by UUID (platform admin only).
+         * @description Get table metadata at its actual organization target.
          */
         get: operations["tables.get"];
         put?: never;
@@ -9038,7 +9076,7 @@ export interface paths {
          *
          *     Platform admins see claims across every org by default — the
          *     organization column lets them filter in the UI. Non-superusers don't
-         *     reach this endpoint (gated by ``CurrentSuperuser``).
+         *     reach this endpoint (gated by ``CurrentActiveUser``).
          */
         get: operations["claims.list"];
         put?: never;
@@ -9067,6 +9105,29 @@ export interface paths {
         head?: never;
         /** Update a custom claim (admin only) */
         patch: operations["claims.update"];
+        trace?: never;
+    };
+    "/api/solutions/{solution_id}/dev-context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a local Solution development context
+         * @description Issue a ten-minute, app-bound context for ``bifrost solution start``.
+         *
+         *     The shared service deliberately checks current canonical Platform Admin
+         *     authority rather than the access-token's legacy ``is_superuser`` claim.
+         */
+        post: operations["create_solution_dev_context_api_solutions__solution_id__dev_context_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/solutions/import-workspace/preview": {
@@ -9815,10 +9876,8 @@ export interface paths {
          * List All Documents
          * @description List all documents across namespaces with optional filters.
          *
-         *     Scope parameter (consistent with workflows, forms, agents):
-         *     - Omitted: show all (superusers only)
-         *     - "global": show only global documents (organization_id IS NULL)
-         *     - UUID string: show only that org's documents (no global fallback)
+         *     Scope is validated against the original caller's current reach. An
+         *     organization selection includes Global shared defaults.
          */
         get: operations["knowledge.documents.list"];
         put?: never;
@@ -9844,7 +9903,7 @@ export interface paths {
         head?: never;
         /**
          * Bulk Update Document Scope
-         * @description Bulk update scope for multiple documents. Superuser only.
+         * @description Bulk update scope for multiple documents.
          *
          *     When replace=true in the request body, conflicting documents in the
          *     target scope are deleted before moving.
@@ -10662,10 +10721,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Export Knowledge
-         * @description Export selected knowledge documents as JSON.
-         */
+        /** Export Knowledge */
         post: operations["export_knowledge_api_export_import_export_knowledge_post"];
         delete?: never;
         options?: never;
@@ -10682,10 +10738,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Export Configs
-         * @description Export selected configs as JSON. Secret values exported encrypted.
-         */
+        /** Export Configs */
         post: operations["export_configs_api_export_import_export_configs_post"];
         delete?: never;
         options?: never;
@@ -10702,10 +10755,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Export Tables
-         * @description Export selected tables with all documents as JSON.
-         */
+        /** Export Tables */
         post: operations["export_tables_api_export_import_export_tables_post"];
         delete?: never;
         options?: never;
@@ -10722,10 +10772,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Export Integrations
-         * @description Export selected integrations with config schema, mappings, OAuth, and default config.
-         */
+        /** Export Integrations */
         post: operations["export_integrations_api_export_import_export_integrations_post"];
         delete?: never;
         options?: never;
@@ -10742,10 +10789,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Export All
-         * @description Export all selected entities as a ZIP file containing individual JSON files.
-         */
+        /** Export All */
         post: operations["export_all_api_export_import_export_all_post"];
         delete?: never;
         options?: never;
@@ -10762,10 +10806,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Import Knowledge
-         * @description Import knowledge documents from JSON file.
-         */
+        /** Import Knowledge */
         post: operations["import_knowledge_api_export_import_import_knowledge_post"];
         delete?: never;
         options?: never;
@@ -10782,10 +10823,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Import Tables
-         * @description Import tables with documents from JSON file.
-         */
+        /** Import Tables */
         post: operations["import_tables_api_export_import_import_tables_post"];
         delete?: never;
         options?: never;
@@ -10802,10 +10840,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Import Configs
-         * @description Import configs from JSON file with optional secret re-encryption.
-         */
+        /** Import Configs */
         post: operations["import_configs_api_export_import_import_configs_post"];
         delete?: never;
         options?: never;
@@ -10822,10 +10857,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Import Integrations
-         * @description Import integrations from JSON file with optional secret re-encryption.
-         */
+        /** Import Integrations */
         post: operations["import_integrations_api_export_import_import_integrations_post"];
         delete?: never;
         options?: never;
@@ -10842,10 +10874,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Import All
-         * @description Import all entities from a ZIP file.
-         */
+        /** Import All */
         post: operations["import_all_api_export_import_import_all_post"];
         delete?: never;
         options?: never;
@@ -11047,8 +11076,8 @@ export interface paths {
         get: operations["list_mcp_servers_api_mcp_servers_get"];
         put?: never;
         /**
-         * Create MCP server template (platform admin)
-         * @description Create a new server template. Platform admin only.
+         * Create MCP server template
+         * @description Create a new server template.
          *
          *     If ``oauth_provider`` is set on the request, this also creates an
          *     ``OAuthProvider`` row and links it on the new server. The provider
@@ -11079,15 +11108,15 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Delete MCP server template (platform admin)
+         * Delete MCP server template
          * @description Soft delete (set ``is_active=False``) by default. Pass ``?hard=true`` to cascade-delete the row, its connections, tools, and any per-user credentials. Soft delete is preferred — the same treatment as ``integrations.is_deleted`` — so existing agent tool bindings don't silently break.
          */
         delete: operations["delete_mcp_server_api_mcp_servers__server_id__delete"];
         options?: never;
         head?: never;
         /**
-         * Update MCP server template (platform admin)
-         * @description Update a server template. Platform admin only.
+         * Update MCP server template
+         * @description Update a server template.
          */
         patch: operations["update_mcp_server_api_mcp_servers__server_id__patch"];
         trace?: never;
@@ -11102,7 +11131,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Discover OAuth metadata (platform admin)
+         * Discover OAuth metadata
          * @description Fetch ``/.well-known/oauth-authorization-server`` and ``/.well-known/oauth-protected-resource`` from the server's host and return a merged metadata dict. Used by the new-server form to auto-fill OAuth fields. Returns ``{metadata: null}`` when neither endpoint is reachable; the frontend falls back to manual entry.
          */
         post: operations["discover_mcp_server_api_mcp_servers_discover_post"];
@@ -11373,6 +11402,91 @@ export interface paths {
          * @description Return the existing requirements.txt HTTP contract for external callers.
          */
         get: operations["fetch_requirements_api_sdk_requirements_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/runtime/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Append Runtime Log */
+        post: operations["append_runtime_log_api_sdk_runtime_logs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/runtime/service-control": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Get Service Control */
+        post: operations["get_service_control_api_sdk_runtime_service_control_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/runtime/data-provider-cache/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Read Runtime Data Provider Cache */
+        post: operations["read_runtime_data_provider_cache_api_sdk_runtime_data_provider_cache_read_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/runtime/data-provider-cache/write": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Write Runtime Data Provider Cache */
+        post: operations["write_runtime_data_provider_cache_api_sdk_runtime_data_provider_cache_write_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/runtime/logs/{execution_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Runtime Logs */
+        get: operations["get_runtime_logs_api_sdk_runtime_logs__execution_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -13814,6 +13928,21 @@ export interface components {
              */
             user_name?: string | null;
             /**
+             * Impersonated By User Id
+             * @description Operator who impersonated the acting user
+             */
+            impersonated_by_user_id?: string | null;
+            /**
+             * Impersonated By Email
+             * @description Impersonating operator's email
+             */
+            impersonated_by_email?: string | null;
+            /**
+             * Impersonated By Name
+             * @description Impersonating operator's display name
+             */
+            impersonated_by_name?: string | null;
+            /**
              * Organization Id
              * @description Organization the event happened in (an access check's target organization)
              */
@@ -13881,7 +14010,7 @@ export interface components {
             operation_id?: string | null;
             /**
              * Surface
-             * @description Transport the request came in over: 'web', 'cli', 'mcp', 'embed', 'workflow', 'service'
+             * @description Transport the request came in over: 'web', 'cli', 'mcp', 'embed', 'workflow', 'agent', 'service'
              */
             surface?: string | null;
             /**
@@ -13889,6 +14018,11 @@ export interface components {
              * @description Workflow execution that produced the event, when supported
              */
             execution_id?: string | null;
+            /**
+             * Impersonation Session Id
+             * @description Browser impersonation session that produced the event
+             */
+            impersonation_session_id?: string | null;
             /** @description Who performed the action */
             actor: components["schemas"]["AuditLogActor"];
             /** Ip Address */
@@ -13910,7 +14044,7 @@ export interface components {
         };
         /**
          * AuditLogGroup
-         * @description Entries sharing one value of the requested ``group_by``.
+         * @description Entries sharing a requested group key or access-check aggregate dimensions.
          */
         AuditLogGroup: {
             /**
@@ -13928,12 +14062,27 @@ export interface components {
              * @description Newest entry's time
              */
             last_seen: string;
+            /**
+             * First Seen
+             * @description Oldest entry's time (access-check aggregates only)
+             */
+            first_seen?: string;
+            /**
+             * Window Start
+             * @description Inclusive UTC aggregate window start
+             */
+            window_start?: string;
+            /**
+             * Window End
+             * @description Exclusive UTC aggregate window end
+             */
+            window_end?: string;
             /** @description Newest entry in the group */
             sample: components["schemas"]["AuditLogEntry"];
         };
         /**
          * AuditLogListResponse
-         * @description Paginated audit log list response, or groups when ``group_by`` is set.
+         * @description Paginated audit log list response, or groups for grouping and aggregation.
          */
         AuditLogListResponse: {
             /**
@@ -13943,7 +14092,7 @@ export interface components {
             entries: components["schemas"]["AuditLogEntry"][];
             /**
              * Groups
-             * @description Groups, largest first (only with group_by; entries is then empty)
+             * @description Groups or aggregates (entries is then empty)
              */
             groups?: components["schemas"]["AuditLogGroup"][] | null;
             /**
@@ -13974,7 +14123,7 @@ export interface components {
             /**
              * Hot Days
              * @description Days events stay in the database before they are archived.
-             * @default 90
+             * @default 30
              */
             hot_days: number;
             /**
@@ -14440,6 +14589,26 @@ export interface components {
             primary_color?: string | null;
             /** @description Fixed product terminology overrides for the platform UI */
             terminology?: components["schemas"]["BrandingTerminology"] | null;
+        };
+        /**
+         * BrowserImpersonationTokenResponse
+         * @description A short-lived bearer credential for one browser impersonation tab.
+         */
+        BrowserImpersonationTokenResponse: {
+            /** Access Token */
+            access_token: string;
+            /**
+             * Token Type
+             * @default bearer
+             * @constant
+             */
+            token_type: "bearer";
+            /**
+             * Expires In
+             * @default 1800
+             * @constant
+             */
+            expires_in: 1800;
         };
         /** BulkExportRequest */
         BulkExportRequest: {
@@ -17878,6 +18047,26 @@ export interface components {
          * @enum {string}
          */
         ExecutableType: "workflow" | "tool" | "data_provider" | "service";
+        /**
+         * ExecutionLog
+         * @description Single log entry from workflow execution.
+         */
+        ExecutionLog: {
+            /** Id */
+            id: string;
+            /** Execution Id */
+            execution_id: string;
+            /** Level */
+            level: string;
+            /** Message */
+            message: string;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            } | null;
+            /** Timestamp */
+            timestamp: string;
+        };
         /**
          * ExecutionLogPublic
          * @description Single log entry from workflow execution (API response model)
@@ -24514,6 +24703,42 @@ export interface components {
             at?: string;
         };
         /**
+         * ProviderCacheReadRequest
+         * @description Parameters for the authenticated runtime's own data-provider cache read.
+         */
+        ProviderCacheReadRequest: {
+            /** Parameters */
+            parameters?: {
+                [key: string]: unknown;
+            };
+        };
+        /** ProviderCacheReadResponse */
+        ProviderCacheReadResponse: {
+            /** Hit */
+            hit: boolean;
+            /** Result */
+            result?: unknown | null;
+            /** Expires At */
+            expires_at?: string | null;
+        };
+        /**
+         * ProviderCacheWriteRequest
+         * @description Result for the authenticated runtime's own data-provider cache entry.
+         */
+        ProviderCacheWriteRequest: {
+            /** Parameters */
+            parameters?: {
+                [key: string]: unknown;
+            };
+            /** Result */
+            result: unknown;
+        };
+        /** ProviderCacheWriteResponse */
+        ProviderCacheWriteResponse: {
+            /** Expires At */
+            expires_at?: string | null;
+        };
+        /**
          * PullAckEntity
          * @description One captured entity the client has materialized into source `.bifrost/`.
          */
@@ -25655,6 +25880,27 @@ export interface components {
             last_run: components["schemas"]["PlatformJobPublic"] | null;
         };
         /**
+         * RuntimeLogRequest
+         * @description A line for the authenticated runtime's own log stream.
+         */
+        RuntimeLogRequest: {
+            /** Level */
+            level: string;
+            /** Message */
+            message: string;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            } | null;
+            /** Timestamp */
+            timestamp?: string | null;
+        };
+        /** RuntimeLogResponse */
+        RuntimeLogResponse: {
+            /** Entry Id */
+            entry_id: string | null;
+        };
+        /**
          * SDKIntegrationsDeleteMappingRequest
          * @description Request to delete a mapping via SDK.
          */
@@ -25764,7 +26010,7 @@ export interface components {
             name: string;
             /**
              * Scope
-             * @description Optional org scope. Omit / pass null to list only the caller's own org mapping, unless the resolved org is a provider org, which lists all mappings. Platform admins and provider-org members may pass 'global' (no filter, all orgs) or a specific org UUID.
+             * @description Accepted from older SDK callers and ignored: the list always returns every mapping the caller may read with Integrations Read.
              */
             scope?: string | null;
         };
@@ -26532,6 +26778,28 @@ export interface components {
              * @description Claim timestamp
              */
             created_at: string;
+        };
+        /** ServiceControlRequest */
+        ServiceControlRequest: {
+            /**
+             * Ready
+             * @default false
+             */
+            ready: boolean;
+            /**
+             * Token Expires At
+             * Format: date-time
+             */
+            token_expires_at: string;
+        };
+        /** ServiceControlResponse */
+        ServiceControlResponse: {
+            /** Stop Requested */
+            stop_requested: boolean;
+            /** Access Token */
+            access_token?: string | null;
+            /** Token Expires At */
+            token_expires_at?: string | null;
         };
         /**
          * ServiceListResponse
@@ -27621,6 +27889,39 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /**
+         * SolutionDevContextRequest
+         * @description The selected portable app identity for a local Solution preview.
+         */
+        SolutionDevContextRequest: {
+            /**
+             * App Id
+             * Format: uuid
+             */
+            app_id: string;
+        };
+        /**
+         * SolutionDevContextResponse
+         * @description Short-lived, app-bound context accepted only as a supplemental header.
+         */
+        SolutionDevContextResponse: {
+            /** Token */
+            token: string;
+            /** Expires At */
+            expires_at: number;
+            /**
+             * Solution Id
+             * Format: uuid
+             */
+            solution_id: string;
+            /** Organization Id */
+            organization_id: string | null;
+            /**
+             * App Id
+             * Format: uuid
+             */
+            app_id: string;
         };
         /**
          * SolutionEntities
@@ -29831,7 +30132,7 @@ export interface components {
             script_name?: string | null;
             /**
              * Org Id
-             * @description Override execution org context. Requires platform admin.
+             * @description Override execution org context within the caller's reach. Requires workflows.execute in the target organization.
              */
             org_id?: string | null;
             /**
@@ -31406,6 +31707,55 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    start_browser_impersonation_auth_impersonate__user_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserImpersonationTokenResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    end_browser_impersonation_auth_impersonation_end_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -33990,7 +34340,7 @@ export interface operations {
     "executions.list": {
         parameters: {
             query?: {
-                /** @description Filter scope: omit for all (superusers), 'global' for global only, or org UUID for specific org + global. */
+                /** @description Filter scope: omit for all reachable executions, 'global' for global only, or an organization UUID for that organization only. */
                 scope?: string | null;
                 /** @description Filter by workflow name */
                 workflowName?: string | null;
@@ -37078,6 +37428,10 @@ export interface operations {
                 search?: string | null;
                 /** @description Group matching entries by this field (counts and newest entry per group) */
                 group_by?: ("workflow" | "action" | "resource_type" | "outcome" | "user" | "organization") | null;
+                /** @description Aggregate exact access checks into fixed UTC windows */
+                aggregate?: ("1h" | "6h" | "24h") | null;
+                /** @description Opaque access-check aggregate selector for raw drill-in */
+                aggregate_key?: string | null;
                 limit?: number;
                 /** @description Pagination cursor */
                 continuation_token?: string | null;
@@ -37250,7 +37604,7 @@ export interface operations {
                 window?: "24h" | "7d" | "30d";
                 /** @description IANA timezone used for hour and day boundaries */
                 timezone?: string;
-                /** @description Filter scope: omit for all (superusers), 'global' for global only, or an organization UUID. */
+                /** @description Filter scope: omit for reachable execution history, 'global' for global only, or an organization UUID. */
                 scope?: string | null;
             };
             header?: never;
@@ -44835,7 +45189,7 @@ export interface operations {
                 page?: number;
                 /** @description Items per page (max 100) */
                 page_size?: number;
-                /** @description Filter by organization ID */
+                /** @description Filter by organization UUID or global */
                 org_id?: string | null;
                 /** @description Filter by workflow ID */
                 workflow_id?: string | null;
@@ -47282,6 +47636,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CustomClaim"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_solution_dev_context_api_solutions__solution_id__dev_context_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SolutionDevContextRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionDevContextResponse"];
                 };
             };
             /** @description Validation Error */
@@ -51440,6 +51829,172 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    append_runtime_log_api_sdk_runtime_logs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeLogRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeLogResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_service_control_api_sdk_runtime_service_control_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServiceControlRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceControlResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_runtime_data_provider_cache_api_sdk_runtime_data_provider_cache_read_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderCacheReadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderCacheReadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    write_runtime_data_provider_cache_api_sdk_runtime_data_provider_cache_write_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderCacheWriteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderCacheWriteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_runtime_logs_api_sdk_runtime_logs__execution_id__get: {
+        parameters: {
+            query?: {
+                start?: string;
+                count?: number;
+            };
+            header?: never;
+            path: {
+                execution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionLog"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

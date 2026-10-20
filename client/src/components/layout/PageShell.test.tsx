@@ -6,6 +6,9 @@ const auth = {
 	isPlatformAdmin: true,
 	isOrgUser: false,
 	hasRole: vi.fn(() => false),
+	isImpersonating: false,
+	user: { name: "Avery Example", email: "avery@example.test" },
+	endImpersonation: vi.fn(),
 };
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => auth }));
 vi.mock("react-router-dom", async (original) => ({
@@ -26,6 +29,8 @@ beforeEach(() => {
 	auth.isPlatformAdmin = true;
 	auth.isOrgUser = false;
 	auth.hasRole.mockReturnValue(false);
+	auth.isImpersonating = false;
+	auth.endImpersonation.mockReset();
 });
 describe("PageShell access contract", () => {
 	it("shows loading without exposing routed content", () => {
@@ -36,11 +41,11 @@ describe("PageShell access contract", () => {
 		);
 		expect(screen.queryByText("Page content")).not.toBeInTheDocument();
 	});
-	it("denies access without a platform or organization role", () => {
+	it("lets an authenticated role-only user reach route authorization", () => {
 		auth.isPlatformAdmin = false;
 		renderWithProviders(<PageShell />);
-		expect(screen.getByText("No access")).toBeVisible();
-		expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
+		expect(screen.getByText("Page content")).toBeVisible();
+		expect(screen.getByRole("navigation")).toBeVisible();
 	});
 	it("keeps embed content free of the workspace chrome", () => {
 		auth.isPlatformAdmin = false;
@@ -57,6 +62,32 @@ describe("PageShell access contract", () => {
 		expect(screen.getByRole("navigation")).toBeVisible();
 		expect(screen.getByRole("banner")).toBeVisible();
 		expect(screen.getByText("Page content")).toBeVisible();
+	});
+
+	it("keeps the impersonated person's name and email visible above the workspace", () => {
+		auth.isImpersonating = true;
+		renderWithProviders(<PageShell />);
+		expect(
+			screen.getByRole("status", { name: "Impersonation session" }),
+		).toHaveTextContent("Impersonating Avery Example");
+		expect(screen.getByText("avery@example.test")).toBeInTheDocument();
+	});
+
+	it("places the impersonation banner above the shared sidebar and header row", () => {
+		auth.isImpersonating = true;
+		renderWithProviders(<PageShell />);
+
+		const banner = screen.getByRole("status", {
+			name: "Impersonation session",
+		});
+		const sharedChromeRow = banner.nextElementSibling;
+
+		expect(sharedChromeRow).toContainElement(
+			screen.getByRole("navigation"),
+		);
+		expect(sharedChromeRow).toContainElement(
+			screen.getByText("Workspace header"),
+		);
 	});
 });
 

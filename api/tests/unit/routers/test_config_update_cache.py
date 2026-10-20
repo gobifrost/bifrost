@@ -23,6 +23,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from src.repositories.config import ConfigRepository
+from tests.helpers.authorization import admin_caller
 from src.models.contracts.config import (
     UpdateConfigRequest,
     ConfigType,
@@ -35,8 +36,11 @@ def _config_row(*, id: UUID, key: str, org_id: UUID | None, value: str = "v1"):
     row.key = key
     row.organization_id = org_id
     row.value = {"value": value}
-    row.config_type = MagicMock(value="string")
+    row.config_type = ConfigType.STRING
+    row.integration_id = None
     row.description = None
+    row.required = False
+    row.position = 0
     row.updated_at = None
     row.updated_by = None
     return row
@@ -45,6 +49,7 @@ def _config_row(*, id: UUID, key: str, org_id: UUID | None, value: str = "v1"):
 def _mk_repo(row):
     session = AsyncMock()
     exec_result = MagicMock()
+    exec_result.first = MagicMock(return_value=(row, None) if row is not None else None)
     exec_result.scalar_one_or_none = MagicMock(return_value=row)
     session.execute = AsyncMock(return_value=exec_result)
     session.flush = AsyncMock()
@@ -126,6 +131,7 @@ async def test_router_invalidates_old_cache_entry_on_rename():
 
     with (
         patch("src.routers.config.ConfigRepository", return_value=repo),
+        patch("src.routers.config.load_caller", new=AsyncMock(return_value=admin_caller())),
         patch("src.routers.config.invalidate_config", new=AsyncMock()) as inv,
         patch("src.routers.config.upsert_config", new=AsyncMock()) as ups,
     ):
@@ -160,6 +166,7 @@ async def test_router_does_not_invalidate_when_identity_unchanged():
 
     with (
         patch("src.routers.config.ConfigRepository", return_value=repo),
+        patch("src.routers.config.load_caller", new=AsyncMock(return_value=admin_caller())),
         patch("src.routers.config.invalidate_config", new=AsyncMock()) as inv,
         patch("src.routers.config.upsert_config", new=AsyncMock()),
     ):
@@ -191,6 +198,7 @@ async def test_router_bumps_global_version_on_org_to_global_transition():
     fake_redis.incr = AsyncMock()
     with (
         patch("src.routers.config.ConfigRepository", return_value=repo),
+        patch("src.routers.config.load_caller", new=AsyncMock(return_value=admin_caller())),
         patch("src.routers.config.invalidate_config", new=AsyncMock()),
         patch("src.routers.config.upsert_config", new=AsyncMock()),
         patch("src.core.cache.get_shared_redis", return_value=fake_redis),
@@ -223,6 +231,7 @@ async def test_router_caches_ciphertext_but_returns_masked_secret():
 
     with (
         patch("src.routers.config.ConfigRepository", return_value=repo),
+        patch("src.routers.config.load_caller", new=AsyncMock(return_value=admin_caller())),
         patch("src.routers.config.invalidate_config", new=AsyncMock()),
         patch("src.routers.config.upsert_config", new=AsyncMock()) as ups,
     ):

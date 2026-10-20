@@ -23,13 +23,12 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.core.auth import Context, CurrentActiveUser, CurrentSuperuser
+from src.core.auth import Context, CurrentActiveUser
 from src.config import get_settings
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.core.rate_limit import RateLimiter, get_client_ip
 from src.models.enums import FormAccessLevel
-from src.repositories.forms import FormRepository
 from src.repositories.workflows import WorkflowRepository
 from src.services.audit import emit_audit
 from src.models import Execution as ExecutionORM
@@ -64,6 +63,7 @@ from shared.form_captcha import (
     redeem_form_captcha_solution,
 )
 from shared.form_provider import FormProviderError, execute_form_field_provider
+from shared.form_execution import create_form_execution_context
 from shared.run_lineage import principal_lineage
 from shared.form_runtime import (
     FormRuntimeValidationError,
@@ -84,6 +84,7 @@ from shared.logo_processing import (
     LogoProcessingError,
     process_logo,
 )
+from shared.scope_resolver import shared_read_organization
 from shared.sdk_forms import (
     SdkFormError,
     attach_form_logo_fields,
@@ -104,10 +105,37 @@ except ImportError:
 # Import workflow role sync
 from src.services.workflow_role_service import sync_form_roles_to_workflows
 from src.services.operation_catalog import operation_route
+from src.services.authorization.enforce import (
+    Caller,
+    allows_permission,
+    load_caller,
+    require_permission,
+    user_reach,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/forms", tags=["Forms"])
+
+
+async def _require_form_permission(
+    db: AsyncSession, user, form: FormORM, permission: str
+) -> None:
+    caller = await load_caller(db, user)
+    if not user_reach(caller).covers(form.organization_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form not found")
+    require_permission(caller, permission, form.organization_id)
+
+
+async def _require_form_read_access(
+    db: AsyncSession, user, form: FormORM
+) -> None:
+    """Apply the shared Form read target and resource ACL."""
+    caller = await load_caller(db, user)
+    if not user_reach(caller).covers(form.organization_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form not found")
+    if not await check_form_access(db, form, caller):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to form")
 
 
 _FORM_EMBED_LIMITERS = {
@@ -425,7 +453,7 @@ async def _publication_response(
 async def create_form(
     request: FormCreate,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> FormPublic:
     """
@@ -434,6 +462,7 @@ async def create_form(
     Forms are stored in the database only. They are serialized
     to JSON on-the-fly for git sync operations.
     """
+    caller = await load_caller(db, ctx.user)
     # Prepare form_schema for validation
     form_schema_data: dict = request.form_schema  # type: ignore[assignment]
     if hasattr(form_schema_data, 'model_dump'):
@@ -455,7 +484,18 @@ async def create_form(
     if "organization_id" in request.model_fields_set:
         target_org_id = request.organization_id
     else:
-        target_org_id = ctx.org_id
+        runtime = caller.principal.runtime_authority
+        target_org_id = (
+            runtime.organization_id
+            if runtime is not None
+            else (caller.ctx.home_organization_id if caller.ctx else None)
+        )
+    if not user_reach(caller).covers(target_org_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to manage forms",
+        )
+    require_permission(caller, "forms.readwrite", target_org_id)
 
     # Create form record
     form = FormORM(
@@ -535,10 +575,11 @@ async def create_form(
 )
 async def review_form_publication(
     form_id: UUID,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> FormPublicationReview:
     form = await _load_form_for_publication(db, form_id)
+    await _require_form_read_access(db, user, form)
     return FormPublicationReview.model_validate(
         await build_publication_review(db, form)
     )
@@ -551,10 +592,11 @@ async def review_form_publication(
 )
 async def get_form_publication(
     form_id: UUID,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> FormPublicationPublic:
     form = await _load_form_for_publication(db, form_id)
+    await _require_form_read_access(db, user, form)
     return await _publication_response(db, form)
 
 
@@ -567,10 +609,11 @@ async def publish_form(
     form_id: UUID,
     request: FormPublicationUpdate,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> FormPublicationPublic:
     form = await _load_form_for_publication(db, form_id)
+    await _require_form_permission(db, user, form, "forms.readwrite")
     review = FormPublicationReview.model_validate(
         await build_publication_review(db, form)
     )
@@ -644,10 +687,11 @@ async def publish_form(
 )
 async def unpublish_form(
     form_id: UUID,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> None:
     form = await _load_form_for_publication(db, form_id)
+    await _require_form_permission(db, user, form, "forms.readwrite")
     if form.publication is not None:
         form.publication.is_active = False
         form.publication.updated_at = datetime.now(timezone.utc)
@@ -665,10 +709,11 @@ async def unpublish_form(
 )
 async def rotate_form_publication_key(
     form_id: UUID,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> FormPublicationPublic:
     form = await _load_form_for_publication(db, form_id)
+    await _require_form_permission(db, user, form, "forms.readwrite")
     if form.publication is None or not form.publication.is_active:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -697,18 +742,15 @@ async def get_form_runtime(
     user: CurrentActiveUser,
     db: DbSession,
 ) -> FormRuntimeDefinition:
-    repo = FormRepository(
-        session=db,
-        org_id=None,
-        user_id=ctx.user.user_id if not ctx.user.is_superuser else None,
-        is_superuser=ctx.user.is_superuser,
-        is_external=ctx.user.is_external,
-    )
-    form = await repo.get_form(form_id)
+    form = (
+        await db.execute(
+            select(FormORM)
+            .options(selectinload(FormORM.fields))
+            .where(FormORM.id == form_id)
+        )
+    ).scalar_one_or_none()
     if form is None or not form.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form not found")
-    if ctx.user.is_superuser:
-        access_checks.note_power("forms.read", form.organization_id, subject=f"form:{form.id}")
 
     publication = await _authorize_form_runtime(db, ctx, form)
     await _limit_embed_action(http_request, ctx, "runtime")
@@ -796,7 +838,7 @@ async def update_form(
     form_id: UUID,
     request: FormUpdate,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> FormPublic:
     """
@@ -817,6 +859,8 @@ async def update_form(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Form not found",
         )
+
+    await _require_form_permission(db, ctx.user, form, "forms.readwrite")
 
     # Solution-managed forms are read-only here; deploy is the writer.
     assert_not_solution_managed(form)
@@ -872,6 +916,13 @@ async def update_form(
         form.access_level = request.access_level
     # Use model_fields_set to distinguish "not provided" from "explicitly set to null"
     if "organization_id" in request.model_fields_set:
+        caller = await load_caller(db, ctx.user)
+        if not user_reach(caller).covers(request.organization_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to manage forms",
+            )
+        require_permission(caller, "forms.readwrite", request.organization_id)
         form.organization_id = request.organization_id
 
     # Role assignment edits. ``role_ids`` (when explicitly provided) bulk-replaces
@@ -941,7 +992,7 @@ async def update_form_put(
     form_id: UUID,
     request: FormUpdate,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> FormPublic:
     """Update a form (PUT - for backwards compatibility)."""
@@ -960,7 +1011,7 @@ async def update_form_put(
 async def upload_form_logo(
     form_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
     file: UploadFile = File(..., description="Logo image (PNG/JPEG/SVG, ≤5MB)"),
 ) -> dict:
@@ -969,6 +1020,7 @@ async def upload_form_logo(
     form = result.scalar_one_or_none()
     if not form:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form not found")
+    await _require_form_permission(db, ctx.user, form, "forms.readwrite")
     assert_not_solution_managed(form)
 
     content = await file.read()
@@ -1019,19 +1071,21 @@ async def get_form_logo(
     if ctx.user.embed:
         if not embed_can_access_form(ctx.user, form):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Logo not set")
-    elif not await check_form_access(
-        db,
-        form,
-        ctx.user.user_id,
-        ctx.org_id,
-        ctx.user.is_superuser,
-        is_external=ctx.user.is_external,
-    ):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Logo not set")
     else:
-        if ctx.user.is_superuser:
-            access_checks.note_power("forms.read", form.organization_id, subject=f"form:{form.id}")
-        access_checks.note_launch("forms.readbasic", form.organization_id, ctx.org_id, subject=f"form:{form.id}")
+        caller = await load_caller(db, ctx.user)
+        if not await check_form_access(db, form, caller):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Logo not set")
+        permission_org = shared_read_organization(caller, form.organization_id)
+        access_checks.note_launch(
+            (
+                "forms.read"
+                if allows_permission(caller, "forms.read", permission_org)
+                else "forms.readbasic"
+            ),
+            permission_org,
+            ctx.org_id,
+            subject=f"form:{form.id}",
+        )
 
     thumbnail_ready = bool(form.logo_thumbnail_data and form.logo_thumbnail_version)
     headers = (
@@ -1061,13 +1115,14 @@ async def get_form_logo(
 async def delete_form_logo(
     form_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> Response:
     result = await db.execute(select(FormORM).where(FormORM.id == form_id))
     form = result.scalar_one_or_none()
     if not form:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form not found")
+    await _require_form_permission(db, ctx.user, form, "forms.readwrite")
     assert_not_solution_managed(form)
 
     form.logo_data = None
@@ -1093,7 +1148,7 @@ async def delete_form_logo(
 async def delete_form(
     form_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
     purge: bool = Query(False, description="Permanently remove the form from the database instead of soft-deleting"),
 ) -> None:
@@ -1114,6 +1169,8 @@ async def delete_form(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Form not found",
         )
+
+    await _require_form_permission(db, ctx.user, form, "forms.readwrite")
 
     # Solution-managed forms are read-only here; deploy is the writer.
     assert_not_solution_managed(form)
@@ -1209,22 +1266,45 @@ async def _authorize_form_runtime(
             return publication
         return None
 
-    if not await check_form_access(
-        db,
-        form,
-        ctx.user.user_id,
-        ctx.org_id,
-        ctx.user.is_superuser,
-        is_external=ctx.user.is_external,
-    ):
+    caller = await load_caller(db, ctx.user)
+    if not await check_form_access(db, form, caller):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied to form",
         )
-    if ctx.user.is_superuser:
-        access_checks.note_power("forms.read", form.organization_id, subject=f"form:{form.id}")
-    access_checks.note_launch("forms.readbasic", form.organization_id, ctx.org_id, subject=f"form:{form.id}")
+    permission_org = shared_read_organization(caller, form.organization_id)
+    access_checks.note_launch(
+        (
+            "forms.read"
+            if allows_permission(caller, "forms.read", permission_org)
+            else "forms.readbasic"
+        ),
+        permission_org,
+        ctx.org_id,
+        subject=f"form:{form.id}",
+    )
     return None
+
+
+async def _form_launch_authority(
+    db: AsyncSession, ctx, form: FormORM
+) -> tuple[UUID | None, Caller | None]:
+    """Resolve the form's execution target and named launch authority.
+
+    A verified form embed is already a resource-bound capability: its form
+    binding, publication fingerprint, and active Solution checks ran in
+    ``_authorize_form_runtime``. Authenticated launches instead require the
+    original user's current ``workflows.execute`` grant at the actual
+    execution organization. Shared Global forms run at that caller's selected
+    home/runtime organization rather than silently requiring a Global grant.
+    """
+    if ctx.user.embed:
+        return (form.organization_id or ctx.org_id), None
+
+    caller = await load_caller(db, ctx.user)
+    execution_org_id = shared_read_organization(caller, form.organization_id)
+    require_permission(caller, "workflows.execute", execution_org_id)
+    return execution_org_id, caller
 
 
 @router.post(
@@ -1253,7 +1333,6 @@ async def submit_form(
     HMAC sessions and authenticated users retain the execution summary used by
     the existing result journey.
     """
-    from src.sdk.context import ExecutionContext as SharedContext, Organization
     from src.services.execution.service import run_workflow, WorkflowNotFoundError, WorkflowLoadError
 
     # Default request if None (backward compatibility with empty body)
@@ -1373,7 +1452,13 @@ async def submit_form(
     # caller's: a cross-org bypass caller (platform admin / provider) executing
     # an org-scoped form must resolve the install's own workflow and run in the
     # form's org. Caller identity was already used for AUTHORIZATION above.
-    anchor_org_id = form.organization_id if form.organization_id is not None else ctx.org_id
+    anchor_org_id, launch_caller = await _form_launch_authority(db, ctx, form)
+    accepted_lineage = await principal_lineage(db, ctx.user)
+    if accepted_lineage is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Form execution has no accepted identity",
+        )
 
     from src.services.solution_scope import solution_allows_global
 
@@ -1393,14 +1478,28 @@ async def submit_form(
             detail=f"Workflow not found: {form.workflow_id}",
         )
     resolved_workflow_id = str(_resolved_wf.id)
+    if launch_caller is not None and not user_reach(launch_caller).covers(_resolved_wf.organization_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found")
     access_checks.note_launch(
-        "workflows.execute", form.organization_id, ctx.org_id, subject=f"workflow:{resolved_workflow_id}"
+        "workflows.execute", anchor_org_id, ctx.org_id, subject=f"workflow:{resolved_workflow_id}"
     )
 
     # Keep signed embed context out of top-level workflow parameters. Validated
     # form inputs remain top-level for workflow signature compatibility and are
     # also available through context.form_inputs.
     merged_params = {**(form.default_launch_params or {}), **validated_inputs}
+    shared_ctx = await create_form_execution_context(
+        db,
+        user=ctx.user,
+        lineage=accepted_lineage,
+        execution_id=str(uuid4()),
+        organization_id=anchor_org_id,
+        is_platform_admin=(
+            launch_caller.is_platform_admin if launch_caller is not None else False
+        ),
+        startup=startup_result,
+        form_inputs=validated_inputs,
+    )
 
     # Scheduled execution: normalize delay_seconds -> scheduled_at and insert a
     # SCHEDULED row directly. The deferred_execution_promoter job picks it up
@@ -1421,12 +1520,12 @@ async def submit_form(
             parameters=merged_params,
             scheduled_at=scheduled_at,
             organization_id=anchor_org_id,
-            executed_by=ctx.user.user_id,
-            executed_by_name=ctx.user.name or ctx.user.email or "Unknown",
+            executed_by=UUID(shared_ctx.user_id),
+            executed_by_name=shared_ctx.name,
             form_id=form.id,
             api_key_id=None,
-            is_platform_admin=ctx.user.is_superuser,
-            lineage=await principal_lineage(db, ctx.user),
+            is_platform_admin=shared_ctx.is_platform_admin,
+            lineage=accepted_lineage,
             run_as=None,
         )
         logger.info(
@@ -1441,26 +1540,6 @@ async def submit_form(
             status=ExecutionStatus.SCHEDULED,
             scheduled_at=scheduled_at,
         )
-
-    # Create organization object if the anchor org is set
-    org = None
-    if anchor_org_id:
-        org = Organization(id=str(anchor_org_id), name="", is_active=True)
-
-    # Create shared context with explicit trust domains.
-    shared_ctx = SharedContext(
-        user_id=str(ctx.user.user_id),
-        name=ctx.user.name,
-        email=ctx.user.email,
-        scope=str(anchor_org_id) if anchor_org_id else "GLOBAL",
-        organization=org,
-        is_platform_admin=ctx.user.is_superuser,
-        is_function_key=False,
-        execution_id=str(uuid4()),
-        startup=startup_result,
-        form_inputs=validated_inputs,
-        embed=ctx.user.verified_context or {},
-    )
 
     if ctx.user.embed:
         try:
@@ -1506,7 +1585,7 @@ async def submit_form(
             workflow_id=resolved_workflow_id,
             input_data=merged_params,
             form_id=str(form.id),
-            lineage=await principal_lineage(db, ctx.user),
+            lineage=accepted_lineage,
         )
         external_workflow_accepted = ctx.user.embed
 
@@ -1630,7 +1709,6 @@ async def execute_startup_workflow(
     Returns:
         FormStartupResponse with the launch workflow's result
     """
-    from src.sdk.context import ExecutionContext as SharedContext, Organization
     from src.services.execution.service import run_workflow, WorkflowNotFoundError, WorkflowLoadError
 
     # Get the form
@@ -1680,9 +1758,13 @@ async def execute_startup_workflow(
     # here — a form user with no role on the launch workflow must still reach it.
     # Anchored to the FORM's org like the execute path: a cross-org bypass
     # caller must resolve the install's own launch workflow, not their org's.
-    launch_anchor_org_id = (
-        form.organization_id if form.organization_id is not None else ctx.org_id
-    )
+    launch_anchor_org_id, launch_caller = await _form_launch_authority(db, ctx, form)
+    accepted_lineage = await principal_lineage(db, ctx.user)
+    if accepted_lineage is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Form execution has no accepted identity",
+        )
     _launch_repo = WorkflowRepository(db, org_id=launch_anchor_org_id, is_superuser=True)
     _resolved_launch = await _launch_repo.resolve(
         form.launch_workflow_id, solution_scope=form.solution_id
@@ -1693,8 +1775,10 @@ async def execute_startup_workflow(
             detail=f"Launch workflow not found: {form.launch_workflow_id}",
         )
     resolved_launch_workflow_id = str(_resolved_launch.id)
+    if launch_caller is not None and not user_reach(launch_caller).covers(_resolved_launch.organization_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Launch workflow not found")
     access_checks.note_launch(
-        "workflows.execute", form.organization_id, ctx.org_id, subject=f"workflow:{resolved_launch_workflow_id}"
+        "workflows.execute", launch_anchor_org_id, ctx.org_id, subject=f"workflow:{resolved_launch_workflow_id}"
     )
 
     # Signed HMAC values stay in context.embed and are never flattened into
@@ -1703,20 +1787,15 @@ async def execute_startup_workflow(
 
     # The launch workflow runs in the form's data world (same anchor as
     # resolution above and as the execute path).
-    org = None
-    if launch_anchor_org_id:
-        org = Organization(id=str(launch_anchor_org_id), name="", is_active=True)
-
-    shared_ctx = SharedContext(
-        user_id=str(ctx.user.user_id),
-        name=ctx.user.name,
-        email=ctx.user.email,
-        scope=str(launch_anchor_org_id) if launch_anchor_org_id else "GLOBAL",
-        organization=org,
-        is_platform_admin=ctx.user.is_superuser,
-        is_function_key=False,
+    shared_ctx = await create_form_execution_context(
+        db,
+        user=ctx.user,
+        lineage=accepted_lineage,
         execution_id=str(uuid4()),
-        embed=ctx.user.verified_context or {},
+        organization_id=launch_anchor_org_id,
+        is_platform_admin=(
+            launch_caller.is_platform_admin if launch_caller is not None else False
+        ),
     )
 
     try:
@@ -1728,7 +1807,7 @@ async def execute_startup_workflow(
             form_id=str(form.id),
             transient=True,
             sync=True,
-            lineage=await principal_lineage(db, ctx.user),
+            lineage=accepted_lineage,
         )
 
         logger.info(f"Launch workflow executed for form {log_safe(form_id)} by user {ctx.user.email}")
@@ -1802,7 +1881,19 @@ async def get_form_field_options(
     field = next((item for item in form.fields if item.name == field_name), None)
     if field is None or field.data_provider_id is None:
         raise HTTPException(status_code=404, detail="Field options unavailable")
-    access_checks.note_launch("workflows.execute", form.organization_id, ctx.org_id, subject=f"workflow:{field.data_provider_id}")
+    provider_org_id, _provider_caller = await _form_launch_authority(db, ctx, form)
+    accepted_lineage = await principal_lineage(db, ctx.user)
+    if accepted_lineage is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Form execution has no accepted identity",
+        )
+    access_checks.note_launch(
+        "workflows.execute",
+        provider_org_id,
+        ctx.org_id,
+        subject=f"workflow:{field.data_provider_id}",
+    )
 
     try:
         options = await execute_form_field_provider(
@@ -1810,13 +1901,18 @@ async def get_form_field_options(
             form=form,
             field=field,
             user=ctx.user,
-            caller_org_id=ctx.org_id,
+            caller_org_id=provider_org_id,
             browser_inputs=request.inputs,
+            lineage=accepted_lineage,
         )
     except FormProviderError as exc:
         detail = "Unable to load field options"
-        if ctx.user.is_superuser and not ctx.user.embed:
-            access_checks.note_power("forms.read", form.organization_id, subject=f"form:{form.id}")
+        caller = None if ctx.user.embed else await load_caller(db, ctx.user)
+        if caller is not None and allows_permission(
+            caller,
+            "forms.read",
+            shared_read_organization(caller, form.organization_id),
+        ):
             detail = str(exc)
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail) from exc
     except Exception as exc:

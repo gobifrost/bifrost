@@ -11,10 +11,8 @@ from sqlalchemy.orm import selectinload
 
 from shared import access_checks
 from shared.run_lineage import principal_lineage
-from shared.scope_resolver import has_scope_bypass
 from src.core.cache.redis_client import get_redis
 from src.core.db_deps import DbSession
-from src.core.principal import UserPrincipal
 from src.core.pubsub import publish_chat_run_event, replay_chat_run_events
 from src.models.contracts.agents import (
     ChatRunCancelResponse,
@@ -29,7 +27,12 @@ from src.models.contracts.agents import (
 )
 from src.models.enums import MessageRole
 from src.models.orm import Agent, AgentRun, Conversation, Message
-from src.repositories.agents import AgentRepository
+from src.services.authorization.enforce import Caller
+from src.services.authorization.agent_runtime import (
+    AgentRuntimeAuthorizationError,
+    authorize_agent_execution,
+    authorize_agentless_ai,
+)
 from src.services.chat_attachments import ChatAttachmentError, ChatAttachmentService
 from src.services.chat_errors import public_chat_error_message
 from src.services.execution.agent_run_service import enqueue_agent_run
@@ -59,12 +62,18 @@ def _run_public(run: AgentRun | None) -> ChatRunPublic | None:
     return public_run
 
 
-async def _load_conversation_or_404(db: DbSession, conversation_id: UUID, user: UserPrincipal) -> Conversation:
+def _owner_id(caller: Caller) -> UUID:
+    if caller.ctx is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Chat caller is unavailable")
+    return caller.ctx.user_id
+
+
+async def _load_conversation_or_404(db: DbSession, conversation_id: UUID, caller: Caller) -> Conversation:
     result = await db.execute(
         select(Conversation)
         .options(selectinload(Conversation.agent))
         .where(Conversation.id == conversation_id)
-        .where(Conversation.user_id == user.user_id)
+        .where(Conversation.user_id == _owner_id(caller))
     )
     conversation = result.scalar_one_or_none()
     if conversation is None:
@@ -77,27 +86,21 @@ async def _load_conversation_or_404(db: DbSession, conversation_id: UUID, user: 
 
 async def _load_authorized_agent(
     db: DbSession,
-    user: UserPrincipal,
+    caller: Caller,
     agent_id: UUID,
-) -> Agent:
-    repository = AgentRepository(
-        db,
-        org_id=user.organization_id,
-        user_id=user.user_id,
-        is_superuser=has_scope_bypass(
-            is_platform_admin=user.is_platform_admin,
-            is_provider_org=user.is_provider_org,
-        ),
-        is_external=user.is_external,
-    )
-    agent = await repository.get_agent_with_access_check(agent_id)
-    if agent is None or not agent.is_active:
+) -> tuple[Caller, Agent]:
+    try:
+        caller, agent = await authorize_agent_execution(db, caller, agent_id)
+    except AgentRuntimeAuthorizationError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have access to this agent",
-        )
-    access_checks.note_launch("agents.execute", agent.organization_id, user.organization_id, subject=f"agent:{agent.id}")
-    return agent
+            detail=str(exc),
+        ) from exc
+    access_checks.note_launch(
+        "agents.execute", agent.organization_id, caller.ctx.home_organization_id,
+        subject=f"agent:{agent.id}",
+    )
+    return caller, agent
 
 
 async def _persist_user_message(
@@ -137,7 +140,7 @@ async def _persist_user_message(
 
 async def create_chat_run(
     db: DbSession,
-    user: UserPrincipal,
+    caller: Caller,
     request: ChatRunCreateRequest,
 ) -> ChatRunCreateResponse:
     """Create or resume a chat run submission."""
@@ -152,7 +155,7 @@ async def create_chat_run(
         conversation = await _load_conversation_or_404(
             db,
             existing_run.conversation_id,
-            user,
+            caller,
         )
         stored_message_id = (existing_run.input or {}).get("user_message_id")
         if not stored_message_id:
@@ -214,7 +217,7 @@ async def create_chat_run(
         )
         existing_conversation = result.scalar_one_or_none()
         if existing_conversation is not None:
-            if existing_conversation.user_id != user.user_id:
+            if existing_conversation.user_id != _owner_id(caller):
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Conversation {request.conversation_id} not found",
@@ -223,15 +226,15 @@ async def create_chat_run(
 
     if conversation is None:
         conversation_id = request.conversation_id or uuid4()
-        requested_agent = (
-            await _load_authorized_agent(db, user, request.agent_id)
-            if request.agent_id is not None
-            else None
-        )
+        requested_agent = None
+        if request.agent_id is not None:
+            caller, requested_agent = await _load_authorized_agent(
+                db, caller, request.agent_id
+            )
         conversation = Conversation(
             id=conversation_id,
             agent_id=requested_agent.id if requested_agent else None,
-            user_id=user.user_id,
+            user_id=_owner_id(caller),
             channel="chat",
             title=None,
             is_active=True,
@@ -252,13 +255,18 @@ async def create_chat_run(
             )
         target_agent_id = request.agent_id or conversation.agent_id
         if target_agent_id is not None:
-            authorized_agent = await _load_authorized_agent(db, user, target_agent_id)
+            caller, authorized_agent = await _load_authorized_agent(
+                db, caller, target_agent_id
+            )
             if conversation.agent_id is None:
                 conversation.agent_id = authorized_agent.id
                 conversation.agent = authorized_agent
     if conversation.agent_id is None:
-        # Chat without an agent spends AI directly.
-        access_checks.note_launch("ai.execute", None, user.organization_id, subject="ai:chat")
+        try:
+            caller = await authorize_agentless_ai(db, caller)
+        except AgentRuntimeAuthorizationError as exc:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
+        access_checks.note_launch("ai.execute", None, caller.ctx.home_organization_id, subject="ai:chat")
 
     existing_message = await db.get(Message, user_message_id)
     if existing_message is not None:
@@ -326,19 +334,26 @@ async def create_chat_run(
                     str(conversation.agent_id) if conversation.agent_id else None
                 ),
             },
-            org_id=str(user.organization_id) if user.organization_id else None,
-            caller_user_id=str(user.user_id),
-            caller_email=user.email,
-            caller_name=user.name,
-            caller_is_superuser=user.is_superuser,
-            caller_is_external=user.is_external,
-            caller_is_provider_org=user.is_provider_org,
-            caller_roles=user.roles,
+            org_id=(
+                str(caller.principal.runtime_authority.organization_id)
+                if caller.principal.runtime_authority is not None
+                and caller.principal.runtime_authority.organization_id is not None
+                else str(caller.ctx.home_organization_id)
+                if caller.ctx.home_organization_id is not None
+                else None
+            ),
+            caller_user_id=str(caller.principal.user_id),
+            caller_email=caller.principal.email,
+            caller_name=caller.principal.name,
+            caller_is_superuser=caller.principal.is_superuser,
+            caller_is_external=caller.principal.is_external,
+            caller_is_provider_org=caller.principal.is_provider_org,
+            caller_roles=caller.principal.roles,
             conversation_id=str(conversation.id),
             sync=False,
             run_id=str(client_run_id),
             before_queue_publish=publish_queued,
-            lineage=await principal_lineage(db, user),
+            lineage=await principal_lineage(db, caller.principal),
         )
     except Exception:
         await publish_chat_run_event(
@@ -373,10 +388,10 @@ async def create_chat_run(
 
 async def get_chat_state(
     db: DbSession,
-    user: UserPrincipal,
+    caller: Caller,
     conversation_id: UUID,
 ) -> ChatRunStateResponse:
-    conversation = await _load_conversation_or_404(db, conversation_id, user)
+    conversation = await _load_conversation_or_404(db, conversation_id, caller)
     message_count = await _conversation_message_count(db, conversation.id)
     messages = await _conversation_messages(db, conversation.id)
     active_run = await _latest_run(db, conversation.id)
@@ -394,7 +409,7 @@ async def get_chat_state(
 
 async def cancel_chat_run(
     db: DbSession,
-    user: UserPrincipal,
+    caller: Caller,
     run_id: UUID,
 ) -> ChatRunCancelResponse:
     query = (
@@ -402,7 +417,7 @@ async def cancel_chat_run(
         .join(Conversation, Conversation.id == AgentRun.conversation_id)
         .options(selectinload(AgentRun.agent))
         .where(AgentRun.id == run_id)
-        .where(Conversation.user_id == user.user_id)
+        .where(Conversation.user_id == _owner_id(caller))
     )
     result = await db.execute(query)
     run = result.scalar_one_or_none()

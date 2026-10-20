@@ -56,6 +56,11 @@ vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockAuth(),
 }));
 
+const mockAuthorization = vi.fn();
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockAuthorization(),
+}));
+
 // Passthrough search — filter by substring across the configured keys.
 vi.mock("@/hooks/useSearch", () => ({
 	useSearch: <T,>(items: T[]): T[] => items,
@@ -236,6 +241,10 @@ beforeEach(() => {
 		isPlatformAdmin: false,
 		user: { id: "user-1", email: "u@example.com" },
 	});
+	mockAuthorization.mockImplementation(() => ({
+		canAt: () => mockAuth().isPlatformAdmin,
+		canAnywhere: () => mockAuth().isPlatformAdmin,
+	}));
 	mockUseExecutions.mockReturnValue({
 		data: { executions: [], continuation_token: null },
 		isFetching: false,
@@ -510,6 +519,38 @@ describe("ExecutionHistory — workflow filter visibility", () => {
 		await renderPage();
 
 		expect(screen.getByLabelText(/workflow selector/i)).toBeInTheDocument();
+	});
+
+	it("shows discovery filters for a scoped role without platform-admin authority", async () => {
+		mockAuthorization.mockReturnValue({
+			canAt: () => false,
+			canAnywhere: (permission: string) =>
+				permission === "workflows.read" ||
+				permission === "organizations.read",
+		});
+
+		await renderPage();
+
+		expect(screen.getByLabelText(/workflow selector/i)).toBeInTheDocument();
+		expect(
+			screen.getByTestId("history-organization-filter"),
+		).toBeInTheDocument();
+	});
+});
+
+describe("ExecutionHistory — agent history visibility", () => {
+	it("offers personal agent history with agentruns.read without agents.read", async () => {
+		mockAuthorization.mockReturnValue({
+			canAt: () => false,
+			canAnywhere: (permission: string) =>
+				permission === "agentruns.read",
+		});
+
+		await renderPage(["/history?type=agents"]);
+
+		expect(
+			screen.getByLabelText("Execution history type"),
+		).toBeInTheDocument();
 	});
 });
 

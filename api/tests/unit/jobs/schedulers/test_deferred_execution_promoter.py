@@ -7,11 +7,35 @@ import pytest
 import pytest_asyncio
 
 from src.models.enums import ExecutionStatus
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.models.orm.executions import Execution
 
 
 PATH_PUBLISH = "src.jobs.schedulers.deferred_execution_promoter._publish_pending"
 PATH_DB_CTX = "src.jobs.schedulers.deferred_execution_promoter.get_db_context"
+
+
+@pytest_asyncio.fixture
+async def db_session(async_engine, monkeypatch):
+    # The promoter commits through this same session. Keep those commits inside
+    # a savepoint so scheduled rows and run users never leak into another test.
+    async with async_engine.connect() as connection:
+        transaction = await connection.begin()
+        async with AsyncSession(
+            bind=connection, expire_on_commit=False, join_transaction_mode="create_savepoint"
+        ) as session:
+            # The writer must see the same uncommitted test users. Its real
+            # insert/judging logic runs here; REST coverage tests the detached
+            # transaction boundary against committed users.
+            monkeypatch.setattr(
+                "src.services.access_check_writer.get_db_context", lambda: _DbCtx(session)
+            )
+            try:
+                yield session
+            finally:
+                await session.rollback()
+                await transaction.rollback()
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -81,6 +105,66 @@ async def test_promotes_due_rows(db_session):
 
 
 @pytest.mark.asyncio
+async def test_deletion_cancellation_wins_after_promotion_before_dispatch(db_session):
+    """A queued message cannot resurrect a run cancelled after promotion."""
+    from shared.run_cancellation import (
+        RUN_USER_DELETED_ERROR,
+        cancel_unstarted_runs_for_deleted_user,
+        claim_pending_run_for_dispatch,
+    )
+    from src.jobs.schedulers.deferred_execution_promoter import promote_due_executions
+
+    _org, user = await _contoso_person(db_session)
+    due = _new_scheduled(datetime.now(timezone.utc) - timedelta(seconds=1))
+    due.executed_by = user.id
+    due.run_user_id = user.id
+    db_session.add(due)
+    await db_session.commit()
+
+    with (
+        patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
+        patch(PATH_PUBLISH, new=AsyncMock()),
+    ):
+        promoted, failures = await promote_due_executions()
+
+    assert (promoted, failures) == (1, 0)
+    assert await cancel_unstarted_runs_for_deleted_user(db_session, user.id) == 1
+    await db_session.commit()
+
+    assert await claim_pending_run_for_dispatch(db_session, due.id) is False
+    await db_session.refresh(due)
+    assert (due.status, due.error_message) == (
+        ExecutionStatus.CANCELLED,
+        RUN_USER_DELETED_ERROR,
+    )
+
+
+@pytest.mark.asyncio
+async def test_does_not_promote_row_with_deleted_run_user_snapshot(db_session):
+    from shared.run_cancellation import RUN_USER_DELETED_ERROR
+    from src.jobs.schedulers.deferred_execution_promoter import promote_due_executions
+
+    due = _new_scheduled(datetime.now(timezone.utc) - timedelta(seconds=1))
+    due.execution_context = {"run_user_id": str(uuid4())}
+    db_session.add(due)
+    await db_session.commit()
+
+    with (
+        patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
+        patch(PATH_PUBLISH, new=AsyncMock()) as publish,
+    ):
+        promoted, failures = await promote_due_executions()
+
+    assert (promoted, failures) == (0, 0)
+    publish.assert_not_awaited()
+    await db_session.refresh(due)
+    assert (due.status, due.error_message) == (
+        ExecutionStatus.CANCELLED,
+        RUN_USER_DELETED_ERROR,
+    )
+
+
+@pytest.mark.asyncio
 async def test_leaves_future_rows(db_session):
     from src.jobs.schedulers.deferred_execution_promoter import promote_due_executions
 
@@ -144,7 +228,7 @@ async def test_reverts_on_publish_failure(db_session):
 
 
 @pytest.mark.asyncio
-async def test_forwards_the_row_lineage(db_session):
+async def test_forwards_the_rows_persisted_actor_attribution(db_session):
     from sqlalchemy import select
 
     from src.models.enums import IdentityKind
@@ -158,6 +242,8 @@ async def test_forwards_the_row_lineage(db_session):
     due.run_user_id = identity
     due.started_by_user_id = identity
     due.root_execution_id = due.id
+    due.impersonated_by_user_id = uuid4()
+    due.impersonation_session_id = uuid4()
     plain = _new_scheduled(datetime.now(timezone.utc) - timedelta(seconds=1))
     db_session.add_all([due, plain])
     await db_session.commit()
@@ -175,6 +261,15 @@ async def test_forwards_the_row_lineage(db_session):
         "root_execution_id": str(due.id),
     }
     assert lineage[str(plain.id)] is None
+    provenance = {
+        call.kwargs["execution_id"]: call.kwargs["impersonation_provenance"]
+        for call in pub.await_args_list
+    }
+    assert provenance[str(due.id)] == {
+        "impersonated_by_user_id": str(due.impersonated_by_user_id),
+        "impersonation_session_id": str(due.impersonation_session_id),
+    }
+    assert provenance[str(plain.id)] is None
 
 
 async def _contoso_person(db_session, **fields):
@@ -389,9 +484,18 @@ async def test_a_run_as_still_permitted_is_published_as_the_target(db_session):
     assert kwargs["user_id"] == colleague_id
     await db_session.refresh(row)
     assert row.status == ExecutionStatus.PENDING
-    # Only a refusal is recorded; the decision when it was scheduled already was.
-    audit = await _run_as_audit(db_session, initiator.id)
-    assert audit == []
+    # Promotion rechecks and records the live named decision, including success.
+    [audit] = await _run_as_audit(db_session, initiator.id)
+    assert audit.details is not None
+    assert (audit.action, audit.outcome, audit.organization_id) == (
+        "access.check",
+        "success",
+        colleague.organization_id,
+    )
+    assert (audit.details["enforced"], audit.details["inputs"]["run_as_user_id"]) == (
+        True,
+        colleague_id,
+    )
 
 
 async def _missing_run_as_user_gaps(db_session, requested) -> list:
@@ -438,15 +542,33 @@ async def test_a_run_as_whose_target_was_deleted_fails_and_is_recorded(db_sessio
 
 
 @pytest.mark.asyncio
-async def test_a_workflow_run_as_checks_the_target_only(db_session):
-    from src.core.constants import SYSTEM_USER_UUID
+async def test_a_workflow_run_as_rechecks_original_reach_and_current_workflow_powers(db_session):
+    from src.models.contracts.workflow_permissions import WorkflowPermissionMode
+    from src.models.orm.workflows import Workflow
+    from src.models.orm.users import User
 
-    # The engine account holds no grant; a workflow's Run As is not judged on roles here.
-    _org, colleague = await _contoso_person(db_session)
-    _org2, departed = await _contoso_person(db_session, is_active=False)
-    _org3, run_user = await _contoso_person(db_session)
-    allowed = _acting_as(colleague.id, SYSTEM_USER_UUID, enforced=False, run_user_id=run_user.id)
-    refused = _acting_as(departed.id, SYSTEM_USER_UUID, enforced=False, run_user_id=run_user.id)
+    org, run_user = await _contoso_person(db_session)
+    colleague = User(email=f"{uuid4().hex[:8]}@contoso.example", name="Contoso Colleague", organization_id=org.id)
+    departed = User(
+        email=f"{uuid4().hex[:8]}@contoso.example",
+        name="Departed Contoso Colleague",
+        organization_id=org.id,
+        is_active=False,
+    )
+    workflow = Workflow(
+        id=uuid4(),
+        name=f"run-as-{uuid4().hex[:8]}",
+        function_name="run",
+        path=f"workflows/run_as_{uuid4().hex[:8]}.py",
+        organization_id=org.id,
+        permission_mode=WorkflowPermissionMode.FULL,
+    )
+    db_session.add_all([colleague, departed, workflow])
+    await db_session.flush()
+    allowed = _acting_as(colleague.id, run_user.id, enforced=True)
+    refused = _acting_as(departed.id, run_user.id, enforced=True)
+    for row in (allowed, refused):
+        row.execution_context["run_as"]["workflow_id"] = str(workflow.id)
     db_session.add_all([allowed, refused])
     await db_session.commit()
 
@@ -460,21 +582,26 @@ async def test_a_workflow_run_as_checks_the_target_only(db_session):
     assert refused.status == ExecutionStatus.FAILED
     expected = f"Run As is no longer permitted: Run As user '{departed.id}' is inactive"
     assert refused.error_message == expected
-    # The refusal is recorded report-only for the run that asked.
-    [audit] = await _run_as_audit(db_session, run_user.id)
+    audits = await _run_as_audit(db_session, run_user.id)
+    by_target = {
+        audit.details["inputs"]["run_as_user_id"]: audit
+        for audit in audits
+        if audit.details is not None
+    }
+    assert set(by_target) == {str(colleague.id), str(departed.id)}
+    assert by_target[str(colleague.id)].outcome == "success"
+    audit = by_target[str(departed.id)]
     assert audit.details is not None
     stopped = [(step["key"], step["reason"]) for step in audit.details["trace"]["steps"] if step["status"] == "stopped"]
     recorded = (audit.outcome, audit.details["enforced"], audit.details["inputs"]["run_as_user_id"], stopped)
-    assert recorded == ("failure", False, str(departed.id), [("run_as_user", "inactive")])
+    assert recorded == ("failure", True, str(departed.id), [("run_as_user", "inactive")])
 
 
 @pytest.mark.asyncio
 async def test_a_workflow_run_as_whose_target_was_deleted_is_recorded(db_session):
-    from src.core.constants import SYSTEM_USER_UUID
-
     _org, run_user = await _contoso_person(db_session)
     departed = uuid4()
-    row = _acting_as(departed, SYSTEM_USER_UUID, enforced=False, run_user_id=run_user.id)
+    row = _acting_as(departed, run_user.id, enforced=True)
     row.executed_by = None
     db_session.add(row)
     await db_session.commit()
@@ -519,6 +646,7 @@ async def test_a_row_without_run_as_is_published_as_before(db_session):
         "file_path": None,
         "execution_record_exists": True,
         "lineage": None,
+        "impersonation_provenance": None,
     }
     await db_session.refresh(plain)
     assert (plain.status, plain.error_message, plain.completed_at) == (ExecutionStatus.PENDING, None, None)

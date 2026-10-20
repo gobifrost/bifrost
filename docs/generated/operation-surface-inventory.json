@@ -1406,7 +1406,7 @@
       },
       "operation": {
         "action_scopes": [
-          "apps.readbasic"
+          "apps.read"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
@@ -4231,7 +4231,7 @@
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "ExecutionRepository.list_executions and caller scope resolver",
+        "authorization_resolver": "shared.sdk_execution_reads.list_sdk_executions and caller scope resolver",
         "cli": {
           "path": [
             "workflows",
@@ -4291,7 +4291,7 @@
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "ExecutionRepository.get_execution access check",
+        "authorization_resolver": "shared.sdk_execution_reads.get_sdk_execution access check",
         "cli": {
           "path": [
             "workflows",
@@ -10197,7 +10197,7 @@
     "cli": 172,
     "manifest": 16,
     "mcp": 94,
-    "rest": 679,
+    "rest": 687,
     "sdk": 21
   },
   "schema_version": 1,
@@ -13804,6 +13804,41 @@
       {
         "method": "POST",
         "operation_id": "",
+        "path": "/api/sdk/runtime/data-provider-cache/read",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/sdk/runtime/data-provider-cache/write",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/sdk/runtime/logs",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/sdk/runtime/logs/{execution_id}",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/sdk/runtime/service-control",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
         "path": "/api/sdk/tables/create",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -14066,6 +14101,13 @@
         "path": "/api/solutions/{solution_id}/deletion-summary",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/solutions/{solution_id}/dev-context",
+        "reason": "Issues user-bound context for local Solution development; owns no entity state.",
+        "status": "transport_only"
       },
       {
         "method": "GET",
@@ -14395,6 +14437,20 @@
         "path": "/auth/device/token",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/auth/impersonate/{user_id}",
+        "reason": "Starts a browser authentication impersonation session; owns no entity state.",
+        "status": "transport_only"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/auth/impersonation/end",
+        "reason": "Ends a browser authentication impersonation session; owns no entity state.",
+        "status": "transport_only"
       },
       {
         "method": "POST",

@@ -51,6 +51,23 @@ function check(
 }
 
 describe("RunUserLabel", () => {
+	it("shows the effective user and the original operator together", () => {
+		render(<RunUserLabel entry={check(null, {
+			user_email: "jane@example.com",
+			impersonated_by_user_id: "operator-id",
+			impersonated_by_email: "operator@example.com",
+		})} />);
+		expect(screen.getByText("jane@example.com")).toBeVisible();
+		expect(screen.getByText("Impersonated by operator@example.com")).toBeVisible();
+	});
+
+	it("keeps the operator ID visible when the original account is unavailable", () => {
+		render(<RunUserLabel entry={check(null, {
+			impersonated_by_user_id: "deleted-operator-id",
+		})} />);
+		expect(screen.getByText("Impersonated by deleted-operator-id")).toBeVisible();
+	});
+
 	it("names an identity with its home organization and the hexagon glyph, never the event's", () => {
 		render(
 			<RunUserLabel

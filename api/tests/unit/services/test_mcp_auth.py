@@ -272,3 +272,29 @@ class TestCreateBifrostAuthProvider:
         provider = create_bifrost_auth_provider()
         assert isinstance(provider, BifrostAuthProvider)
         assert provider.base_url == "https://default.example.com"
+
+
+async def test_browser_impersonation_cannot_grant_independent_mcp_session(auth_provider):
+    from starlette.requests import Request
+    from shared.browser_impersonation import IMPERSONATION_COOKIE_NAME
+
+    request = Request({
+        "type": "http", "method": "GET", "path": "/mcp/callback",
+        "query_string": b"internal_state=example",
+        "headers": [(b"cookie", f"{IMPERSONATION_COOKIE_NAME}=support-session".encode())],
+    })
+    with patch("src.core.cache.get_shared_redis", new_callable=AsyncMock) as redis:
+        response = await auth_provider._callback(request)
+    assert response.status_code == 403
+    redis.assert_not_awaited()
+
+
+async def test_browser_support_token_cannot_authenticate_mcp(auth_provider, regular_user_payload):
+    token = create_access_token({
+        **regular_user_payload,
+        "impersonated_by_user_id": str(uuid4()),
+        "impersonation_session_id": str(uuid4()),
+    })
+    with patch.object(auth_provider, "_check_mcp_access", new_callable=AsyncMock) as access:
+        assert await auth_provider.verify_token(token) is None
+    access.assert_not_awaited()

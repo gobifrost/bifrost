@@ -110,6 +110,10 @@ async def _make_connection(
     available_to_autonomous: bool = False,
     service_oauth_token: OAuthToken | None = None,
 ) -> MCPConnection:
+    if service_oauth_token is not None:
+        service_oauth_token.organization_id = org.id
+        server.oauth_provider_id = service_oauth_token.provider_id
+
     connection = MCPConnection(
         id=uuid4(),
         server_id=server.id,

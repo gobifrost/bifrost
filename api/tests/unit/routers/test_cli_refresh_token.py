@@ -11,6 +11,19 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from uuid import uuid4
 
 
+@pytest.fixture(autouse=True)
+def _authorize_refresh(monkeypatch):
+    """Keep refresh orchestration tests independent of caller policy fixtures."""
+    from shared import sdk_config, sdk_integrations
+    from src.services.authorization import enforce
+
+    caller = MagicMock()
+    caller.principal.is_external = False
+    monkeypatch.setattr(enforce, "load_caller", AsyncMock(return_value=caller))
+    monkeypatch.setattr(sdk_config, "resolve_sdk_scope", AsyncMock(return_value=None))
+    monkeypatch.setattr(sdk_integrations, "require_permission", lambda *args: None)
+
+
 def _make_result(value):
     """Build a SQLAlchemy result mock that supports both access shapes.
 

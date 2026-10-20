@@ -30,6 +30,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
+from shared.run_lineage import unattended_lineage
 from src.models.orm.services import _SERVICE_LIVE_STATES, ServiceAttempt, ServiceDefinition, ServiceLog
 from src.models.orm.workflows import Workflow
 
@@ -669,6 +670,10 @@ async def claim_eligible_service(
     if definition is None:
         return None
 
+    # Resolve the source workflow's unattended identity while claiming the
+    # attempt. The resolved ID belongs to this attempt permanently; later
+    # workflow edits cannot alter a live service's identity.
+    lineage = await unattended_lineage(db, definition.workflow_id)
     last_number = await db.scalar(
         select(func.max(ServiceAttempt.restart_number)).where(
             ServiceAttempt.service_id == definition.id
@@ -679,6 +684,7 @@ async def claim_eligible_service(
         service_id=definition.id,
         revision=definition.current_revision,
         worker_id=worker_id,
+        run_user_id=lineage.run_user_id,
         lease_token=_new_lease_token(),
         lease_expires_at=now + timedelta(seconds=lease_ttl_seconds),
         state="starting",

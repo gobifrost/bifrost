@@ -189,11 +189,6 @@ async def test_process_failure_forwards_reported_metrics() -> None:
                 new_callable=AsyncMock,
             ) as update_execution,
             patch(
-                "bifrost._sync.flush_pending_changes",
-                new_callable=AsyncMock,
-                return_value=0,
-            ),
-            patch(
                 "src.core.metrics.update_daily_metrics",
                 new_callable=AsyncMock,
             ) as daily_metrics,

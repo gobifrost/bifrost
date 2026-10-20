@@ -1,911 +1,189 @@
-"""
-Unit tests for MCP Tool Access Service.
+"""MCP discovery shares original-user resource policy and configuration gates."""
 
-Tests the MCPToolAccessService which computes which MCP tools a user can access
-based on their agent access permissions.
-"""
-
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
+from shared.builtin_roles import USER_BASE_PERMISSIONS, USER_ROLE_ID
+from src.core.principal import UserPrincipal
+from src.models.contracts.agents import ToolInfo
 from src.models.enums import AgentAccessLevel
-from src.services.mcp_server.server import MCPContext
+from src.services.authorization.context import AuthorizationContext, Boundary, BoundaryKind, RoleGrant
+from src.services.authorization.enforce import Caller
+from src.services.authorization.explain import RunUser
+from src.services.authorization.runtime import RuntimeAuthority
+from src.services.mcp_server.config_service import MCPConfig
 from src.services.mcp_server.tool_access import MCPToolAccessService
 
 
-# ==================== Fixtures ====================
+def _caller(*, configuration=False, actor_admin=False):
+    original_id, actor_id, home = uuid4(), uuid4(), uuid4()
+    roles = () if not configuration else (
+        RoleGrant(uuid4(), frozenset({"mcp.read"}), (Boundary(BoundaryKind.PLATFORM),)),
+    )
+    ctx = AuthorizationContext(
+        user_id=original_id, home_organization_id=home, base_role_id=USER_ROLE_ID,
+        is_external=False, base_permissions=USER_BASE_PERMISSIONS, role_grants=roles,
+    )
+    principal = UserPrincipal(
+        user_id=actor_id, email="runner@contoso.example", organization_id=home,
+        is_superuser=actor_admin,
+    )
+    principal.runtime_authority = RuntimeAuthority(
+        kind="agent_run", credential_id=uuid4(), run_user=RunUser(original_id, ctx, None, True),
+        powers=None, acting_user_id=actor_id, organization_id=home, workflow_id=None,
+        started_by_user_id=original_id, root_execution_id=None,
+    )
+    return Caller(principal, ctx)
 
 
-def test_mcp_scope_bypass_requires_superuser_or_provider_org():
-    user_id = uuid4()
-
-    assert MCPContext(user_id=user_id).has_scope_bypass is False
-    assert MCPContext(user_id=user_id, is_platform_admin=True).has_scope_bypass is True
-    assert MCPContext(user_id=user_id, is_provider_org=True).has_scope_bypass is True
-
-
-@pytest.fixture
-def mock_session():
-    """Create a mock database session."""
-    return AsyncMock()
+def _agent(caller, *, tools=(), namespaces=(), workflows=(), organization_id=...):
+    return SimpleNamespace(
+        id=uuid4(), name="Contoso Agent", access_level=AgentAccessLevel.AUTHENTICATED,
+        organization_id=caller.ctx.home_organization_id if organization_id is ... else organization_id,
+        owner_user_id=None, is_active=True, system_tools=list(tools),
+        knowledge_sources=list(namespaces), tools=list(workflows),
+    )
 
 
-@pytest.fixture
-def service(mock_session):
-    """Create an MCPToolAccessService instance."""
-    return MCPToolAccessService(mock_session)
-
-
-@pytest.fixture
-def mock_role():
-    """Create a mock Role object."""
-    def _create_role(name: str):
-        role = MagicMock()
-        role.name = name
-        return role
-    return _create_role
-
-
-@pytest.fixture
-def mock_workflow():
-    """Create a mock Workflow object."""
-    def _create_workflow(name: str = "test_workflow", description: str = "Test workflow"):
-        workflow = MagicMock()
-        workflow.id = uuid4()
-        workflow.name = name
-        workflow.description = description
-        workflow.tool_description = None
-        workflow.category = "automation"
-        return workflow
-    return _create_workflow
-
-
-@pytest.fixture
-def mock_agent(mock_role, mock_workflow):
-    """Create a mock Agent object."""
-    def _create_agent(
-        name: str = "Test Agent",
-        access_level: AgentAccessLevel = AgentAccessLevel.AUTHENTICATED,
-        system_tools: list[str] | None = None,
-        knowledge_sources: list[str] | None = None,
-        roles: list[str] | None = None,
-        workflows: list | None = None,
-    ):
-        agent = MagicMock()
-        agent.id = uuid4()
-        agent.name = name
-        agent.access_level = access_level
-        agent.is_active = True
-        agent.system_tools = system_tools or []
-        agent.knowledge_sources = knowledge_sources or []
-        agent.roles = [mock_role(r) for r in (roles or [])]
-        agent.tools = workflows or []
-        return agent
-    return _create_agent
-
-
-def mock_query_result(agents: list):
-    """Create a mock query result with agents."""
-    mock_result = MagicMock()
-    mock_result.scalars.return_value.unique.return_value.all.return_value = agents
-    return mock_result
+def _session(agents):
+    result = MagicMock()
+    result.scalars.return_value.unique.return_value.all.return_value = agents
+    result.scalars.return_value.unique.return_value.first.return_value = agents[0] if agents else None
+    return AsyncMock(execute=AsyncMock(return_value=result))
 
 
 @pytest.fixture(autouse=True)
-def patch_workflow_repo_passthrough():
-    """Make the per-workflow gate a pass-through for unit tests by default.
-
-    ``MCPToolAccessService`` now gates ``agent.tools`` through
-    ``WorkflowRepository.get(id=...)`` so MCP listing uses the same access
-    rule as the executor. Most existing unit tests mock the SQLAlchemy
-    session at a low level and don't care about that gate — they assert
-    that workflows attached to a visible agent appear in the result.
-
-    Patch ``_build_workflow_repo`` to return a mock repo whose ``.get``
-    looks up the workflow in the test's seeded agent fixtures and returns
-    it. Tests that exercise the gate's deny semantics live in the e2e
-    access matrix (``tests/e2e/mcp/test_mcp_tool_access_matrix.py``)
-    against the real DB.
-    """
-    seen_workflows: dict = {}
-
-    async def _fake_get(*, id, **_):
-        return seen_workflows.get(id)
-
-    fake_repo = AsyncMock()
-    fake_repo.get = _fake_get
-
-    def _build(self, **_):
-        # Walk the test's mock-agent return value to populate the workflow
-        # lookup. We grab whatever the latest session.execute call resolved
-        # to (the agents list) and harvest all attached workflows.
-        # Tests can use any depth of mock chaining (or none); if any link
-        # in the chain isn't a MagicMock with the expected attribute, fall
-        # through and leave seen_workflows empty — which gives the per-test
-        # repo a deny-all default. That's safe: tests that need workflows
-        # visible already populate the chain before calling the service.
-        try:
-            agents = (
-                self.session.execute.return_value.scalars.return_value
-                .unique.return_value.all.return_value
-            )
-            if isinstance(agents, list):
-                for agent in agents:
-                    for wf in (getattr(agent, "tools", None) or []):
-                        seen_workflows[wf.id] = wf
-        except AttributeError:
-            # Mock chain didn't reach .all — leave seen_workflows empty.
-            # Not an error condition, just "no agents seeded for this test".
-            pass
-        return fake_repo
-
-    with patch.object(
-        MCPToolAccessService, "_build_workflow_repo", autospec=True, side_effect=_build
-    ) as mock_build:
-        yield mock_build
-
-
-# ==================== Agent Access Tests ====================
-
-
-class TestGetAccessibleAgents:
-    """Tests for _get_accessible_agents()."""
-
-    @pytest.mark.asyncio
-    async def test_authenticated_agents_accessible_to_all(self, service, mock_session, mock_agent):
-        """AUTHENTICATED agents should be accessible to any authenticated user."""
-        agent = mock_agent(
-            access_level=AgentAccessLevel.AUTHENTICATED,
-            system_tools=["bifrost_workflow_execute"],
-        )
-
-        mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
-
-        result = await service._get_accessible_agents(
-            user_roles=[],
-            is_superuser=False,
-        )
-
-        assert len(result) == 1
-        assert result[0].id == agent.id
-
-    @pytest.mark.asyncio
-    async def test_role_based_agent_with_matching_role(self, service, mock_session, mock_agent):
-        """ROLE_BASED agent accessible when user has matching role."""
-        agent = mock_agent(
-            access_level=AgentAccessLevel.ROLE_BASED,
-            system_tools=["bifrost_workflow_list"],
-            roles=["Developers"],
-        )
-
-        mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
-
-        result = await service._get_accessible_agents(
-            user_roles=["Developers"],
-            is_superuser=False,
-        )
-
-        assert len(result) == 1
-        assert result[0].id == agent.id
-
-    @pytest.mark.asyncio
-    async def test_role_based_agent_without_matching_role(self, service, mock_session, mock_agent):
-        """ROLE_BASED agent not accessible when user lacks matching role."""
-        agent = mock_agent(
-            access_level=AgentAccessLevel.ROLE_BASED,
-            system_tools=["bifrost_workflow_list"],
-            roles=["Admins"],
-        )
-
-        mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
-
-        result = await service._get_accessible_agents(
-            user_roles=["Developers"],  # User has different role
-            is_superuser=False,
-        )
-
-        assert len(result) == 0
-
-    @pytest.mark.asyncio
-    async def test_role_based_agent_no_roles_superuser_access(self, service, mock_session, mock_agent):
-        """ROLE_BASED agent with no roles accessible only to superusers."""
-        agent = mock_agent(
-            access_level=AgentAccessLevel.ROLE_BASED,
-            system_tools=["bifrost_workflow_execute"],
-            roles=[],  # No roles assigned
-        )
-
-        mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
-
-        # Non-superuser should NOT see it
-        result = await service._get_accessible_agents(
-            user_roles=["Developers"],
-            is_superuser=False,
-        )
-        assert len(result) == 0
-
-        # Superuser SHOULD see it
-        result = await service._get_accessible_agents(
-            user_roles=[],
-            is_superuser=True,
-        )
-        assert len(result) == 1
-
-    @pytest.mark.asyncio
-    async def test_platform_admin_bypasses_role_based_agent(self, service, mock_session, mock_agent):
-        """Platform admins (superusers) bypass ROLE_BASED agent role requirements (issue #244).
-
-        Previously, platform admins listing tools via /mcp/{agent_id} for a ROLE_BASED agent
-        whose roles they did not share would receive an empty tools list. Superusers must
-        be able to see tools for any agent, matching their behavior elsewhere in the platform.
-        """
-        agent = mock_agent(
-            access_level=AgentAccessLevel.ROLE_BASED,
-            system_tools=["search_knowledge"],
-            roles=["Secret Team"],
-        )
-
-        mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
-
-        # Platform admin without the role SHOULD now see the agent
-        result = await service._get_accessible_agents(
-            user_roles=["Platform Admin"],  # Not "Secret Team"
-            is_superuser=True,
-        )
-
-        assert len(result) == 1
-        assert result[0].id == agent.id
-
-    def test_check_agent_access_superuser_bypass_role_based(self, service, mock_agent):
-        """_check_agent_access: superuser without matching roles still gets access (issue #244)."""
-        agent = mock_agent(
-            access_level=AgentAccessLevel.ROLE_BASED,
-            roles=["Secret Team"],
-        )
-
-        # Superuser without matching role -> True (the fix)
-        assert service._check_agent_access(
-            agent, user_roles=["Other"], is_superuser=True
-        ) is True
-
-    def test_check_agent_access_non_superuser_without_matching_role(self, service, mock_agent):
-        """_check_agent_access: non-superuser without matching roles is denied."""
-        agent = mock_agent(
-            access_level=AgentAccessLevel.ROLE_BASED,
-            roles=["Secret Team"],
-        )
-
-        assert service._check_agent_access(
-            agent, user_roles=["Other"], is_superuser=False
-        ) is False
-
-    @pytest.mark.asyncio
-    async def test_multiple_roles_matching(self, service, mock_session, mock_agent):
-        """Agent accessible when any user role matches any agent role."""
-        agent = mock_agent(
-            access_level=AgentAccessLevel.ROLE_BASED,
-            system_tools=["bifrost_form_list"],
-            roles=["Developers", "QA"],
-        )
-
-        mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
-
-        # User has QA role, agent has QA role - should match
-        result = await service._get_accessible_agents(
-            user_roles=["QA", "Support"],
-            is_superuser=False,
-        )
-
-        assert len(result) == 1
-
-
-# ==================== Tool Collection Tests ====================
-
-
-class TestGetAccessibleTools:
-    """Tests for get_accessible_tools()."""
-
-    @pytest.mark.asyncio
-    async def test_platform_settings_inventory_preserves_admin_access(
-        self, service
-    ):
-        """The REST settings inventory can enumerate without changing /mcp discovery."""
-        accessible_agents = AsyncMock(return_value=[])
-        workflow_repo = MagicMock()
-
-        with (
-            patch.object(
-                service,
-                "_get_accessible_agents",
-                accessible_agents,
-            ),
-            patch.object(
-                service,
-                "_build_workflow_repo",
-                return_value=workflow_repo,
-            ) as build_workflow_repo,
-            patch.object(service, "_apply_config_filters", return_value=[]),
-            patch(
-                "src.services.mcp_server.tool_access.MCPConfigService"
-            ) as config_service,
-        ):
-            config_service.return_value.get_config = AsyncMock(
-                return_value=MagicMock()
-            )
-            result = await service.get_accessible_tools(
-                user_roles=[],
-                is_superuser=True,
-            )
-
-        assert result.tools == []
-        assert accessible_agents.await_args.kwargs["is_superuser"] is True
-        assert build_workflow_repo.call_args.kwargs["is_superuser"] is True
-
-    @pytest.mark.asyncio
-    async def test_collects_system_tools_from_agents(self, service, mock_session, mock_agent):
-        """Should collect system tools from accessible agents."""
-        agent = mock_agent(
-            access_level=AgentAccessLevel.AUTHENTICATED,
-            system_tools=["bifrost_workflow_execute", "bifrost_workflow_list"],
-        )
-
-        mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
-
-        with patch.object(service, '_apply_config_filters', side_effect=lambda t, c: t):
-            with patch('src.services.mcp_server.tool_access.MCPConfigService') as MockConfig:
-                mock_config = MagicMock()
-                mock_config.allowed_tool_ids = None
-                mock_config.blocked_tool_ids = None
-                MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
-
-                result = await service.get_accessible_tools(
-                    user_roles=[],
-                )
-
-        system_tools = [t for t in result.tools if t.type == "system"]
-        assert len(system_tools) == 2
-        tool_ids = {t.id for t in system_tools}
-        assert tool_ids == {"bifrost_workflow_execute", "bifrost_workflow_list"}
-
-    @pytest.mark.asyncio
-    async def test_collects_workflow_tools_from_agents(self, service, mock_session, mock_agent, mock_workflow):
-        """Should collect workflow tools from accessible agents."""
-        workflow = mock_workflow(name="my_workflow", description="My workflow tool")
-        agent = mock_agent(
-            access_level=AgentAccessLevel.AUTHENTICATED,
-            system_tools=[],
-            workflows=[workflow],
-        )
-
-        mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
-
-        with patch('src.services.mcp_server.tool_access.MCPConfigService') as MockConfig:
-            mock_config = MagicMock()
-            mock_config.allowed_tool_ids = None
-            mock_config.blocked_tool_ids = None
-            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
-
-            result = await service.get_accessible_tools(
-                user_roles=[],
-            )
-
-        workflow_tools = [t for t in result.tools if t.type == "workflow"]
-        assert len(workflow_tools) == 1
-        assert workflow_tools[0].name == "my_workflow"
-
-    @pytest.mark.asyncio
-    async def test_deduplicates_system_tools(self, service, mock_session, mock_agent):
-        """System tools should be deduplicated across agents."""
-        agent1 = mock_agent(
-            name="Agent 1",
-            access_level=AgentAccessLevel.AUTHENTICATED,
-            system_tools=["bifrost_workflow_execute", "bifrost_workflow_list"],
-        )
-        agent2 = mock_agent(
-            name="Agent 2",
-            access_level=AgentAccessLevel.AUTHENTICATED,
-            system_tools=["bifrost_workflow_execute"],  # Duplicate
-        )
-
-        mock_session.execute = AsyncMock(return_value=mock_query_result([agent1, agent2]))
-
-        with patch('src.services.mcp_server.tool_access.MCPConfigService') as MockConfig:
-            mock_config = MagicMock()
-            mock_config.allowed_tool_ids = None
-            mock_config.blocked_tool_ids = None
-            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
-
-            result = await service.get_accessible_tools(
-                user_roles=[],
-            )
-
-        # Should have 2 unique system tools, not 3
-        system_tools = [t for t in result.tools if t.type == "system"]
-        assert len(system_tools) == 2
-        tool_ids = {t.id for t in system_tools}
-        assert tool_ids == {"bifrost_workflow_execute", "bifrost_workflow_list"}
-
-    @pytest.mark.asyncio
-    async def test_deduplicates_workflow_tools(self, service, mock_session, mock_agent, mock_workflow):
-        """Workflow tools should be deduplicated across agents."""
-        workflow = mock_workflow(name="shared_workflow")
-
-        agent1 = mock_agent(
-            name="Agent 1",
-            access_level=AgentAccessLevel.AUTHENTICATED,
-            workflows=[workflow],
-        )
-        agent2 = mock_agent(
-            name="Agent 2",
-            access_level=AgentAccessLevel.AUTHENTICATED,
-            workflows=[workflow],  # Same workflow
-        )
-
-        mock_session.execute = AsyncMock(return_value=mock_query_result([agent1, agent2]))
-
-        with patch('src.services.mcp_server.tool_access.MCPConfigService') as MockConfig:
-            mock_config = MagicMock()
-            mock_config.allowed_tool_ids = None
-            mock_config.blocked_tool_ids = None
-            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
-
-            result = await service.get_accessible_tools(
-                user_roles=[],
-            )
-
-        workflow_tools = [t for t in result.tools if t.type == "workflow"]
-        assert len(workflow_tools) == 1
-
-# ==================== Config Filtering Tests ====================
-
-
-class TestApplyConfigFilters:
-    """Tests for _apply_config_filters()."""
-
-    def test_applies_config_blocklist(self, service):
-        """Blocked tools should be removed."""
-        from src.models.contracts.agents import ToolInfo
-
-        tools = [
-            ToolInfo(id="bifrost_workflow_execute", name="Execute", description="", type="system"),
-            ToolInfo(id="bifrost_workflow_list", name="List", description="", type="system"),
-            ToolInfo(id="search_knowledge", name="Search", description="", type="system"),
-        ]
-
-        mock_config = MagicMock()
-        mock_config.allowed_tool_ids = None
-        mock_config.blocked_tool_ids = ["search_knowledge"]
-
-        result = service._apply_config_filters(tools, mock_config)
-
-        tool_ids = {t.id for t in result}
-        assert "search_knowledge" not in tool_ids
-        assert "bifrost_workflow_execute" in tool_ids
-        assert "bifrost_workflow_list" in tool_ids
-
-    def test_applies_config_allowlist(self, service):
-        """Only allowed tools should be returned when allowlist is set."""
-        from src.models.contracts.agents import ToolInfo
-
-        tools = [
-            ToolInfo(id="bifrost_workflow_execute", name="Execute", description="", type="system"),
-            ToolInfo(id="bifrost_workflow_list", name="List", description="", type="system"),
-            ToolInfo(id="search_knowledge", name="Search", description="", type="system"),
-        ]
-
-        mock_config = MagicMock()
-        mock_config.allowed_tool_ids = ["bifrost_workflow_execute"]
-        mock_config.blocked_tool_ids = None
-
-        result = service._apply_config_filters(tools, mock_config)
-
-        assert len(result) == 1
-        assert result[0].id == "bifrost_workflow_execute"
-
-    def test_allowlist_and_blocklist_combined(self, service):
-        """Blocklist should be applied after allowlist."""
-        from src.models.contracts.agents import ToolInfo
-
-        tools = [
-            ToolInfo(id="bifrost_workflow_execute", name="Execute", description="", type="system"),
-            ToolInfo(id="bifrost_workflow_list", name="List", description="", type="system"),
-            ToolInfo(id="search_knowledge", name="Search", description="", type="system"),
-        ]
-
-        mock_config = MagicMock()
-        mock_config.allowed_tool_ids = ["bifrost_workflow_execute", "bifrost_workflow_list"]
-        mock_config.blocked_tool_ids = ["bifrost_workflow_list"]
-
-        result = service._apply_config_filters(tools, mock_config)
-
-        # Allowlist filters to bifrost_workflow_execute and bifrost_workflow_list
-        # Blocklist removes bifrost_workflow_list
-        assert len(result) == 1
-        assert result[0].id == "bifrost_workflow_execute"
-
-    def test_no_filters_returns_all(self, service):
-        """No filters should return all tools."""
-        from src.models.contracts.agents import ToolInfo
-
-        tools = [
-            ToolInfo(id="bifrost_workflow_execute", name="Execute", description="", type="system"),
-            ToolInfo(id="bifrost_workflow_list", name="List", description="", type="system"),
-        ]
-
-        mock_config = MagicMock()
-        mock_config.allowed_tool_ids = None
-        mock_config.blocked_tool_ids = None
-
-        result = service._apply_config_filters(tools, mock_config)
-
-        assert len(result) == 2
-
-    def test_empty_allowlist_treated_as_no_filter(self, service):
-        """Empty allowlist should be treated as no filter (same as None)."""
-        from src.models.contracts.agents import ToolInfo
-
-        tools = [
-            ToolInfo(id="bifrost_workflow_execute", name="Execute", description="", type="system"),
-        ]
-
-        mock_config = MagicMock()
-        mock_config.allowed_tool_ids = []  # Empty list is falsy
-        mock_config.blocked_tool_ids = None
-
-        result = service._apply_config_filters(tools, mock_config)
-
-        # Empty list is falsy, so no filter is applied - all tools returned
-        assert len(result) == 1
-
-
-# ==================== System Tool Metadata Tests ====================
-
-
-class TestSystemToolMetadata:
-    """Tests for system tool metadata mapping."""
-
-    def test_known_system_tools_have_metadata(self, service):
-        """Known system tools should have proper metadata."""
-        expected_tools = [
-            # Original tools
-            "bifrost_workflow_execute",
-            "bifrost_workflow_list",
-            "bifrost_integration_list",
-            "bifrost_form_list",
-            "get_docs",
-            "search_knowledge",
-            # Code editor tools (precision editing)
-            "list_content",
-            "bifrost_file_search",
-            "read_content_lines",
-            "get_content",
-            "patch_content",
-            "replace_content",
-            "delete_content",
-            # Workflow and execution tools
-            "bifrost_workflow_validate",
-            "bifrost_workflow_get",
-            "bifrost_execution_list",
-            "bifrost_execution_get",
-        ]
-
-        for tool_id in expected_tools:
-            assert tool_id in service._SYSTEM_TOOL_MAP, f"Missing metadata for {tool_id}"
-            tool = service._SYSTEM_TOOL_MAP[tool_id]
-            assert tool.name, f"Tool {tool_id} missing name"
-            assert tool.description, f"Tool {tool_id} missing description"
-
-    @pytest.mark.asyncio
-    async def test_unknown_system_tool_gets_basic_info(self, service, mock_session, mock_agent):
-        """Unknown system tools should get basic auto-generated info."""
-        agent = mock_agent(
-            access_level=AgentAccessLevel.AUTHENTICATED,
-            system_tools=["unknown_custom_tool"],
-        )
-
-        mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
-
-        with patch('src.services.mcp_server.tool_access.MCPConfigService') as MockConfig:
-            mock_config = MagicMock()
-            mock_config.allowed_tool_ids = None
-            mock_config.blocked_tool_ids = None
-            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
-
-            result = await service.get_accessible_tools(
-                user_roles=[],
-            )
-
-        assert len(result.tools) == 1
-        tool = result.tools[0]
-        assert tool.id == "unknown_custom_tool"
-        assert tool.name == "Unknown Custom Tool"  # Auto-formatted
-        assert "System tool" in tool.description
-
-
-# ==================== Edge Cases ====================
-
-
-class TestEdgeCases:
-    """Tests for edge cases."""
-
-    @pytest.mark.asyncio
-    async def test_no_accessible_agents_returns_empty(self, service, mock_session, mock_agent):
-        """Should return empty list when no agents are accessible."""
-        agent = mock_agent(
-            access_level=AgentAccessLevel.ROLE_BASED,
-            system_tools=["bifrost_workflow_execute"],
-            roles=["Secret Role"],
-        )
-
-        mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
-
-        with patch('src.services.mcp_server.tool_access.MCPConfigService') as MockConfig:
-            mock_config = MagicMock()
-            mock_config.allowed_tool_ids = None
-            mock_config.blocked_tool_ids = None
-            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
-
-            result = await service.get_accessible_tools(
-                user_roles=["Other Role"],
-            )
-
-        assert len(result.tools) == 0
-
-    @pytest.mark.asyncio
-    async def test_agents_with_no_tools(self, service, mock_session, mock_agent):
-        """Should handle agents with no tools configured."""
-        agent = mock_agent(
-            access_level=AgentAccessLevel.AUTHENTICATED,
-            system_tools=[],
-            workflows=[],
-        )
-
-        mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
-
-        with patch('src.services.mcp_server.tool_access.MCPConfigService') as MockConfig:
-            mock_config = MagicMock()
-            mock_config.allowed_tool_ids = None
-            mock_config.blocked_tool_ids = None
-            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
-
-            result = await service.get_accessible_tools(
-                user_roles=[],
-            )
-
-        assert len(result.tools) == 0
-
-    @pytest.mark.asyncio
-    async def test_workflow_with_tool_description(self, service, mock_session, mock_agent, mock_workflow):
-        """Should use tool_description if available over description."""
-        workflow = mock_workflow(name="my_tool", description="General description")
-        workflow.tool_description = "Specific tool description"
-
-        agent = mock_agent(
-            access_level=AgentAccessLevel.AUTHENTICATED,
-            workflows=[workflow],
-        )
-
-        mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
-
-        with patch('src.services.mcp_server.tool_access.MCPConfigService') as MockConfig:
-            mock_config = MagicMock()
-            mock_config.allowed_tool_ids = None
-            mock_config.blocked_tool_ids = None
-            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
-
-            result = await service.get_accessible_tools(
-                user_roles=[],
-            )
-
-        workflow_tool = [t for t in result.tools if t.type == "workflow"][0]
-        assert workflow_tool.description == "Specific tool description"
-
-
-# ==================== search_knowledge Auto-Injection Tests ====================
-
-
-class TestSearchKnowledgeAutoInjection:
-    """search_knowledge must be auto-injected when an agent has knowledge_sources.
-
-    Mirrors the native chat path in agent_helpers.py so MCP listing matches
-    what the agent executor exposes.
-    """
-
-    @pytest.mark.asyncio
-    async def test_get_accessible_tools_injects_search_knowledge(
-        self, service, mock_session, mock_agent
-    ):
-        """get_accessible_tools includes search_knowledge when agent has
-        knowledge_sources, even if system_tools doesn't list it."""
-        agent = mock_agent(
-            access_level=AgentAccessLevel.AUTHENTICATED,
-            system_tools=[],  # explicitly empty
-            knowledge_sources=["docs"],
-        )
-
-        mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
-
-        with patch("src.services.mcp_server.tool_access.MCPConfigService") as MockConfig:
-            mock_config = MagicMock()
-            mock_config.allowed_tool_ids = None
-            mock_config.blocked_tool_ids = None
-            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
-
-            result = await service.get_accessible_tools(
-                user_roles=[],
-            )
-
-        tool_ids = {t.id for t in result.tools}
-        assert "search_knowledge" in tool_ids
-
-    @pytest.mark.asyncio
-    async def test_get_accessible_tools_does_not_inject_without_namespaces(
-        self, service, mock_session, mock_agent
-    ):
-        """No auto-injection when knowledge_sources is empty."""
-        agent = mock_agent(
-            access_level=AgentAccessLevel.AUTHENTICATED,
-            system_tools=[],
-            knowledge_sources=[],
-        )
-
-        mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
-
-        with patch("src.services.mcp_server.tool_access.MCPConfigService") as MockConfig:
-            mock_config = MagicMock()
-            mock_config.allowed_tool_ids = None
-            mock_config.blocked_tool_ids = None
-            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
-
-            result = await service.get_accessible_tools(
-                user_roles=[],
-            )
-
-        tool_ids = {t.id for t in result.tools}
-        assert "search_knowledge" not in tool_ids
-
-    @pytest.mark.asyncio
-    async def test_get_accessible_tools_no_duplicate_when_explicit(
-        self, service, mock_session, mock_agent
-    ):
-        """Auto-injection must not duplicate search_knowledge if already
-        listed in system_tools explicitly."""
-        agent = mock_agent(
-            access_level=AgentAccessLevel.AUTHENTICATED,
-            system_tools=["search_knowledge"],
-            knowledge_sources=["docs"],
-        )
-
-        mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
-
-        with patch("src.services.mcp_server.tool_access.MCPConfigService") as MockConfig:
-            mock_config = MagicMock()
-            mock_config.allowed_tool_ids = None
-            mock_config.blocked_tool_ids = None
-            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
-
-            result = await service.get_accessible_tools(
-                user_roles=[],
-            )
-
-        sk_tools = [t for t in result.tools if t.id == "search_knowledge"]
-        assert len(sk_tools) == 1
-
-    @pytest.mark.asyncio
-    async def test_get_tools_for_agent_injects_search_knowledge(
-        self, service, mock_session, mock_agent
-    ):
-        """get_tools_for_agent (the agent-scoped path) auto-injects too."""
-        agent = mock_agent(
-            access_level=AgentAccessLevel.AUTHENTICATED,
-            system_tools=[],
-            knowledge_sources=["docs"],
-        )
-        agent.system_prompt = "You search docs."
-
-        # get_tools_for_agent uses scalars().unique().first() (single agent),
-        # not the .all() shape used elsewhere in this file.
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.unique.return_value.first.return_value = agent
-        mock_session.execute = AsyncMock(return_value=mock_result)
-
-        with patch("src.services.mcp_server.tool_access.MCPConfigService") as MockConfig:
-            mock_config = MagicMock()
-            mock_config.allowed_tool_ids = None
-            mock_config.blocked_tool_ids = None
-            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
-
-            result = await service.get_tools_for_agent(
-                agent_id=agent.id,
-                user_roles=[],
-                is_superuser=True,
-            )
-
-        assert result is not None
-        tool_ids = {t.id for t in result.tools}
-        assert "search_knowledge" in tool_ids
-
-    @pytest.mark.asyncio
-    async def test_provider_org_caller_bypasses_agent_role_requirement(
-        self, service, mock_session, mock_agent
-    ):
-        """Platform-org impersonation has the same scope bypass as superuser."""
-        agent = mock_agent(
-            access_level=AgentAccessLevel.ROLE_BASED,
-            system_tools=["bifrost_workflow_list"],
-            roles=["Customer Operator"],
-        )
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.unique.return_value.first.return_value = agent
-        mock_session.execute = AsyncMock(return_value=mock_result)
-
-        with patch("src.services.mcp_server.tool_access.MCPConfigService") as mock_config_cls:
-            mock_config = MagicMock(allowed_tool_ids=None, blocked_tool_ids=None)
-            mock_config_cls.return_value.get_config = AsyncMock(
-                return_value=mock_config
-            )
-
-            result = await service.get_tools_for_agent(
-                agent_id=agent.id,
-                user_roles=[],
-                is_superuser=False,
-                is_provider_org=True,
-                user_id=uuid4(),
-                org_id=uuid4(),
-            )
-
-        assert result is not None
-        assert {tool.id for tool in result.tools} == {"bifrost_workflow_list"}
-
-    @pytest.mark.asyncio
-    async def test_get_tools_for_agent_no_inject_without_namespaces(
-        self, service, mock_session, mock_agent
-    ):
-        agent = mock_agent(
-            access_level=AgentAccessLevel.AUTHENTICATED,
-            system_tools=[],
-            knowledge_sources=[],
-        )
-        agent.system_prompt = ""
-
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.unique.return_value.first.return_value = agent
-        mock_session.execute = AsyncMock(return_value=mock_result)
-
-        with patch("src.services.mcp_server.tool_access.MCPConfigService") as MockConfig:
-            mock_config = MagicMock()
-            mock_config.allowed_tool_ids = None
-            mock_config.blocked_tool_ids = None
-            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
-
-            result = await service.get_tools_for_agent(
-                agent_id=agent.id,
-                user_roles=[],
-                is_superuser=True,
-            )
-
-        assert result is not None
-        tool_ids = {t.id for t in result.tools}
-        assert "search_knowledge" not in tool_ids
+def _config():
+    with patch("src.services.mcp_server.tool_access.MCPConfigService") as service:
+        service.return_value.get_config = AsyncMock(return_value=MCPConfig())
+        yield service.return_value
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("is_superuser,for_configuration,visible", [
-    (True, True, True), (True, False, False), (False, True, False),
+@pytest.mark.parametrize("namespaces,explicit,expected", [((), False, 0), (("docs",), False, 1), (("docs",), True, 1)])
+async def test_knowledge_tool_matches_native_agent_injection(namespaces, explicit, expected):
+    caller = _caller()
+    agent = _agent(caller, tools=["search_knowledge"] if explicit else [], namespaces=namespaces)
+    service = MCPToolAccessService(_session([agent]))
+    result = await service.get_tools_for_agent(agent.id, caller)
+    assert result is not None
+    assert sum(tool.id == "search_knowledge" for tool in result.tools) == expected
+
+
+@pytest.mark.asyncio
+async def test_bound_workflow_discovery_checks_reach_and_deduplicates_without_direct_role_acl():
+    caller = _caller()
+    visible = SimpleNamespace(
+        id=uuid4(), name="Contoso Lookup", tool_description="Look up an item", description="",
+        category="operations", organization_id=caller.ctx.home_organization_id,
+        is_active=True, type="tool", access_level="role_based", roles=[],
+    )
+    foreign = SimpleNamespace(**{**vars(visible), "id": uuid4(), "organization_id": uuid4()})
+    inactive = SimpleNamespace(**{**vars(visible), "id": uuid4(), "is_active": False})
+    agents = [_agent(caller, workflows=[visible, foreign, inactive]), _agent(caller, workflows=[visible])]
+    result = await MCPToolAccessService(_session(agents)).get_accessible_tools(caller)
+    assert [(tool.name, tool.description) for tool in result.tools] == [(visible.name, visible.tool_description)]
+
+
+@pytest.mark.asyncio
+async def test_actor_admin_fact_does_not_expose_a_foreign_agent():
+    caller = _caller(actor_admin=True)
+    agent = _agent(caller, tools=["bifrost_workflow_list"], organization_id=uuid4())
+    session = _session([agent])
+    service = MCPToolAccessService(session)
+    assert await service.get_tools_for_agent(agent.id, caller) is None
+    query = session.execute.await_args.args[0].compile()
+    assert caller.ctx.home_organization_id in [item for value in query.params.values() if isinstance(value, list) for item in value]
+
+
+@pytest.mark.asyncio
+async def test_shared_global_agent_remains_visible_at_home():
+    caller = _caller()
+    agent = _agent(caller, tools=["bifrost_workflow_list"], organization_id=None)
+    service = MCPToolAccessService(_session([agent]))
+    result = await service.get_tools_for_agent(agent.id, caller)
+    assert result is not None
+    assert [tool.id for tool in result.tools] == ["bifrost_workflow_list"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("has_role", [True, False])
+async def test_role_acl_uses_original_user_id_instead_of_actor_roles(has_role):
+    caller = _caller(actor_admin=True)
+    agent = _agent(caller, tools=["bifrost_workflow_list"])
+    agent.access_level = AgentAccessLevel.ROLE_BASED
+    role_id = uuid4()
+    session = _session([agent])
+    role_result = MagicMock()
+    role_result.scalars.return_value.all.return_value = [role_id]
+    acl_result = MagicMock()
+    acl_result.scalar_one_or_none.return_value = agent.id if has_role else None
+    session.execute.side_effect = [session.execute.return_value, role_result, acl_result]
+
+    result = await MCPToolAccessService(session).get_tools_for_agent(agent.id, caller)
+
+    assert (result is not None) is has_role
+    query = session.execute.await_args_list[1].args[0].compile()
+    assert caller.ctx.user_id in query.params.values()
+    assert caller.principal.user_id not in query.params.values()
+
+
+@pytest.mark.asyncio
+async def test_configuration_inventory_needs_named_global_permission():
+    caller = _caller(actor_admin=True)
+    session = _session([])
+    service = MCPToolAccessService(session)
+    with pytest.raises(HTTPException) as error:
+        await service.get_accessible_tools(caller, for_configuration=True)
+    assert error.value.status_code == 403
+    session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("for_configuration,visible", [(True, True), (False, False)])
+async def test_configuration_inventory_does_not_change_runtime_filtering(_config, for_configuration, visible):
+    caller = _caller(configuration=True)
+    agent = _agent(caller, tools=["bifrost_workflow_execute"])
+    _config.get_config.return_value = MCPConfig(blocked_tool_ids=["bifrost_workflow_execute"])
+    service = MCPToolAccessService(_session([agent]))
+    result = await service.get_accessible_tools(caller, for_configuration=for_configuration)
+    assert bool(result.tools) is visible
+
+
+@pytest.mark.asyncio
+async def test_system_tools_are_deduplicated_and_unknown_metadata_is_preserved():
+    caller = _caller()
+    agents = [_agent(caller, tools=["contoso_lookup"]), _agent(caller, tools=["contoso_lookup"])]
+    service = MCPToolAccessService(_session(agents))
+    result = await service.get_accessible_tools(caller)
+    assert [(tool.id, tool.name) for tool in result.tools] == [("contoso_lookup", "Contoso Lookup")]
+
+
+@pytest.mark.parametrize("allowed,blocked,expected", [
+    (None, [], ["a", "b"]), (["a"], [], ["a"]), (["a", "b"], ["a"], ["b"]),
 ])
-async def test_configuration_inventory_preserves_runtime_tool_filtering(
-    service, mock_session, mock_agent, is_superuser, for_configuration, visible,
-):
-    agent = mock_agent(system_tools=["bifrost_workflow_execute"])
-    mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
-    with patch("src.services.mcp_server.tool_access.MCPConfigService") as config_cls:
-        config_cls.return_value.get_config = AsyncMock(return_value=MagicMock(
-            allowed_tool_ids=None, blocked_tool_ids=["bifrost_workflow_execute"],
-        ))
-        result = await service.get_accessible_tools(
-            user_roles=[], is_superuser=is_superuser,
-            for_configuration=for_configuration,
-        )
-    assert any(tool.id == "bifrost_workflow_execute" for tool in result.tools) is visible
+def test_config_allow_and_block_lists(allowed, blocked, expected):
+    tools = [ToolInfo(id=value, name=value, description="", type="system") for value in ["a", "b"]]
+    result = MCPToolAccessService(None)._apply_config_filters(tools, MCPConfig(allowed_tool_ids=allowed, blocked_tool_ids=blocked))
+    assert [tool.id for tool in result] == expected
+
+
+@pytest.mark.asyncio
+async def test_readable_agent_requires_named_execute_permission_to_call_tools():
+    caller = _caller()
+    caller = Caller(caller.principal, AuthorizationContext(
+        user_id=caller.ctx.user_id, home_organization_id=caller.ctx.home_organization_id,
+        base_role_id=USER_ROLE_ID, is_external=False,
+        base_permissions=frozenset({"agents.readbasic"}),
+    ))
+    caller.principal.runtime_authority = None
+    agent = _agent(caller, tools=["bifrost_workflow_list"])
+    service = MCPToolAccessService(_session([agent]))
+    assert await service.get_tools_for_agent(agent.id, caller) is not None
+    with pytest.raises(HTTPException) as error:
+        await service.get_tools_for_agent(agent.id, caller, for_execution=True)
+    assert error.value.status_code == 403

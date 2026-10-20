@@ -14,6 +14,7 @@ from src.models.orm.external_mcp import (
     MCPServer,
 )
 from src.services.llm import ToolDefinition
+from src.services.mcp_client.auth_resolution import service_token_binding_error
 from src.services.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -52,8 +53,9 @@ def _autonomous_service_token_usable(connection: MCPConnection) -> bool:
     considered usable because dispatch can refresh it.
     """
     token = connection.service_oauth_token
-    if token is None:
+    if service_token_binding_error(connection, token) is not None:
         return False
+    assert token is not None
     if token.expires_at is None:
         return True
     # Treat tokens whose expiry is more than the hard margin in the past

@@ -146,6 +146,32 @@ describe("AccessTraceStrip", () => {
 		expect(after).toHaveClass("text-muted-foreground");
 	});
 
+	it("distinguishes an enforced decision from a forecast", () => {
+		const { rerender } = render(
+			<AccessTraceStrip
+				trace={{ ...blocked, enforced: true }}
+				names={names}
+			/>,
+		);
+		expect(screen.getByRole("status")).toHaveTextContent(/^Blocked$/);
+		expect(screen.getByText("Stopped Here")).toBeInTheDocument();
+		expect(screen.queryByText("Would Stop Here")).not.toBeInTheDocument();
+		rerender(
+			<AccessTraceStrip
+				trace={{ ...allowed, enforced: true }}
+				names={names}
+			/>,
+		);
+		expect(screen.getByRole("status")).toHaveTextContent(/^Allowed$/);
+		rerender(
+			<AccessTraceStrip trace={blocked} names={names} label="Now" />,
+		);
+		expect(screen.getByRole("status")).toHaveTextContent(
+			/^Would Be Blocked$/,
+		);
+		expect(screen.getByText("Would Stop Here")).toBeInTheDocument();
+	});
+
 	it("states the outcome as report-only", () => {
 		const { rerender } = render(
 			<AccessTraceStrip trace={allowed} names={names} />,
@@ -153,9 +179,7 @@ describe("AccessTraceStrip", () => {
 		expect(screen.getByText("Would Be Allowed")).toBeInTheDocument();
 
 		rerender(<AccessTraceStrip trace={blocked} names={names} />);
-		expect(
-			screen.getByText("Would Be Blocked — Not Enforced Yet"),
-		).toBeInTheDocument();
+		expect(screen.getByText("Would Be Blocked")).toBeInTheDocument();
 	});
 
 	it("reveals the steps in sequence", () => {

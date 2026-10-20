@@ -3,7 +3,9 @@ Contract Tests for Data Provider API
 Tests data provider response format and validation
 """
 
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import BaseModel, ValidationError, field_validator
@@ -295,3 +297,36 @@ class TestDataProviderExamples:
 
         assert response.cached is True
         assert response.cache_expires_at is not None
+
+
+@pytest.mark.asyncio
+async def test_engine_provider_cache_transport_sends_only_parameters_and_result(monkeypatch):
+    """The child cannot choose cache scope, workflow, user, or TTL."""
+    from bifrost import client
+    from src.services.execution.engine import (
+        _read_runtime_data_provider_cache,
+        _write_runtime_data_provider_cache,
+    )
+
+    read_response = SimpleNamespace(
+        is_success=True,
+        status_code=200,
+        json=lambda: {"hit": True, "result": ["contoso"], "expires_at": "2026-10-17T12:00:00+00:00"},
+    )
+    write_response = SimpleNamespace(
+        is_success=True,
+        status_code=200,
+        json=lambda: {"expires_at": "2026-10-17T12:00:00+00:00"},
+    )
+    engine_request = AsyncMock(side_effect=[read_response, write_response])
+    monkeypatch.setattr(client, "get_client", lambda: SimpleNamespace(engine_request=engine_request))
+
+    assert await _read_runtime_data_provider_cache({"tenant": "contoso"}) == {
+        "data": ["contoso"], "expires_at": "2026-10-17T12:00:00+00:00",
+    }
+    assert await _write_runtime_data_provider_cache({"tenant": "contoso"}, ["contoso"]) == "2026-10-17T12:00:00+00:00"
+    assert engine_request.await_args_list[0].args == ("POST", "/api/sdk/runtime/data-provider-cache/read")
+    assert engine_request.await_args_list[0].kwargs["json"] == {"parameters": {"tenant": "contoso"}}
+    assert engine_request.await_args_list[1].kwargs["json"] == {
+        "parameters": {"tenant": "contoso"}, "result": ["contoso"],
+    }

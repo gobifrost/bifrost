@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils";
 
 const mockUseAuditLog = vi.fn();
-const mockUseAuth = vi.fn();
+const mockCanReadAudit = vi.fn();
 
 vi.mock("@/hooks/useAuditLog", () => ({
 	useAuditLog: (...args: unknown[]) => mockUseAuditLog(...args),
@@ -29,11 +29,7 @@ vi.mock("@/hooks/useWorkflows", () => ({
 }));
 
 vi.mock("@/services/authorization", () => ({
-	useAuthorization: () => ({ canAnywhere: () => true }),
-}));
-
-vi.mock("@/contexts/AuthContext", () => ({
-	useAuth: () => mockUseAuth(),
+	useAuthorization: () => ({ canAnywhere: mockCanReadAudit }),
 }));
 
 vi.mock("@/hooks/useOrganizations", () => ({
@@ -51,7 +47,7 @@ import { AuditLogPage } from "./AuditLogPage";
 const filePath = "denied/quarterly-result.csv";
 
 beforeEach(() => {
-	mockUseAuth.mockReturnValue({ isPlatformAdmin: true });
+	mockCanReadAudit.mockReturnValue(true);
 	mockUseAuditLog.mockReturnValue({
 		data: {
 			entries: [
@@ -141,6 +137,7 @@ describe("AuditLogPage policy filters", () => {
 	it("shows denial context and searches it across the API result set", async () => {
 		const { user } = renderWithProviders(<AuditLogPage />);
 
+		expect(screen.getByRole("heading", { name: "Auditing" })).toBeVisible();
 		expect(screen.getByText(`reports / ${filePath}`)).toBeInTheDocument();
 		expect(
 			screen.getByText(
@@ -191,21 +188,24 @@ describe("AuditLogPage policy filters", () => {
 		).toBeVisible();
 	});
 
-	it("shows a platform-admin-only access denied state", () => {
-		mockUseAuth.mockReturnValueOnce({
-			isPlatformAdmin: false,
-		});
+	it("refuses and does not query without audit permission", () => {
+		mockCanReadAudit.mockReturnValue(false);
 
 		renderWithProviders(<AuditLogPage />);
 
 		expect(
 			screen.getByText(
-				"You do not have permission to view the audit log. Platform administrator access is required.",
+				"You do not have permission to view the audit log.",
 			),
 		).toBeInTheDocument();
 		expect(
 			screen.getByRole("button", { name: "Go to Home" }),
 		).toBeVisible();
+		expect(mockUseAuditLog).toHaveBeenLastCalledWith(
+			expect.anything(),
+			false,
+			{ preservePageData: true },
+		);
 	});
 
 	it("keeps the existing audit table visible and busy while a page fetch is pending", () => {

@@ -126,7 +126,7 @@ async def test_public_form_on_a_global_form_runs_for_the_global_identity(
 
 
 async def test_app_embed_in_an_organization_runs_for_that_organization_identity(
-    e2e_client, platform_admin, org1, db_session
+    e2e_client, platform_admin, org1, db_session, secrets_reader_platform_admin
 ):
     name = f"lineage_embed_{uuid.uuid4().hex[:8]}"
     workflow = _workflow(e2e_client, platform_admin, name)

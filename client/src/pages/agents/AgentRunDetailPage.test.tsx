@@ -75,6 +75,11 @@ vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockAuth(),
 }));
 
+const mockAuthorization = vi.fn();
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockAuthorization(),
+}));
+
 // Stub heavy children
 vi.mock("@/components/agents/RunReviewPanel", () => ({
 	RunPayloads: () => (
@@ -204,6 +209,10 @@ beforeEach(() => {
 	mockClearVerdict.mockReset();
 	mockRegenSummary.mockReset();
 	mockAuth.mockReturnValue({ isPlatformAdmin: false });
+	mockAuthorization.mockReturnValue({
+		canAt: () => false,
+		canAnywhere: () => false,
+	});
 });
 
 async function renderPage(path = "/agents/agent-1/runs/run-1") {
@@ -629,22 +638,43 @@ describe("AgentRunDetailPage — sidebar metadata", () => {
 });
 
 describe("AgentRunDetailPage — regenerate summary", () => {
-	it("hides the regenerate button for non-admins when summary is healthy", async () => {
-		mockAuth.mockReturnValue({ isPlatformAdmin: false });
+	it("shows regeneration for a named run-write grant at the run organization", async () => {
+		mockUseAgentRun.mockReturnValue({
+			data: makeRun({ org_id: "org-allowed" }),
+			isLoading: false,
+		});
+		mockAuthorization.mockReturnValue({
+			canAt: (
+				permission: string,
+				target: { kind: string; id?: string },
+			) =>
+				permission === "agentruns.readwrite.all" &&
+				target.kind === "org" &&
+				target.id === "org-allowed",
+			canAnywhere: () => true,
+		});
+		await renderPage();
+		expect(screen.getByTestId("regen-summary-button")).toBeInTheDocument();
+	});
+
+	it("hides the regenerate button without run-write permission when summary is healthy", async () => {
 		await renderPage();
 		expect(
 			screen.queryByTestId("regen-summary-button"),
 		).not.toBeInTheDocument();
 	});
 
-	it("shows the regenerate button for platform admins", async () => {
-		mockAuth.mockReturnValue({ isPlatformAdmin: true });
+	it("shows the regenerate button with run-write permission at the run scope", async () => {
+		mockAuthorization.mockReturnValue({
+			canAt: (permission: string) =>
+				permission === "agentruns.readwrite.all",
+			canAnywhere: () => true,
+		});
 		await renderPage();
 		expect(screen.getByTestId("regen-summary-button")).toBeInTheDocument();
 	});
 
-	it("does not offer sidebar regeneration to non-admins after summary failure", async () => {
-		mockAuth.mockReturnValue({ isPlatformAdmin: false });
+	it("does not offer sidebar regeneration after summary failure", async () => {
 		mockUseAgentRun.mockReturnValue({
 			data: makeRun({ summary_status: "failed" }),
 			isLoading: false,
@@ -656,7 +686,11 @@ describe("AgentRunDetailPage — regenerate summary", () => {
 	});
 
 	it("calls useRegenerateSummary when the button is clicked", async () => {
-		mockAuth.mockReturnValue({ isPlatformAdmin: true });
+		mockAuthorization.mockReturnValue({
+			canAt: (permission: string) =>
+				permission === "agentruns.readwrite.all",
+			canAnywhere: () => true,
+		});
 		const { user } = await renderPage();
 		await user.click(screen.getByTestId("regen-summary-button"));
 		await waitFor(() => {
@@ -845,25 +879,34 @@ it("retains the execution when refreshing its run fails", async () => {
 	);
 });
 
-it.each(["run-1", "__proto__", "constructor"])("loads and edits the stored note for run key %s", async (runId) => {
-	mockUseAgentRun.mockReturnValue({
-		data: makeRun({ id: runId, verdict_note: "Stored review", verdict: "down" }),
-		isLoading: false,
-	});
-	const { user } = await renderPage(`/agents/agent-1/runs/${runId}`);
-	const input = screen.getByRole("textbox", { name: "Review note" });
-	expect(input).toHaveValue("Stored review");
-	await user.clear(input);
-	await user.type(input, "Check renewal");
-	await user.click(screen.getByRole("button", { name: "Save review note" }));
-	expect(mockSetVerdict).toHaveBeenCalledWith(
-		expect.objectContaining({
-			body: { verdict: "down", note: "Check renewal" },
-		}),
-		expect.any(Object),
-	);
-	expect(input).toBeDisabled();
-});
+it.each(["run-1", "__proto__", "constructor"])(
+	"loads and edits the stored note for run key %s",
+	async (runId) => {
+		mockUseAgentRun.mockReturnValue({
+			data: makeRun({
+				id: runId,
+				verdict_note: "Stored review",
+				verdict: "down",
+			}),
+			isLoading: false,
+		});
+		const { user } = await renderPage(`/agents/agent-1/runs/${runId}`);
+		const input = screen.getByRole("textbox", { name: "Review note" });
+		expect(input).toHaveValue("Stored review");
+		await user.clear(input);
+		await user.type(input, "Check renewal");
+		await user.click(
+			screen.getByRole("button", { name: "Save review note" }),
+		);
+		expect(mockSetVerdict).toHaveBeenCalledWith(
+			expect.objectContaining({
+				body: { verdict: "down", note: "Check renewal" },
+			}),
+			expect.any(Object),
+		);
+		expect(input).toBeDisabled();
+	},
+);
 
 it("retains the run and retries failed agent information", async () => {
 	const refetch = vi.fn();

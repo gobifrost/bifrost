@@ -18,7 +18,6 @@ from sqlalchemy import func, or_, select, text
 from src.config import get_settings
 from src.core.database import get_db_context
 from src.jobs.platform.base import PlatformJobPolicy
-from src.jobs.platform.registry import get_platform_job_definition
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solution_export_jobs import SolutionExportJob
 from src.services.execution.memory_monitor import get_cgroup_memory
@@ -223,6 +222,8 @@ async def claim_platform_job(
                 continue
             if backend == "kubernetes" and job.kubernetes_job_name is not None:
                 continue
+            from src.jobs.platform.registry import get_platform_job_definition
+
             definition = get_platform_job_definition(job.job_type)
             if definition is None:
                 job.status = "failed"

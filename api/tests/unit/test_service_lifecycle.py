@@ -22,13 +22,15 @@ from src.services.service_lifecycle import (
 
 async def _ensure_org(db_session):
     """Insert a real Organization row (workflows FK-restrict to it)."""
+    from shared.identities import ensure_default_identity
     from src.models.orm.organizations import Organization
 
     org = Organization(
-        id=uuid4(), name=f"acme_{uuid4().hex[:8]}", created_by="tester@example.com"
+        id=uuid4(), name=f"Contoso {uuid4().hex[:8]}", created_by="tester@example.com"
     )
     db_session.add(org)
     await db_session.flush()
+    await ensure_default_identity(db_session, org)
     return org
 
 
@@ -68,6 +70,33 @@ async def _ensure(db_session, org_id="org-scoped", **overrides):
     )
     await db_session.flush()
     return definition, wf
+
+
+async def _custom_identity(db_session, organization_id):
+    """Insert a same-organization custom identity for an explicit run-as test."""
+    from src.models.orm.users import User
+
+    identity = User(
+        email=f"nightly-{uuid4().hex}@identities.example",
+        name=f"Nightly {uuid4().hex[:8]}",
+        organization_id=organization_id,
+        identity_kind="custom",
+    )
+    db_session.add(identity)
+    await db_session.flush()
+    return identity
+
+
+async def _default_identity_id(db_session, organization_id):
+    from src.models.enums import IdentityKind
+    from src.models.orm.users import User
+
+    return await db_session.scalar(
+        select(User.id).where(
+            User.organization_id == organization_id,
+            User.identity_kind == IdentityKind.ORG_DEFAULT,
+        )
+    )
 
 
 # --- Definitions ---
@@ -205,6 +234,74 @@ async def test_restart_asks_live_attempt_to_stop(db_session):
 
 
 @pytest.mark.asyncio
+async def test_claim_binds_the_workflow_identity(db_session):
+    """An attempt records the workflow's selected identity at creation."""
+    definition, workflow = await _ensure(db_session)
+    identity = await _custom_identity(db_session, definition.organization_id)
+    workflow.run_identity_id = identity.id
+    await db_session.flush()
+
+    attempt = await service_lifecycle.claim_eligible_service(db_session, worker_id="w1")
+
+    assert attempt is not None
+    assert attempt.run_user_id == identity.id
+
+
+@pytest.mark.asyncio
+async def test_claim_binds_the_organization_default_when_workflow_identity_is_unset(db_session):
+    """An unassigned org service binds its organization's default identity."""
+    definition, workflow = await _ensure(db_session)
+
+    attempt = await service_lifecycle.claim_eligible_service(db_session, worker_id="w1")
+
+    assert attempt is not None
+    assert workflow.run_identity_id is None
+    assert attempt.run_user_id == await _default_identity_id(
+        db_session, definition.organization_id
+    )
+
+
+@pytest.mark.asyncio
+async def test_workflow_identity_changes_do_not_reassign_a_claimed_attempt(db_session):
+    """Changing the source workflow cannot change a live attempt's identity."""
+    definition, workflow = await _ensure(db_session)
+    first_identity = await _custom_identity(db_session, definition.organization_id)
+    second_identity = await _custom_identity(db_session, definition.organization_id)
+    workflow.run_identity_id = first_identity.id
+    await db_session.flush()
+
+    attempt = await service_lifecycle.claim_eligible_service(db_session, worker_id="w1")
+    assert attempt is not None
+
+    workflow.run_identity_id = second_identity.id
+    await db_session.flush()
+    await db_session.refresh(attempt)
+
+    assert attempt.run_user_id == first_identity.id
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_bound_identity_nulls_the_attempt_without_reassignment(db_session):
+    """A deleted identity remains absent from its attempt instead of rebinding it."""
+    definition, workflow = await _ensure(db_session)
+    identity = await _custom_identity(db_session, definition.organization_id)
+    workflow.run_identity_id = identity.id
+    await db_session.flush()
+    attempt = await service_lifecycle.claim_eligible_service(db_session, worker_id="w1")
+    assert attempt is not None
+
+    # Workflow references restrict deletion; removing that source assignment
+    # must not cause the already-bound attempt to choose the org default.
+    workflow.run_identity_id = None
+    await db_session.flush()
+    await db_session.delete(identity)
+    await db_session.flush()
+    await db_session.refresh(attempt)
+
+    assert attempt.run_user_id is None
+
+
+@pytest.mark.asyncio
 async def test_claim_returns_none_when_nothing_eligible(db_session):
     """Stopped desire, disabled flag, and suppression all block claims."""
     definition, _ = await _ensure(db_session)
@@ -280,6 +377,7 @@ async def test_concurrent_claims_yield_single_attempt(async_session_factory):
         from src.models.orm.organizations import Organization
         from src.models.orm.workflows import Workflow
         from src.models.orm.services import ServiceDefinition
+        from src.models.orm.users import User
 
         async with async_session_factory() as cleanup:
             await cleanup.execute(
@@ -296,6 +394,9 @@ async def test_concurrent_claims_yield_single_attempt(async_session_factory):
                 sa_delete(Workflow).where(Workflow.id == workflow_id)
             )
             if org_id is not None:
+                await cleanup.execute(
+                    sa_delete(User).where(User.organization_id == org_id, User.identity_kind.is_not(None))
+                )
                 await cleanup.execute(
                     sa_delete(Organization).where(Organization.id == org_id)
                 )

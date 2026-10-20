@@ -1,32 +1,15 @@
-"""Judge a request's report-only access checks and write the ones that matter.
+"""Persist Access Checks after a response without changing its outcome.
 
-Called by the request middleware after the response, with its own session.
-Every note is judged against the run's user by the decision core
-(``src.services.authorization.explain``); a person's own request is judged
-against their own roles. Written to the audit log:
+Enforced notes retain the judgment made during the request. Other notes are
+judged against current original-user roles and the exact workflow's powers.
+Denials, scope crossings, Run As, policy, and secret decisions are retained;
+permission successes are not sampled. Missing facts produce coverage gaps.
 
-- ``access.check`` with outcome ``failure``: whenever the model would block
-  what today allows.
-- ``access.check`` with outcome ``success``: when a run crosses into another
-  organization, acts as another user (``run_as``), or is a policy or secret
-  decision. A person's request writes failures only, except ``run_as``: a
-  person's ``run_as`` is enforced, and written in both outcomes with
-  ``enforced`` true. A run's stays report-only.
-- ``access.check_gap``: when the request carries no run user, the run user or
-  the user a ``run_as`` names does not exist (that gap names the requested
-  user), or a check could not be judged.
-
-Each decision (kind, operation, target, run user, outcome and subject: the
-table, secret, path, user or object it concerns) is written once per run, or
-once per person acting directly (Redis marks it for a day). A note already
-judged for that run or person that day is not judged again, so a repeated
-launch costs one judgement a day. An enforced decision (a person acting as
-another user) is the exception: it is judged and written on every call, each
-one a record of an impersonation. Without Redis nothing is written. Nothing
-here raises into the request.
-
-A note on an object the request did not load (``Owned``) is resolved here:
-judged in the object's organization, and dropped when its actor owns it.
+Each decision is deduplicated per run or direct user for a day. Enforced Run As
+is recorded on every call. Redis claims prevent concurrent duplicate writes.
+Unloaded objects are resolved here; objects owned by the requester need no
+additional ownership permission check. Writer failures never raise into the
+request.
 """
 
 from __future__ import annotations
@@ -42,6 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.access_checks import Collector, Note
+from shared.access_trace_storage import compact_access_check_details
 from src.core.cache.redis_client import get_shared_redis
 from src.core.database import get_db_context
 from src.models.contracts.access_list import AccessEntry
@@ -173,7 +157,6 @@ def judge(
             return check_run_as_outside_reach(run_user)
         assert run_as is not None, "the caller loads the user a run_as names"
         return check_run_as(run_user, powers, run_as)
-    assert powers is not None, "only a run's request notes the other kinds"
     if note.kind == "entry":
         return check_entry(run_user, allowed=facts["allowed"], subject=facts["subject"])
     if note.kind == "policy":
@@ -181,14 +164,13 @@ def judge(
     return check_secret(run_user, powers, _target_org(note.target), kind=facts["kind"], name=facts["name"])
 
 
-def _written(note: Note, trace: Trace, run_user: RunUser, *, direct: bool) -> bool:
+def _written(
+    note: Note, trace: Trace, run_user: RunUser, *, direct: bool
+) -> bool:
     if direct:
-        # A person's own request records would-deny decisions, and the
-        # enforced run_as in both outcomes.
         return trace.outcome == "failure" or note.kind in _ALWAYS_WRITTEN
     if trace.outcome == "failure":
-        # Only what today allows: a denial today already stops the request.
-        return bool(note.facts.get("today", True))
+        return _enforced(note) or bool(note.facts.get("today", True))
     if note.kind in _ALWAYS_WRITTEN:
         return True
     if note.kind in ("scope_switch", "child_run"):
@@ -229,14 +211,32 @@ class _Writer:
         self.redis = redis
         self.collector = collector
         self.operation = operation
+        self.stored_run_user_id = collector.run_user_id
         self.run_key = (
-            f"person:{collector.run_user_id}"
-            if collector.direct
+            f"agent-run:{collector.agent_run_id}"
+            if collector.agent_run_id
+            else f"person:{collector.run_user_id}"
+            if collector.direct and not collector.is_run
             else str(collector.execution_id or f"run-user:{collector.run_user_id}")
         )
 
     def _key(self, *parts: Any) -> str:
-        digest = hashlib.sha256("|".join(str(part) for part in parts).encode()).hexdigest()[:16]
+        provenance = (
+            ()
+            if self.collector.impersonated_by_user_id is None
+            and self.collector.impersonation_session_id is None
+            else (
+                "impersonation",
+                self.collector.impersonated_by_user_id,
+                self.collector.impersonation_session_id,
+            )
+        )
+        digest = hashlib.sha256(
+            "|".join(
+                str(part)
+                for part in (*provenance, *parts)
+            ).encode()
+        ).hexdigest()[:16]
         return f"bifrost:access_check:{self.run_key}:{digest}"
 
     async def _claim(self, key: str) -> Claim | None:
@@ -286,7 +286,7 @@ class _Writer:
     async def gap(self, kind: str, reason: str, user_id: UUID | None = None) -> bool:
         return await self._write_once(["gap", kind, self.operation, reason], **self._gap_row(kind, reason, user_id))
 
-    async def missing_run_as(self, note: Note, user_id: UUID) -> bool:
+    async def missing_run_as(self, note: Note, user_id: UUID | None) -> bool:
         """A gap for a ``run_as`` naming a user that does not exist, naming
         the requested user at the note's organization (the caller's); an
         enforced one is written on every call."""
@@ -308,55 +308,65 @@ class _Writer:
             resource_id=None,
             outcome="failure",
             source="http",
+            surface=self.collector.surface,
             ip_address=None,
             user_agent=None,
-            details={"reason": reason, "operation": self.operation},
+            details={
+                "reason": reason,
+                "operation": self.operation,
+                **({"agent_run_id": str(self.collector.agent_run_id)} if self.collector.agent_run_id else {}),
+            },
             execution_id=self.collector.execution_id,
             operation_id=self.operation,
+            impersonated_by_user_id=self.collector.impersonated_by_user_id,
+            impersonation_session_id=self.collector.impersonation_session_id,
         )
 
     async def check(self, note: Note, trace: Trace, run_user: RunUser) -> bool:
         kind, operation, target, subject = self._decision(note)
-        today = note.facts.get("today", True)
         enforced = _enforced(note)
         row = dict(
             action="access.check",
-            user_id=run_user.user_id,
+            user_id=self.stored_run_user_id,
             organization_id=_target_org(note.target),
             resource_type=note.kind,
             resource_id=None,
             outcome=trace.outcome,
             source="http",
+            surface=self.collector.surface,
             ip_address=None,
             user_agent=None,
-            details={
-                "enforced": enforced,
-                "direct": self.collector.direct,
-                "workflow_id": _plain(self.collector.workflow_id),
-                "trace": replace(trace, enforced=enforced).as_dict(),
-                "inputs": {
-                    "operation": self.operation,
-                    "target": target,
-                    **{key: _plain(value) for key, value in note.facts.items()},
-                },
-                "today": "allowed" if today else "denied",
-                "proposed_attribution": {
-                    "actor_user_id": str(run_user.user_id),
-                    "organization_id": _plain(run_user.home),
-                },
-            },
+            details=compact_access_check_details(
+                {
+                    "enforced": enforced,
+                    "direct": self.collector.direct,
+                    **({"agent_run_id": str(self.collector.agent_run_id)} if self.collector.agent_run_id else {}),
+                    "workflow_id": _plain(self.collector.workflow_id),
+                    "trace": replace(trace, enforced=enforced).as_dict(),
+                    "inputs": {
+                        "operation": self.operation,
+                        "target": target,
+                        **{key: _plain(value) for key, value in note.facts.items()},
+                    },
+                }
+            ),
             execution_id=self.collector.execution_id,
             operation_id=self.operation,
+            impersonated_by_user_id=self.collector.impersonated_by_user_id,
+            impersonation_session_id=self.collector.impersonation_session_id,
         )
-        if enforced:
+        if _every_call(note):
             await self._insert(**row)
             return True
         return await self._write_once([kind, operation, target, run_user.user_id, trace.outcome, subject], **row)
 
 
+def _every_call(note: Note) -> bool:
+    return note.kind == "run_as" and _enforced(note)
+
+
 def _enforced(note: Note) -> bool:
-    """A decision the request also enforces: written on every call, never
-    deduplicated."""
+    """Whether the request enforced this decision."""
     return bool(note.facts.get("enforced", False))
 
 
@@ -364,32 +374,27 @@ async def _write(db: AsyncSession, collector: Collector, *, operation: str, rout
     writer = _Writer(db, await get_shared_redis(), collector, operation)
     notes: list[tuple[Note, Claim | None]] = []
     for note in collector.notes:
-        if "gap" in note.facts or _enforced(note):
+        if "gap" in note.facts or _every_call(note):
             notes.append((note, None))
         elif (claim := await writer.reserve(note)) is not None:
             notes.append((note, claim))
     if not notes:
         return
-    kinds = sorted({note.kind for note, _claim in notes})
     run_user = None if collector.run_user_id is None else await load_run_user(db, collector.run_user_id)
-    if run_user is None:
-        reason = "missing_lineage" if collector.run_user_id is None else "run_user_missing"
-        written = True
-        for kind in kinds:
-            written = await writer.gap(kind, reason) and written
-        for _note, claim in notes:
-            if claim is not None:
-                await writer.settle(claim, done=written)
-        return
-    powers = None if collector.direct else await load_powers(db, collector.workflow_id)
+    writer.stored_run_user_id = None if run_user is None else run_user.user_id
+    powers = None if collector.direct or collector.workflow_id is None else await load_powers(db, collector.workflow_id)
     entry = None if route is None else _entries_by_route().get(route)
     for noted, claim in notes:
-        if "gap" in noted.facts:
-            await writer.gap(noted.kind, noted.facts["gap"], run_user.user_id)
-            continue
+        decided_user = run_user if noted.decision is None else noted.decision[0]
         judged = False
         try:
-            judged = await _judge_and_write(db, writer, run_user, powers, noted, entry, direct=collector.direct)
+            if decided_user is None:
+                reason = "missing_lineage" if collector.run_user_id is None else "run_user_missing"
+                judged = await writer.gap(noted.kind, reason)
+            elif "gap" in noted.facts:
+                judged = await writer.gap(noted.kind, noted.facts["gap"], writer.stored_run_user_id)
+            else:
+                judged = await _judge_and_write(db, writer, decided_user, powers, noted, entry, direct=collector.direct)
         finally:
             if claim is not None:
                 await writer.settle(claim, done=judged)
@@ -418,14 +423,14 @@ async def _judge_and_write(
             return False
         assert isinstance(resolved, Note)
         run_as = None
-        if names_a_user_to_load(resolved):
+        if resolved.decision is None and names_a_user_to_load(resolved):
             run_as = await load_run_as_target(db, UUID(str(resolved.facts["run_as_user_id"])))
             if run_as is None:
-                return await writer.missing_run_as(resolved, run_user.user_id)
-        trace = judge(run_user, powers, resolved, entry, run_as)
+                return await writer.missing_run_as(resolved, writer.stored_run_user_id)
+        trace = judge(run_user, powers, resolved, entry, run_as) if resolved.decision is None else resolved.decision[1]
     except Exception as exc:
         logger.warning("access check could not be judged (kind=%s): %s", noted.kind, type(exc).__name__)
-        await writer.gap(noted.kind, f"observer_error:{type(exc).__name__}", run_user.user_id)
+        await writer.gap(noted.kind, f"observer_error:{type(exc).__name__}", writer.stored_run_user_id)
         return False
     if _written(resolved, trace, run_user, direct=direct):
         return await writer.check(resolved, trace, run_user)

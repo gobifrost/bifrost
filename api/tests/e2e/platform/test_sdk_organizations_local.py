@@ -96,11 +96,11 @@ async def {name}():
 
 class TestSdkOrganizationsLocalLiveE2E:
     def test_workflow_crud_commits_and_matches_http(
-        self, e2e_client, org1_user, platform_admin, live_org_workflow, live_org_keys
+        self, e2e_client, platform_admin, live_org_workflow, live_org_keys
     ):
         result = execute_workflow_sync(
             e2e_client,
-            org1_user.headers,
+            platform_admin.headers,
             live_org_workflow["id"],
             max_wait=120.0,
         )
@@ -110,8 +110,8 @@ class TestSdkOrganizationsLocalLiveE2E:
         # the shared client transport (zero-HTTP proof lives in the unit and
         # forked-child socket tests).
         assert out["used_socket"] is True
-        # Non-admin initiator still gets engine superuser authority locally.
-        assert out["created_by"] == "engine@bifrost.internal"
+        # Worker-local calls preserve the initiating administrator as actor.
+        assert out["created_by"] == platform_admin.email
         assert out["fetched_name"] == live_org_keys["name"]
         assert out["listed_before"] is True
         assert out["updated_name"] == f"{live_org_keys['name']}-renamed"

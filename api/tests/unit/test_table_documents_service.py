@@ -11,6 +11,7 @@ from shared import table_documents
 from src.core.principal import UserPrincipal
 from src.models.contracts.tables import DocumentQuery
 from src.models.orm.tables import Document, Table
+from src.models.contracts.policies import TablePolicies
 
 
 def _user() -> UserPrincipal:
@@ -52,7 +53,7 @@ async def test_query_returns_empty_without_touching_repo(monkeypatch):
     query = DocumentQuery(limit=7, offset=3)
 
     monkeypatch.setattr(
-        table_documents, "load_resolved_table_policies", AsyncMock(return_value=object())
+        table_documents, "load_resolved_table_policies", AsyncMock(return_value=TablePolicies())
     )
     monkeypatch.setattr(table_documents, "preresolve_for_policies", AsyncMock())
     monkeypatch.setattr(table_documents, "compile_read_filter", lambda policies, u: None)
@@ -87,7 +88,7 @@ async def test_query_delegates_to_repo_and_maps_dtos(monkeypatch):
     seen = {}
 
     monkeypatch.setattr(
-        table_documents, "load_resolved_table_policies", AsyncMock(return_value=object())
+        table_documents, "load_resolved_table_policies", AsyncMock(return_value=TablePolicies())
     )
     monkeypatch.setattr(table_documents, "preresolve_for_policies", AsyncMock())
     monkeypatch.setattr(
@@ -123,7 +124,7 @@ async def test_count_returns_zero_without_touching_repo(monkeypatch):
     db = AsyncMock()
 
     monkeypatch.setattr(
-        table_documents, "load_resolved_table_policies", AsyncMock(return_value=object())
+        table_documents, "load_resolved_table_policies", AsyncMock(return_value=TablePolicies())
     )
     monkeypatch.setattr(table_documents, "preresolve_for_policies", AsyncMock())
     monkeypatch.setattr(table_documents, "compile_read_filter", lambda policies, u: None)
@@ -148,7 +149,7 @@ async def test_count_delegates_where_and_filter(monkeypatch):
     where = {"status": "active"}
 
     monkeypatch.setattr(
-        table_documents, "load_resolved_table_policies", AsyncMock(return_value=object())
+        table_documents, "load_resolved_table_policies", AsyncMock(return_value=TablePolicies())
     )
     monkeypatch.setattr(table_documents, "preresolve_for_policies", AsyncMock())
     monkeypatch.setattr(
@@ -238,7 +239,7 @@ async def test_check_denied_emits_audit_commits_and_raises_403(monkeypatch):
     db.commit = AsyncMock()
 
     monkeypatch.setattr(
-        table_documents, "load_resolved_table_policies", AsyncMock(return_value=object())
+        table_documents, "load_resolved_table_policies", AsyncMock(return_value=TablePolicies())
     )
     monkeypatch.setattr(table_documents, "preresolve_for_policies", AsyncMock())
     monkeypatch.setattr(table_documents, "evaluate_action", lambda *args: False)
@@ -264,7 +265,7 @@ async def test_check_allowed_skips_audit_and_commit(monkeypatch):
     db.commit = AsyncMock()
 
     monkeypatch.setattr(
-        table_documents, "load_resolved_table_policies", AsyncMock(return_value=object())
+        table_documents, "load_resolved_table_policies", AsyncMock(return_value=TablePolicies())
     )
     monkeypatch.setattr(table_documents, "preresolve_for_policies", AsyncMock())
     monkeypatch.setattr(table_documents, "evaluate_action", lambda *args: True)

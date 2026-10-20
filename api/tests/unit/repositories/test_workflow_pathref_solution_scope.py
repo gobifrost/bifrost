@@ -21,6 +21,14 @@ from src.models.orm.organizations import Organization
 from src.models.orm.solutions import Solution
 from src.models.orm.workflows import Workflow
 from src.repositories.workflows import WorkflowRepository
+from src.core.principal import UserPrincipal
+from src.services.authorization.context import (
+    AuthorizationContext,
+    Boundary,
+    BoundaryKind,
+    RoleGrant,
+)
+from src.services.authorization.enforce import Caller
 
 
 async def _add_org(db) -> Organization:
@@ -466,3 +474,110 @@ class TestUuidSolutionScope:
             allow_shared_fallback=True,
         )
         assert got is None
+
+
+@pytest.mark.e2e
+class TestNamedWorkflowManagement:
+    async def test_management_grant_at_one_org_does_not_open_another(self, db_session) -> None:
+        """Named workflow management overrides role ACL only at its own org."""
+        org_a = (await _add_org(db_session)).id
+        org_b = (await _add_org(db_session)).id
+        permitted = await _add_workflow(
+            db_session,
+            org_id=org_a,
+            solution_id=None,
+            path="workflows/a.py",
+        )
+        blocked = await _add_workflow(
+            db_session,
+            org_id=org_b,
+            solution_id=None,
+            path="workflows/b.py",
+        )
+        permitted.access_level = "role_based"
+        blocked.access_level = "role_based"
+        principal = UserPrincipal(
+            user_id=uuid4(),
+            email="workflow-manager@example.com",
+            organization_id=org_a,
+            name="Workflow manager",
+            is_superuser=True,
+            is_verified=True,
+        )
+        caller = Caller(
+            principal,
+            AuthorizationContext(
+                user_id=principal.user_id,
+                home_organization_id=org_a,
+                base_role_id=uuid4(),
+                is_external=False,
+                base_permissions=frozenset(),
+                role_grants=(
+                    RoleGrant(
+                        uuid4(),
+                        frozenset({"workflows.readwrite"}),
+                        (Boundary(BoundaryKind.ORGANIZATION, org_a),),
+                    ),
+                ),
+            ),
+        )
+        repo = WorkflowRepository(
+            db_session,
+            org_id=org_a,
+            user_id=principal.user_id,
+            is_superuser=True,
+            caller=caller,
+        )
+
+        assert (await repo.resolve(str(permitted.id))) is not None
+        assert await repo.resolve(str(blocked.id)) is None
+
+    async def test_reachable_install_resolves_when_current_org_differs(self, db_session) -> None:
+        """Caller mode checks an own install at its row org, not current scope."""
+        current_org = (await _add_org(db_session)).id
+        install_org = (await _add_org(db_session)).id
+        solution = await _add_solution(db_session, install_org)
+        workflow = await _add_workflow(
+            db_session,
+            org_id=install_org,
+            solution_id=solution.id,
+            path="workflows/reachable.py",
+            name="reachable",
+        )
+        workflow.access_level = "role_based"
+        principal = UserPrincipal(
+            user_id=uuid4(),
+            email="reachable-workflow-manager@example.com",
+            organization_id=current_org,
+            name="Workflow manager",
+            is_superuser=True,
+            is_verified=True,
+        )
+        caller = Caller(
+            principal,
+            AuthorizationContext(
+                user_id=principal.user_id,
+                home_organization_id=current_org,
+                base_role_id=uuid4(),
+                is_external=False,
+                base_permissions=frozenset(),
+                role_grants=(
+                    RoleGrant(
+                        uuid4(),
+                        frozenset({"workflows.readwrite"}),
+                        (Boundary(BoundaryKind.ORGANIZATION, install_org),),
+                    ),
+                ),
+            ),
+        )
+        repo = WorkflowRepository(
+            db_session, org_id=current_org, is_superuser=True, caller=caller
+        )
+
+        by_name = await repo.resolve("reachable", solution_scope=solution.id)
+        by_path = await repo.resolve(
+            "workflows/reachable.py::main", solution_scope=solution.id
+        )
+
+        assert by_name is not None and by_name.id == workflow.id
+        assert by_path is not None and by_path.id == workflow.id

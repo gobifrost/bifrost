@@ -3,7 +3,8 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { renderWithProviders, screen, within } from "@/test-utils";
 import { ROIReports } from "./ROIReports";
 
-const mockUseAuth = vi.fn();
+const mockUseAuthorization = vi.fn();
+const mockOrganizationScope = vi.fn();
 const mockUseMediaQuery = vi.fn();
 const mockUseReducedMotion = vi.fn();
 const mockUseOrganizations = vi.fn();
@@ -12,8 +13,8 @@ const mockUseROIByWorkflow = vi.fn();
 const mockUseROIByOrganization = vi.fn();
 const mockUseROITrends = vi.fn();
 
-vi.mock("@/contexts/AuthContext", () => ({
-	useAuth: () => mockUseAuth(),
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockUseAuthorization(),
 }));
 
 vi.mock("@/hooks/useMediaQuery", () => ({
@@ -55,7 +56,7 @@ vi.mock("@/components/layout/ListPageHeader", () => ({
 }));
 
 vi.mock("@/components/forms/OrganizationSelect", () => ({
-	OrganizationSelect: () => <div data-testid="organization-select" />,
+	OrganizationSelect: (props: Record<string, unknown>) => { mockOrganizationScope(props); return <div data-testid="organization-select" />; },
 }));
 
 vi.mock("@/components/ui/date-range-picker", () => ({
@@ -136,7 +137,10 @@ function renderPage() {
 }
 
 beforeEach(() => {
-	mockUseAuth.mockReturnValue({ isPlatformAdmin: true });
+	mockUseAuthorization.mockReturnValue({
+		canAnywhere: () => true,
+		canAt: () => true,
+	});
 	mockUseMediaQuery.mockReturnValue(false);
 	mockUseReducedMotion.mockReturnValue(false);
 	mockUseOrganizations.mockReturnValue({ data: [] });
@@ -270,3 +274,20 @@ describe("ROIReports read recovery", () => {
 		expect(workflowRefetch).toHaveBeenCalledTimes(1);
 	});
 });
+
+ it("shows a scoped report reader known scopes without Global or organization discovery", () => {
+    mockUseAuthorization.mockReturnValue({
+        authorization: { home_organization_id: "contoso" },
+        canAnywhere: (permission: string) => permission === "reports.read",
+        canAt: (_permission: string, target: { id?: string }) => target.id === "contoso",
+    });
+    renderWithProviders(<ROIReports />);
+    expect(screen.getByRole("heading", { name: "ROI Reports" })).toBeVisible();
+    expect(mockUseOrganizations).toHaveBeenLastCalledWith({ enabled: false });
+    const scope = mockOrganizationScope.mock.lastCall?.[0];
+    expect(scope.showGlobal).toBe(false);
+    expect(scope.loadOrganizations).toBe(false);
+    expect(scope.knownOrganizations).toContainEqual({ id: "contoso", name: "Home organization" });
+    expect(scope.filterOrganizations({ id: "contoso" })).toBe(true);
+    expect(scope.filterOrganizations({ id: "fabrikam" })).toBe(false);
+ });

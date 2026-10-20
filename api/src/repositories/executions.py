@@ -18,8 +18,8 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.run_lineage import lineage_columns
-from src.core.principal import UserPrincipal
 from src.core.log_safety import log_safe
+from src.core.principal import UserPrincipal
 from src.models import (
     AIUsage,
     AIUsagePublicSimple,
@@ -31,6 +31,7 @@ from src.models import (
 )
 from src.models.enums import ExecutionStatus
 from src.repositories.base import BaseRepository
+from src.services.durable_impersonation import pending_durable_impersonation
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,7 @@ class ExecutionRepository(BaseRepository[Execution]):
         check_existing: bool = True,
         *,
         lineage: dict[str, str] | None,
+        impersonation_provenance: dict[str, str] | None = None,
     ) -> Execution:
         """
         Create a new execution record.
@@ -146,6 +148,9 @@ class ExecutionRepository(BaseRepository[Execution]):
             if lineage is not None:
                 for column, value in lineage_columns(lineage).items():
                     setattr(existing, column, value)
+            if impersonation_provenance is not None:
+                for column, value in pending_durable_impersonation(impersonation_provenance).columns().items():
+                    setattr(existing, column, value)
             await self.session.flush()
             await self.session.refresh(existing)
             logger.info(
@@ -168,6 +173,7 @@ class ExecutionRepository(BaseRepository[Execution]):
             execution_model=execution_model,
             started_at=datetime.now(timezone.utc),
             **lineage_columns(lineage),
+            **pending_durable_impersonation(impersonation_provenance).columns(),
         )
 
         self.session.add(execution)
@@ -698,6 +704,7 @@ async def create_execution(
     check_existing: bool = True,
     *,
     lineage: dict[str, str] | None,
+    impersonation_provenance: dict[str, str] | None = None,
 ) -> None:
     """
     Create a new execution record in PostgreSQL.
@@ -729,6 +736,7 @@ async def create_execution(
             workflow_id=workflow_id,
             check_existing=check_existing,
             lineage=lineage,
+            impersonation_provenance=impersonation_provenance,
         )
 
     if session is not None:

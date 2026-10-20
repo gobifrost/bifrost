@@ -39,6 +39,7 @@ from src.jobs.platform.base import (
 from src.jobs.platform import runner
 from src.models.contracts.platform_jobs import PlatformJobStatus
 from src.models.orm.platform_jobs import PlatformJob
+from src.services.audit_context import ActorContext, clear_actor, set_actor
 from src.services import platform_jobs as service
 
 
@@ -60,6 +61,28 @@ async def _enqueue(db_session: AsyncSession) -> PlatformJob:
     )
     assert reused is False
     return job
+
+
+@pytest.mark.asyncio
+async def test_enqueue_persists_current_impersonation_provenance(
+    db_session: AsyncSession,
+) -> None:
+    operator_id, session_id = uuid4(), uuid4()
+    token = set_actor(
+        ActorContext(
+            user_id=uuid4(),
+            organization_id=None,
+            impersonated_by_user_id=operator_id,
+            impersonation_session_id=session_id,
+        )
+    )
+    try:
+        job = await _enqueue(db_session)
+    finally:
+        clear_actor(token)
+
+    assert job.impersonated_by_user_id == operator_id
+    assert job.impersonation_session_id == session_id
 
 
 @pytest.mark.asyncio

@@ -180,13 +180,26 @@ class TestSecretDecryption:
 class TestNonPermissionClasses:
     @pytest.mark.parametrize(
         "access_class",
-        [AccessClass.PERSONAL, AccessClass.OWN_PRIVATE_AGENT, AccessClass.TABLE_POLICY],
+        [AccessClass.PERSONAL, AccessClass.OWN_PRIVATE_AGENT],
     )
     def test_signed_in_user_at_home_only(self, access_class: AccessClass) -> None:
         entry = _entry(access_class)
         assert decide(_ctx(), entry, HOME).rule == "signed_in"
         assert not decide(_ctx(), entry, cross_org(CUSTOMER_B)).allowed
         assert not decide(None, entry, HOME).allowed
+
+    def test_table_policy_reaches_a_cross_org_target_through_a_role_boundary(self) -> None:
+        entry = _entry(AccessClass.TABLE_POLICY)
+        grant = RoleGrant(
+            uuid4(),
+            frozenset(),
+            (Boundary(BoundaryKind.ORGANIZATION, CUSTOMER_B),),
+        )
+
+        decision = decide(_ctx(grant, home=CUSTOMER_A), entry, cross_org(CUSTOMER_B))
+
+        assert decision.allowed
+        assert decision.rule == f"role:{grant.role_id}:reach@organization"
 
     def test_public_allows_anonymous_at_home(self) -> None:
         entry = _entry(AccessClass.PUBLIC, current_gate=CurrentGate.NONE)
@@ -209,3 +222,24 @@ class TestNonPermissionClasses:
         )
         assert decide(external, _perm_entry("agents.readbasic"), HOME).allowed
         assert not decide(external, _perm_entry("agents.readwrite"), HOME).allowed
+
+
+class TestPolicyDataReach:
+    def test_managed_organization_boundary_reaches_cross_org_policy_data(self) -> None:
+        grant = RoleGrant(
+            uuid4(),
+            frozenset(),
+            (Boundary(BoundaryKind.MANAGED_ORGANIZATIONS),),
+        )
+        entry = _entry(AccessClass.TABLE_POLICY)
+
+        decision = decide(_ctx(grant, home=PROVIDER_ORG_ID), entry, cross_org(CUSTOMER_A))
+
+        assert decision.allowed
+
+    def test_policy_data_stays_denied_outside_role_reach(self) -> None:
+        entry = _entry(AccessClass.TABLE_POLICY)
+
+        decision = decide(_ctx(home=PROVIDER_ORG_ID), entry, cross_org(CUSTOMER_A))
+
+        assert (decision.allowed, decision.rule) == (False, "denied:beyond_own_org_requires_role")

@@ -70,6 +70,40 @@ class ModuleSourceError(Exception):
         self.detail = detail
 
 
+async def module_scope_for_principal(db, user, *, solution_id=None, global_repo_access=False) -> ModuleSourceScope:
+    """Derive runtime source scope from its durable workflow; authorize human diagnostics."""
+    from src.models.orm.solutions import Solution
+    from src.models.orm.workflows import Workflow
+    from src.services.authorization.enforce import allows_permission, load_caller, user_reach
+
+    runtime = user.runtime_authority
+    caller = await load_caller(db, user)
+    if runtime is not None:
+        if runtime.kind == "agent_run":
+            raise ModuleSourceError(403, "A workflow source scope is required")
+        if runtime.workflow_id is None:
+            if not allows_permission(caller, "repository.readwrite", None):
+                raise ModuleSourceError(403, "Workspace source access is required")
+            return ModuleSourceScope(solution_id=None, global_repo_access=True)
+        workflow = await db.get(Workflow, runtime.workflow_id)
+        if workflow is None:
+            raise ModuleSourceError(403, "Workflow source scope is unavailable")
+        solution_id = workflow.solution_id
+        global_repo_access = solution_id is None
+    elif not allows_permission(caller, "repository.read", None):
+        raise ModuleSourceError(403, "Workspace source access is required")
+    if solution_id is not None:
+        validate_solution_id(str(solution_id))
+        solution = await db.get(Solution, UUID(str(solution_id)))
+        if solution is None or solution.status != "active" or not user_reach(caller).covers(solution.organization_id):
+            raise ModuleSourceError(403, "Solution source scope is unavailable")
+        if runtime is not None:
+            global_repo_access = solution.allow_outbound_access
+    return ModuleSourceScope(
+        solution_id=None if solution_id is None else str(solution_id), global_repo_access=global_repo_access,
+    )
+
+
 def _resolution_lock(cache_key: str) -> asyncio.Lock:
     """Return a process-local singleflight lock without retaining idle keys."""
     lock = _RESOLUTION_LOCKS.get(cache_key)

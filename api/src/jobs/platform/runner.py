@@ -75,6 +75,8 @@ async def run_claimed_platform_job(job_id: UUID, lease_token: UUID) -> bool:
             requested_by_user_id=job.requested_by_user_id,
             requested_by_email=job.requested_by_email,
             requested_by_name=job.requested_by_name,
+            impersonated_by_user_id=job.impersonated_by_user_id,
+            impersonation_session_id=job.impersonation_session_id,
             checkpoint=job.result,
         )
 
@@ -91,6 +93,8 @@ async def run_claimed_platform_job(job_id: UUID, lease_token: UUID) -> bool:
             source="platform_job",
             # Background system work, not a browser/CLI/MCP call.
             surface="service",
+            impersonated_by_user_id=context.impersonated_by_user_id,
+            impersonation_session_id=context.impersonation_session_id,
         )
     )
 

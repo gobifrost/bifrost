@@ -6,14 +6,12 @@ authenticate via engine credentials and round-trip a file.
 
 Tests run inside the ``test-runner`` container, which is built from the
 same ``api/Dockerfile.dev`` as the worker, so the ``/usr/local/bin/bifrost``
-shim is on PATH here just like in the worker. We seed engine credentials
-by calling :func:`src.core.security.authenticate_engine` directly (the
-worker invokes the same function at the start of every execution — see
-``api/src/services/execution/worker.py``), then exercise the shipped
-``bifrost`` binary via :mod:`subprocess`. This proves:
+shim is on PATH here just like in the worker. We mint a typed token for a
+live, durable execution row, then exercise the shipped ``bifrost`` binary
+via :mod:`subprocess`. This proves:
 
 1. The shim is on PATH in the image.
-2. ``bifrost`` picks up ``~/.bifrost/credentials.json`` automatically.
+2. ``bifrost`` picks up the process-scoped worker credentials automatically.
 3. The CLI hits the real ``http://api:8000`` and round-trips workspace files.
 
 The test_cli_*.py siblings (agents, tables, configs, ...) exercise the
@@ -32,6 +30,8 @@ import subprocess
 import uuid
 
 import pytest
+import pytest_asyncio
+from sqlalchemy import delete
 
 from tests.e2e.file_policy_helpers import grant_file_policy
 
@@ -47,36 +47,50 @@ def _grant_workspace_e2e_policy(e2e_client, platform_admin):
     )
 
 
-@pytest.fixture
-def engine_creds():
-    """Populate ``~/.bifrost/credentials.json`` with an engine token.
+@pytest_asyncio.fixture
+async def engine_creds(async_session_factory, monkeypatch, platform_admin):
+    """Install a typed runtime token for one live, durable execution.
 
-    Mirrors what ``run_execution`` does at the top of every workflow
-    invocation in the worker (`api/src/services/execution/worker.py:134`).
-    Without this, the CLI has nothing to authenticate with.
-
-    Cleans up on teardown so other e2e tests that rely on "no credentials
-    present" semantics (e.g. ``test_sdk_from_workflow``) aren't poisoned by
-    a leftover credentials file from this module.
+    The token contains only the execution identity. The API derives its
+    original caller, actor, and permissions from this row on every request,
+    exactly as it does for a worker child.
     """
-    from bifrost.credentials import get_credentials_path
-    from src.core.security import authenticate_engine
+    from src.core.security import mint_engine_token
+    from src.models.enums import ExecutionStatus
+    from src.models.orm.executions import Execution
 
-    authenticate_engine()
+    execution_id = uuid.uuid4()
+    async with async_session_factory() as session:
+        execution = Execution(
+            id=execution_id,
+            workflow_name="cli-files-runtime-fixture",
+            status=ExecutionStatus.RUNNING,
+            executed_by=platform_admin.user_id,
+            executed_by_name=platform_admin.name,
+            run_user_id=platform_admin.user_id,
+            started_by_user_id=platform_admin.user_id,
+            root_execution_id=execution_id,
+        )
+        session.add(execution)
+        await session.commit()
+
+    token, _ = mint_engine_token(execution_id=str(execution_id), timeout_seconds=120)
+    monkeypatch.setenv("BIFROST_API_URL", "http://api:8000")
+    monkeypatch.setenv("BIFROST_ACCESS_TOKEN", token)
+    monkeypatch.setenv("BIFROST_REFRESH_TOKEN", token)
     try:
         yield
     finally:
-        path = get_credentials_path()
-        if path.exists():
-            path.unlink()
+        async with async_session_factory() as session:
+            await session.execute(delete(Execution).where(Execution.id == execution_id))
+            await session.commit()
 
 
 def _run_bifrost(args: list[str]) -> subprocess.CompletedProcess[str]:
     """Invoke the shipped ``bifrost`` binary via :mod:`subprocess`.
 
-    Sets ``BIFROST_API_URL`` so the CLI's credential resolver points at
-    the in-network test API. ``authenticate_engine`` writes the same URL
-    into the credentials file, so the SDK matches the right record.
+    The typed token fixture sets the worker credential environment; this
+    helper repeats the in-network API URL for the subprocess.
     """
     env = {**os.environ, "BIFROST_API_URL": "http://api:8000"}
     try:

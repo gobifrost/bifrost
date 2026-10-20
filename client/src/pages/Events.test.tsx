@@ -7,6 +7,7 @@ const useEventSourcesMock = vi.fn();
 const useMediaQueryMock = vi.fn();
 const useSearchMock = vi.fn();
 const useAuthMock = vi.fn();
+const useAuthorizationMock = vi.fn();
 const deleteMutationMock = {
 	mutateAsync: vi.fn(),
 	isPending: false,
@@ -14,6 +15,10 @@ const deleteMutationMock = {
 
 vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => useAuthMock(),
+}));
+
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => useAuthorizationMock(),
 }));
 
 vi.mock("@/hooks/useMediaQuery", () => ({
@@ -85,9 +90,14 @@ beforeEach(() => {
 	useMediaQueryMock.mockReset();
 	useSearchMock.mockReset();
 	useAuthMock.mockReset();
+	useAuthorizationMock.mockReset();
 	deleteMutationMock.mutateAsync.mockReset();
 	deleteMutationMock.isPending = false;
 	useAuthMock.mockReturnValue({ isPlatformAdmin: true });
+	useAuthorizationMock.mockReturnValue({
+		canAnywhere: () => true,
+		canAt: () => true,
+	});
 	useSearchMock.mockImplementation((items: unknown[]) => items);
 	useEventSourcesMock.mockReturnValue({
 		data: { items: [makeSource()], total: 1 },
@@ -159,6 +169,54 @@ describe("Events page", () => {
 		expect(
 			screen.getByRole("cell", { name: /northwind automation/i }),
 		).toBeInTheDocument();
+	});
+
+	it("uses events grants instead of platform admin for create and row actions", () => {
+		useMediaQueryMock.mockReturnValue(true);
+		useAuthMock.mockReturnValue({ isPlatformAdmin: false });
+		useAuthorizationMock.mockReturnValue({
+			canAnywhere: (permission: string) =>
+				permission === "events.read" ||
+				permission === "events.readwrite",
+			canAt: (
+				permission: string,
+				target: { kind: string; id?: string },
+			) =>
+				permission === "events.readwrite" &&
+				target.kind === "org" &&
+				target.id === "org-1",
+		});
+		useEventSourcesMock.mockReturnValue({
+			data: {
+				items: [
+					makeSource({ id: "source-allowed", name: "Allowed source" }),
+					makeSource({
+						id: "source-blocked",
+						name: "Blocked source",
+						organization_id: "org-2",
+					}),
+				],
+				total: 2,
+			},
+			isLoading: false,
+			isError: false,
+			isFetching: false,
+			refetch: vi.fn(),
+		});
+
+		renderWithProviders(<Events />, {
+			initialEntries: ["/event-sources"],
+		});
+
+		expect(
+			screen.getByRole("button", { name: /create event source/i }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "Allowed source actions" }),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: "Blocked source actions" }),
+		).not.toBeInTheDocument();
 	});
 
 	it("opens an event source row href on ctrl-click from a plain cell", () => {

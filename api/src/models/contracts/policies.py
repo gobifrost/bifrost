@@ -21,12 +21,19 @@ KNOWN_USER_FIELDS: Final[frozenset[str]] = frozenset({
     "user_id",
     "email",
     "organization_id",
+    # The only legacy admin term retained after cutover: policies resolve it by the
+    # built-in Platform Admin role ID, never an administrative flag.
     "is_platform_admin",
     "is_provider_org",
     "is_external",
     "role_ids",
     "role_names",
 })
+
+# Internal policy authority used by the built-in admin-bypass policy. It is a
+# policy view of configured powers, not a third permission mode or a user role
+# fact: a Full workflow may hold it without changing its engine principal.
+KNOWN_POLICY_AUTHORITIES: Final[frozenset[str]] = frozenset({"platform_admin"})
 
 # Operators that produce boolean results.
 _LOGIC_OPS: Final[frozenset[str]] = frozenset({"and", "or", "not"})
@@ -96,6 +103,14 @@ def _validate_operand(
             raise ValueError(
                 f"{path}: unknown user field {ref!r}; "
                 f"available: {sorted(KNOWN_USER_FIELDS)}"
+            )
+        return
+    if keys == {"authority"}:
+        ref = node["authority"]
+        if ref not in KNOWN_POLICY_AUTHORITIES:
+            raise ValueError(
+                f"{path}: unknown policy authority {ref!r}; "
+                f"available: {sorted(KNOWN_POLICY_AUTHORITIES)}"
             )
         return
     if keys == {"call", "args"} or keys == {"call"}:

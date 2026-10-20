@@ -14,7 +14,7 @@ import json
 from typing import Awaitable, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, Request, HTTPException, status
 
 from shared.subprocess_env import package_tool_env
 from src.models import (
@@ -25,7 +25,10 @@ from src.models import (
     PackageUpdate,
     PackageUpdatesResponse,
 )
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context, CurrentActiveUser
+from src.core.database import AsyncSession, get_db
+from src.services.authorization.enforce import authorize_operation
+from src.services.authorization.evaluator import GLOBAL
 from src.core.log_safety import log_safe
 from src.core.redis_client import get_redis_client
 from src.core.requirements_cache import (
@@ -39,7 +42,14 @@ from src.jobs.rabbitmq import publish_broadcast
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/packages", tags=["Packages"])
+async def _authorize_global_route(
+    request: Request, user: CurrentActiveUser, db: AsyncSession = Depends(get_db, scope="function")
+) -> None:
+    await authorize_operation(
+        db, user, f"{request.method} {request.scope['route'].path}", GLOBAL
+    )
+
+router = APIRouter(prefix="/api/packages", tags=["Packages"], dependencies=[Depends(_authorize_global_route)])
 
 
 # =============================================================================
@@ -231,7 +241,7 @@ async def get_installed_packages() -> list[InstalledPackage]:
 )
 async def list_packages(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> InstalledPackagesResponse:
     """
     List all installed Python packages.
@@ -263,7 +273,7 @@ async def list_packages(
 )
 async def check_updates(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> PackageUpdatesResponse:
     """
     Check for available package updates.
@@ -296,7 +306,7 @@ async def check_updates(
 async def install_package(
     request: InstallPackageRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> PackageInstallResponse:
     """
     Install a Python package by updating requirements.txt and recycling workers.
@@ -376,7 +386,7 @@ async def install_package(
 async def uninstall_package(
     package_name: str,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> dict:
     """Uninstall a package: drop it from requirements.txt and recycle workers.
 

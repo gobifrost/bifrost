@@ -1,32 +1,11 @@
-"""
-Synchronous Redis client for import hook.
+"""Synchronous source loading for the virtual import hook.
 
-Python's import system runs synchronously - we need sync Redis access
-for the MetaPathFinder to fetch modules during import.
-
-This module provides synchronous versions of the cache functions
-specifically for use in virtual_import.py's MetaPathFinder.
-
-When a cache miss occurs, we fall back via one of these paths, tried in order:
-1. Trusted engine socket (preferred inside a forked engine child): the worker
-   parent serves the original ``GET /api/sdk/modules-resolve`` and
-   ``GET /api/sdk/modules/{path:path}`` routes on a private Unix socket, and
-   the child reads them through the synchronous
-   ``BifrostClient.engine_request_sync`` entry point. This path needs no
-   child DB/S3 credentials and no shared pipe, and works while another async
-   SDK call is in flight.
-2. API module-fetch endpoints over the network — preferred when
-   BIFROST_API_URL is set and a credentials file is present.  This path does
-   not require BIFROST_S3_* in the child env (Phase 2 hardening).
-3. Direct S3 access via botocore — legacy fallback, only active when
-   BIFROST_S3_ACCESS_KEY/SECRET_KEY are set in the environment.
-
-Inside a forked engine child with the trusted engine socket injected, a cold
-resolve/fetch failure raises instead of falling back to the network API or S3
-(an installed socket proves the engine socket is expected).
-
-Self-healing: on any successful fetch, the result is re-cached to Redis so
-subsequent calls on the same worker hit the fast path.
+Python imports run synchronously. Parent processes may use the supported
+Redis/S3 cache and network API paths. A forked execution child is explicitly
+marked by the worker-installed SDK Unix socket; every one of its module
+resolution and source requests goes through that scoped transport before any
+cache or storage access. Children never read or write Redis and never fall
+back to network HTTP or S3.
 """
 
 import hashlib
@@ -44,12 +23,12 @@ from uuid import UUID
 import redis
 
 from src.core.module_cache_contract import (
+    CachedModule,
     MODULE_INDEX_KEY,
     MODULE_KEY_PREFIX,
     MODULE_RESOLUTION_KEY_PREFIX,
     MODULE_RESOLUTION_READ_SCRIPT,
     module_resolution_generation_key,
-    CachedModule,
     module_resolution_cache_key,
 )
 
@@ -168,6 +147,7 @@ def _candidate_storage_paths(path: str) -> list[str]:
 # Cached S3 client — reused across calls to avoid repeated setup
 _s3_client: Any = None
 _s3_available: bool | None = None
+_sync_redis_client: Any = None
 
 
 @lru_cache(maxsize=1)
@@ -177,22 +157,21 @@ def _get_sync_redis() -> Any:
 
     Uses lru_cache to reuse connection across imports.
     """
-    return redis.Redis.from_url(
+    global _sync_redis_client
+    _sync_redis_client = redis.Redis.from_url(
         os.environ.get("BIFROST_REDIS_URL", "redis://localhost:6379/0"),
         decode_responses=True,
     )
+    return _sync_redis_client
 
 
 def _get_engine_credentials() -> tuple[str, str] | None:
     """
     Read the engine bearer token and API URL from the credentials file.
 
-    The file is written by save_credentials() (either from the handed-down
-    context_data["engine_token"] path or the legacy authenticate_engine()
-    path) and carries both the access token and the API URL.  Returning the
-    URL from here means the API module-fetch fallback works even when
-    BIFROST_API_URL is not set in the child env (it is not, in either the
-    test stack or the k8s worker manifests).
+    The file is written by the handed-down ``context_data["engine_token"]``
+    path and carries both the access token and the API URL. Parent synchronous
+    callers use it only when no trusted execution-child socket is installed.
 
     Returns (api_url, access_token) or None if unavailable.
     """
@@ -212,9 +191,9 @@ def _get_engine_client() -> Any | None:
     """Return the engine-local SDK client when the trusted socket is injected.
 
     Non-None only inside a forked engine child whose entrypoint installed the
-    worker's private Unix socket. Everywhere else (API processes, plain
-    workers, tests without an injection) this is None and the existing
-    HTTP/S3 fallbacks apply unchanged.
+    worker's private Unix socket. That socket path is the explicit trusted
+    execution marker. Everywhere else (API processes, plain workers, tests
+    without an injection) this is None and parent cache behavior applies.
 
     The import is lazy so this module stays importable before the SDK package
     loads. A SDK package that is present but broken raises instead of
@@ -240,8 +219,8 @@ def _fetch_module_from_api(path: str) -> CachedModule | None:
     no URL.  Returns a CachedModule dict on success, None on any error
     (404, auth failure, etc.).
 
-    This is the primary cold-cache fallback when BIFROST_S3_* are absent
-    from the child environment (Phase 2 hardening).
+    This is the primary parent cold-cache fallback when direct S3 settings are
+    unavailable.
     """
     creds = _get_engine_credentials()
     if not creds:
@@ -545,18 +524,17 @@ def resolve_module_sync(name: str) -> ModuleResolution:
     if cached is not None:
         return cached
 
-    resolution = _get_cached_module_resolution(name)
-    if resolution is None:
-        resolution = _get_exact_scoped_module(name)
-    if resolution is None:
-        # Inside a forked engine child with the trusted socket injected, the
-        # parent serves the original modules-resolve route on that socket —
-        # no API request, no shared pipe, and no HTTP/S3 fallback on failure.
-        # Everywhere else the existing API fallback applies unchanged.
-        engine_client = _get_engine_client()
-        if engine_client is not None:
-            resolution = _resolve_via_engine_socket(engine_client, name)
-        else:
+    # An injected worker socket is the execution-child marker. Consult it
+    # before any Redis helper so an inherited or ambient cache cannot become
+    # an authority or credential path for customer code.
+    engine_client = _get_engine_client()
+    if engine_client is not None:
+        resolution = _resolve_via_engine_socket(engine_client, name)
+    else:
+        resolution = _get_cached_module_resolution(name)
+        if resolution is None:
+            resolution = _get_exact_scoped_module(name)
+        if resolution is None:
             resolution = _fetch_module_resolution_from_api(name)
     if resolution is None:
         raise ModuleResolutionError(f"Module resolver unavailable for {name}")
@@ -623,8 +601,8 @@ def _get_s3_module(storage_path: str) -> bytes | None:
     Fetch a module from S3 by storage path (synchronous).
 
     Bare paths resolve under _repo/; ``_solutions/{id}/...`` paths are used
-    verbatim. Uses botocore sync client since this runs in worker subprocesses.
-    Returns raw bytes or None if not found.
+    verbatim. This is available only to parent synchronous callers. Returns
+    raw bytes or None if not found.
     """
     bucket = os.environ.get("BIFROST_S3_BUCKET")
     if not bucket:
@@ -663,35 +641,31 @@ def get_module_sync(path: str) -> CachedModule | None:
     global_repo_access is on. With no context, behavior is unchanged: the bare
     path resolves under _repo/.
 
-    Per candidate, the lookup order is:
-    1. Redis cache (fast path)
-    2a. Inside a forked engine child with the trusted socket injected: the
-        parent-served original route GET /api/sdk/modules/<storage_path> over
-        ``engine_request_sync`` (no pipe, no child DB/S3, no HTTP/S3 fallback;
-        a 404 tries the next candidate)
-    2b. Otherwise: API endpoint GET /api/sdk/modules/<storage_path>  —
-        preferred cold-cache fallback (no S3 env vars required; uses
-        engine token from credentials file; the server performs the
-        Redis→S3 lookup)
-    3. Direct S3 via botocore — legacy fallback when BIFROST_S3_* are present
-    Then the next candidate; None if no candidate resolves.
+    A forked execution child is identified by its injected worker socket. It
+    uses the parent-served ``GET /api/sdk/modules/<storage_path>`` route for
+    every candidate, including entries that would be warm in Redis. It never
+    uses Redis, network HTTP, or S3, and a 404 advances to the next candidate.
 
-    On any successful fallback hit the module is re-cached to Redis (under the
-    storage-path key) so the next call on the same worker takes the fast path.
-    The returned CachedModule keeps the logical (bare) ``path`` so __file__ and
-    spec origin stay stable regardless of where the bytes were stored.
+    Parent callers retain the existing Redis → network API → S3 lookup and
+    re-cache successful fallback reads. The returned CachedModule keeps the
+    logical (bare) ``path`` so __file__ and spec origin stay stable regardless
+    of where the bytes were stored.
     """
+    # The injected worker socket is an explicit execution-child marker. Route
+    # all child reads through the scoped worker transport before touching any
+    # Redis cache or parent-only fallback.
+    engine_client = _get_engine_client()
+    if engine_client is not None:
+        for storage_path in _candidate_storage_paths(path):
+            engine_module = _fetch_via_engine_socket(engine_client, storage_path)
+            if engine_module is None:
+                continue
+            engine_module["storage_path"] = storage_path
+            return engine_module
+        return None
+
     try:
         client = _get_sync_redis()
-
-        # Inside a forked engine child with the trusted socket injected, the
-        # parent serves the original modules/{path} route on that socket — no
-        # API request, no shared pipe, no child DB/S3 connection, and no
-        # HTTP/S3 fallback on failure. A route 404 advances to the next
-        # candidate; any other local failure raises. Everywhere else the
-        # existing API/S3 fallbacks apply unchanged.
-        engine_client = _get_engine_client()
-
         for storage_path in _candidate_storage_paths(path):
             key = f"{MODULE_KEY_PREFIX}{storage_path}"
             data = client.get(key)
@@ -699,18 +673,6 @@ def get_module_sync(path: str) -> CachedModule | None:
                 cached = cast(CachedModule, json.loads(data))
                 cached["storage_path"] = storage_path
                 return cached
-
-            if engine_client is not None:
-                engine_module = _fetch_via_engine_socket(engine_client, storage_path)
-                if engine_module is None:
-                    continue
-                try:
-                    client.setex(key, MODULE_CACHE_TTL, json.dumps(engine_module))
-                    client.sadd(MODULE_INDEX_KEY, storage_path)
-                except redis.RedisError as e:
-                    logger.warning(f"Failed to re-cache local module to Redis: {e}")
-                engine_module["storage_path"] = storage_path
-                return engine_module
 
             # --- Cold-cache fallback 1: API endpoint ---
             api_module = _fetch_module_from_api(storage_path)
@@ -759,7 +721,12 @@ def get_module_sync(path: str) -> CachedModule | None:
 
 
 def reset_sync_redis() -> None:
-    """Reset the sync Redis client."""
+    """Close and reset the synchronous parent Redis cache client."""
+    global _sync_redis_client
+    if _sync_redis_client is not None:
+        with suppress(Exception):
+            _sync_redis_client.close()
+        _sync_redis_client = None
     _get_sync_redis.cache_clear()
 
 

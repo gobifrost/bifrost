@@ -90,7 +90,7 @@ class workflows:
         Args:
             workflow: Workflow UUID or path::function_name ref
             input_data: Input parameters for the workflow
-            org_id: Override execution org context (admin only).
+            org_id: Execute in this organization within the caller's reach.
                      Like `bifrost run --org <org_id>`.
             run_as: Execute as this user UUID. Requires Impersonate Users
                     in that user's organization. The execution runs under
@@ -110,8 +110,8 @@ class workflows:
         Raises:
             ValueError: If ``scheduled_at`` and ``delay_seconds`` are both
                 provided, or if ``scheduled_at`` is naive (no tzinfo).
-            httpx.HTTPStatusError: If the request fails (403 for non-admin
-                using org_id, or for a run_as user outside the caller's
+            httpx.HTTPStatusError: If the request fails (403 for an organization
+                outside the caller's reach, or for a run_as user outside the caller's
                 Impersonate Users, which includes an unknown user when a
                 person calls; 404 for workflow not found, or for a Run As
                 user not found when a workflow calls, etc.)

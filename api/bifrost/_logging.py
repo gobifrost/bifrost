@@ -69,8 +69,16 @@ def _serialize_metadata(metadata: dict[str, Any] | None) -> dict[str, Any] | Non
     return convert(metadata)
 
 
+def _require_server_process() -> None:
+    from bifrost.client import get_engine_socket_path
+
+    if get_engine_socket_path() is not None:
+        raise RuntimeError("Direct log storage access is unavailable in execution children")
+
+
 def _get_sync_redis() -> redis_sync.Redis:
-    """Get thread-local sync Redis connection."""
+    """Get thread-local sync Redis connection in the trusted server process."""
+    _require_server_process()
     if not hasattr(_local, "redis") or _local.redis is None:
         from src.config import get_settings
 
@@ -312,6 +320,7 @@ async def append_log_to_stream_async(
 
     Use this in async contexts (API routes, background tasks).
     """
+    _require_server_process()
     from src.core.cache import get_redis
 
     exec_id = str(execution_id)
@@ -352,6 +361,7 @@ async def read_logs_from_stream(
     Returns:
         List of ExecutionLog entries
     """
+    _require_server_process()
     from src.core.cache import get_redis
     from .models import ExecutionLog
 
@@ -401,6 +411,7 @@ async def publish_log_to_pubsub_async(
         timestamp: Optional timestamp
         sequence: Monotonic sequence number for client-side ordering
     """
+    _require_server_process()
     from src.core.cache import get_redis
 
     exec_id = str(execution_id)
@@ -520,6 +531,7 @@ async def flush_logs_to_postgres(
     stream_key = execution_logs_stream_key(exec_id)
 
     try:
+        _require_server_process()
         from src.core.cache import get_redis
 
         async with get_redis() as r:

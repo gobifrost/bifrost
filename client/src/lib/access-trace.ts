@@ -95,8 +95,8 @@ function powersSentence(step: AccessStep): string | undefined {
 	const grants = Array.isArray(step.facts.grants) ? step.facts.grants : [];
 	return {
 		no_workflow: "No workflow: only their own roles apply.",
-		full: "The workflow has Full powers: every permission, secrets included.",
-		restricted: `The workflow is Restricted: ${grants.length} ${grants.length === 1 ? "grant adds" : "grants add"} to the run user's roles.`,
+		full: "The workflow has Full Access: every permission, secrets included.",
+		restricted: `The workflow uses Declared Permissions: ${grants.length} ${grants.length === 1 ? "grant adds" : "grants add"} to the run user's roles.`,
 	}[step.reason];
 }
 
@@ -137,6 +137,8 @@ function permissionSentence(
 		return `Their base role grants ${named("base_role:")}.`;
 	if (reason.startsWith("denied:missing:"))
 		return `No role grants ${named("denied:missing:")} there.`;
+	if (reason === "workflow_capability" && typeof step.facts.permission === "string")
+		return `The workflow adds ${names.permission(step.facts.permission)} within the run user's reach.`;
 	if (reason.startsWith("role:")) {
 		const [roleId, held] = roleParts(reason);
 		const permission = names.permission(held);
@@ -148,9 +150,10 @@ function permissionSentence(
 			: `A role placed there grants ${permission}.`;
 	}
 	return {
-		full: "Full powers include every permission.",
+		full: "Full Access includes every permission.",
 		platform_admin: "A Platform Admin holds All Permissions.",
 		public: "Anyone may do this.",
+		"reach:home_or_global": "The data target is in reach. Its policy decides access.",
 		signed_in: "Anyone signed in may do this in their home organization.",
 		"denied:operation_confined_to_own_org":
 			"This operation works only in their home organization.",
@@ -172,7 +175,7 @@ function storedPermissionName(step: AccessStep): string | undefined {
 /**
  * What a step decided, as a sentence: roles and organizations by name where
  * `names` knows them ("a role placed there" where it doesn't), permissions by
- * their Graph-style names. `runUserId` recognizes a Restricted workflow's
+ * their Graph-style names. `runUserId` recognizes a Declared Permissions workflow's
  * grants, which the server judges as a role named by the run user's id. A
  * step that wasn't reached says nothing, except a named permission check's
  * permission step, which says what it needs; a reason this doesn't know shows
@@ -221,7 +224,7 @@ function canonical(value: unknown): string {
 
 /**
  * Keys of the steps that decided differently now than then: their status,
- * reason or facts (a Restricted workflow's grants, the run user's home)
+ * reason or facts (a Declared Permissions workflow's grants, the run user's home)
  * differ.
  */
 export function changedStepKeys(

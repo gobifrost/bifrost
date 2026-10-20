@@ -34,6 +34,10 @@ def _source() -> SimpleNamespace:
     )
 
 
+def _caller() -> MagicMock:
+    return MagicMock()
+
+
 @pytest.mark.asyncio
 async def test_resubscribe_replaces_provider_state_after_cleanup(monkeypatch):
     source = _source()
@@ -58,6 +62,7 @@ async def test_resubscribe_replaces_provider_state_after_cleanup(monkeypatch):
 
     await resubscribe_provider(
         db,
+        _caller(),
         source,
         "https://example.test/api/hooks/source-1",
     )
@@ -94,6 +99,7 @@ async def test_resubscribe_retains_source_and_records_recreation_failure(monkeyp
     with pytest.raises(ValueError, match="callback rejected"):
         await resubscribe_provider(
             db,
+            _caller(),
             source,
             "https://example.test/api/hooks/source-1",
         )
@@ -120,7 +126,7 @@ async def test_unsubscribe_propagates_provider_failure(monkeypatch):
     )
 
     with pytest.raises(ValueError, match="Graph unavailable"):
-        await unsubscribe_provider(MagicMock(), source)
+        await unsubscribe_provider(MagicMock(), _caller(), source)
 
 
 @pytest.mark.asyncio
@@ -141,7 +147,9 @@ async def test_resubscribe_keeps_the_encrypted_signing_secret(monkeypatch):
         lambda: registry,
     )
 
-    await resubscribe_provider(db, source, "https://example.test/api/hooks/source-1")
+    await resubscribe_provider(
+        db, _caller(), source, "https://example.test/api/hooks/source-1"
+    )
 
     assert source.webhook_source.state["fresh"] is True
     assert read_signing_secret(source.webhook_source.state) == "s3cret"

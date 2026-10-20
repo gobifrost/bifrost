@@ -3,7 +3,7 @@
 The Solution manifest declares each workflow's requested mode and grants
 (portable). What an admin approved lives here, on the install's record
 (environment-specific): ``approved_digest`` is the digest of the approved
-request. Data only until delegated execution reads it.
+request. Runtime powers require current, digest-bound approval.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ class SolutionWorkflowPermissionRequest(Base):
         ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False
     )
     requested_mode: Mapped[str] = mapped_column(String(16), nullable=False)
-    # List of {"permission": str, "boundary": str | None}
+    # List of {"permission": str}; workflow requests carry no org placement.
     requested_grants: Mapped[list] = mapped_column(
         JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
     )

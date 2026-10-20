@@ -167,6 +167,7 @@ def _done(input_tokens=3, output_tokens=5):
         output_tokens=output_tokens,
         cache_read_tokens=0,
         cache_write_tokens=0,
+        reasoning_tokens=0,
         provider_cost=None,
     )
 
@@ -241,7 +242,9 @@ def _chunks_to_payloads(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return payloads
 
 
-async def _call_stream_route(async_session_factory, prompt: str) -> list[dict]:
+async def _call_stream_route(
+    async_session_factory, prompt: str, current_user
+) -> list[dict]:
     """Invoke the external HTTP route function directly and read its SSE."""
     from src.models.contracts.cli import CLIAICompleteRequest
     from src.routers.cli import cli_ai_stream
@@ -249,11 +252,7 @@ async def _call_stream_route(async_session_factory, prompt: str) -> list[dict]:
     async with async_session_factory() as session:
         response = await cli_ai_stream(
             CLIAICompleteRequest(messages=[{"role": "user", "content": prompt}]),
-            SimpleNamespace(
-                user_id=uuid4(),
-                organization_id=None,
-                is_superuser=True,
-            ),
+            current_user,
             session,
         )
         lines: list[str] = []
@@ -273,17 +272,44 @@ class TestForkedAIStream:
     ):
         """A real child streams AI over the socket with HTTP disabled."""
         from src.core.security import mint_engine_token
-        from tests.helpers.live_execution import create_live_execution
+        from src.core.principal import UserPrincipal
+        from src.models.orm.audit import AuditLog
+        from src.models.orm.organizations import Organization as OrganizationModel
+        from src.models.orm.users import User
+        from tests.helpers.live_execution import (
+            create_live_execution,
+            delete_live_execution,
+        )
 
         execution_id = str(uuid4())
-        org_id = str(uuid4())
+        async with async_session_factory() as seed:
+            organization = OrganizationModel(
+                name=f"sdk-ai-stream-fork-{uuid4().hex[:8]}",
+                is_active=True,
+                created_by="sdk-ai-stream-fork-test",
+            )
+            seed.add(organization)
+            await seed.commit()
+            org_id = str(organization.id)
         engine_token, _ = mint_engine_token(
             execution_id=execution_id,
-            solution_id=None,
-            global_repo_access=True,
             timeout_seconds=120,
         )
-        await create_live_execution(async_session_factory, execution_id)
+        live_execution = await create_live_execution(
+            async_session_factory,
+            execution_id,
+            organization_id=organization.id,
+        )
+        async with async_session_factory() as session:
+            actor = await session.get(User, live_execution.actor_id)
+            assert actor is not None
+            parity_principal = UserPrincipal(
+                user_id=actor.id,
+                email=actor.email,
+                organization_id=actor.organization_id,
+                is_active=actor.is_active,
+                is_external=actor.is_external,
+            )
         context = _context_for(
             _script_b64(_AI_SOURCE.replace("ORG_ID", repr(org_id))),
             engine_token,
@@ -334,13 +360,23 @@ class TestForkedAIStream:
                 # External parity: the same route function the network API
                 # exposes, consumed directly, yields the same SSE payloads.
                 parity_events = await _call_stream_route(
-                    async_session_factory, "parity"
+                    async_session_factory, "parity", parity_principal
                 )
         finally:
             await server.stop()
-            from tests.helpers.live_execution import delete_live_execution
-
             await delete_live_execution(async_session_factory, execution_id)
+            from sqlalchemy import delete
+
+            async with async_session_factory() as cleanup:
+                await cleanup.execute(
+                    delete(AuditLog).where(AuditLog.organization_id == organization.id)
+                )
+                await cleanup.execute(
+                    delete(OrganizationModel).where(
+                        OrganizationModel.id == organization.id
+                    )
+                )
+                await cleanup.commit()
 
         assert envelope["success"] is True, envelope
         result = envelope["result"]
@@ -414,7 +450,7 @@ class TestForkedAIStream:
 
         # Completed streams recorded usage under the requested org; the
         # cancelled and provider-error streams did not. The direct route call
-        # (external parity) has no execution/org scope.
+        # has no execution, and resolves its scope from the durable actor.
         assert len(usage_records) == 4
         assert all(record["provider"] == "openai" for record in usage_records)
         assert [record["organization_id"] for record in usage_records[:3]] == [
@@ -423,5 +459,5 @@ class TestForkedAIStream:
         assert [record["execution_id"] for record in usage_records[:3]] == [
             _UUID(execution_id)
         ] * 3
-        assert usage_records[3]["organization_id"] is None
+        assert usage_records[3]["organization_id"] == organization.id
         assert usage_records[3]["execution_id"] is None

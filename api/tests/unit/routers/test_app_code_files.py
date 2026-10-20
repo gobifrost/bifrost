@@ -238,7 +238,7 @@ class TestGetV2DistAsset:
             return fake_app
 
         monkeypatch.setattr(
-            "src.routers.app_code_files.get_application_or_404", _fake_get_app
+            "src.routers.app_code_files._get_application_by_id_or_404", _fake_get_app
         )
 
         class _FakeBuilder:
@@ -296,3 +296,50 @@ class TestGetV2DistAsset:
             with pytest.raises(ClientError):
                 await get_v2_dist_asset(app_id=app_id, path="main.js", ctx=SimpleNamespace(org_id=None), _user=None)
         assert any("dist asset read failed" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["live", "draft"])
+async def test_manifest_viewer_can_read_stale_bundle_without_rebuilding(monkeypatch, mode):
+    """App viewers can bootstrap a legacy bundle without acquiring write power."""
+    import json
+    from unittest.mock import AsyncMock
+    from uuid import uuid4
+
+    from src.routers import app_code_files
+    from shared.builtin_roles import USER_ROLE_ID
+    from src.core.principal import UserPrincipal
+    from src.services.authorization.context import AuthorizationContext
+    from src.services.authorization.enforce import Caller
+
+    app_id = uuid4()
+    app = SimpleNamespace(
+        id=app_id, organization_id=uuid4(), app_model="inline_v1", dependencies={},
+    )
+    ctx = SimpleNamespace(db=object(), user=object())
+    loader = AsyncMock(return_value=app)
+    monkeypatch.setattr(app_code_files, "_get_application_by_id_or_404", loader)
+    storage = SimpleNamespace(read_file=AsyncMock(return_value=json.dumps({
+        "entry": "bundle.js", "css": None, "schema_version": 0,
+    }).encode()))
+    monkeypatch.setattr(app_code_files, "AppStorageService", lambda: storage)
+    principal = UserPrincipal(
+        user_id=uuid4(), email="viewer@example.test", organization_id=app.organization_id,
+    )
+    caller = Caller(principal, AuthorizationContext(
+        user_id=principal.user_id, home_organization_id=app.organization_id,
+        base_role_id=USER_ROLE_ID, is_external=False,
+        base_permissions=frozenset({"apps.readbasic"}), role_grants=(),
+    ))
+    monkeypatch.setattr(app_code_files, "load_caller", AsyncMock(return_value=caller))
+    build = AsyncMock()
+    monkeypatch.setattr("src.services.app_bundler.build_with_migrate", build)
+
+    manifest = await app_code_files.get_bundle_manifest(
+        app_id=app_id, mode=app_code_files.FileMode(mode), ctx=ctx, _user=ctx.user,
+    )
+
+    assert manifest["entry"] == "bundle.js"
+    assert manifest["mode"] == ("live" if mode == "live" else "preview")
+    loader.assert_awaited_once_with(ctx, app_id)
+    build.assert_not_awaited()
