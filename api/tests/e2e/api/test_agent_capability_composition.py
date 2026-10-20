@@ -7,10 +7,10 @@ from uuid import UUID, uuid4
 
 import pytest
 from pydantic_ai.messages import (
+    LoadCapabilityReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -46,7 +46,7 @@ class _LoadsSpecialistCapability(TestModel):
         super().__init__(model_name="test-agent-capability-composition")
         self._capability_id = capability_id
         self._child_instruction = child_instruction
-        self.visible_instruction_text = ""
+        self.loaded_instruction_text = ""
         self.child_tool_name: str | None = None
 
     def _request(
@@ -56,17 +56,14 @@ class _LoadsSpecialistCapability(TestModel):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         del model_settings
-        system_text = "\n".join(
-            part.content
+        loaded_instructions = [
+            part.instructions
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, SystemPromptPart) and isinstance(part.content, str)
-        )
-        tool_text = "\n".join(
-            tool.description or "" for tool in model_request_parameters.function_tools
-        )
-        self.visible_instruction_text = f"{system_text}\n{tool_text}"
+            if isinstance(part, LoadCapabilityReturnPart) and part.instructions
+        ]
+        self.loaded_instruction_text = "\n".join(loaded_instructions)
         completed = {
             part.tool_call_id
             for message in messages
@@ -95,7 +92,11 @@ class _LoadsSpecialistCapability(TestModel):
             None,
         )
         assert child_tool is not None, "loading the capability did not expose its tool"
-        assert self._child_instruction in self.visible_instruction_text
+        assert loaded_instructions == [
+            f"{self._child_instruction}\n\n"
+            "Use these approved specialist tools only for work this specialist owns. "
+            "Return evidence to the owning conversation."
+        ]
         self.child_tool_name = child_tool.name
         if "call-specialist-tool" not in completed:
             return ModelResponse(
@@ -245,7 +246,7 @@ async def test_loaded_child_capability_uses_its_bound_workflow_in_the_owning_run
         assert result["status"] == "completed"
         assert result["output"] == "Specialist capability completed."
         assert model.child_tool_name is not None
-        assert child_instruction in model.visible_instruction_text
+        assert model.loaded_instruction_text.count(child_instruction) == 1
         dispatch_kwargs = dispatched.await_args.kwargs
         assert dispatch_kwargs["workflow_id"] == test_tool_workflow["id"]
         assert dispatch_kwargs["parameters"] == {"query": "composition boundary"}
