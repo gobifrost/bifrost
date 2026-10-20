@@ -1090,7 +1090,7 @@ export function IntegrationDetail() {
 			{deleteMappingConfirm &&
 				canManageMapping(deleteMappingConfirm.id) && (
 					<IntegrationDeleteDialog
-						open={deleteMappingConfirm !== null}
+						open
 						onOpenChange={(open) => {
 							if (!open) setDeleteMappingConfirm(null);
 						}}
@@ -1098,7 +1098,7 @@ export function IntegrationDetail() {
 						onConfirm={handleDeleteMappingConfirm}
 					>
 						Delete the mapping for{" "}
-						<strong>{deleteMappingConfirm?.name}</strong>? This
+						<strong>{deleteMappingConfirm.name}</strong>? This
 						removes the organization's integration configuration and
 						cannot be undone.
 					</IntegrationDeleteDialog>
