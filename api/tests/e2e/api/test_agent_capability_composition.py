@@ -27,6 +27,7 @@ from src.models.orm.agent_runs import AgentRun, AgentRunStep
 from src.models.orm.agents import Agent, AgentDelegation, AgentTool
 from src.services.agent_runtime.composition import (
     AgentCompositionError,
+    _delegate_name,
     build_agent_composition,
 )
 from src.services.authorization.enforce import load_caller
@@ -111,6 +112,48 @@ class _LoadsSpecialistCapability(TestModel):
             )
         return ModelResponse(
             parts=[TextPart("Specialist capability completed.")],
+            model_name=self.model_name,
+        )
+
+
+class _NativeDelegationParentModel(TestModel):
+    """Use the framework-native delegate tool once, then consume its receipt."""
+
+    def __init__(self, child_name: str) -> None:
+        super().__init__(model_name="test-native-delegation-parent")
+        self._child_name = child_name
+        self.parent_tool_return_ids: set[str] = set()
+
+    def _request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        del model_settings, model_request_parameters
+        self.parent_tool_return_ids = {
+            part.tool_call_id
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        }
+        if "native-delegation-call" not in self.parent_tool_return_ids:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "delegate_task",
+                        {
+                            "agent_name": self._child_name,
+                            "task": "Return durable child evidence.",
+                        },
+                        tool_call_id="native-delegation-call",
+                    )
+                ],
+                model_name=self.model_name,
+            )
+        return ModelResponse(
+            parts=[TextPart("Parent received the durable child result.")],
             model_name=self.model_name,
         )
 
@@ -289,6 +332,150 @@ async def test_loaded_child_capability_uses_its_bound_workflow_in_the_owning_run
         await db_session.execute(delete(AgentRun).where(AgentRun.id == run_id))
         await db_session.commit()
         for agent in (root, child):
+            e2e_client.delete(
+                f"/api/agents/{agent['id']}", headers=platform_admin.headers
+            )
+
+
+async def test_native_delegate_task_runs_a_transitive_child_without_a_middle_run(
+    e2e_client,
+    platform_admin,
+    async_session_factory,
+    db_session,
+):
+    """A native grandchild delegate reuses the middle agent's durable lifecycle."""
+    tag = uuid4().hex[:8]
+    child = _create_agent(
+        e2e_client,
+        platform_admin,
+        name=f"Native Child {tag}",
+        system_prompt="Return the durable child evidence.",
+    )
+    middle = _create_agent(
+        e2e_client,
+        platform_admin,
+        name=f"Native Middle {tag}",
+        system_prompt="Delegate approved work to the child.",
+        delegated_agent_ids=[child["id"]],
+    )
+    root = _create_agent(
+        e2e_client,
+        platform_admin,
+        name=f"Native Root {tag}",
+        system_prompt="Coordinate the approved descendant tree.",
+        delegated_agent_ids=[middle["id"]],
+    )
+    run_id = uuid4()
+    try:
+        root_agent = await _load_agent(db_session, root["id"])
+        child_agent = await _load_agent(db_session, child["id"])
+        db_session.add(
+            AgentRun(
+                id=run_id,
+                agent_id=root_agent.id,
+                trigger_type="manual",
+                status="running",
+                caller_user_id=str(platform_admin.user_id),
+                run_user_id=platform_admin.user_id,
+                acting_user_id=platform_admin.user_id,
+            )
+        )
+        await db_session.commit()
+        caller = await _load_runtime_caller(db_session, run_id)
+        parent_model = _NativeDelegationParentModel(_delegate_name(child_agent))
+        child_model = TestModel(
+            custom_output_text="Durable native child result.",
+            model_name="test-native-delegation-child",
+        )
+        executor = AutonomousAgentExecutor(async_session_factory)
+
+        with (
+            patch(
+                "src.services.execution.autonomous_agent_executor.get_llm_configs",
+                new_callable=AsyncMock,
+                return_value=[
+                    LLMConfig(
+                        provider="openai",
+                        model="test-native-delegation",
+                        api_key="test-key",
+                    )
+                ],
+            ),
+            patch(
+                "src.services.agent_runtime.model_factory.create_agent_model",
+                side_effect=[parent_model, child_model],
+            ) as create_model,
+            patch(
+                "src.services.execution.run_summarizer.enqueue_summarize",
+                new_callable=AsyncMock,
+            ),
+        ):
+            result = await executor.run(
+                agent=root_agent,
+                input_data={"task": "Use the approved native child capability."},
+                run_id=str(run_id),
+                caller=caller,
+                run_user_id=platform_admin.user_id,
+                run_as=None,
+            )
+
+        assert result["status"] == "completed"
+        assert result["output"] == "Parent received the durable child result."
+        assert create_model.call_count == 2
+        assert parent_model.parent_tool_return_ids == {"native-delegation-call"}
+
+        await executor.flush_to_db(db_session)
+        await db_session.commit()
+        child_runs = list(
+            (
+                await db_session.execute(
+                    select(AgentRun).where(AgentRun.parent_run_id == run_id)
+                )
+            ).scalars()
+        )
+        assert len(child_runs) == 1
+        child_run = child_runs[0]
+        assert child_run.agent_id == UUID(child["id"])
+        assert child_run.status == "completed"
+        assert child_run.output == {"text": "Durable native child result."}
+        assert child_run.caller_user_id == str(platform_admin.user_id)
+        assert child_run.run_user_id == platform_admin.user_id
+        assert child_run.acting_user_id == platform_admin.user_id
+        assert await db_session.scalar(
+            select(func.count()).select_from(AgentRun).where(
+                AgentRun.agent_id == UUID(middle["id"])
+            )
+        ) == 0
+
+        steps = list(
+            (
+                await db_session.execute(
+                    select(AgentRunStep)
+                    .where(AgentRunStep.run_id == run_id)
+                    .order_by(AgentRunStep.step_number)
+                )
+            ).scalars()
+        )
+        delegation_result = next(
+            step
+            for step in steps
+            if step.type == "tool_result"
+            and step.content
+            and step.content["tool_name"] == "delegate_task"
+        )
+        assert delegation_result.content is not None
+        assert delegation_result.content["child_run_id"] == str(child_run.id)
+        assert delegation_result.content["result"] == "Durable native child result."
+        assert delegation_result.content["source_agent_id"] == child["id"]
+        assert delegation_result.content["source_path_agent_ids"] == [
+            root["id"],
+            middle["id"],
+            child["id"],
+        ]
+    finally:
+        await db_session.execute(delete(AgentRun).where(AgentRun.id == run_id))
+        await db_session.commit()
+        for agent in (root, middle, child):
             e2e_client.delete(
                 f"/api/agents/{agent['id']}", headers=platform_admin.headers
             )
