@@ -1,0 +1,14 @@
+{
+  "key": "pr:1017",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "App lists now respect role assignments. Home organization labels resolve correctly, and Integration controls follow the user's permissions.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1017",
+      "Reviewed the reported access fixes against 82 focused backend tests, 283 Vitest tests, administrator and provider-operator browser journeys, and API/client lint and type checks. Organization discovery and server authorization boundaries remain enforced. No upgrade action is required."
+    ]
+  }
+}
