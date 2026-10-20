@@ -186,7 +186,7 @@ async def test_loaded_child_capability_uses_its_bound_workflow_in_the_owning_run
     )
     run_id = uuid4()
     model = _LoadsSpecialistCapability(
-        f"bifrost_agent_{UUID(child['id']).hex[:16]}", child_instruction
+        f"bifrost_agent_{UUID(child['id']).hex}", child_instruction
     )
     try:
         root_agent = await _load_agent(db_session, root["id"])
@@ -275,7 +275,7 @@ async def test_loaded_child_capability_uses_its_bound_workflow_in_the_owning_run
             assert step.content["source_tool_name"] == f"wf_{test_tool_workflow['name']}"
             assert step.content["source_path_agent_ids"] == [root["id"], child["id"]]
             assert step.content["capability_id"] == (
-                f"bifrost_agent_{UUID(child['id']).hex[:16]}"
+                f"bifrost_agent_{UUID(child['id']).hex}"
             )
 
         child_run_count = await db_session.scalar(
