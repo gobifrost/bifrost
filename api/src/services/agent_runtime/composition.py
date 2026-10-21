@@ -208,7 +208,12 @@ class _CompositionAuthorizationCapability(AbstractCapability[object]):
             capability_id = args.get("id")
             if not isinstance(capability_id, str):
                 raise AgentCompositionError("Capability id is required")
-            await self._composition.authorize_capability_load(capability_id)
+            # The SDK owns correction for an unknown id: its native loader
+            # returns ModelRetry with the registered catalog, before any
+            # Bifrost effect can run. Only a capability we actually registered
+            # receives a live authority check here.
+            if self._composition.has_deferred_capability(capability_id):
+                await self._composition.authorize_capability_load(capability_id)
         return args
 
     async def wrap_tool_execute(
@@ -386,6 +391,10 @@ class AgentComposition:
         if deferred is None:
             raise AgentCompositionError("Capability is not available")
         await self._authorize_path(deferred.path)
+
+    def has_deferred_capability(self, capability_id: str) -> bool:
+        """Whether this composition registered the deferred capability id."""
+        return any(item.capability_id == capability_id for item in self._deferred)
 
     async def resolve_call(self, name: str, args: dict[str, Any]) -> ResolvedToolCall:
         """Resolve a model-visible name to one fresh owner/tool binding.

@@ -10,6 +10,7 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
+    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolSearchReturnPart,
@@ -123,30 +124,49 @@ async def test_loaded_skill_searches_and_reveals_only_relevant_individual_tools(
     assert "Find evidence before answering." in str(specialist.get_instructions())
     requests = 0
 
-    def model(_, info):
+    def model(messages, info):
         nonlocal requests
         requests += 1
         names = {tool.name for tool in info.function_tools}
         if requests == 1:
             assert "load_capability" in names
             assert not names & {qualified, archive_qualified, nested_qualified}
-            return ModelResponse(parts=[ToolCallPart("load_capability", {"id": capability_id}, "load")])
+            # A model may mistake a tool name for its parent capability id.
+            # Pydantic AI must return its ordinary no-such-capability correction
+            # without reaching Bifrost authorization or the effect executor.
+            return ModelResponse(
+                parts=[ToolCallPart("load_capability", {"id": case_search.name}, "unknown-load")]
+            )
         if requests == 2:
+            assert "load_capability" in names
+            assert not names & {qualified, archive_qualified, nested_qualified}
+            assert any(
+                isinstance(part, RetryPromptPart)
+                and part.tool_call_id == "unknown-load"
+                and "No capability found" in str(part.content)
+                for message in messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+            )
+            executed.assert_not_awaited()
+            composition.authorize_capability_load.assert_not_awaited()
+            return ModelResponse(parts=[ToolCallPart("load_capability", {"id": capability_id}, "load")])
+        if requests == 3:
             assert "search_tools" in names
             assert not names & {qualified, archive_qualified, nested_qualified}
             return ModelResponse(parts=[ToolCallPart("search_tools", {"queries": ["find"]}, "search-case")])
-        if requests == 3:
+        if requests == 4:
             assert qualified in names
             assert archive_qualified not in names
             assert nested_qualified not in names
             return ModelResponse(parts=[ToolCallPart(qualified, {"case": "123"}, "tool")])
-        if requests == 4:
-            return ModelResponse(parts=[ToolCallPart("load_capability", {"id": nested_capability_id}, "load-nested")])
         if requests == 5:
+            return ModelResponse(parts=[ToolCallPart("load_capability", {"id": nested_capability_id}, "load-nested")])
+        if requests == 6:
             assert "search_tools" in names
             assert nested_qualified not in names
             return ModelResponse(parts=[ToolCallPart("search_tools", {"queries": ["invoice audit"]}, "search-nested")])
-        if requests == 6:
+        if requests == 7:
             assert qualified in names
             assert archive_qualified not in names
             assert nested_qualified in names
@@ -163,6 +183,10 @@ async def test_loaded_skill_searches_and_reveals_only_relevant_individual_tools(
         (nested_qualified, {"invoice": "456"}, "nested-tool"),
     ]
     composition.authorize_capability_load.assert_awaited()
+    assert all(
+        call.args[0] != case_search.name
+        for call in composition.authorize_capability_load.await_args_list
+    )
     discovered = [
         match["name"]
         for message in result.all_messages()
