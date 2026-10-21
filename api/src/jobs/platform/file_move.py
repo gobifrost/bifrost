@@ -2,8 +2,8 @@
 """Durable server-side file moves (``files.move`` / ``files.move_many``).
 
 Authorization happened at enqueue (``shared.sdk_files.sdk_enqueue_file_moves``),
-except for a renamed destination the job chooses itself, which is authorized
-here. This job moves the authorized items, one at a time in request order,
+except for a numbered ``name (n)`` destination the job copies to, resumes, or
+adopts, which is authorized here. This job moves the authorized items, one at a time in request order,
 through :class:`src.services.file_storage.move.FileMover`. Contract:
 ``docs/superpowers/specs/2026-10-09-files-move-design.md``.
 """
@@ -75,10 +75,11 @@ def _object_store() -> Any:
 
 
 async def authorize_renamed_destination(payload: FileMovePayload, path: str) -> bool:
-    """Write policy on a destination the job chose under ``on_conflict="rename"``.
+    """Write policy on a numbered destination under ``on_conflict="rename"``.
 
-    Enqueue authorized the requested destination only. The chosen ``stem (n)``
-    name can fall under a different policy, so it is evaluated for the user
+    Enqueue authorized the requested destination only. A ``stem (n)`` name can
+    fall under a different policy, and an interrupted copy there may have been
+    made for another user, so it is evaluated for the user
     enqueue authorized, with that user's current roles; a denial is audited
     like the enqueue-time ones.
     """

@@ -220,8 +220,11 @@ exact name, or a requested destination with its own). So when step 3 picks a
 new candidate, the job evaluates `write` on that candidate with
 `FilePolicyService.evaluate` for `policy_user_id` with that user's current
 roles (`load_policy_user_principal`) and the recorded authorities. A denial is
-an audited per-item 403 `forbidden`, before any copy. A resumed or adopted
-candidate was authorized by the run that created it and is not re-checked.
+an audited per-item 403 `forbidden`, before any copy. The same check runs
+before a numbered candidate is resumed or adopted: a copy's markers name its
+source and row, not whose authorization created it, so a retry by a different
+user could otherwise finish an interrupted move at a name that user may not
+write. On that denial the copy, the source, and its metadata row are kept.
 
 For a workflow caller, the principal at enqueue is the workflow engine's
 principal, exactly as for `files.delete` today; the healthcare-user policy

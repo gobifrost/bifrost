@@ -60,7 +60,10 @@ MAX_RENAME_NUMBER = 1000
 OnConflict = Literal["error", "rename"]
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 CleanupFailed = Callable[[str, str], Awaitable[None]]
-# Whether the requesting user may write a destination the job chose itself.
+# Whether the requesting user may write a numbered ``name (n)`` destination.
+# Enqueue authorizes only the requested destination, and a copy's markers name
+# its source and row, not whose authorization made it, so every numbered
+# candidate is checked before it is copied to, resumed, or adopted.
 AuthorizeRename = Callable[[str], Awaitable[bool]]
 
 
@@ -291,6 +294,9 @@ class FileMover:
         )
         if found:
             path, key, _ = found[0]
+            if not await self._authorize_rename(path):
+                # The copy is never removed (see _cleanup on resumed copies).
+                return _fail(403, "forbidden")
             return _Destination(path, key, renamed=True, resume=True)
         return await self._first_free_candidate(db, request.destination, taken)
 
@@ -350,8 +356,6 @@ class FileMover:
             await self._lock(db, path)
             # A writer can take a free number between the listing and the lock.
             if await self._store.head_object(key) is None:
-                # Enqueue authorized the requested name; this one may be
-                # governed by a different policy.
                 if not await self._authorize_rename(path):
                     return _fail(403, "forbidden")
                 return _Destination(path, key, renamed=True, resume=False)
@@ -638,14 +642,18 @@ class FileMover:
                 return _fail(500, "recovery_ambiguous")
             if found:
                 path, key, head = found[0]
-                destination = _Destination(path, key, renamed=path != request.destination, resume=True)
+                renamed = path != request.destination
+                if renamed and not await self._authorize_rename(path):
+                    await db.rollback()
+                    return _fail(403, "forbidden")
+                destination = _Destination(path, key, renamed=renamed, resume=True)
                 await self._write_metadata(db, destination, head, row)
                 await db.commit()
                 await self._publish(request.source, path)
                 return MoveOutcome(
                     status_code=200,
-                    path=path if destination.renamed else None,
-                    renamed=destination.renamed,
+                    path=path if renamed else None,
+                    renamed=renamed,
                     adopted=True,
                 )
             await db.rollback()

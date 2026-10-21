@@ -375,3 +375,44 @@ async def test_adopt_refuses_when_two_same_size_versions_match(store, solution_t
     assert [r.id for r in await rows_at(solution_target, "a/r.pdf")] == [row_id]
     assert key_for(solution_target, "b/r (1).pdf") in store.objects
     assert key_for(solution_target, "b/r (2).pdf") in store.objects
+
+
+async def _deny(path: str) -> bool:
+    _deny.asked.append(path)
+    return False
+
+
+async def test_resume_at_a_renamed_candidate_needs_the_callers_write(store, solution_target) -> None:
+    """Markers name the source and row, not whose authorization made the copy."""
+    _deny.asked = []
+    row_id = await seed_file(store, solution_target, "a/r.pdf")
+    store.put(key_for(solution_target, "b/r.pdf"), b"someone else")
+    await _interrupted_copy(store, solution_target, "a/r.pdf", "b/r (1).pdf", row_id, delete_source=False)
+
+    outcome = await FileMover(store, solution_target, authorize_rename=_deny).move(
+        MoveRequest("a/r.pdf", "b/r.pdf"), "rename"
+    )
+
+    assert (outcome.status_code, outcome.error) == (403, "forbidden")
+    assert _deny.asked == ["b/r (1).pdf"]
+    assert key_for(solution_target, "a/r.pdf") in store.objects
+    assert key_for(solution_target, "b/r (1).pdf") in store.objects
+    assert [r.id for r in await rows_at(solution_target, "a/r.pdf")] == [row_id]
+
+
+async def test_adopt_at_a_renamed_candidate_needs_the_callers_write(store, solution_target, published) -> None:
+    _deny.asked = []
+    row_id = await seed_file(store, solution_target, "a/r.pdf")
+    store.put(key_for(solution_target, "b/r.pdf"), b"someone else")
+    await _interrupted_copy(store, solution_target, "a/r.pdf", "b/r (1).pdf", row_id, delete_source=True)
+
+    outcome = await FileMover(store, solution_target, authorize_rename=_deny).move(
+        MoveRequest("a/r.pdf", "b/r.pdf"), "rename"
+    )
+
+    assert (outcome.status_code, outcome.error) == (403, "forbidden")
+    assert _deny.asked == ["b/r (1).pdf"]
+    assert key_for(solution_target, "b/r (1).pdf") in store.objects
+    assert [r.id for r in await rows_at(solution_target, "a/r.pdf")] == [row_id]
+    assert await rows_at(solution_target, "b/r (1).pdf") == []
+    published.assert_not_awaited()

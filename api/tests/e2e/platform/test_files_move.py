@@ -223,6 +223,40 @@ async def test_retry_adopts_an_interrupted_move(
     assert (await _row(db_session, sid, landed_at)).id == row.id
 
 
+
+@pytest.mark.parametrize("source_deleted", [False, True], ids=["resume", "adopt"])
+async def test_recovering_a_renamed_copy_needs_the_retrying_users_write(
+    e2e_client, platform_admin, org1_user, solution, db_session, source_deleted
+) -> None:
+    """An admin's interrupted copy at a name the retrying user may not write."""
+    sid, admin, user = solution["id"], platform_admin.headers, org1_user.headers
+    org = solution["organization_id"]
+    everything = {"name": "all", "actions": ["read", "write", "delete", "list"], "when": None}
+    _put_policy(e2e_client, admin, scope=org, prefix="recover", rules=[everything])
+    _put_policy(e2e_client, admin, scope=org, prefix="recover/report (1).pdf", rules=[READ_ALL_RULE])
+    _write(e2e_client, admin, sid, "recover/in/report.pdf", "mine")
+    _write(e2e_client, admin, sid, "recover/report.pdf", "occupant")
+    row = await _row(db_session, sid, "recover/in/report.pdf")
+    storage = S3StorageClient(get_settings())
+    source_key = resolve_s3_key(LOCATION, sid, "recover/in/report.pdf")
+    head = await storage.head_object(source_key)
+    candidate_key = resolve_s3_key(LOCATION, sid, "recover/report (1).pdf")
+    await storage.copy_object(
+        source_key, candidate_key, source=head,
+        metadata={MARK_SOURCE: source_marker(source_key), MARK_ROW: str(row.id), MARK_ETAG: head.etag},
+    )
+    if source_deleted:
+        await storage.delete_object_strict(source_key)
+
+    job = _move_many(e2e_client, user, sid, [("recover/in/report.pdf", "recover/report.pdf")], "rename")
+
+    [result] = job["result"]["results"]
+    assert (result["status_code"], result["error"]) == (403, "forbidden"), job
+    assert (await _row(db_session, sid, "recover/in/report.pdf")).id == row.id
+    assert await _row(db_session, sid, "recover/report (1).pdf") is None
+    assert await storage.head_object(candidate_key) is not None
+    assert (await storage.head_object(source_key) is None) == source_deleted
+
 def _record_s3_calls(storage: S3StorageClient) -> list[str]:
     """Record the name of every S3 client method ``storage`` calls from now on."""
     issued: list[str] = []
