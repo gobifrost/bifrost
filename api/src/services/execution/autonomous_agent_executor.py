@@ -708,11 +708,19 @@ class AutonomousAgentExecutor:
         # default_max_tokens; agent.llm_max_tokens wins when set,
         # otherwise the profile default (or provider default) applies.
         # Fallbacks resolve from their own profile defaults.
-        toolset = BifrostToolset(
-            tool_definitions,
-            execute_tool,
-            event_handler=record_tool_event,
-            toolset_id=f"bifrost-{agent.id}",
+        toolset = (
+            composition.entry_toolset(
+                execute_tool,
+                event_handler=record_tool_event,
+                toolset_id=f"bifrost-{agent.id}",
+            )
+            if composition is not None
+            else BifrostToolset(
+                tool_definitions,
+                execute_tool,
+                event_handler=record_tool_event,
+                toolset_id=f"bifrost-{agent.id}",
+            )
         )
         # Blank / repetitive no-tool completions are billed like real output
         # (observed: 131072 output tokens with zero visible content and zero

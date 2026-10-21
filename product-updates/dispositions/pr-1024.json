@@ -9,7 +9,7 @@
     "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1024",
-      "Reviewed the native capability and child-lifecycle adapters against 194 focused framework, database, runtime, caller-authorization and MCP checks. Copy reviewed using General Writing and Humanizer; no model-quality, cost-reduction or autonomous crash-resume claim is made. Existing caller authority and effect checks remain enforced."
+      "Reviewed native two-stage instruction/tool discovery and child-lifecycle adapters against focused framework, provider-wire, database, runtime, caller-authorization and MCP checks. API lint/type checks pass. Copy reviewed using General Writing and Humanizer; no model-quality, cost-reduction or autonomous crash-resume claim is made. Existing caller authority and effect checks remain enforced."
     ]
   }
 }

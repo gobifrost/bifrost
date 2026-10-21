@@ -12,6 +12,7 @@ import logging
 from collections.abc import AsyncGenerator
 from uuid import uuid4
 
+from pydantic import TypeAdapter, ValidationError
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.messages import (
     BinaryContent,
@@ -27,6 +28,10 @@ from pydantic_ai.messages import (
     TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
+    ToolSearchArgs,
+    ToolSearchCallPart,
+    ToolSearchReturnContent,
+    ToolSearchReturnPart,
     UserPromptPart,
     UserContent,
 )
@@ -55,6 +60,8 @@ from src.services.llm.base import (
 from src.services.opencode_go import is_opencode_go_endpoint, opencode_go_extra_headers
 
 logger = logging.getLogger(__name__)
+_TOOL_SEARCH_ARGS = TypeAdapter(ToolSearchArgs)
+_TOOL_SEARCH_RETURN = TypeAdapter(ToolSearchReturnContent)
 
 
 class PydanticAIClient(BaseLLMClient):
@@ -265,6 +272,7 @@ class PydanticAIClient(BaseLLMClient):
     def convert_messages(cls, messages: list[LLMMessage]) -> list[ModelMessage]:
         """Convert Bifrost's stable message DTOs to provider-neutral history."""
         capability_load_ids = cls._completed_capability_load_ids(messages)
+        tool_searches = cls._completed_tool_searches(messages)
         converted: list[ModelMessage] = []
         for message in messages:
             if message.role == "assistant":
@@ -277,6 +285,13 @@ class PydanticAIClient(BaseLLMClient):
                             LoadCapabilityCallPart(
                                 tool_call_id=call.id,
                                 args=cast(dict[str, str], call.arguments),
+                            )
+                        )
+                    elif call.id in tool_searches:
+                        parts.append(
+                            ToolSearchCallPart(
+                                tool_call_id=call.id,
+                                args=tool_searches[call.id][0],
                             )
                         )
                     else:
@@ -299,6 +314,11 @@ class PydanticAIClient(BaseLLMClient):
                         content=cls._capability_load_return_content(message.content),
                         tool_call_id=message.tool_call_id,
                     )
+                elif message.tool_call_id in tool_searches:
+                    tool_return = ToolSearchReturnPart(
+                        content=tool_searches[message.tool_call_id][1],
+                        tool_call_id=message.tool_call_id,
+                    )
                 else:
                     tool_return = ToolReturnPart(
                         tool_name=message.tool_name or "tool",
@@ -318,6 +338,46 @@ class PydanticAIClient(BaseLLMClient):
                 request_parts = [UserPromptPart(cls.convert_user_content(message))]
             converted.append(ModelRequest(parts=request_parts))
         return converted
+
+    @staticmethod
+    def _completed_tool_searches(
+        messages: list[LLMMessage],
+    ) -> dict[str, tuple[ToolSearchArgs, ToolSearchReturnContent]]:
+        """Restore native discovery state from completed portable chat receipts.
+
+        Pydantic AI owns search and availability reconstruction. This adapter
+        restores its public typed parts after storage in the existing DTOs;
+        namesake calls and malformed or failed receipts remain generic.
+        """
+        candidates: dict[str, ToolSearchArgs] = {}
+        completed: dict[str, tuple[ToolSearchArgs, ToolSearchReturnContent]] = {}
+        for message in messages:
+            if message.role == "assistant":
+                for call in message.tool_calls or []:
+                    if call.name != "search_tools" or set(call.arguments) != {"queries"}:
+                        continue
+                    try:
+                        args = _TOOL_SEARCH_ARGS.validate_python(call.arguments, strict=True)
+                    except ValidationError:
+                        continue
+                    if args["queries"] and all(query.strip() for query in args["queries"]):
+                        candidates[call.id] = args
+            elif (
+                message.role == "tool"
+                and message.tool_name == "search_tools"
+                and message.tool_call_id in candidates
+            ):
+                try:
+                    decoded = json.loads(message.content or "")
+                    if not isinstance(decoded, dict) or not set(decoded).issubset(
+                        {"discovered_tools", "message"}
+                    ):
+                        continue
+                    receipt = _TOOL_SEARCH_RETURN.validate_python(decoded, strict=True)
+                except (json.JSONDecodeError, ValidationError):
+                    continue
+                completed[message.tool_call_id] = (candidates[message.tool_call_id], receipt)
+        return completed
 
     @staticmethod
     def _completed_capability_load_ids(messages: list[LLMMessage]) -> set[str]:

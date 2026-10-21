@@ -25,6 +25,8 @@ from pydantic_ai.messages import (
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
+    ToolSearchCallPart,
+    ToolSearchReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models.function import FunctionModel
@@ -57,7 +59,6 @@ def _composition(*, root_id, deferred=(), bindings=None, session_factory=None):
 def _legacy_history_without_availability_deltas(messages):
     """Persist only the history shapes represented by the chat database."""
     history: list[LLMMessage] = []
-    dropped_deltas = 0
     for message in messages:
         if isinstance(message, ModelResponse):
             tool_calls = [
@@ -85,7 +86,7 @@ def _legacy_history_without_availability_deltas(messages):
         assert isinstance(message, ModelRequest)
         for part in message.parts:
             if isinstance(part, ToolAvailabilityDeltaPart):
-                dropped_deltas += 1
+                continue
             elif isinstance(part, ToolReturnPart):
                 history.append(
                     LLMMessage(
@@ -100,12 +101,11 @@ def _legacy_history_without_availability_deltas(messages):
             elif isinstance(part, UserPromptPart):
                 history.append(LLMMessage(role="user", content=str(part.content)))
 
-    assert dropped_deltas, "native load must produce a framework-only delta to omit"
     return history
 
 
-def test_only_completed_framework_receipts_restore_capability_load_parts():
-    """An ordinary namesake tool must retain generic Pydantic message parts."""
+def test_only_completed_framework_receipts_restore_typed_framework_parts():
+    """Ordinary namesake tools must retain generic Pydantic message parts."""
     converted = PydanticAIClient.convert_messages(
         [
             LLMMessage(
@@ -124,13 +124,33 @@ def test_only_completed_framework_receipts_restore_capability_load_parts():
                 tool_call_id="namesake",
                 tool_name="load_capability",
             ),
+            LLMMessage(
+                role="assistant",
+                tool_calls=[
+                    ToolCallRequest(
+                        id="search-namesake",
+                        name="search_tools",
+                        arguments={"queries": ["specialist"]},
+                    )
+                ],
+            ),
+            LLMMessage(
+                role="tool",
+                content=json.dumps({"error": "not available"}),
+                tool_call_id="search-namesake",
+                tool_name="search_tools",
+            ),
         ]
     )
 
     call = converted[0].parts[0]
     receipt = converted[1].parts[0]
+    search_call = converted[2].parts[0]
+    search_receipt = converted[3].parts[0]
     assert type(call) is ToolCallPart
     assert type(receipt) is ToolReturnPart
+    assert type(search_call) is ToolCallPart
+    assert type(search_receipt) is ToolReturnPart
 
 
 @pytest.mark.asyncio
@@ -180,7 +200,7 @@ async def test_deferred_capability_survives_legacy_chat_history_without_a_second
             ),
             bindings={qualified: binding},
         )
-        # The real framework still owns load state.  This callback is the
+        # The real framework still owns load state. This callback is the
         # composition's authorization seam, not a replacement for it.
         composition.authorize_capability_load = AsyncMock()
         return composition
@@ -192,15 +212,40 @@ async def test_deferred_capability_survives_legacy_chat_history_without_a_second
     def first_model(_, info):
         nonlocal first_requests
         first_requests += 1
-        visible = {tool.name for tool in info.function_tools}
+        visible = {
+            tool.name
+            for tool in info.function_tools
+            if info.model_request_parameters.visibility_of(tool.name)
+            in {"visible", "via_history"}
+        }
         if first_requests == 1:
             assert qualified not in visible
             return ModelResponse(
                 parts=[ToolCallPart("load_capability", {"id": capability_id}, "load")]
             )
         if first_requests == 2:
+            assert qualified not in visible
+            assert "search_tools" in visible
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "search_tools",
+                        {"queries": ["specialist knowledge"]},
+                        "search",
+                    )
+                ]
+            )
+        if first_requests == 3:
             assert qualified in visible
-            return ModelResponse(parts=[ToolCallPart(qualified, {"query": "case 123"}, "search")])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        qualified,
+                        {"query": "case 123"},
+                        "specialist-tool",
+                    )
+                ]
+            )
         return ModelResponse(parts=[TextPart("first turn complete")])
 
     first_result = await PydanticAgent(
@@ -246,6 +291,22 @@ async def test_deferred_capability_survives_legacy_chat_history_without_a_second
     )
     assert restored_load_call.tool_kind == "capability-load"
     assert restored_load_return.tool_kind == "capability-load"
+    restored_search_call = next(
+        part
+        for message in restored_history
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolSearchCallPart)
+    )
+    restored_search_return = next(
+        part
+        for message in restored_history
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolSearchReturnPart)
+    )
+    assert restored_search_call.queries == ["specialist knowledge"]
+    assert restored_search_return.discovered_tools == [{"name": qualified}]
 
     second = runtime(root_id=root_id)
     second_executed = AsyncMock(return_value={"evidence": "case 456"})
@@ -254,9 +315,14 @@ async def test_deferred_capability_survives_legacy_chat_history_without_a_second
     def resumed_model(_, info):
         nonlocal second_requests
         second_requests += 1
-        visible = {tool.name for tool in info.function_tools}
-        # The next turn starts with the specialist tool already restored; the
-        # model need not emit another load_capability request.
+        visible = {
+            tool.name
+            for tool in info.function_tools
+            if info.model_request_parameters.visibility_of(tool.name)
+            in {"visible", "via_history"}
+        }
+        # The next turn restores both the loaded specialist and its discovered
+        # tool; the model repeats neither framework-managed action.
         assert qualified in visible
         if second_requests == 1:
             return ModelResponse(parts=[ToolCallPart(qualified, {"query": "case 456"}, "resume")])

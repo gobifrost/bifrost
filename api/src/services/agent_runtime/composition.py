@@ -19,7 +19,7 @@ from uuid import UUID
 from pydantic_ai import Agent as PydanticAgent
 from pydantic_ai import AgentRunResult
 from pydantic_ai.agent.wrapper import WrapperAgent
-from pydantic_ai.capabilities import AbstractCapability, Capability
+from pydantic_ai.capabilities import AbstractCapability, Capability, ToolSearch
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import RunContext, ToolDefinition as PydanticToolDefinition
 from pydantic_ai_harness.subagents import SubAgent, SubAgents
@@ -221,7 +221,7 @@ class _CompositionAuthorizationCapability(AbstractCapability[object]):
         handler: Callable[[dict[str, Any]], Awaitable[Any]],
     ) -> Any:
         del ctx, tool_def
-        if call.tool_name not in {"delegate_task", "load_capability"}:
+        if call.tool_name not in {"delegate_task", "load_capability", "search_tools"}:
             return await handler(args)
         if self._event_handler:
             await self._event_handler(
@@ -265,6 +265,8 @@ class _CompositionAuthorizationCapability(AbstractCapability[object]):
                     result=(
                         {"capability_id": args.get("id"), "loaded": True}
                         if call.tool_name == "load_capability"
+                        else {"searched": True, "query_count": len(args.get("queries", []))}
+                        if call.tool_name == "search_tools"
                         else result
                     ),
                 )
@@ -342,6 +344,25 @@ class AgentComposition:
         else:
             binding = self._bindings.get(name)
         return {} if binding is None else binding.provenance
+
+    def entry_toolset(
+        self,
+        executor: ToolExecutor,
+        event_handler: ToolEventHandler | None = None,
+        toolset_id: str = "bifrost-entry",
+    ) -> Any:
+        """Expose root tools through native per-tool search.
+
+        Entry tools remain in Bifrost's executor and authorization path. Their
+        schemas stay deferred until native ``ToolSearch`` reveals a relevant
+        individual tool.
+        """
+        return BifrostToolset(
+            self.entry_definitions,
+            executor,
+            event_handler=event_handler,
+            toolset_id=toolset_id,
+        ).defer_loading()
 
     async def _authorize_path(self, path: tuple[UUID, ...]) -> Agent:
         """Reauthorize the caller plus every active delegation edge in ``path``."""
@@ -424,13 +445,20 @@ class AgentComposition:
         event_handler: ToolEventHandler | None = None,
     ) -> list[Any]:
         """Build framework capabilities bound to this composition snapshot."""
-        capabilities: list[Any] = [_CompositionAuthorizationCapability(self, event_handler)]
+        capabilities: list[Any] = [
+            _CompositionAuthorizationCapability(self, event_handler),
+            # Pin Pydantic AI's public client-executed strategy. This preserves
+            # native provider support while keeping discovery exchanges durable
+            # in Bifrost's stable chat history on every provider.
+            ToolSearch(strategy="keywords"),
+        ]
+        specialist_definitions: list[ToolDefinition] = []
+        owner_capability_by_tool_name: dict[str, str] = {}
         for deferred in self._deferred:
-            definitions: list[ToolDefinition] = []
             for definition in deferred.definitions:
                 qualified_name = _qualified_tool_name(deferred.agent.id, definition.name)
                 binding = self._bindings[qualified_name]
-                definitions.append(
+                specialist_definitions.append(
                     ToolDefinition(
                         name=qualified_name,
                         description=(
@@ -440,28 +468,44 @@ class AgentComposition:
                         parameters=definition.parameters,
                     )
                 )
+                owner_capability_by_tool_name[qualified_name] = deferred.capability_id
             capabilities.append(
                 Capability(
                     id=deferred.capability_id,
                     description=(
-                        f"Approved tools owned by {deferred.agent.name}. "
+                        f"Instructions for {deferred.agent.name}. "
                         f"{getattr(deferred.agent, 'description', None) or ''} "
                         "Load only when their specialist capability is needed."
                     ),
                     instructions=(
                         f"{deferred.agent.system_prompt.rstrip()}\n\n"
-                        "Use these approved specialist tools only for work this specialist owns. "
-                        "Return evidence to the owning conversation."
+                        "Search for an approved individual tool only after loading this skill. "
+                        "Use it only for work this specialist owns and return evidence to the "
+                        "owning conversation."
                     ),
+                    defer_loading=True,
+                )
+            )
+        if specialist_definitions:
+            def specialist_owner_is_loaded(
+                ctx: RunContext[object], tool_def: PydanticToolDefinition,
+            ) -> bool:
+                capability_id = owner_capability_by_tool_name.get(tool_def.name)
+                return capability_id is not None and capability_id in ctx.loaded_capability_ids
+
+            capabilities.append(
+                Capability(
+                    id="bifrost_specialist_tool_search",
                     toolsets=[
                         BifrostToolset(
-                            definitions,
+                            specialist_definitions,
                             executor,
                             event_handler=event_handler,
-                            toolset_id=deferred.capability_id,
+                            toolset_id="bifrost-specialist-search",
                         )
+                        .filtered(specialist_owner_is_loaded)
+                        .defer_loading()
                     ],
-                    defer_loading=True,
                 )
             )
         if self._isolated_delegates:
@@ -632,7 +676,8 @@ async def build_agent_composition(
         caller_user_id=caller_user_id,
         instructions=(
             "\n\nKeep ownership of this task and its evidence. For specialist work, load an approved "
-            "capability and use its advertised tools in this conversation. Use delegate_task or a "
+            "capability's instructions, then search_tools for individual tools to use in this "
+            "conversation. Search also discovers the entry agent's tools. Use delegate_task or a "
             "legacy delegate_to_ tool when a separate child context is useful. Include the necessary "
             "context, inspect the child receipt, and follow up when more information can unblock it. "
             "Respect specialist instructions and approval constraints. Verify uncertain effects "

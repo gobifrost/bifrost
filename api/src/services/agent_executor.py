@@ -710,10 +710,17 @@ class AgentExecutor:
                 max_tokens=max_tokens_override,
                 session_id=str(conversation.id),
             )
-            toolset = BifrostToolset(
-                tool_definitions,
-                execute_runtime_tool,
-                toolset_id=f"bifrost-chat-{agent.id if agent else 'default'}",
+            toolset = (
+                composition.entry_toolset(
+                    execute_runtime_tool,
+                    toolset_id=f"bifrost-chat-{agent.id}",
+                )
+                if composition is not None
+                else BifrostToolset(
+                    tool_definitions,
+                    execute_runtime_tool,
+                    toolset_id=f"bifrost-chat-{agent.id if agent else 'default'}",
+                )
             )
             runtime = PydanticAgent(
                 chain.model,
@@ -844,7 +851,7 @@ class AgentExecutor:
                             part = event.part
                             if (
                                 composition is not None
-                                and part.tool_name in {"load_capability", "delegate_task"}
+                                and part.tool_name in {"load_capability", "search_tools", "delegate_task"}
                                 and part.tool_call_id not in handled_runtime_ids
                             ):
                                 tool_call_id = part.tool_call_id

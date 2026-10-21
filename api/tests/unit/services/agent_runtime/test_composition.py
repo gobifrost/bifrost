@@ -7,7 +7,13 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic_ai import Agent as PydanticAgent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolSearchReturnPart,
+)
 from pydantic_ai.models.function import FunctionModel
 
 from src.services.agent_runtime.composition import (
@@ -38,10 +44,10 @@ def _composition(*, deferred=(), delegates=None, bindings=None):
 
 
 @pytest.mark.asyncio
-async def test_deferred_capability_loads_then_executes_its_qualified_tool_in_one_run():
-    """A model sees no specialist tool until its native capability is loaded."""
-    root_id, child_id = uuid4(), uuid4()
-    source = ToolDefinition(
+async def test_loaded_skill_searches_and_reveals_only_relevant_individual_tools():
+    """Loading instructions and discovering individual tools are separate stages."""
+    root_id, child_id, nested_id = uuid4(), uuid4(), uuid4()
+    case_search = ToolDefinition(
         name="search_case",
         description="Find a case.",
         parameters={
@@ -50,35 +56,66 @@ async def test_deferred_capability_loads_then_executes_its_qualified_tool_in_one
             "required": ["case"],
         },
     )
+    case_archive = ToolDefinition(
+        name="archive_record",
+        description="Archive a completed record.",
+        parameters={"type": "object", "properties": {"record_id": {"type": "string"}}},
+    )
+    nested_audit = ToolDefinition(
+        name="audit_invoice",
+        description="Audit an invoice for billing discrepancies.",
+        parameters={"type": "object", "properties": {"invoice": {"type": "string"}}},
+    )
     child = SimpleNamespace(
         id=child_id,
         name="Case Specialist",
         system_prompt="Find evidence before answering.",
     )
-    capability_id = _capability_id(child_id)
-    qualified = _qualified_tool_name(child_id, source.name)
-    binding = ToolBinding(
-        name=qualified,
-        owner_id=child_id,
-        original_name=source.name,
-        path=(root_id, child_id),
-        capability_id=capability_id,
-        parameters=source.parameters,
+    nested = SimpleNamespace(
+        id=nested_id,
+        name="Billing Specialist",
+        system_prompt="Audit billing evidence before answering.",
     )
+    capability_id = _capability_id(child_id)
+    nested_capability_id = _capability_id(nested_id)
+    qualified = _qualified_tool_name(child_id, case_search.name)
+    archive_qualified = _qualified_tool_name(child_id, case_archive.name)
+    nested_qualified = _qualified_tool_name(nested_id, nested_audit.name)
+    bindings = {
+        name: ToolBinding(
+            name=name,
+            owner_id=owner.id,
+            original_name=source.name,
+            path=path,
+            capability_id=capability,
+            parameters=source.parameters,
+        )
+        for name, owner, source, path, capability in (
+            (qualified, child, case_search, (root_id, child_id), capability_id),
+            (archive_qualified, child, case_archive, (root_id, child_id), capability_id),
+            (nested_qualified, nested, nested_audit, (root_id, child_id, nested_id), nested_capability_id),
+        )
+    }
     composition = _composition(
         deferred=(
             _DeferredAgent(
                 agent=child,
                 path=(root_id, child_id),
-                definitions=(source,),
+                definitions=(case_search, case_archive),
                 capability_id=capability_id,
             ),
+            _DeferredAgent(
+                agent=nested,
+                path=(root_id, child_id, nested_id),
+                definitions=(nested_audit,),
+                capability_id=nested_capability_id,
+            ),
         ),
-        bindings={qualified: binding},
+        bindings=bindings,
     )
     composition.root_id = root_id
     composition.authorize_capability_load = AsyncMock()
-    executed = AsyncMock(return_value="case evidence")
+    executed = AsyncMock(side_effect=["case evidence", "invoice evidence"])
     capabilities = composition.capabilities(executed)
     specialist = next(
         capability for capability in capabilities if getattr(capability, "id", None) == capability_id
@@ -92,11 +129,28 @@ async def test_deferred_capability_loads_then_executes_its_qualified_tool_in_one
         names = {tool.name for tool in info.function_tools}
         if requests == 1:
             assert "load_capability" in names
-            assert qualified not in names
+            assert not names & {qualified, archive_qualified, nested_qualified}
             return ModelResponse(parts=[ToolCallPart("load_capability", {"id": capability_id}, "load")])
         if requests == 2:
+            assert "search_tools" in names
+            assert not names & {qualified, archive_qualified, nested_qualified}
+            return ModelResponse(parts=[ToolCallPart("search_tools", {"queries": ["find"]}, "search-case")])
+        if requests == 3:
             assert qualified in names
+            assert archive_qualified not in names
+            assert nested_qualified not in names
             return ModelResponse(parts=[ToolCallPart(qualified, {"case": "123"}, "tool")])
+        if requests == 4:
+            return ModelResponse(parts=[ToolCallPart("load_capability", {"id": nested_capability_id}, "load-nested")])
+        if requests == 5:
+            assert "search_tools" in names
+            assert nested_qualified not in names
+            return ModelResponse(parts=[ToolCallPart("search_tools", {"queries": ["invoice audit"]}, "search-nested")])
+        if requests == 6:
+            assert qualified in names
+            assert archive_qualified not in names
+            assert nested_qualified in names
+            return ModelResponse(parts=[ToolCallPart(nested_qualified, {"invoice": "456"}, "nested-tool")])
         return ModelResponse(parts=[TextPart("done")])
 
     result = await PydanticAgent(
@@ -104,8 +158,20 @@ async def test_deferred_capability_loads_then_executes_its_qualified_tool_in_one
     ).run("help")
 
     assert result.output == "done"
-    executed.assert_awaited_once_with(qualified, {"case": "123"}, "tool")
+    assert [call.args for call in executed.await_args_list] == [
+        (qualified, {"case": "123"}, "tool"),
+        (nested_qualified, {"invoice": "456"}, "nested-tool"),
+    ]
     composition.authorize_capability_load.assert_awaited()
+    discovered = [
+        match["name"]
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolSearchReturnPart)
+        for match in part.discovered_tools
+    ]
+    assert discovered == [qualified, nested_qualified]
 
 
 @pytest.mark.asyncio

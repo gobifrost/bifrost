@@ -2,26 +2,46 @@
 
 Bifrost chat and autonomous runs use Pydantic AI's existing model/tool/model loop.
 The entry agent owns the conversation, evidence, final answer, budget and choice
-of when to delegate. Its approved specialist agents also supply deferred
-capabilities: the coordinator can load their instructions and call their tools
-in the same run. An isolated child run is an explicit choice.
+of when to delegate. Its approved specialist agents supply deferred instruction
+capabilities. The coordinator loads a specialist's instructions, then searches
+for the individual tools needed from that specialist. Loading instructions does
+not reveal the specialist's whole toolset. An isolated child run is an explicit
+choice.
 
 ## Standard primitives and Bifrost adapters
 
 | Concern | Framework primitive | Bifrost responsibility |
 | --- | --- | --- |
 | Iteration and tool results | `Agent`, `AbstractToolset` | Existing `BifrostToolset` and effect executors |
-| Progressive instructions and tools | `Capability(defer_loading=True)`, `load_capability` | Adapt the approved agent graph and preserve tool ownership |
+| Progressive specialist instructions | Instruction-only `Capability(defer_loading=True)`, `load_capability` | Adapt the approved agent graph and preserve source identity |
+| Individual tool discovery | `ToolSearch`, `.filtered()`, `.defer_loading()` | Limit the searchable corpus to the entry agent and loaded specialists |
 | Isolated delegation | Harness `SubAgents`, `delegate_task` | Bridge through the existing persisted child-run lifecycle |
 | Budgets and context | Shared `RunUsage`, existing Harness capabilities | Keep parent/child ceilings, compaction and cancellation |
-| Conversation continuation | Typed capability-load call/return history | Restore framework parts through existing chat message conversion |
+| Conversation continuation | Typed capability-load and tool-search call/return history | Restore framework parts through existing chat message conversion |
 | Effect evidence | Existing tool results and run steps | Keep workflow IDs, partial results and child timeout receipts |
 
 No vector index is required for instructions. Deferred capability descriptions
-are small model-visible discovery entries. Loading supplies the existing
-specialist instructions and toolset through Pydantic AI. Instructions remain
-versioned agent definitions rather than semantic search results. No parallel
-catalog, custom reasoning loop, or process per capability is introduced.
+are model-visible discovery entries. Loading supplies the existing specialist
+instructions through Pydantic AI and makes that owner's tools eligible for
+native per-tool search. Instructions remain versioned agent definitions rather
+than semantic search results. No parallel catalog, custom search algorithm,
+custom reasoning loop, or process per capability is introduced.
+
+Deferred capability-owned toolsets load as a unit in Pydantic AI. To preserve
+two-stage discovery, the deferred capabilities here contain instructions only.
+An always-on native capability contributes the source toolset, filtered by
+`ctx.loaded_capability_ids` and marked with `.defer_loading()`. Pydantic AI's
+`ToolSearch(strategy="keywords")` discovers individual eligible tools. The
+client-executed strategy keeps discovery exchanges portable in the existing
+chat DTOs while retaining the framework's provider-native wire representation
+where supported. Composed entry-agent tools also use native per-tool search;
+framework controls remain available. Agents without a composed delegate tree
+retain their existing tool surface.
+
+The specialist-description index is still present up front. This is skills-style
+instruction discovery followed by individual tool discovery, not a claim of a
+constant-size catalog across arbitrarily many specialists. Code mode and a
+sandbox worker are not required for this sequence and are not enabled here.
 
 ## Selection and authority
 
@@ -49,9 +69,10 @@ must not be inferred by this adapter.
 
 ## Same conversation or isolated child
 
-Loaded specialist tools run in the owning conversation with its model and
-budget. Their own source identity still controls execution. Specialist model
-profiles apply when the coordinator intentionally chooses isolated delegation.
+Individually discovered specialist tools run in the owning conversation with
+its model and budget. Their own source identity still controls execution.
+Specialist model profiles apply when the coordinator intentionally chooses
+isolated delegation.
 `delegate_task` uses the existing Bifrost child executor and durable `AgentRun`
 record; it does not start a second framework-owned child model loop. Existing
 `delegate_to_*` calls remain compatible and use that same lifecycle.
@@ -78,9 +99,11 @@ the existing catalog and source-qualified tool references. Internal composition
 uses the same source tool resolver and effect authorization boundaries; it does
 not create another public MCP endpoint.
 
-Chat records native load calls/results through the existing message/event
-contract and reconstructs typed parts on a later turn. Autonomous cancellation,
-child terminalization and timeout receipts retain the existing paths. This
+Chat records native load and search calls/results through the existing
+message/event contract and reconstructs typed parts on a later turn. Loaded
+instructions and discovered tools resume without repeating either discovery
+step. Autonomous cancellation, child terminalization and timeout receipts retain
+the existing paths. This
 change does not add autonomous crash-resume or duplicate the separate Agent
 Workbench checkpoint/invocation implementation. Workbench integration must use
 its existing snapshots and reconciliation boundaries when that work lands.
@@ -93,7 +116,8 @@ capacity or model-provider throughput.
 
 ## Verification and usage
 
-Deterministic framework tests cover deferred loading, direct specialist tools,
+Deterministic framework tests cover instruction loading followed by individual
+tool search, hidden unrelated schemas, direct specialist tools,
 optional child execution, follow-up after child failure, chat stream/history
 continuation, owner isolation and failure receipts. Database boundary tests
 exercise current caller authority, graph/tool revocation, foreign organization
@@ -105,3 +129,9 @@ cache and reasoning usage and cost are retained per response. Request byte
 breakdowns separate instructions, active/deferred schemas and history. Bytes
 and cache-prefix diagnostics are not billed-token attribution. Provider timeouts
 and unsupported fixture tools remain explicit limitations in scored results.
+
+The initial model comparison used the earlier whole-toolset bundle loading
+candidate. Its totals are retained as that candidate's evidence, not claimed
+as measurements of the later two-stage discovery implementation. Input-token
+totals sum all requests across tasks; peak request context, average request
+context, and cumulative input are different metrics.

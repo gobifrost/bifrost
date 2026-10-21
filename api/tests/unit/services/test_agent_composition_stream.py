@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from pydantic_ai.capabilities import Capability
+from pydantic_ai.capabilities import Capability, ToolSearch
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 
 from src.models.contracts.agents import ToolResult
@@ -41,19 +41,46 @@ async def test_native_skill_load_and_tool_result_are_streamed_and_persisted(exec
     )]
     binding = SimpleNamespace(owner=owner, original_name="read", arguments={}, workflow_ids={})
 
+    entry_definitions = (
+        [
+            ToolDefinition(
+                name="list_artifacts",
+                description="List files",
+                parameters={"type": "object", "properties": {}},
+            )
+        ]
+        if tool_name == "list_artifacts"
+        else []
+    )
+
+    def entry_toolset(execute, *, toolset_id):
+        return BifrostToolset(
+            entry_definitions, execute, toolset_id=toolset_id
+        ).defer_loading()
+
     def capabilities(execute):
-        return [Capability(
-            id="specialist", description="Read specialist", instructions="Read before deciding.",
-            defer_loading=True,
-            toolsets=[BifrostToolset(definitions, execute, toolset_id="specialist")],
-        )]
+        source_toolset = BifrostToolset(
+            definitions, execute, toolset_id="specialist-source"
+        ).filtered(
+            lambda ctx, _tool: "specialist" in ctx.loaded_capability_ids
+        ).defer_loading()
+        return [
+            ToolSearch(strategy="keywords"),
+            Capability(
+                id="specialist",
+                description="Read specialist",
+                instructions="Read before deciding.",
+                defer_loading=True,
+            ),
+            Capability(id="specialist-source", toolsets=[source_toolset]),
+        ]
 
     composition = SimpleNamespace(
-        instructions="\n\nRetain task ownership.", entry_definitions=(
-            [ToolDefinition(name="list_artifacts", description="List files", parameters={"type": "object", "properties": {}})]
-            if tool_name == "list_artifacts" else []
-        ),
-        capabilities=capabilities, resolve_call=AsyncMock(return_value=binding),
+        instructions="\n\nRetain task ownership.",
+        entry_definitions=entry_definitions,
+        entry_toolset=entry_toolset,
+        capabilities=capabilities,
+        resolve_call=AsyncMock(return_value=binding),
     )
 
     class LoadingModel(CountingTestModel):
@@ -62,9 +89,32 @@ async def test_native_skill_load_and_tool_result_are_streamed_and_persisted(exec
                 part.tool_name for message in messages if isinstance(message, ModelRequest)
                 for part in message.parts if isinstance(part, ToolReturnPart)
             }
+            visible = {
+                tool.name
+                for tool in parameters.function_tools
+                if parameters.visibility_of(tool.name) in {"visible", "via_history"}
+            }
             if "load_capability" not in returned:
                 return ModelResponse(parts=[ToolCallPart("load_capability", {"id": "specialist"}, "load")])
+            if "search_tools" not in returned:
+                assert tool_name not in visible
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            "search_tools",
+                            {
+                                "queries": [
+                                    "approved resource"
+                                    if tool_name == "specialist_read"
+                                    else "list files"
+                                ]
+                            },
+                            "search",
+                        )
+                    ]
+                )
             if tool_name not in returned:
+                assert tool_name in visible
                 return ModelResponse(parts=[ToolCallPart(tool_name, {}, "read")])
             return ModelResponse(parts=[TextPart("Verified.")])
 
@@ -93,7 +143,7 @@ async def test_native_skill_load_and_tool_result_are_streamed_and_persisted(exec
 
     calls = [chunk.tool_call.name for chunk in chunks if chunk.type == "tool_call"]
     results = [chunk.tool_result.tool_name for chunk in chunks if chunk.type == "tool_result"]
-    assert calls == ["load_capability", tool_name]
+    assert calls == ["load_capability", "search_tools", tool_name]
     assert results == calls
     assert chunks[-1].type == "done"
     persisted_results = [
@@ -101,8 +151,8 @@ async def test_native_skill_load_and_tool_result_are_streamed_and_persisted(exec
         if call.kwargs.get("role") == MessageRole.TOOL
     ]
     assert [row["tool_name"] for row in persisted_results] == calls
-    assert [row["tool_call_id"] for row in persisted_results] == ["load", "read"]
-    assert executor._update_tool_call_message.await_count == 2
+    assert [row["tool_call_id"] for row in persisted_results] == ["load", "search", "read"]
+    assert executor._update_tool_call_message.await_count == 3
     executor._execute_tool.assert_awaited_once()
     assert executor._execute_tool.await_args.args[0].name == ("read" if tool_name == "specialist_read" else tool_name)
     assert executor._execute_tool.await_args.args[1] is (owner if tool_name == "specialist_read" else agent)

@@ -14,6 +14,7 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    ToolSearchReturnPart,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
@@ -84,20 +85,51 @@ class _LoadsSpecialistCapability(TestModel):
                 model_name=self.model_name,
             )
 
+        search_completed = any(
+            isinstance(message, ModelRequest)
+            and any(
+                isinstance(part, ToolSearchReturnPart)
+                and part.tool_call_id == "search-specialist-tool"
+                for part in message.parts
+            )
+            for message in messages
+        )
         child_tool = next(
             (
                 tool
                 for tool in model_request_parameters.function_tools
                 if tool.name.startswith("bfa_")
+                and model_request_parameters.visibility_of(tool.name)
+                in {"visible", "via_history"}
             ),
             None,
         )
-        assert child_tool is not None, "loading the capability did not expose its tool"
         assert loaded_instructions == [
             f"{self._child_instruction}\n\n"
-            "Use these approved specialist tools only for work this specialist owns. "
-            "Return evidence to the owning conversation."
+            "Search for an approved individual tool only after loading this skill. "
+            "Use it only for work this specialist owns and return evidence to the "
+            "owning conversation."
         ]
+        if not search_completed:
+            assert child_tool is None, "a loaded specialist tool must still be searched"
+            assert any(
+                tool.name == "search_tools"
+                and model_request_parameters.visibility_of(tool.name)
+                in {"visible", "via_history"}
+                for tool in model_request_parameters.function_tools
+            )
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "search_tools",
+                        {"queries": ["bfa"]},
+                        tool_call_id="search-specialist-tool",
+                    )
+                ],
+                model_name=self.model_name,
+            )
+
+        assert child_tool is not None, "searching did not expose the specialist tool"
         self.child_tool_name = child_tool.name
         if "call-specialist-tool" not in completed:
             return ModelResponse(

@@ -16,7 +16,7 @@ from src.models.contracts.executions import WorkflowExecutionResponse
 from src.models.enums import ExecutionStatus
 from src.models.orm.agent_runs import AgentRun
 from src.repositories.knowledge import KnowledgeDocument
-from src.services.agent_runtime import AgentRunBudget
+from src.services.agent_runtime import AgentRunBudget, BifrostToolset
 from src.services.authorization.enforce import Caller
 from src.services.authorization.agent_runtime import AgentRuntimeAuthorizationError
 from src.services.execution.agent_helpers import find_delegated_agent
@@ -272,9 +272,16 @@ def authorized_agent_runtime(mock_agent):
                 workflow_ids=kwargs["entry_workflow_ids"],
             )
 
+        def entry_toolset(execute, event_handler=None, toolset_id="test-entry"):
+            return BifrostToolset(
+                kwargs["entry_definitions"], execute,
+                event_handler=event_handler, toolset_id=toolset_id,
+            )
+
         return SimpleNamespace(
             entry_definitions=kwargs["entry_definitions"], instructions="",
             resolve_call=resolve, provenance_for=lambda *_: {},
+            entry_toolset=entry_toolset,
             capabilities=lambda *_: [],
         )
 
