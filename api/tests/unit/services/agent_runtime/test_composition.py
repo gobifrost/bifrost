@@ -19,6 +19,7 @@ from pydantic_ai.models.function import FunctionModel
 
 from src.services.agent_runtime.composition import (
     AgentComposition,
+    COMPOSITION_INSTRUCTIONS,
     AgentCompositionError,
     ToolBinding,
     _DeferredAgent,
@@ -42,6 +43,18 @@ def _composition(*, deferred=(), delegates=None, bindings=None):
         deferred=deferred,
         isolated_delegates=delegates or {},
     )
+
+
+def test_composition_instructions_prefer_discovered_same_conversation_tools():
+    """Runtime guidance keeps tool selection bounded to discovered callables."""
+    instructions = " ".join(COMPOSITION_INSTRUCTIONS.split())
+    assert "exact callable name and input schema" in instructions
+    assert "supplied by the runtime or returned by discovery" in instructions
+    assert "Never guess a tool name, arguments, or schema" in instructions
+    assert "same-conversation specialist tools by default" in instructions
+    assert "context isolation or independent review" in instructions
+    assert "permission workaround" in instructions
+    assert "legacy delegate_to_" not in instructions
 
 
 @pytest.mark.asyncio
@@ -196,6 +209,224 @@ async def test_loaded_skill_searches_and_reveals_only_relevant_individual_tools(
         for match in part.discovered_tools
     ]
     assert discovered == [qualified, nested_qualified]
+
+
+@pytest.mark.asyncio
+async def test_guessed_action_name_is_corrected_before_discovery_and_effect():
+    """The framework rejects a guessed callable before Bifrost can dispatch it."""
+    root_id = uuid4()
+    definition = ToolDefinition(
+        name="halopsa_submit_triage",
+        description="Submit a reviewed triage result.",
+        parameters={
+            "type": "object",
+            "properties": {"ticket_id": {"type": "integer"}},
+            "required": ["ticket_id"],
+        },
+    )
+    binding = ToolBinding(
+        name=definition.name,
+        owner_id=root_id,
+        original_name=definition.name,
+        path=(root_id,),
+        capability_id=None,
+        parameters=definition.parameters,
+    )
+    composition = _composition(bindings={definition.name: binding})
+    composition.root_id = root_id
+    composition.entry_definitions = (definition,)
+    executed = AsyncMock(return_value="triage submitted")
+    requests = 0
+
+    def model(messages, info):
+        nonlocal requests
+        requests += 1
+        names = {tool.name for tool in info.function_tools}
+        if requests == 1:
+            assert definition.name not in names
+            return ModelResponse(parts=[ToolCallPart(
+                "halopsa_halopsa_submit_triage", {"ticket_id": 123}, "guessed-action",
+            )])
+        if requests == 2:
+            assert any(
+                isinstance(part, RetryPromptPart)
+                and part.tool_call_id == "guessed-action"
+                and "halopsa_halopsa_submit_triage" in str(part.content)
+                for message in messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+            )
+            executed.assert_not_awaited()
+            return ModelResponse(parts=[ToolCallPart(
+                "search_tools", {"queries": ["submit triage"]}, "discover-action",
+            )])
+        if requests == 3:
+            assert definition.name in names
+            return ModelResponse(parts=[ToolCallPart(
+                definition.name, {"ticket_id": 123}, "exact-action",
+            )])
+        return ModelResponse(parts=[TextPart("done")])
+
+    result = await PydanticAgent(
+        FunctionModel(model),
+        toolsets=[composition.entry_toolset(executed)],
+        capabilities=composition.capabilities(executed),
+    ).run("Submit triage for ticket 123")
+
+    assert result.output == "done"
+    executed.assert_awaited_once_with(definition.name, {"ticket_id": 123}, "exact-action")
+
+
+@pytest.mark.asyncio
+async def test_automatic_toolsets_hide_legacy_delegate_aliases_but_keep_native_subagents():
+    """Automatic discovery exposes domain tools and native isolation only."""
+    root_id, child_id = uuid4(), uuid4()
+    child = SimpleNamespace(id=child_id, name="Case Specialist", system_prompt="Find cases.")
+    capability_id = _capability_id(child_id)
+    delegate_name = _delegate_name(child)
+    root_case = ToolDefinition(
+        name="halopsa_get_case",
+        description="Get one HaloPSA case.",
+        parameters={"type": "object", "properties": {}},
+    )
+    root_legacy_delegate = ToolDefinition(
+        name="delegate_to_case_specialist",
+        description="Legacy delegation alias.",
+        parameters={
+            "type": "object",
+            "properties": {"task": {"type": "string"}},
+            "required": ["task"],
+        },
+    )
+    child_case = ToolDefinition(
+        name="halopsa_search_case_notes",
+        description="Search HaloPSA case notes.",
+        parameters={
+            "type": "object",
+            "properties": {"case_id": {"type": "integer"}},
+            "required": ["case_id"],
+        },
+    )
+    child_legacy_delegate = ToolDefinition(
+        name="delegate_to_nested_specialist",
+        description="Legacy nested delegation alias.",
+        parameters=root_legacy_delegate.parameters,
+    )
+    qualified_child_case = _qualified_tool_name(child_id, child_case.name)
+    qualified_child_legacy = _qualified_tool_name(child_id, child_legacy_delegate.name)
+    bindings = {
+        definition.name: ToolBinding(
+            name=definition.name,
+            owner_id=root_id,
+            original_name=definition.name,
+            path=(root_id,),
+            capability_id=None,
+            parameters=definition.parameters,
+        )
+        for definition in (root_case, root_legacy_delegate)
+    }
+    bindings.update({
+        qualified_child_case: ToolBinding(
+            name=qualified_child_case,
+            owner_id=child_id,
+            original_name=child_case.name,
+            path=(root_id, child_id),
+            capability_id=capability_id,
+            parameters=child_case.parameters,
+        ),
+        qualified_child_legacy: ToolBinding(
+            name=qualified_child_legacy,
+            owner_id=child_id,
+            original_name=child_legacy_delegate.name,
+            path=(root_id, child_id),
+            capability_id=capability_id,
+            parameters=child_legacy_delegate.parameters,
+        ),
+    })
+    delegate_binding = ToolBinding(
+        name="delegate_task",
+        owner_id=root_id,
+        original_name=root_legacy_delegate.name,
+        path=(root_id,),
+        capability_id=None,
+        parameters=root_legacy_delegate.parameters,
+        delegated_target_path=(root_id, child_id),
+    )
+    composition = AgentComposition(
+        root_id=root_id,
+        caller=SimpleNamespace(),
+        session_factory=AsyncMock(),
+        caller_user_id=uuid4(),
+        instructions="",
+        entry_definitions=(root_case, root_legacy_delegate),
+        bindings=bindings,
+        deferred=(
+            _DeferredAgent(
+                agent=child,
+                path=(root_id, child_id),
+                definitions=(child_case, child_legacy_delegate),
+                capability_id=capability_id,
+            ),
+        ),
+        isolated_delegates={delegate_name: delegate_binding},
+    )
+    composition.authorize_capability_load = AsyncMock()
+    executed = AsyncMock(side_effect=["root case", "case notes", "child receipt"])
+    requests = 0
+
+    def model(_, info):
+        nonlocal requests
+        requests += 1
+        names = {tool.name for tool in info.function_tools}
+        if requests == 1:
+            assert root_case.name not in names
+            assert root_legacy_delegate.name not in names
+            return ModelResponse(parts=[ToolCallPart(
+                "search_tools", {"queries": ["get case"]}, "search-root",
+            )])
+        if requests == 2:
+            assert root_case.name in names
+            assert root_legacy_delegate.name not in names
+            return ModelResponse(parts=[ToolCallPart(root_case.name, {}, "root-case")])
+        if requests == 3:
+            return ModelResponse(parts=[ToolCallPart(
+                "load_capability", {"id": capability_id}, "load-child",
+            )])
+        if requests == 4:
+            assert qualified_child_case not in names
+            assert qualified_child_legacy not in names
+            return ModelResponse(parts=[ToolCallPart(
+                "search_tools", {"queries": ["case notes"]}, "search-child",
+            )])
+        if requests == 5:
+            assert qualified_child_case in names
+            assert qualified_child_legacy not in names
+            assert root_legacy_delegate.name not in names
+            return ModelResponse(parts=[ToolCallPart(
+                qualified_child_case, {"case_id": 123}, "child-case",
+            )])
+        if requests == 6:
+            assert "delegate_task" in names
+            assert root_legacy_delegate.name not in names
+            assert qualified_child_legacy not in names
+            return ModelResponse(parts=[ToolCallPart(
+                "delegate_task", {"agent_name": delegate_name, "task": "independently review"},
+                "delegate",
+            )])
+        return ModelResponse(parts=[TextPart("done")])
+
+    result = await PydanticAgent(
+        FunctionModel(model),
+        toolsets=[composition.entry_toolset(executed)],
+        capabilities=composition.capabilities(executed),
+    ).run("Review case 123")
+
+    assert result.output == "done"
+    assert [call.args for call in executed.await_args_list] == [
+        (root_case.name, {}, "root-case"),
+        (qualified_child_case, {"case_id": 123}, "child-case"),
+        ("delegate_task", {"agent_name": delegate_name, "task": "independently review"}, "delegate"),
+    ]
 
 
 @pytest.mark.asyncio

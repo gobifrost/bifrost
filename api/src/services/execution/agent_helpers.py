@@ -72,7 +72,9 @@ EXECUTION MODE: You are running autonomously — there is no human in this conve
 - Your final response MUST be conclusive: a summary, report, action result, or structured output.
 - Do NOT ask questions, request clarification, or use phrases like "let me know if you need anything else."
 - If you lack information, state what you could not determine and why, then provide the best result possible with available data.
-- If a tool call fails, attempt reasonable alternatives before reporting failure."""
+- Use only a tool whose exact callable name and input schema are supplied by the runtime or returned by discovery. Never guess a tool name, arguments, or schema.
+- If a tool call is rejected as unknown or its arguments do not match the schema, use the correction before another call. Do not improvise alternatives or retry an effect.
+- If access is denied, stop that operation. Do not use another tool or child agent as a permission workaround."""
 
 
 def agent_delegation_slug(name: str) -> str:

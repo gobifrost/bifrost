@@ -46,6 +46,23 @@ from src.services.tool_schema import validate_arguments_against_schema
 
 MAX_COMPOSITION_DEPTH = 5
 
+COMPOSITION_INSTRUCTIONS = """
+
+Keep ownership of this task and its evidence. Use only a tool whose exact callable name and input
+schema are supplied by the runtime or returned by discovery. Never guess a tool name, arguments,
+or schema.
+If discovery or invocation corrects an unknown callable or invalid arguments, use that correction
+before making another call.
+
+For specialist work, load an approved capability's instructions, then search_tools for individual
+tools to use in this conversation. Search also discovers the entry agent's tools. Use
+same-conversation specialist tools by default. Start an isolated child only when context isolation
+or independent review is actually required; never use a child as a permission workaround. Include
+the necessary context, inspect the child receipt, and follow up when more information can unblock
+it. Respect specialist instructions and approval constraints. Verify uncertain effects before
+repeating a write.
+"""
+
 _ACTIVE_SUBAGENT_TOOL_CALL_ID: ContextVar[str] = ContextVar(
     "active_subagent_tool_call_id", default=""
 )
@@ -134,6 +151,17 @@ def _qualified_tool_name(agent_id: UUID, original_name: str) -> str:
 def _delegate_name(agent: Agent) -> str:
     """A unique SubAgents key; names are presentation only, never lookup fallbacks."""
     return f"{_safe_segment(agent.name, fallback='agent')[:31]}_{agent.id.hex}"
+
+
+def _model_visible_definitions(
+    definitions: Sequence[ToolDefinition],
+) -> tuple[ToolDefinition, ...]:
+    """Hide legacy delegate aliases while retaining their bindings for native subagents."""
+    return tuple(
+        definition
+        for definition in definitions
+        if not definition.name.startswith("delegate_to_")
+    )
 
 
 async def _load_approved_child(
@@ -363,7 +391,7 @@ class AgentComposition:
         individual tool.
         """
         return BifrostToolset(
-            self.entry_definitions,
+            _model_visible_definitions(self.entry_definitions),
             executor,
             event_handler=event_handler,
             toolset_id=toolset_id,
@@ -464,7 +492,7 @@ class AgentComposition:
         specialist_definitions: list[ToolDefinition] = []
         owner_capability_by_tool_name: dict[str, str] = {}
         for deferred in self._deferred:
-            for definition in deferred.definitions:
+            for definition in _model_visible_definitions(deferred.definitions):
                 qualified_name = _qualified_tool_name(deferred.agent.id, definition.name)
                 binding = self._bindings[qualified_name]
                 specialist_definitions.append(
@@ -665,34 +693,13 @@ async def build_agent_composition(
                 visited.add(child.id)
                 queue.append((child, child_path))
 
-    adapted_entries = [
-        ToolDefinition(
-            name=definition.name,
-            description=(
-                f"{definition.description} Optional isolated child execution is also available "
-                "through delegate_task."
-                if definition.name.startswith("delegate_to_")
-                else definition.description
-            ),
-            parameters=deepcopy(definition.parameters),
-        )
-        for definition in entry_definitions
-    ]
     return AgentComposition(
         root_id=root.id,
         caller=caller,
         session_factory=session_factory,
         caller_user_id=caller_user_id,
-        instructions=(
-            "\n\nKeep ownership of this task and its evidence. For specialist work, load an approved "
-            "capability's instructions, then search_tools for individual tools to use in this "
-            "conversation. Search also discovers the entry agent's tools. Use delegate_task or a "
-            "legacy delegate_to_ tool when a separate child context is useful. Include the necessary "
-            "context, inspect the child receipt, and follow up when more information can unblock it. "
-            "Respect specialist instructions and approval constraints. Verify uncertain effects "
-            "before repeating a write."
-        ),
-        entry_definitions=adapted_entries,
+        instructions=COMPOSITION_INSTRUCTIONS,
+        entry_definitions=entry_definitions,
         bindings=bindings,
         deferred=deferred,
         isolated_delegates=isolated_delegates,

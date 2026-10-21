@@ -151,6 +151,10 @@ class TestBuildAgentSystemPrompt:
         assert result == "Base prompt." + AUTONOMOUS_MODE_SUFFIX
         assert "conclusive" in result
         assert "Do NOT ask questions" in result
+        assert "exact callable name and input schema" in result
+        assert "supplied by the runtime or returned by discovery" in result
+        assert "Never guess a tool name, arguments, or schema" in result
+        assert "reasonable alternatives" not in result
 
     def test_chat_mode_returns_prompt_verbatim(self):
         """mode=chat returns prompt unchanged (no suffix)."""

@@ -70,12 +70,18 @@ must not be inferred by this adapter.
 ## Same conversation or isolated child
 
 Individually discovered specialist tools run in the owning conversation with
-its model and budget. Their own source identity still controls execution.
-Specialist model profiles apply when the coordinator intentionally chooses
+its model and budget, and are the default for specialist work. Their own source
+identity still controls execution. A coordinator chooses isolated delegation
+only when the task actually requires context isolation or an independent
+review; a child run is never a way to obtain authority that the current
+conversation lacks. Specialist model profiles apply to that intentional,
 isolated delegation.
 `delegate_task` uses the existing Bifrost child executor and durable `AgentRun`
-record; it does not start a second framework-owned child model loop. Existing
-`delegate_to_*` calls remain compatible and use that same lifecycle.
+record; it does not start a second framework-owned child model loop. Automatic
+discovery hides legacy `delegate_to_*` aliases in both entry and specialist
+toolsets. Their underlying bindings still support native children. Delegated
+mode and direct external MCP calls keep their existing delegation surface and
+use the same lifecycle.
 
 A failed child returns its run ID, status, partial output and existing sanitized
 evidence, allowing the owner to provide missing context or verify an uncertain
