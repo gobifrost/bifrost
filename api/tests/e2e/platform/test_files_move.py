@@ -9,12 +9,14 @@ from urllib.parse import quote
 from uuid import UUID
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from shared.file_paths import resolve_s3_key
 from src.config import get_settings
 from src.models.orm.file_metadata import FileMetadata
+from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solution_file_location import SolutionFileLocation
+from src.models.orm.solutions import Solution
 from src.services.file_storage.move import (
     MARK_ETAG,
     MARK_ROW,
@@ -33,6 +35,10 @@ pytestmark = pytest.mark.e2e
 LOCATION = "docs"
 ADMIN_RULE = {"name": "admin", "actions": ["read", "write", "delete", "list"], "when": {"user": "is_platform_admin"}}
 READ_ALL_RULE = {"name": "read_all", "actions": ["read"], "when": None}
+
+
+async def _no_rename_expected(path: str) -> bool:
+    raise AssertionError(f"unexpected rename to {path}")
 
 
 def _put_policy(e2e_client, headers, *, scope: str, prefix: str, rules: list[dict]) -> None:
@@ -137,6 +143,56 @@ async def test_move_many_moves_files_and_access_follows(
     assert await _row(db_session, sid, "campus-a/b1/plan.pdf") is None
 
 
+
+async def test_move_into_a_sealed_install_is_refused_like_a_read(
+    e2e_client, platform_admin, solution, db_session
+) -> None:
+    sid, admin = solution["id"], platform_admin.headers
+    _write(e2e_client, admin, sid, "campus-a/sealed.pdf", "sealed")
+    await db_session.execute(
+        update(Solution).where(Solution.id == UUID(sid)).values(allow_inbound_access=False)
+    )
+    await db_session.commit()
+    assert _read(e2e_client, admin, sid, "campus-a/sealed.pdf").status_code == 403
+
+    response = e2e_client.post(
+        f"/api/files/move-many?solution={sid}", headers=admin,
+        json={"items": [{"source": "campus-a/sealed.pdf", "destination": "campus-b/sealed.pdf"}],
+              "location": LOCATION},
+    )
+
+    assert response.status_code == 403, response.text
+    db_session.expire_all()
+    jobs = (
+        await db_session.execute(select(PlatformJob).where(PlatformJob.job_type == "files.move"))
+    ).scalars().all()
+    assert not any(job.payload.get("solution_id") == sid for job in jobs)
+    assert (await _row(db_session, sid, "campus-a/sealed.pdf")) is not None
+
+
+async def test_rename_is_refused_where_the_generated_name_denies_writes(
+    e2e_client, platform_admin, org1_user, solution, db_session
+) -> None:
+    sid, admin, user = solution["id"], platform_admin.headers, org1_user.headers
+    org = solution["organization_id"]
+    everything = {"name": "all", "actions": ["read", "write", "delete", "list"], "when": None}
+    _put_policy(e2e_client, admin, scope=org, prefix="renames", rules=[everything])
+    _put_policy(e2e_client, admin, scope=org, prefix="renames/report (1).pdf", rules=[READ_ALL_RULE])
+    _write(e2e_client, admin, sid, "renames/in/report.pdf", "mine")
+    _write(e2e_client, admin, sid, "renames/report.pdf", "occupant")
+    denied = e2e_client.post(
+        f"/api/files/write?solution={sid}", headers=user,
+        json={"location": LOCATION, "path": "renames/report (1).pdf", "content": "x", "mode": "cloud"},
+    )
+    assert denied.status_code == 403, denied.text
+
+    job = _move_many(e2e_client, user, sid, [("renames/in/report.pdf", "renames/report.pdf")], "rename")
+
+    [result] = job["result"]["results"]
+    assert (result["status_code"], result["error"]) == (403, "forbidden"), job
+    assert _read(e2e_client, user, sid, "renames/in/report.pdf").json()["content"] == "mine"
+    assert await _row(db_session, sid, "renames/report (1).pdf") is None
+
 @pytest.mark.parametrize("rename", [False, True])
 async def test_retry_adopts_an_interrupted_move(
     e2e_client, platform_admin, solution, db_session, rename
@@ -209,6 +265,7 @@ async def test_multipart_copy_against_object_storage(
             location=LOCATION, scope=sid, solution_id=UUID(sid),
             organization_id=UUID(solution["organization_id"]), requested_by=platform_admin.user_id,
         ),
+        authorize_rename=_no_rename_expected,
         open_session=async_session_factory,
         multipart_threshold=6 * 1024 * 1024,
         part_size=5 * 1024 * 1024,

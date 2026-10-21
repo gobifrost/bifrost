@@ -51,6 +51,9 @@ def _verified_caller_context(monkeypatch):
         "src.services.solution_scope.get_active_solution",
         AsyncMock(return_value=SimpleNamespace(id=SOLUTION_ID, organization_id=ORG_ID)),
     )
+    monkeypatch.setattr(
+        "src.services.solution_scope.inbound_allowed_for_context", AsyncMock(return_value=True)
+    )
 
 
 @pytest.fixture
@@ -108,6 +111,7 @@ async def test_valid_items_enqueue_a_locked_priority_job(env) -> None:
     assert kwargs["resource_id"] == f"docs:{SOLUTION_ID}"
     assert kwargs["organization_id"] == ORG_ID
     assert kwargs["requested_by_user_id"] == caller.user.user_id
+    assert (payload.policy_user_id, payload.policy_authorities) == (caller.user.user_id, [])
 
 
 @pytest.mark.parametrize(
@@ -217,3 +221,21 @@ async def test_org_scope_keys_metadata_by_scope(env) -> None:
     )
     payload = _payload(env)
     assert (payload.scope, payload.solution_id, payload.organization_id) == (str(ORG_ID), None, ORG_ID)
+
+
+async def test_sealed_install_is_an_audited_403_before_any_policy_check(env, monkeypatch) -> None:
+    emit = AsyncMock()
+    monkeypatch.setattr(
+        "src.services.solution_scope.inbound_allowed_for_context", AsyncMock(return_value=False)
+    )
+    monkeypatch.setattr("shared.file_access.emit_file_policy_deny", emit)
+
+    with pytest.raises(FileServiceError) as caught:
+        await sdk_enqueue_file_moves(
+            _caller(), items=[("a/r.pdf", "b/r.pdf")], location="docs", scope=None
+        )
+
+    assert caught.value.status_code == 403
+    assert emit.await_args.kwargs["path"] == "a/r.pdf"
+    assert env.checks == []
+    env.enqueue.assert_not_awaited()

@@ -85,30 +85,51 @@ async def enforced_policy_principal(
     if runtime is None:
         return principal
 
-    run_user = runtime.run_user
-    email, is_external, is_provider = (
-        await db.execute(
-            select(User.email, User.is_external, Organization.is_provider)
-            .outerjoin(Organization, Organization.id == User.organization_id)
-            .where(User.id == run_user.user_id)
-        )
-    ).one()
-    role_ids, role_names = await get_user_roles(run_user.user_id, db)
     full = (
         runtime.kind in {"workflow_execution", "service_attempt"}
         and runtime.powers is not None
         and runtime.powers.mode is WorkflowPermissionMode.FULL
     )
+    enforced = await load_policy_user_principal(
+        db,
+        runtime.run_user.user_id,
+        frozenset({"platform_admin"}) if full else frozenset(),
+    )
+    if enforced is None:
+        raise LookupError("the runtime's run user no longer exists")
+    return enforced
+
+
+async def load_policy_user_principal(
+    db: AsyncSession, user_id: UUID, policy_authorities: frozenset[str]
+) -> UserPrincipal | None:
+    """``user_id``'s current policy facts with ``policy_authorities``; None when gone.
+
+    The same facts :func:`enforced_policy_principal` builds for a runtime's
+    run user, for deferred work (a ``files.move`` job) that enforces a policy
+    for the user who requested it.
+    """
+    row = (
+        await db.execute(
+            select(User.organization_id, User.email, User.is_external, Organization.is_provider)
+            .outerjoin(Organization, Organization.id == User.organization_id)
+            .where(User.id == user_id)
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    home, email, is_external, is_provider = row
+    role_ids, role_names = await get_user_roles(user_id, db)
     return UserPrincipal(
-        user_id=run_user.user_id,
+        user_id=user_id,
         email=email,
-        organization_id=run_user.home,
+        organization_id=home,
         is_superuser=PLATFORM_ADMIN_ROLE_ID in role_ids,
         is_provider_org=bool(is_provider),
         is_external=bool(is_external),
         role_ids=list(role_ids),
         role_names=list(role_names),
-        policy_authorities=frozenset({"platform_admin"}) if full else frozenset(),
+        policy_authorities=policy_authorities,
     )
 
 

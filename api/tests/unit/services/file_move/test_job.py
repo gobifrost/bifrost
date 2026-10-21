@@ -46,6 +46,7 @@ def payload(target, items, rejected=(), on_conflict="error") -> FileMovePayload:
         organization_id=target.organization_id,
         on_conflict=on_conflict,
         requested_by_user_id=target.requested_by,
+        policy_user_id=target.requested_by,
         total=len(items) + len(rejected),
         items=[FileMoveWorkItem(index=i, source=s, destination=d) for i, s, d in items],
         rejected=list(rejected),
@@ -63,7 +64,7 @@ def test_payload_requires_every_index_exactly_once() -> None:
     with pytest.raises(ValidationError):
         FileMovePayload(
             location="docs", scope=str(uuid4()), on_conflict="error",
-            requested_by_user_id=uuid4(), total=2,
+            requested_by_user_id=uuid4(), policy_user_id=uuid4(), total=2,
             items=[FileMoveWorkItem(index=0, source="a", destination="b")],
         )
 
@@ -74,7 +75,7 @@ async def _enqueue_move(db_session):
         FILE_MOVE_DEFINITION,
         FileMovePayload(
             location="docs", scope=str(uuid4()), on_conflict="error",
-            requested_by_user_id=uuid4(), total=1,
+            requested_by_user_id=uuid4(), policy_user_id=uuid4(), total=1,
             items=[FileMoveWorkItem(index=0, source="a.pdf", destination="b.pdf")],
         ),
         dedupe_key=None,

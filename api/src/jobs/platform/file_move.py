@@ -1,8 +1,9 @@
 # api/src/jobs/platform/file_move.py
 """Durable server-side file moves (``files.move`` / ``files.move_many``).
 
-Authorization happened at enqueue (``shared.sdk_files.sdk_enqueue_file_moves``).
-This job only moves the authorized items, one at a time in request order,
+Authorization happened at enqueue (``shared.sdk_files.sdk_enqueue_file_moves``),
+except for a renamed destination the job chooses itself, which is authorized
+here. This job moves the authorized items, one at a time in request order,
 through :class:`src.services.file_storage.move.FileMover`. Contract:
 ``docs/superpowers/specs/2026-10-09-files-move-design.md``.
 """
@@ -50,6 +51,10 @@ class FileMovePayload(BaseModel):
     organization_id: UUID | None = None
     on_conflict: Literal["error", "rename"] = "error"
     requested_by_user_id: UUID
+    # The policy principal enqueue authorized: a renamed destination is
+    # authorized again for this user (current roles) with these authorities.
+    policy_user_id: UUID
+    policy_authorities: list[str] = Field(default_factory=list)
     total: int = Field(ge=1, le=MAX_FILE_MOVE_ITEMS)
     items: list[FileMoveWorkItem] = Field(default_factory=list)
     rejected: list[RejectedFileMove] = Field(default_factory=list)
@@ -67,6 +72,46 @@ def _object_store() -> Any:
     from src.services.file_storage.s3_client import S3StorageClient
 
     return S3StorageClient(get_settings())
+
+
+async def authorize_renamed_destination(payload: FileMovePayload, path: str) -> bool:
+    """Write policy on a destination the job chose under ``on_conflict="rename"``.
+
+    Enqueue authorized the requested destination only. The chosen ``stem (n)``
+    name can fall under a different policy, so it is evaluated for the user
+    enqueue authorized, with that user's current roles; a denial is audited
+    like the enqueue-time ones.
+    """
+    from src.core.database import get_db_context
+    from src.services.access_check_policies import load_policy_user_principal
+    from src.services.audit import emit_file_policy_deny
+    from src.services.file_policy_service import FilePolicyService
+
+    async with get_db_context() as db:
+        principal = await load_policy_user_principal(
+            db, payload.policy_user_id, frozenset(payload.policy_authorities)
+        )
+        allowed = principal is not None and (
+            await FilePolicyService(db).evaluate(
+                "write",
+                organization_id=payload.organization_id,
+                location=payload.location,
+                path=path,
+                user=principal,
+                solution_id=payload.solution_id,
+            )
+        ).allowed
+        if not allowed:
+            await emit_file_policy_deny(
+                db,
+                policy_action="write",
+                location=payload.location,
+                path=path,
+                scope=payload.scope,
+                solution_id=payload.solution_id,
+            )
+            await db.commit()
+        return allowed
 
 
 def _failed_entry(index: int, result: FileMoveResult) -> dict[str, Any]:
@@ -98,6 +143,9 @@ async def run_file_move(context: PlatformJobContext, raw_payload: BaseModel) -> 
             "remove it, because it can be readable under its new prefix.",
         )
 
+    async def authorize_rename(path: str) -> bool:
+        return await authorize_renamed_destination(payload, path)
+
     mover = FileMover(
         _object_store(),
         MoveTarget(
@@ -107,6 +155,7 @@ async def run_file_move(context: PlatformJobContext, raw_payload: BaseModel) -> 
             organization_id=payload.organization_id,
             requested_by=payload.requested_by_user_id,
         ),
+        authorize_rename=authorize_rename,
         on_cleanup_failed=log_cleanup_failure,
     )
     work = sorted(payload.items, key=lambda item: item.index)

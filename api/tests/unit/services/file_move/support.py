@@ -183,3 +183,8 @@ async def rows_at(target: MoveTarget, path: str) -> list[FileMetadata]:
         ]
     async with get_db_context() as db:
         return list((await db.execute(select(FileMetadata).where(*filters))).scalars().all())
+
+
+async def allow_rename(_path: str) -> bool:
+    """``authorize_rename`` for tests that do not exercise rename policy."""
+    return True

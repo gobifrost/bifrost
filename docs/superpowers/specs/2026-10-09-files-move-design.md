@@ -157,7 +157,10 @@ Enqueue runs in the request with the caller's `UserPrincipal`, in the same
 order `sdk_delete_file` uses:
 
 1. Resolve effective scope (Solution context wins) — `resolve_effective_scope`.
-2. `require_declared_solution_file_location`.
+2. `require_declared_solution_file_location`, then, for a Solution install,
+   the shared inbound gate `inbound_allowed_for_context` that file reads
+   apply: a sealed install refuses an outside caller with the audited 403
+   `deny_file_policy` raises (the whole request, not per item).
 3. Per item, before any existence probe: path validation, then file policy
    with denial audit. A path is a 400 result if `source == destination`, if
    `resolve_s3_key` rejects it, or if it is empty, ends in `/`, or contains
@@ -205,15 +208,20 @@ order `sdk_delete_file` uses:
 The payload stores, per authorized item, its request index, the source, and
 the requested destination (the job re-derives S3 keys with `resolve_s3_key`);
 plus the location, effective scope,
-`solution_id`, install `organization_id`, `on_conflict`, the requester, and the
-pre-recorded results of rejected items — enough to run after the request
-context is gone. It holds no credentials.
+`solution_id`, install `organization_id`, `on_conflict`, the requester, the
+policy principal enqueue evaluated (`policy_user_id` and its
+`policy_authorities`, from `enforced_policy_principal`), and the pre-recorded
+results of rejected items — enough to run after the request context is gone.
+It holds no credentials.
 
-Rename mode: candidates differ from the requested destination only in the file
-name (same directory) and are authorized by the requested destination's
-`write` grant. A file-level policy written for one exact candidate name is the
-only case where a candidate's effective policy could differ; the operation
-docs state this.
+Rename mode: enqueue authorizes only the requested destination, and a
+candidate name can fall under a different policy (a file-level policy on that
+exact name, or a requested destination with its own). So when step 3 picks a
+new candidate, the job evaluates `write` on that candidate with
+`FilePolicyService.evaluate` for `policy_user_id` with that user's current
+roles (`load_policy_user_principal`) and the recorded authorities. A denial is
+an audited per-item 403 `forbidden`, before any copy. A resumed or adopted
+candidate was authorized by the run that created it and is not re-checked.
 
 For a workflow caller, the principal at enqueue is the workflow engine's
 principal, exactly as for `files.delete` today; the healthcare-user policy
@@ -221,9 +229,9 @@ semantics above are what direct API callers get. Platform-job visibility for
 engine-created jobs (shared engine identity) is a known platform-wide issue
 being fixed separately and is out of scope here.
 
-Policy and claims are evaluated once, at enqueue. A grant revoked while a job
-is queued does not stop its authorized items — the same semantics every other
-platform job has.
+Policy and claims are evaluated at enqueue (and again only for a renamed
+destination the job picks). A grant revoked while a job is queued does not
+stop its authorized items — the same semantics every other platform job has.
 
 ## Job: `files.move` (`api/src/jobs/platform/file_move.py`)
 
@@ -460,6 +468,14 @@ notification see a failed job and the full per-item picture.
    `delete_raw_from_s3` swallows all errors and cannot be used) and
    `HeadObject` to confirm the source is gone.
 
+   A presigned upload can also land on the destination after step 5 has
+   verified our copy there and before this delete. The move still succeeds:
+   step 5's verification is the move's linearization point, so the outcome
+   (the upload at the destination, the source gone) is the one the upload
+   would produce if it landed just after the move finished — an ordinary
+   overwrite. Closing that window would need a second, unaddressable copy of
+   every source until the end of the move.
+
    **Once the delete has been issued, the destination copy is never cleaned
    up** — a delete can succeed server-side while the client sees a timeout,
    and deleting the copy then would lose both. On any error after issuing it,
@@ -506,6 +522,9 @@ source path has a different row id and can never match.
   adopted. Otherwise → 404. Markers are the identity; the size check is
   only a guard that rejects a copy of an older version when the row has
   since been overwritten in place (`upsert_metadata` keeps the row id).
+  Neither tells two same-size versions apart, and the row stores no durable
+  version identity, so when more than one candidate passes, the item fails
+  500 `recovery_ambiguous` and every copy is kept for an operator.
 - **Already moved** (source object missing **and no row at the source
   path** — only then; a row at the source path means adopt or 404). A
   retry of an item that in fact completed — the job died after its commit, or

@@ -852,6 +852,8 @@ async def sdk_enqueue_file_moves(
     from src.models.contracts.cli import FileMoveResult
     from src.services import platform_jobs
     from src.services.file_policy_service import FilePolicyEvalCache
+    from src.services.access_check_policies import enforced_policy_principal
+    from src.services.solution_scope import inbound_allowed_for_context
 
     if location == "workspace":
         raise FileServiceError(400, "files.move does not support the workspace location")
@@ -877,6 +879,17 @@ async def sdk_enqueue_file_moves(
         caller, solution_id=solution_id, location=location
     )
     if solution_id is not None:
+        # The same shared inbound gate as a file read: a sealed install's
+        # files are refused (audited 403) to callers outside it.
+        if not await inbound_allowed_for_context(caller.db, caller, solution_id):
+            await deny_file_policy(
+                caller,
+                action="read",
+                location=location,
+                path=items[0][0],
+                scope=effective_scope,
+                solution_id=solution_id,
+            )
         organization_id = await install_org_id(caller, solution_id)
     else:
         mapped = scope_to_org_id(location, effective_scope)
@@ -885,6 +898,9 @@ async def sdk_enqueue_file_moves(
         organization_id = mapped
 
     policy_cache = FilePolicyEvalCache()
+    # The identity every check below evaluates; the job re-checks a renamed
+    # destination as the same user with that user's current roles.
+    policy_principal = await enforced_policy_principal(caller.db, caller.user)
     work: list[FileMoveWorkItem] = []
     rejected: list[RejectedFileMove] = []
     for index, (source, destination) in enumerate(items):
@@ -927,6 +943,8 @@ async def sdk_enqueue_file_moves(
             organization_id=organization_id,
             on_conflict=on_conflict,
             requested_by_user_id=caller.user.user_id,
+            policy_user_id=policy_principal.user_id,
+            policy_authorities=sorted(getattr(policy_principal, "policy_authorities", ())),
             total=total,
             items=work,
             rejected=rejected,

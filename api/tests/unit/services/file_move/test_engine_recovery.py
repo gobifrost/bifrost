@@ -13,7 +13,7 @@ from src.services.file_policy_service import FilePolicyService
 from src.models.orm.file_metadata import FileMetadata
 from src.services.file_storage.move import MARK_ROW, FileMover, MoveRequest
 
-from .support import key_for, markers, rows_at, seed_file
+from .support import allow_rename, key_for, markers, rows_at, seed_file
 
 
 async def _interrupted_copy(store, target, source: str, destination: str, row_id, *, delete_source: bool):
@@ -28,7 +28,7 @@ async def _interrupted_copy(store, target, source: str, destination: str, row_id
 async def test_resume_skips_copy_and_completes(store, solution_target) -> None:
     row_id = await seed_file(store, solution_target, "a/r.pdf")
     await _interrupted_copy(store, solution_target, "a/r.pdf", "b/r.pdf", row_id, delete_source=False)
-    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    outcome = await FileMover(store, solution_target, authorize_rename=allow_rename).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
     assert (outcome.status_code, outcome.adopted) == (200, False)
     assert not any(op == "copy" for op, _ in store.calls)
     assert key_for(solution_target, "a/r.pdf") not in store.objects
@@ -39,7 +39,7 @@ async def test_resume_with_stale_etag_marker_is_a_conflict(store, solution_targe
     row_id = await seed_file(store, solution_target, "a/r.pdf")
     await _interrupted_copy(store, solution_target, "a/r.pdf", "b/r.pdf", row_id, delete_source=False)
     store.put(key_for(solution_target, "a/r.pdf"), b"replaced since")  # new ETag
-    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    outcome = await FileMover(store, solution_target, authorize_rename=allow_rename).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
     assert (outcome.status_code, outcome.error) == (409, "file_exists")
 
 
@@ -47,7 +47,7 @@ async def test_resume_under_rename_finishes_at_the_orphans_candidate(store, solu
     row_id = await seed_file(store, solution_target, "a/r.pdf")
     store.put(key_for(solution_target, "b/r.pdf"), b"someone else")
     await _interrupted_copy(store, solution_target, "a/r.pdf", "b/r (1).pdf", row_id, delete_source=False)
-    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "rename")
+    outcome = await FileMover(store, solution_target, authorize_rename=allow_rename).move(MoveRequest("a/r.pdf", "b/r.pdf"), "rename")
     assert (outcome.status_code, outcome.path, outcome.renamed) == (200, "b/r (1).pdf", True)
     assert key_for(solution_target, "b/r (2).pdf") not in store.objects
     assert not any(op == "copy" for op, _ in store.calls)
@@ -58,7 +58,7 @@ async def test_resume_under_rename_finishes_at_the_orphans_candidate(store, solu
 async def test_adopt_completes_a_move_whose_source_was_deleted(store, solution_target, published) -> None:
     row_id = await seed_file(store, solution_target, "a/r.pdf")
     await _interrupted_copy(store, solution_target, "a/r.pdf", "b/r.pdf", row_id, delete_source=True)
-    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    outcome = await FileMover(store, solution_target, authorize_rename=allow_rename).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
     assert (outcome.status_code, outcome.adopted) == (200, True)
     assert [r.id for r in await rows_at(solution_target, "b/r.pdf")] == [row_id]
     assert await rows_at(solution_target, "a/r.pdf") == []
@@ -69,7 +69,7 @@ async def test_adopt_under_rename_finds_the_candidate(store, solution_target) ->
     row_id = await seed_file(store, solution_target, "a/r.pdf")
     store.put(key_for(solution_target, "b/r.pdf"), b"someone else")
     await _interrupted_copy(store, solution_target, "a/r.pdf", "b/r (1).pdf", row_id, delete_source=True)
-    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "rename")
+    outcome = await FileMover(store, solution_target, authorize_rename=allow_rename).move(MoveRequest("a/r.pdf", "b/r.pdf"), "rename")
     assert (outcome.status_code, outcome.path, outcome.adopted) == (200, "b/r (1).pdf", True)
 
 
@@ -85,7 +85,7 @@ async def test_adopt_refuses_objects_that_are_not_this_moves_copy(store, solutio
     }
     for path, meta in cases.items():
         store.put(key_for(solution_target, path), data, meta)
-        outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", path), "error")
+        outcome = await FileMover(store, solution_target, authorize_rename=allow_rename).move(MoveRequest("a/r.pdf", path), "error")
         assert (outcome.status_code, outcome.error) == (404, "not_found"), path
     assert len(await rows_at(solution_target, "a/r.pdf")) == 1
 
@@ -95,13 +95,13 @@ async def test_adopt_refuses_a_copy_of_an_older_version(store, solution_target) 
     source_key = key_for(solution_target, "a/r.pdf")
     store.objects.pop(source_key)
     store.put(key_for(solution_target, "b/r.pdf"), b"v1", markers(source_key, row_id, '"old"'))
-    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    outcome = await FileMover(store, solution_target, authorize_rename=allow_rename).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
     assert outcome.status_code == 404
 
 
 async def test_already_moved_is_a_noop_success(store, solution_target, published) -> None:
     row_id = await seed_file(store, solution_target, "a/r.pdf")
-    mover = FileMover(store, solution_target)
+    mover = FileMover(store, solution_target, authorize_rename=allow_rename)
     assert (await mover.move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")).status_code == 200
     published.reset_mock()
 
@@ -114,7 +114,7 @@ async def test_already_moved_is_a_noop_success(store, solution_target, published
 async def test_already_moved_under_rename_reports_the_final_path(store, solution_target) -> None:
     await seed_file(store, solution_target, "a/r.pdf")
     store.put(key_for(solution_target, "b/r.pdf"), b"someone else")
-    mover = FileMover(store, solution_target)
+    mover = FileMover(store, solution_target, authorize_rename=allow_rename)
     first = await mover.move(MoveRequest("a/r.pdf", "b/r.pdf"), "rename")
     assert (first.status_code, first.path) == (200, "b/r (1).pdf")
     again = await mover.move(MoveRequest("a/r.pdf", "b/r.pdf"), "rename")
@@ -123,7 +123,7 @@ async def test_already_moved_under_rename_reports_the_final_path(store, solution
 
 async def test_row_at_source_never_takes_the_already_moved_branch(store, solution_target) -> None:
     await seed_file(store, solution_target, "a/r.pdf")
-    mover = FileMover(store, solution_target)
+    mover = FileMover(store, solution_target, authorize_rename=allow_rename)
     assert (await mover.move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")).status_code == 200
     # A new file row appears at the source path, its object removed out of band.
     await seed_file(store, solution_target, "a/r.pdf")
@@ -144,14 +144,14 @@ async def test_commit_failure_after_source_delete_is_adopted_on_retry(store, sol
             db.commit = fail
             yield db
 
-    first = await FileMover(store, solution_target, open_session=commit_lost).move(
+    first = await FileMover(store, solution_target, authorize_rename=allow_rename, open_session=commit_lost).move(
         MoveRequest("a/r.pdf", "b/r.pdf"), "error"
     )
     assert first.status_code == 500
     assert key_for(solution_target, "a/r.pdf") not in store.objects
     assert [r.id for r in await rows_at(solution_target, "a/r.pdf")] == [row_id]
 
-    retry = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    retry = await FileMover(store, solution_target, authorize_rename=allow_rename).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
     assert (retry.status_code, retry.adopted) == (200, True)
     assert [r.id for r in await rows_at(solution_target, "b/r.pdf")] == [row_id]
     assert await rows_at(solution_target, "a/r.pdf") == []
@@ -177,7 +177,7 @@ async def test_candidate_orphan_replaced_before_its_lock_is_not_resumed(store, s
     await _interrupted_copy(store, solution_target, "a/r.pdf", "b/r (1).pdf", row_id, delete_source=False)
     candidate = key_for(solution_target, "b/r (1).pdf")
     store.before["head"] = _replace_on_second_head(store, candidate, b"a writer's file")
-    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "rename")
+    outcome = await FileMover(store, solution_target, authorize_rename=allow_rename).move(MoveRequest("a/r.pdf", "b/r.pdf"), "rename")
     assert (outcome.status_code, outcome.path) == (200, "b/r (2).pdf")
     assert store.objects[candidate].data == b"a writer's file"
 
@@ -188,7 +188,7 @@ async def test_candidate_copy_replaced_before_its_lock_is_not_adopted(store, sol
     await _interrupted_copy(store, solution_target, "a/r.pdf", "b/r (1).pdf", row_id, delete_source=True)
     candidate = key_for(solution_target, "b/r (1).pdf")
     store.before["head"] = _replace_on_second_head(store, candidate, b"a writer's file")
-    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "rename")
+    outcome = await FileMover(store, solution_target, authorize_rename=allow_rename).move(MoveRequest("a/r.pdf", "b/r.pdf"), "rename")
     assert (outcome.status_code, outcome.error) == (404, "not_found")
     assert store.objects[candidate].data == b"a writer's file"
     assert [r.id for r in await rows_at(solution_target, "a/r.pdf")] == [row_id]
@@ -217,7 +217,7 @@ async def test_resume_whose_source_vanishes_before_recheck_is_adopted(store, sol
         store.objects.pop(source_key)
 
     store.before["head"] = _on_second_source_head(store, source_key, late_delete_lands)
-    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    outcome = await FileMover(store, solution_target, authorize_rename=allow_rename).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
     assert (outcome.status_code, outcome.adopted) == (200, True)
     assert store.objects[dest_key].data == b"%PDF-1.7 test"
     assert [r.id for r in await rows_at(solution_target, "b/r.pdf")] == [row_id]
@@ -235,7 +235,7 @@ async def test_resume_whose_source_vanishes_keeps_a_copy_that_fails_the_adopt_gu
         store.objects[dest_key].metadata[MARK_ROW] = str(uuid4())
 
     store.before["head"] = _on_second_source_head(store, source_key, source_gone_and_markers_lost)
-    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    outcome = await FileMover(store, solution_target, authorize_rename=allow_rename).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
     assert (outcome.status_code, outcome.error) == (500, "source_missing_during_resume")
     assert dest_key in store.objects
     assert ("delete", dest_key) not in store.calls
@@ -252,7 +252,7 @@ async def test_resume_whose_source_recheck_raises_keeps_the_copy(store, solution
         raise RuntimeError("head failed")
 
     store.before["head"] = _on_second_source_head(store, source_key, head_fails)
-    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    outcome = await FileMover(store, solution_target, authorize_rename=allow_rename).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
     assert outcome.status_code == 500
     assert dest_key in store.objects
     assert ("delete", dest_key) not in store.calls
@@ -262,7 +262,7 @@ async def test_resume_whose_source_recheck_raises_keeps_the_copy(store, solution
 
 async def test_already_moved_refuses_a_row_marker_that_is_not_the_rows(store, solution_target) -> None:
     await seed_file(store, solution_target, "a/r.pdf")
-    mover = FileMover(store, solution_target)
+    mover = FileMover(store, solution_target, authorize_rename=allow_rename)
     assert (await mover.move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")).status_code == 200
     store.objects[key_for(solution_target, "b/r.pdf")].metadata[MARK_ROW] = str(uuid4())
     outcome = await mover.move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
@@ -274,7 +274,7 @@ async def test_adopt_without_a_recorded_size_relies_on_markers(store, solution_t
     async with get_db_context() as db:
         await db.execute(update(FileMetadata).where(FileMetadata.id == row_id).values(size_bytes=None))
     await _interrupted_copy(store, solution_target, "a/r.pdf", "b/r.pdf", row_id, delete_source=True)
-    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    outcome = await FileMover(store, solution_target, authorize_rename=allow_rename).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
     assert (outcome.status_code, outcome.adopted) == (200, True)
     assert [r.id for r in await rows_at(solution_target, "b/r.pdf")] == [row_id]
 
@@ -317,7 +317,7 @@ async def test_failed_resume_keeps_the_copy_when_the_verify_head_raises(store, s
         raise RuntimeError("head failed")
 
     store.before["head"] = _on_second_head(store, dest_key, head_fails)  # step 5
-    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    outcome = await FileMover(store, solution_target, authorize_rename=allow_rename).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
     assert outcome.status_code == 500 and outcome.error.startswith("internal_error")
     await _assert_copy_kept(store, solution_target, row_id, dest_key)
 
@@ -327,7 +327,7 @@ async def test_failed_resume_keeps_the_copy_when_the_metadata_write_raises(
 ) -> None:
     row_id, _, dest_key = await _resume_setup(store, solution_target)
     monkeypatch.setattr(FilePolicyService, "move_metadata", AsyncMock(side_effect=RuntimeError("db")))
-    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    outcome = await FileMover(store, solution_target, authorize_rename=allow_rename).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
     assert outcome.status_code == 500 and outcome.error.startswith("internal_error")
     await _assert_copy_kept(store, solution_target, row_id, dest_key)
 
@@ -339,7 +339,7 @@ async def test_failed_resume_keeps_the_copy_when_verification_fails(store, solut
         store.objects[dest_key].data += b" truncated differently"
 
     store.before["head"] = _on_second_head(store, dest_key, copy_size_changes)  # step 5
-    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    outcome = await FileMover(store, solution_target, authorize_rename=allow_rename).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
     assert (outcome.status_code, outcome.error) == (500, "copy_verification_failed")
     await _assert_copy_kept(store, solution_target, row_id, dest_key)
 
@@ -351,7 +351,27 @@ async def test_failed_resume_keeps_the_copy_when_the_source_changes(store, solut
         store.put(source_key, b"new upload")
 
     store.before["head"] = _on_second_head(store, source_key, upload_lands)  # step 7
-    outcome = await FileMover(store, solution_target).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
+    outcome = await FileMover(store, solution_target, authorize_rename=allow_rename).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
     assert (outcome.status_code, outcome.error) == (409, "source_changed")
     assert store.objects[source_key].data == b"new upload"
     await _assert_copy_kept(store, solution_target, row_id, dest_key)
+
+
+async def test_adopt_refuses_when_two_same_size_versions_match(store, solution_target) -> None:
+    """Row id and size cannot tell an older version's copy from the newer one."""
+    row_id = await seed_file(store, solution_target, "a/r.pdf")
+    store.put(key_for(solution_target, "b/r.pdf"), b"someone else")
+    source_key = key_for(solution_target, "a/r.pdf")
+    version_a = store.objects[source_key].data
+    await _interrupted_copy(store, solution_target, "a/r.pdf", "b/r (1).pdf", row_id, delete_source=False)
+    # Overwritten in place with a same-length version B; a later run copies B
+    # to (2), deletes the source, then loses its metadata commit.
+    store.put(source_key, bytes(reversed(version_a)))
+    await _interrupted_copy(store, solution_target, "a/r.pdf", "b/r (2).pdf", row_id, delete_source=True)
+
+    outcome = await FileMover(store, solution_target, authorize_rename=allow_rename).move(MoveRequest("a/r.pdf", "b/r.pdf"), "rename")
+
+    assert (outcome.status_code, outcome.error) == (500, "recovery_ambiguous")
+    assert [r.id for r in await rows_at(solution_target, "a/r.pdf")] == [row_id]
+    assert key_for(solution_target, "b/r (1).pdf") in store.objects
+    assert key_for(solution_target, "b/r (2).pdf") in store.objects

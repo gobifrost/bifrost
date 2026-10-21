@@ -11,13 +11,13 @@ from src.core.database import get_db_context
 from src.services.file_storage.move import FileMover, MoveRequest
 from src.services.file_storage.s3_client import ObjectMissing
 
-from .support import holds_move_copy, key_for, rows_at, seed_file
+from .support import allow_rename, holds_move_copy, key_for, rows_at, seed_file
 
 DATA = b"x" * 64  # above the test threshold of 16 bytes
 
 
 def mover(store, target, **kwargs) -> FileMover:
-    return FileMover(store, target, multipart_threshold=16, part_size=8, **kwargs)
+    return FileMover(store, target, authorize_rename=allow_rename, multipart_threshold=16, part_size=8, **kwargs)
 
 
 async def _path_lock_free(target, path: str) -> bool:

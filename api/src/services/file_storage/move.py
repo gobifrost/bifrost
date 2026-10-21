@@ -60,10 +60,14 @@ MAX_RENAME_NUMBER = 1000
 OnConflict = Literal["error", "rename"]
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 CleanupFailed = Callable[[str, str], Awaitable[None]]
+# Whether the requesting user may write a destination the job chose itself.
+AuthorizeRename = Callable[[str], Awaitable[bool]]
 
 
 class ObjectStore(Protocol):
-    async def head_object(self, key: str) -> ObjectHead | None: ...
+    async def head_object(self, key: str) -> ObjectHead | None:
+        """The object's head, or None when no object is stored at ``key``."""
+        raise NotImplementedError
 
     async def copy_object(
         self,
@@ -72,13 +76,19 @@ class ObjectStore(Protocol):
         *,
         source: ObjectHead,
         metadata: dict[str, str],
-        multipart_threshold: int = ...,
-        part_size: int | None = ...,
-    ) -> None: ...
+        multipart_threshold: int = COPY_OBJECT_LIMIT,
+        part_size: int | None = None,
+    ) -> None:
+        """Copy ``source`` server-side, guarded by its ETag, with ``metadata``."""
+        raise NotImplementedError
 
-    async def delete_object_strict(self, key: str) -> None: ...
+    async def delete_object_strict(self, key: str) -> None:
+        """Delete ``key``, raising on any storage error."""
+        raise NotImplementedError
 
-    async def list_keys(self, prefix: str, *, delimiter: str = "/") -> list[str]: ...
+    async def list_keys(self, prefix: str, *, delimiter: str = "/") -> list[str]:
+        """Keys directly under ``prefix``."""
+        raise NotImplementedError
 
 
 @dataclass(frozen=True)
@@ -151,6 +161,7 @@ class FileMover:
         store: ObjectStore,
         target: MoveTarget,
         *,
+        authorize_rename: AuthorizeRename,
         open_session: SessionFactory | None = None,
         on_cleanup_failed: CleanupFailed | None = None,
         multipart_threshold: int = COPY_OBJECT_LIMIT,
@@ -162,6 +173,7 @@ class FileMover:
             open_session = get_db_context
         self._store = store
         self._target = target
+        self._authorize_rename = authorize_rename
         self._open_session = open_session
         self._on_cleanup_failed = on_cleanup_failed
         self._multipart_threshold = multipart_threshold
@@ -271,31 +283,34 @@ class FileMover:
         if on_conflict == "error":
             return _fail(409, "file_exists")
         taken = await self._candidates(request.destination)
-        found = await self._find_own_copy(
+        found = await self._own_copies(
             db,
             [taken[number] for number in sorted(taken)],
             lambda head: self._is_orphan(head, source_key, source, row),
+            limit=1,
         )
-        if found is not None:
-            path, key, _ = found
+        if found:
+            path, key, _ = found[0]
             return _Destination(path, key, renamed=True, resume=True)
         return await self._first_free_candidate(db, request.destination, taken)
 
-    async def _find_own_copy(
+    async def _own_copies(
         self,
         db: AsyncSession,
         targets: list[tuple[str, str]],
         is_ours: Callable[[ObjectHead], bool],
         *,
         locked: str | None = None,
-    ) -> tuple[str, str, ObjectHead] | None:
-        """The first target holding this item's copy, confirmed under its path lock.
+        limit: int | None = None,
+    ) -> list[tuple[str, str, ObjectHead]]:
+        """Targets holding this item's copy, each confirmed under its path lock.
 
         ``locked`` names a path whose lock is already held. Any other match is
         locked and looked at again: a writer can replace the object between
         the first look and the lock, and its file must never be resumed (and
-        then cleaned up) or adopted.
+        then cleaned up) or adopted. ``limit`` stops after that many matches.
         """
+        found: list[tuple[str, str, ObjectHead]] = []
         for path, key in targets:
             head = await self._store.head_object(key)
             if head is None or not is_ours(head):
@@ -305,8 +320,10 @@ class FileMover:
                 head = await self._store.head_object(key)
                 if head is None or not is_ours(head):
                     continue
-            return path, key, head
-        return None
+            found.append((path, key, head))
+            if limit is not None and len(found) >= limit:
+                break
+        return found
 
     async def _candidates(self, destination: str) -> dict[int, tuple[str, str]]:
         """Existing ``stem (n)ext`` siblings of ``destination``: n → (path, key)."""
@@ -333,6 +350,10 @@ class FileMover:
             await self._lock(db, path)
             # A writer can take a free number between the listing and the lock.
             if await self._store.head_object(key) is None:
+                # Enqueue authorized the requested name; this one may be
+                # governed by a different policy.
+                if not await self._authorize_rename(path):
+                    return _fail(403, "forbidden")
                 return _Destination(path, key, renamed=True, resume=False)
         return _fail(409, "no_available_name")
 
@@ -603,14 +624,20 @@ class FileMover:
             # Adopt: an earlier run deleted the source but died before its
             # commit (or its commit failed). The source is gone, so the copy
             # is never cleaned up here; any error leaves it for another retry.
-            found = await self._find_own_copy(
+            found = await self._own_copies(
                 db,
                 targets,
                 lambda head: self._is_adoptable(head, source_key, row),
                 locked=request.destination,
             )
-            if found is not None:
-                path, key, head = found
+            if len(found) > 1:
+                # Copies of two versions of the row (overwritten in place at
+                # the same size) both pass the markers and the size guard;
+                # nothing durable says which is newest, so keep them all.
+                await db.rollback()
+                return _fail(500, "recovery_ambiguous")
+            if found:
+                path, key, head = found[0]
                 destination = _Destination(path, key, renamed=path != request.destination, resume=True)
                 await self._write_metadata(db, destination, head, row)
                 await db.commit()
