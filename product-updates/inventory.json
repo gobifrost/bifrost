@@ -2,9 +2,9 @@
   "schema_version": 1,
   "repository": "gobifrost/bifrost",
   "base_ref": "ade714a08b95c84daa285e859ebece55f45c6754",
-  "target_ref": "ef9a9d7cf059725e5641b4c2904b0d51ce4a8312",
-  "collected_at": "2026-10-20T03:06:51Z",
-  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...ef9a9d7cf059725e5641b4c2904b0d51ce4a8312",
+  "target_ref": "3f5a93072ddb6a830820ecd394d0367dea05ae56",
+  "collected_at": "2026-10-21T06:26:26Z",
+  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...3f5a93072ddb6a830820ecd394d0367dea05ae56",
   "commits": [
     {
       "sha": "2399fbb049e6b6c121ca07980ffa649844c0d477",
@@ -1341,6 +1341,41 @@
       "subject": "Add audited browser impersonation (#1012)",
       "prs": [
         1012
+      ]
+    },
+    {
+      "sha": "fcd47ce22e71879faac7e272459fd8af0cca8b4e",
+      "subject": "Activate the impersonation product update (#1013)",
+      "prs": [
+        1013
+      ]
+    },
+    {
+      "sha": "57d3c08595ce0964fef8e5d9cecb57209d874280",
+      "subject": "Fix SDK rebuild failures in retained source and npm (#1019)",
+      "prs": [
+        1019
+      ]
+    },
+    {
+      "sha": "959d400fe9ef60e1936ae601225403b2cd643cff",
+      "subject": "Unify resource visibility and align scoped UI controls (#1017)",
+      "prs": [
+        1017
+      ]
+    },
+    {
+      "sha": "37bdd9e83c499b2b4ba7fc7c390c36e345061d8c",
+      "subject": "Fix SDK rebuilds for captured Apps (#1021)",
+      "prs": [
+        1021
+      ]
+    },
+    {
+      "sha": "3f5a93072ddb6a830820ecd394d0367dea05ae56",
+      "subject": "Add experimental Automatic agent execution (#1024)",
+      "prs": [
+        1024
       ]
     }
   ],
@@ -3836,6 +3871,71 @@
       "merge_commit": "ef9a9d7cf059725e5641b4c2904b0d51ce4a8312",
       "body": "## Product Updates\n\n- [x] Highlight \u2014 `773b8dba-4d08-4ae8-87a9-a14e9989beb0`; canonical PR disposition and verified contributor metadata are included.\n\n## Summary\n\nPrivileged users can impersonate a user from their profile using the existing `users.impersonate` permission. The effective session follows regular tabs in the same browser, shows an Exit banner above shared navigation, and retains the original operator and support session in audit records and durable work.\n\nSessions expire after 30 minutes and are revalidated against current RBAC, the target, and the original login. Permission denial hides the button and is enforced independently on the server. Temporary support sessions cannot become independent CLI/MCP sessions or enroll lasting target passkeys/MFA credentials. Exit restores the original session across tabs. The shared banner also keeps the sidebar and navbar borders aligned.\n\nThe demo audit review found false `users.impersonate` failures caused by judging the operator's internal revalidation note against the target. Revalidation stays enforced without adding those misleading target notes. Historical audit records are preserved. Genuine `roles.read` denials and wrong-password login events remain failures.\n\n## Validation\n\nFocused backend authorization, audit, durable provenance, WebSocket, credential-boundary and contract tests; client auth/storage/context/component/transport tests; API/client lint and type checks; one Playwright journey across three tabs; and a live V2 SDK read/write/live-update demo. Exact commands and results are recorded in `docs/spikes/browser-impersonation.md`.\n\nA security review traced all 72 source inventory items in the initial spike, caught the MCP callback and credential-enrollment escape paths, and prompted the focused fixes here. Broader suites remain the merge queue's gate. The dedicated debug demo stays running for review.\n",
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1012"
+    },
+    {
+      "number": 1013,
+      "title": "Activate the impersonation product update",
+      "url": "https://github.com/gobifrost/bifrost/pull/1013",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-20T03:32:59Z",
+      "merge_commit": "fcd47ce22e71879faac7e272459fd8af0cca8b4e",
+      "body": "Refresh the cumulative verified Product Updates inventory through merged #1012 so the approved **Impersonate a User** entry appears in built images. Preserve its reviewed UUID and prose, and retain all historical source metadata and contribution evidence.\n\nValidation: Product Updates schema and coverage validation passed; image preparation included entry `773b8dba-4d08-4ae8-87a9-a14e9989beb0`; whitespace checks passed. The diff contains only verified inventory metadata and its ledger target. Application behavior is covered by #1012's completed merge-queue checks; application suites were not rerun for this metadata-only follow-up.\n\nProduct Updates: Omit a separate announcement for this activation; it delivers the existing approved feature note.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1013"
+    },
+    {
+      "number": 1017,
+      "title": "Unify resource visibility and align scoped UI controls",
+      "url": "https://github.com/gobifrost/bifrost/pull/1017",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-20T18:31:27Z",
+      "merge_commit": "959d400fe9ef60e1936ae601225403b2cd643cff",
+      "body": "## Summary\n\nKeep resource discovery and editing controls consistent with the access already enforced by the server.\n\n- Use one shared resource access resolver for Apps, Forms, and Agents. Lists, direct reads, and Home reuse its original-user reach, named permission, and sharing decisions. SDK, MCP, and runtime consumers retain their existing adapters to the same decision.\n- Preserve management reads, private Agent ownership, shared Global read defaults, actual-organization writes, and public/embed capability gates.\n- Resolve the signed-in user's home organization name without expanding directory access. Check Integration controls at the action's Global or organization target, while retaining permitted connection tests.\n\n## Cause\n\nThe App list's all-scope path selected a raw discovery query during the earlier authority refactor. It still checked reach and general read permission, while opening an App also checked sharing. Forms and Agents had separate implementations of that composition. The shared resolver replaces those parallel visibility decisions, and the App list uses the same complete decision as direct reads.\n\n## Validation\n\n- Shared resolver matrix: 22 tests pass, covering all three kinds, reach, permissions, sharing tiers, Global defaults, private Agent ownership, and original-user versus actor identity.\n- Existing SDK, MCP, runtime, Home, and policy consumers: 162 checks pass. The structural audit guard was updated to follow the extracted App helper and then passed in the final cohort.\n- Final live/contract cohort: 37 checks pass (27 live endpoint checks plus 10 App loader, WebSocket, and audit-guard checks). The metadata-only sharing regression covers grant and revocation through default and explicit-org lists and direct reads for all three kinds. No deploy, publish, build, or execution jobs are created. Its first case spends 6.99s in shared authentication setup and 0.57s in ordinary requests.\n- Identity/CLI contract and operator API checks passed earlier (79 checks). Focused frontend coverage passes (296 tests across 27 files), including the two isolated fixtures corrected after CI exposed their missing authorization context. Administrator and provider-operator browser journeys passed; home-name and scoped-picker screenshots were inspected.\n- Final API pyright/ruff pass. Client TypeScript/lint pass with one existing review-helper console warning. Generated API types include the home organization name. The redundant dialog null check reported by CodeQL was removed.\n- Full backend CI exposed three stale sealed-Solution App-context fixtures that modeled a visible user without App read permission. The fixture now supplies the standard User grant, and the file passes 11 tests including explicit denial without that grant.\n- Full backend, Vitest, Playwright, and pre-PR suites were not run locally; the merge queue remains the complete-suite gate.\n\n<details>\n<summary>Exact focused commands for the shared resolver</summary>\n\n```sh\n./test.sh tests/unit/shared/test_resource_access.py -v\n./test.sh tests/unit/test_solution_app_context.py -v\n./test.sh tests/unit/sdk/test_sdk_forms_authorization.py tests/unit/sdk/test_sdk_forms_context_service.py tests/unit/shared/test_sdk_forms_embed_binding.py tests/unit/services/test_agent_runtime_authorization.py tests/unit/routers/test_application_authority.py tests/unit/routers/test_scoped_lookups.py::TestGetApplicationOr404SuperuserSlug tests/unit/test_home.py tests/unit/test_agent_write_policy.py tests/unit/services/test_agent_router_access.py tests/unit/services/test_mcp_agent_scope.py tests/unit/test_access_list.py -v --durations=0\n./test.sh tests/e2e/api/test_resource_access.py tests/e2e/api/test_applications.py::TestApplicationScopeFiltering tests/e2e/api/test_applications.py::TestApplicationWriteScope tests/e2e/api/test_agents.py::TestAgentScopeFiltering tests/e2e/api/test_forms.py::TestFormScopeFiltering tests/e2e/api/test_forms.py::TestFormAccessLevels tests/e2e/api/test_forms.py::TestFormRoleAccess tests/e2e/api/test_home.py tests/unit/routers/test_application_authority.py tests/unit/test_access_list.py::TestEveryPowerIsNoted::test_app_and_agent_launches_keep_named_resource_judgments -v --durations=0\n./test.sh quality api\n```\n\n</details>\n\n<details>\n<summary>Focused commands for the original UI fixes</summary>\n\n```sh\n./test.sh tests/unit/test_identity_authorization.py::TestRoleAssignments::test_authorization_summary_includes_only_the_callers_home_organization_name tests/unit/test_access_list.py tests/unit/test_contract_version.py tests/e2e/platform/test_r3a_identity_authorization.py::TestPlatformOperator::test_own_authorization_summary -v --durations=0\n./test.sh client unit src/hooks/useOrganizationName.test.ts src/components/forms/OrganizationSelect.test.tsx src/pages/Applications.test.tsx src/components/agents/AgentSelectorDialog.test.tsx src/components/workflows/WorkflowSelectorDialog.test.tsx src/components/entity-management/ResourceTreeTable.test.tsx src/components/entity-management/EntityAssignmentPanel.test.tsx src/components/users/UserProfileForm.test.tsx src/pages/Solutions.test.tsx\n./test.sh client unit src/pages/IntegrationDetail.test.tsx src/pages/Integrations.test.tsx src/components/integrations/IntegrationMappingsTab.test.tsx src/components/integrations/ConfigOverridesTab.test.tsx src/components/integrations/ManualEntityIdInput.test.tsx src/components/integrations/IntegrationOverview.test.tsx src/components/integrations/IntegrationTestPanel.test.tsx\n./test.sh client unit src/pages/Config.test.tsx src/pages/ExecutionHistory.test.tsx src/pages/Forms.test.tsx src/pages/Knowledge.test.tsx src/pages/Services.test.tsx src/pages/Tables.test.tsx src/pages/TablesClaimsTab.test.tsx src/pages/Workflows.test.tsx src/pages/agents/FleetPage.test.tsx\n./test.sh client unit src/pages/EntityManagement.test.tsx src/pages/audit/AuditExportDialog.test.tsx\n(cd client && npm run tsc)\n(cd client && npm run lint)\n./test.sh client e2e --screenshots e2e/integration-permissions.admin.spec.ts e2e/integration-cards.admin.spec.ts\n./test.sh client e2e --screenshots e2e/integration-permissions.admin.spec.ts\n```\n\nClient commands used the repository-required Node 26 runtime.\n\n</details>\n\n## Product Updates\n\n- [x] Other \u2014 App discovery and Integration controls reflect existing access, and home organization names display consistently.\n- [ ] Highlight\n- [ ] Omit\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1017"
+    },
+    {
+      "number": 1019,
+      "title": "Fix SDK rebuild failures in retained source and npm",
+      "url": "https://github.com/gobifrost/bifrost/pull/1019",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-20T18:31:27Z",
+      "merge_commit": "57d3c08595ce0964fef8e5d9cecb57209d874280",
+      "body": "SDK rebuilds fail when retained Solution archives contain duplicate logo files or npm crashes while resolving otherwise valid dependencies. The shared archive reader now treats byte-identical repeated paths as one file, rejects conflicting contents, and counts every physical member against the existing archive limits before comparing bounded chunks. Retained archives and App source are never rewritten.\n\nSolution exports emit a matching source/logo path once. When source and metadata logos differ, the exporter preserves both at stable distinct paths. Both API images use the same digest-pinned Node 24.22.0 runtime and checksum-verified npm 11.21.1 resolver.\n\nFixes #1018.\n\n## Validation\n\n- 91 focused tests passed, including the HTTP preview and existing backup/import boundaries:\n  ```sh\n  ./test.sh tests/unit/test_solution_zip_install.py tests/unit/test_solution_backup_archive.py tests/unit/test_solution_export.py tests/unit/test_application_source_resolver.py tests/unit/test_application_source_archive.py tests/unit/test_workspace_bundle_hardening.py tests/unit/test_npm_install_integrity.py tests/e2e/platform/test_solution_zip_install_e2e.py::test_zip_preview_accepts_identical_duplicate_members -v --durations=0\n  ```\n- `./test.sh quality api`: Pyright and Ruff passed.\n- The five affected frozen production package fixtures reproduce the npm 10.9.3 resolver crash; all five install and build with Node 24.22.0/npm 11.21.1. These private fixtures remain outside the repository.\n- Built `api/Dockerfile.dev`, verified Node/npm/esbuild in the resulting image, and compiled the retained Docs App through `SolutionAppBuilder` using that image's SDK.\n- Independent final review found no actionable issues.\n\nThe new HTTP case enqueues zero jobs (3.60s fixture setup, 0.33s request, under 0.01s teardown). Archive conflicts, limits, source preservation, and export round trips use unit/service tests. Full backend/client suites and the full browser suite were not run locally; the merge queue remains the complete-suite gate.\n\n## Product Updates\n\n- [x] Other \u2014 SDK updates can rebuild retained Solution sources with identical duplicate files, and valid App dependency trees no longer crash the build installer.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1019"
+    },
+    {
+      "number": 1021,
+      "title": "Fix SDK rebuilds for captured Apps",
+      "url": "https://github.com/gobifrost/bifrost/pull/1021",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-20T19:18:03Z",
+      "merge_commit": "37bdd9e83c499b2b4ba7fc7c390c36e345061d8c",
+      "body": "Apps captured into a Solution keep their existing App ID. SDK rebuilds previously applied installation-time UUID remapping to every retained manifest entry, so a captured App could fail with \u201cNo retained Solution manifest entry maps to this App.\u201d\n\nResolve the owning Solution\u2019s retained source using either supported exact identity form. Require one matching entry and reject ambiguous direct/remapped matches before reading its files. Capture, export, and same-install deploy already support these identities.\n\nValidation:\n- 50 focused tests pass, including captured and installed source resolution, ambiguity rejection, SDK job consumers, and existing capture identity behavior.\n- New capture \u2192 export \u2192 S3 \u2192 resolver E2E passes in 0.685s. It creates zero deploy/build/worker jobs and confirms the stored archive is unchanged.\n- API pyright and Ruff pass; bounded final review found no actionable issues.\n- Full local suites were not run; the merge queue remains the full-suite gate.\n\nCommands:\n```sh\nBIFROST_SKIP_BUILD=1 ./test.sh tests/unit/test_application_source_resolver.py tests/unit/jobs/test_application_sdk_update.py tests/unit/test_solution_capture.py tests/e2e/platform/test_captured_app_sdk_source.py -v --durations=0\nBIFROST_SKIP_BUILD=1 ./test.sh quality api\n```\n\nProduction audit identified Job Tracking as the single captured-ID case among the 14 SDK retries. The other 13 updates now succeed after #1019. After this fix ships, retry only Job Tracking.\n\nCloses #1020\n\nProduct Updates: Other / Fix \u2014 SDK updates work for Apps captured into a Solution.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1021"
+    },
+    {
+      "number": 1024,
+      "title": "Add experimental Automatic agent execution",
+      "url": "https://github.com/gobifrost/bifrost/pull/1024",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-21T06:21:36Z",
+      "merge_commit": "3f5a93072ddb6a830820ecd394d0367dea05ae56",
+      "body": "## Summary\n\nAdd a platform-wide **Automatic Agent Execution** experiment under Settings \u2192 AI \u2192 Behavior. It is off by default: existing installations retain Delegated execution. Operators can opt in without replacing agents, tools, permissions, entry points or worker infrastructure.\n\n- **Delegated:** the entry agent uses its tools and reaches specialists through isolated child runs.\n- **Automatic:** the owner loads approved specialist instructions, discovers individual tools and calls them in the same conversation. It can still choose an isolated subagent.\n\nBoth use the standard Pydantic AI loop. Automatic uses native deferred capabilities, keyword ToolSearch and Harness SubAgents, backed by Bifrost's existing executors and live authorization of the caller, rooted approved agent paths, source schemas and workflow bindings. No new registry, worker service, retry service or per-session container.\n\nThe settings update preserves unrelated chat instructions, including concurrent independent changes. Each owning run retains its selected mode through child execution and resumption; summarization cannot choose or discard it. Chat and autonomous execution share the policy. Existing direct MCP tool calls remain driven by the external client; Bifrost runs launched through MCP follow the platform setting.\n\nFailed workflow calls also retain actionable returned execution details and partial receipts. Existing timeout/child lifecycle paths are reused. Mapping diagnosis #1016 and instance finalization repairs are separate. Refs #1015 and #1014.\n\n## Evidence and limitations\n\nThe previous frozen 96-run comparison tied 35/48 successful tasks per arrangement. Automatic used fewer model/child calls in aggregate, but this does **not establish better ticket completion**. The legacy arm was its delegation surface emulated on the same SDK, not an old worker binary. Detailed cohorts and limitations are retained in #1015; they are not pooled with newer checks.\n\nThe rollout separately audits all 62 active production agent definitions and proposes 11 narrow instruction replacements across 9 loose agents. It preserves confirmation, exact resource authority, business admission/finalization and result contracts. Solution-managed independent-review boundaries remain unchanged. Those private instance edits are not part of this public source patch and will only be applied after deployment.\n\nSeven additional Sonnet 5.5 first-decision checks exercise direct discovery, the Delegated control, intermediate findings, script confirmation, missing scope, an on-premises authority boundary and Triage admission. These are routing checks without executed tools, not a full-loop or production-default-model accuracy benchmark.\n\n## Validation\n\nFocused checks:\n\n- `./test.sh tests/unit/test_ai_behavior_service.py tests/unit/test_run_summarizer.py tests/unit/services/test_agent_run_consumer.py tests/unit/services/test_agent_composition_stream.py tests/unit/services/test_autonomous_executor_mcp.py tests/unit/services/agent_runtime/test_composition.py tests/unit/test_dto_flags.py tests/unit/test_contract_version.py tests/e2e/test_ai_model_settings_api.py tests/e2e/api/test_agent_capability_composition.py tests/e2e/api/test_agent_delegation_lifecycle.py -q` \u2014 144 passed.\n- `./test.sh tests/unit/test_run_metadata_sdk.py tests/unit/test_run_summarizer.py -q` \u2014 26 passed, including reserved mode protection and PostgreSQL row locking.\n- `(cd client && npm run tsc -- --force)` \u2014 passed; settings component tests 8 passed, Settings navigation tests passed, and changed-file ESLint passed.\n- `./test.sh client e2e --screenshots e2e/chat-instructions-acceptance.admin.spec.ts` \u2014 2 passed (setup + live save/reload journey), including acceptance reporting.\n- `./test.sh quality api` \u2014 Pyright and Ruff passed. Product Updates validation passed.\n\nThe initial browser body passed, but its acceptance reporter exposed the renamed test\u2019s stale ledger binding; the binding and linked inventory are corrected. The metadata helper\u2019s new lock initially targeted an eager outer join; restricting it to the run record fixes the PostgreSQL error. No retries, skips or expanded timeouts were added. Full backend/browser suites remain the protected merge-queue gate. A final bounded review caught and fixed missing worker-chat mode forwarding, with regression coverage. Production activation is authorized only after the merged build is deployed; it has not occurred yet.\n\nThe complete local `./test.sh unit` command also passed: **9,629 passed, 53 deselected**. The first pushed CI candidate exposed 44 executor-test fixture failures from the newly introduced settings read and forwarded mode. Six local fixture modules now stub the intended Delegated setting and retain exact mode/actor assertions; the composition revocation test explicitly chooses Automatic. Production source behavior was unchanged by that repair.\n\n## Product Updates\n\nApproved entry 250a294a-6072-4b82-a2c7-0027b3b5af65 describes the experimental setting and Delegated default. Canonical disposition: product-updates/dispositions/pr-1024.json.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1024"
     }
   ]
 }
