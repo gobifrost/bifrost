@@ -64,6 +64,10 @@ class RuntimeAuthority:
     solution_id: UUID | None = None
     impersonated_by_user_id: UUID | None = None
     impersonation_session_id: UUID | None = None
+    # Durable execution provenance is deliberately separate from actor and
+    # original-user authority.  NULL/invalid historic data is unknown.
+    execution_origin: str = "unknown"
+    agent_id: UUID | None = None
 
 
 async def load_runtime_authority(
@@ -101,6 +105,12 @@ async def _load_workflow_execution(db: AsyncSession, execution_id: UUID) -> Runt
     if await load_run_user(db, execution.executed_by) is None:
         raise RuntimeIdentityError(_EXECUTION_ACTOR_MISSING)
 
+    from shared.execution_provenance import durable_execution_provenance
+
+    provenance = durable_execution_provenance(
+        execution.execution_origin, execution.agent_id
+    )
+
     powers = None
     solution_id = None
     if execution.workflow_id is not None:
@@ -123,6 +133,8 @@ async def _load_workflow_execution(db: AsyncSession, execution_id: UUID) -> Runt
         solution_id=solution_id,
         impersonated_by_user_id=execution.impersonated_by_user_id,
         impersonation_session_id=execution.impersonation_session_id,
+        execution_origin=provenance.origin,
+        agent_id=provenance.agent_id,
     )
 
 
@@ -199,6 +211,8 @@ async def _load_agent_run(db: AsyncSession, run_id: UUID) -> RuntimeAuthority:
         root_execution_id=None,
         impersonated_by_user_id=run.impersonated_by_user_id,
         impersonation_session_id=run.impersonation_session_id,
+        execution_origin="agent" if run.agent_id is not None else "unknown",
+        agent_id=run.agent_id,
     )
 
 

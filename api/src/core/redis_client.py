@@ -66,6 +66,9 @@ class PendingExecution(TypedDict):
     embed: dict[str, Any]
     sync: bool  # If True, worker pushes result to Redis for sync execution
     is_platform_admin: bool  # Whether the caller is a platform admin
+    is_agent: bool  # Retained for compatibility with existing agent-aware SDK code
+    execution_origin: str | None  # Durable origin; unknown/None stays conservative
+    agent_id: str | None  # Present only for validated agent-origin execution
     event: dict[str, Any] | None  # EventContext fields if event-triggered; None otherwise
     artifact_workspace_id: str | None
     # Run lineage bound to this execution (shared.run_lineage). Absent on
@@ -136,8 +139,11 @@ class RedisClient:
         api_key_id: str | None = None,
         sync: bool = False,
         is_platform_admin: bool = False,
+        is_agent: bool = False,
         event: dict[str, Any] | None = None,
         artifact_workspace_id: str | None = None,
+        execution_origin: str | None = None,
+        agent_id: str | None = None,
         *,
         lineage: dict[str, str] | None,
         impersonation_provenance: dict[str, str] | None = None,
@@ -182,8 +188,11 @@ class RedisClient:
             "embed": embed or {},
             "sync": sync,
             "is_platform_admin": is_platform_admin,
+            "is_agent": is_agent,
             "event": event,
             "artifact_workspace_id": artifact_workspace_id,
+            "execution_origin": execution_origin,
+            "agent_id": agent_id,
             "lineage": lineage,
             "impersonation_provenance": impersonation_provenance,
             "created_at": datetime.now(timezone.utc).isoformat(),

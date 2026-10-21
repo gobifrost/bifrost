@@ -237,3 +237,30 @@ async def test_set_pending_execution_stores_lineage():
 
     _, _, payload = client._redis.setex.await_args.args
     assert json.loads(payload)["lineage"] == lineage
+
+
+@pytest.mark.asyncio
+async def test_set_pending_execution_stores_execution_provenance():
+    from src.core.redis_client import RedisClient
+
+    client = RedisClient()
+    client._redis = AsyncMock()
+    agent_id = "00000000-0000-0000-0000-0000000000aa"
+
+    await client.set_pending_execution(
+        execution_id="e1",
+        workflow_id="wf",
+        parameters={},
+        org_id=None,
+        user_id="u",
+        user_name="n",
+        user_email="",
+        lineage=None,
+        execution_origin="agent",
+        agent_id=agent_id,
+    )
+
+    _, _, payload = client._redis.setex.await_args.args
+    stored = json.loads(payload)
+    assert stored["execution_origin"] == "agent"
+    assert stored["agent_id"] == agent_id

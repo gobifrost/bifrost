@@ -112,7 +112,10 @@ async def promote_due_executions() -> tuple[int, int]:
                     is_platform_admin=bool(
                         (row.execution_context or {}).get("is_platform_admin", False)
                     ),
+                    is_agent=row.execution_origin == "agent",
                     file_path=None,
+                    execution_origin=row.execution_origin,
+                    agent_id=None if row.agent_id is None else str(row.agent_id),
                     execution_record_exists=True,
                     lineage=(
                         RunLineage(

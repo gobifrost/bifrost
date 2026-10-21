@@ -81,6 +81,18 @@ async def test_row_gets_the_pending_impersonation_provenance() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancelled_agent_run_keeps_provenance_when_the_consumer_writes_its_row() -> None:
+    agent_id = "00000000-0000-0000-0000-0000000000dd"
+
+    created = await _created_with(
+        _pending(execution_origin="agent", agent_id=agent_id)
+    )
+
+    assert created["execution_origin"] == "agent"
+    assert created["agent_id"] == agent_id
+
+
+@pytest.mark.asyncio
 async def test_pending_record_written_before_lineage_existed_is_still_consumed() -> None:
     assert (await _created_with(_pending()))["lineage"] is None
 

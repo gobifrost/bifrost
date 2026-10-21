@@ -194,6 +194,9 @@ def _context():
         embed={},
         is_platform_admin=False,
         artifact_workspace_id="workspace-1",
+        is_agent=True,
+        execution_origin="agent",
+        agent_id="00000000-0000-0000-0000-0000000000aa",
     )
 
 
@@ -329,3 +332,6 @@ async def test_enqueue_workflow_execution_binds_lineage_to_the_execution():
         "started_by_user_id": person,
         "root_execution_id": execution_id,
     }
+    assert publish.await_args.kwargs["execution_origin"] == "agent"
+    assert publish.await_args.kwargs["agent_id"] == "00000000-0000-0000-0000-0000000000aa"
+    assert publish.await_args.kwargs["is_agent"] is True

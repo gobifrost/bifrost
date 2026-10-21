@@ -583,6 +583,8 @@ async def execute_tool(
     org_name: str | None = None,
     is_platform_admin: bool = False,
     is_agent: bool = False,
+    execution_origin: str = "unknown",
+    agent_id: str | None = None,
     execution_id: str | None = None,
     artifact_workspace_id: str | None = None,
     sync: bool = True,
@@ -644,6 +646,8 @@ async def execute_tool(
         is_platform_admin=is_platform_admin,
         is_function_key=False,
         is_agent=is_agent,
+        execution_origin=execution_origin,
+        agent_id=agent_id,
         execution_id=execution_id,
         workflow_name=workflow_name,  # Workflow name for context
         artifact_workspace_id=artifact_workspace_id,

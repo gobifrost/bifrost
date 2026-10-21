@@ -141,6 +141,10 @@ class DeveloperContextResponse(BaseModel):
     track_executions: bool = Field(
         default=True, description="Whether to track executions in history"
     )
+    execution_origin: str = Field(default="unknown")
+    agent_id: str | None = Field(default=None)
+    original_user_is_platform_admin: bool = Field(default=False)
+    original_user_id: str | None = Field(default=None)
 
 
 # =============================================================================
