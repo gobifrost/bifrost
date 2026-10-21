@@ -66,6 +66,9 @@ def mock_runtime_config():
         "src.services.execution.autonomous_agent_executor.get_llm_configs",
         new_callable=AsyncMock,
         return_value=[LLMConfig(provider="openai", model="test-model", api_key="test-key")],
+    ), patch(
+        "src.services.execution.autonomous_agent_executor.AIBehaviorService.get_agent_execution_mode",
+        new=AsyncMock(return_value="delegated"),
     ):
         yield
 

@@ -197,7 +197,10 @@ def mock_runtime_config():
                 api_key="test-key",
             )
         ],
-    ) as mock_get_config:
+    ) as mock_get_config, patch(
+        "src.services.execution.autonomous_agent_executor.AIBehaviorService.get_agent_execution_mode",
+        new=AsyncMock(return_value="delegated"),
+    ):
         yield mock_get_config
 
 
@@ -322,7 +325,7 @@ class TestAutonomousAgentExecutor:
         ):
             result = await AutonomousAgentExecutor(mock_session).run(
                 agent=mock_agent, input_data={}, caller=_canonical_caller(None),
-                run_user_id=None, run_as=None,
+                run_user_id=None, run_as=None, agent_execution_mode="automatic",
             )
         assert result["status"] == "failed"
         assert result["error"] == "Agent revoked"
@@ -536,6 +539,7 @@ class TestAutonomousAgentExecutor:
             run_user_id=run_user_id,
             run_as=None,
             acting=None,
+            agent_execution_mode="delegated",
         )
         child_payload = authorized_agent_runtime.load_child_principal.await_args.args[1]
         assert child_payload == {
@@ -2468,6 +2472,7 @@ class TestRunAsActingUser:
             ),
             run_user_id=run_user_id,
             run_as=run_as,
+            agent_execution_mode="delegated",
         )
 
     @pytest.mark.asyncio

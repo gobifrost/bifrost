@@ -662,6 +662,7 @@ class TestChatDelegation:
             _shared_budget=None,
             run_user_id=None,
             run_as=None,
+            agent_execution_mode="delegated",
         )
 
     def test_parent_history_keeps_failure_explicit_with_partial_result(self):
@@ -743,6 +744,7 @@ class TestChatDelegation:
             _shared_budget=None,
             run_user_id=None,
             run_as=None,
+            agent_execution_mode="delegated",
         )
         assert result.error is None
 

@@ -85,6 +85,10 @@ def configured_chat_model():
             "src.services.agent_executor.AIModelService.has_assignment",
             new=AsyncMock(return_value=False),
         ),
+        patch(
+            "src.services.agent_executor.AIBehaviorService.get_agent_execution_mode",
+            new=AsyncMock(return_value="delegated"),
+        ),
         patch("src.services.agent_executor.store_chat_context_usage", new=AsyncMock()),
         patch(
             "src.services.agent_executor.authorize_agentless_ai",
