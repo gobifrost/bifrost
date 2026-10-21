@@ -25,9 +25,9 @@ from src.core.principal import UserPrincipal
 from src.models.orm.agents import Agent, AgentDelegation, Conversation
 from src.models.orm.agent_runs import AgentRun
 from src.services.agent_executor import AgentExecutor
+from src.services.agent_runtime.composition import _delegate_name
 from src.services.authorization.callers import load_human_caller
 from src.services.authorization.enforce import load_caller
-from src.services.execution.agent_helpers import agent_delegation_slug
 from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
 from src.services.llm.base import LLMConfig, ToolCallRequest
 from src.services.llm.pydantic_client import PydanticAIClient
@@ -39,9 +39,9 @@ pytestmark = pytest.mark.asyncio
 class DelegatingTestModel(TestModel):
     """Emit one explicit delegation followed by the parent's final answer."""
 
-    def __init__(self, tool_name: str) -> None:
+    def __init__(self, agent_name: str) -> None:
         super().__init__(model_name="test-parent")
-        self._tool_name = tool_name
+        self._agent_name = agent_name
 
     def _request(
         self,
@@ -50,15 +50,6 @@ class DelegatingTestModel(TestModel):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         del model_settings
-        if model_request_parameters.visibility_of(self._tool_name) not in {"visible", "via_history"}:
-            return ModelResponse(
-                parts=[ToolCallPart(
-                    "search_tools",
-                    {"queries": [self._tool_name]},
-                    tool_call_id="parent-search-call",
-                )],
-                model_name="test-parent",
-            )
         delegation_completed = any(
             isinstance(message, ModelRequest)
             and any(
@@ -69,11 +60,22 @@ class DelegatingTestModel(TestModel):
             for message in messages
         )
         if not delegation_completed:
+            assert any(
+                tool.name == "delegate_task"
+                for tool in model_request_parameters.function_tools
+            )
+            assert any(
+                self._agent_name in part.content
+                for part in model_request_parameters.instruction_parts or ()
+            )
             return ModelResponse(
                 parts=[
                     ToolCallPart(
-                        self._tool_name,
-                        {"task": "Return the durable callback"},
+                        "delegate_task",
+                        {
+                            "agent_name": self._agent_name,
+                            "task": "Return the durable callback",
+                        },
                         tool_call_id="parent-delegation-call",
                     )
                 ],
@@ -442,7 +444,7 @@ async def test_chat_executor_receives_durable_child_callback(
     chat_profile = MagicMock(id=uuid4(), name="Test parent")
     chat_capabilities = ModelCapabilities(tool_calling=True, source="manual")
 
-    parent_model = DelegatingTestModel(agent_delegation_slug(child["name"]))
+    parent_model: DelegatingTestModel | None = None
     child_model = TestModel(custom_output_text="Durable child answer")
 
     def _route_model(config, model=None, **kwargs):
@@ -454,7 +456,10 @@ async def test_chat_executor_receives_durable_child_callback(
         """
         del kwargs
         name = model or config.model
-        return parent_model if name == "test-parent" else child_model
+        if name != "test-parent":
+            return child_model
+        assert parent_model is not None
+        return parent_model
 
     try:
         with (
@@ -505,6 +510,12 @@ async def test_chat_executor_receives_durable_child_callback(
                 .where(Conversation.id == conversation_id)
             )
             conversation = conversation_result.scalar_one()
+            delegated_child = next(
+                item
+                for item in conversation.agent.delegated_agents
+                if item.id == UUID(child["id"])
+            )
+            parent_model = DelegatingTestModel(_delegate_name(delegated_child))
 
             assert platform_admin.user_id is not None
             principal = UserPrincipal(
@@ -530,7 +541,7 @@ async def test_chat_executor_receives_durable_child_callback(
                 if chunk.type == "done":
                     final_content = chunk.content or ""
                 elif chunk.type == "error":
-                    pytest.fail(chunk.content or "Chat returned an execution error")
+                    pytest.fail(f"Chat returned an execution error: {chunk!r}")
 
         assert final_content == "Parent received the durable callback."
 
@@ -544,11 +555,11 @@ async def test_chat_executor_receives_durable_child_callback(
             for message in messages_response.json()
             if message["role"] == "tool_call"
         ]
-        assert len(tool_call_messages) == 2, messages_response.json()
+        assert len(tool_call_messages) == 1, messages_response.json()
         assert all(message["tool_state"] == "completed" for message in tool_call_messages)
         delegation_message = next(
             message for message in tool_call_messages
-            if message["tool_name"] == agent_delegation_slug(child["name"])
+            if message["tool_name"] == "delegate_task"
         )
 
         result = await db_session.execute(
@@ -559,6 +570,7 @@ async def test_chat_executor_receives_durable_child_callback(
         )
         child_run = result.scalar_one()
         assert child_run.status == "completed"
+        assert child_run.agent_id == UUID(child["id"])
         assert child_run.output == {"text": "Durable child answer"}
         assert child_run.caller_user_id == str(platform_admin.user_id)
         assert child_run.run_user_id == platform_admin.user_id
