@@ -185,10 +185,37 @@ async def test_identical_retry_reuses_active_job_before_policy(env) -> None:
 
 def test_dedupe_key_is_stable_and_order_sensitive() -> None:
     user = uuid4()
-    one = file_move_dedupe_key(user, "docs", "s", "error", [("a", "b"), ("c", "d")])
-    assert one == file_move_dedupe_key(user, "docs", "s", "error", [("a", "b"), ("c", "d")])
-    assert one != file_move_dedupe_key(user, "docs", "s", "error", [("c", "d"), ("a", "b")])
-    assert one != file_move_dedupe_key(user, "docs", "s", "rename", [("a", "b"), ("c", "d")])
+    items = [("a", "b"), ("c", "d")]
+    one = file_move_dedupe_key(user, user, [], "docs", "s", "error", items)
+    assert one == file_move_dedupe_key(user, user, [], "docs", "s", "error", items)
+    assert one != file_move_dedupe_key(user, user, [], "docs", "s", "error", items[::-1])
+    assert one != file_move_dedupe_key(user, user, [], "docs", "s", "rename", items)
+
+
+def test_dedupe_key_separates_policy_principals_of_one_acting_user() -> None:
+    """Two runs by one acting user, as different run users or with Full Access."""
+    acting, run_user = uuid4(), uuid4()
+    items = [("a", "b")]
+    own = file_move_dedupe_key(acting, acting, [], "docs", "s", "error", items)
+    assert own != file_move_dedupe_key(acting, run_user, [], "docs", "s", "error", items)
+    assert own != file_move_dedupe_key(acting, acting, ["platform_admin"], "docs", "s", "error", items)
+
+
+async def test_reuse_lookup_uses_the_enforced_run_user(env, monkeypatch) -> None:
+    run_user = SimpleNamespace(user_id=uuid4(), policy_authorities=frozenset({"platform_admin"}))
+    monkeypatch.setattr(
+        "src.services.access_check_policies.enforced_policy_principal",
+        AsyncMock(return_value=run_user),
+    )
+    caller = _caller()
+
+    await sdk_enqueue_file_moves(caller, items=[("a/r.pdf", "b/r.pdf")], location="docs", scope=None)
+
+    expected = file_move_dedupe_key(
+        caller.user.user_id, run_user.user_id, ["platform_admin"],
+        "docs", str(SOLUTION_ID), "error", [("a/r.pdf", "b/r.pdf")],
+    )
+    assert env.find.await_args.args[2] == expected
 
 
 @pytest.mark.parametrize("location", ["workspace", "_repo", "Bad Name"])

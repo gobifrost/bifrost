@@ -207,7 +207,7 @@ class FileMover:
             row = await self._row(db, request.source)
             source = await self._store.head_object(source_key)
             if source is None:
-                return await self._recover(db, request, source_key, row, on_conflict)
+                return await self._recover(db, request, source_key, row)
             chosen = await self._choose_destination(db, request, source_key, source, row, on_conflict)
             if isinstance(chosen, MoveOutcome):
                 await db.rollback()
@@ -620,10 +620,9 @@ class FileMover:
         request: MoveRequest,
         source_key: str,
         row: _Row | None,
-        on_conflict: OnConflict,
     ) -> MoveOutcome:
         """The source object is gone: adopt our copy, report already moved, or 404."""
-        targets = await self._recovery_targets(request.destination, on_conflict)
+        targets = await self._recovery_targets(request.destination)
         if row is not None:
             # Adopt: an earlier run deleted the source but died before its
             # commit (or its commit failed). The source is gone, so the copy
@@ -677,15 +676,17 @@ class FileMover:
         await db.rollback()
         return _fail(404, "not_found")
 
-    async def _recovery_targets(
-        self, destination: str, on_conflict: OnConflict
-    ) -> list[tuple[str, str]]:
-        """Where an earlier run of this item could have put its copy."""
-        targets = [(destination, self._key(destination))]
-        if on_conflict == "rename":
-            candidates = await self._candidates(destination)
-            targets += [candidates[number] for number in sorted(candidates)]
-        return targets
+    async def _recovery_targets(self, destination: str) -> list[tuple[str, str]]:
+        """Where an earlier run of this item could have put its copy.
+
+        Numbered candidates are scanned whatever this retry's ``on_conflict``:
+        the interrupted run's mode is not recorded, and ownership is decided
+        by the markers, never by the location.
+        """
+        candidates = await self._candidates(destination)
+        return [(destination, self._key(destination))] + [
+            candidates[number] for number in sorted(candidates)
+        ]
 
     # -- helpers ------------------------------------------------------------
 

@@ -114,7 +114,7 @@ results = await files.move_many(
   - An upload that lands on the **destination** after the move has verified its copy there replaces the moved file, exactly as if it had landed just after the move finished. The move still succeeds.
   - An upload that lands on the **source** within milliseconds of its delete is lost.
 - A source deleted outside a move is a plain 404. A source without a metadata row cannot be resumed or adopted after an interruption.
-- Retrying an identical request while its job is still queued returns that job, including any 403s it recorded, even if the policy has since changed.
+- Retrying an identical request while its job is still queued returns that job, including any 403s it recorded, even if the policy has since changed. Only a request from the same user, checked as the same run user with the same Full Access, reuses a job.
 
 **Deployment requirements**
 - The bucket credentials need `s3:ListBucket`. Without it, `HeadObject` on a missing key returns 403 instead of 404. The engine treats a 403 as a storage-level error, so the item fails 500 `storage_unavailable` instead of 404. Three consecutive such failures stop the job with `storage_unavailable`, and the remaining items are marked 500 `not_attempted`.

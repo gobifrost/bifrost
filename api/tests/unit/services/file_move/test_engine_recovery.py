@@ -416,3 +416,21 @@ async def test_adopt_at_a_renamed_candidate_needs_the_callers_write(store, solut
     assert [r.id for r in await rows_at(solution_target, "a/r.pdf")] == [row_id]
     assert await rows_at(solution_target, "b/r (1).pdf") == []
     published.assert_not_awaited()
+
+
+async def test_adopt_scans_numbered_copies_whatever_mode_the_retry_uses(store, solution_target) -> None:
+    """The interrupted run's mode is not recorded, so an error-mode retry still
+    sees a rename run's copy and refuses to pick between two versions."""
+    row_id = await seed_file(store, solution_target, "a/r.pdf")
+    source_key = key_for(solution_target, "a/r.pdf")
+    version_a = store.objects[source_key].data
+    await _interrupted_copy(store, solution_target, "a/r.pdf", "b/r.pdf", row_id, delete_source=False)
+    store.put(source_key, bytes(reversed(version_a)))  # same row, same size
+    await _interrupted_copy(store, solution_target, "a/r.pdf", "b/r (1).pdf", row_id, delete_source=True)
+
+    outcome = await FileMover(store, solution_target, authorize_rename=allow_rename).move(
+        MoveRequest("a/r.pdf", "b/r.pdf"), "error"
+    )
+
+    assert (outcome.status_code, outcome.error) == (500, "recovery_ambiguous")
+    assert [r.id for r in await rows_at(solution_target, "a/r.pdf")] == [row_id]

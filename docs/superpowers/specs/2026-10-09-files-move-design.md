@@ -282,8 +282,13 @@ truncated to fit `String(200)`), `resource_type` = `"file_location"`,
 `resource_id` = `"{location}:{effective scope}"` truncated to `String(255)`,
 `action_url` = none, and the standard platform-job notification.
 
-Dedupe key: sha256 of (requester, location, effective scope, `on_conflict`,
-ordered items). The enqueue service computes it from the request and looks for
+Dedupe key: sha256 of (requester, the policy principal's user id and
+authorities, location, effective scope, `on_conflict`, ordered items). The
+requester is the acting user who sees the job; the policy principal
+(`enforced_policy_principal`: a runtime's run user, plus `platform_admin` for
+a Full Access workflow) is who the checks ran as, so two runs by one acting
+user with different run users or powers never share a job. The enqueue
+service computes the key from the request and the principal and looks for
 an active job with that key **before** running any policy checks, so an
 identical retry reuses the job without re-evaluating policy or writing
 duplicate deny-audit rows. `enqueue_platform_job` still applies the key under
@@ -519,10 +524,11 @@ source path has a different row id and can never match.
   match, and the row's `size_bytes` (when set) equals the destination's
   content length, the item skips steps 3–5 and 7, runs step 6 against the
   requested destination, commits, publishes, and reports success with
-  `"adopted": true`. Under `on_conflict="rename"` the copy may sit at a
-  renamed candidate, so when the requested destination's markers do not
-  match, the same candidate scan as step 3 is run and a matching candidate is
-  adopted. Otherwise → 404. Markers are the identity; the size check is
+  `"adopted": true`. An earlier run under `on_conflict="rename"` may have
+  left the copy at a numbered candidate, and the interrupted run's mode is
+  not recorded, so the same candidate scan as step 3 always runs, whatever
+  this retry's `on_conflict`, and a matching candidate is adopted (after the
+  numbered-destination write check). Otherwise → 404. Markers are the identity; the size check is
   only a guard that rejects a copy of an older version when the row has
   since been overwritten in place (`upsert_metadata` keeps the row id).
   Neither tells two same-size versions apart, and the row stores no durable
@@ -532,7 +538,7 @@ source path has a different row id and can never match.
   path** — only then; a row at the source path means adopt or 404). A
   retry of an item that in fact completed — the job died after its commit, or
   the caller re-submits it — finds the source gone and the row moved. If the
-  destination (requested, or a candidate under rename) carries
+  destination (requested, or a numbered candidate) carries
   `bifrost-move-source` = sha256(source key) and `bifrost-move-row` = the id of
   the row now at that destination, the item is a no-op success with
   `"adopted": true`. Retrying any item is therefore idempotent, as

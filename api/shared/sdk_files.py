@@ -729,14 +729,30 @@ _MAX_METADATA_KEY = 2500
 
 def file_move_dedupe_key(
     user_id: object,
+    policy_user_id: object,
+    policy_authorities: list[str],
     location: str,
     scope: str,
     on_conflict: str,
     items: list[tuple[str, str]],
 ) -> str:
-    """Identical retries of one request map to one active move job."""
+    """Identical retries of one request map to one active move job.
+
+    The key names the acting user (who sees the job) and the policy principal
+    the job was authorized as (``policy_user_id`` and its authorities): a run
+    whose run user or Full Access differs must not reuse another run's
+    decisions.
+    """
     material = json.dumps(
-        [str(user_id), location, scope, on_conflict, [list(item) for item in items]],
+        [
+            str(user_id),
+            str(policy_user_id),
+            sorted(policy_authorities),
+            location,
+            scope,
+            on_conflict,
+            [list(item) for item in items],
+        ],
         separators=(",", ":"),
     )
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
@@ -866,8 +882,18 @@ async def sdk_enqueue_file_moves(
         raise FileServiceError(400, f"A scope is required for location '{location}'")
     solution_id = ctx_solution_id(caller, location)
 
+    # The identity every check below evaluates; the job re-checks a numbered
+    # destination as the same user with that user's current roles.
+    policy_principal = await enforced_policy_principal(caller.db, caller.user)
+    policy_authorities = sorted(getattr(policy_principal, "policy_authorities", ()))
     dedupe_key = file_move_dedupe_key(
-        caller.user.user_id, location, effective_scope, on_conflict, items
+        caller.user.user_id,
+        policy_principal.user_id,
+        policy_authorities,
+        location,
+        effective_scope,
+        on_conflict,
+        items,
     )
     existing = await platform_jobs.find_active_platform_job(
         caller.db, FILE_MOVE_JOB_TYPE, dedupe_key
@@ -898,9 +924,6 @@ async def sdk_enqueue_file_moves(
         organization_id = mapped
 
     policy_cache = FilePolicyEvalCache()
-    # The identity every check below evaluates; the job re-checks a renamed
-    # destination as the same user with that user's current roles.
-    policy_principal = await enforced_policy_principal(caller.db, caller.user)
     work: list[FileMoveWorkItem] = []
     rejected: list[RejectedFileMove] = []
     for index, (source, destination) in enumerate(items):
@@ -944,7 +967,7 @@ async def sdk_enqueue_file_moves(
             on_conflict=on_conflict,
             requested_by_user_id=caller.user.user_id,
             policy_user_id=policy_principal.user_id,
-            policy_authorities=sorted(getattr(policy_principal, "policy_authorities", ())),
+            policy_authorities=policy_authorities,
             total=total,
             items=work,
             rejected=rejected,
