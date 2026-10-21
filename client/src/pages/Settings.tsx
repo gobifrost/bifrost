@@ -79,7 +79,7 @@ const settingsSections: SettingsSection[] = [
 			},
 			{
 				value: "ai-chat",
-				label: "Chat Instructions",
+				label: "Behavior",
 				icon: MessageSquareText,
 				content: AIBehaviorSettings,
 			},

@@ -653,13 +653,13 @@
 			]
 		},
 		{
-			"id": "CHAT-INSTRUCTIONS-01",
+			"id": "AI-BEHAVIOR-01",
 			"area": "Platform settings",
-			"title": "CHAT-INSTRUCTIONS-01 saves and reloads default chat instructions",
+			"title": "AI-BEHAVIOR-01 saves and reloads agent execution and chat instructions",
 			"tests": [
 				{
 					"spec": "chat-instructions-acceptance.admin.spec.ts",
-					"title": "CHAT-INSTRUCTIONS-01 saves and reloads default chat instructions",
+					"title": "AI-BEHAVIOR-01 saves and reloads agent execution and chat instructions",
 					"project": "platform-admin",
 					"variant": "desktop",
 					"proof": "real-platform"

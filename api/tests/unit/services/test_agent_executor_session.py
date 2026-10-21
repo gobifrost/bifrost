@@ -32,6 +32,9 @@ def mock_runtime_config():
                 api_key="test-key",
             )
         ],
+    ), patch(
+        "src.services.execution.autonomous_agent_executor.AIBehaviorService.get_agent_execution_mode",
+        new=AsyncMock(return_value="delegated"),
     ):
         yield
 

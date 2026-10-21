@@ -364,6 +364,32 @@ async def test_expired_recovery_ignores_kubernetes_backend_jobs(
 
 
 @pytest.mark.asyncio
+async def test_expired_recovery_keeps_a_local_job_with_a_live_lease(
+    db_session: AsyncSession,
+) -> None:
+    job = await _queued_job(db_session)
+    now = datetime.now(timezone.utc)
+    job.status = "running"
+    job.attempt = 1
+    job.lease_owner = "test-scheduler"
+    job.lease_token = uuid4()
+    job.heartbeat_at = now
+    job.lease_expires_at = now + scheduler.LEASE_DURATION
+    await db_session.commit()
+
+    try:
+        recovered, failed = await scheduler.recover_expired_platform_jobs()
+
+        assert (recovered, failed) == (0, 0)
+        await db_session.refresh(job)
+        assert job.status == "running"
+        assert job.lease_token is not None
+    finally:
+        await db_session.execute(delete(PlatformJob).where(PlatformJob.id == job.id))
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
 async def test_claim_assigns_fenced_lease(
     db_session: AsyncSession,
 ) -> None:

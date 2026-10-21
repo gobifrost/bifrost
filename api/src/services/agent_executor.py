@@ -14,7 +14,7 @@ Handles the chat completion loop for AI agents, including:
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -25,10 +25,12 @@ from pydantic_ai import Agent as PydanticAgent, AgentRunResultEvent
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
+    FunctionToolResultEvent,
     PartDeltaEvent,
     PartStartEvent,
     TextPart,
     TextPartDelta,
+    RetryPromptPart,
 )
 from pydantic_ai.usage import RunUsage
 from sqlalchemy import func, select
@@ -71,12 +73,21 @@ from src.services.model_capabilities import should_offer_tool_calling
 from src.services.model_pricing import chain_context_window, config_context_window
 from src.services.model_catalog import get_model_catalog
 from src.services.agent_runtime.model_factory import provider_name_for_config
+from src.services.agent_runtime.composition import build_agent_composition
+from src.services.ai_behavior_service import (
+    AgentExecutionMode,
+    AIBehaviorService,
+    DEFAULT_AGENT_EXECUTION_MODE,
+)
 from src.services.execution.agent_helpers import (
     find_delegated_agent,
     parse_mcp_tool_name,
     resolve_agent_tools,
 )
-from src.services.execution.agent_workflow_tools import execute_agent_workflow_tool
+from src.services.execution.agent_workflow_tools import (
+    execute_agent_workflow_tool,
+    workflow_failure_receipt,
+)
 from src.services.authorization.callers import refresh_caller
 from src.services.authorization.agent_runtime import (
     AgentRuntimeAuthorizationError,
@@ -125,7 +136,11 @@ def _serialize_for_json(value: Any) -> str:
 def _serialize_tool_result_for_history(tool_result: ToolResult) -> str:
     """Serialize what the parent model sees, with failures taking precedence."""
     if tool_result.error:
-        return bound_tool_result_for_model(tool_result.error)
+        return bound_tool_result_for_model(_serialize_for_json({
+            "error": tool_result.error,
+            "result": tool_result.result,
+            **(tool_result.metadata or {}),
+        }))
     return bound_tool_result_for_model(_serialize_for_json(tool_result.result))
 
 
@@ -156,6 +171,7 @@ class AgentExecutor:
         self._active_llm_model: str | None = None
         self._active_failover_path: list[str] | None = None
         self._run_user_id: UUID | None = None
+        self._agent_execution_mode: AgentExecutionMode = DEFAULT_AGENT_EXECUTION_MODE
 
     @asynccontextmanager
     async def _db(self):
@@ -231,6 +247,7 @@ class AgentExecutor:
         model_profile_id: UUID | None = None,
         user_message_id: UUID | None = None,
         run_user_id: UUID | None,
+        agent_execution_mode: AgentExecutionMode | None = None,
     ) -> AsyncIterator[ChatStreamChunk]:
         """
         Process a user message and generate a response.
@@ -256,6 +273,8 @@ class AgentExecutor:
         from src.services.agent_router import AgentRouter
 
         start_time = time.time()
+        model_name = None
+        chain = None
         self._knowledge_search_budget.reset()
         self._run_user_id = run_user_id
         async with self._db() as session:
@@ -263,6 +282,11 @@ class AgentExecutor:
                 caller = await authorize_agentless_ai(session, caller)
             else:
                 caller, agent = await authorize_agent_execution(session, caller, agent.id)
+            self._agent_execution_mode = (
+                agent_execution_mode
+                if agent_execution_mode is not None
+                else await AIBehaviorService(session).get_agent_execution_mode()
+            )
         router = AgentRouter(
             self._session_factory,
             caller=caller,
@@ -390,23 +414,41 @@ class AgentExecutor:
             )
             if not should_offer_tool_calling(model_capabilities):
                 tool_definitions = []
+                chat_artifact_tool_names: set[str] = set()
             else:
                 from src.services.chat_artifacts import artifact_tool_definitions
 
                 existing_tool_names = {definition.name for definition in tool_definitions}
-                tool_definitions.extend(
+                chat_artifact_definitions = [
                     definition
                     for definition in artifact_tool_definitions(
                         image_generation_enabled=image_generation_enabled,
                         video_generation_enabled=video_generation_enabled,
                     )
                     if definition.name not in existing_tool_names
-                )
+                ]
+                tool_definitions.extend(chat_artifact_definitions)
+                chat_artifact_tool_names = {definition.name for definition in chat_artifact_definitions}
             logger.info(f"Agent '{agent.name if agent else 'None'}' has {len(tool_definitions)} tool definitions")
             if tool_definitions:
                 logger.debug(f"Tools: {[t.name for t in tool_definitions]}")
 
-            # 4b. Delegation tools are now included by resolve_agent_tools
+            composition = None
+            if (
+                self._agent_execution_mode == "automatic"
+                and agent
+                and agent.delegated_agents
+                and should_offer_tool_calling(model_capabilities)
+            ):
+                composition = await build_agent_composition(
+                    agent,
+                    caller=caller,
+                    session_factory=self._db,
+                    caller_user_id=caller_user_id,
+                    entry_definitions=tool_definitions,
+                    entry_workflow_ids=self._tool_workflow_id_map,
+                )
+                tool_definitions = list(composition.entry_definitions)
 
             # 5. Build message history and fix any corrupted ordering
             messages = await self._build_message_history(agent, conversation)
@@ -514,6 +556,39 @@ class AgentExecutor:
             tool_execution_ids: dict[str, str] = {}
             tool_call_ready: dict[str, asyncio.Event] = {}
             pending_tool_chunks: list[ChatStreamChunk] = []
+            handled_runtime_ids: set[str] = set()
+
+            async def persist_tool_result(tool_call_id: str, result: ToolResult) -> str:
+                tool_call = tool_calls[tool_call_id]
+                message_id = tool_message_ids[tool_call_id]
+                if stream:
+                    pending_tool_chunks.append(
+                        ChatStreamChunk(
+                            type="tool_result", tool_result=result,
+                            message_id=str(message_id),
+                        )
+                    )
+                persisted = (
+                    result.result if not result.error
+                    else {"error": result.error, "result": result.result, **(result.metadata or {})}
+                )
+                await self._update_tool_call_message(
+                    message_id=message_id,
+                    tool_state="completed" if not result.error else "error",
+                    tool_result=persisted,
+                    duration_ms=result.duration_ms,
+                )
+                content = _serialize_tool_result_for_history(result)
+                await self._save_message(
+                    conversation_id=conversation.id,
+                    role=MessageRole.TOOL,
+                    content=content,
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_call.name,
+                    execution_id=tool_execution_ids[tool_call_id],
+                    duration_ms=result.duration_ms,
+                )
+                return content
 
             async def execute_runtime_tool(
                 name: str,
@@ -527,21 +602,42 @@ class AgentExecutor:
                 ready = tool_call_ready.setdefault(tool_call_id, asyncio.Event())
                 await ready.wait()
                 tool_call = tool_calls[tool_call_id]
+                handled_runtime_ids.add(tool_call_id)
                 execution_id = tool_execution_ids[tool_call_id]
                 message_id = tool_message_ids[tool_call_id]
-                request = ToolCallRequest(
-                    id=tool_call.id,
-                    name=name,
-                    arguments=arguments,
-                )
-                tool_result = await self._execute_tool(
-                    request,
-                    agent,
-                    conversation,
-                    execution_id=execution_id,
-                    tool_message_id=message_id,
-                    caller=caller,
-                )
+                try:
+                    owner = agent
+                    workflow_ids = None
+                    # Chat artifact tools are added by the chat surface, not
+                    # bound to an AgentTool row. Their existing executor checks
+                    # the conversation/caller; specialist tools still require
+                    # an exact live composition binding.
+                    if composition is not None and name not in chat_artifact_tool_names:
+                        binding = await composition.resolve_call(name, arguments)
+                        owner = binding.owner
+                        name = binding.original_name
+                        arguments = binding.arguments
+                        workflow_ids = binding.workflow_ids
+                    request = ToolCallRequest(
+                        id=tool_call.id, name=name, arguments=arguments,
+                    )
+                    tool_result = await self._execute_tool(
+                        request,
+                        owner,
+                        conversation,
+                        execution_id=execution_id,
+                        tool_message_id=message_id,
+                        caller=caller,
+                        workflow_ids=workflow_ids,
+                    )
+                    tool_result = tool_result.model_copy(update={"tool_name": tool_call.name})
+                except Exception as exc:
+                    tool_result = ToolResult(
+                        tool_call_id=tool_call.id,
+                        tool_name=tool_call.name,
+                        result=None,
+                        error=str(exc),
+                    )
                 promoted_artifacts = []
                 from src.services.chat_artifacts import (
                     ARTIFACT_TOOL_NAMES,
@@ -571,14 +667,7 @@ class AgentExecutor:
                             error=f"Artifact output could not be imported: {exc}",
                             duration_ms=tool_result.duration_ms,
                         )
-                if stream:
-                    pending_tool_chunks.append(
-                        ChatStreamChunk(
-                            type="tool_result",
-                            tool_result=tool_result,
-                            message_id=str(message_id),
-                        )
-                    )
+                tool_history_content = await persist_tool_result(tool_call_id, tool_result)
                 from src.models.contracts.artifacts import ArtifactRef
 
                 if name in ARTIFACT_TOOL_NAMES:
@@ -606,30 +695,11 @@ class AgentExecutor:
                             message_id=str(message_id),
                         )
                     )
-                persisted_tool_result = (
-                    tool_result.result
-                    if not tool_result.error
-                    else {"error": tool_result.error, **(tool_result.metadata or {})}
-                )
-                await self._update_tool_call_message(
-                    message_id=message_id,
-                    tool_state="completed" if not tool_result.error else "error",
-                    tool_result=persisted_tool_result,
-                    duration_ms=tool_result.duration_ms,
-                )
-                tool_history_content = _serialize_tool_result_for_history(tool_result)
-                await self._save_message(
-                    conversation_id=conversation.id,
-                    role=MessageRole.TOOL,
-                    content=tool_history_content,
-                    tool_call_id=tool_call.id,
-                    tool_name=name,
-                    execution_id=execution_id,
-                    duration_ms=tool_result.duration_ms,
-                )
                 return tool_history_content
 
             system_prompt = messages[0].content or FALLBACK_SYSTEM_PROMPT
+            if composition is not None:
+                system_prompt += composition.instructions
             from src.services.chat_artifacts import (
                 ARTIFACT_WORKSPACE_INSTRUCTIONS,
                 BUILTIN_ARTIFACT_TOOL_NAMES,
@@ -657,10 +727,17 @@ class AgentExecutor:
                 max_tokens=max_tokens_override,
                 session_id=str(conversation.id),
             )
-            toolset = BifrostToolset(
-                tool_definitions,
-                execute_runtime_tool,
-                toolset_id=f"bifrost-chat-{agent.id if agent else 'default'}",
+            toolset = (
+                composition.entry_toolset(
+                    execute_runtime_tool,
+                    toolset_id=f"bifrost-chat-{agent.id}",
+                )
+                if composition is not None
+                else BifrostToolset(
+                    tool_definitions,
+                    execute_runtime_tool,
+                    toolset_id=f"bifrost-chat-{agent.id if agent else 'default'}",
+                )
             )
             runtime = PydanticAgent(
                 chain.model,
@@ -670,9 +747,11 @@ class AgentExecutor:
                 # history already contains its original system part.
                 instructions=system_prompt,
                 toolsets=[toolset] if tool_definitions else [],
-                capabilities=build_runtime_capabilities(
-                    budget, context_window=context_window
-                ),
+                capabilities=[
+                    *build_runtime_capabilities(budget, context_window=context_window),
+                    *(composition.capabilities(execute_runtime_tool)
+                      if composition is not None else []),
+                ],
                 model_settings=chain.primary_settings,
                 # Permit one schema/tool-name correction. It is charged to the
                 # same pre-request budget, so a malformed provider response can
@@ -785,6 +864,27 @@ class AgentExecutor:
                                         ),
                                         message_id=str(tool_call_msg.id),
                                     )
+                        elif isinstance(event, FunctionToolResultEvent):
+                            part = event.part
+                            if (
+                                composition is not None
+                                and part.tool_name in {"load_capability", "search_tools", "delegate_task"}
+                                and part.tool_call_id not in handled_runtime_ids
+                            ):
+                                tool_call_id = part.tool_call_id
+                                if tool_call_id is None:
+                                    raise ValueError("Framework tool result has no call identity")
+                                handled_runtime_ids.add(tool_call_id)
+                                is_error = isinstance(part, RetryPromptPart)
+                                await persist_tool_result(
+                                    tool_call_id,
+                                    ToolResult(
+                                        tool_call_id=tool_calls[tool_call_id].id,
+                                        tool_name=part.tool_name,
+                                        result=None if is_error else part.content,
+                                        error=_serialize_for_json(part.content) if is_error else None,
+                                    ),
+                                )
                         elif isinstance(event, AgentRunResultEvent):
                             final_content = str(event.result.output or "")
                     for pending_chunk in pending_tool_chunks:
@@ -856,7 +956,7 @@ class AgentExecutor:
             self._active_llm_model = model_name
             self._active_failover_path = (
                 chain.failover.fallback_path()
-                if chain.failover is not None
+                if chain is not None and chain.failover is not None
                 else None
             )
             yield ChatStreamChunk(
@@ -1306,6 +1406,7 @@ class AgentExecutor:
         tool_message_id: UUID | None = None,
         *,
         caller: Caller,
+        workflow_ids: Mapping[str, UUID] | None = None,
     ) -> ToolResult:
         """
         Execute a tool (workflow, delegation, system tool, knowledge search,
@@ -1416,7 +1517,9 @@ class AgentExecutor:
             )
 
         try:
-            workflow_id = self._tool_workflow_id_map.get(tool_call.name)
+            workflow_id = (
+                self._tool_workflow_id_map if workflow_ids is None else workflow_ids
+            ).get(tool_call.name)
             if workflow_id is None or agent is None:
                 return ToolResult(
                     tool_call_id=tool_call.id,
@@ -1446,12 +1549,14 @@ class AgentExecutor:
                     duration_ms=duration_ms,
                 )
             else:
+                receipt = workflow_failure_receipt(execution_response)
                 return ToolResult(
                     tool_call_id=tool_call.id,
                     tool_name=tool_call.name,
-                    result=None,
-                    error=execution_response.error or "Unknown error",
+                    result=execution_response.result,
+                    error=receipt["error"],
                     duration_ms=duration_ms,
+                    metadata=receipt,
                 )
 
         except Exception as e:
@@ -1928,12 +2033,18 @@ class AgentExecutor:
                 run_user_id=self._run_user_id,
                 # Chat runs have no Run As user; the caller acts.
                 run_as=None,
+                agent_execution_mode=self._agent_execution_mode,
             )
-            metadata = {
+            metadata: dict[str, Any] = {
                 "child_run_id": str(outcome.child_run_id),
                 "agent": outcome.agent_name,
                 "status": outcome.status,
             }
+            if not outcome.succeeded:
+                if outcome.evidence is not None:
+                    metadata["evidence"] = outcome.evidence
+                if outcome.output is not None:
+                    metadata["partial_output"] = outcome.output
 
             logger.info(
                 f"Delegation to '{outcome.agent_name}' completed with "

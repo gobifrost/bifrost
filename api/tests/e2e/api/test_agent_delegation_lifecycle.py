@@ -49,7 +49,16 @@ class DelegatingTestModel(TestModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        del model_settings, model_request_parameters
+        del model_settings
+        if model_request_parameters.visibility_of(self._tool_name) not in {"visible", "via_history"}:
+            return ModelResponse(
+                parts=[ToolCallPart(
+                    "search_tools",
+                    {"queries": [self._tool_name]},
+                    tool_call_id="parent-search-call",
+                )],
+                model_name="test-parent",
+            )
         delegation_completed = any(
             isinstance(message, ModelRequest)
             and any(
@@ -192,10 +201,12 @@ async def test_chat_delegation_creates_terminal_run_with_conversation_and_caller
                 acting_user_id=caller.principal.user_id,
                 run_user_id=alice_user.user_id,
                 run_as=None,
+                agent_execution_mode="automatic",
             )
 
         # The delegated run keeps the delegating run's user.
         assert child_run_kwargs["run_user_id"] == alice_user.user_id
+        assert child_run_kwargs["agent_execution_mode"] == "automatic"
         async with session_factory() as session:
             persisted = await session.get(AgentRun, outcome.child_run_id)
             assert persisted is not None
@@ -209,6 +220,7 @@ async def test_chat_delegation_creates_terminal_run_with_conversation_and_caller
             assert persisted.caller_user_id == str(caller.principal.user_id)
             assert persisted.caller_email == caller.principal.email
             assert persisted.caller_name == caller.principal.name
+            assert persisted.run_metadata["agent_execution_mode"] == "automatic"
             assert persisted.output == {"text": "Durable answer"}
             assert persisted.iterations_used == 2
             assert persisted.tokens_used == 42
@@ -513,9 +525,12 @@ async def test_chat_executor_receives_durable_child_callback(
                 enable_routing=False,
                 caller=caller,
                 run_user_id=platform_admin.user_id,
+                agent_execution_mode="automatic",
             ):
                 if chunk.type == "done":
                     final_content = chunk.content or ""
+                elif chunk.type == "error":
+                    pytest.fail(chunk.content or "Chat returned an execution error")
 
         assert final_content == "Parent received the durable callback."
 
@@ -529,9 +544,11 @@ async def test_chat_executor_receives_durable_child_callback(
             for message in messages_response.json()
             if message["role"] == "tool_call"
         ]
-        assert len(tool_call_messages) == 1, messages_response.json()
-        assert tool_call_messages[0]["tool_state"] == "completed", (
-            tool_call_messages[0]
+        assert len(tool_call_messages) == 2, messages_response.json()
+        assert all(message["tool_state"] == "completed" for message in tool_call_messages)
+        delegation_message = next(
+            message for message in tool_call_messages
+            if message["tool_name"] == agent_delegation_slug(child["name"])
         )
 
         result = await db_session.execute(
@@ -547,10 +564,10 @@ async def test_chat_executor_receives_durable_child_callback(
         assert child_run.run_user_id == platform_admin.user_id
         assert child_run.acting_user_id == platform_admin.user_id
 
-        assert tool_call_messages[0]["tool_result"]["child_run_id"] == str(
+        assert delegation_message["tool_result"]["child_run_id"] == str(
             child_run.id
         )
-        assert tool_call_messages[0]["tool_result"]["response"] == (
+        assert delegation_message["tool_result"]["response"] == (
             "Durable child answer"
         )
     finally:

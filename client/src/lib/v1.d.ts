@@ -11634,11 +11634,22 @@ export interface components {
         AIBehaviorResponse: {
             /** Default System Prompt */
             default_system_prompt?: string | null;
+            /**
+             * Agent Execution Mode
+             * @enum {string}
+             */
+            agent_execution_mode: "delegated" | "automatic";
         };
         /** AIBehaviorUpdate */
         AIBehaviorUpdate: {
             /** Default System Prompt */
             default_system_prompt?: string | null;
+            /**
+             * Agent Execution Mode
+             * @description Omit to retain the current platform execution mode.
+             * @enum {string}
+             */
+            agent_execution_mode?: "delegated" | "automatic";
         };
         /** AIConnectionTestResponse */
         AIConnectionTestResponse: {

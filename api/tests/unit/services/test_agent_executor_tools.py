@@ -8,6 +8,7 @@ Tests cover:
 - JSON serialization of tool results
 """
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -661,10 +662,11 @@ class TestChatDelegation:
             _shared_budget=None,
             run_user_id=None,
             run_as=None,
+            agent_execution_mode="delegated",
         )
 
-    def test_parent_history_prefers_error_over_partial_result(self):
-        """A failed child must not look successful merely because it returned data."""
+    def test_parent_history_keeps_failure_explicit_with_partial_result(self):
+        """The owner can recover from partial data without mistaking it for success."""
         tool_result = ToolResult(
             tool_call_id="tc1",
             tool_name="delegate_to_specialist",
@@ -672,9 +674,10 @@ class TestChatDelegation:
             error="Specialist failed after producing a partial answer",
         )
 
-        assert _serialize_tool_result_for_history(tool_result) == (
-            "Specialist failed after producing a partial answer"
-        )
+        assert json.loads(_serialize_tool_result_for_history(tool_result)) == {
+            "error": "Specialist failed after producing a partial answer",
+            "result": {"response": "partial answer"},
+        }
 
     def test_parent_history_bounds_large_tool_result(self):
         tool_result = ToolResult(
@@ -741,6 +744,7 @@ class TestChatDelegation:
             _shared_budget=None,
             run_user_id=None,
             run_as=None,
+            agent_execution_mode="delegated",
         )
         assert result.error is None
 
@@ -789,8 +793,9 @@ class TestChatDelegation:
         assert "No task" in result.error
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("has_partial_evidence", [False, True])
     async def test_delegation_propagates_failure_status(
-        self, executor, mock_session, contoso_caller
+        self, executor, mock_session, contoso_caller, has_partial_evidence,
     ):
         """When sub-executor returns failed status, error is propagated."""
         from src.services.llm.base import ToolCallRequest
@@ -822,9 +827,10 @@ class TestChatDelegation:
                     child_run_id=child_run_id,
                     agent_name="Broken Agent",
                     status="failed",
-                    output=None,
+                    output={"accepted_action": "action-1"} if has_partial_evidence else None,
                     error="LLM call failed",
                     duration_ms=10,
+                    evidence={"verification_receipt": "readback-1"} if has_partial_evidence else None,
                 )
             )
             MockExecutorClass.return_value = mock_sub
@@ -835,11 +841,21 @@ class TestChatDelegation:
 
         assert result.error == "LLM call failed"
         assert result.result is None
-        assert result.metadata == {
+        expected_metadata = {
             "child_run_id": str(child_run_id),
             "agent": "Broken Agent",
             "status": "failed",
         }
+        if has_partial_evidence:
+            expected_metadata.update({
+                "partial_output": {"accepted_action": "action-1"},
+                "evidence": {"verification_receipt": "readback-1"},
+            })
+        assert result.metadata == expected_metadata
+        history = json.loads(_serialize_tool_result_for_history(result))
+        assert history["error"] == result.error
+        if has_partial_evidence:
+            assert history["partial_output"] == {"accepted_action": "action-1"}
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

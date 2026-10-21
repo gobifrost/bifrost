@@ -1,19 +1,48 @@
 import { randomUUID } from "node:crypto";
+import type { components } from "../src/lib/v1";
 import { test, expect } from "./fixtures/api-fixture";
 
-test("CHAT-INSTRUCTIONS-01 saves and reloads default chat instructions", async ({
+test("AI-BEHAVIOR-01 saves and reloads agent execution and chat instructions", async ({
 	page,
 	api,
 }) => {
 	const endpoint = "/api/admin/ai/behavior";
 	const originalResponse = await api.get(endpoint);
 	expect(originalResponse.ok()).toBe(true);
-	const original = (await originalResponse.json()) as {
-		default_system_prompt: string | null;
-	};
+	const original =
+		(await originalResponse.json()) as components["schemas"]["AIBehaviorResponse"];
+	const nextMode =
+		original.agent_execution_mode === "automatic"
+			? "delegated"
+			: "automatic";
 	const instructions = `Acceptance instructions ${randomUUID()}: explain results clearly.`;
 	try {
 		await page.goto("/settings/ai-chat");
+		const executionToggle = page.getByRole("switch", {
+			name: "Automatic Agent Execution",
+		});
+		await expect(executionToggle).toBeChecked({
+			checked: original.agent_execution_mode === "automatic",
+		});
+		const modeSaved = page.waitForResponse(
+			(response) =>
+				response.request().method() === "PUT" &&
+				new URL(response.url()).pathname === endpoint,
+		);
+		await executionToggle.click();
+		expect((await modeSaved).ok()).toBe(true);
+		const modePersisted = await api.get(endpoint);
+		expect(modePersisted.ok()).toBe(true);
+		expect(
+			(
+				(await modePersisted.json()) as components["schemas"]["AIBehaviorResponse"]
+			).agent_execution_mode,
+		).toBe(nextMode);
+		await page.reload();
+		await expect(executionToggle).toBeChecked({
+			checked: nextMode === "automatic",
+		});
+
 		const input = page.getByRole("textbox", {
 			name: "Instructions",
 			exact: true,
@@ -39,7 +68,10 @@ test("CHAT-INSTRUCTIONS-01 saves and reloads default chat instructions", async (
 		await expect(input).toHaveValue(instructions);
 	} finally {
 		const restored = await api.put(endpoint, {
-			data: { default_system_prompt: original.default_system_prompt },
+			data: {
+				default_system_prompt: original.default_system_prompt,
+				agent_execution_mode: original.agent_execution_mode,
+			},
 		});
 		expect(
 			restored.ok(),

@@ -74,6 +74,15 @@ def _authorize_agent(mock_agent):
         yield
 
 
+@pytest.fixture(autouse=True)
+def _delegated_execution_mode():
+    with patch(
+        "src.services.execution.autonomous_agent_executor.AIBehaviorService.get_agent_execution_mode",
+        new=AsyncMock(return_value="delegated"),
+    ):
+        yield
+
+
 def _blank(output_tokens: int = 50) -> LLMResponse:
     """Blank no-tool response staying inside the test budget's headroom."""
     return LLMResponse(
