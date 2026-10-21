@@ -389,6 +389,49 @@ async def test_run_threads_user_id_from_caller(
 @patch(
     "src.services.execution.autonomous_agent_executor.resolve_agent_tools"
 )
+async def test_delegated_mode_keeps_direct_child_tools_without_composition(
+    mock_resolve_tools, mock_get_llm, mock_session_factory, mock_agent
+):
+    mock_agent.delegated_agents = [MagicMock(id=uuid4())]
+    mock_resolve_tools.return_value = ([], {})
+    mock_llm = AsyncMock()
+    mock_llm.complete = AsyncMock(
+        return_value=LLMResponse(
+            content="done",
+            tool_calls=None,
+            finish_reason="end_turn",
+            input_tokens=1,
+            output_tokens=1,
+        )
+    )
+    mock_llm.provider_name = "openai"
+    mock_get_llm.return_value = LegacyMockModel(mock_llm)
+
+    executor = AutonomousAgentExecutor(mock_session_factory)
+    with patch(
+        "src.services.execution.autonomous_agent_executor.build_agent_composition",
+        new=AsyncMock(),
+    ) as build_composition:
+        await executor.run(
+            agent=mock_agent,
+            input_data={"task": "x"},
+            run_id=str(uuid4()),
+            caller=_caller(mock_agent.organization_id),
+            run_user_id=None,
+            run_as=None,
+            agent_execution_mode="delegated",
+        )
+
+    build_composition.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@patch(
+    "src.services.agent_runtime.model_factory.create_agent_model"
+)
+@patch(
+    "src.services.execution.autonomous_agent_executor.resolve_agent_tools"
+)
 async def test_run_treats_missing_caller_as_autonomous(
     mock_resolve_tools, mock_get_llm, mock_session_factory, mock_agent
 ):

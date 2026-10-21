@@ -139,6 +139,7 @@ async def test_native_skill_load_and_tool_result_are_streamed_and_persisted(exec
         chunks = [chunk async for chunk in executor.chat(
             agent, conversation, "Verify the result.", stream=True,
             enable_routing=False, caller=caller, run_user_id=None,
+            agent_execution_mode="automatic",
         )]
 
     calls = [chunk.tool_call.name for chunk in chunks if chunk.type == "tool_call"]

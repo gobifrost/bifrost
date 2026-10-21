@@ -25,6 +25,7 @@ from src.models.orm.agents import Agent, Conversation
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.organizations import Organization
 from src.models.orm.users import User
+from src.services.ai_behavior_service import AgentExecutionMode, AIBehaviorService
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -228,6 +229,7 @@ class AgentRunConsumer(BaseConsumer):
         executor = None
         acting: ActingUser | None = None
         runtime_caller: Caller | None = None
+        agent_execution_mode: AgentExecutionMode | None = None
 
         try:
             # Atomically claim the durable queued row and load the agent.
@@ -286,6 +288,10 @@ class AgentRunConsumer(BaseConsumer):
 
                 is_chat_trigger = trigger_type == "chat" or context.get("trigger_type") == "chat"
                 if is_chat_trigger:
+                    agent_execution_mode = await AIBehaviorService(
+                        db
+                    ).resolve_agent_run_execution_mode(agent_run)
+                    assert agent_execution_mode is not None
                     agent_run.status = "running"
                     agent_run.started_at = datetime.now(timezone.utc)
                     await db.commit()
@@ -323,6 +329,7 @@ class AgentRunConsumer(BaseConsumer):
                         caller=chat_caller,
                         sync=sync,
                         start_time=start_time,
+                        agent_execution_mode=agent_execution_mode,
                     )
                     return
 
@@ -396,6 +403,9 @@ class AgentRunConsumer(BaseConsumer):
                         return
 
                 agent_run.status = "running"
+                agent_execution_mode = await AIBehaviorService(
+                    db
+                ).resolve_agent_run_execution_mode(agent_run)
                 agent_run.budget_max_iterations = agent.max_iterations
                 agent_run.budget_max_tokens = agent.max_token_budget
                 agent_run.started_at = datetime.now(timezone.utc)
@@ -441,6 +451,7 @@ class AgentRunConsumer(BaseConsumer):
                     run_user_id=agent_run.run_user_id,
                     run_as=run_as,
                     acting=acting,
+                    agent_execution_mode=agent_execution_mode,
                 ))
 
                 # Cancel watcher: polls Redis flag, force-cancels task if stuck
@@ -694,6 +705,7 @@ class AgentRunConsumer(BaseConsumer):
         caller: Caller,
         sync: bool,
         start_time: float,
+        agent_execution_mode: AgentExecutionMode = "delegated",
     ) -> None:
         input_data = context.get("input") or {}
         conversation_id_raw = (
@@ -811,6 +823,7 @@ class AgentRunConsumer(BaseConsumer):
                             model_profile_id=model_profile_id,
                             user_message_id=persisted_user_message_id,
                             run_user_id=agent_run.run_user_id,
+                            agent_execution_mode=agent_execution_mode,
                         ):
                             await publish_chat_run_event(
                                 conversation_id=conversation.id,

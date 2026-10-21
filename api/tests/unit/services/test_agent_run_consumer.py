@@ -118,8 +118,11 @@ def _chat_executor_stub(
     executor._active_usage = SimpleNamespace(requests=usage_requests, total_tokens=usage_tokens)
     executor._active_llm_model = None
     executor._active_failover_path = None
+    executor.chat_kwargs = None
 
     def _chat(*args, **kwargs):
+        executor.chat_kwargs = kwargs
+
         async def _gen():
             for index, chunk in enumerate(chunks):
                 yield chunk
@@ -496,6 +499,7 @@ async def test_chat_run_publishes_stream_chunks_and_terminal_completion(
             caller=_chat_caller(user_id),
             sync=False,
             start_time=time.time(),
+            agent_execution_mode="automatic",
         )
 
     assert [call.kwargs["kind"] for call in publish_chat.await_args_list] == [
@@ -516,6 +520,8 @@ async def test_chat_run_publishes_stream_chunks_and_terminal_completion(
     }
     assert publish_run.await_count == 1
     assert publish_run.await_args.args[0].status == "completed"
+    assert fake_executor.chat_kwargs is not None
+    assert fake_executor.chat_kwargs["agent_execution_mode"] == "automatic"
 
 
 @pytest.mark.asyncio
@@ -741,6 +747,10 @@ async def test_agentless_chat_skips_agent_lookup_and_socket_dependencies(
             "src.services.authorization.enforce.load_caller",
             new=AsyncMock(return_value=runtime_caller),
         ) as load_caller,
+        patch(
+            "src.jobs.consumers.agent_run.AIBehaviorService.resolve_agent_run_execution_mode",
+            new=AsyncMock(return_value="automatic"),
+        ),
         patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat),
         patch("src.jobs.consumers.agent_run.publish_agent_run_update", AsyncMock()),
         patch.object(consumer, "_process_chat_run", process_chat),
@@ -761,6 +771,7 @@ async def test_agentless_chat_skips_agent_lookup_and_socket_dependencies(
     load_caller.assert_awaited_once_with(mock_session, runtime_principal)
     process_chat.assert_awaited_once()
     assert process_chat.await_args.kwargs["agent"] is None
+    assert process_chat.await_args.kwargs["agent_execution_mode"] == "automatic"
     assert queued_run.status == "running"
     publish_chat.assert_awaited_once()
     assert publish_chat.await_args.kwargs["kind"] == "run_status"
@@ -808,6 +819,10 @@ async def test_chat_outer_failure_publishes_terminal_error_envelope(
         patch(
             "src.jobs.consumers.agent_run._load_acting_user",
             new=AsyncMock(return_value=_loaded_actor()),
+        ),
+        patch(
+            "src.jobs.consumers.agent_run.AIBehaviorService.resolve_agent_run_execution_mode",
+            new=AsyncMock(return_value="delegated"),
         ),
         patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat),
         patch("src.jobs.consumers.agent_run.publish_agent_run_update", publish_run),
@@ -868,6 +883,7 @@ def _recording_executor(runs: list[dict[str, Any]]):
             run_user_id,
             run_as,
             acting=None,
+            agent_execution_mode=None,
         ):
             runs.append(
                 {
@@ -875,6 +891,7 @@ def _recording_executor(runs: list[dict[str, Any]]):
                     "run_user_id": run_user_id,
                     "run_as": run_as,
                     "acting": acting,
+                    "agent_execution_mode": agent_execution_mode,
                 }
             )
             return {
@@ -1009,6 +1026,7 @@ async def test_run_as_user_comes_from_the_database_not_the_redis_context(
         assert runs[0]["run_user_id"] == lead.id
         assert runs[0]["run_as"] == expected_run_as
         assert runs[0]["acting"] == expected_run_as
+        assert runs[0]["agent_execution_mode"] == "delegated"
         refreshed = await _load_run(async_session_factory, run.id)
         assert refreshed.status == "completed"
     finally:
@@ -1065,6 +1083,7 @@ async def test_run_without_run_as_passes_the_persisted_actor(
         assert runtime_caller.ctx.user_id == lead.id
         assert runs[0]["run_user_id"] == lead.id
         assert runs[0]["run_as"] is None
+        assert runs[0]["agent_execution_mode"] == "delegated"
         assert runs[0]["acting"] == ActingUser(
             user_id=str(lead.id),
             email=lead.email,

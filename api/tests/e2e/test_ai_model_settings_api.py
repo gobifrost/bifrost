@@ -21,6 +21,68 @@ def test_failed_provider_verification_does_not_save(e2e_client, platform_admin):
     assert all(connection["name"] != "Unsaved Provider" for connection in connections)
 
 
+def test_ai_behavior_execution_mode_persists_independently_of_prompt(
+    e2e_client, platform_admin
+):
+    initial = e2e_client.get(
+        "/api/admin/ai/behavior", headers=platform_admin.headers
+    )
+    assert initial.status_code == 200, initial.text
+    assert initial.json()["agent_execution_mode"] in {"delegated", "automatic"}
+    original = initial.json()
+    try:
+        automatic = e2e_client.put(
+            "/api/admin/ai/behavior",
+            headers=platform_admin.headers,
+            json={"agent_execution_mode": "automatic"},
+        )
+        assert automatic.status_code == 200, automatic.text
+        assert automatic.json() == {
+            "default_system_prompt": original["default_system_prompt"],
+            "agent_execution_mode": "automatic",
+        }
+
+        prompt = e2e_client.put(
+            "/api/admin/ai/behavior",
+            headers=platform_admin.headers,
+            json={"default_system_prompt": "Use citations."},
+        )
+        assert prompt.status_code == 200, prompt.text
+        assert prompt.json() == {
+            "default_system_prompt": "Use citations.",
+            "agent_execution_mode": "automatic",
+        }
+
+        persisted = e2e_client.get(
+            "/api/admin/ai/behavior", headers=platform_admin.headers
+        )
+        assert persisted.status_code == 200, persisted.text
+        assert persisted.json() == prompt.json()
+    finally:
+        restore = e2e_client.put(
+            "/api/admin/ai/behavior",
+            headers=platform_admin.headers,
+            json=original,
+        )
+        assert restore.status_code == 200, restore.text
+
+
+def test_ai_behavior_execution_mode_requires_platform_settings_access(
+    e2e_client, org1_user
+):
+    read = e2e_client.get(
+        "/api/admin/ai/behavior", headers=org1_user.headers
+    )
+    write = e2e_client.put(
+        "/api/admin/ai/behavior",
+        headers=org1_user.headers,
+        json={"agent_execution_mode": "automatic"},
+    )
+
+    assert read.status_code == 403, read.text
+    assert write.status_code == 403, write.text
+
+
 def test_ai_model_settings_crud_and_assignment(e2e_client, platform_admin):
     existing_profiles_resp = e2e_client.get(
         "/api/admin/ai/profiles",

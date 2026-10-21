@@ -65,6 +65,12 @@ from src.services.agent_runtime import (
 )
 from src.services.agent_runtime.empty_output import EmptyOutputCircuitBreaker
 from src.services.agent_runtime.composition import build_agent_composition
+from src.services.ai_behavior_service import (
+    AGENT_EXECUTION_MODE_METADATA_KEY,
+    AgentExecutionMode,
+    AIBehaviorService,
+    DEFAULT_AGENT_EXECUTION_MODE,
+)
 from src.services.llm import ToolCallRequest
 from src.services.llm.factory import get_llm_configs
 from src.services.model_pricing import chain_context_window
@@ -376,6 +382,7 @@ class AutonomousAgentExecutor:
         # timeout or cancellation because it is updated per response.
         self._own_tokens = 0
         self._delegated_tokens = 0
+        self._agent_execution_mode: AgentExecutionMode = DEFAULT_AGENT_EXECUTION_MODE
 
     @property
     def acting_user(self) -> ActingUser:
@@ -402,6 +409,7 @@ class AutonomousAgentExecutor:
         run_user_id: UUID | None,
         run_as: ActingUser | None,
         acting: ActingUser | None = None,
+        agent_execution_mode: AgentExecutionMode | None = None,
     ) -> dict:
         """Execute an autonomous agent run.
 
@@ -446,6 +454,10 @@ class AutonomousAgentExecutor:
             }
 
         self._caller = caller
+        if agent_execution_mode is None:
+            async with self._session_factory() as db:
+                agent_execution_mode = await AIBehaviorService(db).get_agent_execution_mode()
+        self._agent_execution_mode = agent_execution_mode
         self._run_user_id = run_user_id
         self._run_as = run_as
         if acting is not None:
@@ -523,7 +535,7 @@ class AutonomousAgentExecutor:
                 caller_user_id=self._acting_user_id,
             )
         composition = None
-        if agent.delegated_agents:
+        if self._agent_execution_mode == "automatic" and agent.delegated_agents:
             try:
                 composition = await build_agent_composition(
                     agent,
@@ -1219,6 +1231,7 @@ class AutonomousAgentExecutor:
         _shared_budget: AgentRunBudget | None = None,
         run_user_id: UUID | None,
         run_as: ActingUser | None,
+        agent_execution_mode: AgentExecutionMode | None = None,
     ) -> DelegationOutcome:
         """Run one delegated child with a durable, caller-neutral lifecycle.
 
@@ -1258,6 +1271,7 @@ class AutonomousAgentExecutor:
         )
 
         sub_run_id = uuid4()
+        effective_execution_mode = agent_execution_mode or self._agent_execution_mode
         delegation_org_id = parent_agent.organization_id
         if delegation_org_id is None and run_as is not None:
             # A Run As run's children stay in the organization its tools use.
@@ -1318,6 +1332,9 @@ class AutonomousAgentExecutor:
                 budget_max_iterations=target_agent.max_iterations,
                 budget_max_tokens=target_agent.max_token_budget,
                 started_at=datetime.now(timezone.utc),
+                run_metadata={
+                    AGENT_EXECUTION_MODE_METADATA_KEY: effective_execution_mode,
+                },
             )
             db.add(sub_run)
             await db.commit()
@@ -1369,6 +1386,7 @@ class AutonomousAgentExecutor:
                     run_user_id=run_user_id,
                     run_as=run_as,
                     acting=self._acting,
+                    agent_execution_mode=effective_execution_mode,
                 ),
                 timeout=DELEGATION_TIMEOUT_SECONDS,
             )
@@ -1556,6 +1574,7 @@ class AutonomousAgentExecutor:
             acting_user_id=self._acting_user_id,
             run_user_id=self._run_user_id,
             run_as=self._run_as,
+            agent_execution_mode=self._agent_execution_mode,
         )
         if not outcome.succeeded:
             raise ToolError(json.dumps({

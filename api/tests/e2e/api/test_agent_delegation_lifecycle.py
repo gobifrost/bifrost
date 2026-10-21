@@ -201,10 +201,12 @@ async def test_chat_delegation_creates_terminal_run_with_conversation_and_caller
                 acting_user_id=caller.principal.user_id,
                 run_user_id=alice_user.user_id,
                 run_as=None,
+                agent_execution_mode="automatic",
             )
 
         # The delegated run keeps the delegating run's user.
         assert child_run_kwargs["run_user_id"] == alice_user.user_id
+        assert child_run_kwargs["agent_execution_mode"] == "automatic"
         async with session_factory() as session:
             persisted = await session.get(AgentRun, outcome.child_run_id)
             assert persisted is not None
@@ -218,6 +220,7 @@ async def test_chat_delegation_creates_terminal_run_with_conversation_and_caller
             assert persisted.caller_user_id == str(caller.principal.user_id)
             assert persisted.caller_email == caller.principal.email
             assert persisted.caller_name == caller.principal.name
+            assert persisted.run_metadata["agent_execution_mode"] == "automatic"
             assert persisted.output == {"text": "Durable answer"}
             assert persisted.iterations_used == 2
             assert persisted.tokens_used == 42
@@ -522,6 +525,7 @@ async def test_chat_executor_receives_durable_child_callback(
                 enable_routing=False,
                 caller=caller,
                 run_user_id=platform_admin.user_id,
+                agent_execution_mode="automatic",
             ):
                 if chunk.type == "done":
                     final_content = chunk.content or ""

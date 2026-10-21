@@ -316,6 +316,7 @@ async def test_loaded_child_capability_uses_its_bound_workflow_in_the_owning_run
                 caller=caller,
                 run_user_id=platform_admin.user_id,
                 run_as=None,
+                agent_execution_mode="automatic",
             )
 
         assert result["status"] == "completed"
@@ -449,6 +450,7 @@ async def test_native_delegate_task_runs_a_transitive_child_without_a_middle_run
                 caller=caller,
                 run_user_id=platform_admin.user_id,
                 run_as=None,
+                agent_execution_mode="automatic",
             )
 
         assert result["status"] == "completed"

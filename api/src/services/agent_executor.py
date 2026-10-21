@@ -74,6 +74,11 @@ from src.services.model_pricing import chain_context_window, config_context_wind
 from src.services.model_catalog import get_model_catalog
 from src.services.agent_runtime.model_factory import provider_name_for_config
 from src.services.agent_runtime.composition import build_agent_composition
+from src.services.ai_behavior_service import (
+    AgentExecutionMode,
+    AIBehaviorService,
+    DEFAULT_AGENT_EXECUTION_MODE,
+)
 from src.services.execution.agent_helpers import (
     find_delegated_agent,
     parse_mcp_tool_name,
@@ -166,6 +171,7 @@ class AgentExecutor:
         self._active_llm_model: str | None = None
         self._active_failover_path: list[str] | None = None
         self._run_user_id: UUID | None = None
+        self._agent_execution_mode: AgentExecutionMode = DEFAULT_AGENT_EXECUTION_MODE
 
     @asynccontextmanager
     async def _db(self):
@@ -241,6 +247,7 @@ class AgentExecutor:
         model_profile_id: UUID | None = None,
         user_message_id: UUID | None = None,
         run_user_id: UUID | None,
+        agent_execution_mode: AgentExecutionMode | None = None,
     ) -> AsyncIterator[ChatStreamChunk]:
         """
         Process a user message and generate a response.
@@ -275,6 +282,11 @@ class AgentExecutor:
                 caller = await authorize_agentless_ai(session, caller)
             else:
                 caller, agent = await authorize_agent_execution(session, caller, agent.id)
+            self._agent_execution_mode = (
+                agent_execution_mode
+                if agent_execution_mode is not None
+                else await AIBehaviorService(session).get_agent_execution_mode()
+            )
         router = AgentRouter(
             self._session_factory,
             caller=caller,
@@ -422,7 +434,12 @@ class AgentExecutor:
                 logger.debug(f"Tools: {[t.name for t in tool_definitions]}")
 
             composition = None
-            if agent and agent.delegated_agents and should_offer_tool_calling(model_capabilities):
+            if (
+                self._agent_execution_mode == "automatic"
+                and agent
+                and agent.delegated_agents
+                and should_offer_tool_calling(model_capabilities)
+            ):
                 composition = await build_agent_composition(
                     agent,
                     caller=caller,
@@ -2016,6 +2033,7 @@ class AgentExecutor:
                 run_user_id=self._run_user_id,
                 # Chat runs have no Run As user; the caller acts.
                 run_as=None,
+                agent_execution_mode=self._agent_execution_mode,
             )
             metadata: dict[str, Any] = {
                 "child_run_id": str(outcome.child_run_id),
