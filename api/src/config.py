@@ -139,6 +139,21 @@ class Settings(BaseSettings):
 
 
     # ==========================================================================
+    # Control plane
+    # ==========================================================================
+    control_plane_host: Literal["scheduler", "api"] = Field(
+        default="scheduler",
+        description=(
+            "Process that hosts platform control: the scheduled-trigger leader "
+            "election and Kubernetes build reconciliation. 'scheduler' keeps "
+            "control in the scheduler container. 'api' runs it in every API "
+            "replica's lifespan; the scheduler then only executes local "
+            "platform jobs. Both hosts compete for the same fenced trigger "
+            "lease, so mixed versions never run two trigger leaders."
+        ),
+    )
+
+    # ==========================================================================
     # Platform build jobs
     # ==========================================================================
     platform_build_backend: Literal["local", "kubernetes"] = Field(

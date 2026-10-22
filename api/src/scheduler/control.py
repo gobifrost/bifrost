@@ -1,0 +1,360 @@
+"""Platform control services, hosted by either the scheduler or the API.
+
+The control plane owns two kinds of work:
+
+- **Trigger leadership.** Replicas compete for the fenced ``scheduler-triggers``
+  lease. Only the holder runs the code-owned schedule catalog. Every callback
+  re-checks the conservative local lease deadline before it starts, so a
+  replica that stops renewing stops producing triggers before PostgreSQL can
+  elect a successor. The lease name is shared by both hosts: during a rollout
+  an old scheduler and a new API replica can never both lead.
+- **Kubernetes build reconciliation.** Every control replica reconciles
+  concurrently. Row locks, the backend advisory lock, deterministic Job names
+  and UID binding make concurrent reconcilers launch each attempt once.
+
+Execution stays outside this service. Local platform jobs run in scheduler
+child processes; workflow and agent work stays on the execution workers.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import importlib
+import logging
+import os
+import socket
+from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
+from typing import Any
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
+
+from src.config import Settings, get_settings
+from src.scheduler.leadership import SchedulerLeadershipLease
+from src.scheduler.registry import (
+    SCHEDULED_TASKS,
+    ScheduledTaskDefinition,
+    ScheduledTaskOutcome,
+)
+from src.services.scheduler_diagnostics import (
+    finish_scheduler_run,
+    heartbeat_scheduler_replica,
+    publish_task_states,
+    start_scheduler_run,
+)
+
+logger = logging.getLogger(__name__)
+
+LEADERSHIP_RETRY_SECONDS = 5.0
+LEADERSHIP_RENEW_SECONDS = 10.0
+REPLICA_HEARTBEAT_SECONDS = 10.0
+# Bounds the database sessions scheduled callbacks may hold at once, so a
+# leader's startup burst cannot exhaust a host's shared connection pool.
+CONTROL_TASK_CONCURRENCY = 4
+MISFIRE_OPTIONS: dict[str, Any] = {
+    "misfire_grace_time": 60 * 10,
+    "coalesce": True,
+}
+
+ControlHost = str
+FailureCallback = Callable[["asyncio.Task[None]"], None]
+
+
+def resolve_callback(reference: str) -> Callable[[], Awaitable[Any]]:
+    module_name, _, attribute = reference.partition(":")
+    return getattr(importlib.import_module(module_name), attribute)
+
+
+def build_trigger(definition: ScheduledTaskDefinition) -> CronTrigger | IntervalTrigger:
+    if definition.trigger == "cron":
+        return CronTrigger(timezone=timezone.utc, **definition.trigger_args)
+    return IntervalTrigger(timezone=timezone.utc, **definition.trigger_args)  # type: ignore[arg-type]
+
+
+async def wait_or_stop(stop_event: asyncio.Event, seconds: float) -> None:
+    try:
+        await asyncio.wait_for(stop_event.wait(), timeout=seconds)
+    except TimeoutError:
+        # The interval elapsed without a stop request.
+        return
+
+
+async def replica_heartbeat_loop(
+    *,
+    replica_id: str,
+    job_slots: int,
+    stop_event: asyncio.Event,
+) -> None:
+    """Publish this process to Diagnostics until stopped."""
+    started_at = datetime.now(timezone.utc)
+    while not stop_event.is_set():
+        try:
+            await heartbeat_scheduler_replica(
+                replica_id=replica_id,
+                hostname=socket.gethostname(),
+                pid=os.getpid(),
+                job_slots=job_slots,
+                started_at=started_at,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Failed to publish control replica heartbeat")
+        await wait_or_stop(stop_event, REPLICA_HEARTBEAT_SECONDS)
+
+
+class ControlPlane:
+    """Lifecycle-managed trigger leadership and build reconciliation."""
+
+    def __init__(
+        self,
+        *,
+        host: ControlHost,
+        leadership_lease: SchedulerLeadershipLease | None = None,
+        settings: Settings | None = None,
+        catalog: tuple[ScheduledTaskDefinition, ...] = SCHEDULED_TASKS,
+        on_failure: FailureCallback | None = None,
+        renew_seconds: float = LEADERSHIP_RENEW_SECONDS,
+        retry_seconds: float = LEADERSHIP_RETRY_SECONDS,
+    ) -> None:
+        self.host = host
+        self._renew_seconds = renew_seconds
+        self._retry_seconds = retry_seconds
+        self.settings = settings or get_settings()
+        self.lease = leadership_lease or SchedulerLeadershipLease()
+        self._catalog = catalog
+        self._on_failure = on_failure
+        self._stop_event = asyncio.Event()
+        self._scheduler: AsyncIOScheduler | None = None
+        self._tasks: list[asyncio.Task[None]] = []
+        self._task_slots = asyncio.Semaphore(CONTROL_TASK_CONCURRENCY)
+        self.running = False
+
+    @property
+    def owner_id(self) -> str:
+        return self.lease.owner_id
+
+    @property
+    def tasks(self) -> tuple[asyncio.Task[None], ...]:
+        return tuple(self._tasks)
+
+    @property
+    def leading(self) -> bool:
+        return self._scheduler is not None and self.lease.holds_lease()
+
+    async def start(self) -> None:
+        if self.running:
+            return
+        self.running = True
+        self._stop_event.clear()
+        self._tasks = [
+            asyncio.create_task(self._leadership_loop(), name="control-leadership")
+        ]
+        if self.settings.platform_build_backend == "kubernetes":
+            from src.jobs.schedulers.kubernetes_jobs import kubernetes_build_loop
+
+            self._tasks.append(
+                asyncio.create_task(
+                    kubernetes_build_loop(self._stop_event),
+                    name="kubernetes-build-controller",
+                )
+            )
+        for task in self._tasks:
+            task.add_done_callback(self._task_done)
+        logger.info(
+            "Platform control started",
+            extra={"control_host": self.host, "owner_id": self.owner_id},
+        )
+
+    def _task_done(self, task: asyncio.Task[None]) -> None:
+        """Report an always-on control loop that exited outside stop()."""
+        if self.running and not self._stop_event.is_set() and self._on_failure:
+            self._on_failure(task)
+
+    async def stop(self) -> None:
+        if not self.running:
+            return
+        self.running = False
+        self._stop_event.set()
+        tasks, self._tasks = self._tasks, []
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        logger.info(
+            "Platform control stopped",
+            extra={"control_host": self.host, "owner_id": self.owner_id},
+        )
+
+    async def _run_scheduled_task(
+        self,
+        task_id: str,
+        callback: Callable[[], Awaitable[Any]],
+    ) -> None:
+        async with self._task_slots:
+            # Fence after any wait for a slot: a replica whose lease may have
+            # been handed over must not start another trigger.
+            if not self.lease.holds_lease():
+                logger.warning(
+                    "Skipped scheduled task without a current trigger lease",
+                    extra={"task_id": task_id, "owner_id": self.owner_id},
+                )
+                return
+            run_id = await start_scheduler_run(task_id, self.owner_id)
+            try:
+                result = await callback()
+            except asyncio.CancelledError:
+                await finish_scheduler_run(
+                    run_id,
+                    status="failed",
+                    error_message="Scheduler leadership ended while the task was running.",
+                )
+                raise
+            except Exception as exc:
+                await finish_scheduler_run(
+                    run_id,
+                    status="failed",
+                    error_message=f"{type(exc).__name__}: {exc}",
+                )
+                raise
+            outcome = (
+                result
+                if isinstance(result, ScheduledTaskOutcome)
+                else ScheduledTaskOutcome(summary="Completed")
+            )
+            await finish_scheduler_run(
+                run_id,
+                status="enqueued" if outcome.platform_job_id else "succeeded",
+                summary=outcome.summary,
+                platform_job_id=outcome.platform_job_id,
+            )
+        await self._publish_task_states()
+
+    async def _publish_task_states(self) -> None:
+        scheduler = self._scheduler
+        if scheduler is None:
+            return
+        states = []
+        for definition in self._catalog:
+            job = scheduler.get_job(definition.task_id)
+            states.append((definition, job.next_run_time if job else None))
+        await publish_task_states(states)
+
+    async def _start_leader_services(self) -> None:
+        """Install the full schedule catalog on this replica."""
+        if self._scheduler is not None:
+            return
+        scheduler = AsyncIOScheduler(timezone=timezone.utc)
+        now = datetime.now(timezone.utc)
+        for definition in self._catalog:
+            options: dict[str, Any] = dict(MISFIRE_OPTIONS)
+            if definition.run_at_startup:
+                options["next_run_time"] = now
+            scheduler.add_job(
+                self._run_scheduled_task,
+                build_trigger(definition),
+                id=definition.task_id,
+                name=definition.name,
+                replace_existing=True,
+                args=[definition.task_id, resolve_callback(definition.callback)],
+                **options,
+            )
+        scheduler.start()
+        self._scheduler = scheduler
+        await self._publish_task_states()
+        logger.info(
+            "Trigger leader installed scheduled tasks",
+            extra={"owner_id": self.owner_id, "tasks": len(self._catalog)},
+        )
+
+    async def _stop_leader_services(self) -> None:
+        """Stop triggers and cancel running callbacks before surrendering."""
+        if self._scheduler is None:
+            return
+        scheduler = self._scheduler
+        self._scheduler = None
+        scheduler.shutdown(wait=False)
+        logger.info("Trigger leader stopped scheduled tasks")
+
+    async def _renew_within_lease(self) -> bool:
+        remaining = self.lease.seconds_remaining()
+        if remaining <= 0:
+            return False
+        try:
+            return await asyncio.wait_for(self.lease.renew(), timeout=remaining)
+        except asyncio.CancelledError:
+            raise
+        except TimeoutError:
+            logger.warning("Trigger lease renewal did not finish before its deadline")
+            return False
+        except Exception:
+            logger.exception("Failed to renew scheduler trigger lease")
+            return False
+
+    async def _surrender(self) -> None:
+        try:
+            await self._stop_leader_services()
+        except Exception:
+            logger.exception("Failed to stop trigger leader services")
+        try:
+            await self.lease.release()
+        except Exception:
+            logger.exception("Failed to release scheduler trigger lease")
+
+    async def _leadership_loop(self) -> None:
+        """Elect one trigger leader among all control replicas."""
+        try:
+            while not self._stop_event.is_set():
+                if not self.lease.is_leader:
+                    try:
+                        acquired = await self.lease.try_acquire()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.exception("Failed to acquire scheduler trigger lease")
+                        acquired = False
+                    if not acquired:
+                        await wait_or_stop(self._stop_event, self._retry_seconds)
+                        continue
+
+                    logger.info(
+                        "Control replica became trigger leader",
+                        extra={"owner_id": self.owner_id, "control_host": self.host},
+                    )
+                    try:
+                        await self._start_leader_services()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.exception("Failed to start trigger leader services")
+                        await self._surrender()
+                        await wait_or_stop(self._stop_event, self._retry_seconds)
+                        continue
+
+                await wait_or_stop(self._stop_event, self._renew_seconds)
+                if self._stop_event.is_set():
+                    break
+                if await self._renew_within_lease():
+                    continue
+
+                logger.warning(
+                    "Control replica lost trigger leadership",
+                    extra={"owner_id": self.owner_id, "control_host": self.host},
+                )
+                await self._surrender()
+        finally:
+            await self._surrender()
+
+
+__all__ = [
+    "CONTROL_TASK_CONCURRENCY",
+    "ControlPlane",
+    "LEADERSHIP_RENEW_SECONDS",
+    "LEADERSHIP_RETRY_SECONDS",
+    "build_trigger",
+    "replica_heartbeat_loop",
+    "resolve_callback",
+    "wait_or_stop",
+]

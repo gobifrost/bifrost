@@ -1,56 +1,34 @@
 """
-Bifrost Scheduler - Background Scheduler Service
+Bifrost Scheduler - platform-job execution host and default control host.
 
-Main entry point for the scheduler service.
-Handles APScheduler for cron jobs, cleanup tasks, and OAuth token refresh.
+Every replica runs a small durable platform-job pool. Local platform jobs run
+in killable child processes that share this container's cgroup; PostgreSQL row
+locking assigns each job to exactly one slot on one replica.
 
-This container is responsible for:
-- Competing for the singleton trigger lease used by APScheduler
-- Running a small durable platform-job pool on every replica
-
-Scheduler replicas are interchangeable. PostgreSQL lease fencing ensures only
-one replica runs scheduled triggers while durable job rows are claimed across
-all replicas with ``FOR UPDATE SKIP LOCKED``.
-
-NOTE: File watching and DB sync has been moved to the Discovery container.
+Platform control (scheduled-trigger leadership and Kubernetes build
+reconciliation) lives in ``src.scheduler.control``. With the default
+``BIFROST_CONTROL_PLANE_HOST=scheduler`` this process hosts it, as before. With
+``api`` the API replicas host it and this process only executes local jobs.
 """
 
 import asyncio
 import logging
-import os
 import signal
-import socket
 import sys
-from datetime import datetime, timezone
-
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.interval import IntervalTrigger
 
 from src.config import get_settings
 from shared.schema_gate import wait_for_schema
 from src.core.database import close_db, get_engine, init_db
-from src.jobs.schedulers.cron_scheduler import process_schedule_sources
-from src.jobs.schedulers.execution_cleanup import cleanup_stuck_executions
 from src.jobs.schedulers.platform_jobs import platform_job_worker_loop
+from src.scheduler.control import ControlPlane, replica_heartbeat_loop
 from src.scheduler.health import (
     clear_ready,
     heartbeat_loop,
     mark_ready,
     write_heartbeat,
 )
-from src.scheduler.leadership import SchedulerLeadershipLease
-from src.scheduler.registry import (
-    SCHEDULED_TASKS_BY_ID,
-    ScheduledTaskOutcome,
-)
-from src.services.scheduler_diagnostics import (
-    finish_scheduler_run,
-    heartbeat_scheduler_replica,
-    publish_task_states,
-    remove_scheduler_replica,
-    start_scheduler_run,
-)
+from src.scheduler.leadership import control_owner_id
+from src.services.scheduler_diagnostics import remove_scheduler_replica
 
 
 # Configure logging
@@ -69,45 +47,47 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
-LEADERSHIP_RETRY_SECONDS = 5.0
-LEADERSHIP_RENEW_SECONDS = 10.0
 PLATFORM_JOB_CONCURRENCY = 2
 
 
 class Scheduler:
-    """
-    Background scheduler service.
+    """Platform-job execution host, plus platform control when configured."""
 
-    Manages APScheduler for scheduled tasks:
-    - CRON workflow execution
-    - Stuck execution cleanup
-    - OAuth token refresh
-
-    Every replica also claims durable on-demand platform jobs from PostgreSQL.
-    """
-
-    def __init__(
-        self,
-        *,
-        leadership_lease: SchedulerLeadershipLease | None = None,
-    ):
+    def __init__(self, *, control_plane: ControlPlane | None = None):
         self.settings = get_settings()
         self.running = False
         self._shutdown_event = asyncio.Event()
-        self._leadership_lease = leadership_lease or SchedulerLeadershipLease()
-        self._scheduler: AsyncIOScheduler | None = None
+        if control_plane is not None:
+            self._control: ControlPlane | None = control_plane
+        elif self.settings.control_plane_host == "scheduler":
+            self._control = ControlPlane(
+                host="scheduler",
+                on_failure=self._background_task_done,
+            )
+        else:
+            self._control = None
+        # Diagnostics marks the leader by matching this id to the lease owner.
+        self.replica_id = (
+            self._control.owner_id if self._control is not None else control_owner_id()
+        )
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._diagnostics_task: asyncio.Task[None] | None = None
-        self._leadership_task: asyncio.Task[None] | None = None
         self._job_slots = PLATFORM_JOB_CONCURRENCY
         self._platform_job_tasks: list[asyncio.Task[None]] = []
-        self._kubernetes_build_task: asyncio.Task[None] | None = None
+
+    @property
+    def hosts_control(self) -> bool:
+        return self._control is not None
 
     async def start(self) -> None:
         """Start the scheduler."""
         self.running = True
         logger.info("Starting Bifrost Scheduler...")
         logger.info(f"Environment: {self.settings.environment}")
+        logger.info(
+            "Platform control host: %s",
+            "this scheduler" if self.hosts_control else "API replicas",
+        )
 
         # Initialize database connection
         logger.info("Initializing database connection...")
@@ -122,7 +102,11 @@ class Scheduler:
         await wait_for_schema(get_engine())
 
         self._diagnostics_task = asyncio.create_task(
-            self._diagnostics_heartbeat_loop(),
+            replica_heartbeat_loop(
+                replica_id=self.replica_id,
+                job_slots=self._job_slots,
+                stop_event=self._shutdown_event,
+            ),
             name="scheduler-diagnostics-heartbeat",
         )
         self._platform_job_tasks = [
@@ -132,21 +116,10 @@ class Scheduler:
             )
             for slot in range(self._job_slots)
         ]
-        if self.settings.platform_build_backend == "kubernetes":
-            from src.jobs.schedulers.kubernetes_jobs import kubernetes_build_loop
-
-            self._kubernetes_build_task = asyncio.create_task(
-                kubernetes_build_loop(self._shutdown_event),
-                name="kubernetes-build-controller",
-            )
-            self._kubernetes_build_task.add_done_callback(self._background_task_done)
-        self._leadership_task = asyncio.create_task(
-            self._leadership_loop(),
-            name="scheduler-leadership",
-        )
         for task in self._platform_job_tasks:
             task.add_done_callback(self._background_task_done)
-        self._leadership_task.add_done_callback(self._background_task_done)
+        if self._control is not None:
+            await self._control.start()
 
         mark_ready()
         logger.info("Bifrost Scheduler replica started")
@@ -155,13 +128,9 @@ class Scheduler:
         # Keep running until shutdown
         await self._shutdown_event.wait()
 
-        for task in (*self._platform_job_tasks, self._leadership_task, self._kubernetes_build_task):
-            if (
-                self.running
-                and task is not None
-                and task.done()
-                and not task.cancelled()
-            ):
+        control_tasks = self._control.tasks if self._control is not None else ()
+        for task in (*self._platform_job_tasks, *control_tasks):
+            if self.running and task.done() and not task.cancelled():
                 error = task.exception()
                 await self.stop()
                 if error is not None:
@@ -173,533 +142,9 @@ class Scheduler:
                 )
 
     def _background_task_done(self, _task: asyncio.Task[None]) -> None:
-        """Terminate the replica if an always-on control loop exits."""
+        """Terminate the replica if an always-on loop exits."""
         if self.running and not self._shutdown_event.is_set():
             self._shutdown_event.set()
-
-    async def _diagnostics_heartbeat_loop(self) -> None:
-        started_at = datetime.now(timezone.utc)
-        while not self._shutdown_event.is_set():
-            try:
-                await heartbeat_scheduler_replica(
-                    replica_id=self._leadership_lease.owner_id,
-                    hostname=socket.gethostname(),
-                    pid=os.getpid(),
-                    job_slots=self._job_slots,
-                    started_at=started_at,
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Failed to publish scheduler diagnostics heartbeat")
-            await self._wait_or_shutdown(10)
-
-    async def _run_scheduled_task(self, task_id: str, callback) -> None:  # type: ignore[no-untyped-def]
-        run_id = await start_scheduler_run(task_id, self._leadership_lease.owner_id)
-        try:
-            result = await callback()
-        except asyncio.CancelledError:
-            await finish_scheduler_run(
-                run_id,
-                status="failed",
-                error_message="Scheduler leadership ended while the task was running.",
-            )
-            raise
-        except Exception as exc:
-            await finish_scheduler_run(
-                run_id,
-                status="failed",
-                error_message=f"{type(exc).__name__}: {exc}",
-            )
-            raise
-        outcome = (
-            result
-            if isinstance(result, ScheduledTaskOutcome)
-            else ScheduledTaskOutcome(summary="Completed")
-        )
-        await finish_scheduler_run(
-            run_id,
-            status="enqueued" if outcome.platform_job_id else "succeeded",
-            summary=outcome.summary,
-            platform_job_id=outcome.platform_job_id,
-        )
-        await self._publish_task_states()
-
-    async def _publish_task_states(self) -> None:
-        scheduler = self._scheduler
-        if scheduler is None:
-            return
-        states = []
-        for task_id, definition in SCHEDULED_TASKS_BY_ID.items():
-            job = scheduler.get_job(task_id)
-            states.append((definition, job.next_run_time if job else None))
-        await publish_task_states(states)
-
-    async def _start_scheduler(self) -> None:
-        """Start APScheduler with all scheduled jobs."""
-        scheduler = AsyncIOScheduler()
-
-        # Common job options for misfire handling
-        misfire_options = {
-            "misfire_grace_time": 60 * 10,  # 10 minute grace period
-            "coalesce": True,  # Combine missed runs into one
-        }
-
-        # Schedule processor - every 1 minute
-        scheduler.add_job(
-            self._run_scheduled_task,
-            CronTrigger(minute="*/1"),  # Every 1 minute
-            id="schedule_processor",
-            name="Process schedule sources",
-            replace_existing=True,
-            args=["schedule_processor", process_schedule_sources],
-            **misfire_options,
-        )
-
-        from src.jobs.platform.summary_backfill import reconcile_summary_backfill_jobs
-
-        scheduler.add_job(
-            self._run_scheduled_task,
-            IntervalTrigger(seconds=60),
-            id="summary_backfill_reconciliation",
-            name="Reconcile summary backfill parents",
-            replace_existing=True,
-            next_run_time=datetime.now(timezone.utc),
-            args=["summary_backfill_reconciliation", reconcile_summary_backfill_jobs],
-            **misfire_options,
-        )
-
-        # Deferred execution promoter — every 60s.
-        from src.jobs.schedulers.deferred_execution_promoter import (
-            promote_due_executions,
-        )
-
-        scheduler.add_job(
-            self._run_scheduled_task,
-            IntervalTrigger(seconds=60),
-            id="deferred_execution_promoter",
-            name="Promote due scheduled executions",
-            replace_existing=True,
-            next_run_time=datetime.now(timezone.utc),
-            args=["deferred_execution_promoter", promote_due_executions],
-            **misfire_options,
-        )
-        logger.info("Deferred execution promoter scheduled (every 60s)")
-
-        from src.jobs.schedulers.workspace_bundle_cleanup import cleanup_workspace_bundle_previews
-        scheduler.add_job(
-            self._run_scheduled_task,
-            IntervalTrigger(hours=1),
-            id="workspace_bundle_preview_cleanup",
-            name="Clean up expired workspace bundle previews",
-            replace_existing=True,
-            next_run_time=datetime.now(timezone.utc),
-            args=["workspace_bundle_preview_cleanup", cleanup_workspace_bundle_previews],
-            **misfire_options,
-        )
-
-        # Workflow operation usage flush — every 15 minutes.
-        from src.jobs.schedulers.workflow_operation_usage_flush import (
-            flush_workflow_operation_usage,
-        )
-        scheduler.add_job(
-            self._run_scheduled_task,
-            IntervalTrigger(minutes=15),
-            id="workflow_operation_usage_flush",
-            name="Flush workflow operation usage counters",
-            replace_existing=True,
-            next_run_time=datetime.now(timezone.utc),
-            args=["workflow_operation_usage_flush", flush_workflow_operation_usage],
-            **misfire_options,
-        )
-        logger.info("Workflow operation usage flush scheduled (every 15 min)")
-
-        # Legacy entity-logo normalization — bounded batches, immediate at startup.
-        from src.jobs.schedulers.logo_thumbnail_backfill import (
-            backfill_logo_thumbnails,
-        )
-
-        scheduler.add_job(
-            backfill_logo_thumbnails,
-            IntervalTrigger(minutes=1),
-            id="logo_thumbnail_backfill",
-            name="Backfill bounded entity-logo thumbnails",
-            replace_existing=True,
-            next_run_time=datetime.now(timezone.utc),
-            **misfire_options,
-        )
-        logger.info("Logo thumbnail backfill scheduled (every 60s)")
-
-        # Execution cleanup - every 5 minutes (run immediately at startup)
-        scheduler.add_job(
-            self._run_scheduled_task,
-            CronTrigger(minute="*/5"),  # Every 5 minutes
-            id="execution_cleanup",
-            name="Cleanup stuck executions",
-            replace_existing=True,
-            next_run_time=datetime.now(timezone.utc),  # Run immediately at startup
-            args=["execution_cleanup", cleanup_stuck_executions],
-            **misfire_options,
-        )
-
-        # OAuth token refresh - every 15 minutes (run immediately at startup)
-        try:
-            from src.jobs.platform.system_maintenance import (
-                enqueue_automatic_oauth_refresh,
-            )
-            scheduler.add_job(
-                self._run_scheduled_task,
-                IntervalTrigger(minutes=15),
-                id="oauth_token_refresh",
-                name="Refresh expiring OAuth tokens",
-                replace_existing=True,
-                next_run_time=datetime.now(timezone.utc),  # Run immediately at startup
-                args=["oauth_token_refresh", enqueue_automatic_oauth_refresh],
-                **misfire_options,
-            )
-            logger.info("OAuth token refresh job scheduled (every 15 min)")
-        except ImportError:
-            logger.warning("OAuth token refresh job not available")
-
-        # Metrics snapshot refresh - every 60 minutes (run immediately at startup)
-        try:
-            from src.jobs.schedulers.metrics_refresh import refresh_metrics_snapshot
-            scheduler.add_job(
-                self._run_scheduled_task,
-                IntervalTrigger(minutes=60),
-                id="metrics_refresh",
-                name="Refresh platform metrics snapshot",
-                replace_existing=True,
-                next_run_time=datetime.now(timezone.utc),  # Run immediately at startup
-                args=["metrics_refresh", refresh_metrics_snapshot],
-                **misfire_options,
-            )
-            logger.info("Metrics snapshot refresh job scheduled (every 60 min)")
-        except ImportError:
-            logger.warning("Metrics snapshot refresh job not available")
-
-        # Knowledge storage refresh - daily at 2:00 AM UTC (run immediately at startup)
-        try:
-            from src.jobs.schedulers.knowledge_storage_refresh import (
-                refresh_knowledge_storage_daily,
-            )
-            scheduler.add_job(
-                self._run_scheduled_task,
-                CronTrigger(hour=2, minute=0),  # Daily at 2:00 AM UTC
-                id="knowledge_storage_refresh",
-                name="Refresh knowledge storage daily metrics",
-                replace_existing=True,
-                next_run_time=datetime.now(timezone.utc),  # Run immediately at startup
-                args=["knowledge_storage_refresh", refresh_knowledge_storage_daily],
-                **misfire_options,
-            )
-            logger.info("Knowledge storage refresh job scheduled (daily at 2:00 AM)")
-        except ImportError:
-            logger.warning("Knowledge storage refresh job not available")
-
-        # Workspace file-index reconciliation - daily at 01:00 UTC and startup.
-        from src.jobs.platform.system_maintenance import (
-            enqueue_automatic_file_index_reconciliation,
-        )
-
-        scheduler.add_job(
-            self._run_scheduled_task,
-            CronTrigger(hour=1, minute=0),
-            id="file_index_reconciliation",
-            name="Reconcile workspace file index",
-            replace_existing=True,
-            next_run_time=datetime.now(timezone.utc),
-            args=[
-                "file_index_reconciliation",
-                enqueue_automatic_file_index_reconciliation,
-            ],
-            **misfire_options,
-        )
-        logger.info("Workspace file-index reconciliation scheduled (daily at 01:00)")
-
-        # Webhook subscription renewal - every 6 hours
-        try:
-            from src.jobs.platform.system_maintenance import (
-                enqueue_automatic_webhook_renewal,
-            )
-            scheduler.add_job(
-                self._run_scheduled_task,
-                IntervalTrigger(hours=6),
-                id="webhook_renewal",
-                name="Renew expiring webhook subscriptions",
-                replace_existing=True,
-                next_run_time=datetime.now(timezone.utc),  # Run immediately at startup
-                args=["webhook_renewal", enqueue_automatic_webhook_renewal],
-                **misfire_options,
-            )
-            logger.info("Webhook renewal job scheduled (every 6 hours)")
-        except ImportError:
-            logger.warning("Webhook renewal job not available")
-
-        # Solution update check - every 6 hours (run immediately at startup)
-        try:
-            from src.jobs.platform.system_maintenance import (
-                enqueue_automatic_solution_update_check,
-            )
-            scheduler.add_job(
-                self._run_scheduled_task,
-                IntervalTrigger(hours=6),
-                id="solution_update_check",
-                name="Check git-connected Solution installs for updates",
-                replace_existing=True,
-                next_run_time=datetime.now(timezone.utc),  # Run immediately at startup
-                args=["solution_update_check", enqueue_automatic_solution_update_check],
-                **misfire_options,
-            )
-            logger.info("Solution update check job scheduled (every 6 hours)")
-        except ImportError:
-            logger.warning("Solution update check job not available")
-
-        # Model catalog (models.dev) - every 4 hours, and once at startup so a
-        # new install moves off the bundled snapshot promptly.
-        from src.jobs.platform.system_maintenance import (
-            enqueue_automatic_model_catalog_refresh,
-        )
-        scheduler.add_job(
-            self._run_scheduled_task,
-            IntervalTrigger(hours=4),
-            id="model_catalog_refresh",
-            name="Refresh the models.dev provider and model catalog",
-            replace_existing=True,
-            next_run_time=datetime.now(timezone.utc),
-            args=["model_catalog_refresh", enqueue_automatic_model_catalog_refresh],
-            **misfire_options,
-        )
-        logger.info("Model catalog refresh scheduled (every 4 hours)")
-
-        # Completed Solution backup artifacts expire independently of execution.
-        try:
-            from src.jobs.schedulers.solution_export_jobs import (
-                cleanup_expired_solution_export_jobs,
-            )
-            scheduler.add_job(
-                self._run_scheduled_task,
-                IntervalTrigger(hours=1),
-                id="solution_export_job_cleanup",
-                name="Cleanup expired Solution backup export artifacts",
-                replace_existing=True,
-                args=["solution_export_job_cleanup", cleanup_expired_solution_export_jobs],
-                **misfire_options,
-            )
-            logger.info("Solution export artifact cleanup scheduled (hourly)")
-        except ImportError:
-            logger.warning("Solution export artifact cleanup not available")
-
-        # Artifact retention cleanup - daily at 3:30 AM UTC
-        try:
-            from src.jobs.schedulers.artifact_retention import (
-                cleanup_expired_chat_artifacts_schedule,
-            )
-
-            scheduler.add_job(
-                self._run_scheduled_task,
-                CronTrigger(hour=3, minute=30),
-                id="artifact_retention_cleanup",
-                name="Cleanup expired artifacts",
-                replace_existing=True,
-                args=[
-                    "artifact_retention_cleanup",
-                    cleanup_expired_chat_artifacts_schedule,
-                ],
-                **misfire_options,
-            )
-            logger.info("Artifact retention cleanup scheduled (daily at 3:30 AM)")
-        except ImportError:
-            logger.warning("Artifact retention cleanup not available")
-
-        # Audit archive - daily at 2:30 AM UTC
-        from src.jobs.schedulers.audit_archive import archive_audit_events_schedule
-
-        scheduler.add_job(
-            self._run_scheduled_task,
-            CronTrigger(hour=2, minute=30),
-            id="audit_archive",
-            name="Archive aged audit events to object storage",
-            replace_existing=True,
-            args=["audit_archive", archive_audit_events_schedule],
-            **misfire_options,
-        )
-        logger.info("Audit archive scheduled (daily at 2:30 AM)")
-
-        # Run retention - daily at 3:00 AM UTC
-        from src.jobs.schedulers.run_retention import delete_expired_runs_schedule
-
-        scheduler.add_job(
-            self._run_scheduled_task,
-            CronTrigger(hour=3, minute=0),
-            id="run_retention",
-            name="Delete finished runs and events past the retention window",
-            replace_existing=True,
-            args=["run_retention", delete_expired_runs_schedule],
-            **misfire_options,
-        )
-        logger.info("Run retention scheduled (daily at 3:00 AM)")
-
-        # Stuck event delivery cleanup - every 5 minutes (run immediately at startup)
-        try:
-            from src.jobs.schedulers.event_cleanup import cleanup_stuck_events
-            scheduler.add_job(
-                self._run_scheduled_task,
-                CronTrigger(minute="*/5"),  # Every 5 minutes
-                id="stuck_event_cleanup",
-                name="Cleanup stuck event deliveries",
-                replace_existing=True,
-                next_run_time=datetime.now(timezone.utc),  # Run immediately at startup
-                args=["stuck_event_cleanup", cleanup_stuck_events],
-                **misfire_options,
-            )
-            logger.info("Stuck event cleanup job scheduled (every 5 min)")
-        except ImportError:
-            logger.warning("Stuck event cleanup job not available")
-
-        # Worker metrics sampling - every 60 seconds
-        # Reads heartbeats from Redis and persists to DB for the diagnostics chart
-        try:
-            from src.jobs.schedulers.worker_metrics_sampling import sample_worker_metrics
-            scheduler.add_job(
-                self._run_scheduled_task,
-                IntervalTrigger(seconds=60),
-                id="worker_metrics_sampling",
-                name="Sample worker metrics from Redis heartbeats",
-                replace_existing=True,
-                next_run_time=datetime.now(timezone.utc),
-                args=["worker_metrics_sampling", sample_worker_metrics],
-                **misfire_options,
-            )
-            logger.info("Worker metrics sampling job scheduled (every 60s)")
-        except ImportError:
-            logger.warning("Worker metrics sampling job not available")
-
-        # Worker metrics cleanup - daily at 4:00 AM UTC (7-day retention)
-        try:
-            from src.jobs.schedulers.worker_metrics_cleanup import cleanup_old_worker_metrics
-            scheduler.add_job(
-                self._run_scheduled_task,
-                CronTrigger(hour=4, minute=0),  # Daily at 4:00 AM UTC
-                id="worker_metrics_cleanup",
-                name="Cleanup old worker metrics (7-day retention)",
-                replace_existing=True,
-                args=["worker_metrics_cleanup", cleanup_old_worker_metrics],
-                **misfire_options,
-            )
-            logger.info("Worker metrics cleanup job scheduled (daily at 4:00 AM)")
-        except ImportError:
-            logger.warning("Worker metrics cleanup job not available")
-
-        from src.services.scheduler_diagnostics import cleanup_scheduler_diagnostics
-
-        scheduler.add_job(
-            self._run_scheduled_task,
-            IntervalTrigger(hours=1),
-            id="scheduler_diagnostics_cleanup",
-            name="Cleanup scheduler diagnostics",
-            replace_existing=True,
-            args=["scheduler_diagnostics_cleanup", cleanup_scheduler_diagnostics],
-            **misfire_options,
-        )
-
-        scheduler.start()
-        self._scheduler = scheduler
-        await self._publish_task_states()
-        logger.info("APScheduler started with scheduled jobs")
-
-    async def _start_leader_services(self) -> None:
-        """Start services that must have exactly one active replica."""
-        if self._scheduler is not None:
-            return
-        await self._start_scheduler()
-
-    async def _stop_leader_services(self) -> None:
-        """Stop singleton trigger services before surrendering leadership."""
-        stop_error: Exception | None = None
-        if self._scheduler is not None:
-            scheduler = self._scheduler
-            self._scheduler = None
-            try:
-                scheduler.shutdown(wait=False)
-                logger.info("APScheduler stopped")
-            except Exception as exc:
-                stop_error = stop_error or exc
-                logger.exception("Failed to stop APScheduler")
-
-        if stop_error is not None:
-            raise stop_error
-
-    async def _wait_or_shutdown(self, seconds: float) -> None:
-        try:
-            await asyncio.wait_for(self._shutdown_event.wait(), timeout=seconds)
-        except TimeoutError:
-            # The retry interval elapsed without a shutdown request.
-            return
-
-    async def _leadership_loop(self) -> None:
-        """Elect one trigger leader while every replica remains a job runner."""
-        try:
-            while self.running and not self._shutdown_event.is_set():
-                if not self._leadership_lease.is_leader:
-                    try:
-                        acquired = await self._leadership_lease.try_acquire()
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception:
-                        logger.exception("Failed to acquire scheduler trigger lease")
-                        await self._wait_or_shutdown(LEADERSHIP_RETRY_SECONDS)
-                        continue
-
-                    if not acquired:
-                        await self._wait_or_shutdown(LEADERSHIP_RETRY_SECONDS)
-                        continue
-
-                    logger.info(
-                        "Scheduler replica became trigger leader",
-                        extra={"owner_id": self._leadership_lease.owner_id},
-                    )
-                    try:
-                        await self._start_leader_services()
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception:
-                        logger.exception("Failed to start scheduler leader services")
-                        await self._stop_leader_services()
-                        try:
-                            await self._leadership_lease.release()
-                        except Exception:
-                            logger.exception("Failed to release scheduler trigger lease")
-                        await self._wait_or_shutdown(LEADERSHIP_RETRY_SECONDS)
-                        continue
-
-                await self._wait_or_shutdown(LEADERSHIP_RENEW_SECONDS)
-                if self._shutdown_event.is_set():
-                    break
-
-                try:
-                    renewed = await self._leadership_lease.renew()
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logger.exception("Failed to renew scheduler trigger lease")
-                    renewed = False
-
-                if renewed:
-                    continue
-
-                logger.warning("Scheduler replica lost trigger leadership")
-                await self._stop_leader_services()
-                try:
-                    await self._leadership_lease.release()
-                except Exception:
-                    logger.exception("Failed to clear lost scheduler trigger lease")
-        finally:
-            await self._stop_leader_services()
-            try:
-                await self._leadership_lease.release()
-            except Exception:
-                logger.exception("Failed to release scheduler trigger lease on shutdown")
 
     async def stop(self) -> None:
         """Stop the scheduler gracefully."""
@@ -709,18 +154,16 @@ class Scheduler:
         self.running = False
         self._shutdown_event.set()
 
-        tasks = [
-            task
-            for task in (*self._platform_job_tasks, self._leadership_task, self._kubernetes_build_task)
-            if task is not None
-        ]
+        # Surrender trigger leadership before stopping local execution.
+        if self._control is not None:
+            await self._control.stop()
+
+        tasks = list(self._platform_job_tasks)
         for task in tasks:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._platform_job_tasks = []
-        self._leadership_task = None
-        self._kubernetes_build_task = None
 
         if self._heartbeat_task:
             self._heartbeat_task.cancel()
@@ -732,7 +175,7 @@ class Scheduler:
             await asyncio.gather(self._diagnostics_task, return_exceptions=True)
             self._diagnostics_task = None
         try:
-            await remove_scheduler_replica(self._leadership_lease.owner_id)
+            await remove_scheduler_replica(self.replica_id)
         except Exception:
             logger.exception("Failed to remove scheduler diagnostics heartbeat")
 

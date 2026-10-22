@@ -152,6 +152,8 @@ services:
         BIFROST_VERSION: ${BIFROST_VERSION:-debug}
     environment:
       BIFROST_ENVIRONMENT: development
+      # Which process hosts platform control: scheduler (default) or api.
+      BIFROST_CONTROL_PLANE_HOST: ${BIFROST_CONTROL_PLANE_HOST:-scheduler}
       BIFROST_DEBUG: "true"
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_debug@pgbouncer:5432/bifrost
@@ -226,6 +228,8 @@ services:
         BIFROST_VERSION: ${BIFROST_VERSION:-debug}
     environment:
       BIFROST_ENVIRONMENT: development
+      # Which process hosts platform control: scheduler (default) or api.
+      BIFROST_CONTROL_PLANE_HOST: ${BIFROST_CONTROL_PLANE_HOST:-scheduler}
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_debug@pgbouncer:5432/bifrost

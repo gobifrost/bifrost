@@ -160,6 +160,8 @@ services:
     environment:
       # Core
       BIFROST_ENVIRONMENT: ${BIFROST_ENVIRONMENT:-production}
+      # Which process hosts platform control: scheduler (default) or api.
+      BIFROST_CONTROL_PLANE_HOST: ${BIFROST_CONTROL_PLANE_HOST:-scheduler}
       BIFROST_DEBUG: ${BIFROST_DEBUG:-false}
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:?BIFROST_SECRET_KEY is required (32+ chars)}
       # Database (via PgBouncer for connection pooling)
@@ -242,6 +244,8 @@ services:
     environment:
       # Core (must match API)
       BIFROST_ENVIRONMENT: ${BIFROST_ENVIRONMENT:-production}
+      # Which process hosts platform control: scheduler (default) or api.
+      BIFROST_CONTROL_PLANE_HOST: ${BIFROST_CONTROL_PLANE_HOST:-scheduler}
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:?BIFROST_SECRET_KEY is required (32+ chars)}
       # Database (via PgBouncer for connection pooling)
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD}@pgbouncer:5432/bifrost

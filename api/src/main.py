@@ -113,6 +113,7 @@ logging.basicConfig(
 # Suppress noisy third-party loggers
 logging.getLogger("aiormq").setLevel(logging.WARNING)
 logging.getLogger("aio_pika").setLevel(logging.WARNING)
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
 logging.getLogger("botocore").setLevel(logging.WARNING)
 logging.getLogger("aiobotocore").setLevel(logging.WARNING)
 logging.getLogger("s3transfer").setLevel(logging.WARNING)
@@ -181,12 +182,24 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         logger.warning(f"Kubernetes detection announcement failed: {e}")
 
+    control_host = None
+    if settings.control_plane_host == "api":
+        from src.scheduler.api_host import ApiControlHost
+
+        control_host = ApiControlHost()
+        await control_host.start()
+        logger.info("Platform control hosted by this API replica")
+
     logger.info(f"Bifrost API started in {settings.environment} mode")
 
     yield
 
     # Shutdown
     logger.info("Shutting down Bifrost API...")
+
+    if control_host is not None:
+        # Surrender the trigger lease while the database is still open.
+        await control_host.stop()
 
     from src.services.agent_runtime.retry_transport import (
         close_ai_retry_http_client,

@@ -1,117 +1,103 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+from src.scheduler import main as scheduler_main
 from src.scheduler.main import PLATFORM_JOB_CONCURRENCY, Scheduler
 
 
-class FakeLeadershipLease:
-    owner_id = "scheduler-test"
-
-    def __init__(self) -> None:
-        self.is_leader = False
-        self.acquire_calls = 0
-        self.release_calls = 0
-
-    async def try_acquire(self) -> bool:
-        self.acquire_calls += 1
-        if self.acquire_calls > 1:
-            return False
-        self.is_leader = True
-        return True
-
-    async def renew(self) -> bool:
-        self.is_leader = False
-        return False
-
-    async def release(self) -> None:
-        self.release_calls += 1
-        self.is_leader = False
+def _with_control_host(monkeypatch: pytest.MonkeyPatch, host: str) -> None:
+    monkeypatch.setattr(
+        scheduler_main,
+        "get_settings",
+        lambda: SimpleNamespace(control_plane_host=host, environment="testing"),
+    )
 
 
-def test_scheduler_uses_internal_platform_job_concurrency() -> None:
-    scheduler = Scheduler(leadership_lease=FakeLeadershipLease())  # type: ignore[arg-type]
+def test_scheduler_uses_internal_platform_job_concurrency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _with_control_host(monkeypatch, "scheduler")
+    scheduler = Scheduler(control_plane=MagicMock())
 
     assert scheduler._job_slots == PLATFORM_JOB_CONCURRENCY == 2
 
 
-@pytest.mark.asyncio
-async def test_trigger_services_run_only_while_lease_is_held(
+def test_scheduler_hosts_control_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    _with_control_host(monkeypatch, "scheduler")
+    created: list[dict] = []
+
+    class RecordingControl:
+        def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
+            created.append(kwargs)
+            self.owner_id = "scheduler-host:1"
+
+    monkeypatch.setattr(scheduler_main, "ControlPlane", RecordingControl)
+    scheduler = Scheduler()
+
+    assert scheduler.hosts_control
+    assert created[0]["host"] == "scheduler"
+    # Diagnostics recognises the leader by this shared identity.
+    assert scheduler.replica_id == "scheduler-host:1"
+
+
+def test_scheduler_only_executes_jobs_when_api_hosts_control(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    lease = FakeLeadershipLease()
-    scheduler = Scheduler(leadership_lease=lease)  # type: ignore[arg-type]
-    scheduler.running = True
-    scheduler._start_leader_services = AsyncMock()  # type: ignore[method-assign]
-    scheduler._stop_leader_services = AsyncMock()  # type: ignore[method-assign]
+    _with_control_host(monkeypatch, "api")
+    monkeypatch.setattr(
+        scheduler_main,
+        "ControlPlane",
+        MagicMock(side_effect=AssertionError("scheduler must not start control")),
+    )
 
-    waits = 0
+    scheduler = Scheduler()
 
-    async def wait_then_stop(_seconds: float) -> None:
-        nonlocal waits
-        waits += 1
-        if waits == 2:
-            scheduler._shutdown_event.set()
-
-    monkeypatch.setattr(scheduler, "_wait_or_shutdown", wait_then_stop)
-
-    await scheduler._leadership_loop()
-
-    scheduler._start_leader_services.assert_awaited_once()
-    assert scheduler._stop_leader_services.await_count >= 1
-    assert lease.acquire_calls == 2
-    assert lease.release_calls >= 1
+    assert not scheduler.hosts_control
 
 
 @pytest.mark.asyncio
-async def test_stopping_leader_services_cancels_running_scheduler_callback() -> None:
-    scheduler = Scheduler(leadership_lease=FakeLeadershipLease())  # type: ignore[arg-type]
-    started = asyncio.Event()
-    cancelled = asyncio.Event()
+async def test_stop_surrenders_control_before_local_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _with_control_host(monkeypatch, "scheduler")
+    order: list[str] = []
+    control = MagicMock()
+    control.owner_id = "scheduler-host:1"
 
-    async def running_callback() -> None:
-        started.set()
+    async def stop_control() -> None:
+        order.append("control")
+
+    control.stop = stop_control
+    monkeypatch.setattr(scheduler_main, "remove_scheduler_replica", AsyncMock())
+    monkeypatch.setattr(scheduler_main, "close_db", AsyncMock())
+    scheduler = Scheduler(control_plane=control)
+    scheduler.running = True
+
+    async def platform_loop() -> None:
         try:
-            await asyncio.Future()
+            await asyncio.Event().wait()
         except asyncio.CancelledError:
-            cancelled.set()
+            order.append("platform-jobs")
             raise
 
-    apscheduler = AsyncIOScheduler()
-    apscheduler.add_job(
-        running_callback,
-        next_run_time=datetime.now(timezone.utc),
-    )
-    apscheduler.start()
-    scheduler._scheduler = apscheduler
+    scheduler._platform_job_tasks = [asyncio.create_task(platform_loop())]
+    await asyncio.sleep(0)
+    await scheduler.stop()
 
-    await asyncio.wait_for(started.wait(), timeout=1)
-    await scheduler._stop_leader_services()
-    await asyncio.wait_for(cancelled.wait(), timeout=1)
+    assert order == ["control", "platform-jobs"]
 
 
 @pytest.mark.asyncio
-async def test_failed_scheduler_shutdown_is_reported() -> None:
-    scheduler = Scheduler(leadership_lease=FakeLeadershipLease())  # type: ignore[arg-type]
-    apscheduler = MagicMock()
-    apscheduler.shutdown.side_effect = RuntimeError("scheduler still active")
-    scheduler._scheduler = apscheduler
-
-    with pytest.raises(RuntimeError, match="scheduler still active"):
-        await scheduler._stop_leader_services()
-
-    assert scheduler._scheduler is None
-    apscheduler.shutdown.assert_called_once_with(wait=False)
-
-
-@pytest.mark.asyncio
-async def test_background_task_exit_signals_replica_shutdown() -> None:
-    scheduler = Scheduler(leadership_lease=FakeLeadershipLease())  # type: ignore[arg-type]
+async def test_background_task_exit_signals_replica_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _with_control_host(monkeypatch, "api")
+    scheduler = Scheduler()
     scheduler.running = True
 
     async def stop_unexpectedly() -> None:

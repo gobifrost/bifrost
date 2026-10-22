@@ -43,6 +43,10 @@ class SchedulerTaskState(Base):
     last_run_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), nullable=True
     )
+    # Progress marker for tasks that scan time windows (schedule_processor).
+    cursor_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("NOW()")
     )

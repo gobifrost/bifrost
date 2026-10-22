@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: bifrost
+
+# Opt-in: host platform control (trigger leadership and Kubernetes build
+# reconciliation) in the API replicas. Layers on the elastic build overlay and
+# moves the Job-launching identity from the scheduler to the API. The scheduler
+# keeps executing local platform jobs without cluster credentials.
+resources:
+  - ../builds
+  - control-config.yaml
+
+patches:
+  - path: api-control-patch.yaml
+  - path: scheduler-execution-patch.yaml

@@ -6,25 +6,48 @@ Replaces the Azure Timer trigger version with APScheduler cron job.
 
 Checks each ScheduleSource and fires events for matching schedules,
 creating Event records and queuing deliveries for subscribed workflows.
+
+Occurrence semantics survive trigger-leader failover:
+
+- Each run scans at least its own cadence (``DEFAULT_SCAN_WINDOW``), extended
+  back to the previous successful scan (a durable cursor on the
+  ``schedule_processor`` task state) and capped at ``MAX_CATCH_UP``. An
+  occurrence missed while no leader was running fires once on the next scan;
+  several missed occurrences of one source coalesce into the latest. A cursor
+  written by a leader whose clock runs ahead never narrows the window.
+- Every fired occurrence carries a unique ``occurrence_key`` (source + UTC
+  occurrence time), so two overlapping leaders cannot fire it twice.
+- Occurrences are computed in the source's timezone and keyed in UTC, so DST
+  transitions neither merge nor duplicate distinct instants.
 """
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import sqlalchemy as sa
 from croniter import croniter
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from src.core.database import get_db_context
 from src.models.enums import EventDeliveryStatus, EventSourceType, EventStatus, ScheduleOverlapPolicy
 from src.models.orm.events import Event, EventDelivery, EventSource
+from src.models.orm.scheduler_diagnostics import SchedulerTaskState
 from src.repositories.events import EventSubscriptionRepository
 from src.services.cron_parser import get_schedule_zone
 
 logger = logging.getLogger(__name__)
+
+SCHEDULE_PROCESSOR_TASK_ID = "schedule_processor"
+# Window scanned when no previous scan is recorded (the processor's cadence).
+DEFAULT_SCAN_WINDOW = timedelta(seconds=60)
+# Longest outage whose missed occurrences still fire; matches the trigger
+# misfire grace so a delayed run and a failover behave the same way.
+MAX_CATCH_UP = timedelta(minutes=10)
 
 
 def _next_interval_seconds(cron_expression: str, now_utc: datetime, timezone_name: str) -> float:
@@ -43,16 +66,47 @@ def _latest_due_run_utc(
     cron_expression: str,
     now_utc: datetime,
     timezone_name: str,
+    window_start: datetime,
 ) -> datetime | None:
+    """Latest occurrence in ``(window_start, now_utc]``, coalescing earlier ones."""
     zone = get_schedule_zone(timezone_name)
     local_now = now_utc.astimezone(zone)
     cron_iter = croniter(cron_expression, local_now)
     prev_run = cron_iter.get_prev(datetime)
     prev_run_utc = prev_run.astimezone(timezone.utc)
-    seconds_since_last = (now_utc - prev_run_utc).total_seconds()
-    if seconds_since_last >= 60:
+    if prev_run_utc <= window_start:
         return None
     return prev_run_utc
+
+
+def occurrence_key(source_id: uuid.UUID, scheduled_at_utc: datetime) -> str:
+    return f"schedule:{source_id}:{scheduled_at_utc.astimezone(timezone.utc).isoformat()}"
+
+
+async def _scan_window_start(db: AsyncSession, now_utc: datetime) -> datetime:
+    cursor = await db.scalar(
+        select(SchedulerTaskState.cursor_at).where(
+            SchedulerTaskState.task_id == SCHEDULE_PROCESSOR_TASK_ID
+        )
+    )
+    window_start = now_utc - DEFAULT_SCAN_WINDOW
+    if cursor is not None:
+        window_start = min(window_start, cursor)
+    return max(window_start, now_utc - MAX_CATCH_UP)
+
+
+async def _advance_scan_cursor(db: AsyncSession, now_utc: datetime) -> None:
+    await db.execute(
+        update(SchedulerTaskState)
+        .where(
+            SchedulerTaskState.task_id == SCHEDULE_PROCESSOR_TASK_ID,
+            sa.or_(
+                SchedulerTaskState.cursor_at.is_(None),
+                SchedulerTaskState.cursor_at < now_utc,
+            ),
+        )
+        .values(cursor_at=now_utc)
+    )
 
 
 async def process_schedule_sources() -> dict[str, Any]:
@@ -95,6 +149,7 @@ async def process_schedule_sources() -> dict[str, Any]:
 
             results["total_sources"] = len(sources)
             now_utc = datetime.now(timezone.utc)
+            window_start = await _scan_window_start(db, now_utc)
 
             for source in sources:
                 try:
@@ -134,13 +189,13 @@ async def process_schedule_sources() -> dict[str, Any]:
                             f"Failed to validate schedule interval for source {source.id}: {e}"
                         )
 
-                    # Check if the most recent cron match is within our polling window.
-                    # We poll every 1 minute, so check if the last match was < 60s ago.
+                    # Fire the most recent occurrence since the previous scan.
                     try:
                         scheduled_at_utc = _latest_due_run_utc(
                             cron_expression,
                             now_utc,
                             ss.timezone,
+                            window_start,
                         )
                     except ValueError as e:
                         logger.warning(
@@ -154,7 +209,7 @@ async def process_schedule_sources() -> dict[str, Any]:
                         continue
 
                     if scheduled_at_utc is None:
-                        continue  # Last match was outside our polling window
+                        continue  # No occurrence since the previous scan
 
                     # Check overlap policy: skip if a prior delivery is still active.
                     # Query EventDelivery.status directly — covers both workflow-target
@@ -195,23 +250,38 @@ async def process_schedule_sources() -> dict[str, Any]:
                         results["skipped_overlap"] = results.get("skipped_overlap", 0) + 1
                         continue
 
-                    logger.info(f"Firing schedule source: {source.name} ({source.id})")
-
-                    # Create event record
-                    event = Event(
-                        id=uuid.uuid4(),
-                        event_source_id=source.id,
-                        event_type="schedule.fired",
-                        received_at=scheduled_at_utc,
-                        data={
-                            "cron_expression": cron_expression,
-                            "timezone": ss.timezone,
-                            "scheduled_time": scheduled_at_utc.isoformat(),
-                        },
-                        status=EventStatus.PROCESSING,
+                    # Claim the occurrence. A conflict means another leader
+                    # (or an earlier scan) already fired it.
+                    event_id = await db.scalar(
+                        insert(Event)
+                        .values(
+                            id=uuid.uuid4(),
+                            event_source_id=source.id,
+                            event_type="schedule.fired",
+                            received_at=scheduled_at_utc,
+                            occurrence_key=occurrence_key(source.id, scheduled_at_utc),
+                            data={
+                                "cron_expression": cron_expression,
+                                "timezone": ss.timezone,
+                                "scheduled_time": scheduled_at_utc.isoformat(),
+                            },
+                            status=EventStatus.PROCESSING,
+                        )
+                        .on_conflict_do_nothing(
+                            index_elements=[Event.occurrence_key],
+                            index_where=Event.occurrence_key.is_not(None),
+                        )
+                        .returning(Event.id)
                     )
-                    db.add(event)
-                    await db.flush()
+                    if event_id is None:
+                        results["duplicates_skipped"] = (
+                            results.get("duplicates_skipped", 0) + 1
+                        )
+                        continue
+                    event = await db.get(Event, event_id)
+                    if event is None:
+                        raise RuntimeError("Inserted schedule event was not readable")
+                    logger.info(f"Firing schedule source: {source.name} ({source.id})")
                     results["events_created"] += 1
 
                     # Get active subscriptions for this source
@@ -288,6 +358,7 @@ async def process_schedule_sources() -> dict[str, Any]:
                         exc_info=True,
                     )
 
+            await _advance_scan_cursor(db, now_utc)
             await db.commit()
 
     except Exception as e:

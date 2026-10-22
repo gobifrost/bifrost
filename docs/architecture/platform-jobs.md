@@ -91,6 +91,38 @@ events past the retention window) enqueue deduplicated platform jobs that take
 a resource lock, so they never overlap a manual run. User-initiated
 long-running work is claimed by any replica.
 
+### Control host
+
+Trigger leadership and Kubernetes build reconciliation form the *control
+plane* (`api/src/scheduler/control.py`). `BIFROST_CONTROL_PLANE_HOST` chooses
+the process that hosts it:
+
+- `scheduler` (default): every scheduler replica competes for the trigger
+  lease and reconciles build Jobs, exactly as before.
+- `api`: every API replica does both inside its lifespan, after the schema
+  gate and without delaying HTTP startup. Scheduler replicas only execute
+  local platform jobs and stop competing for control. API replicas never run
+  platform-job handlers.
+
+Set the same value on both API and scheduler. Both hosts use the same
+`scheduler-triggers` lease, so during a switch or a mixed-version rollout an
+old scheduler and a new API replica cannot both lead. The schedule catalog
+(`api/src/scheduler/registry.py`) is the single source for the jobs a leader
+installs and for Diagnostics; every callback re-checks a conservative local
+lease deadline before it starts, so a leader that stops renewing stops
+producing triggers before PostgreSQL can elect a successor. Scheduled
+callbacks on one leader share a bounded number of slots so a startup burst
+cannot exhaust its database pool. A control loop that fails inside an API
+replica releases control on that replica only; HTTP keeps serving and another
+replica takes over.
+
+Workflow schedule occurrences survive failover. Each scan covers at least the
+processor's one-minute cadence, extended back to the previous successful scan
+(capped at ten minutes), and every fired occurrence carries a unique
+`events.occurrence_key` (source and UTC instant). A successor fires an
+occurrence missed during failover once; overlapping leaders cannot fire it
+twice; DST-repeated wall-clock times are distinct instants.
+
 A handler may release its scheduler slot in `waiting` state after dispatching
 durable child work. The child tracker completes the parent row later. Summary
 backfills and Solution app builds use this path so RabbitMQ fan-out or an
@@ -107,8 +139,8 @@ durably placed on the Kubernetes backend at enqueue time. The row stores that
 placement in `execution_backend` so scheduler replicas do not disagree after
 restart or configuration changes.
 
-The scheduler still owns the control loop. A separate Kubernetes build
-controller task watches `execution_backend='kubernetes'` rows and creates one
+The control host (the scheduler by default, or the API; see "Control host")
+owns the control loop. A Kubernetes build controller task watches `execution_backend='kubernetes'` rows and creates one
 deterministic `batch/v1` Job for each claimed attempt. Local platform-job claim
 loops filter to `execution_backend='local'`, so remote App builds do not occupy
 the warm scheduler's ordinary child-runner slots. The scheduler remains warm for

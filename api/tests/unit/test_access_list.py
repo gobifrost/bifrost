@@ -1184,36 +1184,15 @@ def _consumer_classes() -> list[type]:
 
 
 def _scheduler_job_functions() -> list[object]:
-    """The functions the scheduler hands to ``add_job``."""
-    module = importlib.import_module("src.scheduler.main")
-    return _add_job_functions(ast.parse(Path(inspect.getfile(module)).read_text()), vars(module))
+    """The functions the trigger leader schedules: every catalog callback,
+    whichever process (scheduler or API) hosts control."""
+    from src.scheduler.control import resolve_callback
+    from src.scheduler.registry import SCHEDULED_TASKS
 
-
-def _add_job_functions(tree: ast.Module, module_globals: dict) -> list[object]:
-    """Every in-scope function an ``add_job`` call is given, however it is
-    passed: positionally, as ``func=``, inside ``args=[...]`` or any other
-    keyword, wrapped in ``partial(...)``, by name or as ``mod.func``."""
-    local_imports = _local_imports(tree)
     found: dict[str, object] = {}
-    for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call) and _terminal_name(node.func) == "add_job"):
-            continue
-        pending = [*node.args, *(kw.value for kw in node.keywords)]
-        while pending:
-            candidate = pending.pop()
-            if isinstance(candidate, (ast.List, ast.Tuple)):
-                pending.extend(candidate.elts)
-            elif isinstance(candidate, ast.Call) and _terminal_name(candidate.func) == "partial":
-                pending.extend(candidate.args)
-            elif isinstance(candidate, ast.Name):
-                func = _resolve_name(candidate.id, local_imports, module_globals)
-                if inspect.isfunction(func):
-                    found[_qualname(func)] = func
-            elif isinstance(candidate, ast.Attribute) and isinstance(candidate.value, ast.Name):
-                module = _resolve_name(candidate.value.id, local_imports, module_globals)
-                func = getattr(module, candidate.attr, None) if inspect.ismodule(module) else None
-                if inspect.isfunction(func) and _in_scope(func):
-                    found[_qualname(func)] = func
+    for task in SCHEDULED_TASKS:
+        func = resolve_callback(task.callback)
+        found[_qualname(func)] = func
     return [found[key] for key in sorted(found)]
 
 
@@ -2876,32 +2855,6 @@ class TestScannerReviewFindings:
         )
         reached = {_qualname(func) for func, _source in _reachable_functions(entry.handler, None)}
         assert "src.synthetic_factories.Gate.authorize" in reached
-
-    def test_add_job_callables_count_however_they_are_passed(self, synthetic_module) -> None:
-        synthetic_module("synthetic_more_jobs", "def tuck():\n    pass\n")
-        source = """
-            from functools import partial
-
-            import src.synthetic_more_jobs as more
-
-            def tick():
-                pass
-
-            def tock():
-                pass
-
-            def tack(n):
-                pass
-
-            def install(scheduler):
-                scheduler.add_job(func=tick)
-                scheduler.add_job(scheduler.run, args=["tock", tock])
-                scheduler.add_job(partial(tack, 1))
-                scheduler.add_job(more.tuck)
-        """
-        module = synthetic_module("synthetic_jobs", source)
-        found = _add_job_functions(ast.parse(textwrap.dedent(source)), vars(module))
-        assert {func.__name__ for func in found} == {"tick", "tock", "tack", "tuck"}
 
     def test_a_new_elevated_branch_in_a_registered_site_fails(self) -> None:
         source = """

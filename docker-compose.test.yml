@@ -149,6 +149,8 @@ services:
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
+      # Which process hosts platform control: scheduler (default) or api.
+      BIFROST_CONTROL_PLANE_HOST: ${BIFROST_CONTROL_PLANE_HOST:-scheduler}
       # Browser-facing callbacks use the Playwright loopback client proxy.
       BIFROST_PUBLIC_URL: http://localhost:3000
       # The full E2E suite intentionally reuses session-scoped users. Keep its
@@ -291,6 +293,8 @@ services:
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
+      # Which process hosts platform control: scheduler (default) or api.
+      BIFROST_CONTROL_PLANE_HOST: ${BIFROST_CONTROL_PLANE_HOST:-scheduler}
       # S3-compatible object storage
       BIFROST_S3_BUCKET: bifrost-test
       BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333

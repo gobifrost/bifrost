@@ -38,9 +38,11 @@ async def test_scheduler_keeps_heartbeat_but_is_not_ready_while_gated(
     async def idle(*_args: object, **_kwargs: object) -> None:
         await asyncio.Event().wait()
 
-    scheduler = Scheduler(leadership_lease=MagicMock())
-    scheduler._diagnostics_heartbeat_loop = idle  # type: ignore[method-assign]
-    scheduler._leadership_loop = idle  # type: ignore[method-assign]
+    control = MagicMock()
+    control.owner_id = "scheduler-test"
+    control.start = AsyncMock()
+    control.tasks = ()
+    scheduler = Scheduler(control_plane=control)
 
     with (
         patch("src.scheduler.main.init_db", new=AsyncMock()),
@@ -48,6 +50,7 @@ async def test_scheduler_keeps_heartbeat_but_is_not_ready_while_gated(
         patch("src.scheduler.main.wait_for_schema", new=gate),
         patch("src.scheduler.main.heartbeat_loop", new=fast_heartbeat),
         patch("src.scheduler.main.platform_job_worker_loop", new=idle),
+        patch("src.scheduler.main.replica_heartbeat_loop", new=idle),
     ):
         start_task = asyncio.create_task(scheduler.start())
         await _eventually(scheduler_health.HEARTBEAT_PATH.exists)
@@ -57,9 +60,12 @@ async def test_scheduler_keeps_heartbeat_but_is_not_ready_while_gated(
         )
         assert not scheduler_health.READY_PATH.exists()
 
+        control.start.assert_not_awaited()
+
         gate_open.set()
         await _eventually(scheduler_health.READY_PATH.exists)
         assert scheduler_health.is_ready()
+        control.start.assert_awaited_once()
 
         scheduler._shutdown_event.set()
         scheduler.running = False
@@ -67,8 +73,6 @@ async def test_scheduler_keeps_heartbeat_but_is_not_ready_while_gated(
         for task in (scheduler._heartbeat_task, *scheduler._platform_job_tasks):
             if task is not None:
                 task.cancel()
-        if scheduler._leadership_task is not None:
-            scheduler._leadership_task.cancel()
         if scheduler._diagnostics_task is not None:
             scheduler._diagnostics_task.cancel()
 

@@ -18,7 +18,7 @@ KIND_BIN="${BIN_DIR}/kind-${KIND_VERSION}"
 
 usage() {
   cat <<USAGE
-Usage: $0 <up|status|down|collect|experiment|build-experiment|kubectl -- <args>>
+Usage: $0 <up|status|down|collect|experiment|build-experiment|control-experiment|kubectl -- <args>>
 
 Environment overrides:
   BIFROST_KIND_CLUSTER_NAME  Cluster name (default: bifrost-<worktree-hash>)
@@ -28,6 +28,7 @@ Environment overrides:
   BIFROST_KIND_VERSION       Kind version (default: v0.24.0)
   BIFROST_KEDA_VERSION       KEDA version without leading v (default: 2.16.1)
   BIFROST_KIND_BUILD_JOBS    Set to 1 to opt into Kubernetes App build Jobs
+  BIFROST_KIND_API_CONTROL   Set to 1 to host platform control in two API replicas
 USAGE
 }
 
@@ -121,7 +122,11 @@ render_runtime_manifest() {
   local rendered_file="$2"
   local revision="$3"
   local build_jobs="${BIFROST_KIND_BUILD_JOBS:-}"
-  awk -v image="${IMAGE_NAME}" -v revision="${revision}" -v build_jobs="${build_jobs}" '
+  local api_control="${BIFROST_KIND_API_CONTROL:-}"
+  awk -v image="${IMAGE_NAME}" -v revision="${revision}" -v build_jobs="${build_jobs}" -v api_control="${api_control}" '
+    BEGIN {
+      controller = (api_control == "1") ? "bifrost-api" : "bifrost-scheduler"
+    }
     { gsub("bifrost-api:kind-local", image) }
     /^kind: / {
       kind=$2
@@ -129,7 +134,11 @@ render_runtime_manifest() {
     kind == "Deployment" && /^  name: / {
       deployment=$2
     }
-    build_jobs == "1" && deployment == "bifrost-scheduler" && $0 == "      automountServiceAccountToken: false" {
+    api_control == "1" && deployment == "bifrost-api" && $0 == "  replicas: 1" {
+      print "  replicas: 2"
+      next
+    }
+    build_jobs == "1" && deployment == controller && $0 == "      automountServiceAccountToken: false" {
       print "      automountServiceAccountToken: true"
       print "      serviceAccountName: bifrost-build-controller"
       next
@@ -138,6 +147,11 @@ render_runtime_manifest() {
     build_jobs == "1" && (deployment == "bifrost-api" || deployment == "bifrost-scheduler") && $0 == "                name: bifrost-local-secrets" {
       print "            - configMapRef:"
       print "                name: bifrost-build-jobs-config"
+    }
+    api_control == "1" && (deployment == "bifrost-api" || deployment == "bifrost-scheduler") && $0 == "                name: bifrost-local-secrets" {
+      print "          env:"
+      print "            - name: BIFROST_CONTROL_PLANE_HOST"
+      print "              value: \"api\""
     }
     /^        app.kubernetes.io\/name:/ {
       print "      annotations:"
@@ -290,6 +304,7 @@ down() {
 case "${1:-}" in
   experiment) shift; exec python3 "${ROOT_DIR}/scripts/kubernetes/spike.py" "$@" ;;
   build-experiment) shift; exec python3 "${ROOT_DIR}/scripts/kubernetes/build_spike.py" "$@" ;;
+  control-experiment) shift; exec python3 "${ROOT_DIR}/scripts/kubernetes/control_spike.py" "$@" ;;
   up) up ;;
   status) status ;;
   down) down ;;

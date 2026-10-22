@@ -64,6 +64,7 @@ class TestSchedulerDiagnostics:
             "audit_archive",
             "workspace_bundle_preview_cleanup",
             "workflow_operation_usage_flush",
+            "logo_thumbnail_backfill",
         }
         assert set(tasks) == expected
         for task_id in (
