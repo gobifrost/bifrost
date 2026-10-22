@@ -10,7 +10,9 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCall
 
 from src.models.contracts.agents import ToolResult
 from src.models.enums import MessageRole
+from src.models.orm.agents import Agent
 from src.services.agent_runtime import BifrostToolset
+from src.services.agent_runtime.composition import ResolvedToolCall
 from src.services.llm.base import LLMConfig, LLMMessage, ToolDefinition
 from src.services.llm.pydantic_client import PydanticAIClient
 from tests.unit.services.test_agent_executor_runtime import (
@@ -34,12 +36,14 @@ async def test_native_skill_load_and_tool_result_are_streamed_and_persisted(exec
     agent.max_iterations = None
     agent.max_token_budget = None
     agent.llm_max_tokens = None
-    owner = SimpleNamespace(id=uuid4())
+    owner = MagicMock(spec=Agent, id=uuid4())
     definitions = [ToolDefinition(
         name="specialist_read", description="Read the approved resource.",
         parameters={"type": "object", "properties": {}},
     )]
-    binding = SimpleNamespace(owner=owner, original_name="read", arguments={}, workflow_ids={})
+    binding = ResolvedToolCall(
+        owner=owner, original_name="read", arguments={}, workflow_ids={}, provenance={},
+    )
 
     entry_definitions = (
         [

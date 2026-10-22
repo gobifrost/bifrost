@@ -10197,7 +10197,7 @@
     "cli": 172,
     "manifest": 16,
     "mcp": 94,
-    "rest": 687,
+    "rest": 688,
     "sdk": 21
   },
   "schema_version": 1,
@@ -13028,6 +13028,13 @@
         "method": "PUT",
         "operation_id": "",
         "path": "/api/mcp/config",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/mcp/gateway/agents/{agent_id}/execute",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
