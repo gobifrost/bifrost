@@ -127,3 +127,47 @@ class TestSchedulerDiagnostics:
             headers=platform_admin.headers,
         )
         assert response.status_code == 404
+
+
+@pytest.mark.e2e
+async def test_api_control_replicas_are_listed_but_not_counted_as_capacity(
+    e2e_client, platform_admin, db_session
+):
+    from datetime import datetime, timezone
+
+    from sqlalchemy import delete
+
+    from src.models.orm.scheduler_diagnostics import SchedulerReplica
+
+    replica_id = "api-control-diagnostics-test:1"
+    now = datetime.now(timezone.utc)
+    db_session.add(
+        SchedulerReplica(
+            id=replica_id,
+            hostname="api-control-diagnostics-test",
+            pid=1,
+            job_slots=0,
+            started_at=now,
+            last_heartbeat_at=now,
+            memory_current_bytes=900,
+            memory_limit_bytes=1000,
+        )
+    )
+    await db_session.commit()
+    try:
+        body = e2e_client.get(
+            "/api/platform/scheduler", headers=platform_admin.headers
+        ).json()
+        replicas = {replica["id"]: replica for replica in body["replicas"]}
+        executors = [
+            replica for replica in replicas.values()
+            if replica["online"] and replica["job_slots"] > 0
+        ]
+        assert replicas[replica_id]["job_slots"] == 0
+        assert body["capacity"]["replicas_online"] == len(executors)
+        assert body["capacity"]["slots_total"] == sum(r["job_slots"] for r in executors)
+        # The control replica's 90% memory never reads as scheduler pressure.
+        assert (body["capacity"]["max_memory_utilization_percent"] or 0) < 90
+    finally:
+        await db_session.execute(delete(SchedulerReplica).where(SchedulerReplica.id == replica_id))
+        await db_session.commit()

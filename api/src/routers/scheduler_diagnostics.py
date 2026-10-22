@@ -129,7 +129,11 @@ async def get_scheduler_diagnostics(
         )
         for row in replica_rows
     ]
-    online_replicas = [replica for replica in replicas if replica.online]
+    # Capacity describes platform-job execution. API control replicas report
+    # zero slots and stay in the replica list, but not in these figures.
+    online_replicas = [
+        replica for replica in replicas if replica.online and replica.job_slots > 0
+    ]
 
     state_rows = {
         row.task_id: row

@@ -131,6 +131,10 @@ async def _until(predicate, timeout: float = 10.0) -> float:  # type: ignore[no-
     return time.monotonic() - started
 
 
+def _leads(replica: ControlPlane) -> bool:
+    return replica._scheduler is not None and replica.lease.holds_lease()
+
+
 def _assert_no_overlap(runs: list[Run]) -> None:
     ordered = sorted(runs, key=lambda run: run.started)
     for previous, following in zip(ordered, ordered[1:]):
@@ -140,10 +144,10 @@ def _assert_no_overlap(runs: list[Run]) -> None:
 
 async def _leader_of(*replicas: ControlPlane) -> ControlPlane:
     async def one_leads() -> bool:
-        return sum(replica.leading for replica in replicas) == 1
+        return sum(_leads(replica) for replica in replicas) == 1
 
     await _until(one_leads)
-    return next(replica for replica in replicas if replica.leading)
+    return next(replica for replica in replicas if _leads(replica))
 
 
 @pytest.mark.asyncio
@@ -168,7 +172,7 @@ async def test_replicas_elect_one_leader_and_fail_over_after_crash(
         await leader.stop()
 
         async def follower_leads() -> bool:
-            return follower.leading
+            return _leads(follower)
 
         await _until(follower_leads)
         handoff = time.monotonic() - crashed_at
@@ -193,7 +197,7 @@ async def test_rolling_restart_hands_off_promptly_without_overlap(
         await _leader_of(old)
         await new.start()
         await asyncio.sleep(0.5)
-        assert not new.leading
+        assert not _leads(new)
 
         # Graceful shutdown releases the lease; the successor does not wait
         # for expiry.
@@ -201,7 +205,7 @@ async def test_rolling_restart_hands_off_promptly_without_overlap(
         await old.stop()
 
         async def new_leads() -> bool:
-            return new.leading
+            return _leads(new)
 
         await _until(new_leads)
         assert time.monotonic() - stopped_at < LEASE.total_seconds() - 1
@@ -242,7 +246,7 @@ async def test_partitioned_leader_stops_triggers_before_successor_starts(
         partitioned_at = time.monotonic()
 
         async def b_leads() -> bool:
-            return b.leading
+            return _leads(b)
 
         await _until(b_leads)
         await asyncio.sleep(0.5)
@@ -254,7 +258,7 @@ async def test_partitioned_leader_stops_triggers_before_successor_starts(
         assert max(run.started for run in a_runs) <= (
             partitioned_at + LEASE.total_seconds() - LOCAL_DEADLINE_MARGIN_SECONDS
         )
-        assert not a.leading
+        assert not _leads(a)
         _assert_no_overlap(runs)
     finally:
         await asyncio.gather(a.stop(), b.stop())

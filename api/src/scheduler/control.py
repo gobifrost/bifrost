@@ -24,7 +24,7 @@ import logging
 import os
 import socket
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -50,9 +50,11 @@ logger = logging.getLogger(__name__)
 LEADERSHIP_RETRY_SECONDS = 5.0
 LEADERSHIP_RENEW_SECONDS = 10.0
 REPLICA_HEARTBEAT_SECONDS = 10.0
-# Bounds the database sessions scheduled callbacks may hold at once, so a
-# leader's startup burst cannot exhaust a host's shared connection pool.
-CONTROL_TASK_CONCURRENCY = 4
+# A new leader spreads its run-at-startup callbacks this far apart so the
+# burst does not take a host's whole shared connection pool at once.
+# Recurring runs are not throttled: a waiting job would count as a running
+# instance and APScheduler would skip its next firing.
+STARTUP_STAGGER_SECONDS = 0.5
 MISFIRE_OPTIONS: dict[str, Any] = {
     "misfire_grace_time": 60 * 10,
     "coalesce": True,
@@ -129,7 +131,6 @@ class ControlPlane:
         self._stop_event = asyncio.Event()
         self._scheduler: AsyncIOScheduler | None = None
         self._tasks: list[asyncio.Task[None]] = []
-        self._task_slots = asyncio.Semaphore(CONTROL_TASK_CONCURRENCY)
         self.running = False
 
     @property
@@ -139,10 +140,6 @@ class ControlPlane:
     @property
     def tasks(self) -> tuple[asyncio.Task[None], ...]:
         return tuple(self._tasks)
-
-    @property
-    def leading(self) -> bool:
-        return self._scheduler is not None and self.lease.holds_lease()
 
     async def start(self) -> None:
         if self.running:
@@ -193,43 +190,42 @@ class ControlPlane:
         task_id: str,
         callback: Callable[[], Awaitable[Any]],
     ) -> None:
-        async with self._task_slots:
-            # Fence after any wait for a slot: a replica whose lease may have
-            # been handed over must not start another trigger.
-            if not self.lease.holds_lease():
-                logger.warning(
-                    "Skipped scheduled task without a current trigger lease",
-                    extra={"task_id": task_id, "owner_id": self.owner_id},
-                )
-                return
-            run_id = await start_scheduler_run(task_id, self.owner_id)
-            try:
-                result = await callback()
-            except asyncio.CancelledError:
-                await finish_scheduler_run(
-                    run_id,
-                    status="failed",
-                    error_message="Scheduler leadership ended while the task was running.",
-                )
-                raise
-            except Exception as exc:
-                await finish_scheduler_run(
-                    run_id,
-                    status="failed",
-                    error_message=f"{type(exc).__name__}: {exc}",
-                )
-                raise
-            outcome = (
-                result
-                if isinstance(result, ScheduledTaskOutcome)
-                else ScheduledTaskOutcome(summary="Completed")
+        # Fence at start: a replica whose lease may have been handed over
+        # must not start another trigger.
+        if not self.lease.holds_lease():
+            logger.warning(
+                "Skipped scheduled task without a current trigger lease",
+                extra={"task_id": task_id, "owner_id": self.owner_id},
             )
+            return
+        run_id = await start_scheduler_run(task_id, self.owner_id)
+        try:
+            result = await callback()
+        except asyncio.CancelledError:
             await finish_scheduler_run(
                 run_id,
-                status="enqueued" if outcome.platform_job_id else "succeeded",
-                summary=outcome.summary,
-                platform_job_id=outcome.platform_job_id,
+                status="failed",
+                error_message="Scheduler leadership ended while the task was running.",
             )
+            raise
+        except Exception as exc:
+            await finish_scheduler_run(
+                run_id,
+                status="failed",
+                error_message=f"{type(exc).__name__}: {exc}",
+            )
+            raise
+        outcome = (
+            result
+            if isinstance(result, ScheduledTaskOutcome)
+            else ScheduledTaskOutcome(summary="Completed")
+        )
+        await finish_scheduler_run(
+            run_id,
+            status="enqueued" if outcome.platform_job_id else "succeeded",
+            summary=outcome.summary,
+            platform_job_id=outcome.platform_job_id,
+        )
         await self._publish_task_states()
 
     async def _publish_task_states(self) -> None:
@@ -248,10 +244,14 @@ class ControlPlane:
             return
         scheduler = AsyncIOScheduler(timezone=timezone.utc)
         now = datetime.now(timezone.utc)
+        startup_slot = 0
         for definition in self._catalog:
             options: dict[str, Any] = dict(MISFIRE_OPTIONS)
             if definition.run_at_startup:
-                options["next_run_time"] = now
+                options["next_run_time"] = now + timedelta(
+                    seconds=startup_slot * STARTUP_STAGGER_SECONDS
+                )
+                startup_slot += 1
             scheduler.add_job(
                 self._run_scheduled_task,
                 build_trigger(definition),
@@ -349,7 +349,7 @@ class ControlPlane:
 
 
 __all__ = [
-    "CONTROL_TASK_CONCURRENCY",
+    "STARTUP_STAGGER_SECONDS",
     "ControlPlane",
     "LEADERSHIP_RENEW_SECONDS",
     "LEADERSHIP_RETRY_SECONDS",

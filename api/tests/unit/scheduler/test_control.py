@@ -9,7 +9,7 @@ import pytest
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from src.scheduler import control as control_module
-from src.scheduler.control import CONTROL_TASK_CONCURRENCY, ControlPlane
+from src.scheduler.control import STARTUP_STAGGER_SECONDS, ControlPlane
 from src.scheduler.registry import SCHEDULED_TASKS, ScheduledTaskDefinition
 
 
@@ -109,9 +109,14 @@ async def test_leader_installs_the_full_catalog(monkeypatch: pytest.MonkeyPatch)
         scheduler = control._scheduler
         assert scheduler is not None
         assert {job.id for job in scheduler.get_jobs()} == set(LEGACY_SCHEDULES)
-        startup = scheduler.get_job("execution_cleanup")
-        assert startup is not None
-        assert startup.next_run_time <= datetime.now(timezone.utc)
+        startup_ids = [task.task_id for task in SCHEDULED_TASKS if task.run_at_startup]
+        first_runs = sorted(scheduler.get_job(task_id).next_run_time for task_id in startup_ids)
+        # The startup burst is spread out, never deferred past a few seconds.
+        assert len(set(first_runs)) == len(first_runs)
+        assert (first_runs[-1] - first_runs[0]).total_seconds() == pytest.approx(
+            STARTUP_STAGGER_SECONDS * (len(first_runs) - 1)
+        )
+        assert first_runs[0] <= datetime.now(timezone.utc)
         deferred = scheduler.get_job("audit_archive")
         assert deferred is not None
         assert deferred.next_run_time.hour == 2 and deferred.next_run_time.minute == 30
@@ -218,32 +223,31 @@ async def test_callback_does_not_start_without_a_current_lease(
 
 
 @pytest.mark.asyncio
-async def test_scheduled_callbacks_share_a_bounded_number_of_slots(
+async def test_recurring_callbacks_are_not_throttled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A slow callback must not hold back another task's run: APScheduler
+    counts a waiting run as a running instance and would skip its next firing."""
     monkeypatch.setattr(control_module, "start_scheduler_run", AsyncMock())
     monkeypatch.setattr(control_module, "finish_scheduler_run", AsyncMock())
     lease = FakeLease()
     lease.is_leader = True
     control = _control(lease)
-    running = 0
-    peak = 0
     release = asyncio.Event()
+    running = 0
 
     async def callback() -> None:
-        nonlocal running, peak
+        nonlocal running
         running += 1
-        peak = max(peak, running)
         await release.wait()
-        running -= 1
 
     tasks = [
         asyncio.create_task(control._run_scheduled_task(f"task-{n}", callback))
-        for n in range(CONTROL_TASK_CONCURRENCY + 3)
+        for n in range(len(SCHEDULED_TASKS))
     ]
     for _ in range(10):
         await asyncio.sleep(0)
-    assert peak == CONTROL_TASK_CONCURRENCY
+    assert running == len(SCHEDULED_TASKS)
     release.set()
     await asyncio.gather(*tasks)
 

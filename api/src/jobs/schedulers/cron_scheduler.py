@@ -16,7 +16,9 @@ Occurrence semantics survive trigger-leader failover:
   several missed occurrences of one source coalesce into the latest. A cursor
   written by a leader whose clock runs ahead never narrows the window.
 - Every fired occurrence carries a unique ``occurrence_key`` (source + UTC
-  occurrence time), so two overlapping leaders cannot fire it twice.
+  occurrence time), so two overlapping leaders cannot fire it twice. An
+  unkeyed event at the same instant (fired by an older image during a
+  mixed-version rollout or rollback) also counts as fired.
 - Occurrences are computed in the source's timezone and keyed in UTC, so DST
   transitions neither merge nor duplicate distinct instants.
 """
@@ -248,6 +250,21 @@ async def process_schedule_sources() -> dict[str, Any]:
                             },
                         )
                         results["skipped_overlap"] = results.get("skipped_overlap", 0) + 1
+                        continue
+
+                    # A leader running an older image fires occurrences
+                    # without a key, which the unique index cannot see.
+                    if await db.scalar(
+                        sa.select(sa.exists().where(
+                            Event.event_source_id == source.id,
+                            Event.event_type == "schedule.fired",
+                            Event.received_at == scheduled_at_utc,
+                            Event.occurrence_key.is_(None),
+                        ))
+                    ):
+                        results["duplicates_skipped"] = (
+                            results.get("duplicates_skipped", 0) + 1
+                        )
                         continue
 
                     # Claim the occurrence. A conflict means another leader

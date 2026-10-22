@@ -14,34 +14,41 @@ class FakeControl:
     owner_id = "api-host:7"
 
     def __init__(self) -> None:
+        self.starts = 0
+        self.stops = 0
         self.started = asyncio.Event()
-        self.stop_calls = 0
 
     async def start(self) -> None:
+        self.starts += 1
         self.started.set()
 
     async def stop(self) -> None:
-        self.stop_calls += 1
+        self.stops += 1
 
 
 @pytest.fixture
 def gated(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    gate = asyncio.Event()
-    heartbeats: list[dict] = []
+    state = SimpleNamespace(gate=asyncio.Event(), failures=[], heartbeats=[])
 
     async def wait_for_schema(_engine: object) -> None:
-        await gate.wait()
+        if state.failures:
+            raise state.failures.pop(0)
+        await state.gate.wait()
 
     async def heartbeat(**kwargs) -> None:  # type: ignore[no-untyped-def]
-        heartbeats.append(kwargs)
+        state.heartbeats.append(kwargs)
         await kwargs["stop_event"].wait()
 
     monkeypatch.setattr(api_host, "wait_for_schema", wait_for_schema)
     monkeypatch.setattr(api_host, "get_engine", lambda: object())
     monkeypatch.setattr(api_host, "replica_heartbeat_loop", heartbeat)
-    removed = AsyncMock()
-    monkeypatch.setattr(api_host, "remove_scheduler_replica", removed)
-    return SimpleNamespace(gate=gate, heartbeats=heartbeats, removed=removed)
+    state.removed = AsyncMock()
+    monkeypatch.setattr(api_host, "remove_scheduler_replica", state.removed)
+    return state
+
+
+def _host(control: FakeControl) -> ApiControlHost:
+    return ApiControlHost(control_plane=control, restart_backoff_seconds=0.01)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
@@ -49,11 +56,11 @@ async def test_api_serves_before_control_joins_after_schema_gate(
     gated: SimpleNamespace,
 ) -> None:
     control = FakeControl()
-    host = ApiControlHost(control_plane=control)  # type: ignore[arg-type]
+    host = _host(control)
 
     await host.start()  # returns without waiting for the schema gate
     await asyncio.sleep(0.01)
-    assert not control.started.is_set()
+    assert control.starts == 0
 
     gated.gate.set()
     await asyncio.wait_for(control.started.wait(), timeout=1)
@@ -62,42 +69,79 @@ async def test_api_serves_before_control_joins_after_schema_gate(
     assert gated.heartbeats[0]["job_slots"] == API_CONTROL_JOB_SLOTS == 0
 
     await host.stop()
-    assert control.stop_calls == 1
+    assert control.stops == 1
     gated.removed.assert_awaited_once_with("api-host:7")
 
 
 @pytest.mark.asyncio
 async def test_shutdown_while_gated_never_starts_control(gated: SimpleNamespace) -> None:
     control = FakeControl()
-    host = ApiControlHost(control_plane=control)  # type: ignore[arg-type]
+    host = _host(control)
     await host.start()
-    await host.stop()
-    gated.gate.set()
+    await asyncio.sleep(0)
+    stopping = asyncio.create_task(host.stop())
     await asyncio.sleep(0.01)
+    gated.gate.set()
+    await stopping
 
-    assert not control.started.is_set()
-    gated.removed.assert_not_awaited()
+    assert control.starts == 0
 
 
 @pytest.mark.asyncio
-async def test_control_failure_gives_up_control_without_stopping_http(
+async def test_failed_startup_is_retried(gated: SimpleNamespace) -> None:
+    """A database blip at boot must not leave the replica without control."""
+    gated.failures.append(ConnectionError("database unavailable"))
+    gated.gate.set()
+    control = FakeControl()
+    host = _host(control)
+
+    await host.start()
+    await asyncio.wait_for(control.started.wait(), timeout=1)
+
+    assert control.starts == 1
+    await host.stop()
+
+
+@pytest.mark.asyncio
+async def test_control_failure_restarts_control_without_stopping_http(
     gated: SimpleNamespace,
 ) -> None:
-    host = ApiControlHost(control_plane=FakeControl())  # type: ignore[arg-type]
-    control = host.control
     gated.gate.set()
+    control = FakeControl()
+    host = _host(control)
     await host.start()
-    await asyncio.sleep(0.01)
+    await asyncio.wait_for(control.started.wait(), timeout=1)
 
+    control.started.clear()
     failed = asyncio.create_task(asyncio.sleep(0), name="control-leadership")
     await failed
     host._control_failed(failed)
-    assert host._failure_task is not None
-    await host._failure_task
+    await asyncio.wait_for(control.started.wait(), timeout=1)
 
-    assert control.stop_calls == 1  # type: ignore[attr-defined]
-    await host.stop()  # lifespan shutdown afterwards is a no-op
-    assert control.stop_calls == 1  # type: ignore[attr-defined]
+    # The failed generation was stopped (lease released) before restarting.
+    assert control.stops == 1
+    assert control.starts == 2
+    await host.stop()
+    assert control.stops == 2
+
+
+@pytest.mark.asyncio
+async def test_shutdown_waits_for_lease_release(gated: SimpleNamespace) -> None:
+    gated.gate.set()
+    released = asyncio.Event()
+
+    class SlowStop(FakeControl):
+        async def stop(self) -> None:
+            await asyncio.sleep(0.05)
+            released.set()
+
+    host = _host(SlowStop())
+    await host.start()
+    await asyncio.sleep(0.01)
+    await host.stop()
+
+    # The lifespan closes the database only after this returns.
+    assert released.is_set()
 
 
 @pytest.mark.asyncio

@@ -720,3 +720,22 @@ async def test_dst_repeated_wall_clock_hour_fires_distinct_instants(
         datetime(2026, 11, 1, 6, 30, tzinfo=timezone.utc),
     ]
     assert len({event.occurrence_key for event in events}) == 2
+
+
+@pytest.mark.asyncio
+async def test_occurrence_fired_by_an_older_leader_is_not_repeated(
+    db_session, processor_cursor
+):
+    """Mixed versions: an older image fires without an occurrence key."""
+    source = await _add_source(db_session, "5 * * * *")
+    processor_cursor.cursor_at = datetime(2026, 3, 2, 12, 1, tzinfo=timezone.utc)
+    legacy = _make_event(source.id)
+    legacy.received_at = datetime(2026, 3, 2, 12, 5, tzinfo=timezone.utc)
+    db_session.add(legacy)
+    await db_session.commit()
+
+    result = await _scan(db_session, datetime(2026, 3, 2, 12, 8, 10, tzinfo=timezone.utc))
+
+    events = await _events_for_source(db_session, source.id)
+    assert [event.id for event in events] == [legacy.id]
+    assert result["duplicates_skipped"] >= 1
