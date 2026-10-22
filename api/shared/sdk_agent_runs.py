@@ -92,10 +92,11 @@ class SdkAgentRunError(Exception):
 async def resolve_executable_agent(
     session: AsyncSession,
     *,
-    agent_name: str,
+    agent_name: str | None = None,
+    agent_id: UUID | None = None,
     principal: UserPrincipal,
 ) -> Agent:
-    """Resolve an agent by name and enforce solution execution availability.
+    """Resolve an agent by name or UUID and enforce execution availability.
 
     Case-insensitive name lookup; unknown names are 404. Once a candidate
     row is found by name, access is verified through the exact same
@@ -119,16 +120,21 @@ async def resolve_executable_agent(
     from src.models.orm.agents import Agent
     from src.models.orm.solutions import Solution
 
-    result = await session.execute(select(Agent.id).where(Agent.name.ilike(agent_name)))
-    agent_id = result.scalar_one_or_none()
+    if (agent_name is None) == (agent_id is None):
+        raise ValueError("Provide exactly one agent name or ID")
+    identity = agent_name if agent_name is not None else str(agent_id)
+    if agent_id is None:
+        assert agent_name is not None
+        result = await session.execute(select(Agent.id).where(Agent.name.ilike(agent_name)))
+        agent_id = result.scalar_one_or_none()
 
     if agent_id is None:
-        raise SdkAgentRunError(404, f"Agent '{agent_name}' not found")
+        raise SdkAgentRunError(404, f"Agent '{identity}' not found")
 
     agent = (await session.execute(select(Agent).where(Agent.id == agent_id))).scalar_one_or_none()
     caller = await load_caller(session, principal)
     if agent is None or not await can_read_agent(session, caller, agent):
-        raise SdkAgentRunError(404, f"Agent '{agent_name}' not found")
+        raise SdkAgentRunError(404, f"Agent '{identity}' not found")
 
     if agent.solution_id is not None:
         sol_result = await session.execute(
@@ -243,7 +249,8 @@ async def enqueue_sdk_agent_run(
     session: AsyncSession,
     principal: UserPrincipal,
     *,
-    agent_name: str,
+    agent_name: str | None = None,
+    agent_id: UUID | None = None,
     input_data: dict[str, Any] | None = None,
     output_schema: dict[str, Any] | None = None,
     run_as: UUID | None = None,
@@ -279,7 +286,9 @@ async def enqueue_sdk_agent_run(
             the agent belongs to an inactive Solution; a refused
             ``run_as``.
     """
-    agent = await resolve_executable_agent(session, agent_name=agent_name, principal=principal)
+    agent = await resolve_executable_agent(
+        session, agent_name=agent_name, agent_id=agent_id, principal=principal,
+    )
 
     if not agent.is_active:
         return PausedResponse(

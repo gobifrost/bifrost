@@ -767,6 +767,7 @@ async def update_agent(
             selectinload(Agent.mcp_connections),
         )
         .where(Agent.id == agent_id)
+        .execution_options(populate_existing=True)
     )
     agent = result.scalar_one()
 

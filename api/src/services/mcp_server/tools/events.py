@@ -432,28 +432,6 @@ TOOLS = [
 ]
 
 
-def register_tools(mcp: Any, get_context_fn: Any) -> None:
-    """Register all Event tools with FastMCP."""
-    from src.services.mcp_server.generators.fastmcp_generator import register_tool_with_context
-
-    tool_funcs = {
-        "bifrost_event_source_list": bifrost_event_source_list,
-        "bifrost_event_source_get": bifrost_event_source_get,
-        "bifrost_event_source_create": bifrost_event_source_create,
-        "bifrost_event_source_update": bifrost_event_source_update,
-        "bifrost_event_source_delete": bifrost_event_source_delete,
-        "bifrost_event_subscription_list": bifrost_event_subscription_list,
-        "bifrost_event_subscription_get": bifrost_event_subscription_get,
-        "bifrost_event_subscription_create": bifrost_event_subscription_create,
-        "bifrost_event_subscription_update": bifrost_event_subscription_update,
-        "bifrost_event_subscription_delete": bifrost_event_subscription_delete,
-        "bifrost_event_webhook_adapter_list": bifrost_event_webhook_adapter_list,
-    }
-
-    for tool_id, _name, description in TOOLS:
-        register_tool_with_context(mcp, tool_funcs[tool_id], tool_id, description, get_context_fn)
-
-
 __all__ = [
     "TOOLS",
     "bifrost_event_source_create",
@@ -467,5 +445,4 @@ __all__ = [
     "bifrost_event_subscription_list",
     "bifrost_event_subscription_update",
     "bifrost_event_webhook_adapter_list",
-    "register_tools",
 ]

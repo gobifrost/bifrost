@@ -154,8 +154,8 @@ class MCPGatewayExecuteRequest(BaseModel):
         default=None,
         alias="async",
         description=(
-            "Override the capability's default execution mode. When omitted, "
-            "delegations run asynchronously and other tools run synchronously."
+            "Run workflow tools asynchronously when true. "
+            "Tools run synchronously when omitted."
         ),
     )
 

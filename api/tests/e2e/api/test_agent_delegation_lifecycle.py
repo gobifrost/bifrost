@@ -25,11 +25,10 @@ from src.core.principal import UserPrincipal
 from src.models.orm.agents import Agent, AgentDelegation, Conversation
 from src.models.orm.agent_runs import AgentRun
 from src.services.agent_executor import AgentExecutor
-from src.services.agent_runtime.composition import _delegate_name
 from src.services.authorization.callers import load_human_caller
 from src.services.authorization.enforce import load_caller
 from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
-from src.services.llm.base import LLMConfig, ToolCallRequest
+from src.services.llm.base import LLMConfig
 from src.services.llm.pydantic_client import PydanticAIClient
 
 
@@ -193,11 +192,8 @@ async def test_chat_delegation_creates_terminal_run_with_conversation_and_caller
         ):
             outcome = await executor.run_delegation(
                 parent_agent=parent_agent,
-                tool_call=ToolCallRequest(
-                    id="tc1",
-                    name=f"delegate_to_{child['name'].lower().replace(' ', '_')}",
-                    arguments={"task": "Return a durable answer"},
-                ),
+                target_agent_id=UUID(child["id"]),
+                task="Return a durable answer",
                 conversation_id=conversation_id,
                 caller=caller,
                 acting_user_id=caller.principal.user_id,
@@ -368,11 +364,8 @@ async def test_delegation_timeout_persists_sanitized_partial_evidence(
         ):
             outcome = await AutonomousAgentExecutor(session_factory).run_delegation(
                 parent_agent=parent_agent,
-                tool_call=ToolCallRequest(
-                    id="timeout-call",
-                    name=f"delegate_to_{child['name'].lower().replace(' ', '_')}",
-                    arguments={"task": "Check the service"},
-                ),
+                target_agent_id=UUID(child["id"]),
+                task="Check the service",
                 caller=caller,
                 acting_user_id=caller.principal.user_id,
                 run_user_id=caller.ctx.user_id,
@@ -515,7 +508,7 @@ async def test_chat_executor_receives_durable_child_callback(
                 for item in conversation.agent.delegated_agents
                 if item.id == UUID(child["id"])
             )
-            parent_model = DelegatingTestModel(_delegate_name(delegated_child))
+            parent_model = DelegatingTestModel(delegated_child.id.hex)
 
             assert platform_admin.user_id is not None
             principal = UserPrincipal(

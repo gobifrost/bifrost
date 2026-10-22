@@ -28,7 +28,6 @@ from src.models.orm.agent_runs import AgentRun, AgentRunStep
 from src.models.orm.agents import Agent, AgentDelegation, AgentTool
 from src.services.agent_runtime.composition import (
     AgentCompositionError,
-    _delegate_name,
     build_agent_composition,
 )
 from src.services.authorization.enforce import load_caller
@@ -415,7 +414,7 @@ async def test_native_delegate_task_runs_a_transitive_child_without_a_middle_run
         )
         await db_session.commit()
         caller = await _load_runtime_caller(db_session, run_id)
-        parent_model = _NativeDelegationParentModel(_delegate_name(child_agent))
+        parent_model = _NativeDelegationParentModel(child_agent.id.hex)
         child_model = TestModel(
             custom_output_text="Durable native child result.",
             model_name="test-native-delegation-child",

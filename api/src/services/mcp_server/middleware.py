@@ -1,216 +1,59 @@
-"""
-MCP Tool Filter Middleware
-
-Exposes a stable discovery/dispatch gateway on the unscoped endpoint and
-filters the agent-scoped endpoint to the selected agent's native tools.
-
-When an agent_id is present in the ASGI scope (set by AgentScopeMCPMiddleware),
-the middleware preserves that agent's native tool surface.
-"""
-
-import logging
+"""Expose the same live gateway on global and agent-scoped MCP endpoints."""
 
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
-from src.services.mcp_server.agent_scope import (
-    get_scoped_agent_id as _get_agent_id_from_scope,
-)
+from src.services.mcp_server.agent_scope import get_scoped_agent_id
 from src.services.mcp_server.tools.gateway import GATEWAY_TOOL_NAMES
-
-logger = logging.getLogger(__name__)
 
 
 class ToolFilterMiddleware(Middleware):
-    """
-    FastMCP middleware for gateway and agent-scoped tool surfaces.
+    """Keep native tools private and enforce the selected agent's current ACL."""
 
-    The unscoped ``/mcp`` endpoint exposes only the stable gateway tools.
-    The ``/mcp/{agent_id}`` endpoint preserves the native per-agent tool
-    surface and its existing authorization checks.
-
-    It also blocks execution of tools the user doesn't have access to
-    as a second layer of protection.
-
-    When an agent_id is in the ASGI scope:
-    - on_list_tools: Returns only that agent's tools
-    - on_call_tool: Enforces access scoped to that agent's tools
-
-    When no agent_id is present:
-    - on_list_tools: Returns only the gateway tools
-    - on_call_tool: Rejects direct calls to hidden native tools
-    """
-
-    async def on_list_tools(
-        self, context: MiddlewareContext, call_next
-    ) -> list:
-        """
-        Filter tools/list response based on user permissions.
-
-        Args:
-            context: FastMCP middleware context
-            call_next: Next handler in the chain
-
-        Returns:
-            Filtered list of tools the user can access
-        """
-        # Get all tools first
-        all_tools = await call_next(context)
-
-        # Get authenticated user from token
-        token = get_access_token()
-        if token is None:
-            logger.warning("MCP tools/list: No authenticated user, returning empty list")
-            return []
-
-        user_email = token.claims.get("email", "unknown")
-
-        agent_id = _get_agent_id_from_scope()
+    async def _authorize_scope(self, *, for_execution: bool) -> None:
+        agent_id = get_scoped_agent_id()
         if agent_id is None:
-            filtered_tools = [
-                tool for tool in all_tools if tool.name in GATEWAY_TOOL_NAMES
-            ]
-            logger.info(
-                "MCP tools/list: Unscoped gateway returned %s tools for user %s",
-                len(filtered_tools),
-                user_email,
-            )
-            return filtered_tools
+            return
+        from shared.scope_resolver import shared_read_organization
+        from src.core.database import get_db_context
+        from src.services.authorization.enforce import require_named_permission
+        from src.services.mcp_server.gateway import MCPAgentGatewayService
+        from src.services.mcp_server.server import _get_context_from_token
 
-        logger.info(
-            f"MCP tools/list: Filtering for user {user_email}, "
-            f"agent_id={agent_id}"
-        )
-
-        # Get accessible tool IDs from service
+        context = _get_context_from_token()
+        context.scoped_agent_id = agent_id
+        service = MCPAgentGatewayService(context)
         try:
-            from src.core.database import get_db_context
-            from src.services.mcp_server.tool_access import MCPToolAccessService
-            from src.services.mcp_server.authorization import load_mcp_caller
-            from src.services.mcp_server.server import _get_context_from_token
-
-            async with get_db_context() as db:
-                service = MCPToolAccessService(db)
-
-                agent_result = await service.get_tools_for_agent(
-                    agent_id=agent_id,
-                    caller=await load_mcp_caller(db, _get_context_from_token()),
-                )
-                if agent_result is None:
-                    logger.warning(
-                        f"MCP tools/list: Agent {agent_id} not found or access denied "
-                        f"for user {user_email}"
+            snapshot = await service.get_agent_snapshot(str(agent_id))
+            if for_execution:
+                async with get_db_context() as db:
+                    caller = await service._caller(db)
+                    require_named_permission(
+                        caller,
+                        "agents.execute",
+                        shared_read_organization(caller, snapshot.agent.organization_id),
                     )
-                    return []
-                accessible_ids = {t.id for t in agent_result.tools}
+        except Exception as exc:
+            raise ToolError("Agent not found or you do not have permission") from exc
 
-            # Filter to only accessible tools
-            filtered_tools = [
-                tool for tool in all_tools
-                if tool.name in accessible_ids
-            ]
-
-            logger.info(
-                f"MCP tools/list: Filtered {len(all_tools)} -> {len(filtered_tools)} tools "
-                f"for user {user_email}"
-            )
-
-            return filtered_tools
-
-        except Exception as e:
-            logger.exception(f"MCP tools/list: Error filtering tools: {e}")
-            # On error, return empty list for security
+    async def on_list_tools(self, context: MiddlewareContext, call_next) -> list:
+        if get_access_token() is None:
             return []
-
-    async def on_call_tool(
-        self, context: MiddlewareContext, call_next
-    ):
-        """
-        Block execution of tools user doesn't have access to.
-
-        This is a second layer of protection in case someone tries to
-        call a tool directly without going through tools/list.
-
-        Args:
-            context: FastMCP middleware context
-            call_next: Next handler in the chain
-
-        Returns:
-            Tool execution result if authorized
-
-        Raises:
-            ToolError: If user doesn't have access to the tool
-        """
-        tool_name = context.message.name
-
-        # Get authenticated user from token
-        token = get_access_token()
-        if token is None:
-            raise ToolError("Authentication required to call tools")
-
-        user_email = token.claims.get("email", "unknown")
-
-        agent_id = _get_agent_id_from_scope()
-        if agent_id is None:
-            if tool_name not in GATEWAY_TOOL_NAMES:
-                logger.warning(
-                    "MCP tools/call: Unscoped endpoint denied hidden tool '%s' "
-                    "for user %s",
-                    tool_name,
-                    user_email,
-                )
-                raise ToolError(
-                    f"Tool '{tool_name}' is not available on the unscoped MCP "
-                    "endpoint. Use the Bifrost agent gateway tools."
-                )
-            logger.info(
-                "MCP tools/call: Unscoped gateway authorized '%s' for user %s",
-                tool_name,
-                user_email,
-            )
-            return await call_next(context)
-
-
-        # Check if user has access to this tool
         try:
-            from src.core.database import get_db_context
-            from src.services.mcp_server.tool_access import MCPToolAccessService
-            from src.services.mcp_server.authorization import load_mcp_caller
-            from src.services.mcp_server.server import _get_context_from_token
-
-            async with get_db_context() as db:
-                service = MCPToolAccessService(db)
-
-                agent_result = await service.get_tools_for_agent(
-                    agent_id=agent_id,
-                    caller=await load_mcp_caller(db, _get_context_from_token()),
-                    for_execution=True,
-                )
-                if agent_result is None:
-                    raise ToolError(
-                        "Access denied: Agent not found or you don't have permission"
-                    )
-                accessible_ids = {t.id for t in agent_result.tools}
-
-            if tool_name not in accessible_ids:
-                logger.warning(
-                    f"MCP tools/call: Access denied for user {user_email} "
-                    f"to tool '{tool_name}'"
-                )
-                raise ToolError(
-                    f"Access denied: You don't have permission to use '{tool_name}'"
-                )
-
-            logger.info(
-                f"MCP tools/call: User {user_email} authorized to call '{tool_name}'"
-            )
-
+            await self._authorize_scope(for_execution=False)
         except ToolError:
-            raise
-        except Exception as e:
-            logger.exception(f"MCP tools/call: Error checking access: {e}")
-            raise ToolError(f"Authorization check failed: {e}")
+            return []
+        tools = await call_next(context)
+        return [tool for tool in tools if tool.name in GATEWAY_TOOL_NAMES]
 
-        # User is authorized, proceed with tool call
+    async def on_call_tool(self, context: MiddlewareContext, call_next):
+        if get_access_token() is None:
+            raise ToolError("Authentication required to call tools")
+        name = context.message.name
+        if name not in GATEWAY_TOOL_NAMES:
+            raise ToolError(
+                f"Tool '{name}' is not available. Use the Bifrost agent gateway tools."
+            )
+        await self._authorize_scope(for_execution=True)
         return await call_next(context)

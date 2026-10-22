@@ -70,16 +70,16 @@ run's input, and the run's output. Produce a JSON object with:
     tool_call/tool_response entries, or implied by the agent's output),
     EVERY tool name you mention in `did` MUST be wrapped in square
     brackets. Use the exact machine-readable tool name from the run's
-    tool_call steps (e.g. `ai_ticketing_get_ticket_details`,
-    `delegate_to_security_subagent`), NOT a friendly paraphrase. The
+    tool_call steps (e.g. `halopsa_get_ticket_details`,
+    `delegate_task`), NOT a friendly paraphrase. The
     brackets are required syntax — the UI renders them as clickable chips.
 
     GOOD example (markers present, tool names exact):
-      "I pulled the ticket via [ai_ticketing_get_ticket_details], saw the
+      "I pulled the ticket via [halopsa_get_ticket_details], saw the
       EOL alert came from a Windows 2012 R2 host, then delegated to
-      [delegate_to_security_subagent] which recommended an in-place
+      [delegate_task] which recommended an in-place
       upgrade. Wrote the categorization back with
-      [ai_ticketing_update_ticket]."
+      [halopsa_update_ticket]."
 
     BAD example (markers MISSING — do not do this):
       "I pulled the ticket details, saw the alert came from a 2012 R2

@@ -1,6 +1,6 @@
 """MCP agent queries use the current Caller reach in the SQL predicate."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -8,6 +8,7 @@ import pytest
 from src.core.principal import UserPrincipal
 from src.services.authorization.context import AuthorizationContext
 from src.services.authorization.enforce import Caller
+from src.services.mcp_server.config_service import MCPConfig
 from src.services.mcp_server.tool_access import MCPToolAccessService
 from tests.helpers.authorization import admin_caller
 
@@ -20,6 +21,13 @@ def session():
     result.scalars.return_value.unique.return_value.all.return_value = []
     value.execute.return_value = result
     return value
+
+
+@pytest.fixture(autouse=True)
+def config_service():
+    with patch("src.services.mcp_server.tool_access.MCPConfigService") as service:
+        service.return_value.get_config = AsyncMock(return_value=MCPConfig())
+        yield service
 
 
 def _caller(*, external: bool = False) -> Caller:
@@ -58,36 +66,19 @@ def _executed_sql(session) -> str:
 
 
 @pytest.mark.asyncio
-class TestAccessibleAgentsOrgScope:
+class TestAccessibleToolsOrgScope:
     async def test_regular_user_query_is_org_scoped(self, session):
-        await MCPToolAccessService(session)._get_accessible_agents(_caller())
+        await MCPToolAccessService(session).get_accessible_tools(_caller())
         sql = _executed_sql(session)
         assert "organization_id" in sql
         assert "IS NULL" in sql
 
     async def test_external_user_query_keeps_normal_cascade(self, session):
-        await MCPToolAccessService(session)._get_accessible_agents(_caller(external=True))
+        await MCPToolAccessService(session).get_accessible_tools(_caller(external=True))
         sql = _executed_sql(session)
         assert "organization_id" in sql
         assert "IS NULL" in sql
 
     async def test_platform_admin_query_is_unscoped(self, session):
-        await MCPToolAccessService(session)._get_accessible_agents(admin_caller())
+        await MCPToolAccessService(session).get_accessible_tools(admin_caller())
         assert "organization_id" not in _executed_sql(session)
-
-
-@pytest.mark.asyncio
-class TestGetToolsForAgentByIdOrgScope:
-    async def test_regular_user_by_id_query_is_org_scoped(self, session):
-        await MCPToolAccessService(session).get_tools_for_agent(uuid4(), _caller())
-        sql = _executed_sql(session)
-        assert "organization_id" in sql
-        assert "IS NULL" in sql
-
-    async def test_external_user_by_id_query_keeps_normal_cascade(self, session):
-        await MCPToolAccessService(session).get_tools_for_agent(
-            uuid4(), _caller(external=True)
-        )
-        sql = _executed_sql(session)
-        assert "organization_id" in sql
-        assert "IS NULL" in sql

@@ -861,18 +861,7 @@ async def register_workflow(
         },
     )
 
-    # Commit before refreshing MCP tools. refresh_workflow_tools() opens its
-    # own session via get_db_context(), and at READ COMMITTED it cannot see
-    # this request's still-uncommitted INSERT — leaving the freshly-registered
-    # workflow missing from FastMCP's in-memory registry until the next API
-    # restart. update_workflow / delete_workflow already follow this pattern.
     await db.commit()
-
-    try:
-        from src.services.mcp_server.server import refresh_workflow_tools
-        await refresh_workflow_tools()
-    except Exception as e:
-        logger.warning(f"Failed to refresh MCP workflow tools: {e}")
 
     return RegisterWorkflowResponse(
         id=str(workflow.id),
@@ -1161,13 +1150,6 @@ async def update_workflow(
             await redis_client.invalidate_workflow_metadata_cache(str(workflow.id))
         except Exception as e:
             logger.warning(f"Failed to invalidate caches for workflow {log_safe(workflow.name)}: {e}")
-
-        # Refresh MCP tool registry so updated signatures appear immediately
-        try:
-            from src.services.mcp_server.server import refresh_workflow_tools
-            await refresh_workflow_tools()
-        except Exception as e:
-            logger.warning(f"Failed to refresh MCP workflow tools: {e}")
 
         logger.info(f"Updated workflow '{log_safe(workflow.name)}' organization_id={log_safe(workflow.organization_id)}, access_level={log_safe(workflow.access_level)}")
         await emit_audit(
@@ -2017,12 +1999,5 @@ async def delete_workflow(
         details={"name": workflow.name, "path": workflow.path},
     )
     await db.commit()
-
-    # Refresh MCP tool registry so deleted tools disappear immediately
-    try:
-        from src.services.mcp_server.server import refresh_workflow_tools
-        await refresh_workflow_tools()
-    except Exception as e:
-        logger.warning(f"Failed to refresh MCP workflow tools: {e}")
 
     return {"status": "deleted", "detail": f"Workflow '{workflow.name}' has been removed"}

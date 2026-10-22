@@ -1,7 +1,7 @@
 """
 MCP System Tools
 
-Each module provides a register_tools(mcp, get_context_fn) function.
+Modules provide the internal system-tool definitions used by agent execution.
 """
 
 from src.services.mcp_server.tools import (
@@ -50,12 +50,6 @@ TOOL_MODULES = [
 ]
 
 
-def register_all_tools(mcp, get_context_fn) -> None:
-    """Register all system tools with FastMCP."""
-    for module in TOOL_MODULES:
-        module.register_tools(mcp, get_context_fn)
-
-
 def register_gateway_tools(mcp, get_context_fn) -> None:
-    """Register stable discovery/dispatch tools for the unscoped endpoint."""
+    """Register stable discovery/dispatch tools for both MCP endpoints."""
     gateway.register_tools(mcp, get_context_fn)

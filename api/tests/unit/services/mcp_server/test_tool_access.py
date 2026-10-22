@@ -42,7 +42,7 @@ def _caller(*, configuration=False, actor_admin=False):
 
 def _agent(caller, *, tools=(), namespaces=(), workflows=(), organization_id=...):
     return SimpleNamespace(
-        id=uuid4(), name="Contoso Agent", access_level=AgentAccessLevel.AUTHENTICATED,
+        id=uuid4(), name="Contoso Agent", description=None, access_level=AgentAccessLevel.AUTHENTICATED,
         organization_id=caller.ctx.home_organization_id if organization_id is ... else organization_id,
         owner_user_id=None, is_active=True, system_tools=list(tools),
         knowledge_sources=list(namespaces), tools=list(workflows),
@@ -69,8 +69,7 @@ async def test_knowledge_tool_matches_native_agent_injection(namespaces, explici
     caller = _caller()
     agent = _agent(caller, tools=["search_knowledge"] if explicit else [], namespaces=namespaces)
     service = MCPToolAccessService(_session([agent]))
-    result = await service.get_tools_for_agent(agent.id, caller)
-    assert result is not None
+    result = await service.get_accessible_tools(caller)
     assert sum(tool.id == "search_knowledge" for tool in result.tools) == expected
 
 
@@ -95,7 +94,8 @@ async def test_actor_admin_fact_does_not_expose_a_foreign_agent():
     agent = _agent(caller, tools=["bifrost_workflow_list"], organization_id=uuid4())
     session = _session([agent])
     service = MCPToolAccessService(session)
-    assert await service.get_tools_for_agent(agent.id, caller) is None
+    result = await service.get_accessible_tools(caller)
+    assert result.tools == []
     query = session.execute.await_args.args[0].compile()
     assert caller.ctx.home_organization_id in [item for value in query.params.values() if isinstance(value, list) for item in value]
 
@@ -105,8 +105,7 @@ async def test_shared_global_agent_remains_visible_at_home():
     caller = _caller()
     agent = _agent(caller, tools=["bifrost_workflow_list"], organization_id=None)
     service = MCPToolAccessService(_session([agent]))
-    result = await service.get_tools_for_agent(agent.id, caller)
-    assert result is not None
+    result = await service.get_accessible_tools(caller)
     assert [tool.id for tool in result.tools] == ["bifrost_workflow_list"]
 
 
@@ -124,9 +123,9 @@ async def test_role_acl_uses_original_user_id_instead_of_actor_roles(has_role):
     acl_result.scalar_one_or_none.return_value = agent.id if has_role else None
     session.execute.side_effect = [session.execute.return_value, role_result, acl_result]
 
-    result = await MCPToolAccessService(session).get_tools_for_agent(agent.id, caller)
+    result = await MCPToolAccessService(session).get_accessible_tools(caller)
 
-    assert (result is not None) is has_role
+    assert bool(result.tools) is has_role
     query = session.execute.await_args_list[1].args[0].compile()
     assert caller.ctx.user_id in query.params.values()
     assert caller.principal.user_id not in query.params.values()
@@ -141,6 +140,19 @@ async def test_configuration_inventory_needs_named_global_permission():
         await service.get_accessible_tools(caller, for_configuration=True)
     assert error.value.status_code == 403
     session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_configuration_inventory_includes_reachable_agent_invocations():
+    caller = _caller(configuration=True)
+    agent = _agent(caller)
+    agent.description = "Handles Contoso operations"
+    result = await MCPToolAccessService(_session([agent])).get_accessible_tools(
+        caller, for_configuration=True
+    )
+    assert [(tool.id, tool.name, tool.description, tool.type) for tool in result.tools] == [
+        (str(agent.id), "Run Contoso Agent", "Handles Contoso operations", "agent")
+    ]
 
 
 @pytest.mark.asyncio
@@ -164,26 +176,9 @@ async def test_system_tools_are_deduplicated_and_unknown_metadata_is_preserved()
 
 
 @pytest.mark.parametrize("allowed,blocked,expected", [
-    (None, [], ["a", "b"]), (["a"], [], ["a"]), (["a", "b"], ["a"], ["b"]),
+    (None, [], ["a", "b"]), ([], [], []), (["a"], [], ["a"]), (["a", "b"], ["a"], ["b"]),
 ])
 def test_config_allow_and_block_lists(allowed, blocked, expected):
     tools = [ToolInfo(id=value, name=value, description="", type="system") for value in ["a", "b"]]
     result = MCPToolAccessService(None)._apply_config_filters(tools, MCPConfig(allowed_tool_ids=allowed, blocked_tool_ids=blocked))
     assert [tool.id for tool in result] == expected
-
-
-@pytest.mark.asyncio
-async def test_readable_agent_requires_named_execute_permission_to_call_tools():
-    caller = _caller()
-    caller = Caller(caller.principal, AuthorizationContext(
-        user_id=caller.ctx.user_id, home_organization_id=caller.ctx.home_organization_id,
-        base_role_id=USER_ROLE_ID, is_external=False,
-        base_permissions=frozenset({"agents.readbasic"}),
-    ))
-    caller.principal.runtime_authority = None
-    agent = _agent(caller, tools=["bifrost_workflow_list"])
-    service = MCPToolAccessService(_session([agent]))
-    assert await service.get_tools_for_agent(agent.id, caller) is not None
-    with pytest.raises(HTTPException) as error:
-        await service.get_tools_for_agent(agent.id, caller, for_execution=True)
-    assert error.value.status_code == 403

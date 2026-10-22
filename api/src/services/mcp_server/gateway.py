@@ -1,4 +1,4 @@
-"""Live agent discovery and tool dispatch for the unscoped MCP gateway."""
+"""Live agent discovery and dispatch for global and agent-scoped MCP gateways."""
 
 from __future__ import annotations
 
@@ -13,13 +13,11 @@ import pydantic_core
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from shared.run_lineage import RunLineage
 from src.models.orm.agents import Agent
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.executions import Execution
 from src.models.orm.external_mcp import MCPConnection, MCPServer
 from src.services.execution.agent_helpers import (
-    find_delegated_agent,
     parse_mcp_tool_name,
     resolve_agent_tools,
 )
@@ -51,7 +49,6 @@ GatewayToolSource = Literal[
     "system",
     "knowledge",
     "workflow",
-    "delegation",
     "external_mcp",
 ]
 DiscoveryScope = Literal["accessible", "all"]
@@ -100,8 +97,8 @@ class ResolvedGatewayTool:
             "name": self.definition.name,
             "description": self.definition.description,
             "source": self.source,
-            "supports_async": self.source in {"workflow", "delegation"},
-            "default_async": self.source == "delegation",
+            "supports_async": self.source == "workflow",
+            "default_async": False,
         }
 
 
@@ -235,6 +232,93 @@ class MCPAgentGatewayService:
 
     def __init__(self, context: MCPContext):
         self.context = context
+        self._scope_ids: set[UUID] | None = None
+
+    async def _approved_agents(self, db, root_id: UUID) -> dict[UUID, Agent]:
+        """Resolve a live graph using the same edge and caller rules as runtime."""
+        from src.services.agent_runtime.graph import MAX_COMPOSITION_DEPTH, load_approved_child
+        from src.services.agent_write_policy import agent_query_in_reach, can_read_agent
+
+        caller = await self._caller(db)
+        root = (
+            await db.execute(
+                agent_query_in_reach(caller)
+                .options(
+                    selectinload(Agent.roles), selectinload(Agent.tools),
+                    selectinload(Agent.mcp_connections), selectinload(Agent.delegated_agents),
+                )
+                .where(Agent.id == root_id, Agent.is_active.is_(True))
+            )
+        ).scalars().unique().first()
+        if root is None or not await can_read_agent(db, caller, root):
+            raise GatewayError("AGENT_NOT_FOUND_OR_FORBIDDEN", "Agent not found or you do not have access.")
+        agents = {root.id: root}
+        queue = [(root, 0)]
+        while queue:
+            parent, depth = queue.pop(0)
+            if depth >= MAX_COMPOSITION_DEPTH:
+                continue
+            for candidate in parent.delegated_agents:
+                if candidate.id in agents:
+                    continue
+                child = await load_approved_child(db, parent=parent, child_id=candidate.id)
+                if child is not None and await can_read_agent(db, caller, child):
+                    agents[child.id] = child
+                    queue.append((child, depth + 1))
+        return agents
+
+    async def _scoped_agent_ids(self, db) -> set[UUID] | None:
+        """Resolve this request's live endpoint boundary through approved edges."""
+        if self.context.scoped_agent_id is None:
+            return None
+        if self._scope_ids is None:
+            self._scope_ids = set(await self._approved_agents(db, self.context.scoped_agent_id))
+        return self._scope_ids
+
+    async def authorize_agent_invocation(self, agent_id: UUID) -> None:
+        """Keep whole-agent execution from bypassing MCP tool restrictions."""
+        from src.core.database import get_db_context
+
+        await self.get_agent_snapshot(str(agent_id))
+        async with get_db_context() as db:
+            config = await MCPConfigService(db).get_config()
+            blocked = set(config.blocked_tool_ids or [])
+            if str(agent_id) in blocked or (
+                config.allowed_tool_ids is not None
+                and str(agent_id) not in config.allowed_tool_ids
+            ):
+                raise GatewayError(
+                    "AUTHORIZATION_FORBIDDEN",
+                    "Agent invocation is not allowed by the MCP configuration.",
+                )
+            if not blocked:
+                return
+            graph = await self._approved_agents(db, agent_id)
+            for agent in graph.values():
+                # An agent's configured Run As identity can have OAuth tools
+                # absent from the external caller's planning catalog. Check
+                # declared bindings before resolving that caller's tool schemas.
+                bound_ids = {
+                    str(binding.id) for binding in (*agent.tools, *agent.mcp_connections)
+                } | set(agent.system_tools or []) | {str(agent.id)}
+                if agent.knowledge_sources:
+                    bound_ids.add("search_knowledge")
+                if bound_ids & blocked:
+                    raise GatewayError(
+                        "AUTHORIZATION_FORBIDDEN",
+                        "This agent can use a blocked MCP capability. Use an individually allowed tool instead.",
+                    )
+                definitions, id_map = await resolve_agent_tools(
+                    agent, db, caller_user_id=UUID(str(self.context.user_id)),
+                )
+                tools = self._resolve_gateway_tools(agent, definitions, id_map, MCPConfig())
+                if any(
+                    {tool.definition.name, str(tool.source_id)} & blocked for tool in tools
+                ):
+                    raise GatewayError(
+                        "AUTHORIZATION_FORBIDDEN",
+                        "This agent can use a blocked MCP capability. Use an individually allowed tool instead.",
+                    )
 
     async def _caller(self, db):
         from src.services.mcp_server.authorization import MCPAuthorizationError, load_mcp_caller
@@ -252,10 +336,13 @@ class MCPAgentGatewayService:
 
         async with get_db_context() as db:
             caller = await self._caller(db)
+            scope_ids = await self._scoped_agent_ids(db)
             query = agent_query_in_reach(caller).options(
                 selectinload(Agent.roles), selectinload(Agent.tools),
                 selectinload(Agent.delegated_agents),
             ).where(Agent.is_active.is_(True))
+            if scope_ids is not None:
+                query = query.where(Agent.id.in_(scope_ids))
             if not all_scopes:
                 selected_org = resolve_effective_scope(caller=caller)
                 query = query.where(or_(
@@ -481,8 +568,8 @@ class MCPAgentGatewayService:
             "name": tool.definition.name,
             "description": _compact_description(tool.definition.description) or "",
             "source": tool.source,
-            "supports_async": tool.source in {"workflow", "delegation"},
-            "default_async": tool.source == "delegation",
+            "supports_async": tool.source == "workflow",
+            "default_async": False,
             "input_schema": None,
             "schema_included": False,
         }
@@ -561,6 +648,9 @@ class MCPAgentGatewayService:
             from src.services.agent_write_policy import agent_query_in_reach, can_read_agent
 
             caller = await self._caller(db)
+            scope_ids = await self._scoped_agent_ids(db)
+            if scope_ids is not None and parsed_agent_id not in scope_ids:
+                raise GatewayError("AGENT_NOT_FOUND_OR_FORBIDDEN", "Agent not found or you do not have access.")
             result = await db.execute(
                 agent_query_in_reach(caller).options(
                     selectinload(Agent.roles), selectinload(Agent.tools),
@@ -581,6 +671,16 @@ class MCPAgentGatewayService:
             )
             config = await MCPConfigService(db).get_config()
             tools = self._resolve_gateway_tools(agent, definitions, id_map, config)
+            from src.services.mcp_server.tool_access import MCPToolAccessService
+
+            visible_workflow_ids = {
+                UUID(tool.id)
+                for tool in MCPToolAccessService.visible_workflows_for_agent(agent, caller, set())
+            }
+            tools = [
+                tool for tool in tools
+                if tool.source != "workflow" or tool.source_id in visible_workflow_ids
+            ]
 
         return AgentToolSnapshot(agent=agent, tools=tools)
 
@@ -591,12 +691,10 @@ class MCPAgentGatewayService:
         arguments: dict[str, Any],
         *,
         async_execution: bool | None = None,
-        lineage: RunLineage | None,
     ) -> dict[str, Any]:
         """Re-resolve, validate, and execute an agent-bound tool.
 
-        ``lineage`` is the caller's (shared.run_lineage.principal_lineage);
-        workflow and delegation tools run with it.
+        The shared workflow gate records the authenticated caller's lineage.
         """
         snapshot = await self.get_agent_snapshot(agent_id)
         tool = self.find_tool(snapshot, tool_ref)
@@ -620,7 +718,6 @@ class MCPAgentGatewayService:
             tool,
             arguments,
             async_execution=async_execution,
-            lineage=lineage,
         )
 
     async def get_execution(
@@ -648,6 +745,7 @@ class MCPAgentGatewayService:
         pending = None
         async with get_db_context() as db:
             caller = await self._caller(db)
+            scope_ids = await self._scoped_agent_ids(db)
             result = await db.execute(
                 select(Execution).where(Execution.id == parsed_execution_id)
             )
@@ -664,6 +762,22 @@ class MCPAgentGatewayService:
 
             if execution is None and agent_run is None:
                 pending, _ = await get_pending_execution_fallback(parsed_execution_id, caller, db)
+
+            if scope_ids is not None:
+                from src.models.orm.agents import AgentTool
+
+                if agent_run is not None and agent_run.agent_id not in scope_ids:
+                    raise GatewayError("EXECUTION_NOT_FOUND_OR_FORBIDDEN", "Execution not found or you do not have access.")
+                if execution is not None or pending is not None:
+                    workflow_id = execution.workflow_id if execution is not None else pending.workflow_id
+                    allowed = await db.scalar(
+                        select(AgentTool.workflow_id).where(
+                            AgentTool.agent_id.in_(scope_ids),
+                            AgentTool.workflow_id == workflow_id,
+                        ).limit(1)
+                    )
+                    if allowed is None:
+                        raise GatewayError("EXECUTION_NOT_FOUND_OR_FORBIDDEN", "Execution not found or you do not have access.")
 
         if execution is not None:
             if not execution_read_access(caller, execution).visible:
@@ -938,28 +1052,22 @@ class MCPAgentGatewayService:
                 source = "system"
                 source_identity = f"system:{definition.name}"
             else:
-                delegated = find_delegated_agent(agent, definition.name)
-                if delegated is not None:
-                    source = "delegation"
-                    source_id = delegated.id
-                    source_identity = f"delegation:{delegated.id}"
-                else:
-                    workflow_id = id_map.get(definition.name)
-                    if workflow_id is None:
-                        logger.warning(
-                            "Gateway could not classify resolved tool %s for agent %s",
-                            definition.name,
-                            agent.id,
-                        )
-                        continue
-                    source = "workflow"
-                    source_id = workflow_id
-                    source_identity = f"workflow:{workflow_id}"
+                workflow_id = id_map.get(definition.name)
+                if workflow_id is None:
+                    logger.warning(
+                        "Gateway could not classify resolved tool %s for agent %s",
+                        definition.name,
+                        agent.id,
+                    )
+                    continue
+                source = "workflow"
+                source_id = workflow_id
+                source_identity = f"workflow:{workflow_id}"
 
             filter_ids = {definition.name}
             if source_id is not None:
                 filter_ids.add(str(source_id))
-            if config.allowed_tool_ids and not (
+            if config.allowed_tool_ids is not None and not (
                 filter_ids & set(config.allowed_tool_ids)
             ):
                 continue
@@ -1044,21 +1152,16 @@ class MCPAgentGatewayService:
         arguments: dict[str, Any],
         *,
         async_execution: bool | None = None,
-        lineage: RunLineage | None,
     ) -> dict[str, Any]:
         started = time.monotonic()
-        resolved_async = (
-            tool.source == "delegation"
-            if async_execution is None
-            else async_execution
-        )
+        resolved_async = async_execution is True
 
         try:
             self.validate_arguments(tool, arguments)
-            if resolved_async and tool.source not in {"workflow", "delegation"}:
+            if resolved_async and tool.source != "workflow":
                 raise GatewayError(
                     "ASYNC_NOT_SUPPORTED",
-                    "Async execution is supported only for workflow and delegation tools.",
+                    "Async execution is supported only for workflow tools.",
                     retryable=True,
                 )
             result = await self._dispatch(
@@ -1066,7 +1169,6 @@ class MCPAgentGatewayService:
                 tool,
                 arguments,
                 async_execution=resolved_async,
-                lineage=lineage,
             )
         except GatewayError as exc:
             duration_ms = int((time.monotonic() - started) * 1000)
@@ -1140,7 +1242,6 @@ class MCPAgentGatewayService:
         arguments: dict[str, Any],
         *,
         async_execution: bool = False,
-        lineage: RunLineage | None,
     ) -> Any:
         if tool.source in {"system", "knowledge"}:
             return await self._dispatch_system_tool(agent, tool, arguments)
@@ -1150,14 +1251,6 @@ class MCPAgentGatewayService:
                 tool,
                 arguments,
                 async_execution=async_execution,
-            )
-        if tool.source == "delegation":
-            return await self._dispatch_delegation(
-                agent,
-                tool,
-                arguments,
-                async_execution=async_execution,
-                lineage=lineage,
             )
         if tool.source == "external_mcp":
             return await self._dispatch_external_mcp(tool, arguments)
@@ -1262,103 +1355,6 @@ class MCPAgentGatewayService:
                 details={"underlying_result": data},
             )
         return response.result
-
-    async def _dispatch_delegation(
-        self,
-        agent: Agent,
-        tool: ResolvedGatewayTool,
-        arguments: dict[str, Any],
-        *,
-        async_execution: bool = False,
-        lineage: RunLineage | None,
-    ) -> Any:
-        from src.core.database import get_db_context
-        from src.services.execution.agent_run_service import (
-            enqueue_agent_run,
-            wait_for_agent_run_result,
-        )
-
-        if tool.source_id is None:
-            raise GatewayError(
-                "TOOL_EXECUTION_FAILED",
-                "Delegated agent identity is missing.",
-            )
-        task = arguments.get("task")
-        if not isinstance(task, str) or not task.strip():
-            raise GatewayError(
-                "INVALID_ARGUMENTS",
-                "Delegation requires a non-empty task.",
-                retryable=True,
-            )
-
-        async with get_db_context() as db:
-            from shared.scope_resolver import shared_read_organization
-            from src.services.agent_write_policy import agent_query_in_reach
-            from src.services.authorization.enforce import PermissionDenied, require_named_permission
-
-            caller = await self._caller(db)
-            result = await db.execute(
-                agent_query_in_reach(caller).where(Agent.id == tool.source_id)
-            )
-            delegated = result.scalar_one_or_none()
-            if delegated is not None:
-                try:
-                    require_named_permission(
-                        caller, "agents.execute",
-                        shared_read_organization(caller, delegated.organization_id),
-                    )
-                except PermissionDenied as exc:
-                    raise GatewayError("AUTHORIZATION_FORBIDDEN", exc.detail) from exc
-        if delegated is None or not delegated.is_active:
-            raise GatewayError(
-                "TOOL_NOT_FOUND_OR_FORBIDDEN",
-                "Delegated agent is no longer available.",
-                retryable=True,
-            )
-
-        run_id = await enqueue_agent_run(
-            agent_id=str(delegated.id),
-            trigger_type="delegation",
-            trigger_source=f"mcp_gateway:{agent.id}",
-            input_data={"task": task, "_delegated_from": agent.name},
-            org_id=(
-                str(delegated.organization_id)
-                if delegated.organization_id
-                else None
-            ),
-            caller_user_id=str(self.context.user_id),
-            caller_email=self.context.user_email,
-            caller_name=self.context.user_name,
-            caller_is_superuser=self.context.is_platform_admin,
-            caller_is_external=self.context.is_external,
-            caller_is_provider_org=self.context.is_provider_org,
-            sync=not async_execution,
-            lineage=lineage,
-        )
-        if async_execution:
-            return {
-                "execution_id": run_id,
-                "execution_type": "agent_run",
-                "status": "Pending",
-            }
-
-        result = await wait_for_agent_run_result(
-            run_id,
-            timeout=delegated.max_run_timeout or 1800,
-        )
-        if result is None:
-            raise GatewayError(
-                "TOOL_EXECUTION_FAILED",
-                "Delegated agent execution timed out while waiting for a result.",
-                details={"execution_id": run_id},
-            )
-        if result.get("status") == "failed":
-            raise GatewayError(
-                "TOOL_EXECUTION_FAILED",
-                str(result.get("error") or "Delegated agent execution failed."),
-                details={"execution_id": run_id, "underlying_result": result},
-            )
-        return result
 
     async def _dispatch_external_mcp(
         self,

@@ -174,32 +174,11 @@ TOOLS = [
 ]
 
 
-def register_tools(mcp: Any, get_context_fn: Any) -> None:
-    """Register all claims tools with FastMCP."""
-    from src.services.mcp_server.generators.fastmcp_generator import (
-        register_tool_with_context,
-    )
-
-    tool_funcs = {
-        "bifrost_claim_list": bifrost_claim_list,
-        "bifrost_claim_get": bifrost_claim_get,
-        "bifrost_claim_create": bifrost_claim_create,
-        "bifrost_claim_update": bifrost_claim_update,
-        "bifrost_claim_delete": bifrost_claim_delete,
-    }
-
-    for tool_id, _name, description in TOOLS:
-        register_tool_with_context(
-            mcp, tool_funcs[tool_id], tool_id, description, get_context_fn
-        )
-
-
 __all__ = [
     "TOOLS",
     "bifrost_claim_create",
     "bifrost_claim_delete",
     "bifrost_claim_get",
     "bifrost_claim_list",
-    "register_tools",
     "bifrost_claim_update",
 ]

@@ -24,7 +24,6 @@ from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import RunContext, ToolDefinition as PydanticToolDefinition
 from pydantic_ai_harness.subagents import SubAgent, SubAgents
 from sqlalchemy import or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.models.orm.agents import Agent, AgentDelegation
@@ -40,20 +39,21 @@ from src.services.authorization.agent_runtime import (
     authorize_agent_execution,
 )
 from src.services.authorization.enforce import Caller
-from src.services.execution.agent_helpers import agent_delegation_slug, resolve_agent_tools
+from src.services.agent_runtime.graph import MAX_COMPOSITION_DEPTH, load_approved_child
+from src.services.execution.agent_helpers import resolve_agent_tools
 from src.services.llm import ToolDefinition
 from src.services.tool_schema import validate_arguments_against_schema
 
-MAX_COMPOSITION_DEPTH = 5
-
-COMPOSITION_INSTRUCTIONS = """
+_SHARED_COMPOSITION_INSTRUCTIONS = """
 
 Keep ownership of this task and its evidence. Use only a tool whose exact callable name and input
 schema are supplied by the runtime or returned by discovery. Never guess a tool name, arguments,
 or schema.
 If discovery or invocation corrects an unknown callable or invalid arguments, use that correction
 before making another call.
+"""
 
+COMPOSITION_INSTRUCTIONS = _SHARED_COMPOSITION_INSTRUCTIONS + """
 For specialist work, load an approved capability's instructions, then search_tools for individual
 tools to use in this conversation. Search also discovers the entry agent's tools. Use
 same-conversation specialist tools by default. Start an isolated child only when context isolation
@@ -62,6 +62,20 @@ the necessary context, inspect the child receipt, and follow up when more inform
 it. Respect specialist instructions and approval constraints. Verify uncertain effects before
 repeating a write.
 """
+
+DELEGATED_COMPOSITION_INSTRUCTIONS = _SHARED_COMPOSITION_INSTRUCTIONS + """
+For specialist work, use an approved tool supplied directly by the runtime. Start an isolated
+approved child with delegate_task only when context isolation or independent review is actually
+required; never use a child as a permission workaround. Include the necessary context, inspect
+the child receipt, and follow up when more information can unblock it. Respect specialist
+instructions and approval constraints. Verify uncertain effects before repeating a write.
+"""
+
+
+def composition_instructions(*, automatic: bool) -> str:
+    """Return guidance that names only capabilities available in this mode."""
+    return COMPOSITION_INSTRUCTIONS if automatic else DELEGATED_COMPOSITION_INSTRUCTIONS
+
 
 _ACTIVE_SUBAGENT_TOOL_CALL_ID: ContextVar[str] = ContextVar(
     "active_subagent_tool_call_id", default=""
@@ -83,7 +97,6 @@ class ToolBinding:
     capability_id: str | None
     parameters: dict[str, Any]
     bound_id: UUID | None = None
-    delegated_target_path: tuple[UUID, ...] | None = None
 
     @property
     def provenance(self) -> dict[str, Any]:
@@ -92,16 +105,44 @@ class ToolBinding:
             "source_tool_name": self.original_name,
             "source_path_agent_ids": [str(agent_id) for agent_id in self.path],
             "capability_id": self.capability_id,
-            **(
-                {
-                    "delegated_agent_id": str(self.delegated_target_path[-1]),
-                    "delegated_target_path_agent_ids": [
-                        str(agent_id) for agent_id in self.delegated_target_path
-                    ],
-                }
-                if self.delegated_target_path
-                else {}
-            ),
+        }
+
+
+@dataclass(frozen=True)
+class ChildBinding:
+    """One UUID-addressed isolated child, catalog metadata, and approved paths."""
+
+    owner_id: UUID
+    parent_path: tuple[UUID, ...]
+    target_path: tuple[UUID, ...]
+    target_name: str = "Approved child agent"
+    target_description: str | None = None
+
+    @property
+    def target_agent_id(self) -> UUID:
+        return self.target_path[-1]
+
+    @property
+    def catalog_description(self) -> str:
+        """Human-readable planning metadata for the native SubAgents catalog.
+
+        The UUID catalog key and approved paths remain the only execution
+        authority. This metadata only gives the model enough context to choose
+        an appropriate isolated child.
+        """
+        if self.target_description:
+            return f"{self.target_name}: {self.target_description}"
+        return self.target_name
+
+    @property
+    def provenance(self) -> dict[str, Any]:
+        return {
+            "source_agent_id": str(self.owner_id),
+            "source_path_agent_ids": [str(agent_id) for agent_id in self.parent_path],
+            "delegated_agent_id": str(self.target_agent_id),
+            "delegated_target_path_agent_ids": [
+                str(agent_id) for agent_id in self.target_path
+            ],
         }
 
 
@@ -114,6 +155,7 @@ class ResolvedToolCall:
     arguments: dict[str, Any]
     workflow_ids: dict[str, UUID]
     provenance: dict[str, Any]
+    delegated_target_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -146,52 +188,6 @@ def _qualified_tool_name(agent_id: UUID, original_name: str) -> str:
     source_hash = sha256(original_name.encode()).hexdigest()[:10]
     readable = source[: 64 - len(owner) - len(source_hash) - len("bfa___")]
     return f"bfa_{owner}_{readable}_{source_hash}"
-
-
-def _delegate_name(agent: Agent) -> str:
-    """A unique SubAgents key; names are presentation only, never lookup fallbacks."""
-    return f"{_safe_segment(agent.name, fallback='agent')[:31]}_{agent.id.hex}"
-
-
-def _model_visible_definitions(
-    definitions: Sequence[ToolDefinition],
-) -> tuple[ToolDefinition, ...]:
-    """Hide legacy delegate aliases while retaining their bindings for native subagents."""
-    return tuple(
-        definition
-        for definition in definitions
-        if not definition.name.startswith("delegate_to_")
-    )
-
-
-async def _load_approved_child(
-    session: AsyncSession,
-    *,
-    parent: Agent,
-    child_id: UUID,
-) -> Agent | None:
-    """Load one currently-active edge using the legacy delegation scope rule."""
-    result = await session.execute(
-        select(Agent)
-        .join(AgentDelegation, AgentDelegation.child_agent_id == Agent.id)
-        .options(
-            selectinload(Agent.tools),
-            selectinload(Agent.delegated_agents),
-            selectinload(Agent.mcp_connections),
-            selectinload(Agent.roles),
-        )
-        .where(
-            Agent.id == child_id,
-            Agent.is_active.is_(True),
-            AgentDelegation.parent_agent_id == parent.id,
-            or_(
-                Agent.organization_id.is_(None),
-                Agent.organization_id == parent.organization_id,
-            ),
-        )
-        .execution_options(populate_existing=True)
-    )
-    return result.scalar_one_or_none()
 
 
 class _CompositionAuthorizationCapability(AbstractCapability[object]):
@@ -357,7 +353,8 @@ class AgentComposition:
         entry_definitions: Sequence[ToolDefinition],
         bindings: dict[str, ToolBinding],
         deferred: Sequence[_DeferredAgent],
-        isolated_delegates: dict[str, ToolBinding],
+        isolated_delegates: dict[str, ChildBinding],
+        automatic: bool = True,
     ) -> None:
         self.root_id = root_id
         self.caller = caller
@@ -368,6 +365,7 @@ class AgentComposition:
         self._bindings = dict(bindings)
         self._deferred = tuple(deferred)
         self._isolated_delegates = dict(isolated_delegates)
+        self.automatic = automatic
 
     def provenance_for(self, name: str, args: dict[str, Any] | None = None) -> dict[str, Any] | None:
         """Return static review metadata without treating it as live authority."""
@@ -384,18 +382,14 @@ class AgentComposition:
         event_handler: ToolEventHandler | None = None,
         toolset_id: str = "bifrost-entry",
     ) -> Any:
-        """Expose root tools through native per-tool search.
-
-        Entry tools remain in Bifrost's executor and authorization path. Their
-        schemas stay deferred until native ``ToolSearch`` reveals a relevant
-        individual tool.
-        """
-        return BifrostToolset(
-            _model_visible_definitions(self.entry_definitions),
+        """Expose root tools with Automatic discovery or Delegated direct loading."""
+        toolset = BifrostToolset(
+            self.entry_definitions,
             executor,
             event_handler=event_handler,
             toolset_id=toolset_id,
-        ).defer_loading()
+        )
+        return toolset.defer_loading() if self.automatic else toolset
 
     async def _authorize_path(self, path: tuple[UUID, ...]) -> Agent:
         """Reauthorize the caller plus every active delegation edge in ``path``."""
@@ -405,7 +399,7 @@ class AgentComposition:
             try:
                 caller, parent = await authorize_agent_execution(session, self.caller, self.root_id)
                 for child_id in path[1:]:
-                    child = await _load_approved_child(session, parent=parent, child_id=child_id)
+                    child = await load_approved_child(session, parent=parent, child_id=child_id)
                     if child is None:
                         raise AgentCompositionError("Agent delegation is no longer available")
                     caller, parent = await authorize_agent_execution(session, caller, child.id)
@@ -436,7 +430,16 @@ class AgentComposition:
             binding = self._isolated_delegates.get(agent_name)
             if binding is None or not isinstance(task, str) or not task.strip():
                 raise AgentCompositionError("Approved agent_name and non-empty task are required")
-            arguments = {"task": task}
+            owner = await self._authorize_path(binding.parent_path)
+            await self._authorize_path(binding.target_path)
+            return ResolvedToolCall(
+                owner=owner,
+                original_name="delegate_task",
+                arguments={"task": task},
+                workflow_ids={},
+                provenance=binding.provenance,
+                delegated_target_id=binding.target_agent_id,
+            )
         else:
             binding = self._bindings.get(name)
             if binding is None:
@@ -444,11 +447,9 @@ class AgentComposition:
             arguments = args
 
         owner = await self._authorize_path(binding.path)
-        if binding.delegated_target_path is not None:
-            await self._authorize_path(binding.delegated_target_path)
         async with self.session_factory() as session:
             # Re-resolve the owner's bindings after the graph check. This checks
-            # workflow, MCP, knowledge, and legacy delegation bindings uniformly.
+            # workflow, MCP, and knowledge bindings uniformly.
             definitions, workflow_ids = await resolve_agent_tools(
                 owner, session, caller_user_id=self.caller_user_id
             )
@@ -482,17 +483,16 @@ class AgentComposition:
         event_handler: ToolEventHandler | None = None,
     ) -> list[Any]:
         """Build framework capabilities bound to this composition snapshot."""
-        capabilities: list[Any] = [
-            _CompositionAuthorizationCapability(self, event_handler),
+        capabilities: list[Any] = [_CompositionAuthorizationCapability(self, event_handler)]
+        if self.automatic:
             # Pin Pydantic AI's public client-executed strategy. This preserves
             # native provider support while keeping discovery exchanges durable
             # in Bifrost's stable chat history on every provider.
-            ToolSearch(strategy="keywords"),
-        ]
+            capabilities.append(ToolSearch(strategy="keywords"))
         specialist_definitions: list[ToolDefinition] = []
         owner_capability_by_tool_name: dict[str, str] = {}
-        for deferred in self._deferred:
-            for definition in _model_visible_definitions(deferred.definitions):
+        for deferred in self._deferred if self.automatic else ():
+            for definition in deferred.definitions:
                 qualified_name = _qualified_tool_name(deferred.agent.id, definition.name)
                 binding = self._bindings[qualified_name]
                 specialist_definitions.append(
@@ -552,16 +552,11 @@ class AgentComposition:
                     SubAgent(
                         _BifrostChildAgent(
                             agent_name=name,
-                            description=(
-                                "Runs this approved Bifrost agent through its isolated child lifecycle."
-                            ),
+                            description=binding.catalog_description,
                             executor=executor,
                         ),
                         name=name,
-                        description=(
-                            "Optional isolated run of approved agent "
-                            f"{binding.delegated_target_path[-1] if binding.delegated_target_path else binding.owner_id}."
-                        ),
+                        description=binding.catalog_description,
                     )
                 )
             capabilities.append(
@@ -587,8 +582,9 @@ async def build_agent_composition(
     caller_user_id: UUID | None,
     entry_definitions: Sequence[ToolDefinition],
     entry_workflow_ids: dict[str, UUID],
+    automatic: bool = True,
 ) -> AgentComposition:
-    """Build deferred descendants from the caller-visible active delegation graph."""
+    """Build approved native children and Automatic specialist capabilities."""
     bindings: dict[str, ToolBinding] = {
         definition.name: ToolBinding(
             name=definition.name,
@@ -602,8 +598,7 @@ async def build_agent_composition(
         for definition in entry_definitions
     }
     deferred: list[_DeferredAgent] = []
-    isolated_delegates: dict[str, ToolBinding] = {}
-    definitions_by_agent: dict[UUID, Sequence[ToolDefinition]] = {root.id: entry_definitions}
+    isolated_delegates: dict[str, ChildBinding] = {}
 
     async with session_factory() as session:
         refreshed_caller, live_root = await authorize_agent_execution(session, caller, root.id)
@@ -641,55 +636,46 @@ async def build_agent_composition(
                 except AgentRuntimeAuthorizationError:
                     continue
                 child_path = (*path, child.id)
-                definitions, workflow_ids = await resolve_agent_tools(
-                    child, session, caller_user_id=caller_user_id
-                )
-                definitions_by_agent[child.id] = definitions
-                capability_id = _capability_id(child.id)
-                deferred.append(
-                    _DeferredAgent(
-                        agent=child,
-                        path=child_path,
-                        definitions=tuple(
-                            ToolDefinition(
-                                name=definition.name,
-                                description=definition.description,
-                                parameters=deepcopy(definition.parameters),
-                            )
-                            for definition in definitions
-                        ),
-                        capability_id=capability_id,
+                if automatic:
+                    definitions, workflow_ids = await resolve_agent_tools(
+                        child, session, caller_user_id=caller_user_id
                     )
-                )
-                for definition in definitions:
-                    qualified_name = _qualified_tool_name(child.id, definition.name)
-                    if qualified_name in bindings:
-                        raise AgentCompositionError("Specialist tool names are not unique")
-                    bindings[qualified_name] = ToolBinding(
-                        name=qualified_name,
-                        owner_id=child.id,
-                        original_name=definition.name,
-                        path=child_path,
-                        capability_id=capability_id,
-                        parameters=deepcopy(definition.parameters),
-                        bound_id=workflow_ids.get(definition.name),
+                    capability_id = _capability_id(child.id)
+                    deferred.append(
+                        _DeferredAgent(
+                            agent=child,
+                            path=child_path,
+                            definitions=tuple(
+                                ToolDefinition(
+                                    name=definition.name,
+                                    description=definition.description,
+                                    parameters=deepcopy(definition.parameters),
+                                )
+                                for definition in definitions
+                            ),
+                            capability_id=capability_id,
+                        )
                     )
-                legacy_name = agent_delegation_slug(child.name)
-                legacy_definition = next(
-                    (item for item in definitions_by_agent[parent.id] if item.name == legacy_name),
-                    None,
+                    for definition in definitions:
+                        qualified_name = _qualified_tool_name(child.id, definition.name)
+                        if qualified_name in bindings:
+                            raise AgentCompositionError("Specialist tool names are not unique")
+                        bindings[qualified_name] = ToolBinding(
+                            name=qualified_name,
+                            owner_id=child.id,
+                            original_name=definition.name,
+                            path=child_path,
+                            capability_id=capability_id,
+                            parameters=deepcopy(definition.parameters),
+                            bound_id=workflow_ids.get(definition.name),
+                        )
+                isolated_delegates[child.id.hex] = ChildBinding(
+                    owner_id=parent.id,
+                    parent_path=path,
+                    target_path=child_path,
+                    target_name=child.name,
+                    target_description=child.description,
                 )
-                if legacy_definition is not None:
-                    delegate_name = _delegate_name(child)
-                    isolated_delegates[delegate_name] = ToolBinding(
-                        name="delegate_task",
-                        owner_id=parent.id,
-                        original_name=legacy_name,
-                        path=path,
-                        capability_id=None,
-                        parameters=deepcopy(legacy_definition.parameters),
-                        delegated_target_path=child_path,
-                    )
                 visited.add(child.id)
                 queue.append((child, child_path))
 
@@ -698,9 +684,10 @@ async def build_agent_composition(
         caller=caller,
         session_factory=session_factory,
         caller_user_id=caller_user_id,
-        instructions=COMPOSITION_INSTRUCTIONS,
+        instructions=composition_instructions(automatic=automatic),
         entry_definitions=entry_definitions,
         bindings=bindings,
         deferred=deferred,
         isolated_delegates=isolated_delegates,
+        automatic=automatic,
     )

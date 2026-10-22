@@ -80,3 +80,12 @@ class ProviderCacheWriteRequest(BaseModel):
 
 class ProviderCacheWriteResponse(BaseModel):
     expires_at: datetime | None = None
+
+
+class MCPGatewayAgentExecuteRequest(BaseModel):
+    """Structured input for a discovered agent's canonical queued execution."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    input: dict[str, Any] | None = None
+    output_schema: dict[str, Any] | None = None

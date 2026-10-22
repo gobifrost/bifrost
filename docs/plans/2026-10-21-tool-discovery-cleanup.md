@@ -40,9 +40,13 @@ Automatic mode uses discovered specialist tools in the current conversation by
 default. An isolated child needs a concrete context-isolation or independent-review
 requirement. Routine routing instructions should describe the specialist skill
 and required evidence without directing a new child conversation. Automatic
-discovery omits legacy `delegate_to_*` aliases; native `delegate_task` remains
-available for the required isolated cases. The existing bindings still supply
-its execution path, without changing Delegated mode or external MCP calls.
+and Delegated modes use native `delegate_task` for the required isolated cases.
+Bindings identify the child by UUID and approved graph path. External MCP calls
+use the existing progressive gateway on both endpoints, with direct agent
+invocation through the shared queued AgentRun service. Generated
+`delegate_to_*` callables are removed. See the
+[composition architecture](../architecture/agent-capability-composition.md)
+for endpoint scope, configuration migration and historical presentation.
 
 A permission denial applies to the operation under the original caller. Another
 agent or tool is not an alternative authorization path. An uncertain write needs

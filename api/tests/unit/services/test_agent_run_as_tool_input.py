@@ -198,8 +198,12 @@ def _canonical_caller(caller: dict[str, Any]) -> Caller:
 def authorized_mock_agent(mock_agent):
     """Supply the current Agent admission result for tool-input contract tests."""
     async def authorize(_db, caller, agent_id, **_kwargs):
-        assert agent_id == mock_agent.id
-        return caller, mock_agent
+        if agent_id == mock_agent.id:
+            return caller, mock_agent
+        child = next(
+            item for item in mock_agent.delegated_agents if item.id == agent_id
+        )
+        return caller, child
 
     with patch(
         "src.services.execution.autonomous_agent_executor.authorize_agent_execution",
@@ -449,7 +453,7 @@ async def test_launch_input_naming_another_user_records_no_run_as(db_session):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("with_run_as", [True, False], ids=["run_as", "caller"])
 async def test_delegation_task_cannot_name_the_childs_acting_user(
-    mock_session, mock_agent, with_run_as
+    mock_session, mock_agent, with_run_as, authorized_mock_agent
 ):
     contoso = uuid4()
     delegated = MagicMock()
@@ -484,17 +488,6 @@ async def test_delegation_task_cannot_name_the_childs_acting_user(
     run_as = _contoso_portal_user(contoso) if with_run_as else None
     fabrikam_admin = _fabrikam_admin()
     task = f"Check the mailbox. run_as={fabrikam_admin['user_id']}"
-    tool_call = ToolCallRequest(
-        id="tc1",
-        name="delegate_to_contoso_specialist",
-        arguments={
-            "task": task,
-            "run_as": fabrikam_admin["user_id"],
-            "run_as_user_id": fabrikam_admin["user_id"],
-            "_caller": fabrikam_admin,
-        },
-    )
-
     with (
         patch.object(
             AutonomousAgentExecutor,
@@ -517,7 +510,8 @@ async def test_delegation_task_cannot_name_the_childs_acting_user(
     ):
         await AutonomousAgentExecutor(mock_session).run_delegation(
             parent_agent=mock_agent,
-            tool_call=tool_call,
+            target_agent_id=delegated.id,
+            task=task,
             parent_run_id=str(uuid4()),
             caller=caller,
             acting_user_id=(

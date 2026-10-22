@@ -152,7 +152,7 @@ async function mockHierarchicalRun(page: Page, agentId: string) {
 				parentId,
 				"Service Desk Triage",
 				"Triage ticket 428950",
-				"Looked up the ticket with [ai_ticketing_get_ticket_details], then asked [delegate_to_troubleshooting_agent] to collect evidence.",
+				"Looked up the ticket with [ai_ticketing_get_ticket_details], then asked [delegate_task] to collect evidence.",
 				[
 					step(parentId, 1, "llm_request", {
 						messages_count: 2,
@@ -178,11 +178,14 @@ async function mockHierarchicalRun(page: Page, agentId: string) {
 						},
 					}),
 					step(parentId, 5, "tool_call", {
-						tool_name: "delegate_to_troubleshooting_agent",
-						arguments: { task: "Collect endpoint evidence" },
+						tool_name: "delegate_task",
+						arguments: {
+							agent_name: "Troubleshooting Specialist",
+							task: "Collect endpoint evidence",
+						},
 					}),
 					step(parentId, 6, "tool_result", {
-						tool_name: "delegate_to_troubleshooting_agent",
+						tool_name: "delegate_task",
 						result: { status: "complete" },
 						child_run_id: childId,
 					}),

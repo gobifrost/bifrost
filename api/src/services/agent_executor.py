@@ -79,11 +79,7 @@ from src.services.ai_behavior_service import (
     AIBehaviorService,
     DEFAULT_AGENT_EXECUTION_MODE,
 )
-from src.services.execution.agent_helpers import (
-    find_delegated_agent,
-    parse_mcp_tool_name,
-    resolve_agent_tools,
-)
+from src.services.execution.agent_helpers import parse_mcp_tool_name, resolve_agent_tools
 from src.services.execution.agent_workflow_tools import (
     execute_agent_workflow_tool,
     workflow_failure_receipt,
@@ -435,8 +431,7 @@ class AgentExecutor:
 
             composition = None
             if (
-                self._agent_execution_mode == "automatic"
-                and agent
+                agent
                 and agent.delegated_agents
                 and should_offer_tool_calling(model_capabilities)
             ):
@@ -447,6 +442,7 @@ class AgentExecutor:
                     caller_user_id=caller_user_id,
                     entry_definitions=tool_definitions,
                     entry_workflow_ids=self._tool_workflow_id_map,
+                    automatic=self._agent_execution_mode == "automatic",
                 )
                 tool_definitions = list(composition.entry_definitions)
 
@@ -608,6 +604,7 @@ class AgentExecutor:
                 try:
                     owner = agent
                     workflow_ids = None
+                    delegated_target_id = None
                     # Chat artifact tools are added by the chat surface, not
                     # bound to an AgentTool row. Their existing executor checks
                     # the conversation/caller; specialist tools still require
@@ -615,21 +612,32 @@ class AgentExecutor:
                     if composition is not None and name not in chat_artifact_tool_names:
                         binding = await composition.resolve_call(name, arguments)
                         owner = binding.owner
-                        name = binding.original_name
                         arguments = binding.arguments
                         workflow_ids = binding.workflow_ids
-                    request = ToolCallRequest(
-                        id=tool_call.id, name=name, arguments=arguments,
-                    )
-                    tool_result = await self._execute_tool(
-                        request,
-                        owner,
-                        conversation,
-                        execution_id=execution_id,
-                        tool_message_id=message_id,
-                        caller=caller,
-                        workflow_ids=workflow_ids,
-                    )
+                        delegated_target_id = binding.delegated_target_id
+                        if delegated_target_id is not None:
+                            tool_result = await self._execute_delegation(
+                                tool_call,
+                                owner,
+                                target_agent_id=delegated_target_id,
+                                conversation=conversation,
+                                caller=caller,
+                            )
+                        else:
+                            name = binding.original_name
+                    if delegated_target_id is None:
+                        request = ToolCallRequest(
+                            id=tool_call.id, name=name, arguments=arguments,
+                        )
+                        tool_result = await self._execute_tool(
+                            request,
+                            owner,
+                            conversation,
+                            execution_id=execution_id,
+                            tool_message_id=message_id,
+                            caller=caller,
+                            workflow_ids=workflow_ids,
+                        )
                     tool_result = tool_result.model_copy(update={"tool_name": tool_call.name})
                 except Exception as exc:
                     tool_result = ToolResult(
@@ -997,8 +1005,10 @@ class AgentExecutor:
         Delegates to the shared resolve_agent_tools helper which handles:
         1. System tools (unprefixed, e.g., "execute_workflow", "search_knowledge")
         2. Workflow tools (prefixed, e.g., "halopsa_list_tickets", "wf_add_comment")
-        3. Delegation tools (e.g., "delegate_to_agent_name")
-        4. External MCP tools (prefixed ``mcp__<connection_id>__<tool>``)
+        3. External MCP tools (prefixed ``mcp__<connection_id>__<tool>``)
+
+        Approved child runs are supplied separately by the native composition
+        capability and are never synthetic tool definitions.
 
         When a workflow tool's normalized name collides with a system tool,
         the system tool wins and a warning is logged.
@@ -1478,15 +1488,6 @@ class AgentExecutor:
         # Check if this is a knowledge search tool call
         if tool_call.name == "search_knowledge" and agent:
             return await self._execute_knowledge_search(tool_call, agent)
-
-        # Check if this is a delegation tool call
-        if tool_call.name.startswith("delegate_to_") and agent:
-            return await self._execute_delegation(
-                tool_call,
-                agent,
-                conversation=conversation,
-                caller=caller,
-            )
 
         # Check if this is a system tool call
         if agent and tool_call.name in (agent.system_tools or []):
@@ -1986,21 +1987,12 @@ class AgentExecutor:
         tool_call: ToolCallRequest,
         agent: Agent,
         *,
+        target_agent_id: UUID,
         conversation: Conversation | None = None,
         caller: Caller,
     ) -> ToolResult:
         """Execute a delegation to another agent via AutonomousAgentExecutor."""
         start_time = time.time()
-
-        delegated_agent = find_delegated_agent(agent, tool_call.name)
-        if not delegated_agent:
-            return ToolResult(
-                tool_call_id=tool_call.id,
-                tool_name=tool_call.name,
-                result=None,
-                error=f"Delegated agent not found: {tool_call.name}",
-                duration_ms=int((time.time() - start_time) * 1000),
-            )
 
         task = tool_call.arguments.get("task", "")
         if not task:
@@ -2015,7 +2007,7 @@ class AgentExecutor:
         try:
             from src.core.cache import get_shared_redis
 
-            logger.info(f"Agent '{agent.name}' delegating to '{delegated_agent.name}' via chat")
+            logger.info("Agent '%s' starting native child %s via chat", agent.name, target_agent_id)
 
             redis_client = await get_shared_redis()
             delegation_executor = AutonomousAgentExecutor(
@@ -2024,7 +2016,8 @@ class AgentExecutor:
             )
             outcome = await delegation_executor.run_delegation(
                 parent_agent=agent,
-                tool_call=tool_call,
+                target_agent_id=target_agent_id,
+                task=task,
                 conversation_id=conversation.id if conversation else None,
                 caller=caller,
                 acting_user_id=caller.principal.user_id,

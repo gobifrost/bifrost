@@ -8,22 +8,10 @@
 
 import { expect, test } from "./fixtures/api-fixture";
 import type { AuthedApi } from "./fixtures/api-fixture";
+import type { components } from "../src/lib/v1";
 
-type MCPConfig = {
-	enabled: boolean;
-	allowed_tool_ids?: string[] | null;
-	blocked_tool_ids?: string[];
-	is_configured: boolean;
-	configured_at?: string | null;
-	configured_by?: string | null;
-};
-
-type MCPTool = {
-	id: string;
-	name: string;
-	description: string;
-	is_system: boolean;
-};
+type MCPConfig = components["schemas"]["MCPConfigResponse"];
+type MCPTool = components["schemas"]["MCPToolInfo"];
 
 async function readMcpConfig(api: AuthedApi): Promise<MCPConfig> {
 	const response = await api.get("/api/mcp/config");
@@ -40,7 +28,8 @@ async function readMcpTools(api: AuthedApi): Promise<MCPTool[]> {
 		response.ok(),
 		`read MCP tools: ${response.status()} ${await response.text()}`,
 	).toBe(true);
-	const body = (await response.json()) as { tools: MCPTool[] };
+	const body =
+		(await response.json()) as components["schemas"]["MCPToolsResponse"];
 	return body.tools;
 }
 
@@ -145,23 +134,23 @@ test.describe("MCP settings", () => {
 			const enableSwitch = page.getByRole("switch", {
 				name: "Enable MCP Access",
 			});
+			const allowAllToolsSwitch = page.getByRole("switch", {
+				name: "Allow All Tools",
+			});
 			await expect(enableSwitch).toBeEnabled();
 			if ((await enableSwitch.isChecked()) !== nextEnabled) {
 				await enableSwitch.click();
 			}
 
-			for (const toolId of previousConfig.allowed_tool_ids ?? []) {
-				if (!targetAllowedToolIds.includes(toolId)) {
-					await removeSelectedTool(page, toolId, "Allowed Tools");
-				}
+			// Make widening and narrowing access explicit before choosing a subset.
+			if (await allowAllToolsSwitch.isChecked()) {
+				await allowAllToolsSwitch.click();
 			}
-			if (
-				!(previousConfig.allowed_tool_ids ?? []).includes(
-					allowedTool.id,
-				)
-			) {
-				await chooseTool(page, "Select Allowed Tools", allowedTool.id);
-			}
+			await allowAllToolsSwitch.click();
+			await expect(allowAllToolsSwitch).toBeChecked();
+			await allowAllToolsSwitch.click();
+			await expect(allowAllToolsSwitch).not.toBeChecked();
+			await chooseTool(page, "Select Allowed Tools", allowedTool.id);
 			await expect(
 				page.getByText(allowedTool.name, { exact: true }),
 			).toBeVisible();
@@ -197,6 +186,7 @@ test.describe("MCP settings", () => {
 				page.getByText("External MCP Access", { exact: true }),
 			).toBeVisible({ timeout: 15000 });
 			await expect(enableSwitch).toBeChecked({ checked: nextEnabled });
+			await expect(allowAllToolsSwitch).not.toBeChecked();
 			await expect(
 				page.getByText(allowedTool.name, { exact: true }),
 			).toBeVisible();
@@ -212,6 +202,24 @@ test.describe("MCP settings", () => {
 				allowed_tool_ids: targetAllowedToolIds,
 				blocked_tool_ids: targetBlockedToolIds,
 				is_configured: true,
+			});
+
+			await removeSelectedTool(page, allowedTool.id, "Allowed Tools");
+			await page
+				.getByRole("button", { name: "Save Configuration" })
+				.click();
+			await expect(
+				page.getByRole("button", { name: "Save Configuration" }),
+			).toBeDisabled();
+			await expect(allowAllToolsSwitch).not.toBeChecked();
+			await expect(
+				page.getByText(allowedTool.name, { exact: true }),
+			).toBeHidden();
+
+			const emptyAllowedConfig = await readMcpConfig(api);
+			expect(emptyAllowedConfig).toMatchObject({
+				allowed_tool_ids: [],
+				blocked_tool_ids: targetBlockedToolIds,
 			});
 
 			await page

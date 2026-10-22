@@ -77,19 +77,6 @@ EXECUTION MODE: You are running autonomously — there is no human in this conve
 - If access is denied, stop that operation. Do not use another tool or child agent as a permission workaround."""
 
 
-def agent_delegation_slug(name: str) -> str:
-    """Generate the tool name slug for a delegated agent."""
-    return f"delegate_to_{name.lower().replace(' ', '_')}"
-
-
-def find_delegated_agent(agent: Agent, tool_name: str) -> Agent | None:
-    """Match a delegate_to_* tool name to the target agent."""
-    for d in (agent.delegated_agents or []):
-        if agent_delegation_slug(d.name) == tool_name and d.is_active:
-            return d
-    return None
-
-
 def build_agent_system_prompt(
     agent: Agent,
     *,
@@ -185,31 +172,7 @@ async def resolve_agent_tools(
                     f"hidden by {seen_names[td.name]}"
                 )
 
-    # 3. Delegation tools (use already-loaded relationship, no extra query)
-    if agent.delegated_agents:
-        for delegated in agent.delegated_agents:
-            if not delegated.is_active:
-                continue
-            tool_name = agent_delegation_slug(delegated.name)
-            if tool_name not in seen_names:
-                tool_definitions.append(
-                    ToolDefinition(
-                        name=tool_name,
-                        description=f"Delegate a task to {delegated.name}. {delegated.description or ''}",
-                        parameters={
-                            "type": "object",
-                            "properties": {
-                                "task": {
-                                    "type": "string",
-                                    "description": "The task or question to delegate to this agent",
-                                },
-                            },
-                            "required": ["task"],
-                        },
-                    )
-                )
-
-    # 4. External MCP tools — surfaced from this org's MCPConnections.
+    # 3. External MCP tools — surfaced from this org's MCPConnections.
     #
     # MCP connections are strictly per-org (organization_id NOT NULL on
     # the connection row), so we filter by the agent's organization_id.

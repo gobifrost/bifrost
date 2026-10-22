@@ -49,7 +49,9 @@ class WorkflowVariant:
     """Describes one row's worth of workflow state we seed for the agent."""
 
     key: str
-    in_org: str | None  # "A" (platform org / admin's org), "B" (cross-org), or None (global)
+    in_org: (
+        str | None
+    )  # "A" (platform org / admin's org), "B" (cross-org), or None (global)
     role_based: bool
     with_role: bool  # only meaningful if role_based=True
 
@@ -74,7 +76,11 @@ ADMIN_EXPECTED_VISIBLE: dict[tuple[str, str, str], bool] = {
     ("platform_admin", "A", "org_a_authenticated"): True,
     ("platform_admin", "A", "org_a_role_gated"): True,
     ("platform_admin", "A", "org_b_authenticated"): True,  # cross-org, authenticated
-    ("platform_admin", "A", "org_b_role_gated"): True,     # THE BUG — cross-org + role-gated
+    (
+        "platform_admin",
+        "A",
+        "org_b_role_gated",
+    ): True,  # THE BUG — cross-org + role-gated
 }
 
 
@@ -155,29 +161,70 @@ def _parse_mcp_response(resp) -> dict[str, Any]:
         for line in raw.splitlines():
             line = line.strip()
             if line.startswith("data:"):
-                return _json.loads(line[len("data:"):].strip())
+                return _json.loads(line[len("data:") :].strip())
         raise AssertionError(f"SSE response had no data line: {raw[:300]}")
     return _json.loads(raw)
 
 
-def _candidate_tool_names_for_workflow(workflow: dict) -> set[str]:
-    """Return the set of names a workflow could be registered as in MCP.
+def _mcp_headers(access_token: str) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
 
-    The registration table (``_WORKFLOW_ID_TO_TOOL_NAME``) lives in the API
-    process, not the test-runner process, so we can't read it directly.
-    Recreate the normalization rule from
-    ``src.services.mcp_server.server._normalize_tool_name`` and accept either
-    the raw name or the normalized one.
-    """
-    import re as _re
 
-    name = workflow["name"]
-    normalized = _re.sub(
-        r"[^a-z0-9_]",
-        "",
-        _re.sub(r"[\s\-]+", "_", name.lower()),
-    ).strip("_")
-    return {normalized, name}
+def _gateway_data(
+    e2e_client,
+    headers: dict[str, str],
+    tool_name: str,
+    arguments: dict[str, Any],
+    *,
+    path: str = "/mcp",
+) -> Any:
+    """Call a stable gateway tool and return its structured or direct result."""
+    response = e2e_client.post(
+        path,
+        headers=headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": tool_name, "arguments": arguments},
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = _parse_mcp_response(response)
+    assert "error" not in payload, payload
+    result = payload["result"]
+    structured = result.get("structuredContent")
+    if structured is not None:
+        return structured
+    return result["content"][0]["text"]
+
+
+def _discover_workflow_tool(
+    e2e_client,
+    headers: dict[str, str],
+    agent_id: str,
+    workflow: dict[str, Any],
+    *,
+    path: str | None = None,
+) -> dict[str, Any]:
+    """Discover one attached workflow through the stable gateway identity."""
+    data = _gateway_data(
+        e2e_client,
+        headers,
+        "bifrost_search_capabilities",
+        {"agent_id": agent_id, "query": workflow["name"]},
+        path=path or f"/mcp/{agent_id}",
+    )
+    assert "code" not in data, data
+    agent = next((item for item in data["agents"] if item["id"] == agent_id), None)
+    assert agent is not None, data
+    tools = [item for item in agent["matching_tools"] if item["source"] == "workflow"]
+    assert len(tools) == 1, data
+    return tools[0]
 
 
 def _set_workflow_access_level(
@@ -346,8 +393,10 @@ async def seeded_agent_with_tools(
     workflows_by_key: dict[str, dict] = {}
     for variant in (v for v in VARIANTS if v.key == variant_key):
         target_org = (
-            org_a["id"] if variant.in_org == "A"
-            else org_b["id"] if variant.in_org == "B"
+            org_a["id"]
+            if variant.in_org == "A"
+            else org_b["id"]
+            if variant.in_org == "B"
             else None
         )
         wf = _register_simple_tool_workflow(
@@ -400,9 +449,7 @@ async def seeded_agent_with_tools(
     finally:
         # Best-effort teardown.
         try:
-            e2e_client.delete(
-                f"/api/agents/{agent['id']}", headers=admin_headers
-            )
+            e2e_client.delete(f"/api/agents/{agent['id']}", headers=admin_headers)
         except Exception:
             logger.exception("matrix teardown: delete agent failed")
         for wf in workflows_by_key.values():
@@ -412,9 +459,7 @@ async def seeded_agent_with_tools(
                     headers=admin_headers,
                 )
             except Exception:
-                logger.exception(
-                    "matrix teardown: delete workflow %s failed", wf["id"]
-                )
+                logger.exception("matrix teardown: delete workflow %s failed", wf["id"])
 
 
 # =============================================================================
@@ -425,250 +470,82 @@ async def seeded_agent_with_tools(
 @pytest.mark.e2e
 @pytest.mark.asyncio
 class TestMcpToolAccessMatrix:
-    """Pin each caller and workflow variant at the MCP HTTP boundary."""
+    """Pin each caller and workflow variant at the stable MCP gateway boundary."""
 
     @pytest.mark.parametrize(
         "variant_key",
-        [k for (caller, _agent_org, k) in ADMIN_EXPECTED_VISIBLE if caller == "platform_admin"],
-        ids=lambda k: f"admin__mcp_call__{k}",
+        [
+            k
+            for (caller, _agent_org, k) in ADMIN_EXPECTED_VISIBLE
+            if caller == "platform_admin"
+        ],
+        ids=lambda k: f"admin__gateway_call__{k}",
     )
-    async def test_platform_admin_can_execute_tool_via_mcp_http(
+    async def test_platform_admin_can_execute_discovered_tool_via_mcp_gateway(
         self,
         variant_key: str,
         seeded_agent_with_tools: dict[str, Any],
         e2e_client,
         platform_admin,
     ) -> None:
-        """Admin must be able to *execute* every tool listed for an accessible agent.
-
-        ``tools/list`` and ``tools/call`` go through different code paths
-        (middleware filter vs. workflow tool execution -> WorkflowRepository
-        scoping). The reported failure mode for operator@contoso.example was
-        "tool listed in Claude, but `tools/call` returns 'Workflow not found'"
-        — the listing path passed while the execute path failed because
-        ``OrgScopedRepository.get(id=...)`` compared a UUID column to a JWT
-        string and silently returned None. This test pins both paths.
-
-        For every variant where the admin is expected to *see* the tool,
-        executing it must also succeed (no 'Error: Workflow X not found',
-        no JSON-RPC error envelope). The tool body itself returns 'ok'.
-        """
+        """An administrator can discover and execute every attached workflow."""
         agent = seeded_agent_with_tools["agent"]
         workflow = seeded_agent_with_tools["workflows_by_key"][variant_key]
-        mcp_headers = {
-            "Authorization": f"Bearer {platform_admin.access_token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        }
+        headers = _mcp_headers(platform_admin.access_token)
+        tool = _discover_workflow_tool(e2e_client, headers, agent["id"], workflow)
 
-        # Find the actual tool name FastMCP registered the workflow under by
-        # asking the server. Avoids guessing wrong when normalization rules
-        # change. tools/list is already covered above so we can rely on it.
-        list_resp = e2e_client.post(
-            f"/mcp/{agent['id']}",
-            headers=mcp_headers,
-            json={
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/list",
-                "params": {},
-            },
+        result = _gateway_data(
+            e2e_client,
+            headers,
+            "bifrost_execute_tool",
+            {"agent_id": agent["id"], "tool_ref": tool["tool_ref"], "arguments": {}},
+            path=f"/mcp/{agent['id']}",
         )
-        assert list_resp.status_code == 200, (
-            f"tools/list precondition failed: {list_resp.status_code} {list_resp.text[:300]}"
-        )
-        list_payload = _parse_mcp_response(list_resp)
-        candidate_names = _candidate_tool_names_for_workflow(workflow)
-        registered_tool_name: str | None = None
-        for tool in list_payload["result"].get("tools", []):
-            if tool.get("name") in candidate_names:
-                registered_tool_name = tool.get("name")
-                break
-        assert registered_tool_name is not None, (
-            f"tools/list did not return a name matching candidates "
-            f"{candidate_names}; cannot execute. Got: "
-            f"{[t.get('name') for t in list_payload['result'].get('tools', [])]}"
-        )
-
-        call_resp = e2e_client.post(
-            f"/mcp/{agent['id']}",
-            headers=mcp_headers,
-            json={
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {"name": registered_tool_name, "arguments": {}},
-            },
-        )
-        assert call_resp.status_code == 200, (
-            f"MCP tools/call HTTP failed: status={call_resp.status_code} "
-            f"body={call_resp.text[:500]}"
-        )
-
-        payload = _parse_mcp_response(call_resp)
-
-        # JSON-RPC envelope-level error: middleware denied the call.
-        # That's a different failure mode from the bug we're testing; surface
-        # it with a clear message rather than letting the next assert misfire.
-        assert "error" not in payload, (
-            f"MCP middleware rejected tools/call for variant={variant_key}: "
-            f"{payload['error']}"
-        )
-
-        result = payload.get("result")
-        assert result is not None, f"tools/call returned no result: {payload}"
-
-        # The fix path: result.isError must be False AND content must not
-        # be the 'Workflow not found' error string from
-        # _execute_workflow_tool_impl. Either of those signals the executor
-        # ran but its lookup returned None.
-        is_error = result.get("isError", False)
-        content_blocks = result.get("content", [])
-        content_text = " ".join(
-            block.get("text", "") for block in content_blocks if isinstance(block, dict)
-        )
-
-        assert not is_error, (
-            f"tools/call returned isError=True for variant={variant_key}, "
-            f"tool={registered_tool_name!r}: content={content_text[:300]}"
-        )
-        assert "Workflow" not in content_text or "not found" not in content_text, (
-            f"tools/call returned 'Workflow not found' for variant={variant_key}, "
-            f"tool={registered_tool_name!r}. This is the operator@contoso.example bug: "
-            f"executor's WorkflowRepository.get() returned None for an "
-            f"accessible workflow. Content: {content_text[:300]}"
-        )
-
-        # The seeded tool body returns the literal string 'ok'.
-        assert "ok" in content_text, (
-            f"tools/call did not return expected 'ok' for variant={variant_key}, "
-            f"tool={registered_tool_name!r}. Content: {content_text[:300]}"
-        )
-
-    # =========================================================================
-    # Non-admin caller: Org A user with role_x. This is where the
-    # operator@contoso.example bug actually surfaced — admin bypass hides the
-    # UUID/string compare. A real org user with role_x assigned trips it.
-    # =========================================================================
+        assert result == "ok", result
 
     @pytest.mark.parametrize(
         "variant_key",
-        [k for (caller, _agent_org, k) in ORG_A_USER_EXPECTED_VISIBLE
-         if caller == "org_a_user_with_role_x"
-         and ORG_A_USER_EXPECTED_VISIBLE[(caller, _agent_org, k)]],
-        ids=lambda k: f"org_a_user__call__{k}",
+        [
+            k
+            for (caller, _agent_org, k) in ORG_A_USER_EXPECTED_VISIBLE
+            if caller == "org_a_user_with_role_x"
+            and ORG_A_USER_EXPECTED_VISIBLE[(caller, _agent_org, k)]
+        ],
+        ids=lambda k: f"org_a_user__gateway_call__{k}",
     )
-    async def test_org_a_user_can_execute_authorized_tools_via_mcp_http(
+    async def test_org_a_user_can_execute_authorized_tools_via_mcp_gateway(
         self,
         variant_key: str,
         seeded_agent_with_tools: dict[str, Any],
         e2e_client,
         org_a_user_with_role_x,
     ) -> None:
-        """Non-admin Org A user: tools/call must succeed for every visible tool.
-
-        This is the operator@contoso.example reproducer. Without the UUID coercion fix
-        in OrgScopedRepository.__init__ + MCPContext.__post_init__, the
-        ``org_a_role_gated`` row fails with 'Workflow not found' because:
-          - Workflow.organization_id is a UUID (DB column)
-          - MCPContext.org_id is a string (JWT claim)
-          - OrgScopedRepository.get(id=...) compares them with ``==``
-          - ``UUID == str`` is False even when they represent the same value
-          - In-scope check fails -> get returns None -> executor reports
-            'Error: Workflow ... not found'
-        """
+        """A role-authorized Org A user executes the discovered tool successfully."""
         agent = seeded_agent_with_tools["agent"]
         workflow = seeded_agent_with_tools["workflows_by_key"][variant_key]
+        headers = _mcp_headers(org_a_user_with_role_x.access_token)
+        tool = _discover_workflow_tool(e2e_client, headers, agent["id"], workflow)
 
-        mcp_headers = {
-            "Authorization": f"Bearer {org_a_user_with_role_x.access_token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        }
-
-        # Look up registered name via tools/list; same approach as admin test.
-        list_resp = e2e_client.post(
-            f"/mcp/{agent['id']}",
-            headers=mcp_headers,
-            json={
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/list",
-                "params": {},
-            },
+        result = _gateway_data(
+            e2e_client,
+            headers,
+            "bifrost_execute_tool",
+            {"agent_id": agent["id"], "tool_ref": tool["tool_ref"], "arguments": {}},
+            path=f"/mcp/{agent['id']}",
         )
-        assert list_resp.status_code == 200, (
-            f"tools/list precondition failed: {list_resp.status_code} "
-            f"{list_resp.text[:300]}"
-        )
-        list_payload = _parse_mcp_response(list_resp)
-        candidate_names = _candidate_tool_names_for_workflow(workflow)
-        registered_tool_name: str | None = None
-        for tool in list_payload["result"].get("tools", []):
-            if tool.get("name") in candidate_names:
-                registered_tool_name = tool.get("name")
-                break
-        assert registered_tool_name is not None, (
-            f"tools/list did not return the expected workflow for variant="
-            f"{variant_key}. Candidates: {candidate_names}, "
-            f"returned: {[t.get('name') for t in list_payload['result'].get('tools', [])]}."
-        )
-
-        call_resp = e2e_client.post(
-            f"/mcp/{agent['id']}",
-            headers=mcp_headers,
-            json={
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {"name": registered_tool_name, "arguments": {}},
-            },
-        )
-        assert call_resp.status_code == 200, (
-            f"MCP tools/call HTTP failed: status={call_resp.status_code} "
-            f"body={call_resp.text[:500]}"
-        )
-
-        payload = _parse_mcp_response(call_resp)
-        assert "error" not in payload, (
-            f"MCP middleware rejected tools/call for variant={variant_key}: "
-            f"{payload['error']}"
-        )
-
-        result = payload.get("result")
-        assert result is not None, f"tools/call returned no result: {payload}"
-
-        is_error = result.get("isError", False)
-        content_blocks = result.get("content", [])
-        content_text = " ".join(
-            block.get("text", "") for block in content_blocks if isinstance(block, dict)
-        )
-
-        assert not is_error, (
-            f"tools/call returned isError=True for variant={variant_key}, "
-            f"tool={registered_tool_name!r}: content={content_text[:300]}"
-        )
-        # Pin the specific failure shape so a regression names the bug class.
-        assert not ("Workflow" in content_text and "not found" in content_text), (
-            f"BUG REPRODUCED: tools/call returned 'Workflow not found' for "
-            f"variant={variant_key}, tool={registered_tool_name!r}. This is "
-            f"the operator@contoso.example failure. Likely cause: "
-            f"OrgScopedRepository.get() returned None due to UUID/string "
-            f"comparison failure. Content: {content_text[:300]}"
-        )
-        assert "ok" in content_text, (
-            f"tools/call did not return expected 'ok' for variant={variant_key}, "
-            f"tool={registered_tool_name!r}. Content: {content_text[:300]}"
-        )
+        assert result == "ok", result
 
     @pytest.mark.parametrize(
         "variant_key",
-        [k for (caller, _agent_org, k) in ORG_A_USER_EXPECTED_VISIBLE
-         if caller == "org_a_user_with_role_x"
-         and not ORG_A_USER_EXPECTED_VISIBLE[(caller, _agent_org, k)]],
-        ids=lambda k: f"org_a_user__deny__{k}",
+        [
+            k
+            for (caller, _agent_org, k) in ORG_A_USER_EXPECTED_VISIBLE
+            if caller == "org_a_user_with_role_x"
+            and not ORG_A_USER_EXPECTED_VISIBLE[(caller, _agent_org, k)]
+        ],
+        ids=lambda k: f"org_a_user__gateway_deny__{k}",
     )
-    async def test_org_a_user_denied_for_unauthorized_tools_via_mcp_http(
+    async def test_org_a_user_cannot_discover_or_execute_foreign_tools_via_mcp_gateway(
         self,
         variant_key: str,
         seeded_agent_with_tools: dict[str, Any],
@@ -676,175 +553,74 @@ class TestMcpToolAccessMatrix:
         platform_admin,
         org_a_user_with_role_x,
     ) -> None:
-        """Symmetric deny test: invisible tools must also reject tools/call.
-
-        Hard rule from product: a user in Org A must NOT access anything in
-        Org B regardless of access_level or role-name match. Even if the
-        list filter gets bypassed (regression, race, name guess), tools/call
-        must reject. This test pins both layers — defense in depth.
-
-        Strategy: use the admin's tools/list response to discover the real
-        registered name for each variant — bypassing the user's filter — then
-        invoke tools/call as the Org A user with that name. The call must be
-        denied via one of:
-          * a JSON-RPC ``error`` envelope (middleware rejected the call),
-          * an ``isError=true`` result (executor returned an error),
-          * a result whose content doesn't contain ``"ok"`` (executor's repo
-            lookup returned None and produced "Workflow ... not found").
-
-        The ONE shape that's never acceptable: a successful ``"ok"`` response.
-        """
+        """Foreign workflows stay hidden and reject an admin-discovered reference."""
         agent = seeded_agent_with_tools["agent"]
         workflow = seeded_agent_with_tools["workflows_by_key"][variant_key]
-
-        # Use admin to learn the real registered name. Admin sees everything,
-        # so this is the ground-truth tool name FastMCP exposes.
-        admin_headers = {
-            "Authorization": f"Bearer {platform_admin.access_token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        }
-        admin_list = e2e_client.post(
-            f"/mcp/{agent['id']}",
-            headers=admin_headers,
-            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+        admin_tool = _discover_workflow_tool(
+            e2e_client, _mcp_headers(platform_admin.access_token), agent["id"], workflow
         )
-        assert admin_list.status_code == 200
-        admin_payload = _parse_mcp_response(admin_list)
-        candidate_names = _candidate_tool_names_for_workflow(workflow)
-        registered_tool_name: str | None = None
-        for tool in admin_payload["result"].get("tools", []):
-            if tool.get("name") in candidate_names:
-                registered_tool_name = tool.get("name")
-                break
-        assert registered_tool_name is not None, (
-            f"Admin couldn't see the workflow either; fixture is broken. "
-            f"Candidates: {candidate_names}"
+        headers = _mcp_headers(org_a_user_with_role_x.access_token)
+        discovery = _gateway_data(
+            e2e_client,
+            headers,
+            "bifrost_search_capabilities",
+            {"agent_id": agent["id"], "query": workflow["name"]},
+            path=f"/mcp/{agent['id']}",
         )
+        assert "code" not in discovery, discovery
+        assert all(
+            tool["tool_ref"] != admin_tool["tool_ref"]
+            for tool in discovery["agents"][0]["matching_tools"]
+        ), discovery
 
-        user_headers = {
-            "Authorization": f"Bearer {org_a_user_with_role_x.access_token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        }
-
-        # First layer of defense: the user's tools/list must not even expose
-        # the name. Listing leaks workflow names/descriptions/parameter
-        # schemas — sensitive metadata even if the call would later deny.
-        user_list_resp = e2e_client.post(
-            f"/mcp/{agent['id']}",
-            headers=user_headers,
-            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
-        )
-        assert user_list_resp.status_code == 200
-        user_list = _parse_mcp_response(user_list_resp)
-        user_visible_names = {
-            t.get("name") for t in user_list["result"].get("tools", [])
-        }
-        assert registered_tool_name not in user_visible_names, (
-            f"INFO DISCLOSURE: variant={variant_key} should be denied for "
-            f"org_a_user_with_role_x but appears in their tools/list. "
-            f"Workflow id={workflow['id']}, name={workflow['name']!r}, "
-            f"workflow_org_id={workflow.get('organization_id')!r}, "
-            f"registered_tool_name={registered_tool_name!r}. "
-            f"Listing response leaks name/description/parameter schema "
-            f"across the org boundary. Even if the executor denies the "
-            f"actual call, this is sensitive metadata — fix in "
-            f"MCPToolAccessService."
-        )
-
-        # Second layer of defense: even if listing leaks, tools/call must
-        # reject. This is the belt to the listing's suspenders.
-        call_resp = e2e_client.post(
-            f"/mcp/{agent['id']}",
-            headers=user_headers,
-            json={
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {"name": registered_tool_name, "arguments": {}},
+        denied = _gateway_data(
+            e2e_client,
+            headers,
+            "bifrost_execute_tool",
+            {
+                "agent_id": agent["id"],
+                "tool_ref": admin_tool["tool_ref"],
+                "arguments": {},
             },
+            path=f"/mcp/{agent['id']}",
         )
-        assert call_resp.status_code == 200, (
-            f"MCP tools/call HTTP failed: status={call_resp.status_code} "
-            f"body={call_resp.text[:500]}"
-        )
+        assert denied["code"] == "TOOL_NOT_FOUND_OR_FORBIDDEN", denied
 
-        payload = _parse_mcp_response(call_resp)
-        if "error" in payload:
-            return  # middleware denied — correct
-        result = payload.get("result")
-        if result is None:
-            return  # pathological but not a leak
-        is_error = result.get("isError", False)
-        content_blocks = result.get("content", [])
-        content_text = " ".join(
-            block.get("text", "") for block in content_blocks if isinstance(block, dict)
-        )
-        if is_error:
-            return  # executor denied — correct
-
-        assert "ok" not in content_text, (
-            f"CROSS-TENANT LEAK: variant={variant_key} should be denied for "
-            f"org_a_user_with_role_x but tools/call returned 'ok'. "
-            f"Workflow id={workflow['id']}, name={workflow['name']!r}, "
-            f"tool={registered_tool_name!r}, "
-            f"workflow_org_id={workflow.get('organization_id')!r}. "
-            f"Content: {content_text[:300]}"
-        )
-
-    @pytest.mark.parametrize("seeded_agent_with_tools", ["org_b_role_gated"], indirect=True)
-    async def test_provider_org_user_cannot_list_or_call_foreign_agent_tool(
+    @pytest.mark.parametrize(
+        "seeded_agent_with_tools", ["org_b_role_gated"], indirect=True
+    )
+    async def test_provider_org_user_cannot_discover_or_execute_foreign_agent_tool(
         self,
         seeded_agent_with_tools: dict[str, Any],
         e2e_client,
         provider_org_user,
         platform_admin,
     ) -> None:
-        """Provider membership alone grants no access to a foreign Agent."""
+        """Provider membership adds neither foreign-agent discovery nor execution."""
         agent = seeded_agent_with_tools["agent"]
         workflow = seeded_agent_with_tools["workflows_by_key"]["org_b_role_gated"]
-        headers = {
-            "Authorization": f"Bearer {provider_org_user.access_token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        }
-
-        admin_list = e2e_client.post(
-            f"/mcp/{agent['id']}",
-            headers={**headers, "Authorization": f"Bearer {platform_admin.access_token}"},
-            json={"jsonrpc": "2.0", "id": 0, "method": "tools/list", "params": {}},
+        admin_tool = _discover_workflow_tool(
+            e2e_client, _mcp_headers(platform_admin.access_token), agent["id"], workflow
         )
-        assert admin_list.status_code == 200, admin_list.text
-        candidates = _candidate_tool_names_for_workflow(workflow)
-        registered_name = next(
-            tool["name"]
-            for tool in _parse_mcp_response(admin_list)["result"]["tools"]
-            if tool["name"] in candidates
+        headers = _mcp_headers(provider_org_user.access_token)
+        discovery = _gateway_data(
+            e2e_client,
+            headers,
+            "bifrost_search_capabilities",
+            {"agent_id": agent["id"], "query": workflow["name"]},
         )
-
-        list_resp = e2e_client.post(
-            f"/mcp/{agent['id']}",
-            headers=headers,
-            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
-        )
-        assert list_resp.status_code == 200, list_resp.text
-        list_payload = _parse_mcp_response(list_resp)
-        assert list_payload["result"]["tools"] == [], list_payload
-
-        call_resp = e2e_client.post(
-            f"/mcp/{agent['id']}",
-            headers=headers,
-            json={
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {"name": registered_name, "arguments": {}},
+        assert discovery["code"] == "AGENT_NOT_FOUND_OR_FORBIDDEN", discovery
+        denied = _gateway_data(
+            e2e_client,
+            headers,
+            "bifrost_execute_tool",
+            {
+                "agent_id": agent["id"],
+                "tool_ref": admin_tool["tool_ref"],
+                "arguments": {},
             },
         )
-        assert call_resp.status_code == 200, call_resp.text
-        call_payload = _parse_mcp_response(call_resp)
-        assert call_payload["result"].get("isError") is True, call_payload
+        assert denied["code"] == "AGENT_NOT_FOUND_OR_FORBIDDEN", denied
 
     @pytest.mark.parametrize("seeded_agent_with_tools", [None], indirect=True)
     async def test_provider_gateway_discovery_preserves_organization_reach(
@@ -855,192 +631,69 @@ class TestMcpToolAccessMatrix:
     ) -> None:
         """Neither broader discovery nor an exact ID adds organization reach."""
         agent = seeded_agent_with_tools["agent"]
-        headers = {
-            "Authorization": f"Bearer {provider_org_user.access_token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        }
+        headers = _mcp_headers(provider_org_user.access_token)
 
-        tools_response = e2e_client.post(
-            "/mcp",
-            headers=headers,
-            json={
-                "jsonrpc": "2.0",
-                "id": 0,
-                "method": "tools/list",
-                "params": {},
-            },
+        accessible = _gateway_data(
+            e2e_client, headers, "bifrost_search_capabilities", {"query": agent["name"]}
         )
-        assert tools_response.status_code == 200, tools_response.text
-        tools_payload = _parse_mcp_response(tools_response)
-        search_tool = next(
-            tool
-            for tool in tools_payload["result"]["tools"]
-            if tool["name"] == "bifrost_search_capabilities"
+        assert agent["id"] not in {item["id"] for item in accessible.get("agents", [])}
+        all_scopes = _gateway_data(
+            e2e_client,
+            headers,
+            "bifrost_search_capabilities",
+            {"query": agent["name"], "discovery_scope": "all"},
         )
-        assert search_tool["inputSchema"]["properties"]["discovery_scope"][
-            "enum"
-        ] == ["accessible", "all"]
+        assert agent["id"] not in {item["id"] for item in all_scopes.get("agents", [])}
+        explicit = _gateway_data(
+            e2e_client,
+            headers,
+            "bifrost_search_capabilities",
+            {"agent_id": agent["id"]},
+        )
+        assert explicit["code"] == "AGENT_NOT_FOUND_OR_FORBIDDEN", explicit
 
-        search_response = e2e_client.post(
-            "/mcp",
-            headers=headers,
-            json={
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": {
-                    "name": "bifrost_search_capabilities",
-                    "arguments": {"query": agent["name"]},
-                },
-            },
-        )
-        assert search_response.status_code == 200, search_response.text
-        search_payload = _parse_mcp_response(search_response)
-        search_result = search_payload["result"]
-        assert not search_result.get("isError", False), search_payload
-        search_data = search_result.get("structuredContent")
-        assert isinstance(search_data, dict), search_payload
-        assert agent["id"] not in {
-            item["id"] for item in search_data.get("agents", [])
-        }
-
-        all_response = e2e_client.post(
-            "/mcp",
-            headers=headers,
-            json={
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {
-                    "name": "bifrost_search_capabilities",
-                    "arguments": {
-                        "query": agent["name"],
-                        "discovery_scope": "all",
-                    },
-                },
-            },
-        )
-        assert all_response.status_code == 200, all_response.text
-        all_payload = _parse_mcp_response(all_response)
-        all_result = all_payload["result"]
-        all_data = all_result.get("structuredContent")
-        assert isinstance(all_data, dict), all_payload
-        assert agent["id"] not in {item["id"] for item in all_data.get("agents", [])}
-
-        explicit_response = e2e_client.post(
-            "/mcp",
-            headers=headers,
-            json={
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "tools/call",
-                "params": {
-                    "name": "bifrost_search_capabilities",
-                    "arguments": {"agent_id": agent["id"]},
-                },
-            },
-        )
-        assert explicit_response.status_code == 200, explicit_response.text
-        explicit_payload = _parse_mcp_response(explicit_response)
-        explicit_result = explicit_payload["result"]
-        explicit_data = explicit_result.get("structuredContent")
-        assert isinstance(explicit_data, dict), explicit_payload
-        assert explicit_data["code"] == "AGENT_NOT_FOUND_OR_FORBIDDEN", explicit_payload
-        assert "agents" not in explicit_data, explicit_payload
-
-    @pytest.mark.parametrize("seeded_agent_with_tools", ["org_b_role_gated"], indirect=True)
-    async def test_customer_org_platform_admin_cannot_list_or_call_cross_org_tool(
+    @pytest.mark.parametrize(
+        "seeded_agent_with_tools", ["org_b_role_gated"], indirect=True
+    )
+    async def test_customer_org_platform_admin_cannot_execute_cross_org_tool(
         self,
         seeded_agent_with_tools: dict[str, Any],
         e2e_client,
         platform_admin,
         customer_org_platform_admin,
     ) -> None:
-        """A custom role called Platform Admin grants only its actual permissions."""
+        """A custom role called Platform Admin receives no cross-org tool grant."""
         agent = seeded_agent_with_tools["agent"]
         workflow = seeded_agent_with_tools["workflows_by_key"]["org_b_role_gated"]
-        admin_headers = {
-            "Authorization": f"Bearer {platform_admin.access_token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        }
-        admin_list = e2e_client.post(
-            f"/mcp/{agent['id']}",
-            headers=admin_headers,
-            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+        admin_tool = _discover_workflow_tool(
+            e2e_client, _mcp_headers(platform_admin.access_token), agent["id"], workflow
         )
-        assert admin_list.status_code == 200, admin_list.text
-        candidates = _candidate_tool_names_for_workflow(workflow)
-        registered_name = next(
-            (
-                tool.get("name")
-                for tool in _parse_mcp_response(admin_list)["result"].get("tools", [])
-                if tool.get("name") in candidates
-            ),
-            None,
-        )
-        assert registered_name is not None, "fixture admin could not resolve tool name"
-
-        customer_headers = {
-            "Authorization": f"Bearer {customer_org_platform_admin.access_token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        }
-        all_search = e2e_client.post(
-            "/mcp",
-            headers=customer_headers,
-            json={
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": {
-                    "name": "bifrost_search_capabilities",
-                    "arguments": {
-                        "query": agent["name"],
-                        "discovery_scope": "all",
-                    },
-                },
+        headers = _mcp_headers(customer_org_platform_admin.access_token)
+        discovery = _gateway_data(
+            e2e_client,
+            headers,
+            "bifrost_search_capabilities",
+            {
+                "agent_id": agent["id"],
+                "query": workflow["name"],
+                "discovery_scope": "all",
             },
         )
-        assert all_search.status_code == 200, all_search.text
-        all_search_payload = _parse_mcp_response(all_search)
-        all_search_data = all_search_payload["result"].get("structuredContent")
-        assert isinstance(all_search_data, dict), all_search_payload
-        assert not all_search_payload["result"].get("isError", False), all_search_payload
-        assert agent["id"] in {item["id"] for item in all_search_data.get("agents", [])}
+        assert "code" not in discovery, discovery
+        assert agent["id"] in {item["id"] for item in discovery["agents"]}, discovery
+        assert all(
+            tool["tool_ref"] != admin_tool["tool_ref"]
+            for tool in discovery["agents"][0]["matching_tools"]
+        ), discovery
 
-        customer_list = e2e_client.post(
-            f"/mcp/{agent['id']}",
-            headers=customer_headers,
-            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
-        )
-        assert customer_list.status_code == 200, customer_list.text
-        visible_names = {
-            tool.get("name")
-            for tool in _parse_mcp_response(customer_list)["result"].get("tools", [])
-        }
-        assert registered_name not in visible_names, (
-            "customer-org Platform Admin role leaked cross-org tool metadata"
-        )
-
-        call_resp = e2e_client.post(
-            f"/mcp/{agent['id']}",
-            headers=customer_headers,
-            json={
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {"name": registered_name, "arguments": {}},
+        denied = _gateway_data(
+            e2e_client,
+            headers,
+            "bifrost_execute_tool",
+            {
+                "agent_id": agent["id"],
+                "tool_ref": admin_tool["tool_ref"],
+                "arguments": {},
             },
         )
-        assert call_resp.status_code == 200, call_resp.text
-        payload = _parse_mcp_response(call_resp)
-        if "error" in payload:
-            return
-        result = payload.get("result")
-        assert result is None or result.get("isError", False) or not any(
-            "ok" in block.get("text", "")
-            for block in result.get("content", [])
-            if isinstance(block, dict)
-        ), "customer-org Platform Admin role executed a cross-org tool"
+        assert denied["code"] == "TOOL_NOT_FOUND_OR_FORBIDDEN", denied

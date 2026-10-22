@@ -23,11 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import {
-	Loader2,
-	Plug,
-	RotateCcw,
-} from "lucide-react";
+import { Loader2, Plug, RotateCcw } from "lucide-react";
 import { $api } from "@/lib/api-client";
 import type { components } from "@/lib/v1";
 
@@ -58,14 +54,15 @@ export function MCP() {
 	});
 
 	// Load available tools
-	const { data: toolsData, isLoading: toolsLoading, isError: toolsError, isFetching: toolsFetching, refetch: refetchTools } = $api.useQuery(
-		"get",
-		"/api/mcp/tools",
-		undefined,
-		{
-			staleTime: 5 * 60 * 1000,
-		},
-	);
+	const {
+		data: toolsData,
+		isLoading: toolsLoading,
+		isError: toolsError,
+		isFetching: toolsFetching,
+		refetch: refetchTools,
+	} = $api.useQuery("get", "/api/mcp/tools", undefined, {
+		staleTime: 5 * 60 * 1000,
+	});
 
 	const tools: MCPToolInfo[] = toolsData?.tools || [];
 
@@ -75,14 +72,15 @@ export function MCP() {
 
 	// Update form when config loads. Adjust during render with a previous-
 	// reference sentinel to avoid setState-in-effect.
-	const [prevConfigRef, setPrevConfigRef] = useState<typeof config>(undefined);
+	const [prevConfigRef, setPrevConfigRef] =
+		useState<typeof config>(undefined);
 	if (config && prevConfigRef !== config) {
 		setPrevConfigRef(config);
 		if (!hasChanges) {
-		setEnabled(config.enabled);
-		setAllowedToolIds(config.allowed_tool_ids ?? null);
-		setBlockedToolIds(config.blocked_tool_ids ?? []);
-		setHasChanges(false);
+			setEnabled(config.enabled);
+			setAllowedToolIds(config.allowed_tool_ids ?? null);
+			setBlockedToolIds(config.blocked_tool_ids ?? []);
+			setHasChanges(false);
 		}
 	}
 
@@ -136,7 +134,7 @@ export function MCP() {
 		const current = allowedToolIds || [];
 		if (current.includes(toolId)) {
 			const newList = current.filter((id) => id !== toolId);
-			setAllowedToolIds(newList.length > 0 ? newList : null);
+			setAllowedToolIds(newList);
 		} else {
 			setAllowedToolIds([...current, toolId]);
 		}
@@ -154,7 +152,12 @@ export function MCP() {
 
 	const removeAllowedTool = (toolId: string) => {
 		const newList = (allowedToolIds || []).filter((id) => id !== toolId);
-		setAllowedToolIds(newList.length > 0 ? newList : null);
+		setAllowedToolIds(newList);
+		handleChange();
+	};
+
+	const handleAllowAllToolsChange = (allowAll: boolean) => {
+		setAllowedToolIds(allowAll ? null : []);
 		handleChange();
 	};
 
@@ -171,19 +174,46 @@ export function MCP() {
 		);
 	}
 
-	const readError = configError ? <SettingsReadError resource="MCP configuration" cached={!!config} pending={configFetching} onRetry={() => { void refetch(); }} /> : null;
+	const readError = configError ? (
+		<SettingsReadError
+			resource="MCP configuration"
+			cached={!!config}
+			pending={configFetching}
+			onRetry={() => {
+				void refetch();
+			}}
+		/>
+	) : null;
 	if (!config) return readError;
 
 	return (
 		<div className="space-y-6">
 			{readError}
-			{toolsError && <SettingsReadError resource="MCP tools" cached={!!toolsData} pending={toolsFetching} onRetry={() => { void refetchTools(); }} />}
-			<MCPConnectionDetails configured={config.is_configured} updatedAt={config.configured_at} updatedBy={config.configured_by} url={`${window.location.origin}/mcp`} />
+			{toolsError && (
+				<SettingsReadError
+					resource="MCP tools"
+					cached={!!toolsData}
+					pending={toolsFetching}
+					onRetry={() => {
+						void refetchTools();
+					}}
+				/>
+			)}
+			<MCPConnectionDetails
+				configured={config.is_configured}
+				updatedAt={config.configured_at}
+				updatedBy={config.configured_by}
+				url={`${window.location.origin}/mcp`}
+			/>
 
 			{/* Main Configuration Card */}
 			<Card>
 				<CardHeader>
-					<CardTitle ref={headingRef} tabIndex={-1} className="flex items-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+					<CardTitle
+						ref={headingRef}
+						tabIndex={-1}
+						className="flex items-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+					>
 						<Plug className="h-5 w-5" />
 						External MCP Access
 					</CardTitle>
@@ -199,10 +229,10 @@ export function MCP() {
 							<Label htmlFor="mcp-enabled" className="text-base">
 								Enable MCP Access
 							</Label>
-								<p className="text-sm text-muted-foreground">
-									When enabled, users can connect via MCP and
-									discover only the agents and tools they can
-									access.
+							<p className="text-sm text-muted-foreground">
+								When enabled, users can connect via MCP and
+								discover only the agents and tools they can
+								access.
 							</p>
 						</div>
 						<Switch
@@ -223,17 +253,65 @@ export function MCP() {
 				<CardHeader>
 					<CardTitle>Tool Access Control</CardTitle>
 					<CardDescription>
-						Configure which tools are available via MCP. Leave empty
-						to allow all tools.
+						Configure which tools are available via MCP. Allow all
+						tools, or choose a specific allowed subset.
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-6">
-                    <MCPToolPicker title="Allowed Tools" description="If set, only these tools will be available. Leave empty to allow all tools." tools={tools} selected={allowedToolIds || []} disabled={saving || toolsLoading || toolsError} onToggle={toggleAllowedTool} onRemove={removeAllowedTool} />
-                    <MCPToolPicker title="Blocked Tools" description="These tools will never be available via MCP, even if in the allowed list." tools={tools} selected={blockedToolIds} disabled={saving || toolsLoading || toolsError} onToggle={toggleBlockedTool} onRemove={removeBlockedTool} />
+					<div className="flex items-start justify-between gap-4">
+						<div className="space-y-0.5">
+							<Label
+								htmlFor="mcp-allow-all-tools"
+								className="text-base"
+							>
+								Allow All Tools
+							</Label>
+							<p className="text-sm text-muted-foreground">
+								When enabled, all tools are available unless
+								they are blocked. When disabled, only the
+								selected allowed tools are available; leaving
+								that list empty blocks all tools.
+							</p>
+						</div>
+						<Switch
+							id="mcp-allow-all-tools"
+							disabled={saving || toolsLoading || toolsError}
+							checked={allowedToolIds === null}
+							onCheckedChange={handleAllowAllToolsChange}
+						/>
+					</div>
+					<MCPToolPicker
+						title="Allowed Tools"
+						description="Select tools to allow when Allow All Tools is disabled. Leaving this list empty blocks all tools."
+						tools={tools}
+						selected={allowedToolIds || []}
+						disabled={
+							saving ||
+							toolsLoading ||
+							toolsError ||
+							allowedToolIds === null
+						}
+						onToggle={toggleAllowedTool}
+						onRemove={removeAllowedTool}
+					/>
+					<MCPToolPicker
+						title="Blocked Tools"
+						description="These tools will never be available via MCP, even if in the allowed list."
+						tools={tools}
+						selected={blockedToolIds}
+						disabled={saving || toolsLoading || toolsError}
+						onToggle={toggleBlockedTool}
+						onRemove={removeBlockedTool}
+					/>
 				</CardContent>
 			</Card>
 
-			{saveMutation.isError && <p role="alert" className="text-sm text-destructive">Could not save MCP configuration. Your changes are still here. Try again.</p>}
+			{saveMutation.isError && (
+				<p role="alert" className="text-sm text-destructive">
+					Could not save MCP configuration. Your changes are still
+					here. Try again.
+				</p>
+			)}
 			{/* Action Buttons */}
 			<div className="flex flex-col gap-3 sm:flex-row sm:items-center [&>button]:min-h-11">
 				<Button onClick={handleSave} disabled={saving || !hasChanges}>
@@ -248,14 +326,28 @@ export function MCP() {
 				</Button>
 				<Button
 					variant="outline"
-					onClick={() => { deleteMutation.reset(); setResetComplete(false); setResetOpen(true); }}
+					onClick={() => {
+						deleteMutation.reset();
+						setResetComplete(false);
+						setResetOpen(true);
+					}}
 					disabled={saving || !config?.is_configured}
 				>
 					<RotateCcw className="mr-2 h-4 w-4" />
 					Reset to Defaults
 				</Button>
 			</div>
-			<MCPResetDialog open={resetOpen} pending={saving} failed={deleteMutation.isError} completed={resetComplete} returnFocusRef={headingRef} onClose={() => setResetOpen(false)} onConfirm={() => { void handleReset(); }} />
+			<MCPResetDialog
+				open={resetOpen}
+				pending={saving}
+				failed={deleteMutation.isError}
+				completed={resetComplete}
+				returnFocusRef={headingRef}
+				onClose={() => setResetOpen(false)}
+				onConfirm={() => {
+					void handleReset();
+				}}
+			/>
 		</div>
 	);
 }

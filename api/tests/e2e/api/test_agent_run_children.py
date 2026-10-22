@@ -134,6 +134,7 @@ async def test_agent_scoped_history_includes_delegated_runs(
     )
     root_id = uuid4()
     child_id = uuid4()
+    legacy_parentless_id = uuid4()
     created_at = datetime(2026, 7, 22, 15, 0, tzinfo=timezone.utc)
     db_session.add_all(
         [
@@ -152,6 +153,18 @@ async def test_agent_scoped_history_includes_delegated_runs(
                 status="completed",
                 asked="Investigate the endpoint",
                 created_at=created_at + timedelta(seconds=1),
+            ),
+            # Older MCP delegation invocations did not persist a parent relation.
+            # Their captured source identifies an external invocation rather
+            # than a child whose parent relationship was not recorded.
+            AgentRun(
+                id=legacy_parentless_id,
+                agent_id=UUID(child_agent["id"]),
+                trigger_type="delegation",
+                trigger_source=f"mcp_gateway:{root_agent['id']}",
+                status="completed",
+                asked="Investigate a historical MCP request",
+                created_at=created_at + timedelta(seconds=2),
             ),
         ]
     )
@@ -174,6 +187,7 @@ async def test_agent_scoped_history_includes_delegated_runs(
         assert global_response.status_code == 200, global_response.text
         global_ids = {item["id"] for item in global_response.json()["items"]}
         assert str(child_id) not in global_ids
+        assert str(legacy_parentless_id) in global_ids
     finally:
         await db_session.execute(delete(AgentRun).where(AgentRun.id == root_id))
         await db_session.commit()

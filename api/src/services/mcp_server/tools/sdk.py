@@ -475,15 +475,4 @@ async def get_sdk_schema(context: Any) -> ToolResult:  # noqa: ARG001
         return error_result(f"Error generating SDK documentation: {e}")
 
 
-# Tool metadata for registration
 TOOLS: list[tuple[str, str, str]] = []
-
-
-def register_tools(mcp: Any, get_context_fn: Any) -> None:
-    """Register all SDK tools with FastMCP."""
-    from src.services.mcp_server.generators.fastmcp_generator import register_tool_with_context
-
-    tool_funcs: dict[str, Any] = {}
-
-    for tool_id, name, description in TOOLS:
-        register_tool_with_context(mcp, tool_funcs[tool_id], tool_id, description, get_context_fn)

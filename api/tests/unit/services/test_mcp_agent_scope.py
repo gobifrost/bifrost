@@ -3,8 +3,8 @@ Unit tests for agent-scoped MCP endpoint (/mcp/{agent_id}).
 
 Tests:
 - AgentScopeMCPMiddleware: ASGI path rewriting
-- MCPToolAccessService.get_tools_for_agent: Agent-scoped tool access
-- ToolFilterMiddleware: Agent-scoped filtering
+- get_scoped_agent_id: request-scope propagation
+- MCPToolAccessService.get_accessible_tools: MCP inventory access
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -140,12 +140,12 @@ class TestAgentScopeMCPMiddleware:
 
 
 # =============================================================================
-# MCPToolAccessService.get_tools_for_agent Tests
+# MCPToolAccessService.get_accessible_tools Tests
 # =============================================================================
 
 
-class TestGetToolsForAgent:
-    """Tests for Caller-backed agent-scoped tool access."""
+class TestAccessibleTools:
+    """Tests for Caller-backed MCP inventory access."""
 
     @staticmethod
     def _query() -> MagicMock:
@@ -169,7 +169,7 @@ class TestGetToolsForAgent:
         agent.knowledge_sources = ["docs", "wiki"]
         agent.is_active = True
         result_row = MagicMock()
-        result_row.scalars.return_value.unique.return_value.first.return_value = agent
+        result_row.scalars.return_value.unique.return_value.all.return_value = [agent]
         session = AsyncMock()
         session.execute = AsyncMock(return_value=result_row)
         query = self._query()
@@ -181,10 +181,8 @@ class TestGetToolsForAgent:
         ):
             config = MagicMock(allowed_tool_ids=None, blocked_tool_ids=None)
             config_service.return_value.get_config = AsyncMock(return_value=config)
-            result = await MCPToolAccessService(session).get_tools_for_agent(agent.id, caller)
+            result = await MCPToolAccessService(session).get_accessible_tools(caller)
 
-        assert result is not None
-        assert result.accessible_namespaces == ["docs", "wiki"]
         assert {tool.id for tool in result.tools} == {
             "bifrost_workflow_execute", "bifrost_workflow_list", "search_knowledge"
         }
@@ -199,7 +197,7 @@ class TestGetToolsForAgent:
         caller = _caller(home=home, actor_platform_admin=True)
         agent = MagicMock(id=uuid4(), access_level=AgentAccessLevel.AUTHENTICATED)
         result_row = MagicMock()
-        result_row.scalars.return_value.unique.return_value.first.return_value = agent
+        result_row.scalars.return_value.unique.return_value.all.return_value = [agent]
         session = AsyncMock()
         session.execute = AsyncMock(return_value=result_row)
         query = self._query()
@@ -207,10 +205,14 @@ class TestGetToolsForAgent:
         with (
             patch("src.services.mcp_server.tool_access.agent_query_in_reach", return_value=query),
             patch("src.services.mcp_server.tool_access.can_read_agent", new=AsyncMock(return_value=False)) as can_read,
+            patch("src.services.mcp_server.tool_access.MCPConfigService") as config_service,
         ):
-            result = await MCPToolAccessService(session).get_tools_for_agent(agent.id, caller)
+            config_service.return_value.get_config = AsyncMock(
+                return_value=MagicMock(allowed_tool_ids=None, blocked_tool_ids=None)
+            )
+            result = await MCPToolAccessService(session).get_accessible_tools(caller)
 
-        assert result is None
+        assert result.tools == []
         can_read.assert_awaited_once_with(session, caller, agent)
 
 
@@ -219,12 +221,12 @@ class TestGetToolsForAgent:
 # =============================================================================
 
 
-class TestToolFilterMiddlewareAgentScope:
-    """Tests for agent-scoped middleware behavior."""
+class TestScopedAgentId:
+    """Tests for request-scope propagation into the live gateway."""
 
     @pytest.mark.asyncio
     async def test_get_agent_id_from_scope_with_valid_id(self):
-        """_get_agent_id_from_scope returns UUID when present."""
+        """get_scoped_agent_id returns UUID when present."""
         agent_id = uuid4()
         mock_request = MagicMock()
         mock_request.scope = {"mcp_agent_id": str(agent_id)}
@@ -233,14 +235,14 @@ class TestToolFilterMiddlewareAgentScope:
             "src.services.mcp_server.agent_scope.get_http_request",
             return_value=mock_request,
         ):
-            from src.services.mcp_server.middleware import _get_agent_id_from_scope
+            from src.services.mcp_server.agent_scope import get_scoped_agent_id
 
-            result = _get_agent_id_from_scope()
+            result = get_scoped_agent_id()
             assert result == agent_id
 
     @pytest.mark.asyncio
     async def test_get_agent_id_from_scope_without_id(self):
-        """_get_agent_id_from_scope returns None when not present."""
+        """get_scoped_agent_id returns None when not present."""
         mock_request = MagicMock()
         mock_request.scope = {}
 
@@ -248,19 +250,19 @@ class TestToolFilterMiddlewareAgentScope:
             "src.services.mcp_server.agent_scope.get_http_request",
             return_value=mock_request,
         ):
-            from src.services.mcp_server.middleware import _get_agent_id_from_scope
+            from src.services.mcp_server.agent_scope import get_scoped_agent_id
 
-            result = _get_agent_id_from_scope()
+            result = get_scoped_agent_id()
             assert result is None
 
     @pytest.mark.asyncio
     async def test_get_agent_id_from_scope_no_request(self):
-        """_get_agent_id_from_scope returns None when no request context."""
+        """get_scoped_agent_id returns None when no request context."""
         with patch(
             "src.services.mcp_server.agent_scope.get_http_request",
             side_effect=RuntimeError("No request"),
         ):
-            from src.services.mcp_server.middleware import _get_agent_id_from_scope
+            from src.services.mcp_server.agent_scope import get_scoped_agent_id
 
-            result = _get_agent_id_from_scope()
+            result = get_scoped_agent_id()
             assert result is None

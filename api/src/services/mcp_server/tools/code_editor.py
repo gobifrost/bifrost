@@ -778,21 +778,3 @@ TOOLS = [
     ("replace_content", "Replace Content", "Replace entire file content or create new file."),
     ("delete_content", "Delete Content", "Delete a file."),
 ]
-
-
-def register_tools(mcp: Any, get_context_fn: Any) -> None:
-    """Register all code editor tools with FastMCP."""
-    from src.services.mcp_server.generators.fastmcp_generator import register_tool_with_context
-
-    tool_funcs = {
-        "list_content": list_content,
-        "bifrost_file_search": bifrost_file_search,
-        "read_content_lines": read_content_lines,
-        "get_content": get_content,
-        "patch_content": patch_content,
-        "replace_content": replace_content,
-        "delete_content": delete_content,
-    }
-
-    for tool_id, name, description in TOOLS:
-        register_tool_with_context(mcp, tool_funcs[tool_id], tool_id, description, get_context_fn)

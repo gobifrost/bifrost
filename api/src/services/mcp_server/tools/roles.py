@@ -198,32 +198,11 @@ TOOLS = [
 ]
 
 
-def register_tools(mcp: Any, get_context_fn: Any) -> None:
-    """Register all roles parity tools with FastMCP."""
-    from src.services.mcp_server.generators.fastmcp_generator import (
-        register_tool_with_context,
-    )
-
-    tool_funcs = {
-        "bifrost_role_list": bifrost_role_list,
-        "bifrost_role_get": bifrost_role_get,
-        "bifrost_role_create": bifrost_role_create,
-        "bifrost_role_update": bifrost_role_update,
-        "bifrost_role_delete": bifrost_role_delete,
-    }
-
-    for tool_id, _name, description in TOOLS:
-        register_tool_with_context(
-            mcp, tool_funcs[tool_id], tool_id, description, get_context_fn
-        )
-
-
 __all__ = [
     "TOOLS",
     "bifrost_role_create",
     "bifrost_role_delete",
     "bifrost_role_get",
     "bifrost_role_list",
-    "register_tools",
     "bifrost_role_update",
 ]

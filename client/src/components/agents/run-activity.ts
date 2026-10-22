@@ -148,6 +148,7 @@ function lowerPhrase(words: string[]): string {
 }
 
 export function delegationTarget(toolName: string): string | null {
+	if (/^delegate_task$/i.test(toolName)) return "Another agent";
 	const match = toolName.match(/^delegate_to_(.+)$/i);
 	if (!match) return null;
 	const hasAgentSuffix = /_agent$/i.test(match[1]);

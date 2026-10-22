@@ -284,14 +284,14 @@ class TestDelegationUsesFactory:
 
         agent = _make_mock_agent()
         child_agent = _make_mock_agent()
-        child_agent.name = "child agent"  # agent_delegation_slug("child agent") -> "delegate_to_child_agent"
+        child_agent.name = "child agent"
         child_agent.is_active = True
         child_agent.organization_id = agent.organization_id
         agent.delegated_agents = [child_agent]
 
         # Mock the select query for re-fetching child agent
         mock_result = MagicMock()
-        mock_result.scalar_one.return_value = child_agent
+        mock_result.scalar_one_or_none.return_value = child_agent
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         mock_redis = _make_mock_redis()
@@ -329,11 +329,11 @@ class TestDelegationUsesFactory:
             executor._run_as = None
             executor._current_run_id = str(uuid4())
 
-            tool_call = MagicMock()
-            tool_call.name = "delegate_to_child_agent"
-            tool_call.arguments = {"task": "do something"}
-
-            await executor._execute_delegation(tool_call, agent)
+            await executor._execute_delegation(
+                parent_agent=agent,
+                target_agent_id=child_agent.id,
+                task="do something",
+            )
 
         # Delegation should have completed (mock_run was called)
         # Child executor receives the session factory via constructor
