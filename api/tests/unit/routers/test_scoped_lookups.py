@@ -1122,8 +1122,8 @@ class TestApplicationCrossOrgSlugLookup:
     ):
         """Superuser in org A cannot access org B's app via cascade get().
 
-        Cross-org access should use get_by_slug_global() instead.
-        Slugs are globally unique so cascade fallback is unnecessary.
+        This is the non-Caller cascade. Caller-mode slug opens resolve
+        cross-org through _get_by_slug_for_caller with a per-row access check.
         """
         from src.routers.applications import ApplicationRepository
 
