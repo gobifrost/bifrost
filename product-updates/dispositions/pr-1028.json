@@ -1,0 +1,13 @@
+{
+  "key": "pr:1028",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Solution installs and deploys show the npm or Vite error when an app build fails, instead of pointing to server logs.",
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1028"
+    ]
+  }
+}
