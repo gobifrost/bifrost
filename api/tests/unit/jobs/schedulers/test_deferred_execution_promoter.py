@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.models.orm.executions import Execution
 
 
-PATH_PUBLISH = "src.jobs.schedulers.deferred_execution_promoter._publish_pending"
+PATH_PUBLISH = "src.jobs.schedulers.deferred_execution_promoter.hand_off_workflow_run"
 PATH_DB_CTX = "src.jobs.schedulers.deferred_execution_promoter.get_db_context"
 
 
@@ -91,14 +91,14 @@ async def test_promotes_due_rows(db_session):
 
     with (
         patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
-        patch(PATH_PUBLISH, new=AsyncMock()) as pub,
+        patch(PATH_PUBLISH, new=AsyncMock(return_value=True)) as pub,
     ):
         promoted, failed = await promote_due_executions()
 
     assert promoted == 1
     assert failed == 0
     pub.assert_awaited_once()
-    assert pub.await_args.kwargs["execution_record_exists"] is True
+    assert pub.await_args.args[0].message["execution_record_exists"] is True
 
     await db_session.refresh(due)
     assert due.status == ExecutionStatus.PENDING
@@ -123,7 +123,7 @@ async def test_deletion_cancellation_wins_after_promotion_before_dispatch(db_ses
 
     with (
         patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
-        patch(PATH_PUBLISH, new=AsyncMock()),
+        patch(PATH_PUBLISH, new=AsyncMock(return_value=True)),
     ):
         promoted, failures = await promote_due_executions()
 
@@ -151,7 +151,7 @@ async def test_does_not_promote_row_with_deleted_run_user_snapshot(db_session):
 
     with (
         patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
-        patch(PATH_PUBLISH, new=AsyncMock()) as publish,
+        patch(PATH_PUBLISH, new=AsyncMock(return_value=True)) as publish,
     ):
         promoted, failures = await promote_due_executions()
 
@@ -174,7 +174,7 @@ async def test_leaves_future_rows(db_session):
 
     with (
         patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
-        patch(PATH_PUBLISH, new=AsyncMock()) as pub,
+        patch(PATH_PUBLISH, new=AsyncMock(return_value=True)) as pub,
     ):
         promoted, failed = await promote_due_executions()
 
@@ -196,7 +196,7 @@ async def test_skips_cancelled_rows(db_session):
 
     with (
         patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
-        patch(PATH_PUBLISH, new=AsyncMock()),
+        patch(PATH_PUBLISH, new=AsyncMock(return_value=True)),
     ):
         promoted, _ = await promote_due_executions()
 
@@ -206,8 +206,12 @@ async def test_skips_cancelled_rows(db_session):
 
 
 @pytest.mark.asyncio
-async def test_reverts_on_publish_failure(db_session):
+async def test_publish_failure_leaves_a_durable_dispatch(db_session):
+    """A failed hand-off is not reverted: the reconciler publishes it."""
+    from sqlalchemy import select
+
     from src.jobs.schedulers.deferred_execution_promoter import promote_due_executions
+    from src.models.orm.work_dispatches import WorkDispatch
 
     due = _new_scheduled(datetime.now(timezone.utc) - timedelta(seconds=1))
     db_session.add(due)
@@ -215,16 +219,18 @@ async def test_reverts_on_publish_failure(db_session):
 
     with (
         patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
-        patch(PATH_PUBLISH, new=AsyncMock(side_effect=RuntimeError("rabbit down"))),
+        patch(PATH_PUBLISH, new=AsyncMock(return_value=False)),
     ):
         promoted, failed = await promote_due_executions()
 
-    assert promoted == 0
-    assert failed == 1
-
+    assert (promoted, failed) == (0, 1)
     await db_session.refresh(due)
-    # Reverted so next tick can retry.
-    assert due.status == ExecutionStatus.SCHEDULED
+    assert due.status == ExecutionStatus.PENDING
+    dispatch = (
+        await db_session.execute(select(WorkDispatch).where(WorkDispatch.subject_id == due.id))
+    ).scalar_one()
+    assert dispatch.status == "pending"
+    assert dispatch.payload["execution_id"] == str(due.id)
 
 
 @pytest.mark.asyncio
@@ -250,11 +256,12 @@ async def test_forwards_the_rows_persisted_actor_attribution(db_session):
 
     with (
         patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
-        patch(PATH_PUBLISH, new=AsyncMock()) as pub,
+        patch(PATH_PUBLISH, new=AsyncMock(return_value=True)) as pub,
     ):
         await promote_due_executions()
 
-    lineage = {call.kwargs["execution_id"]: call.kwargs["lineage"] for call in pub.await_args_list}
+    pending = {call.args[0].pending["execution_id"]: call.args[0].pending for call in pub.await_args_list}
+    lineage = {execution_id: record["lineage"] for execution_id, record in pending.items()}
     assert lineage[str(due.id)] == {
         "run_user_id": str(identity),
         "started_by_user_id": str(identity),
@@ -262,8 +269,8 @@ async def test_forwards_the_rows_persisted_actor_attribution(db_session):
     }
     assert lineage[str(plain.id)] is None
     provenance = {
-        call.kwargs["execution_id"]: call.kwargs["impersonation_provenance"]
-        for call in pub.await_args_list
+        execution_id: record["impersonation_provenance"]
+        for execution_id, record in pending.items()
     }
     assert provenance[str(due.id)] == {
         "impersonated_by_user_id": str(due.impersonated_by_user_id),
@@ -327,14 +334,14 @@ async def _promote(db_session) -> AsyncMock:
 
     with (
         patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
-        patch(PATH_PUBLISH, new=AsyncMock()) as pub,
+        patch(PATH_PUBLISH, new=AsyncMock(return_value=True)) as pub,
     ):
         await promote_due_executions()
     return pub
 
 
 def _published(pub: AsyncMock) -> set[str]:
-    return {call.kwargs["execution_id"] for call in pub.await_args_list}
+    return {call.args[0].pending["execution_id"] for call in pub.await_args_list}
 
 
 async def _run_as_audit(db_session, user_id):
@@ -478,10 +485,14 @@ async def test_a_run_as_still_permitted_is_published_as_the_target(db_session):
 
     pub = await _promote(db_session)
 
-    calls = [call.kwargs for call in pub.await_args_list if call.kwargs["execution_id"] == str(row.id)]
-    [kwargs] = calls
+    calls = [
+        call.args[0].pending
+        for call in pub.await_args_list
+        if call.args[0].pending["execution_id"] == str(row.id)
+    ]
+    [pending] = calls
     colleague_id = str(colleague.id)
-    assert kwargs["user_id"] == colleague_id
+    assert pending["user_id"] == colleague_id
     await db_session.refresh(row)
     assert row.status == ExecutionStatus.PENDING
     # Promotion rechecks and records the live named decision, including success.
@@ -626,11 +637,18 @@ async def test_a_row_without_run_as_is_published_as_before(db_session):
 
     pub = await _promote(db_session)
 
-    calls = [call.kwargs for call in pub.await_args_list if call.kwargs["execution_id"] == str(plain.id)]
-    [kwargs] = calls
-    assert kwargs == {
+    calls = [
+        call.args[0]
+        for call in pub.await_args_list
+        if call.args[0].pending["execution_id"] == str(plain.id)
+    ]
+    [accepted] = calls
+    pending = dict(accepted.pending)
+    assert pending.pop("created_at")
+    assert pending == {
         "execution_id": str(plain.id),
         "workflow_id": None,
+        "script_name": None,
         "parameters": {"k": 1},
         "org_id": None,
         "user_id": "",
@@ -643,11 +661,13 @@ async def test_a_row_without_run_as_is_published_as_before(db_session):
         "api_key_id": None,
         "sync": False,
         "is_platform_admin": True,
-        "file_path": None,
-        "execution_record_exists": True,
+        "event": None,
+        "artifact_workspace_id": None,
         "lineage": None,
         "impersonation_provenance": None,
+        "cancelled": False,
     }
+    assert accepted.message["execution_record_exists"] is True
     await db_session.refresh(plain)
     assert (plain.status, plain.error_message, plain.completed_at) == (ExecutionStatus.PENDING, None, None)
 

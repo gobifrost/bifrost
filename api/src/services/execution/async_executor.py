@@ -1,15 +1,16 @@
 """
 Async Workflow Execution
-Handles queueing of workflows via Redis + RabbitMQ
+Handles durable acceptance and queueing of workflow and inline-code runs.
 
-Flow:
-1. API stores pending execution in Redis
-2. API publishes message to RabbitMQ
-3. API returns execution_id immediately (<100ms)
-4. Worker reads from Redis, writes to PostgreSQL, executes
+Flow (see ``workflow_dispatch``):
+1. API commits a PENDING Execution and a WorkDispatch holding its context
+2. API publishes the dispatch to RabbitMQ (the control plane republishes a
+   lost hand-off)
+3. API returns execution_id immediately
+4. Worker claims PENDING -> RUNNING, taking the context from the dispatch
 
 For sync execution (sync=True):
-- Caller provides execution_id (already stored in Redis)
+- Caller provides execution_id
 - Worker pushes result to Redis
 - Caller waits on Redis BLPOP
 """
@@ -20,19 +21,27 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from src.core.database import get_db_context
 from src.core.log_safety import log_safe
-from src.core.redis_client import get_redis_client
-from src.jobs.rabbitmq import publish_message
+from src.core.redis_client import PendingExecution, pending_execution_record
 from src.sdk.context import EventContext, ExecutionContext
 from src.services.durable_impersonation import current_durable_impersonation
-from src.services.execution.queue_tracker import add_to_queue
+from src.services.execution.workflow_dispatch import (
+    hand_off_workflow_run,
+    stage_workflow_run,
+)
 
 if TYPE_CHECKING:
     from shared.run_lineage import RunLineage
 
 logger = logging.getLogger(__name__)
 
-QUEUE_NAME = "workflow-executions"
+async def _accept(pending: PendingExecution, message: dict[str, Any]) -> None:
+    """Commit the run durably, then hand it to the broker."""
+    async with get_db_context() as db:
+        accepted = await stage_workflow_run(db, pending, message, record_exists=False)
+        await db.commit()
+    await hand_off_workflow_run(accepted)
 
 
 async def _publish_pending(
@@ -52,25 +61,14 @@ async def _publish_pending(
     is_platform_admin: bool,
     file_path: str | None,
     event: dict[str, Any] | None = None,
-    execution_record_exists: bool = False,
     dispatch_metadata: dict[str, Any] | None = None,
     artifact_workspace_id: str | None = None,
     *,
     lineage: dict[str, str] | None,
     impersonation_provenance: dict[str, str] | None = None,
 ) -> None:
-    """
-    Write a pending-execution blob to Redis, register with the queue tracker,
-    and publish the minimal dispatch message to RabbitMQ.
-
-    Shared by the run-now path (enqueue_workflow_execution) and the deferred
-    execution promoter. Callers are responsible for generating execution_id
-    before calling this helper.
-    """
-    redis_client = get_redis_client()
-
-    # Store pending execution in Redis (worker needs this for execution context)
-    await redis_client.set_pending_execution(
+    """Durably accept a workflow run and dispatch it to a worker."""
+    pending = pending_execution_record(
         execution_id=execution_id,
         workflow_id=workflow_id,
         parameters=parameters,
@@ -94,29 +92,17 @@ async def _publish_pending(
             else impersonation_provenance
         ),
     )
-
-    # Sync callers wait on their private result list and cannot consume queue
-    # position events. RabbitMQ and the worker pool still provide admission and
-    # resource protection; avoid the extra sorted-set write and N broadcasts.
-    if not sync:
-        await add_to_queue(execution_id)
-
-    # Prepare queue message (the consumer reads full context from Redis)
     message: dict[str, Any] = {
         "execution_id": execution_id,
         "workflow_id": workflow_id,
         "sync": sync,
-        "execution_record_exists": execution_record_exists,
     }
     if dispatch_metadata is not None:
         message["dispatch_metadata"] = dispatch_metadata
-
     # Include file_path for fast direct loading (avoids filesystem scan)
     if file_path:
         message["file_path"] = file_path
-
-    # Enqueue message via RabbitMQ
-    await publish_message(QUEUE_NAME, message)
+    await _accept(pending, message)
 
 
 async def enqueue_workflow_execution(
@@ -225,14 +211,11 @@ async def enqueue_code_execution(
     Returns:
         execution_id: UUID of the queued execution
     """
-    redis_client = get_redis_client()
-
     # Generate or use provided execution ID
     if execution_id is None:
         execution_id = str(uuid.uuid4())
 
-    # Store pending execution in Redis (worker needs this for execution context)
-    await redis_client.set_pending_execution(
+    pending = pending_execution_record(
         execution_id=execution_id,
         workflow_id=None,  # No workflow ID for inline code
         script_name=script_name,
@@ -251,22 +234,15 @@ async def enqueue_code_execution(
         lineage=lineage.bound(execution_id) if lineage else None,
         impersonation_provenance=current_durable_impersonation().pending_value(),
     )
-
-    # Sync callers wait on their private result list and cannot consume queue
-    # position events. Match workflow execution enqueue behavior.
-    if not sync:
-        await add_to_queue(execution_id)
-
-    # Prepare queue message with code
-    message = {
-        "execution_id": execution_id,
-        "code": code_base64,
-        "script_name": script_name,
-        "sync": sync,
-    }
-
-    # Enqueue message via RabbitMQ
-    await publish_message(QUEUE_NAME, message)
+    await _accept(
+        pending,
+        {
+            "execution_id": execution_id,
+            "code": code_base64,
+            "script_name": script_name,
+            "sync": sync,
+        },
+    )
 
     logger.info(
         f"Enqueued async code execution: {log_safe(script_name)}",

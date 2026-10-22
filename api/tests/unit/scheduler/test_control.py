@@ -269,6 +269,7 @@ async def test_unexpected_control_exit_is_reported_but_stop_is_not() -> None:
 
     failures.clear()
     control._leadership_loop = AsyncMock()  # type: ignore[method-assign]
+    control._dispatch_reconcile_loop = AsyncMock()  # type: ignore[method-assign]
     control.running = False
     await control.start()
     await control.stop()
@@ -287,9 +288,10 @@ async def test_build_reconciler_runs_only_for_kubernetes_backend(
 
     monkeypatch.setattr(kubernetes_jobs, "kubernetes_build_loop", idle)
 
-    for backend, expected in (("local", {"control-leadership"}), (
+    always = {"control-leadership", "work-dispatch-reconciler"}
+    for backend, expected in (("local", always), (
         "kubernetes",
-        {"control-leadership", "kubernetes-build-controller"},
+        always | {"kubernetes-build-controller"},
     )):
         control = ControlPlane(
             host="test",
@@ -297,6 +299,7 @@ async def test_build_reconciler_runs_only_for_kubernetes_backend(
             settings=_settings(backend),  # type: ignore[arg-type]
         )
         control._leadership_loop = AsyncMock()  # type: ignore[method-assign]
+        control._dispatch_reconcile_loop = AsyncMock()  # type: ignore[method-assign]
         await control.start()
         assert {task.get_name() for task in control.tasks} == expected
         await control.stop()

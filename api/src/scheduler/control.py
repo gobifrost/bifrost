@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 LEADERSHIP_RETRY_SECONDS = 5.0
 LEADERSHIP_RENEW_SECONDS = 10.0
 REPLICA_HEARTBEAT_SECONDS = 10.0
+DISPATCH_RECONCILE_SECONDS = 5.0
 # A new leader spreads its run-at-startup callbacks this far apart so the
 # burst does not take a host's whole shared connection pool at once.
 # Recurring runs are not throttled: a waiting job would count as a running
@@ -147,7 +148,10 @@ class ControlPlane:
         self.running = True
         self._stop_event.clear()
         self._tasks = [
-            asyncio.create_task(self._leadership_loop(), name="control-leadership")
+            asyncio.create_task(self._leadership_loop(), name="control-leadership"),
+            asyncio.create_task(
+                self._dispatch_reconcile_loop(), name="work-dispatch-reconciler"
+            ),
         ]
         if self.settings.platform_build_backend == "kubernetes":
             from src.jobs.schedulers.kubernetes_jobs import kubernetes_build_loop
@@ -184,6 +188,19 @@ class ControlPlane:
             "Platform control stopped",
             extra={"control_host": self.host, "owner_id": self.owner_id},
         )
+
+    async def _dispatch_reconcile_loop(self) -> None:
+        """Publish accepted work whose broker hand-off was lost."""
+        from src.services.work_dispatch import reconcile_work_dispatches
+
+        while not self._stop_event.is_set():
+            try:
+                await reconcile_work_dispatches()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Work dispatch reconciliation failed")
+            await wait_or_stop(self._stop_event, DISPATCH_RECONCILE_SECONDS)
 
     async def _run_scheduled_task(
         self,

@@ -708,8 +708,30 @@ class WorkflowExecutionConsumer(BaseConsumer):
         if not is_sync:
             await remove_from_queue(execution_id)
 
-        # Read execution context from Redis
-        pending = await self._redis_client.get_pending_execution(execution_id)
+        # A durable dispatch carries the context in PostgreSQL. Claim the run
+        # (PENDING -> RUNNING) and take the context in one transaction; a
+        # cancelled run or a duplicate delivery finds nothing to claim.
+        dispatch_id = message_data.get("dispatch_id")
+        if dispatch_id is not None:
+            from src.services.execution.workflow_dispatch import claim_workflow_dispatch
+
+            async with get_db_context() as db:
+                pending = await claim_workflow_dispatch(
+                    db,
+                    dispatch_id=UUID(dispatch_id),
+                    execution_id=UUID(execution_id),
+                )
+                await db.commit()
+            if pending is None:
+                logger.info(
+                    "Discarding dispatch whose run was not pending",
+                    extra={"execution_id": execution_id, "dispatch_id": dispatch_id},
+                )
+                await self._redis_client.delete_pending_execution(execution_id)
+                return
+        else:
+            # A message published before durable dispatch: context in Redis.
+            pending = await self._redis_client.get_pending_execution(execution_id)
 
         if pending is None:
             logger.error(f"No pending execution found in Redis: {execution_id}")
@@ -772,7 +794,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
         # Scheduled runs have a durable row before their queue message exists.
         # Claim it atomically before dispatch so a deletion-side cancellation
         # cannot be overwritten by this consumer after promotion commits.
-        if execution_record_exists:
+        if execution_record_exists and dispatch_id is None:
             from shared.run_cancellation import claim_pending_run_for_dispatch
 
             async with get_db_context() as db:

@@ -78,6 +78,54 @@ class PendingExecution(TypedDict):
     cancelled: bool
 
 
+def pending_execution_record(
+    *,
+    execution_id: str,
+    workflow_id: str | None,
+    parameters: dict[str, Any],
+    org_id: str | None,
+    user_id: str,
+    user_name: str,
+    user_email: str,
+    form_id: str | None = None,
+    script_name: str | None = None,
+    startup: Any | None = None,
+    form_inputs: dict[str, Any] | None = None,
+    embed: dict[str, Any] | None = None,
+    api_key_id: str | None = None,
+    sync: bool = False,
+    is_platform_admin: bool = False,
+    event: dict[str, Any] | None = None,
+    artifact_workspace_id: str | None = None,
+    lineage: dict[str, str] | None,
+    impersonation_provenance: dict[str, str] | None = None,
+) -> PendingExecution:
+    """The execution context a worker needs, durable or cached."""
+    return {
+        "execution_id": execution_id,
+        "workflow_id": workflow_id,
+        "script_name": script_name,
+        "parameters": parameters,
+        "org_id": org_id,
+        "user_id": user_id,
+        "user_name": user_name,
+        "user_email": user_email,
+        "form_id": form_id,
+        "api_key_id": api_key_id,
+        "startup": startup,
+        "form_inputs": form_inputs or {},
+        "embed": embed or {},
+        "sync": sync,
+        "is_platform_admin": is_platform_admin,
+        "event": event,
+        "artifact_workspace_id": artifact_workspace_id,
+        "lineage": lineage,
+        "impersonation_provenance": impersonation_provenance,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "cancelled": False,
+    }
+
+
 class ActiveExecution(TypedDict):
     """Compact completion metadata retained by the process-pool parent."""
 
@@ -163,33 +211,34 @@ class RedisClient:
             sync: If True, worker will push result to Redis for sync execution
             lineage: Run lineage bound to this execution (RunLineage.bound)
         """
+        await self.store_pending_execution(
+            pending_execution_record(
+                execution_id=execution_id,
+                workflow_id=workflow_id,
+                script_name=script_name,
+                parameters=parameters,
+                org_id=org_id,
+                user_id=user_id,
+                user_name=user_name,
+                user_email=user_email,
+                form_id=form_id,
+                api_key_id=api_key_id,
+                startup=startup,
+                form_inputs=form_inputs,
+                embed=embed,
+                sync=sync,
+                is_platform_admin=is_platform_admin,
+                event=event,
+                artifact_workspace_id=artifact_workspace_id,
+                lineage=lineage,
+                impersonation_provenance=impersonation_provenance,
+            )
+        )
+
+    async def store_pending_execution(self, data: PendingExecution) -> None:
+        """Store a prebuilt pending-execution record."""
         redis_client = await self._get_redis()
-        key = f"{PENDING_KEY_PREFIX}{execution_id}{PENDING_KEY_SUFFIX}"
-
-        data: PendingExecution = {
-            "execution_id": execution_id,
-            "workflow_id": workflow_id,
-            "script_name": script_name,
-            "parameters": parameters,
-            "org_id": org_id,
-            "user_id": user_id,
-            "user_name": user_name,
-            "user_email": user_email,
-            "form_id": form_id,
-            "api_key_id": api_key_id,
-            "startup": startup,
-            "form_inputs": form_inputs or {},
-            "embed": embed or {},
-            "sync": sync,
-            "is_platform_admin": is_platform_admin,
-            "event": event,
-            "artifact_workspace_id": artifact_workspace_id,
-            "lineage": lineage,
-            "impersonation_provenance": impersonation_provenance,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "cancelled": False,
-        }
-
+        key = f"{PENDING_KEY_PREFIX}{data['execution_id']}{PENDING_KEY_SUFFIX}"
         try:
             await redis_client.setex(
                 key,
