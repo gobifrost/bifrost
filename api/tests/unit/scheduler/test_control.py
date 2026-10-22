@@ -263,7 +263,7 @@ async def test_unexpected_control_exit_is_reported_but_stop_is_not() -> None:
     control.running = True
     task = asyncio.create_task(exits(), name="control-leadership")
     task.add_done_callback(control._task_done)
-    await task
+    await asyncio.wait_for(task, timeout=1)
     await asyncio.sleep(0)
     assert failures == ["control-leadership"]
 

@@ -40,7 +40,7 @@ def gated(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         await kwargs["stop_event"].wait()
 
     monkeypatch.setattr(api_host, "wait_for_schema", wait_for_schema)
-    monkeypatch.setattr(api_host, "get_engine", lambda: object())
+    monkeypatch.setattr(api_host, "get_engine", object)
     monkeypatch.setattr(api_host, "replica_heartbeat_loop", heartbeat)
     state.removed = AsyncMock()
     monkeypatch.setattr(api_host, "remove_scheduler_replica", state.removed)
@@ -82,7 +82,7 @@ async def test_shutdown_while_gated_never_starts_control(gated: SimpleNamespace)
     stopping = asyncio.create_task(host.stop())
     await asyncio.sleep(0.01)
     gated.gate.set()
-    await stopping
+    await asyncio.wait_for(stopping, timeout=1)
 
     assert control.starts == 0
 
@@ -114,7 +114,7 @@ async def test_control_failure_restarts_control_without_stopping_http(
 
     control.started.clear()
     failed = asyncio.create_task(asyncio.sleep(0), name="control-leadership")
-    await failed
+    await asyncio.wait_for(failed, timeout=1)
     host._control_failed(failed)
     await asyncio.wait_for(control.started.wait(), timeout=1)
 
