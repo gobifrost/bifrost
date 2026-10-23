@@ -134,6 +134,7 @@ dependencies = [
     # execution boundary for every Bifrost agent surface.
     "pydantic-ai-slim[openai,anthropic,google,retries]==2.55.0",
     "pydantic-ai-harness==0.55.0",
+    "pydantic-monty==1.3.0",  # Local language sandbox for the opt-in CodeMode spike
 
     # =========================================================================
     # MCP (Model Context Protocol)
