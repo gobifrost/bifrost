@@ -1,8 +1,8 @@
 # CodeMode on the consolidated executors
 
 Related work: [#1015](https://github.com/gobifrost/bifrost/issues/1015).
-Base: `origin/main` at `7b536a590` (PostgreSQL-only executor claims and
-per-worktree test images).
+Base: `origin/main` at `a120b676e` (PostgreSQL-only executor claims,
+per-worktree test images, and recovery of previously queued legacy work).
 
 ## Question and scope
 
@@ -10,11 +10,11 @@ Can the owning agent compose tools in code, keep intermediate results out of
 model context, and run on ordinary Bifrost executors without requiring operators
 to provide a separate sandbox service or privileged Linux namespace setup?
 
-This branch supplies an opt-in runtime capability, a credential-free synthetic
-probe, focused regression tests, and one real workflow dispatch. It does not
-enable CodeMode in production chat or autonomous configuration. Automatic mode
-alone retains the existing result cap. A follow-up frozen production-derived
-comparison measures actual provider usage; its limitations and results are below.
+This branch now supplies an Automatic-mode integration for both chat and
+background runtimes, following the initial opt-in probe. It has not been deployed.
+The integrated provider comparison below fails the promotion gate: the large
+mechanism-level data reductions have not translated into whole-run savings.
+Direct calls and the outer code result retain the existing model result cap.
 
 **Interpretation corrected after auditing generated code:** the initial live-model
 comparison mostly measured an unfiltered tool wrapper. Generated snippets printed
@@ -358,6 +358,131 @@ PATH=/tmp/bifrost-code-mode-filtering-checks:$PATH BIFROST_SKIP_BUILD=1 ./test.s
 ```
 
 Full backend/frontend suites and a production deployment were not run.
+
+## Integrated Automatic candidate and fixed proof gate
+
+The candidate now applies one shared native CodeMode policy to Automatic chat
+and background execution. It covers agents with no delegates, compositions with
+only specialist tools, and ordinary chat's tool catalog. Workflow/MCP/system
+business tools run through code; framework discovery, capability loading and
+explicit isolated delegation retain their native lifecycle. This is a branch
+candidate, not a production enablement or a measured fleet-wide improvement.
+
+The shared tool definition now carries an optional return schema through
+specialist qualification. Bifrost's adapters declare their truthful **string**
+transport contract, with JSON decoding and tool-specific error formats documented.
+This does not supply an inner object schema for an arbitrary workflow, or pass
+an MCP vendor schema off as the Bifrost envelope's schema.
+
+Chat now registers each nested call from its scoped outer invocation, persists
+an explicit child/outer audit relation before dispatch, and retains full results
+on audit rows. Rebuilt history excludes only those explicitly related rows and
+keeps the bounded outer receipt. Ordinary tool IDs containing double underscores
+remain ordinary history. The relation is durable even if the outer invocation
+is interrupted. Code variables are local to a run; later chat turns use persisted
+receipts and identifiers rather than assuming the REPL survived.
+
+Interrupted-history coverage proves exclusion of raw nested data, not a durable
+Monty resume protocol. Before rollout, interrupted code runs also need a compact
+continuation record distinguishing completed effects from effects with unknown
+outcomes; filtering all child rows alone must not leave the next model guessing
+which mutations completed. This candidate is not promoted as safe crash-resume.
+
+Context diagnostics and conservative preflight estimates now omit application-only
+`ToolReturnPart.metadata`, including full nested receipts. They do not mutate the
+original audit messages or alter actual provider billing counters. The prior
+warning about raw serialized diagnostics above describes the initial spike.
+
+A database-backed chat test executes three reads of more than 32,000 characters,
+then reloads the conversation with a fresh session and executor. It verifies
+complete nested audit records and only the compact aggregate in the continuation
+history. It starts zero business-worker jobs. The existing single-workflow E2E
+now uses the production Automatic policy without injected CodeMode capabilities;
+it still starts exactly one workflow job through the existing executors.
+
+Before six fresh provider runs, the private protocol froze three SharePoint
+pairs, the source/input/schema/rubric hashes, three correction attempts, and a
+strict promotion gate: covered successful evidence in every pair and lower
+whole-run usage per successful task. Both arms used identical return-contract
+documentation, production-derived inputs, current prompts, model and frozen mocks.
+No fixture widening, extra provider trials or post-result prompt search occurred.
+The old Automatic baseline was rerun, not reused for this comparison.
+
+| Observed median over three fresh repetitions | Existing Automatic | Integrated CodeMode |
+| --- | ---: | ---: |
+| Provider input tokens, including cache tokens | 259,141 | 388,502 |
+| Provider output tokens | 4,125 | 5,230 |
+| Cache-read tokens | 229,752 | 344,438 |
+| Cache-write tokens | 28,390 | 44,038 |
+| Model responses | 8 | 12 |
+| Prescribed task / fully covered passes | 3 / 3 | 3 / 0 |
+
+**The promotion gate failed.** Observed median input rose 49.9%. All CodeMode
+repetitions encountered missing mock coverage (15 strict replay/off-script events
+in total), so these numbers do not establish a clean production cost regression
+estimate either. They provide no basis for a savings claim. Business callbacks
+were mocked, real business executor calls were zero, and all final outcomes were
+`needs_human` without SharePoint permission mutations. Provisional source-based
+semantic review also flags access/root-cause inferences requiring adjudication;
+it is not an independent human certification.
+
+The traces explain why a smaller return did not suffice. Across three CodeMode
+runs, 29 snippets made 63 nested calls, with repeated successful reads, discovery
+round trips, four native retry-feedback events and continued raw/string-clipped
+or mixed outputs. Unique returned content fell 13.8% (81,939 to 70,668 bytes),
+but cumulative content reread rose 61.7% (340,365 to 550,506 bytes). These are
+tool-return content bytes including framework results, not provider tokens.
+
+The continuation is therefore an experimental integration with verified history
+and dispatch boundaries, not a rollout. The next cost experiment needs a clearer
+phase-level discovery/processing interface and actual structured result contracts
+where supported, plus complete frozen coverage. Merely declaring the existing
+transport `str` and enabling native CodeMode everywhere did not establish the
+published filtering/chaining economics. Keep that distinction when evaluating
+the earlier hand-written 75.7% payload reduction.
+
+Final verification after rebasing onto `a120b676e` passed **131 tests**, with
+zero failures, errors or skips, followed by API Pyright/Ruff. The test image was
+rebuilt as the worktree-owned tag `bifrost-test-api-dev:code-mode-proof-1015`
+(`sha256:107078a90c412bf81f45aa2fa22b01d7483f87215fe94e57ff6f01b64798bb38`)
+to include main's new broker-recovery dependency. An old API container initially
+failed to import that dependency; recreating services with the rebuilt image
+resolved the harness state. The benchmark remains pinned to its earlier image
+and immutable source snapshot. All nine shared policy, adapter, composition,
+measurement and executor source files match the tested candidate byte-for-byte;
+the later artifact factory also declares the same serialized return contract.
+
+The selected commands were:
+
+```bash
+BIFROST_TEST_IMAGE_TAG=code-mode-proof-1015 BIFROST_SKIP_BUILD=1 ./test.sh \
+  tests/unit/services/test_agent_code_mode.py \
+  tests/unit/services/test_agent_tool_return_contract.py \
+  tests/unit/services/test_agent_code_mode_runtime_policy.py \
+  tests/unit/services/agent_runtime/test_tool_policy.py \
+  tests/unit/services/agent_runtime/test_context_breakdown.py \
+  tests/unit/services/test_agent_executor_runtime.py \
+  tests/unit/services/test_agent_composition_stream.py \
+  tests/unit/services/test_autonomous_agent_executor.py \
+  tests/unit/services/agent_runtime/test_composition.py \
+  tests/unit/services/test_agent_runtime_authorization.py \
+  tests/unit/services/test_chat_artifacts.py \
+  tests/e2e/api/test_agent_code_mode_spike.py \
+  tests/e2e/api/test_agent_code_mode_chat.py -v --durations=0
+BIFROST_TEST_IMAGE_TAG=code-mode-proof-1015 BIFROST_SKIP_BUILD=1 ./test.sh quality api
+git diff --check
+```
+
+Earlier focused failures were fixed rather than retried unchanged: Pydantic
+requires `include_return_schema` to expose a known schema; its provider fallback
+can express that schema in the description, while the sandbox catalog retains
+the actual return type. Test doubles now use the supported streaming callback,
+structured outer results and dataclass message adapter. The old Automatic stream
+test now checks the intentional code/child event sequence instead of direct
+business calls. A missing `replace` import and one unused test import were fixed.
+Concurrent harness resets were eliminated by giving the parent exclusive stack
+ownership. No retries, skips or broad-failure waivers were added. Full backend
+and frontend suites, production deployment and worker-density testing were not run.
 
 ## Primary references
 
