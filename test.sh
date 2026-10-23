@@ -54,6 +54,18 @@ COMPOSE_FILE="docker-compose.test.yml"
 export COMPOSE_PROJECT_NAME
 COMPOSE_PROJECT_NAME="$(compute_project_name .)"
 
+# Each worktree builds and runs its own API image, so a parallel worktree's
+# build cannot replace the image this one tests. CI pre-builds :latest and
+# sets BIFROST_SKIP_BUILD=1.
+if [ -z "${BIFROST_TEST_IMAGE_TAG:-}" ]; then
+    if [ "${BIFROST_SKIP_BUILD:-0}" = "1" ]; then
+        BIFROST_TEST_IMAGE_TAG=latest
+    else
+        BIFROST_TEST_IMAGE_TAG="$COMPOSE_PROJECT_NAME"
+    fi
+fi
+export BIFROST_TEST_IMAGE_TAG
+
 LOG_DIR="/tmp/bifrost-$COMPOSE_PROJECT_NAME"
 mkdir -p "$LOG_DIR"
 # Pre-create the fixture subdir the api container bind-mounts (install/preview-repo
@@ -227,7 +239,8 @@ stack_up() {
     wait_for_service "$COMPOSE_FILE" pgbouncer pg_isready -h localhost -p 5432 -U bifrost
 
     # CI pre-builds the API dev image via docker/build-push-action with GHA cache
-    # and tags it as bifrost-test-api-dev:latest before calling stack up.
+    # and tags it as bifrost-test-api-dev:latest before calling stack up
+    # (BIFROST_TEST_IMAGE_TAG; locally each worktree uses its project name).
     # Setting BIFROST_SKIP_BUILD=1 tells compose to
     # use those local images directly instead of building. Local dev leaves
     # this unset so `--build` continues to apply (image layer cache makes the
