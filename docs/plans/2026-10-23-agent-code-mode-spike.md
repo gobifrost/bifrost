@@ -26,6 +26,13 @@ has been removed. See **Direct function bindings and reference-audit correction*
 below. Those experiments remain historical observations of the previous adapter;
 they do not measure this candidate.
 
+**Latest provider benchmark:** the direct-function candidate now has a fresh
+20-attempt comparison with high thinking in both arms. Eight pairs passed the
+required structured report/action contract in both arms; median within-pair
+reductions were 52.0% input tokens, 84.4% estimated model cost, and 17.6% elapsed
+time. Separate audit found prose errors and one large raw return. See **Provider
+benchmark of direct function bindings** below for the evidence and limits.
+
 **Interpretation corrected after auditing generated code:** the initial live-model
 comparison mostly measured an unfiltered tool wrapper. Generated snippets printed
 or implicitly returned complete responses and copied discovered IDs through later
@@ -935,6 +942,130 @@ BIFROST_TEST_IMAGE_TAG=code-mode-proof-1015 BIFROST_SKIP_BUILD=1 ./test.sh \
   tests/e2e/api/test_agent_code_mode_chat.py -v --durations=0
 BIFROST_TEST_IMAGE_TAG=code-mode-proof-1015 BIFROST_SKIP_BUILD=1 ./test.sh quality api
 ```
+
+## Provider benchmark of direct function bindings
+
+The corrected candidate at `4db7aaa79` was benchmarked in a fresh, frozen cohort:
+10 alternating pairs, direct DeepSeek Flash with thinking enabled and effort
+`high` in both arms, identical production operating prompts and business schemas,
+and the same fictional five-folder/300-file SharePoint workload. This remains
+one favorable synthetic task using a frozen 25-agent/237-definition production
+graph, not a replay of historical runs or a sample of general chat traffic.
+The source/shared trees, fixture, protocol, runner, recorder, wire probe, and
+analyzer were hashed before the first generation request. No model settings,
+prompts, budgets, schemas, or source were tuned between attempts.
+
+The new protocol makes required report/action correctness the task contract.
+Batch size, model responses, a single-program target, and returned-data size are
+separate diagnostics. They do not redefine task success. Both arms retain the
+40-request, 1.5-million-total-token and 360-second budgets; native code allows
+three corrections. All complete read responses are below the ordinary
+32,000-character model result cap, so the direct arm does not lose evidence to
+truncation. Both execute against the same closed-world mock router, with no
+live business executor or production authorization reads.
+
+Offline checks passed the exact report/action oracle for both scripted arms,
+327 normal mock operations with no gaps, raw-result detection, inclusive cache
+accounting, high-thinking/reasoning-content tool continuation through the HTTP
+adapter, and nested-set serialization through durable recording. During paid
+execution, each provider response was fsynced before the next request and each
+artifact was written atomically. Final verification found 20 distinct attempts,
+270 received provider responses, no replacement attempts, no oracle leakage,
+zero real business effects, and unchanged frozen helpers and runtime trees.
+
+Two first-request connection timeouts stopped the harness as configured:
+direct repetition 5 and CodeMode repetition 7. After non-billable connectivity
+checks, the remaining scheduled attempts resumed with identical hashes; neither
+failed attempt was retried or replaced. Both have zero received model responses
+and no returned usage. Their actual billing is unknown, rather than assumed zero.
+The other direct failure (repetition 7) delivered an otherwise equivalent JSON
+report followed by prose, violating the required standalone-JSON contract.
+
+| Required report/action outcome | Direct | CodeMode |
+| --- | ---: | ---: |
+| Passes / scheduled attempts | 8 / 10 | 9 / 10 |
+| Connection timeouts | 1 | 1 |
+| Received response, invalid required report | 1 | 0 |
+
+Eight ordinal pairs passed that required contract in both arms: 1, 2, 3, 4, 6,
+8, 9 and 10. Costs below estimate received usage using DeepSeek's
+[published rates](https://api-docs.deepseek.com/quick_start/pricing/); all response
+timestamps fall outside peak hours. Input tokens already include cache hits,
+and completion tokens are not increased by adding reasoning again. These are
+model-cost estimates, not an invoice or worker-infrastructure cost calculation.
+
+| Median across the eight matched pairs | Direct | CodeMode |
+| --- | ---: | ---: |
+| Inclusive input tokens | 635,730 | 300,075 |
+| Output tokens | 8,223 | 4,822.5 |
+| Estimated model cost | $0.04008 | $0.00611 |
+| Elapsed time | 45.00 s | 38.55 s |
+| Model responses | 11.5 | 17 |
+| Uncached input tokens | 223,126 | 13,727.5 |
+
+The **median of the individual paired reductions** is **52.0% for input,
+84.4% for estimated model cost, and 17.6% for elapsed time**. These are medians
+of per-pair ratios, not ratios of the independent medians in the table. Every
+matched pair reduced input (44.8–72.2%) and estimated cost (83.8–87.1%). Most
+of the cost difference comes from fewer uncached input tokens. This experiment
+does not isolate how much came from stable discovery/catalog transport versus
+code-side projection, or from function bindings versus the previous generic SDK.
+The previous disabled-thinking cohort cannot supply that causal comparison.
+
+More responses therefore did not imply more tokens, cost, or elapsed time.
+Successful CodeMode runs received one or two framework correction messages;
+the reported usage and latency include them. All nine performed real batching:
+14–15 business reads across 4–6 read-containing programs, with 5–10 reads in
+the largest batch. None satisfied the old monolithic-program target, which is
+reported without treating it as a Cloudflare conformance requirement.
+
+The quality and projection limits are material:
+
+- **Required JSON correctness does not certify every narrative sentence.**
+  Direct repetitions 3 and 4 overstate root organization-link counts; repetition
+  8 understates anonymous links. CodeMode repetition 9 gives an invalid ID
+  abbreviation in its final table, and repetition 10 gives an incorrect total
+  qualifying-CSV count. Their required JSON reports remain exact under the
+  frozen oracle. The CodeMode terminal work summaries retain the correct values.
+- **Raw results still reached the model.** CodeMode repetition 6 fully returned
+  a 15,995-byte permission response. The other eight completed CodeMode runs
+  avoided complete top-level business responses above 10 KB but returned some
+  smaller source containers, metadata, or partial values. The earlier chat update
+  saying no exposure had been detected was too strong and was corrected.
+- **No run passes the strict projection diagnostic.** Total `run_code` returned
+  content was 25,330–37,982 bytes. Under the conservative classifier that counts
+  ambiguous retained-state output as business-derived, the business/ambiguous
+  count was 25,330–33,298 bytes, above the diagnostic 10,000-byte ceiling. Raw
+  markers compare equal nested containers of at least 128 bytes; their nonzero
+  counts do not by themselves prove a complete large response was exposed.
+
+A post-hoc narrative sensitivity check leaves only three matched pairs without
+identified prose contradictions (1, 2, 6). Their median paired reductions remain
+53.3% input, 84.3% estimated cost and 11.9% elapsed, but that smaller sample is
+not a replacement primary score or a strong whole-answer quality certification.
+The original structured scores remain unchanged.
+
+**Disposition:** the experiment demonstrates a substantial model-token and
+model-cost advantage for this workload, including correction overhead. It does
+not certify general Automatic/chat savings, perfect summary fidelity, or reliable
+suppression of raw results. The implementation remains undeployed. The next
+validation should address summaries derived from verified report data and
+unnecessary raw returns, then cover ordinary chat and additional workloads
+rather than extrapolating from this favorable inventory task.
+
+Private reproducibility artifacts live in
+`/home/jack/workspace/code-mode-production-benchmark-2026-10-23/function-bindings-benchmark/`:
+`benchmark-protocol.json`, `function-bindings-launch-manifest.json`,
+`function-bindings-offline-conformance.json`, the per-attempt results and durable
+response captures, `analysis.json`, `final-receipt-verification.json`,
+`final-evidence-review.json`, and `narrative-sensitivity.json`. Manifest SHA-256:
+`cdf4a16d26bf22461b0f0b2ff91ba516dfabf59f6655d29507fdb81318b388ab`.
+Runtime source SHA-256:
+`0a2eb607ea0f9e9ab48ce02a45644eadb28d9bebd3e8d2479da49b2cf6c77991`.
+Earlier experiment files, scores, and manifests remain unchanged. This turn
+changes documentation only; no backend or frontend suite was rerun after the
+previous 121 targeted tests and API quality checks. The benchmark's offline
+conformance and final artifact-integrity checks were run as described above.
 
 ## Primary references
 
