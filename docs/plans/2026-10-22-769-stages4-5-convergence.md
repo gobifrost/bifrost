@@ -119,9 +119,9 @@ move to the API: the API holds no Job permission there.
   files), so unchanged Compose healthchecks and Kubernetes probes keep
   passing. The scheduler's liveness probe would otherwise kill it.
 - **Job specs default from the cluster.** Without build settings, worker Jobs
-  use the API pod's own namespace (service-account `namespace` file) and
-  image (its own pod spec), the `bifrost-config` / `bifrost-secrets` names of
-  the base manifests, and the `default` service account with no token.
+  use the controlling pod's own namespace (service-account `namespace` file),
+  image and `envFrom` sources (its own pod spec, so renamed ConfigMaps and
+  Secrets carry over), and the `default` service account with no token.
 - **Defaults** `BIFROST_POOL_MIN_WORKERS=1`, `BIFROST_POOL_MAX_WORKERS=6`.
   Supervised services need an executor: in Docker the static executors, on
   Kubernetes the static executors or the warm Job worker.
