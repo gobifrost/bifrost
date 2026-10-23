@@ -136,3 +136,12 @@ two hops:
 Folding the two transactions together is the next optimization. A cold
 Job worker takes seconds, so interactive runs need warm capacity:
 `BIFROST_POOL_MIN_WORKERS` or a static executor.
+
+## Failure drills (Kind, `./test.sh kubernetes pool-drills`, 2026-10-22)
+
+| Drill | Result |
+| --- | --- |
+| Worker process SIGKILLed on its node mid-run | lost after 28.6 s; its 2 running runs failed at once ("executor lost"), not replayed; queued work completed on another worker |
+| Every API pod deleted during a 12-run burst | burst completed in 28.6 s; no duplicate Jobs (one per executor row) |
+| Run exceeding the pod memory limit | that run failed visibly (executor lost); pool kept serving (next runs 0.2 s) |
+| Unschedulable worker capacity | not completed: the drill's enqueue hit an API pod being replaced by its own `set env` rollout (exit 137). Harness fix: select a Ready, non-terminating API pod |
