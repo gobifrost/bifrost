@@ -1011,7 +1011,8 @@ def _inventory(rule, roots: tuple[str, ...] = _SOURCE_ROOTS) -> dict[str, set[st
     return found
 
 
-def _elevated_site_nodes(source: str) -> list[tuple[ast.AST, str]]:
+@functools.cache
+def _elevated_site_nodes(source: str) -> tuple[tuple[ast.AST, str], ...]:
     """``(node, token)`` for every token that makes a function an
     elevated-check site: a read used to decide, widen, or hand the decision
     to a callee. Not a site: a pure echo, where the token is itself a dict
@@ -1021,11 +1022,11 @@ def _elevated_site_nodes(source: str) -> list[tuple[ast.AST, str]]:
     within a dict or f-string still decides something and counts."""
     tree = _parse_source(source)
     parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
-    return [
+    return tuple(
         (node, token)
         for node, token in _elevated_token_nodes(tree)
         if token not in _ELEVATED_DEPENDENCY_NAMES and not _is_pure_echo(node, parents.get(node))
-    ]
+    )
 
 
 def _elevated_site_tokens(source: str) -> set[str]:
