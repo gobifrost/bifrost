@@ -1,0 +1,12 @@
+{
+  "key": "pr:1034",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Deployment robustness fix: an older worker or scheduler image now starts against a database already migrated by a newer image instead of crash-looping. No product behavior changes.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1034"
+    ]
+  }
+}
