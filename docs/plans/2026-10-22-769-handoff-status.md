@@ -23,24 +23,33 @@ Updated 2026-10-22, late. Read with `2026-10-22-769-stage2-durable-dispatch.md`,
   long-running worker) serves interactive runs; a cold Job worker takes
   about 12 s.
 
-## Authority for this run
+## Authority for this run (confirmed by Jack, 2026-10-22)
 
-- **Merges:** Jack consents to merging each PR, in order through the merge
-  queue (`gh pr merge <N>`, no strategy flag), **once its gate below passes
-  in the debug stack**. A failed gate means fix with a test; never skip.
-- **Production:** no deploys and no GitOps changes. "Roll out" means merge
-  to `main`. Nightly images will contain the merged work. Everything before
-  the final flip is off by default, so those images are safe.
-- **Decisions still open.** Stop and ask before the steps that depend on
-  them:
-  - **D1:** confirm "roll out" means merge only.
-  - **D2:** accept that Docker installs get fixed executors, not dynamic
-    scaling.
-  - **D3:** may the base `k8s/` manifests give the API the Job-creating
-    service account (namespace-scoped `jobs` create/patch/delete, `pods`
-    get/list), so an unchanged Kubernetes install scales on its next sync?
-    Without it, those installs keep a fixed worker Deployment until they
-    apply the RBAC.
+- **Merges.** Merge each PR in order through the merge queue
+  (`gh pr merge <N>`, no strategy flag) once its gate below passes. A failed
+  gate means a fix with a test; never a skip.
+- **No waiting between steps.** Run straight through 5c. Restarts are safe:
+  accepted work is durable, workers drain and leadership hands off. The only
+  rule is that 5a and 5b merge after their upgrade rehearsal passes, never
+  before.
+- **Production.** Update production once a stage is fully tested locally.
+  Kind runs the production image and manifests.
+  - Production is Kubernetes, synced from GitOps by Flux. Change it through
+    the GitOps repository.
+  - After each rollout, run the read-only prod smoke test
+    (`prod_smoke/prod_smoke.sh`).
+  - Kind cannot cover three things, so check them on the first prod rollout:
+    DigitalOcean node autoscaling, pulling the image from GHCR, and the
+    Flux sync.
+  - Jack's personal instance is available but not required.
+- **Docker.** The expected setup is 1 scheduler + 1 worker. Unchanged, that
+  becomes two identical executors. To scale, set replicas.
+- **Kubernetes RBAC.** The base `k8s/` manifests give the API the
+  Job-creating Role. It is the same namespace-scoped Role the
+  `deploy/kubernetes/builds` runbook already grants the scheduler today:
+  `jobs` create/patch/delete, `pods` get/list. The scheduler binding moves
+  to the API, so an unchanged Kubernetes install scales after its next
+  sync.
 
 ## Ground rules for every step
 
@@ -91,9 +100,9 @@ Updated 2026-10-22, late. Read with `2026-10-22-769-stage2-durable-dispatch.md`,
 | 5b | **Retire RabbitMQ** | Remove consumers, publishers, topology, bridge code, the RabbitMQ health check, the test-stack and CI service, the KEDA ScaledObject, the worker-Deployment-only settings, and the `api-control` overlay. Tolerate a leftover `BIFROST_RABBITMQ_URL` or `rabbitmq` service in a user's compose (ignored, never fatal). Before removal, a startup check confirms no broker-placed dispatches remain. Document deleting the old queues and their dead-letter recovery. Gate: full checklist, the upgrade rehearsal again, and `grep -ri rabbit api/src` returns nothing but the migration note. |
 | 5c | **Final proof** | Kind with unchanged base manifests: 1 warm worker scales to 6 under a burst, drains back to 1, and the checklist passes. Docker with the unchanged compose: the checklist passes on the two executors. |
 
-Stopping anywhere before 5a leaves `main` safe, because every earlier PR is
-off by default or invisible. Do not start 5a in a session that cannot also
-finish its rehearsal.
+Every PR before 5a is off by default or invisible, so `main` is safe at any
+point. 5a and 5b merge only once their upgrade rehearsal passes; after that,
+continue directly to 5c and the production rollout.
 
 ## Status
 
