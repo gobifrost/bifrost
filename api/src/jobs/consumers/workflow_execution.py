@@ -92,20 +92,26 @@ class WorkflowExecutionConsumer(BaseConsumer):
         the template is still starting, and there would be no valid way to
         create worker processes for incoming messages.
         """
-        await self._pool.start()
-        self._pool_started = True
-        logger.info("Process pool started")
+        await self.start_pool()
 
         # Only now begin accepting messages from RabbitMQ.
         await super().start()
 
-    async def stop(self) -> None:
-        """Stop the consumer and process pool."""
-        # Stop process pool
+    async def start_pool(self) -> None:
+        """Start the process pool without consuming RabbitMQ (pool workers)."""
+        await self._pool.start()
+        self._pool_started = True
+        logger.info("Process pool started")
+
+    async def stop_pool(self) -> None:
         if self._pool_started:
             await self._pool.stop()
             self._pool_started = False
             logger.info("Process pool stopped")
+
+    async def stop(self) -> None:
+        """Stop the consumer and process pool."""
+        await self.stop_pool()
 
         # Call parent stop
         await super().stop()

@@ -162,6 +162,8 @@ services:
       BIFROST_ENVIRONMENT: ${BIFROST_ENVIRONMENT:-production}
       # Which process hosts platform control: scheduler (default) or api.
       BIFROST_CONTROL_PLANE_HOST: ${BIFROST_CONTROL_PLANE_HOST:-scheduler}
+      # Where accepted runs go: broker (RabbitMQ workers, default) or pool.
+      BIFROST_EXECUTION_PLACEMENT: ${BIFROST_EXECUTION_PLACEMENT:-broker}
       BIFROST_DEBUG: ${BIFROST_DEBUG:-false}
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:?BIFROST_SECRET_KEY is required (32+ chars)}
       # Database (via PgBouncer for connection pooling)
@@ -246,6 +248,8 @@ services:
       BIFROST_ENVIRONMENT: ${BIFROST_ENVIRONMENT:-production}
       # Which process hosts platform control: scheduler (default) or api.
       BIFROST_CONTROL_PLANE_HOST: ${BIFROST_CONTROL_PLANE_HOST:-scheduler}
+      # Where accepted runs go: broker (RabbitMQ workers, default) or pool.
+      BIFROST_EXECUTION_PLACEMENT: ${BIFROST_EXECUTION_PLACEMENT:-broker}
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:?BIFROST_SECRET_KEY is required (32+ chars)}
       # Database (via PgBouncer for connection pooling)
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD}@pgbouncer:5432/bifrost
@@ -301,6 +305,8 @@ services:
     environment:
       # Core (must match API)
       BIFROST_ENVIRONMENT: ${BIFROST_ENVIRONMENT:-production}
+      # Must match the API and scheduler: nested runs are accepted here too.
+      BIFROST_EXECUTION_PLACEMENT: ${BIFROST_EXECUTION_PLACEMENT:-broker}
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:?BIFROST_SECRET_KEY is required (32+ chars)}
       # Database (via PgBouncer for connection pooling)
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD}@pgbouncer:5432/bifrost

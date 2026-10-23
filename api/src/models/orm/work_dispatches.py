@@ -31,6 +31,10 @@ class WorkDispatch(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     # pending: committed, not yet handed to the broker; published: handed over.
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    # broker: published to RabbitMQ. pool: claimed from PostgreSQL by a
+    # reusable worker (assigned_worker_id records the claimant).
+    placement: Mapped[str] = mapped_column(String(20), nullable=False, default="broker")
+    assigned_worker_id: Mapped[UUID | None] = mapped_column(nullable=True)
     publish_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_published_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -42,4 +46,5 @@ class WorkDispatch(Base):
     __table_args__ = (
         UniqueConstraint("family", "subject_id", name="uq_work_dispatches_subject"),
         Index("ix_work_dispatches_status_created", "status", "created_at"),
+        Index("ix_work_dispatches_placement_created", "placement", "created_at"),
     )

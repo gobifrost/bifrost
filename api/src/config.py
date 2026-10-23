@@ -168,6 +168,56 @@ class Settings(BaseSettings):
     )
 
     # ==========================================================================
+    # Reusable execution workers (#769 stage 3)
+    # ==========================================================================
+    execution_placement: Literal["broker", "pool"] = Field(
+        default="broker",
+        description=(
+            "Where accepted workflow and agent runs go. 'broker' publishes them "
+            "to RabbitMQ for the worker Deployment. 'pool' leaves them in "
+            "PostgreSQL for reusable worker Jobs that the control plane starts "
+            "on demand and that drain to zero when idle; requires "
+            "BIFROST_CONTROL_PLANE_HOST=api and the Kubernetes build backend."
+        ),
+    )
+    pool_max_workers: int = Field(
+        default=4, ge=1, description="Maximum concurrent reusable worker Jobs"
+    )
+    pool_min_workers: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Job workers kept ready even with no work (the warm minimum). A "
+            "worker cold start takes seconds, so interactive runs need warm "
+            "capacity: this minimum or static executors."
+        ),
+    )
+    pool_worker_slots: int = Field(
+        default=4,
+        ge=1,
+        description="Concurrent runs one reusable worker accepts",
+    )
+    pool_idle_seconds: int = Field(
+        default=300,
+        ge=1,
+        description="Seconds a reusable worker stays up with no work before draining",
+    )
+    pool_max_lifetime_seconds: int = Field(
+        default=6 * 3600,
+        ge=60,
+        description="A reusable worker drains (never kills work) after this lifetime",
+    )
+    pool_start_timeout_seconds: int = Field(
+        default=300,
+        ge=10,
+        description="Seconds a launched worker may take to become ready",
+    )
+    pool_worker_memory_request_mib: int = Field(default=512, ge=1)
+    pool_worker_memory_limit_mib: int = Field(default=2048, ge=1)
+    pool_worker_cpu_request: str = Field(default="250m")
+    pool_worker_cpu_limit: str = Field(default="2")
+
+    # ==========================================================================
     # Platform build jobs
     # ==========================================================================
     platform_build_backend: Literal["local", "kubernetes"] = Field(

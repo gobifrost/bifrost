@@ -41,6 +41,13 @@ REDELIVERY_WINDOW = timedelta(minutes=30)
 # longer than the hour a Redis-only run used to survive).
 MAX_PUBLISHES = 3
 RECONCILE_BATCH = 100
+# Pool dispatches are re-examined once they are this old (cancelled runs,
+# dispatches held by a lost worker), and fail visibly if no worker capacity
+# claimed them by the claim deadline.
+POOL_RECHECK_AFTER = timedelta(minutes=2)
+POOL_CLAIM_DEADLINE = timedelta(minutes=30)
+# A worker of either form that has not heartbeated this long holds nothing.
+WORKER_SILENT_AFTER = timedelta(minutes=2)
 
 
 @dataclass(frozen=True)
@@ -85,7 +92,13 @@ def stage_dispatch(
     message: dict[str, Any],
     payload: dict[str, Any],
 ) -> WorkDispatch:
-    """Add a dispatch to the caller's transaction; publish after commit."""
+    """Add a dispatch to the caller's transaction; hand off after commit.
+
+    Placement is fixed here, from deployment configuration, and persists with
+    the dispatch so a configuration change never strands in-flight work.
+    """
+    from src.config import get_settings
+
     dispatch_id = uuid4()
     dispatch = WorkDispatch(
         id=dispatch_id,
@@ -101,11 +114,36 @@ def stage_dispatch(
             "handler_version": handler_version,
         },
         payload=payload,
+        placement=get_settings().execution_placement,
         status="pending",
         publish_count=0,
     )
     db.add(dispatch)
     return dispatch
+
+
+async def hand_off(dispatch_id: UUID, placement: str, queue: str, message: dict[str, Any]) -> bool:
+    """Fast-path hand-off after commit: publish, or leave for pool workers."""
+    if placement == "pool":
+        # The dispatch is already claimable; the hint only saves pool workers
+        # their poll interval.
+        await wake_pool_workers()
+        return True
+    return await publish_dispatch(dispatch_id, queue, message)
+
+
+POOL_WAKE_CHANNEL = "bifrost:pool:wake"
+
+
+async def wake_pool_workers() -> None:
+    """Best-effort nudge to pool workers; never authority over claims."""
+    from src.core.cache.redis_client import get_shared_redis
+
+    try:
+        redis = await get_shared_redis()
+        await redis.publish(POOL_WAKE_CHANNEL, "1")
+    except Exception:
+        logger.debug("Could not wake pool workers", exc_info=True)
 
 
 # Publish records in flight; held so they are not garbage-collected.
@@ -195,6 +233,11 @@ async def _reconcile_one(
             # Cancelled, or claimed by an executor that predates dispatches.
             await db.delete(row)
             return False
+        if row.placement == "pool":
+            failure = await _settle_pool_dispatch(db, family, row)
+            if failure is not None:
+                await family.report_failed(subject_id, *failure)
+            return False
         if row.publish_count >= MAX_PUBLISHES:
             reason = f"No executor claimed this run after {row.publish_count} deliveries."
             await family.fail(db, subject_id, reason)
@@ -228,6 +271,37 @@ async def _reconcile_one(
     return True
 
 
+async def _settle_pool_dispatch(
+    db: AsyncSession, family: DispatchFamily, row: WorkDispatch
+) -> tuple[dict[str, Any], str] | None:
+    """Release work held by a dead worker; fail work no capacity picked up."""
+    from src.models.orm.execution_workers import ExecutionWorker
+
+    if row.assigned_worker_id is not None:
+        worker = (
+            await db.execute(
+                select(ExecutionWorker.state, ExecutionWorker.heartbeat_at).where(
+                    ExecutionWorker.id == row.assigned_worker_id
+                )
+            )
+        ).one_or_none()
+        silent = worker is not None and (
+            worker.heartbeat_at is None
+            or worker.heartbeat_at <= datetime.now(timezone.utc) - WORKER_SILENT_AFTER
+        )
+        if worker is None or worker.state in ("lost", "retired") or silent:
+            # The worker that took it is gone before claiming the run.
+            row.assigned_worker_id = None
+        return None
+    if row.created_at <= datetime.now(timezone.utc) - POOL_CLAIM_DEADLINE:
+        reason = "No worker capacity became available for this run."
+        await family.fail(db, row.subject_id, reason)
+        payload = row.payload
+        await db.delete(row)
+        return payload, reason
+    return None
+
+
 async def reconcile_work_dispatches(*, limit: int = RECONCILE_BATCH) -> int:
     """Publish lost hand-offs; drop dispatches whose subject moved on.
 
@@ -241,10 +315,14 @@ async def reconcile_work_dispatches(*, limit: int = RECONCILE_BATCH) -> int:
                 select(WorkDispatch.id, WorkDispatch.family, WorkDispatch.subject_id)
                 .where(
                     or_(
-                        (WorkDispatch.status == "pending")
+                        (WorkDispatch.placement == "broker")
+                        & (WorkDispatch.status == "pending")
                         & (WorkDispatch.created_at <= now - PENDING_GRACE),
-                        (WorkDispatch.status == "published")
+                        (WorkDispatch.placement == "broker")
+                        & (WorkDispatch.status == "published")
                         & (WorkDispatch.last_published_at <= now - REDELIVERY_WINDOW),
+                        (WorkDispatch.placement == "pool")
+                        & (WorkDispatch.created_at <= now - POOL_RECHECK_AFTER),
                     )
                 )
                 .order_by(WorkDispatch.created_at.asc())
@@ -263,6 +341,9 @@ async def reconcile_work_dispatches(*, limit: int = RECONCILE_BATCH) -> int:
 
 __all__ = [
     "DispatchFamily",
+    "POOL_CLAIM_DEADLINE",
+    "POOL_WAKE_CHANNEL",
+    "hand_off",
     "MAX_PUBLISHES",
     "PENDING_GRACE",
     "REDELIVERY_WINDOW",

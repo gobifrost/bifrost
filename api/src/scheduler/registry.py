@@ -138,6 +138,11 @@ SCHEDULED_TASKS: tuple[ScheduledTaskDefinition, ...] = (
         trigger_args={"minutes": 15}, run_at_startup=True,
     ),
     ScheduledTaskDefinition(
+        "execution_worker_cleanup", "Clean Up Executors", "Hourly",
+        callback="src.services.worker_pool.maintenance:prune_execution_workers",
+        trigger_args={"hours": 1},
+    ),
+    ScheduledTaskDefinition(
         "logo_thumbnail_backfill", "Backfill Entity Logo Thumbnails", "Every minute",
         callback="src.jobs.schedulers.logo_thumbnail_backfill:backfill_logo_thumbnails",
         trigger_args={"minutes": 1}, run_at_startup=True,

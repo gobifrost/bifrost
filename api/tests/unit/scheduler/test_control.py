@@ -47,7 +47,7 @@ class FakeLease:
 
 
 def _settings(backend: str = "local") -> SimpleNamespace:
-    return SimpleNamespace(platform_build_backend=backend)
+    return SimpleNamespace(platform_build_backend=backend, execution_placement="broker")
 
 
 def _control(lease: FakeLease, **kwargs) -> ControlPlane:
@@ -84,6 +84,8 @@ LEGACY_SCHEDULES = {
     "worker_metrics_sampling": ("interval", {"seconds": 60}, True),
     "worker_metrics_cleanup": ("cron", {"hour": 4, "minute": 0}, False),
     "scheduler_diagnostics_cleanup": ("interval", {"hours": 1}, False),
+    # Added with reusable executors (#769 stage 3).
+    "execution_worker_cleanup": ("interval", {"hours": 1}, False),
 }
 
 

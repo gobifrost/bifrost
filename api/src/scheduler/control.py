@@ -153,6 +153,15 @@ class ControlPlane:
                 self._dispatch_reconcile_loop(), name="work-dispatch-reconciler"
             ),
         ]
+        if self.settings.execution_placement == "pool":
+            from src.services.worker_pool.controller import worker_pool_loop
+
+            self._tasks.append(
+                asyncio.create_task(
+                    worker_pool_loop(self._stop_event),
+                    name="worker-pool-controller",
+                )
+            )
         if self.settings.platform_build_backend == "kubernetes":
             from src.jobs.schedulers.kubernetes_jobs import kubernetes_build_loop
 

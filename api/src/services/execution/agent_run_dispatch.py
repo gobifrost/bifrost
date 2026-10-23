@@ -24,7 +24,7 @@ from src.core.cache.redis_client import get_redis
 from src.core.log_safety import log_safe
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.work_dispatches import WorkDispatch
-from src.services.work_dispatch import publish_dispatch, stage_dispatch
+from src.services.work_dispatch import hand_off, stage_dispatch
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ async def cache_agent_context(run_id: str, context: dict[str, Any]) -> None:
 
 
 async def hand_off_agent_run(dispatch: WorkDispatch) -> bool:
-    return await publish_dispatch(dispatch.id, QUEUE_NAME, dispatch.message)
+    return await hand_off(dispatch.id, dispatch.placement, QUEUE_NAME, dispatch.message)
 
 
 async def lock_waiting_agent_run(db: AsyncSession, run_id: UUID) -> bool | None:

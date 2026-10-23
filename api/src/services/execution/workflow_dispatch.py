@@ -27,7 +27,7 @@ from src.models.enums import ExecutionStatus
 from src.models.orm.executions import Execution
 from src.models.orm.workflows import Workflow
 from src.services.durable_impersonation import pending_durable_impersonation
-from src.services.work_dispatch import publish_dispatch, stage_dispatch, take_dispatch_payload
+from src.services.work_dispatch import hand_off, stage_dispatch, take_dispatch_payload
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,7 @@ QUEUE_NAME = "workflow-executions"
 @dataclass(frozen=True)
 class AcceptedRun:
     dispatch_id: UUID
+    placement: str
     message: dict[str, Any]
     pending: PendingExecution
 
@@ -115,7 +116,12 @@ async def stage_workflow_run(
         message={**message, "execution_record_exists": True},
         payload=dict(pending),
     )
-    return AcceptedRun(dispatch_id=dispatch.id, message=dispatch.message, pending=pending)
+    return AcceptedRun(
+        dispatch_id=dispatch.id,
+        placement=dispatch.placement,
+        message=dispatch.message,
+        pending=pending,
+    )
 
 
 async def hand_off_workflow_run(accepted: AcceptedRun) -> bool:
@@ -145,7 +151,9 @@ async def hand_off_workflow_run(accepted: AcceptedRun) -> bool:
                 extra={"execution_id": accepted.pending["execution_id"]},
                 exc_info=True,
             )
-    return await publish_dispatch(accepted.dispatch_id, QUEUE_NAME, accepted.message)
+    return await hand_off(
+        accepted.dispatch_id, accepted.placement, QUEUE_NAME, accepted.message
+    )
 
 
 async def claim_workflow_dispatch(
