@@ -16,6 +16,7 @@ from pathlib import Path
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+from alembic.script.revision import RevisionError
 from alembic.util.exc import CommandError
 from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
@@ -48,7 +49,9 @@ def _known_ancestors(script: ScriptDirectory) -> Callable[[str], frozenset[str] 
             return frozenset(
                 r.revision for r in script.iterate_revisions(revision, "base")
             )
-        except CommandError:
+        except (CommandError, RevisionError):
+            # A revision missing from this image's history was written by a
+            # newer image; alembic reports it as a RevisionError.
             return None
 
     return ancestors

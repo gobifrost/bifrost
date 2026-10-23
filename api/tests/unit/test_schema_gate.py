@@ -1,4 +1,4 @@
-"""Schema gate decision logic and wait loop, against a fake revision source."""
+"""Schema gate decision logic and wait loop, against fake and real revision sources."""
 
 from __future__ import annotations
 
@@ -6,7 +6,13 @@ import logging
 
 import pytest
 
-from shared.schema_gate import SchemaGateTimeout, is_at_or_ahead, wait_for_schema
+from shared.schema_gate import (
+    SchemaGateTimeout,
+    _known_ancestors,
+    _script_directory,
+    is_at_or_ahead,
+    wait_for_schema,
+)
 
 # Linear history: a -> b -> c (c is head)
 _ANCESTORS = {
@@ -132,3 +138,18 @@ async def test_raises_when_behind_past_max_wait() -> None:
         )
 
     assert clock.sleeps == [5.0] * 4
+
+
+def test_real_history_treats_a_newer_revision_as_ahead() -> None:
+    """An older image must start against a database a newer image migrated.
+
+    Alembic reports an unknown revision with ``ResolutionError``, which is not
+    a ``CommandError``; the fakes above cannot catch that difference.
+    """
+    script = _script_directory()
+    ancestors_of = _known_ancestors(script)
+
+    assert ancestors_of("20991231_from_a_newer_image") is None
+    assert is_at_or_ahead(
+        {"20991231_from_a_newer_image"}, script.get_heads(), ancestors_of
+    )
