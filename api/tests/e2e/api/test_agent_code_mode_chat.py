@@ -126,23 +126,23 @@ async def test_automatic_chat_persists_nested_code_mode_audit_and_replays_only_o
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal continuation_messages
-        del info
         model_requests.append(messages)
         request_number = len(model_requests)
         if request_number == 1:
-            return ModelResponse(
-                parts=[ToolCallPart("search_tools", {"queries": ["read chunk"]}, "search")]
-            )
-        if request_number == 2:
+            names = {tool.name for tool in info.function_tools}
+            assert names == {"run_code"}
             return ModelResponse(
                 parts=[
                     ToolCallPart(
                         "run_code",
                         {
                             "code": (
-                                "import json\n"
-                                "chunks = [json.loads(read_chunk(index=index)) for index in range(3)]\n"
-                                "combined = ''.join(chunk['payload'] for chunk in chunks)\n"
+                                "catalog = bifrost_search(query='read chunk')\n"
+                                "tool_name = catalog['data'][0]['name']\n"
+                                "contract = bifrost_describe(name=tool_name)\n"
+                                "assert contract['ok']\n"
+                                "chunks = [bifrost_call(name=tool_name, arguments={'index': index}) for index in range(3)]\n"
+                                "combined = ''.join(chunk['data']['payload'] for chunk in chunks)\n"
                                 "{'combined_length': len(combined)}"
                             )
                         },
@@ -150,9 +150,9 @@ async def test_automatic_chat_persists_nested_code_mode_audit_and_replays_only_o
                     )
                 ]
             )
-        if request_number == 3:
+        if request_number == 2:
             return ModelResponse(parts=[TextPart("First turn complete.")])
-        assert request_number == 4
+        assert request_number == 3
         continuation_messages = messages
         return ModelResponse(parts=[TextPart("Continuation complete.")])
 
@@ -277,7 +277,7 @@ async def test_automatic_chat_persists_nested_code_mode_audit_and_replays_only_o
             second_errors = [chunk.error for chunk in second_chunks if chunk.type == "error"]
             assert not second_errors, second_errors
 
-        assert len(model_requests) == 4
+        assert len(model_requests) == 3
         assert continuation_messages is not None
         continuation_parts = _tool_parts(continuation_messages)
         continuation_ids = {

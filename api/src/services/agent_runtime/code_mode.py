@@ -1,10 +1,11 @@
-"""Opt-in native CodeMode wiring for the agent-runtime spike.
+"""Native CodeMode primitives for Bifrost agent runtimes.
 
 The sandbox is supplied by Pydantic AI Harness and has no Bifrost runner,
-workflow, filesystem, or operator setup of its own.  Its nested calls use the
-same live Bifrost toolset as ordinary calls.  Only those nested values bypass
+workflow, filesystem, or operator setup of its own. Its nested calls use the
+same live Bifrost toolset as ordinary calls. Only those nested values bypass
 the model-history result cap; the single public ``run_code`` value is capped
-before it returns to the model.
+before it returns to the model. Automatic policy composes these primitives with
+the catalog-private Bifrost sandbox SDK.
 """
 
 from __future__ import annotations
@@ -113,8 +114,8 @@ def build_code_mode_capabilities(
 ) -> Sequence[AbstractCapability[object]]:
     """Build the small, explicit capability set used by the CodeMode spike.
 
-    Its caller keeps the normal Pydantic AI ToolSearch capability. CodeMode
-    wraps only caller-selected tools; eager and speculative execution stay off
+    Its caller chooses the model-visible catalog. CodeMode wraps only
+    caller-selected tools; eager and speculative execution stay off
     so a completed model response still determines every effect.
     """
     return (

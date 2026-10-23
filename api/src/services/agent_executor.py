@@ -886,9 +886,7 @@ class AgentExecutor:
                 )
             )
             automatic_code_mode_capabilities = (
-                build_automatic_code_mode_capabilities(
-                    has_tool_search=composition is not None,
-                )
+                build_automatic_code_mode_capabilities()
                 if self._agent_execution_mode == "automatic"
                 and (tool_definitions or composition is not None)
                 else []
@@ -903,8 +901,10 @@ class AgentExecutor:
                 toolsets=[toolset] if tool_definitions else [],
                 capabilities=[
                     *build_runtime_capabilities(budget, context_window=context_window),
-                    *(composition.capabilities(execute_runtime_tool)
-                      if composition is not None else []),
+                    *(composition.capabilities(
+                        execute_runtime_tool,
+                        include_tool_search=self._agent_execution_mode != "automatic",
+                    ) if composition is not None else []),
                     *automatic_code_mode_capabilities,
                 ],
                 model_settings=chain.primary_settings,

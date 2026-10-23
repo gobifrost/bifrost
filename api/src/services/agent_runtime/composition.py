@@ -54,9 +54,10 @@ or schema.
 If discovery or invocation corrects an unknown callable or invalid arguments, use that correction
 before making another call.
 
-For specialist work, load an approved capability's instructions, then search_tools for individual
-tools to use in this conversation. Search also discovers the entry agent's tools. Use
-same-conversation specialist tools by default. Start an isolated child only when context isolation
+For specialist work, load an approved capability's instructions, then use run_code and its
+Bifrost sandbox SDK to search, describe, and call individual approved tools. The SDK discovers
+entry-agent and loaded-specialist tools inside one bounded program. Use same-conversation
+specialist tools by default. Start an isolated child only when context isolation
 or independent review is actually required; never use a child as a permission workaround. Include
 the necessary context, inspect the child receipt, and follow up when more information can unblock
 it. Respect specialist instructions and approval constraints. Verify uncertain effects before
@@ -480,15 +481,16 @@ class AgentComposition:
         self,
         executor: ToolExecutor,
         event_handler: ToolEventHandler | None = None,
+        *,
+        include_tool_search: bool = True,
     ) -> list[Any]:
         """Build framework capabilities bound to this composition snapshot."""
-        capabilities: list[Any] = [
-            _CompositionAuthorizationCapability(self, event_handler),
-            # Pin Pydantic AI's public client-executed strategy. This preserves
-            # native provider support while keeping discovery exchanges durable
-            # in Bifrost's stable chat history on every provider.
-            ToolSearch(strategy="keywords"),
-        ]
+        capabilities: list[Any] = [_CompositionAuthorizationCapability(self, event_handler)]
+        if include_tool_search:
+            # Legacy delegated execution keeps native provider discovery. Automatic
+            # CodeMode uses its fixed sandbox SDK so business schemas never enter
+            # the outer model catalog.
+            capabilities.append(ToolSearch(strategy="keywords"))
         specialist_definitions: list[ToolDefinition] = []
         owner_capability_by_tool_name: dict[str, str] = {}
         for deferred in self._deferred:

@@ -58,14 +58,13 @@ async def test_native_skill_load_and_tool_result_are_streamed_and_persisted(exec
             entry_definitions, execute, toolset_id=toolset_id
         ).defer_loading()
 
-    def capabilities(execute):
+    def capabilities(execute, *, include_tool_search=True):
         source_toolset = BifrostToolset(
             definitions, execute, toolset_id="specialist-source"
         ).filtered(
             lambda ctx, _tool: "specialist" in ctx.loaded_capability_ids
         ).defer_loading()
-        return [
-            ToolSearch(strategy="keywords"),
+        capabilities = [
             Capability(
                 id="specialist",
                 description="Read specialist",
@@ -74,6 +73,9 @@ async def test_native_skill_load_and_tool_result_are_streamed_and_persisted(exec
             ),
             Capability(id="specialist-source", toolsets=[source_toolset]),
         ]
+        if include_tool_search:
+            capabilities.insert(0, ToolSearch(strategy="keywords"))
+        return capabilities
 
     composition = SimpleNamespace(
         instructions="\n\nRetain task ownership.",
@@ -96,28 +98,26 @@ async def test_native_skill_load_and_tool_result_are_streamed_and_persisted(exec
             }
             if "load_capability" not in returned:
                 return ModelResponse(parts=[ToolCallPart("load_capability", {"id": "specialist"}, "load")])
-            if "search_tools" not in returned:
-                assert tool_name not in visible
-                return ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            "search_tools",
-                            {
-                                "queries": [
-                                    "approved resource"
-                                    if tool_name == "specialist_read"
-                                    else "list files"
-                                ]
-                            },
-                            "search",
-                        )
-                    ]
-                )
             if "run_code" not in returned:
                 assert tool_name not in visible
                 assert "run_code" in visible
+                assert "search_tools" not in visible
+                query = (
+                    "approved resource"
+                    if tool_name == "specialist_read"
+                    else "list files"
+                )
                 return ModelResponse(parts=[ToolCallPart(
-                    "run_code", {"code": f"{tool_name}()"}, "code",
+                    "run_code",
+                    {
+                        "code": (
+                            f"catalog = bifrost_search(query='{query}')\n"
+                            "name = catalog['data'][0]['name']\n"
+                            "bifrost_describe(name=name)\n"
+                            "bifrost_call(name=name, arguments={})"
+                        )
+                    },
+                    "code",
                 )])
             return ModelResponse(parts=[TextPart("Verified.")])
 
@@ -148,8 +148,8 @@ async def test_native_skill_load_and_tool_result_are_streamed_and_persisted(exec
     calls = [chunk.tool_call.name for chunk in chunks if chunk.type == "tool_call"]
     results = [chunk.tool_result.tool_name for chunk in chunks if chunk.type == "tool_result"]
     assert [chunk.error for chunk in chunks if chunk.type == "error"] == []
-    assert calls == ["load_capability", "search_tools", "run_code", tool_name]
-    assert results == ["load_capability", "search_tools", tool_name, "run_code"]
+    assert calls == ["load_capability", "run_code", tool_name]
+    assert results == ["load_capability", tool_name, "run_code"]
     assert chunks[-1].type == "done"
     persisted_results = [
         call.kwargs for call in executor._save_message.await_args_list
@@ -160,12 +160,12 @@ async def test_native_skill_load_and_tool_result_are_streamed_and_persisted(exec
         chunk.tool_call for chunk in chunks
         if chunk.type == "tool_call" and chunk.tool_call.name == tool_name
     )
-    assert [row["tool_call_id"] for row in persisted_results] == ["load", "search", nested_call.id, "code"]
+    assert [row["tool_call_id"] for row in persisted_results] == ["load", nested_call.id, "code"]
     completed = [
         call for call in executor._update_tool_call_message.await_args_list
         if call.kwargs["tool_state"] == "completed"
     ]
-    assert len(completed) == 4
+    assert len(completed) == 3
     executor._execute_tool.assert_awaited_once()
     assert executor._execute_tool.await_args.args[0].name == ("read" if tool_name == "specialist_read" else tool_name)
     assert executor._execute_tool.await_args.args[1] is (owner if tool_name == "specialist_read" else agent)

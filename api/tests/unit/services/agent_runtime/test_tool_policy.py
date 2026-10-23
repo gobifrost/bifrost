@@ -1,21 +1,21 @@
-"""Automatic CodeMode selects Bifrost business tools and keeps framework controls native."""
+"""Automatic CodeMode policy and durable nested-audit metadata."""
 
+from pydantic_ai.capabilities import ToolSearch
+
+from src.services.agent_runtime.sandbox_sdk import BifrostSandboxSDK
 from src.services.agent_runtime.tool_policy import (
     CODE_MODE_AUDIT_METADATA_KEY,
     CODE_MODE_NESTED_TOOL_CALL_IDS_KEY,
+    build_automatic_code_mode_capabilities,
     code_mode_nested_tool_call_ids_from_audit,
-    is_automatic_code_mode_tool,
 )
 
 
-def test_automatic_code_mode_selects_business_tools_only() -> None:
-    assert is_automatic_code_mode_tool("read_ticket")
-    assert is_automatic_code_mode_tool("search_knowledge")
-    assert is_automatic_code_mode_tool("artifact_create_document")
-    assert not is_automatic_code_mode_tool("search_tools")
-    assert not is_automatic_code_mode_tool("load_capability")
-    assert not is_automatic_code_mode_tool("delegate_task")
-    assert not is_automatic_code_mode_tool("run_code")
+def test_automatic_code_mode_uses_catalog_private_sdk_without_tool_search() -> None:
+    capabilities = build_automatic_code_mode_capabilities()
+
+    assert any(isinstance(capability, BifrostSandboxSDK) for capability in capabilities)
+    assert not any(isinstance(capability, ToolSearch) for capability in capabilities)
 
 
 def test_nested_history_ids_come_only_from_outer_audit_metadata() -> None:

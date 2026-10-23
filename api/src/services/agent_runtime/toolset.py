@@ -48,6 +48,7 @@ class CodeModeToolResultScope:
 
     cancellation: AgentRunCancelled | None = None
     outer_tool_call_id: str | None = None
+    business_calls: int = 0
 
 
 _CODE_MODE_TOOL_RESULT_SCOPE: ContextVar[CodeModeToolResultScope | None] = ContextVar(

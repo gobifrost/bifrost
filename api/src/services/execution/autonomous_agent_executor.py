@@ -744,9 +744,7 @@ class AutonomousAgentExecutor:
         # charged to the shared UsageLimits ledger by ObservedModel.
         empty_output_guard = EmptyOutputCircuitBreaker()
         automatic_code_mode_capabilities = (
-            build_automatic_code_mode_capabilities(
-                has_tool_search=composition is not None,
-            )
+            build_automatic_code_mode_capabilities()
                 if self._agent_execution_mode == "automatic"
                 and (tool_definitions or composition is not None)
             else []
@@ -761,8 +759,11 @@ class AutonomousAgentExecutor:
             capabilities=[
                 *build_runtime_capabilities(budget, context_window=context_window),
                 empty_output_guard,
-                *(composition.capabilities(execute_tool, record_tool_event)
-                  if composition is not None else []),
+                *(composition.capabilities(
+                    execute_tool,
+                    record_tool_event,
+                    include_tool_search=self._agent_execution_mode != "automatic",
+                ) if composition is not None else []),
                 *automatic_code_mode_capabilities,
             ],
             model_settings=chain.primary_settings,

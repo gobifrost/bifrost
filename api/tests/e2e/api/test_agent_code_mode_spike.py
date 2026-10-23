@@ -56,15 +56,28 @@ async def test_code_mode_dispatches_one_bound_workflow_on_existing_executors(
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal model_requests, final_tool_value
-        del info
         model_requests += 1
         if model_requests == 1:
+            names = {tool.name for tool in info.function_tools}
+            assert "load_capability" in names
+            assert "run_code" in names
+            assert "search_tools" not in names
+            assert tool_name not in names
             part = ToolCallPart("load_capability", {"id": capability_id})
         elif model_requests == 2:
-            part = ToolCallPart("search_tools", {"queries": ["bfa"]})
-        elif model_requests == 3:
+            names = {tool.name for tool in info.function_tools}
+            assert "run_code" in names
+            assert "search_tools" not in names
+            assert tool_name not in names
             part = ToolCallPart("run_code", {
-                "code": f"receipt = {tool_name}(query='code-mode-boundary')\nreceipt",
+                "code": (
+                    "catalog = bifrost_search(query='bfa')\n"
+                    "tool_name = catalog['data'][0]['name']\n"
+                    "contract = bifrost_describe(name=tool_name)\n"
+                    "assert contract['ok']\n"
+                    "receipt = bifrost_call(name=tool_name, arguments={'query': 'code-mode-boundary'})\n"
+                    "{'receipt': receipt['data']}"
+                ),
             })
         else:
             final_tool_value = next(

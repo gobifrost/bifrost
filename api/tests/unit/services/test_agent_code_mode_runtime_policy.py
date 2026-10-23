@@ -2,6 +2,8 @@
 
 import json
 from types import SimpleNamespace
+
+import httpx2
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -26,6 +28,8 @@ from src.services.agent_runtime.tool_policy import (
     CODE_MODE_NESTED_TOOL_CALL_IDS_KEY,
     build_automatic_code_mode_capabilities,
 )
+from src.services.agent_runtime.sandbox_sdk import SANDBOX_SDK_TOOL_NAMES
+from src.services.agent_runtime.model_factory import create_agent_model
 from src.services.agent_runtime.toolset import BifrostToolset, MAX_MODEL_TOOL_RESULT_CHARS
 from src.services.llm import LLMMessage, ToolDefinition
 from src.services.llm.base import LLMConfig
@@ -65,22 +69,22 @@ async def test_automatic_policy_uses_code_mode_for_a_non_delegated_toolset() -> 
         return '{"payload": "' + payload + '"}'
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        del info
         requests.append(messages)
         if len(requests) == 1:
-            return ModelResponse(
-                parts=[ToolCallPart("search_tools", {"queries": ["read chunk"]}, "search")]
-            )
-        if len(requests) == 2:
+            names = {tool.name for tool in info.function_tools}
+            assert names == {"run_code"}
             return ModelResponse(
                 parts=[
                     ToolCallPart(
                         "run_code",
                         {
                             "code": (
-                                "import json\n"
-                                "chunks = [json.loads(read_chunk(index=index)) for index in range(3)]\n"
-                                "combined = ''.join(chunk['payload'] for chunk in chunks)\n"
+                                "catalog = bifrost_search(query='read chunk')\n"
+                                "tool_name = catalog['data'][0]['name']\n"
+                                "contract = bifrost_describe(name=tool_name)\n"
+                                "assert contract['ok']\n"
+                                "chunks = [bifrost_call(name=tool_name, arguments={'index': index}) for index in range(3)]\n"
+                                "combined = ''.join(chunk['data']['payload'] for chunk in chunks)\n"
                                 "{'combined_length': len(combined)}"
                             )
                         },
@@ -108,15 +112,121 @@ async def test_automatic_policy_uses_code_mode_for_a_non_delegated_toolset() -> 
                 execute,
             )
         ],
-        capabilities=build_automatic_code_mode_capabilities(has_tool_search=False),
+        capabilities=build_automatic_code_mode_capabilities(),
     )
 
     result = await runtime.run("Aggregate the chunks.")
 
     assert result.output == "complete"
     assert calls == [0, 1, 2]
-    [outer_result] = _tool_returns(requests[2], "run_code")
+    [outer_result] = _tool_returns(requests[1], "run_code")
     assert outer_result == {"combined_length": len(payload) * 3}
+
+
+@pytest.mark.asyncio
+async def test_automatic_sdk_deepseek_wire_exposes_only_run_code() -> None:
+    """The OpenRouter DeepSeek wire never receives SDK or raw business schemas."""
+    bodies: list[dict[str, Any]] = []
+
+    async def execute(name: str, arguments: dict[str, Any], tool_call_id: str) -> str:
+        assert name == "read_chunk"
+        assert arguments == {"index": 0}
+        assert tool_call_id
+        return '{"payload":"evidence"}'
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        index = len(bodies) - 1
+        message: dict[str, Any] = {"role": "assistant", "content": "complete"}
+        if index == 0:
+            message = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "outer",
+                        "type": "function",
+                        "function": {
+                            "name": "run_code",
+                            "arguments": json.dumps(
+                                {
+                                    "code": (
+                                        "catalog = bifrost_search(query='read chunk')\n"
+                                        "name = catalog['data'][0]['name']\n"
+                                        "bifrost_describe(name=name)\n"
+                                        "receipt = bifrost_call(name=name, arguments={'index': 0})\n"
+                                        "{'payload': receipt['data']['payload']}"
+                                    )
+                                }
+                            ),
+                        },
+                    }
+                ],
+            }
+        return httpx2.Response(
+            200,
+            json={
+                "id": f"completion-{index}",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "deepseek/deepseek-v4.1-flash",
+                "provider": "Synthetic",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": message,
+                        "finish_reason": "tool_calls" if index == 0 else "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            },
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        with patch(
+            "src.services.agent_runtime.model_factory.get_ai_retry_http_client",
+            return_value=client,
+        ):
+            model = create_agent_model(
+                LLMConfig(
+                    provider="openai",
+                    model="deepseek/deepseek-v4.1-flash",
+                    endpoint="https://openrouter.ai/api/v1",
+                    api_key="synthetic-never-sent-to-network",
+                )
+            )
+            result = await Agent(
+                model,
+                toolsets=[
+                    BifrostToolset(
+                        [
+                            ToolDefinition(
+                                name="read_chunk",
+                                description="Read one large chunk.",
+                                parameters={
+                                    "type": "object",
+                                    "properties": {"index": {"type": "integer"}},
+                                    "required": ["index"],
+                                },
+                            )
+                        ],
+                        execute,
+                    )
+                ],
+                capabilities=build_automatic_code_mode_capabilities(),
+            ).run("Read the compact evidence.")
+
+    assert result.output == "complete"
+    assert len(bodies) == 2
+    visible_tools = [
+        {tool["function"]["name"] for tool in body.get("tools", [])}
+        for body in bodies
+    ]
+    assert visible_tools == [{"run_code"}, {"run_code"}]
+    assert all(not (SANDBOX_SDK_TOOL_NAMES & names) for names in visible_tools)
+    assert all("read_chunk" not in names for names in visible_tools)
+    assert all("search_tools" not in names for names in visible_tools)
 
 
 @pytest.mark.asyncio
@@ -171,22 +281,22 @@ async def test_chat_automatic_code_mode_audits_three_nested_reads_and_projects_h
     requests: list[list[ModelMessage]] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        del info
         requests.append(messages)
         if len(requests) == 1:
-            return ModelResponse(
-                parts=[ToolCallPart("search_tools", {"queries": ["read chunk"]}, "search")]
-            )
-        if len(requests) == 2:
+            names = {tool.name for tool in info.function_tools}
+            assert names == {"run_code"}
             return ModelResponse(
                 parts=[
                     ToolCallPart(
                         "run_code",
                         {
                             "code": (
-                                "import json\n"
-                                "chunks = [json.loads(read_chunk(index=index)) for index in range(3)]\n"
-                                "combined = ''.join(chunk['payload'] for chunk in chunks)\n"
+                                "catalog = bifrost_search(query='read chunk')\n"
+                                "tool_name = catalog['data'][0]['name']\n"
+                                "contract = bifrost_describe(name=tool_name)\n"
+                                "assert contract['ok']\n"
+                                "chunks = [bifrost_call(name=tool_name, arguments={'index': index}) for index in range(3)]\n"
+                                "combined = ''.join(chunk['data']['payload'] for chunk in chunks)\n"
                                 "{'combined_length': len(combined)}"
                             )
                         },
@@ -303,7 +413,7 @@ async def test_chat_automatic_code_mode_audits_three_nested_reads_and_projects_h
         )
     ] == [call.id for call in nested_calls]
     assert executor._execute_tool.await_count == 3
-    [outer_result] = _tool_returns(requests[2], "run_code")
+    [outer_result] = _tool_returns(requests[1], "run_code")
     assert outer_result == {"combined_length": len(payload) * 3}
     outer_audits = [
         call.kwargs["tool_result"]

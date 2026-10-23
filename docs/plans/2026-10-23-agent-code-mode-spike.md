@@ -12,9 +12,12 @@ to provide a separate sandbox service or privileged Linux namespace setup?
 
 This branch now supplies an Automatic-mode integration for both chat and
 background runtimes, following the initial opt-in probe. It has not been deployed.
-The integrated provider comparison below fails the promotion gate: the large
+The original integrated provider comparison below fails the promotion gate: the large
 mechanism-level data reductions have not translated into whole-run savings.
 Direct calls and the outer code result retain the existing model result cap.
+The later Cloudflare-pattern revision replaces that candidate's model-side tool
+search with a fixed execution-resident SDK; its implementation and verification
+are described separately below.
 
 **Interpretation corrected after auditing generated code:** the initial live-model
 comparison mostly measured an unfiltered tool wrapper. Generated snippets printed
@@ -527,6 +530,165 @@ needs an execution-resident search/describe/call interface over the same live
 authorization path, plus truthful structured return contracts. These changes
 must be tested independently before attributing a future result to any one of
 them. This audit made no provider calls and did not change the frozen matrix.
+
+## Cloudflare-pattern revision and cheaper provider comparison
+
+The next candidate follows Cloudflare's execution-resident discovery pattern:
+search returns ranked method names and short descriptions, describe returns the
+contract for one method, and execution processes complete intermediate values
+before returning selected evidence. The
+[reference runtime](https://developers.cloudflare.com/agents/tools/codemode/how-it-works/)
+explicitly allows discovery and execution to occupy separate model turns when
+the model needs to interpret the discovered contracts. A one-turn solution is
+possible for data-dependent orchestration, not a universal guarantee.
+The source reference was checked against Cloudflare Agents commit
+[`321814b6c13f72cff82161e7eb20312574ac9b7a`](https://github.com/cloudflare/agents/tree/321814b6c13f72cff82161e7eb20312574ac9b7a)
+on 2026-10-23; Bifrost's interpreter and Harness pins remain those listed above.
+
+This is a protocol adaptation to Bifrost's existing Python/Monty executor, not
+installation of Cloudflare's JavaScript package. Cloudflare's default
+`DynamicWorkerExecutor` requires its Worker Loader binding. The Bifrost candidate
+uses fixed sandbox functions `bifrost_search`, `bifrost_describe`, and
+`bifrost_call` over the same authorized Bifrost toolset. It does not implement
+Cloudflare's Durable Object storage, saved snippets, rollback, or approval replay.
+Those features must not be claimed on the strength of this spike.
+
+Discovery and business results use a fixed `{ok, data, error}` envelope. JSON
+adapter strings can become structured `data`; plain text remains text. The
+envelope supplies a reliable transport contract without inventing result-field
+schemas for workflows that do not declare them. Full original execution results
+remain in Bifrost's audit. Existing ownership, authorization, cancellation,
+effect ordering, and workflow dispatch continue to apply.
+
+The implementation removes model-side ToolSearch from Automatic composition.
+The outer model receives `run_code` and any native capability-loading/delegation
+controls. Search and describe resolve the current authorized catalog inside the
+sandbox; describe exposes the original input schema and labels the original
+adapter return schema separately from the SDK's decoded transport. Each call
+rechecks the current catalog and dispatches through the assembled toolset's
+wrapper chain. An original leaf toolset must not receive an assembled wrapper's
+tool descriptor directly. The SDK does not cache authority from discovery.
+
+The SDK permits 64 total SDK interactions per code invocation and separately
+limits business callbacks to 16. The business counter belongs to that invocation
+and is discarded with its scope. Cancellation latches there too, preventing a
+later callback even when generated code catches an exception. Search and describe
+do not consume the business-call allowance. SDK-owned return schemas document
+the exact envelope without claiming types for unknown business fields.
+
+The final focused boundary check passed 17 tests: SDK discovery and dependent
+reads, native capability loading without catalog leakage, refreshed catalog
+revocation, schema denial, JSON/plain-text/error transport, per-invocation call
+limits, cancellation through both Bifrost and native function toolsets, stream
+events, one workflow dispatch through the existing worker, and chat continuation
+that retains full audit while replaying only the outer compact result. Earlier
+targeted consumer checks also exercised composition authorization and the
+autonomous loop. No full backend or frontend suite was run for this revision.
+The final combined consumer run subsequently passed **116 tests**, with zero
+failures, errors, or skips. API Pyright and Ruff also passed. Exact commands:
+
+```bash
+BIFROST_TEST_IMAGE_TAG=code-mode-proof-1015 BIFROST_SKIP_BUILD=1 ./test.sh \
+  tests/unit/services/agent_runtime/test_sandbox_sdk.py \
+  tests/unit/services/test_agent_code_mode_runtime_policy.py \
+  tests/unit/services/agent_runtime/test_tool_policy.py \
+  tests/unit/services/test_agent_code_mode.py \
+  tests/unit/services/test_agent_composition_stream.py \
+  tests/unit/services/test_autonomous_agent_executor.py \
+  tests/unit/services/agent_runtime/test_composition.py \
+  tests/unit/services/test_agent_runtime_authorization.py \
+  tests/e2e/api/test_agent_code_mode_spike.py \
+  tests/e2e/api/test_agent_code_mode_chat.py -v --durations=0
+BIFROST_TEST_IMAGE_TAG=code-mode-proof-1015 BIFROST_SKIP_BUILD=1 ./test.sh quality api
+git diff --check
+```
+
+The new provider comparison uses the direct DeepSeek endpoint and canonical
+`deepseek-flash` model ID in **both** arms. DeepSeek's
+[current documentation](https://api-docs.deepseek.com/quick_start/pricing/)
+maps that ID to `DeepSeek-V4.1-Flash-1017`; model pricing and context-cache hits
+are separate from a CodeMode token reduction. The benchmark explicitly disables
+thinking with the provider's documented `thinking.type=disabled` request body.
+The pinned generic reasoning setting alone does not emit that DeepSeek option.
+
+The new fixtures are complete, fictional, production-shaped datasets. They are
+separate from the frozen historical-capture comparisons above. Valid queries
+must have operation-level semantics, including pagination and queries for every
+listed object, rather than matching only previously captured argument tuples.
+Only quality-passing paired runs can support a savings claim; a task failure or
+missing mock response cannot count as an efficiency improvement.
+
+The first DeepSeek pilot was stopped after seven runs because the synthetic
+world was incomplete: search returned an archive site and a template library
+without follow-up records, named principals lacked resolution outcomes, and
+the work-log schema failed to constrain the router's accepted outcome values.
+Those seven immutable artifacts are invalidated for comparison. They consumed
+54 provider responses, 206,691 input tokens, and 14,357 output tokens; these are
+experiment-provenance totals, not a savings result.
+
+The replacement v2 fixture defines a finite global world. Valid missing reads
+return ordinary empty collections or structured NotFound results. Known
+references have positive records or explicitly empty collections. Before
+launch, a closure crawl traversed 2 sites, 2 libraries, 48 items and their
+permission records, and the named principals; it also verified both allowed
+work-log outcome values. Uncertainty in generated assessments receives a
+source-based semantic review, rather than an exact-phrase check. The new matrix
+uses an independent protocol and result directory; the earlier artifacts and
+protocol remain unchanged.
+
+### Completed DeepSeek Flash v2 comparison
+
+All 18 provider-backed runs completed with zero transport errors and zero real
+business executor calls. Source, corpus, protocol, model settings, and tool
+schema hashes match across arms. Every CodeMode provider request offers only
+`run_code`; the complete business catalog is not sent as outer function tools.
+All cases are synthetic, with a much smaller catalog and shorter operational
+prompt than the earlier production-derived simulations. This matrix validates
+the SDK integration and records model behavior; it is not an exact production
+replay or a production savings estimate.
+
+| Three repetitions per arm | Direct baseline input / output / responses (median) | CodeMode input / output / responses (median) | Preregistered coverage passes, baseline / code |
+| --- | ---: | ---: | ---: |
+| SharePoint assessment | 20,831 / 1,622 / 6 | 10,900 / 967 / 5 | 2 / 0 |
+| Identity correlation | 13,738 / 1,108 / 4 | 15,669 / 1,297 / 6 | 0 / 0 |
+| Small-response control | 9,266 / 1,152 / 4 | 14,878 / 980 / 6 | 2 / 1 |
+
+These are raw provider-usage observations, **not credited savings**. Across
+nine runs per arm, input totals were 123,388 direct and 141,399 CodeMode;
+output totals were 11,618 and 10,347. Cache-read totals were 103,808 and
+123,904, respectively; cache-write totals were zero. Input volume alone is
+not billed cost, especially with DeepSeek's different cached-input rate.
+Only the first small-response control pair passes the primary gate in both
+arms; it is insufficient to establish a general savings claim.
+
+The gate also has limits. Some failures require a particular discovery/list
+sequence even though the input already supplies the target IDs. Those failures
+alone do not establish a wrong answer. Baseline identity runs correctly
+correlated membership with the grant and retained uncertainty, but recorded
+`resolved` where the protocol expected `needs_human`. The minimal synthetic
+prompt is not equivalent to the production agents' operating instructions.
+These issues are retained in source-based review, not silently reclassified
+to manufacture a passing comparison.
+
+Other failures are substantive. The assessment CodeMode runs omitted work-log
+recording; two identity runs passed a UPN as a membership object ID and did not
+recover the known group relationship. Generated programs still print full
+business responses or string-clipped payloads in several runs. Moving discovery
+into the sandbox is therefore implemented and verified, but the live model has
+not consistently selected the intended complete, compact orchestration pattern.
+
+Raw `ToolCallPart.args` from this provider are JSON strings. The frozen runner's
+convenience `generated_snippets` field consequently missed them. The independent
+analyzer parses the retained response arguments to recover the actual programs;
+the raw artifacts and provider usage were not modified. Source-based review is
+Codex's inspection of those receipts and programs, not human outcome certification.
+
+**Disposition:** the Automatic chat/background spike is implemented and locally
+verified, and the cheaper provider route works. Whole-run savings and production
+promotion remain unproven. Do not deploy this revision on the strength of the
+synthetic data reductions or relax its quality gate. A production decision needs
+representative operating prompts, task-outcome evaluation rather than prescribed
+call sequences, and a competent model-generated filtering/chaining trace.
 
 ## Primary references
 
