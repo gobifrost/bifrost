@@ -43,6 +43,11 @@ SCHEDULED_TASKS: tuple[ScheduledTaskDefinition, ...] = (
         trigger_args={"seconds": 60}, run_at_startup=True,
     ),
     ScheduledTaskDefinition(
+        "legacy_broker_drain", "Recover Work Left in RabbitMQ", "Every 5 minutes",
+        callback="src.services.legacy_broker_drain:drain_legacy_broker",
+        trigger_args={"minutes": 5}, run_at_startup=True,
+    ),
+    ScheduledTaskDefinition(
         "execution_cleanup", "Clean Up Stuck Executions", "Every 5 minutes",
         callback="src.jobs.schedulers.execution_cleanup:cleanup_stuck_executions",
         trigger="cron", trigger_args={"minute": "*/5"}, run_at_startup=True,

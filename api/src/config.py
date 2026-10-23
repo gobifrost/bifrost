@@ -85,6 +85,17 @@ class Settings(BaseSettings):
     )
 
     # ==========================================================================
+    # Legacy broker
+    # ==========================================================================
+    rabbitmq_url: str | None = Field(
+        default=None,
+        description=(
+            "RabbitMQ of an earlier release. While reachable, work it left "
+            "queued is moved into PostgreSQL; remove it once drained."
+        ),
+    )
+
+    # ==========================================================================
     # Workflow Execution
     # ==========================================================================
     max_concurrency: int = Field(

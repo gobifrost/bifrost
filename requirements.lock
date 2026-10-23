@@ -4,6 +4,10 @@
 #
 #    pip-compile --generate-hashes --output-file=requirements.lock pyproject.toml
 #
+aio-pika==9.6.2 \
+    --hash=sha256:2a5478af920d169795071c9c09c7542cd8cdece60438cf7804533dcbcce93b7f \
+    --hash=sha256:c49e9246080dc8ffa1bb0e4aca407bf3d8ad78c3ee3a93df88b68fe65d7a49b9
+    # via bifrost-api (pyproject.toml)
 aiobotocore==3.5.0 \
     --hash=sha256:49ce35bb8b96b85d3251c2cbbb2ed7a028dc0cb0d0d0801f9ccca1ccd0d41ded \
     --hash=sha256:d45d1c4659ad0e48b694a5aa4ff18829100386f7de96c8d146ec7757a6f12918
@@ -144,6 +148,10 @@ aioitertools==0.13.0 \
     --hash=sha256:0be0292b856f08dfac90e31f4739432f4cb6d7520ab9eb73e143f4f2fa5259be \
     --hash=sha256:620bd241acc0bbb9ec819f1ab215866871b4bbd1f73836a55f799200ee86950c
     # via aiobotocore
+aiormq==6.9.4 \
+    --hash=sha256:0e7c01b662804e1cc7ace9a17794e8c1192a27fc2afa96162362a6e61ae8e8ef \
+    --hash=sha256:726a8586695e863fba68cf88842065ab12348c9438dcebdfc9d0bddaf6083277
+    # via aio-pika
 aiosignal==1.4.0 \
     --hash=sha256:053243f8b92b990551949e63930a839ff0cf0b0ebbe0597b0f3fb19e1a0fe82e \
     --hash=sha256:f47eecd9468083c2029cc99945502cb7708b082c232f9aca65da147157b251c7
@@ -2004,6 +2012,10 @@ packaging==26.2 \
     #   bifrost-api (pyproject.toml)
     #   fastmcp
     #   pytest
+pamqp==3.3.0 \
+    --hash=sha256:40b8795bd4efcf2b0f8821c1de83d12ca16d5760f4507836267fd7a02b06763b \
+    --hash=sha256:c901a684794157ae39b52cbf700db8c9aae7a470f13528b9d7b4e5f7202f8eb0
+    # via aiormq
 pathable==0.5.0 \
     --hash=sha256:646e3d09491a6351a0c82632a09c02cdf70a252e73196b36d8a15ba0a114f0a6 \
     --hash=sha256:d81938348a1cacb525e7c75166270644782c0fb9c8cecc16be033e71427e0ef1
@@ -3676,7 +3688,10 @@ yarl==1.23.0 \
     --hash=sha256:fda207c815b253e34f7e1909840fd14299567b1c0eb4908f8c2ce01a41265401 \
     --hash=sha256:fe8f8f5e70e6dbdfca9882cd9deaac058729bcf323cf7a58660901e55c9c94f6 \
     --hash=sha256:fffc45637bcd6538de8b85f51e3df3223e4ad89bccbfca0481c08c7fc8b7ed7d
-    # via aiohttp
+    # via
+    #   aio-pika
+    #   aiohttp
+    #   aiormq
 zipp==3.23.1 \
     --hash=sha256:0b3596c50a5c700c9cb40ba8d86d9f2cc4807e9bedb06bcdf7fac85633e444dc \
     --hash=sha256:32120e378d32cd9714ad503c1d024619063ec28aad2248dc6672ad13edfa5110

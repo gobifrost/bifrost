@@ -37,6 +37,7 @@ dependencies = [
     # =========================================================================
     # Message Queue (RabbitMQ)
     # =========================================================================
+    "aio-pika>=9.6,<10",  # Recovers work an earlier release left in RabbitMQ (src/services/legacy_broker_drain.py)
 
     # =========================================================================
     # Cache & Sessions (Redis)
