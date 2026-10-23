@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock
 from uuid import UUID
@@ -32,9 +31,8 @@ def harness(
             await session.commit()
 
     monkeypatch.setattr(work_dispatch, "get_db_context", context)
-    monkeypatch.setattr(work_dispatch, "get_dispatch_db_context", context)
     monkeypatch.setattr(agent_run_service, "get_dispatch_db_context", context)
-    monkeypatch.setattr(work_dispatch, "publish_message", AsyncMock())
+    monkeypatch.setattr(work_dispatch, "wake_pool_workers", AsyncMock())
     redis = AsyncMock()
 
     @asynccontextmanager
@@ -64,9 +62,7 @@ async def _dispatch(async_session_factory, run_id: str) -> WorkDispatch | None: 
 async def _enqueue(**overrides) -> str:  # type: ignore[no-untyped-def]
     kwargs = dict(agent_id=None, trigger_type="sdk", input_data={"task": "t"}, lineage=None)
     kwargs.update(overrides)
-    run_id = await enqueue_agent_run(**kwargs)
-    await asyncio.gather(*work_dispatch._publish_records)
-    return run_id
+    return await enqueue_agent_run(**kwargs)
 
 
 @pytest.fixture(autouse=True)
@@ -85,7 +81,8 @@ async def test_agent_run_and_context_are_accepted_together(
     run = await _run(async_session_factory, run_id)
     dispatch = await _dispatch(async_session_factory, run_id)
     assert run.status == "queued"
-    assert dispatch is not None and dispatch.status == "published"
+    assert dispatch is not None
+    assert (dispatch.placement, dispatch.status) == ("pool", "pending")
     assert dispatch.payload["input"] == {"task": "t"}
 
 
@@ -98,8 +95,7 @@ async def test_unclaimed_agent_run_fails_visibly_and_wakes_its_caller(
             update(WorkDispatch)
             .where(WorkDispatch.subject_id == UUID(run_id))
             .values(
-                publish_count=work_dispatch.MAX_PUBLISHES,
-                last_published_at=datetime.now(timezone.utc) - work_dispatch.REDELIVERY_WINDOW * 2,
+                created_at=datetime.now(timezone.utc) - work_dispatch.POOL_CLAIM_DEADLINE * 2,
             )
         )
         await session.commit()
@@ -108,7 +104,7 @@ async def test_unclaimed_agent_run_fails_visibly_and_wakes_its_caller(
 
     run = await _run(async_session_factory, run_id)
     assert run.status == "failed"
-    assert "No executor claimed this run" in (run.error or "")
+    assert "No worker capacity" in (run.error or "")
     assert await _dispatch(async_session_factory, run_id) is None
     harness.lpush.assert_awaited_once()
 
@@ -122,7 +118,7 @@ async def test_cancelled_agent_run_dispatch_is_dropped(harness, async_session_fa
         await session.execute(
             update(WorkDispatch)
             .where(WorkDispatch.subject_id == UUID(run_id))
-            .values(last_published_at=datetime.now(timezone.utc) - work_dispatch.REDELIVERY_WINDOW * 2)
+            .values(created_at=datetime.now(timezone.utc) - timedelta(minutes=5))
         )
         await session.commit()
 

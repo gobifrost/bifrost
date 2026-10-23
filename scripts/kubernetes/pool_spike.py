@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Prove on-demand reusable workers in local Kind (#769 stage 3 gate).
 
-Usage: BIFROST_KIND_BUILD_JOBS=1 BIFROST_KIND_API_CONTROL=1 BIFROST_KIND_POOL=1 \\
-           ./test.sh kubernetes up
+Usage: BIFROST_KIND_BUILD_JOBS=1 ./test.sh kubernetes up
        ./test.sh kubernetes pool-experiment [--out DIR]
 
 Phases (recorded in report.json):

@@ -153,38 +153,13 @@ class Settings(BaseSettings):
 
 
     # ==========================================================================
-    # Control plane
+    # Executors and on-demand Kubernetes workers (#769)
     # ==========================================================================
-    control_plane_host: Literal["scheduler", "api"] = Field(
-        default="scheduler",
-        description=(
-            "Process that hosts platform control: the scheduled-trigger leader "
-            "election and Kubernetes build reconciliation. 'scheduler' keeps "
-            "control in the scheduler container. 'api' runs it in every API "
-            "replica's lifespan; the scheduler then only executes local "
-            "platform jobs. Both hosts compete for the same fenced trigger "
-            "lease, so mixed versions never run two trigger leaders."
-        ),
-    )
-
-    # ==========================================================================
-    # Reusable execution workers (#769 stage 3)
-    # ==========================================================================
-    execution_placement: Literal["broker", "pool"] = Field(
-        default="broker",
-        description=(
-            "Where accepted workflow and agent runs go. 'broker' publishes them "
-            "to RabbitMQ for the worker Deployment. 'pool' leaves them in "
-            "PostgreSQL for reusable worker Jobs that the control plane starts "
-            "on demand and that drain to zero when idle; requires "
-            "BIFROST_CONTROL_PLANE_HOST=api and the Kubernetes build backend."
-        ),
-    )
     pool_max_workers: int = Field(
-        default=4, ge=1, description="Maximum concurrent reusable worker Jobs"
+        default=6, ge=1, description="Maximum concurrent on-demand worker Jobs"
     )
     pool_min_workers: int = Field(
-        default=0,
+        default=1,
         ge=0,
         description=(
             "Job workers kept ready even with no work (the warm minimum). A "

@@ -160,10 +160,6 @@ services:
     environment:
       # Core
       BIFROST_ENVIRONMENT: ${BIFROST_ENVIRONMENT:-production}
-      # Which process hosts platform control: scheduler (default) or api.
-      BIFROST_CONTROL_PLANE_HOST: ${BIFROST_CONTROL_PLANE_HOST:-scheduler}
-      # Where accepted runs go: broker (RabbitMQ workers, default) or pool.
-      BIFROST_EXECUTION_PLACEMENT: ${BIFROST_EXECUTION_PLACEMENT:-broker}
       BIFROST_DEBUG: ${BIFROST_DEBUG:-false}
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:?BIFROST_SECRET_KEY is required (32+ chars)}
       # Database (via PgBouncer for connection pooling)
@@ -235,9 +231,9 @@ services:
       api:
         condition: service_healthy
 
-  # Scheduler Service + isolated platform-job host. Every replica runs a small
-  # job pool; a PostgreSQL lease elects one trigger leader.
-  # Workflow/agent execution remains in worker containers.
+  # Scheduler Service: an executor, the same as the worker service (workflows,
+  # agent runs, services and local platform jobs). Platform control (the
+  # trigger leader) runs in the API. Either service can be removed.
   scheduler:
     # build:
     #   context: .
@@ -246,10 +242,6 @@ services:
     environment:
       # Core (must match API)
       BIFROST_ENVIRONMENT: ${BIFROST_ENVIRONMENT:-production}
-      # Which process hosts platform control: scheduler (default) or api.
-      BIFROST_CONTROL_PLANE_HOST: ${BIFROST_CONTROL_PLANE_HOST:-scheduler}
-      # Where accepted runs go: broker (RabbitMQ workers, default) or pool.
-      BIFROST_EXECUTION_PLACEMENT: ${BIFROST_EXECUTION_PLACEMENT:-broker}
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:?BIFROST_SECRET_KEY is required (32+ chars)}
       # Database (via PgBouncer for connection pooling)
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD}@pgbouncer:5432/bifrost
@@ -265,6 +257,13 @@ services:
       BIFROST_S3_ACCESS_KEY: ${BIFROST_S3_ACCESS_KEY:-${SEAWEEDFS_ACCESS_KEY:-bifrost}}
       BIFROST_S3_SECRET_KEY: ${BIFROST_S3_SECRET_KEY:-${SEAWEEDFS_SECRET_KEY}}
       BIFROST_S3_REGION: ${BIFROST_S3_REGION:-us-east-1}
+      # Runs the same executor as the worker service (workflows included).
+      PIP_NO_CACHE_DIR: "1"
+      HOME: /home/bifrost
+    # The worker's posture: it runs user workflow code too.
+    user: "1000:1000"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
     depends_on:
       init:
         condition: service_completed_successfully
@@ -294,8 +293,8 @@ services:
     command: >
       python -m src.scheduler.main
 
-  # Worker Service (RabbitMQ Consumers)
-  # Can be scaled horizontally for increased throughput
+  # Worker Service: an executor, the same as the scheduler service.
+  # Scale either with replicas; executors claim work from PostgreSQL.
   # Workers load Python modules from Redis cache (no filesystem sync needed)
   worker:
     # build:
@@ -305,8 +304,6 @@ services:
     environment:
       # Core (must match API)
       BIFROST_ENVIRONMENT: ${BIFROST_ENVIRONMENT:-production}
-      # Must match the API and scheduler: nested runs are accepted here too.
-      BIFROST_EXECUTION_PLACEMENT: ${BIFROST_EXECUTION_PLACEMENT:-broker}
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:?BIFROST_SECRET_KEY is required (32+ chars)}
       # Database (via PgBouncer for connection pooling)
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD}@pgbouncer:5432/bifrost

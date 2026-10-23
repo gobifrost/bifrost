@@ -1,8 +1,8 @@
 """Host platform control inside an API replica's lifespan.
 
-Enabled by ``BIFROST_CONTROL_PLANE_HOST=api``. Each API replica becomes a
-control replica: it competes for the trigger lease and reconciles Kubernetes
-builds, but never executes platform-job handlers. Startup does not wait for
+Every API replica is a control replica: it competes for the trigger lease,
+reconciles accepted work, and runs the Kubernetes loops when it may manage
+Jobs, but never executes platform-job handlers. Startup does not wait for
 control; HTTP serving begins immediately and control joins once the database
 schema gate passes.
 
@@ -38,10 +38,7 @@ class ApiControlHost:
         restart_backoff_seconds: float = RESTART_BACKOFF_SECONDS,
     ) -> None:
         self._failed = asyncio.Event()
-        self.control = control_plane or ControlPlane(
-            host="api",
-            on_failure=self._control_failed,
-        )
+        self.control = control_plane or ControlPlane(on_failure=self._control_failed)
         self._restart_backoff_seconds = restart_backoff_seconds
         self._stop_event = asyncio.Event()
         self._supervisor: asyncio.Task[None] | None = None

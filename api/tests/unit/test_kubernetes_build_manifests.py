@@ -110,7 +110,8 @@ def test_elastic_builds_config_and_patches_are_explicit() -> None:
     assert config["data"] == EXPECTED_BUILD_CONFIG
 
     api_patch = _load_yaml(ELASTIC_BUILDS_DIR / "api-env-patch.yaml")[0]
-    assert api_patch["spec"]["template"]["spec"]["automountServiceAccountToken"] is False
+    # The API keeps the base manifests' controller identity (k8s/api/rbac.yaml).
+    assert "automountServiceAccountToken" not in api_patch["spec"]["template"]["spec"]
     assert {"configMapRef": {"name": "bifrost-build-jobs-config"}} in _container_env_from(
         api_patch, "api"
     )
@@ -187,89 +188,53 @@ def test_local_renderer_replaces_build_job_configmap_image(tmp_path) -> None:
     assert config["data"]["BIFROST_KUBERNETES_BUILD_IMAGE"] == image
 
 
-def test_local_runtime_renderer_inlines_build_jobs_in_one_apply(tmp_path) -> None:
-    image = "bifrost-api:test-build-jobs"
-    revision = "buildjobs1234567"
-    script = LOCAL_SCRIPT.read_text()
-    start = script.index("render_runtime_manifest() {")
-    end = script.index("\n}\n", start) + 3
-    renderer = script[start:end]
-    output = tmp_path / "runtime.yaml"
-    subprocess.run(
-        [
-            "bash",
-            "-c",
-            (
-                renderer
-                + '\nIMAGE_NAME="$1"; BIFROST_KIND_BUILD_JOBS=1; '
-                + 'render_runtime_manifest "$2" "$3" "$4"'
-            ),
-            "renderer-test",
-            image,
-            str(REPO_ROOT / "k8s" / "local" / "bifrost.yaml"),
-            str(output),
-            revision,
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    deployments = {
-        doc["metadata"]["name"]: doc
-        for doc in yaml.safe_load_all(output.read_text())
-        if doc and doc.get("kind") == "Deployment"
-    }
-    api = deployments["bifrost-api"]["spec"]["template"]["spec"]
-    scheduler = deployments["bifrost-scheduler"]["spec"]["template"]["spec"]
-    worker = deployments["bifrost-worker"]["spec"]["template"]["spec"]
-
-    api_env_from = api["containers"][0]["envFrom"]
-    scheduler_env_from = scheduler["containers"][0]["envFrom"]
-    worker_env_from = worker["containers"][0]["envFrom"]
-    build_config = {"configMapRef": {"name": "bifrost-build-jobs-config"}}
-
-    assert api["automountServiceAccountToken"] is False
-    assert build_config in api_env_from
-    assert scheduler["automountServiceAccountToken"] is True
-    assert scheduler["serviceAccountName"] == "bifrost-build-controller"
-    assert build_config in scheduler_env_from
-    assert worker["automountServiceAccountToken"] is False
-    assert build_config not in worker_env_from
-
-
-API_CONTROL_DIR = REPO_ROOT / "deploy" / "kubernetes" / "api-control"
-CONTROL_CONFIG = {"configMapRef": {"name": "bifrost-control-config"}}
-
-
-def test_api_control_overlay_is_opt_in_and_layers_on_builds() -> None:
+def test_base_manifests_let_only_the_api_manage_worker_jobs() -> None:
     root_kustomization = yaml.safe_load((REPO_ROOT / "k8s" / "kustomization.yml").read_text())
-    assert "api-control" not in "\n".join(root_kustomization["resources"])
+    assert "api/rbac.yaml" in root_kustomization["resources"]
+    docs = _docs_by_kind_name([REPO_ROOT / "k8s" / "api" / "rbac.yaml"])
+    role = docs[("Role", "bifrost-worker-controller")]
+    assert role["rules"] == [
+        {
+            "apiGroups": ["batch"],
+            "resources": ["jobs"],
+            "verbs": ["get", "list", "create", "patch", "delete"],
+        },
+        {"apiGroups": [""], "resources": ["pods"], "verbs": ["get", "list"]},
+    ]
+    binding = docs[("RoleBinding", "bifrost-worker-controller")]
+    assert binding["subjects"] == [
+        {"kind": "ServiceAccount", "name": "bifrost-api", "namespace": "bifrost"}
+    ]
 
-    overlay = yaml.safe_load((API_CONTROL_DIR / "kustomization.yaml").read_text())
-    assert overlay["resources"] == ["../builds", "control-config.yaml"]
-    config = _load_yaml(API_CONTROL_DIR / "control-config.yaml")[0]
-    assert config["data"] == {"BIFROST_CONTROL_PLANE_HOST": "api"}
+    def pod(name: str) -> dict[str, Any]:
+        [deployment] = _load_yaml(REPO_ROOT / "k8s" / name / "deployment.yaml")
+        return deployment["spec"]["template"]["spec"]
+
+    assert pod("api")["serviceAccountName"] == "bifrost-api"
+    assert pod("api")["automountServiceAccountToken"] is True
+    assert pod("scheduler")["automountServiceAccountToken"] is False
+    assert pod("worker")["automountServiceAccountToken"] is False
 
 
-def test_api_control_moves_job_identity_from_scheduler_to_api() -> None:
-    api_patch = _load_yaml(API_CONTROL_DIR / "api-control-patch.yaml")[0]
-    api_spec = api_patch["spec"]["template"]["spec"]
-    assert api_spec["serviceAccountName"] == "bifrost-build-controller"
-    assert api_spec["automountServiceAccountToken"] is True
-    api_env = _container_env_from(api_patch, "api")
-    assert CONTROL_CONFIG in api_env
-    assert {"configMapRef": {"name": "bifrost-build-jobs-config"}} in api_env
+def test_base_scheduler_runs_the_executor_with_the_workers_posture() -> None:
+    [scheduler] = _load_yaml(REPO_ROOT / "k8s" / "scheduler" / "deployment.yaml")
+    [worker] = _load_yaml(REPO_ROOT / "k8s" / "worker" / "deployment.yaml")
+    scheduler_pod = scheduler["spec"]["template"]["spec"]
+    worker_pod = worker["spec"]["template"]["spec"]
+    scheduler_container = scheduler_pod["containers"][0]
+    worker_container = worker_pod["containers"][0]
 
-    scheduler_patch = _load_yaml(API_CONTROL_DIR / "scheduler-execution-patch.yaml")[0]
-    scheduler_spec = scheduler_patch["spec"]["template"]["spec"]
-    # Both hosts must agree, or the scheduler would keep competing for control.
-    assert CONTROL_CONFIG in _container_env_from(scheduler_patch, "scheduler")
-    assert scheduler_spec["serviceAccountName"] == "default"
-    assert scheduler_spec["automountServiceAccountToken"] is False
+    assert scheduler_container["command"] == ["python", "-m", "src.scheduler.main"]
+    assert scheduler_container["securityContext"] == worker_container["securityContext"]
+    assert scheduler_container["resources"] == worker_container["resources"]
+    assert scheduler_pod["volumes"] == worker_pod["volumes"]
+    assert scheduler_pod["terminationGracePeriodSeconds"] == worker_pod["terminationGracePeriodSeconds"]
+    # The scheduler's own probes stay: the entry point keeps its health files.
+    assert "src.scheduler.health" in scheduler_container["livenessProbe"]["exec"]["command"]
+    assert "src.scheduler.health" in scheduler_container["readinessProbe"]["exec"]["command"]
 
 
-def test_local_runtime_renderer_hosts_control_in_two_api_replicas(tmp_path) -> None:
+def test_local_runtime_renderer_gives_the_api_the_build_config(tmp_path) -> None:
     script = LOCAL_SCRIPT.read_text()
     start = script.index("render_runtime_manifest() {")
     end = script.index("\n}\n", start) + 3
@@ -280,7 +245,7 @@ def test_local_runtime_renderer_hosts_control_in_two_api_replicas(tmp_path) -> N
             "-c",
             (
                 script[start:end]
-                + '\nIMAGE_NAME="img"; BIFROST_KIND_BUILD_JOBS=1; BIFROST_KIND_API_CONTROL=1; '
+                + '\nIMAGE_NAME="img"; BIFROST_KIND_BUILD_JOBS=1; '
                 + 'render_runtime_manifest "$1" "$2" rev'
             ),
             "renderer-test",
@@ -296,51 +261,11 @@ def test_local_runtime_renderer_hosts_control_in_two_api_replicas(tmp_path) -> N
         for doc in yaml.safe_load_all(output.read_text())
         if doc and doc.get("kind") == "Deployment"
     }
-    control_env = [{"name": "BIFROST_CONTROL_PLANE_HOST", "value": "api"}]
-    api = deployments["bifrost-api"]
-    scheduler = deployments["bifrost-scheduler"]["spec"]["template"]["spec"]
-    assert api["spec"]["replicas"] == 2
-    assert api["spec"]["template"]["spec"]["serviceAccountName"] == "bifrost-build-controller"
-    assert api["spec"]["template"]["spec"]["containers"][0]["env"] == control_env
-    assert scheduler["automountServiceAccountToken"] is False
-    assert "serviceAccountName" not in scheduler
-    assert scheduler["containers"][0]["env"] == control_env
-    worker = deployments["bifrost-worker"]["spec"]["template"]["spec"]
-    assert all(e["name"] != "BIFROST_CONTROL_PLANE_HOST" for e in worker["containers"][0]["env"])
-
-
-def test_local_runtime_renderer_pool_mode_leaves_no_broker_workers(tmp_path) -> None:
-    script = LOCAL_SCRIPT.read_text()
-    start = script.index("render_runtime_manifest() {")
-    end = script.index("\n}\n", start) + 3
-    output = tmp_path / "runtime.yaml"
-    subprocess.run(
-        [
-            "bash",
-            "-c",
-            (
-                script[start:end]
-                + '\nIMAGE_NAME="img"; BIFROST_KIND_BUILD_JOBS=1; BIFROST_KIND_API_CONTROL=1; '
-                + 'BIFROST_KIND_POOL=1; render_runtime_manifest "$1" "$2" rev'
-            ),
-            "renderer-test",
-            str(REPO_ROOT / "k8s" / "local" / "bifrost.yaml"),
-            str(output),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    deployments = {
-        doc["metadata"]["name"]: doc
-        for doc in yaml.safe_load_all(output.read_text())
-        if doc and doc.get("kind") == "Deployment"
-    }
-    assert deployments["bifrost-worker"]["spec"]["replicas"] == 0
-    for name in ("bifrost-api", "bifrost-scheduler"):
-        env = {
-            item["name"]: item["value"]
-            for item in deployments[name]["spec"]["template"]["spec"]["containers"][0]["env"]
-        }
-        assert env["BIFROST_EXECUTION_PLACEMENT"] == "pool"
-    assert "if [[ \"${BIFROST_KIND_POOL:-}\" == \"1\" ]]; then" in script
+    build_config = {"configMapRef": {"name": "bifrost-build-jobs-config"}}
+    api = deployments["bifrost-api"]["spec"]["template"]["spec"]
+    assert api["serviceAccountName"] == "bifrost-api"
+    assert build_config in api["containers"][0]["envFrom"]
+    for name in ("bifrost-scheduler", "bifrost-worker"):
+        pod = deployments[name]["spec"]["template"]["spec"]
+        assert pod["automountServiceAccountToken"] is False
+        assert build_config not in pod["containers"][0]["envFrom"]

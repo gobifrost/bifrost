@@ -41,9 +41,11 @@ PostgreSQL is the source of truth. Each `platform_jobs` row stores the typed
 payload version, requester and resource scope, progress, result or structured
 error, retry policy, timestamps, and lease state.
 
-Every scheduler replica is a platform-job host; there is no separate
-platform-job container. Each replica runs two claim loops as an internal safety
-ceiling, not a deployment setting. Each loop:
+Every executor is a platform-job host: the `scheduler` and `worker`
+containers and on-demand Kubernetes worker Jobs all run the same executor
+(`api/src/worker/pool_main.py`). There is no separate platform-job container.
+Each executor runs two claim loops as an internal safety ceiling, not a
+deployment setting. Each loop:
 
 1. recovers expired leases from a stopped scheduler or runner;
 2. claims one available row with `FOR UPDATE SKIP LOCKED`;
@@ -53,22 +55,23 @@ ceiling, not a deployment setting. Each loop:
    memory policy;
 6. records a terminal result or requeues an eligible lost attempt.
 
-The child shares the scheduler container's cgroup. Admission checks require the
+The child shares the executor container's cgroup. Admission checks require the
 job policy's minimum memory headroom and ratio before starting. The host stops
-the child process group at its hard memory ratio before the scheduler container
-reaches its limit. If the scheduler container still exits or is OOM-killed, the
-durable lease expires and a later scheduler instance retries or fails the job
-according to policy.
+the child process group at its hard memory ratio before the container reaches
+its limit. If the container still exits or is OOM-killed, the durable lease
+expires and another executor retries or fails the job according to policy. An
+executor that is draining stops claiming platform jobs and lets running ones
+finish.
 
-PostgreSQL row locking assigns each job to exactly one slot on one replica.
-Adding replicas adds both independent cgroups and execution capacity. Two slots
+PostgreSQL row locking assigns each job to exactly one slot on one executor.
+Adding executors adds both independent cgroups and execution capacity. Two slots
 allow serialized Solution work to dispatch isolated child work while retaining
 capacity for other system jobs. This is deliberately an implementation detail:
 operators should provision scheduler resources and replicas, not tune an
 internal process count. If resource classes become necessary, evolve the common
 host and its policy contract; do not add per-feature worker containers.
 
-One replica also holds the fenced `scheduler-triggers` database lease. Only
+One API replica also holds the fenced `scheduler-triggers` database lease. Only
 that trigger leader runs APScheduler. On-demand work is persisted directly to
 PostgreSQL and does not depend on Redis delivery. The lease uses database-time expiry rather than a session advisory
 lock because supported deployments use transaction-mode PgBouncer. A follower
@@ -93,20 +96,21 @@ long-running work is claimed by any replica.
 
 ### Control host
 
-Trigger leadership and Kubernetes build reconciliation form the *control
-plane* (`api/src/scheduler/control.py`). `BIFROST_CONTROL_PLANE_HOST` chooses
-the process that hosts it:
+Trigger leadership and dispatch reconciliation form the *control plane*
+(`api/src/scheduler/control.py`), hosted by every API replica inside its
+lifespan, after the schema gate and without delaying HTTP startup. API
+replicas never run platform-job handlers.
 
-- `scheduler` (default): every scheduler replica competes for the trigger
-  lease and reconciles build Jobs, exactly as before.
-- `api`: every API replica does both inside its lifespan, after the schema
-  gate and without delaying HTTP startup. Scheduler replicas only execute
-  local platform jobs and stop competing for control. API replicas never run
-  platform-job handlers.
+The Kubernetes loops (the on-demand worker controller and the build-Job
+controller) run wherever a process may manage Jobs
+(`api/src/services/kubernetes_control.py`, checked with a
+`SelfSubjectAccessReview` at start): the API with the base manifests' Role,
+and the scheduler container's executor on an install that bound the builds
+runbook's controller Role to it. Both loops are safe on several replicas.
 
-Set the same value on both API and scheduler. Both hosts use the same
-`scheduler-triggers` lease, so during a switch or a mixed-version rollout an
-old scheduler and a new API replica cannot both lead. The schedule catalog
+All replicas use the same `scheduler-triggers` lease that older schedulers
+used, so during a rolling upgrade an old scheduler and a new API replica
+cannot both lead. The schedule catalog
 (`api/src/scheduler/registry.py`) is the single source for the jobs a leader
 installs and for Diagnostics; every callback re-checks a conservative local
 lease deadline before it starts, so a leader that stops renewing stops

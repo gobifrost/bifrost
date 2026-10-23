@@ -112,23 +112,6 @@ async def test_summarize_failure_marks_run_failed(
             await cleanup.commit()
 
 
-def test_summarize_consumer_uses_prefetch_one():
-    """Live consumer must run with prefetch=1 so fleet-wide concurrency
-    equals the worker pod count, not pods × max_concurrency.
-
-    Regression guard: bumping this value back up silently melts OpenRouter
-    and re-introduces the burst-429 problem that cost ~525 runs in prod
-    on 2026-04-24."""
-    from src.jobs.summarize_worker import SummarizeBackfillConsumer, SummarizeConsumer
-
-    live = SummarizeConsumer()
-    backfill = SummarizeBackfillConsumer()
-    assert live.prefetch_count == 1
-    assert backfill.prefetch_count == 1
-    assert live.queue_name == "agent-summarization"
-    assert backfill.queue_name == "agent-summarization-backfill"
-
-
 @pytest.mark.asyncio
 async def test_backfill_endpoint_enqueues_durable_platform_job(async_session_factory):
     """The request path persists orchestration and hands work to the scheduler."""

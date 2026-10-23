@@ -73,8 +73,8 @@ async def cache_agent_context(run_id: str, context: dict[str, Any]) -> None:
         )
 
 
-async def hand_off_agent_run(dispatch: WorkDispatch) -> bool:
-    return await hand_off(dispatch.id, dispatch.placement, QUEUE_NAME, dispatch.message)
+async def hand_off_agent_run() -> None:
+    await hand_off()
 
 
 async def lock_waiting_agent_run(db: AsyncSession, run_id: UUID) -> bool | None:

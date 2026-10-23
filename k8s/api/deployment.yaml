@@ -24,6 +24,9 @@ spec:
         app.kubernetes.io/component: api
         app.kubernetes.io/part-of: bifrost
     spec:
+      # Runs the worker controller: may manage worker Jobs (api/rbac.yaml).
+      serviceAccountName: bifrost-api
+      automountServiceAccountToken: true
       # Init container runs migrations and warms module cache
       initContainers:
         - name: init

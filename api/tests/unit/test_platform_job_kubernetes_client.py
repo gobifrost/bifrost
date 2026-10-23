@@ -13,6 +13,7 @@ from src.jobs.platform.kubernetes_client import (
     KubernetesJobClient,
     _lease_token_fingerprint,
     build_job_manifest,
+    validate_build_settings,
 )
 from src.jobs.schedulers.platform_jobs import ClaimedPlatformJob
 
@@ -417,22 +418,96 @@ def test_client_creation_requires_in_cluster_endpoint(
         "kubernetes_build_service_account",
     ],
 )
-def test_client_creation_requires_build_settings_before_http_client(
-    monkeypatch: pytest.MonkeyPatch,
-    field_name: str,
-) -> None:
-    def fail_http_client(**_kwargs: object) -> object:
-        raise AssertionError("HTTP client must not be created")
-
-    monkeypatch.setattr(
-        "src.jobs.platform.kubernetes_client.httpx.AsyncClient",
-        fail_http_client,
-    )
+def test_remote_builds_require_their_settings(field_name: str) -> None:
     settings = KubernetesSettings()
     setattr(settings, field_name, "")
 
     with pytest.raises(KubernetesConfigurationError, match=field_name):
+        validate_build_settings(settings)
+
+
+def _cluster(handler, *, settings=None):  # type: ignore[no-untyped-def]
+    return KubernetesJobClient(
+        settings=settings or KubernetesSettings(),
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url="https://kubernetes.default.svc",
+        ),
+    )
+
+
+def test_client_namespace_defaults_to_this_pods_service_account(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    namespace_file = tmp_path / "namespace"
+    namespace_file.write_text("bifrost\n")
+    monkeypatch.setattr(
+        "src.jobs.platform.kubernetes_client.SERVICE_ACCOUNT_NAMESPACE_PATH", namespace_file
+    )
+    settings = KubernetesSettings()
+    settings.kubernetes_build_namespace = None  # type: ignore[assignment]
+
+    client = _cluster(lambda request: httpx.Response(200), settings=settings)
+
+    assert client.namespace == "bifrost"
+
+
+def test_client_needs_a_namespace(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "src.jobs.platform.kubernetes_client.SERVICE_ACCOUNT_NAMESPACE_PATH", tmp_path / "absent"
+    )
+    settings = KubernetesSettings()
+    settings.kubernetes_build_namespace = None  # type: ignore[assignment]
+
+    with pytest.raises(KubernetesConfigurationError, match="namespace"):
         KubernetesJobClient(settings=settings)
+
+
+async def test_allows_asks_the_cluster_with_a_self_subject_access_review(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    token = tmp_path / "token"
+    token.write_text("token")
+    monkeypatch.setattr("src.jobs.platform.kubernetes_client.SERVICE_ACCOUNT_TOKEN_PATH", token)
+    reviews: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        review = json.loads(request.content)
+        reviews.append(review["spec"]["resourceAttributes"])
+        allowed = review["spec"]["resourceAttributes"]["verb"] == "create"
+        return httpx.Response(201, json={"status": {"allowed": allowed}})
+
+    client = _cluster(handler)
+
+    assert await client.allows("create", "jobs", "batch") is True
+    assert await client.allows("delete", "jobs", "batch") is False
+    assert reviews[0] == {
+        "namespace": "builds",
+        "verb": "create",
+        "group": "batch",
+        "resource": "jobs",
+    }
+
+
+async def test_own_image_is_this_pods_first_container(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    token = tmp_path / "token"
+    token.write_text("token")
+    monkeypatch.setattr("src.jobs.platform.kubernetes_client.SERVICE_ACCOUNT_TOKEN_PATH", token)
+    monkeypatch.setenv("HOSTNAME", "bifrost-api-abc")
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        return httpx.Response(
+            200, json={"spec": {"containers": [{"image": "ghcr.io/gobifrost/bifrost-api:1.5.0"}]}}
+        )
+
+    assert await _cluster(handler).own_image() == "ghcr.io/gobifrost/bifrost-api:1.5.0"
+    assert paths == ["/api/v1/namespaces/builds/pods/bifrost-api-abc"]
 
 
 def test_client_creation_brackets_ipv6_service_host_and_uses_ca_context(

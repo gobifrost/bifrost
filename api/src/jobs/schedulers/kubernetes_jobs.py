@@ -16,6 +16,7 @@ from src.jobs.platform.kubernetes_client import (
     KubernetesConfigurationError,
     KubernetesJobClient,
     build_job_manifest,
+    validate_build_settings,
 )
 from src.jobs.platform.registry import get_platform_job_definition
 from src.jobs.schedulers.platform_jobs import ClaimedPlatformJob, _handle_runner_loss, claim_platform_job
@@ -187,7 +188,7 @@ class KubernetesBuildController:
 async def kubernetes_build_loop(shutdown_event: asyncio.Event) -> None:
     settings = get_settings()
     try:
-        client = KubernetesJobClient(settings)
+        client = KubernetesJobClient(settings, namespace=validate_build_settings(settings))
     except KubernetesConfigurationError as exc:
         # A deployment that enables the backend without cluster credentials
         # (wrong environment, missing token mount) must not take down the

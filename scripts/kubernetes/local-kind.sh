@@ -28,8 +28,6 @@ Environment overrides:
   BIFROST_KIND_VERSION       Kind version (default: v0.24.0)
   BIFROST_KEDA_VERSION       KEDA version without leading v (default: 2.16.1)
   BIFROST_KIND_BUILD_JOBS    Set to 1 to opt into Kubernetes App build Jobs
-  BIFROST_KIND_API_CONTROL   Set to 1 to host platform control in two API replicas
-  BIFROST_KIND_POOL          Set to 1 to place runs on on-demand worker Jobs (needs the two above)
 USAGE
 }
 
@@ -123,12 +121,7 @@ render_runtime_manifest() {
   local rendered_file="$2"
   local revision="$3"
   local build_jobs="${BIFROST_KIND_BUILD_JOBS:-}"
-  local api_control="${BIFROST_KIND_API_CONTROL:-}"
-  local pool="${BIFROST_KIND_POOL:-}"
-  awk -v image="${IMAGE_NAME}" -v revision="${revision}" -v build_jobs="${build_jobs}" -v api_control="${api_control}" -v pool="${pool}" '
-    BEGIN {
-      controller = (api_control == "1") ? "bifrost-api" : "bifrost-scheduler"
-    }
+  awk -v image="${IMAGE_NAME}" -v revision="${revision}" -v build_jobs="${build_jobs}" '
     { gsub("bifrost-api:kind-local", image) }
     /^kind: / {
       kind=$2
@@ -136,41 +129,11 @@ render_runtime_manifest() {
     kind == "Deployment" && /^  name: / {
       deployment=$2
     }
-    api_control == "1" && deployment == "bifrost-api" && $0 == "  replicas: 1" {
-      print "  replicas: 2"
-      next
-    }
-    pool == "1" && deployment == "bifrost-worker" && $0 == "spec:" {
-      print
-      print "  replicas: 0"
-      next
-    }
-    build_jobs == "1" && deployment == controller && $0 == "      automountServiceAccountToken: false" {
-      print "      automountServiceAccountToken: true"
-      print "      serviceAccountName: bifrost-build-controller"
-      next
-    }
     { print }
-    build_jobs == "1" && (deployment == "bifrost-api" || deployment == "bifrost-scheduler") && $0 == "                name: bifrost-local-secrets" {
+    # The API runs the build controller (its Role covers build Jobs too).
+    build_jobs == "1" && deployment == "bifrost-api" && $0 == "                name: bifrost-local-secrets" {
       print "            - configMapRef:"
       print "                name: bifrost-build-jobs-config"
-    }
-    api_control == "1" && (deployment == "bifrost-api" || deployment == "bifrost-scheduler") && $0 == "                name: bifrost-local-secrets" {
-      print "          env:"
-      print "            - name: BIFROST_CONTROL_PLANE_HOST"
-      print "              value: \"api\""
-      if (pool == "1") {
-        print "            - name: BIFROST_EXECUTION_PLACEMENT"
-        print "              value: \"pool\""
-        print "            - name: BIFROST_POOL_IDLE_SECONDS"
-        print "              value: \"45\""
-        print "            - name: BIFROST_POOL_MAX_WORKERS"
-        print "              value: \"3\""
-        print "            - name: BIFROST_POOL_WORKER_SLOTS"
-        print "              value: \"2\""
-        print "            - name: BIFROST_POOL_WORKER_MEMORY_REQUEST_MIB"
-        print "              value: \"256\""
-      }
     }
     /^        app.kubernetes.io\/name:/ {
       print "      annotations:"
@@ -266,19 +229,13 @@ up() {
   apply_local_manifest "${ROOT_DIR}/k8s/local/init.yaml"
   kubectl_local wait --for=condition=complete job/bifrost-init -n "${NAMESPACE}" --timeout=300s
   apply_build_jobs_manifest
+  kubectl_local apply -f "${ROOT_DIR}/k8s/local/api-rbac.yaml"
   apply_runtime_manifest "${ROOT_DIR}/k8s/local/bifrost.yaml" "$(runtime_revision "${rendered}")"
-  if [[ "${BIFROST_KIND_POOL:-}" == "1" ]]; then
-    # Runs go to on-demand worker Jobs; nothing keeps broker workers up.
-    kubectl_local delete scaledobject/bifrost-worker -n "${NAMESPACE}" --ignore-not-found
-  else
-    kubectl_local apply -f "${ROOT_DIR}/k8s/local/keda.yaml"
-  fi
+  kubectl_local apply -f "${ROOT_DIR}/k8s/local/keda.yaml"
   kubectl_local rollout status deployment/bifrost-api -n "${NAMESPACE}" --timeout=300s
   kubectl_local rollout status deployment/bifrost-scheduler -n "${NAMESPACE}" --timeout=180s
-  if [[ "${BIFROST_KIND_POOL:-}" != "1" ]]; then
-    kubectl_local rollout status deployment/bifrost-worker -n "${NAMESPACE}" --timeout=180s
-    kubectl_local wait --for=condition=Ready=True scaledobject/bifrost-worker -n "${NAMESPACE}" --timeout=180s
-  fi
+  kubectl_local rollout status deployment/bifrost-worker -n "${NAMESPACE}" --timeout=180s
+  kubectl_local wait --for=condition=Ready=True scaledobject/bifrost-worker -n "${NAMESPACE}" --timeout=180s
   trap - ERR
   status
 }

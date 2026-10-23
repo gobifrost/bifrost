@@ -1,4 +1,10 @@
-"""An executor runs one live and one backfill summary at a time."""
+"""An executor runs one live and one backfill summary at a time.
+
+Regression guard: fleet-wide summary concurrency must equal the executor
+count, not executors × slots. More silently melts the model provider and
+re-introduces the burst-429 problem that cost ~525 runs in production on
+2026-04-24 (then enforced by the broker consumers' prefetch of 1).
+"""
 
 from __future__ import annotations
 

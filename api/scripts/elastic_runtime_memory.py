@@ -192,25 +192,19 @@ def _stage_workflow_consumer_import(_args: argparse.Namespace) -> None:
     _ = WorkflowExecutionConsumer
 
 
-def _stage_worker_app_import(_args: argparse.Namespace) -> None:
-    import src.worker.app  # noqa: F401
+def _stage_executor_import(_args: argparse.Namespace) -> None:
+    import src.worker.pool_main  # noqa: F401
 
 
 def _stage_construct_worker_consumers(_args: argparse.Namespace) -> None:
     from src.jobs.consumers.agent_run import AgentRunConsumer
     from src.jobs.consumers.package_install import PackageInstallConsumer
     from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
-    from src.jobs.summarize_worker import (
-        SummarizeBackfillConsumer,
-        SummarizeConsumer,
-    )
 
     consumers = [
         WorkflowExecutionConsumer(),
         PackageInstallConsumer(),
         AgentRunConsumer(),
-        SummarizeConsumer(),
-        SummarizeBackfillConsumer(),
     ]
     _ = [consumer.queue_name for consumer in consumers]
 
@@ -259,8 +253,8 @@ STAGES: tuple[Stage, ...] = (
     Stage("database", "Database layer imported and SQLAlchemy mappers configured", _stage_database),
     Stage("rabbitmq", "RabbitMQ transport module imported", _stage_rabbitmq),
     Stage("workflow-consumer-import", "Workflow execution consumer class imported", _stage_workflow_consumer_import),
-    Stage("worker-app-import", "Full worker app module imported", _stage_worker_app_import),
-    Stage("construct-worker-consumers", "All worker consumer instances constructed without starting IO", _stage_construct_worker_consumers),
+    Stage("executor-import", "Executor module imported", _stage_executor_import),
+    Stage("construct-worker-consumers", "The executor's run handlers constructed without starting IO", _stage_construct_worker_consumers),
     Stage("scheduler-import", "PlatformJob scheduler module imported", _stage_scheduler_import),
     Stage("platform-registry", "PlatformJob registry imported", _stage_platform_registry),
     Stage("selected-platform-job", "Selected PlatformJob definition resolved", _stage_selected_platform_job),

@@ -186,33 +186,22 @@ Exact focused commands:
 ./test.sh tests/unit/jobs/schedulers/test_platform_jobs.py -q
 ```
 
-## Hosting Control In The API
+## Where The Controllers Run
 
-`deploy/kubernetes/api-control` layers on the build overlay and moves platform
-control (trigger leadership and build-Job reconciliation) into the API
-replicas:
-
-```bash
-kubectl apply -k deploy/kubernetes/api-control
-```
-
-It sets `BIFROST_CONTROL_PLANE_HOST=api` on both API and scheduler, mounts the
-`bifrost-build-controller` token in the API pods, and removes it from the
-scheduler, which keeps executing local platform jobs. Every API replica then
-reconciles build Jobs concurrently; one holds the trigger lease. Diagnostics →
-Scheduler lists API control replicas with zero job slots and marks the leader.
-
-Switching is fenced: both hosts share the trigger lease, so an old scheduler
-and a new API replica never lead at the same time, and build reconciliation is
-safe under any mix of reconcilers. Apply both Deployment changes in one rollout.
-To return control to the scheduler, re-apply `deploy/kubernetes/builds`; the
-same lease fencing covers the reverse switch. A single API replica is a single
-point of control: run at least two.
+The build-Job controller runs wherever a process may manage Jobs, checked at
+start. The base manifests bind the `bifrost-worker-controller` Role to the
+API (`k8s/api/rbac.yaml`), so every API replica reconciles build Jobs. This
+overlay additionally binds `bifrost-build-controller` to the scheduler
+container, whose executor then reconciles them too; reconciliation is safe
+under any mix of reconcilers. To keep the controllers in the API only, drop
+`scheduler-controller-patch.yaml`. Diagnostics → Scheduler lists API control
+replicas with zero job slots and marks the trigger leader. A single API
+replica is a single point of control: run at least two.
 
 Evidence (local Kind, two API replicas):
 
 ```bash
-BIFROST_KIND_BUILD_JOBS=1 BIFROST_KIND_API_CONTROL=1 ./test.sh kubernetes up
+BIFROST_KIND_BUILD_JOBS=1 ./test.sh kubernetes up
 ./test.sh kubernetes control-experiment
 ```
 

@@ -47,12 +47,11 @@ class FakeLease:
 
 
 def _settings(backend: str = "local") -> SimpleNamespace:
-    return SimpleNamespace(platform_build_backend=backend, execution_placement="broker")
+    return SimpleNamespace(platform_build_backend=backend)
 
 
 def _control(lease: FakeLease, **kwargs) -> ControlPlane:
     return ControlPlane(
-        host="test",
         leadership_lease=lease,  # type: ignore[arg-type]
         settings=_settings(),  # type: ignore[arg-type]
         **kwargs,
@@ -280,23 +279,30 @@ async def test_unexpected_control_exit_is_reported_but_stop_is_not() -> None:
 
 
 @pytest.mark.asyncio
-async def test_build_reconciler_runs_only_for_kubernetes_backend(
+async def test_kubernetes_loops_follow_the_job_permission_not_a_flag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from src.jobs.schedulers import kubernetes_jobs
+    from src.services import kubernetes_control
+    from src.services.worker_pool import controller
 
-    async def idle(stop_event: asyncio.Event) -> None:
+    async def idle(stop_event: asyncio.Event, *_args: object) -> None:
         await stop_event.wait()
 
     monkeypatch.setattr(kubernetes_jobs, "kubernetes_build_loop", idle)
+    monkeypatch.setattr(controller, "worker_pool_loop", idle)
 
     always = {"control-leadership", "work-dispatch-reconciler"}
-    for backend, expected in (("local", always), (
-        "kubernetes",
-        always | {"kubernetes-build-controller"},
-    )):
+    workers = always | {"worker-pool-controller"}
+    for permitted, backend, expected in (
+        (False, "kubernetes", always),
+        (True, "local", workers),
+        (True, "kubernetes", workers | {"kubernetes-build-controller"}),
+    ):
+        monkeypatch.setattr(
+            kubernetes_control, "may_manage_jobs", AsyncMock(return_value=permitted)
+        )
         control = ControlPlane(
-            host="test",
             leadership_lease=FakeLease(),  # type: ignore[arg-type]
             settings=_settings(backend),  # type: ignore[arg-type]
         )

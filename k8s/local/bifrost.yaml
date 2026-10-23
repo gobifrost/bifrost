@@ -17,7 +17,8 @@ metadata:
   name: bifrost-api
   namespace: bifrost-local
 spec:
-  replicas: 1
+  # Two control replicas: trigger leadership hands over between them.
+  replicas: 2
   selector:
     matchLabels:
       app.kubernetes.io/name: bifrost-api
@@ -26,7 +27,9 @@ spec:
       labels:
         app.kubernetes.io/name: bifrost-api
     spec:
-      automountServiceAccountToken: false
+      # Runs the worker controller: may manage worker Jobs (api-rbac.yaml).
+      serviceAccountName: bifrost-api
+      automountServiceAccountToken: true
       containers:
         - name: api
           image: bifrost-api:kind-local

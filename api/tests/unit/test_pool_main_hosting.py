@@ -69,3 +69,26 @@ async def test_draining_hands_services_over_first_and_waits_for_platform_jobs(mo
 
     worker._platform_jobs.discard(job)
     await asyncio.wait_for(drain, timeout=2)
+
+
+async def test_an_incarnation_makes_a_job_worker_and_none_a_static_one(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from src.worker import pool_main
+
+    formed: list[tuple[bool, object]] = []
+
+    async def run(self) -> int:  # type: ignore[no-untyped-def]
+        formed.append((self.static, self._on_ready))
+        return 0
+
+    monkeypatch.setattr(pool_main.PoolWorker, "run", run)
+    ready = object()
+
+    monkeypatch.delenv("BIFROST_WORKER_INCARNATION_ID", raising=False)
+    assert await pool_main.run_executor(on_ready=ready) == 0  # type: ignore[arg-type]
+
+    monkeypatch.setenv("BIFROST_WORKER_INCARNATION_ID", str(uuid4()))
+    monkeypatch.setenv("BIFROST_KUBERNETES_JOB_UID", "job-uid")
+    monkeypatch.setenv("BIFROST_KUBERNETES_POD_UID", "pod-uid")
+    assert await pool_main.run_executor() == 0
+
+    assert formed == [(True, ready), (False, None)]

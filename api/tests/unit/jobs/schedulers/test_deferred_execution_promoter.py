@@ -93,10 +93,9 @@ async def test_promotes_due_rows(db_session):
         patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
         patch(PATH_PUBLISH, new=AsyncMock(return_value=True)) as pub,
     ):
-        promoted, failed = await promote_due_executions()
+        promoted = await promote_due_executions()
 
     assert promoted == 1
-    assert failed == 0
     pub.assert_awaited_once()
     assert pub.await_args.args[0].message["execution_record_exists"] is True
 
@@ -125,9 +124,9 @@ async def test_deletion_cancellation_wins_after_promotion_before_dispatch(db_ses
         patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
         patch(PATH_PUBLISH, new=AsyncMock(return_value=True)),
     ):
-        promoted, failures = await promote_due_executions()
+        promoted = await promote_due_executions()
 
-    assert (promoted, failures) == (1, 0)
+    assert promoted == 1
     assert await cancel_unstarted_runs_for_deleted_user(db_session, user.id) == 1
     await db_session.commit()
 
@@ -153,9 +152,9 @@ async def test_does_not_promote_row_with_deleted_run_user_snapshot(db_session):
         patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
         patch(PATH_PUBLISH, new=AsyncMock(return_value=True)) as publish,
     ):
-        promoted, failures = await promote_due_executions()
+        promoted = await promote_due_executions()
 
-    assert (promoted, failures) == (0, 0)
+    assert promoted == 0
     publish.assert_not_awaited()
     await db_session.refresh(due)
     assert (due.status, due.error_message) == (
@@ -176,7 +175,7 @@ async def test_leaves_future_rows(db_session):
         patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
         patch(PATH_PUBLISH, new=AsyncMock(return_value=True)) as pub,
     ):
-        promoted, failed = await promote_due_executions()
+        promoted = await promote_due_executions()
 
     assert promoted == 0
     pub.assert_not_awaited()
@@ -198,7 +197,7 @@ async def test_skips_cancelled_rows(db_session):
         patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
         patch(PATH_PUBLISH, new=AsyncMock(return_value=True)),
     ):
-        promoted, _ = await promote_due_executions()
+        promoted = await promote_due_executions()
 
     assert promoted == 0
     await db_session.refresh(cancelled)
@@ -206,8 +205,8 @@ async def test_skips_cancelled_rows(db_session):
 
 
 @pytest.mark.asyncio
-async def test_publish_failure_leaves_a_durable_dispatch(db_session):
-    """A failed hand-off is not reverted: the reconciler publishes it."""
+async def test_promotion_commits_a_claimable_dispatch_before_the_hand_off(db_session):
+    """The hand-off only wakes executors: the dispatch is already durable."""
     from sqlalchemy import select
 
     from src.jobs.schedulers.deferred_execution_promoter import promote_due_executions
@@ -219,17 +218,17 @@ async def test_publish_failure_leaves_a_durable_dispatch(db_session):
 
     with (
         patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
-        patch(PATH_PUBLISH, new=AsyncMock(return_value=False)),
+        patch(PATH_PUBLISH, new=AsyncMock()),
     ):
-        promoted, failed = await promote_due_executions()
+        promoted = await promote_due_executions()
 
-    assert (promoted, failed) == (0, 1)
+    assert promoted == 1
     await db_session.refresh(due)
     assert due.status == ExecutionStatus.PENDING
     dispatch = (
         await db_session.execute(select(WorkDispatch).where(WorkDispatch.subject_id == due.id))
     ).scalar_one()
-    assert dispatch.status == "pending"
+    assert (dispatch.placement, dispatch.status) == ("pool", "pending")
     assert dispatch.payload["execution_id"] == str(due.id)
 
 

@@ -1170,8 +1170,10 @@ def _mount_roots() -> dict[str, list[object]]:
 
 
 def _consumer_classes() -> list[type]:
-    """Every RabbitMQ consumer the worker runs."""
-    import src.worker.app  # noqa: F401 - registers every consumer class the worker runs
+    """Every consumer class whose handler the executor runs."""
+    import src.jobs.consumers.agent_run  # noqa: F401 - registers the consumer classes
+    import src.jobs.consumers.package_install  # noqa: F401
+    import src.jobs.consumers.workflow_execution  # noqa: F401
     from src.jobs.rabbitmq import _AbstractConsumer
 
     found: list[type] = []

@@ -18,6 +18,7 @@ from src.jobs.schedulers.platform_jobs import ClaimedPlatformJob
 SERVICE_ACCOUNT_ROOT = Path("/var/run/secrets/kubernetes.io/serviceaccount")
 SERVICE_ACCOUNT_TOKEN_PATH = SERVICE_ACCOUNT_ROOT / "token"
 SERVICE_ACCOUNT_CA_PATH = SERVICE_ACCOUNT_ROOT / "ca.crt"
+SERVICE_ACCOUNT_NAMESPACE_PATH = SERVICE_ACCOUNT_ROOT / "namespace"
 
 JOB_TTL_SECONDS = 3600
 JOB_DEADLINE_BUFFER_SECONDS = 60
@@ -44,6 +45,19 @@ def _required_setting(settings: Any, name: str) -> Any:
     if value is None or value == "":
         raise KubernetesConfigurationError(f"Missing required setting: {name}")
     return value
+
+
+def in_cluster_namespace() -> str | None:
+    """The namespace of this pod's service account, when running in a cluster."""
+    try:
+        return SERVICE_ACCOUNT_NAMESPACE_PATH.read_text().strip() or None
+    except OSError:
+        return None
+
+
+def validate_build_settings(settings: Any) -> str:
+    """The settings remote platform-job builds require; returns the namespace."""
+    return _validate_required_settings(settings)
 
 
 def _validate_required_settings(settings: Any) -> str:
@@ -219,11 +233,54 @@ class KubernetesJobClient:
         self,
         settings: Any | None = None,
         http_client: httpx.AsyncClient | None = None,
+        *,
+        namespace: str | None = None,
     ) -> None:
+        """``namespace`` defaults to the build namespace setting, then this pod's."""
         self.settings = settings or get_settings()
-        self.namespace = _validate_required_settings(self.settings)
+        resolved = (
+            namespace
+            or getattr(self.settings, "kubernetes_build_namespace", None)
+            or in_cluster_namespace()
+        )
+        if not resolved:
+            raise KubernetesConfigurationError("No Kubernetes namespace is configured")
+        self.namespace = str(resolved)
         self._owned_client = http_client is None
         self._client = http_client or self._create_http_client()
+
+    async def allows(self, verb: str, resource: str, group: str = "") -> bool:
+        """Whether this service account may ``verb`` ``resource`` in its namespace."""
+        review = {
+            "apiVersion": "authorization.k8s.io/v1",
+            "kind": "SelfSubjectAccessReview",
+            "spec": {
+                "resourceAttributes": {
+                    "namespace": self.namespace,
+                    "verb": verb,
+                    "group": group,
+                    "resource": resource,
+                }
+            },
+        }
+        response = await self._request(
+            "POST",
+            "/apis/authorization.k8s.io/v1/selfsubjectaccessreviews",
+            expected={201},
+            json=review,
+        )
+        return bool(response.json().get("status", {}).get("allowed"))
+
+    async def own_image(self) -> str | None:
+        """The image of this pod's first container (the process's own image)."""
+        name = os.environ.get("HOSTNAME")
+        if not name:
+            return None
+        response = await self._request(
+            "GET", f"{self._pod_path()}/{quote(name, safe='')}", expected={200}
+        )
+        containers = response.json().get("spec", {}).get("containers") or []
+        return containers[0].get("image") if containers else None
 
     def _create_http_client(self) -> httpx.AsyncClient:
         host = os.environ.get("KUBERNETES_SERVICE_HOST")

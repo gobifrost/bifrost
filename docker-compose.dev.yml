@@ -69,10 +69,6 @@ services:
         BIFROST_VERSION: ${BIFROST_VERSION:-unknown}
     environment:
       BIFROST_ENVIRONMENT: development
-      # Which process hosts platform control: scheduler (default) or api.
-      BIFROST_CONTROL_PLANE_HOST: ${BIFROST_CONTROL_PLANE_HOST:-scheduler}
-      # Where accepted runs go: broker (RabbitMQ workers, default) or pool.
-      BIFROST_EXECUTION_PLACEMENT: ${BIFROST_EXECUTION_PLACEMENT:-broker}
       BIFROST_DEBUG: ${BIFROST_DEBUG:-true}
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD:-bifrost_dev}@pgbouncer:5432/bifrost
@@ -111,10 +107,6 @@ services:
         BIFROST_VERSION: ${BIFROST_VERSION:-unknown}
     environment:
       BIFROST_ENVIRONMENT: development
-      # Which process hosts platform control: scheduler (default) or api.
-      BIFROST_CONTROL_PLANE_HOST: ${BIFROST_CONTROL_PLANE_HOST:-scheduler}
-      # Where accepted runs go: broker (RabbitMQ workers, default) or pool.
-      BIFROST_EXECUTION_PLACEMENT: ${BIFROST_EXECUTION_PLACEMENT:-broker}
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD:-bifrost_dev}@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:${POSTGRES_PASSWORD:-bifrost_dev}@pgbouncer:5432/bifrost
@@ -141,8 +133,6 @@ services:
         BIFROST_VERSION: ${BIFROST_VERSION:-unknown}
     environment:
       BIFROST_ENVIRONMENT: development
-      # Must match the API and scheduler: nested runs are accepted here too.
-      BIFROST_EXECUTION_PLACEMENT: ${BIFROST_EXECUTION_PLACEMENT:-broker}
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD:-bifrost_dev}@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:${POSTGRES_PASSWORD:-bifrost_dev}@pgbouncer:5432/bifrost

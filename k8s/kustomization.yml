@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - configmap.yaml
+  - api/rbac.yaml
   - api/deployment.yaml
   - api/service.yaml
   - client/deployment.yaml

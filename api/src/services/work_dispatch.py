@@ -1,11 +1,13 @@
 """Durable acceptance and dispatch of domain work (transactional outbox).
 
 Acceptance inserts a ``WorkDispatch`` in the same transaction as the domain
-record. After commit the accepting process publishes it on the fast path; the
-control plane's reconciler publishes any dispatch whose hand-off was lost.
+record. After commit the accepting process wakes the executors, which claim
+dispatches from PostgreSQL (the wake only saves them their poll interval).
 An executor claims a dispatch by moving its subject from waiting to running
 and deleting the dispatch in one transaction, so a duplicate or stale
-delivery finds nothing to claim.
+delivery finds nothing to claim. The control plane's reconciler re-places a
+dispatch an older API left on the broker during a rolling upgrade, releases
+work held by a lost executor, and fails work no capacity claimed in time.
 
 Started work is never replayed: once claimed, a run's recovery belongs to
 its domain's terminal sweeps.
@@ -13,33 +15,20 @@ its domain's terminal sweeps.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.database import get_db_context, get_dispatch_db_context
-from src.jobs.rabbitmq import publish_message
+from src.core.database import get_db_context
 from src.models.orm.work_dispatches import WorkDispatch
 
 logger = logging.getLogger(__name__)
 
-# A dispatch still unpublished this long after it was staged lost its fast
-# path (the accepting process died or the broker refused it). Long enough
-# that a large promoter batch handing off sequentially is never raced.
-PENDING_GRACE = timedelta(seconds=60)
-# A published dispatch unclaimed this long may have been lost by the broker.
-# A busy queue legitimately holds messages, and a duplicate publish costs
-# capacity (the claim discards it), so redelivery is rare and bounded.
-REDELIVERY_WINDOW = timedelta(minutes=30)
-# Deliveries before an unclaimed run fails visibly (about 90 minutes,
-# longer than the hour a Redis-only run used to survive).
-MAX_PUBLISHES = 3
 RECONCILE_BATCH = 100
 # Pool dispatches are re-examined once they are this old (cancelled runs,
 # dispatches held by a lost worker), and fail visibly if no worker capacity
@@ -99,11 +88,9 @@ def stage_dispatch(
 ) -> WorkDispatch:
     """Add a dispatch to the caller's transaction; hand off after commit.
 
-    Placement is fixed here, from deployment configuration, and persists with
-    the dispatch so a configuration change never strands in-flight work.
+    Executors claim it from PostgreSQL. A dispatch an older API placed on the
+    broker during a rolling upgrade is re-placed by the reconciler.
     """
-    from src.config import get_settings
-
     dispatch_id = uuid4()
     dispatch = WorkDispatch(
         id=dispatch_id,
@@ -119,7 +106,7 @@ def stage_dispatch(
             "handler_version": handler_version,
         },
         payload=payload,
-        placement=get_settings().execution_placement,
+        placement="pool",
         status="pending",
         publish_count=0,
     )
@@ -127,14 +114,13 @@ def stage_dispatch(
     return dispatch
 
 
-async def hand_off(dispatch_id: UUID, placement: str, queue: str, message: dict[str, Any]) -> bool:
-    """Fast-path hand-off after commit: publish, or leave for pool workers."""
-    if placement == "pool":
-        # The dispatch is already claimable; the hint only saves pool workers
-        # their poll interval.
-        await wake_pool_workers()
-        return True
-    return await publish_dispatch(dispatch_id, queue, message)
+async def hand_off() -> None:
+    """Fast-path hand-off after commit.
+
+    The dispatch is already claimable; the hint only saves executors their
+    poll interval.
+    """
+    await wake_pool_workers()
 
 
 POOL_WAKE_CHANNEL = "bifrost:pool:wake"
@@ -149,53 +135,6 @@ async def wake_pool_workers() -> None:
         await redis.publish(POOL_WAKE_CHANNEL, "1")
     except Exception:
         logger.debug("Could not wake pool workers", exc_info=True)
-
-
-# Publish records in flight; held so they are not garbage-collected.
-_publish_records: set[asyncio.Task[None]] = set()
-
-
-async def _record_published(dispatch_id: UUID) -> None:
-    try:
-        async with get_dispatch_db_context() as db:
-            await db.execute(
-                update(WorkDispatch)
-                .where(WorkDispatch.id == dispatch_id, WorkDispatch.status == "pending")
-                .values(
-                    status="published",
-                    publish_count=WorkDispatch.publish_count + 1,
-                    last_published_at=datetime.now(timezone.utc),
-                )
-            )
-    except Exception:
-        # At worst the reconciler publishes a duplicate after PENDING_GRACE,
-        # which the claim discards.
-        logger.warning(
-            "Could not record dispatch publish",
-            extra={"dispatch_id": str(dispatch_id)},
-            exc_info=True,
-        )
-
-
-async def publish_dispatch(dispatch_id: UUID, queue: str, message: dict[str, Any]) -> bool:
-    """Fast-path hand-off after commit. A failure leaves it to the reconciler.
-
-    The publish is recorded in the background: callers (often a request that
-    then waits for the run's result) do not wait for that write.
-    """
-    try:
-        await publish_message(queue, message)
-    except Exception:
-        logger.warning(
-            "Dispatch publish failed; the reconciler will retry",
-            extra={"dispatch_id": str(dispatch_id), "queue": queue},
-            exc_info=True,
-        )
-        return False
-    task = asyncio.create_task(_record_published(dispatch_id))
-    _publish_records.add(task)
-    task.add_done_callback(_publish_records.discard)
-    return True
 
 
 async def take_dispatch_payload(db: AsyncSession, dispatch_id: UUID) -> dict[str, Any] | None:
@@ -213,7 +152,7 @@ async def _reconcile_one(
     family_name: str,
     subject_id: UUID,
 ) -> bool:
-    """Settle one candidate in its own short transaction; True if published."""
+    """Settle one candidate in its own short transaction; True if re-placed."""
     family = families.get(family_name)
     if family is None:
         logger.error(
@@ -222,7 +161,7 @@ async def _reconcile_one(
         )
         return False
     failure: tuple[dict[str, Any], str] | None = None
-    hand_off: tuple[str, dict[str, Any], int] | None = None
+    replaced = False
     async with get_db_context() as db:
         waiting = await family.lock_waiting(db, subject_id)
         if waiting is None:
@@ -235,45 +174,24 @@ async def _reconcile_one(
         if row is None:
             return False
         if not waiting:
-            # Cancelled, or claimed by an executor that predates dispatches.
+            # Cancelled, or claimed through an older worker's broker delivery.
             await db.delete(row)
             return False
-        if row.placement == "pool":
-            failure = await _settle_pool_dispatch(db, family, row)
-            if failure is not None:
-                await family.report_failed(subject_id, *failure)
-            return False
-        if row.publish_count >= MAX_PUBLISHES:
-            reason = f"No executor claimed this run after {row.publish_count} deliveries."
-            await family.fail(db, subject_id, reason)
-            failure = (row.payload, reason)
-            await db.delete(row)
+        if row.placement != "pool":
+            # Placed on the broker by an older API during a rolling upgrade.
+            # Executors claim from PostgreSQL only; an older worker that
+            # still receives the broker copy is fenced by the claim.
+            row.placement = "pool"
+            row.assigned_worker_id = None
+            row.status = "pending"
+            replaced = True
         else:
-            row.status = "published"
-            row.publish_count += 1
-            row.last_published_at = datetime.now(timezone.utc)
-            hand_off = (row.queue, row.message, row.publish_count)
+            failure = await _settle_pool_dispatch(db, family, row)
     if failure is not None:
         await family.report_failed(subject_id, *failure)
-        return False
-    if hand_off is None:
-        return False
-    queue, message, attempt = hand_off
-    # Publish outside the transaction: no row lock is held across the broker.
-    try:
-        await publish_message(queue, message)
-    except Exception:
-        logger.warning(
-            "Dispatch republish failed", extra={"dispatch_id": str(dispatch_id)}, exc_info=True
-        )
-        async with get_db_context() as db:
-            await db.execute(
-                update(WorkDispatch)
-                .where(WorkDispatch.id == dispatch_id, WorkDispatch.publish_count == attempt)
-                .values(status="pending", publish_count=attempt - 1)
-            )
-        return False
-    return True
+    if replaced:
+        await wake_pool_workers()
+    return replaced
 
 
 async def _settle_pool_dispatch(
@@ -308,9 +226,9 @@ async def _settle_pool_dispatch(
 
 
 async def reconcile_work_dispatches(*, limit: int = RECONCILE_BATCH) -> int:
-    """Publish lost hand-offs; drop dispatches whose subject moved on.
+    """Re-place broker leftovers; settle pool work nobody holds or claimed.
 
-    Returns the number of dispatches published. Safe on every control
+    Returns the number of dispatches re-placed. Safe on every control
     replica concurrently: each candidate is settled under SKIP LOCKED.
     """
     now = datetime.now(timezone.utc)
@@ -320,14 +238,8 @@ async def reconcile_work_dispatches(*, limit: int = RECONCILE_BATCH) -> int:
                 select(WorkDispatch.id, WorkDispatch.family, WorkDispatch.subject_id)
                 .where(
                     or_(
-                        (WorkDispatch.placement == "broker")
-                        & (WorkDispatch.status == "pending")
-                        & (WorkDispatch.created_at <= now - PENDING_GRACE),
-                        (WorkDispatch.placement == "broker")
-                        & (WorkDispatch.status == "published")
-                        & (WorkDispatch.last_published_at <= now - REDELIVERY_WINDOW),
-                        (WorkDispatch.placement == "pool")
-                        & (WorkDispatch.created_at <= now - POOL_RECHECK_AFTER),
+                        WorkDispatch.placement != "pool",
+                        WorkDispatch.created_at <= now - POOL_RECHECK_AFTER,
                     )
                 )
                 .order_by(WorkDispatch.created_at.asc())
@@ -335,13 +247,13 @@ async def reconcile_work_dispatches(*, limit: int = RECONCILE_BATCH) -> int:
             )
         ).all()
     families = _families()
-    published = 0
+    replaced = 0
     for dispatch_id, family_name, subject_id in candidates:
         if await _reconcile_one(families, dispatch_id, family_name, subject_id):
-            published += 1
-    if published:
-        logger.info("Reconciled work dispatches", extra={"published": published})
-    return published
+            replaced += 1
+    if replaced:
+        logger.info("Re-placed broker dispatches", extra={"replaced": replaced})
+    return replaced
 
 
 __all__ = [
@@ -349,10 +261,6 @@ __all__ = [
     "POOL_CLAIM_DEADLINE",
     "POOL_WAKE_CHANNEL",
     "hand_off",
-    "MAX_PUBLISHES",
-    "PENDING_GRACE",
-    "REDELIVERY_WINDOW",
-    "publish_dispatch",
     "reconcile_work_dispatches",
     "stage_dispatch",
     "take_dispatch_payload",

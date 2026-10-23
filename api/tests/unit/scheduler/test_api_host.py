@@ -145,42 +145,38 @@ async def test_shutdown_waits_for_lease_release(gated: SimpleNamespace) -> None:
 
 
 @pytest.mark.asyncio
-async def test_lifespan_hosts_control_only_when_configured(
+async def test_lifespan_always_hosts_control(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from fastapi import FastAPI
 
     from src import main as api_main
 
-    for setting, expected in (("scheduler", 0), ("api", 1)):
-        hosts: list[MagicMock] = []
+    hosts: list[MagicMock] = []
 
-        def make_host() -> MagicMock:
-            host = MagicMock()
-            host.start = AsyncMock()
-            host.stop = AsyncMock()
-            hosts.append(host)
-            return host
+    def make_host() -> MagicMock:
+        host = MagicMock()
+        host.start = AsyncMock()
+        host.stop = AsyncMock()
+        hosts.append(host)
+        return host
 
-        settings = MagicMock(
-            control_plane_host=setting,
-            default_user_email=None,
-            default_user_password=None,
-            environment="testing",
-        )
-        monkeypatch.setattr(api_main, "get_settings", lambda: settings)
-        monkeypatch.setattr(api_main, "init_db", AsyncMock())
-        monkeypatch.setattr(api_main, "close_db", AsyncMock())
-        monkeypatch.setattr(api_main, "register_dynamic_workflow_endpoints", AsyncMock())
-        monkeypatch.setattr(api_main, "get_session_factory", MagicMock(side_effect=RuntimeError))
-        monkeypatch.setattr(api_main.pubsub_manager, "close", AsyncMock())
-        monkeypatch.setattr(api_main, "close_health_check_clients", AsyncMock())
-        monkeypatch.setattr(api_host, "ApiControlHost", make_host)
+    settings = MagicMock(
+        default_user_email=None,
+        default_user_password=None,
+        environment="testing",
+    )
+    monkeypatch.setattr(api_main, "get_settings", lambda: settings)
+    monkeypatch.setattr(api_main, "init_db", AsyncMock())
+    monkeypatch.setattr(api_main, "close_db", AsyncMock())
+    monkeypatch.setattr(api_main, "register_dynamic_workflow_endpoints", AsyncMock())
+    monkeypatch.setattr(api_main, "get_session_factory", MagicMock(side_effect=RuntimeError))
+    monkeypatch.setattr(api_main.pubsub_manager, "close", AsyncMock())
+    monkeypatch.setattr(api_main, "close_health_check_clients", AsyncMock())
+    monkeypatch.setattr(api_host, "ApiControlHost", make_host)
 
-        async with api_main.app_lifespan(FastAPI()):
-            assert len(hosts) == expected
-            if hosts:
-                hosts[0].start.assert_awaited_once()
-                hosts[0].stop.assert_not_awaited()
-        if hosts:
-            hosts[0].stop.assert_awaited_once()
+    async with api_main.app_lifespan(FastAPI()):
+        [host] = hosts
+        host.start.assert_awaited_once()
+        host.stop.assert_not_awaited()
+    host.stop.assert_awaited_once()

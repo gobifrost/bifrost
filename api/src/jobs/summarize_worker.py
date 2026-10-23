@@ -1,6 +1,6 @@
-"""RabbitMQ consumer wrappers for post-run summarization.
+"""Post-run summarization message handling.
 
-Two queues, intentionally separate from ``agent-runs``:
+Two dispatch handlers (and queue names), intentionally separate from agent runs:
 
 - ``agent-summarization`` — short, deterministic LLM call to extract
   asked/did/confidence/metadata from a completed run. Failures are
@@ -10,12 +10,8 @@ Two queues, intentionally separate from ``agent-runs``:
 - ``agent-summarization-backfill`` — the same work for bulk backfills.
 
 Summaries are a work-dispatch family (``summary_dispatch``): a message with
-a ``dispatch_id`` is claimed before it runs. Pool executors claim the same
-dispatches from PostgreSQL and call :func:`handle_summarize_message` too.
-
-The handler is a standalone async function so it can be unit-tested without
-a RabbitMQ connection. The ``_Consumer`` classes wrap it in
-:class:`BaseConsumer` for the worker bootstrap to register.
+a ``dispatch_id`` is claimed before it runs. Executors claim the dispatches
+from PostgreSQL and call :func:`handle_summarize_message`.
 """
 from __future__ import annotations
 
@@ -31,7 +27,6 @@ from src.jobs.queue_names import (
     SUMMARIZE_BACKFILL_QUEUE as SUMMARIZE_BACKFILL_QUEUE,
     SUMMARIZE_QUEUE as SUMMARIZE_QUEUE,
 )
-from src.jobs.rabbitmq import BaseConsumer
 from src.models.orm.agent_runs import AgentRun
 
 logger = logging.getLogger(__name__)
@@ -42,8 +37,6 @@ __all__ = [
     "SUMMARIZE_BACKFILL_QUEUE",
     "SUMMARIZE_QUEUE",
     "handle_summarize_message",
-    "SummarizeBackfillConsumer",
-    "SummarizeConsumer",
 ]
 
 
@@ -143,43 +136,3 @@ async def handle_summarize_message(
             succeeded=succeeded,
             session_factory=factory,
         )
-
-
-class SummarizeConsumer(BaseConsumer):
-    """Consumer for live ``agent-summarization`` traffic.
-
-    ``prefetch_count=1`` so each pod processes one message at a time.
-    Fleet-wide concurrency equals the number of worker pods — the admin
-    controls burst load against the LLM provider by scaling pods, not by
-    tuning a hidden per-pod concurrency knob. A 6-pod fleet hits the LLM
-    at most 6 requests-in-flight concurrently, which for a post-run
-    summarizer is well inside any reasonable provider RPM headroom.
-    """
-
-    def __init__(self) -> None:
-        super().__init__(
-            queue_name=SUMMARIZE_QUEUE,
-            prefetch_count=1,
-        )
-
-    async def process_message(self, body: dict[str, Any]) -> None:
-        await handle_summarize_message(body)
-
-
-class SummarizeBackfillConsumer(BaseConsumer):
-    """Consumer for the dedicated backfill queue.
-
-    Backfills use a separate queue so a 2000-run bulk operation can't
-    starve live traffic on ``agent-summarization``. Same prefetch=1 rule
-    applies: pod count caps parallelism. Both consumers call the same
-    handler — only the queue routing differs.
-    """
-
-    def __init__(self) -> None:
-        super().__init__(
-            queue_name=SUMMARIZE_BACKFILL_QUEUE,
-            prefetch_count=1,
-        )
-
-    async def process_message(self, body: dict[str, Any]) -> None:
-        await handle_summarize_message(body)

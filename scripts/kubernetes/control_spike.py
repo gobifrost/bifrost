@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prove API-hosted platform control in local Kind.
 
-Usage: BIFROST_KIND_API_CONTROL=1 ./test.sh kubernetes up
+Usage: ./test.sh kubernetes up
        ./test.sh kubernetes control-experiment [--out DIR]
 
 Phases, each recorded under the output directory:
@@ -164,17 +164,12 @@ def hard_kill(pod: dict) -> None:
     )
 
 
-def control_env(pod: dict) -> str:
-    return kubectl("exec", pod["metadata"]["name"], "--", "printenv", "BIFROST_CONTROL_PLANE_HOST").strip()
-
-
 def run(out: Path, steady_seconds: int) -> dict:
     out.mkdir(parents=True, exist_ok=False)
     report: dict = {"started_at": datetime.now(timezone.utc).isoformat()}
 
     api_pods = wait_for(lambda: (p := pods(API)) and len(p) >= 2 and p, 300, "two API pods")
     scheduler_pods = pods(SCHEDULER)
-    assert all(control_env(pod) == "api" for pod in [*api_pods, *scheduler_pods])
 
     # election
     owner = wait_for(lambda: (o := lease())[1] and o[0], 120, "a trigger leader")

@@ -61,14 +61,13 @@ BATCH_LIMIT = 500
 RECHECK_OPERATION = "scheduler.deferred_execution_promoter"
 
 
-async def promote_due_executions() -> tuple[int, int]:
-    """Promote due SCHEDULED rows to PENDING and publish them.
+async def promote_due_executions() -> int:
+    """Promote due SCHEDULED rows to PENDING and hand them to the executors.
 
     Returns:
-        Tuple of (promoted_count, publish_failures).
+        The number of runs promoted.
     """
     promoted = 0
-    failures = 0
 
     async with get_db_context() as db:
         result = await db.execute(
@@ -82,13 +81,13 @@ async def promote_due_executions() -> tuple[int, int]:
         rows = list(result.scalars().all())
 
         if not rows:
-            return 0, 0
+            return 0
 
         rows = _cancel_rows_with_deleted_run_user(rows)
         rows = await _fail_rows_no_longer_permitted(db, rows)
         if not rows:
             await db.commit()
-            return 0, 0
+            return 0
 
         ids = [r.id for r in rows]
         await db.execute(
@@ -112,16 +111,14 @@ async def promote_due_executions() -> tuple[int, int]:
         await db.commit()
 
         for run in accepted:
-            if await hand_off_workflow_run(run):
-                promoted += 1
-            else:
-                failures += 1
+            await hand_off_workflow_run(run)
+        promoted = len(accepted)
 
         logger.info(
             "deferred_execution_promoter tick complete",
-            extra={"promoted": promoted, "failures": failures},
+            extra={"promoted": promoted},
         )
-        return promoted, failures
+        return promoted
 
 
 def _pending_record(row: Execution) -> PendingExecution:

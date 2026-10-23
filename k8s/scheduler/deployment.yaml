@@ -8,13 +8,15 @@ metadata:
     app.kubernetes.io/component: scheduler
     app.kubernetes.io/part-of: bifrost
 spec:
-  # Safe to scale: every replica executes platform jobs while PostgreSQL
-  # elects one APScheduler/pub-sub trigger leader.
+  # An executor, the same as bifrost-worker: workflows, agent runs, services
+  # and local platform jobs. Platform control runs in the API. Safe to scale
+  # or to remove.
   replicas: 1
   strategy:
-    # Keep Recreate so the first upgrade cannot overlap a pre-election
-    # scheduler pod with a new lease-aware pod. This does not prevent scaling.
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: bifrost-scheduler
@@ -25,6 +27,7 @@ spec:
         app.kubernetes.io/component: scheduler
         app.kubernetes.io/part-of: bifrost
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: scheduler
           image: ghcr.io/gobifrost/bifrost-api:latest
@@ -34,15 +37,28 @@ spec:
                 name: bifrost-config
             - secretRef:
                 name: bifrost-secrets
+          env:
+            - name: PIP_NO_CACHE_DIR
+              value: "1"
+            - name: HOME
+              value: /home/bifrost
           resources:
             requests:
-              cpu: "50m"
+              cpu: "100m"
               memory: "256Mi"
             limits:
-              cpu: "1"
-              memory: "1Gi"
-          # Verify the asyncio event loop is still advancing. Platform-job
-          # subprocesses share this cgroup and are stopped before hard pressure.
+              cpu: "2000m"
+              memory: "2Gi"
+          # The worker's hardening: this container runs user workflow code too.
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+            readOnlyRootFilesystem: true
+          # The event loop is still advancing (the entry point's heartbeat).
           livenessProbe:
             exec:
               command:
@@ -55,8 +71,8 @@ spec:
             periodSeconds: 30
             timeoutSeconds: 5
             failureThreshold: 3
-          # Ready only after the startup schema gate passes, so a rollout
-          # pauses while new pods wait for migrations.
+          # Ready once the schema gate passed and the executor can claim
+          # work, so a rollout pauses while new pods wait for migrations.
           readinessProbe:
             exec:
               command:
@@ -67,7 +83,22 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 3
-      # Run as non-root user (matches Dockerfile)
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          volumeMounts:
+            - name: home
+              mountPath: /home/bifrost
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+      # Drain budget: drain deadline (300s) + cleanup margin (60s)
+      terminationGracePeriodSeconds: 360
       securityContext:
         runAsUser: 1000
         runAsGroup: 1000

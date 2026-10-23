@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator
@@ -35,14 +33,9 @@ def harness(
             await session.commit()
 
     monkeypatch.setattr(work_dispatch, "get_db_context", context)
-    monkeypatch.setattr(work_dispatch, "get_dispatch_db_context", context)
     monkeypatch.setattr(async_executor, "get_dispatch_db_context", context)
-    published: list[tuple[str, dict]] = []
-
-    async def publish(queue: str, message: dict) -> None:
-        published.append((queue, message))
-
-    monkeypatch.setattr(work_dispatch, "publish_message", publish)
+    wake = AsyncMock()
+    monkeypatch.setattr(work_dispatch, "wake_pool_workers", wake)
     redis = AsyncMock()
     monkeypatch.setattr(workflow_dispatch, "get_redis_client", lambda: redis)
     monkeypatch.setattr(
@@ -56,7 +49,7 @@ def harness(
 
     class Harness:
         sessions = async_session_factory
-        messages = published
+        wakes = wake
         cache = redis
         live_updates = updates
 
@@ -106,9 +99,13 @@ async def _accept(**overrides) -> str:  # type: ignore[no-untyped-def]
     )
     kwargs.update(overrides)
     await _publish_pending(**kwargs)
-    # The publish is recorded off the request path; let it land.
-    await asyncio.gather(*work_dispatch._publish_records)
     return execution_id
+
+
+async def _message(harness, execution_id: str) -> dict:  # type: ignore[no-untyped-def]
+    dispatch = await harness.dispatch(execution_id)
+    assert dispatch is not None
+    return dispatch.message
 
 
 @pytest.fixture(autouse=True)
@@ -119,7 +116,7 @@ async def _clean(async_session_factory: async_sessionmaker[AsyncSession]):
         await session.commit()
 
 
-async def test_acceptance_commits_a_pending_run_before_publishing(harness) -> None:
+async def test_acceptance_commits_a_pending_run_before_waking_executors(harness) -> None:
     execution_id = await _accept()
 
     execution = await harness.execution(execution_id)
@@ -127,38 +124,38 @@ async def test_acceptance_commits_a_pending_run_before_publishing(harness) -> No
     assert execution.status == ExecutionStatus.PENDING
     assert execution.started_at is None
     dispatch = await harness.dispatch(execution_id)
-    assert dispatch is not None and dispatch.status == "published"
-    assert dispatch.payload["parameters"] == {"x": 1}
-    [(queue, message)] = harness.messages
-    assert queue == "workflow-executions"
-    assert message["dispatch_id"] == str(dispatch.id)
-    assert message["execution_record_exists"] is True
-    assert (message["handler"], message["handler_version"]) == ("workflow.execute", 1)
-
-
-async def test_broker_failure_does_not_lose_an_accepted_run(harness, monkeypatch) -> None:
-    async def broker_down(_queue: str, _message: dict) -> None:
-        raise ConnectionError("rabbitmq unavailable")
-
-    monkeypatch.setattr(work_dispatch, "publish_message", broker_down)
-    execution_id = await _accept()  # the caller still gets its id
-
-    assert (await harness.execution(execution_id)).status == ExecutionStatus.PENDING
-    assert (await harness.dispatch(execution_id)).status == "pending"
-
-    async def broker_up(queue: str, message: dict) -> None:
-        harness.messages.append((queue, message))
-
-    monkeypatch.setattr(work_dispatch, "publish_message", broker_up)
-    # Still inside the fast path's grace: not yet the reconciler's.
-    assert await work_dispatch.reconcile_work_dispatches() == 0
-    await harness.age(
-        execution_id,
-        created_at=datetime.now(timezone.utc) - work_dispatch.PENDING_GRACE * 2,
+    assert dispatch is not None
+    assert (dispatch.placement, dispatch.status, dispatch.assigned_worker_id) == (
+        "pool",
+        "pending",
+        None,
     )
+    assert dispatch.payload["parameters"] == {"x": 1}
+    assert dispatch.message["dispatch_id"] == str(dispatch.id)
+    assert dispatch.message["execution_record_exists"] is True
+    assert (dispatch.message["handler"], dispatch.message["handler_version"]) == (
+        "workflow.execute",
+        1,
+    )
+    harness.wakes.assert_awaited_once()
+
+
+async def test_an_older_apis_broker_dispatch_is_replaced_into_the_pool_at_once(harness) -> None:
+    """During a rolling upgrade an older API still places runs on the broker."""
+    execution_id = await _accept()
+    await harness.age(execution_id, placement="broker", status="published")
+    harness.wakes.reset_mock()
+
     assert await work_dispatch.reconcile_work_dispatches() == 1
-    assert harness.messages[-1][1]["execution_id"] == execution_id
-    assert (await harness.dispatch(execution_id)).status == "published"
+
+    dispatch = await harness.dispatch(execution_id)
+    assert (dispatch.placement, dispatch.status, dispatch.assigned_worker_id) == (
+        "pool",
+        "pending",
+        None,
+    )
+    harness.wakes.assert_awaited_once()
+    assert await work_dispatch.reconcile_work_dispatches() == 0, "a young pool dispatch is left alone"
 
 
 async def test_redis_outage_does_not_fail_acceptance(harness) -> None:
@@ -167,12 +164,12 @@ async def test_redis_outage_does_not_fail_acceptance(harness) -> None:
     execution_id = await _accept()
 
     assert (await harness.execution(execution_id)).status == ExecutionStatus.PENDING
-    assert [message["execution_id"] for _, message in harness.messages] == [execution_id]
+    assert await harness.dispatch(execution_id) is not None
 
 
 async def test_claim_takes_the_context_once(harness) -> None:
     execution_id = await _accept()
-    message = harness.messages[0][1]
+    message = await _message(harness, execution_id)
 
     async with harness.sessions() as session:
         pending = await claim_workflow_dispatch(
@@ -194,7 +191,7 @@ async def test_claim_takes_the_context_once(harness) -> None:
 
 async def test_cancelled_before_claim_is_discarded(harness) -> None:
     execution_id = await _accept()
-    message = harness.messages[0][1]
+    message = await _message(harness, execution_id)
     async with harness.sessions() as session:
         await session.execute(
             update(Execution)
@@ -214,21 +211,17 @@ async def test_cancelled_before_claim_is_discarded(harness) -> None:
     assert await harness.dispatch(execution_id) is None
 
 
-async def test_reconciler_republishes_lost_messages_then_fails_visibly(harness) -> None:
+async def test_a_run_no_capacity_claimed_fails_visibly_and_wakes_its_caller(harness) -> None:
     execution_id = await _accept(sync=True)
-    stale = datetime.now(timezone.utc) - work_dispatch.REDELIVERY_WINDOW * 2
-
-    await harness.age(execution_id, last_published_at=stale)
-    assert await work_dispatch.reconcile_work_dispatches() == 1
-    assert len(harness.messages) == 2
-
     await harness.age(
-        execution_id, last_published_at=stale, publish_count=work_dispatch.MAX_PUBLISHES
+        execution_id,
+        created_at=datetime.now(timezone.utc) - work_dispatch.POOL_CLAIM_DEADLINE * 2,
     )
+
     assert await work_dispatch.reconcile_work_dispatches() == 0
     execution = await harness.execution(execution_id)
     assert execution.status == ExecutionStatus.FAILED
-    assert "No executor claimed this run" in (execution.error_message or "")
+    assert "No worker capacity" in (execution.error_message or "")
     assert await harness.dispatch(execution_id) is None
     # The live view and the waiting sync caller hear about it.
     harness.live_updates.assert_awaited()
@@ -245,7 +238,7 @@ async def test_reconciler_drops_dispatch_claimed_by_an_older_worker(harness) -> 
         await session.commit()
     await harness.age(
         execution_id,
-        last_published_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        created_at=datetime.now(timezone.utc) - timedelta(minutes=5),
     )
 
     assert await work_dispatch.reconcile_work_dispatches() == 0
@@ -256,34 +249,15 @@ async def test_reconciler_drops_dispatch_claimed_by_an_older_worker(harness) -> 
 async def test_reconciler_skips_a_run_an_executor_is_claiming(harness) -> None:
     """Lock order matches the claim (run, then dispatch): no deadlock, no theft."""
     execution_id = await _accept()
-    await harness.age(
-        execution_id,
-        last_published_at=datetime.now(timezone.utc) - work_dispatch.REDELIVERY_WINDOW * 2,
-    )
+    await harness.age(execution_id, placement="broker")
     async with harness.sessions() as claimer:
         await claimer.execute(
             select(Execution).where(Execution.id == UUID(execution_id)).with_for_update()
         )
         assert await work_dispatch.reconcile_work_dispatches() == 0
         await claimer.rollback()
-    assert (await harness.dispatch(execution_id)).publish_count == 1
+    assert (await harness.dispatch(execution_id)).placement == "broker"
     assert await work_dispatch.reconcile_work_dispatches() == 1
-
-
-async def test_failed_republish_returns_the_dispatch_to_pending(harness, monkeypatch) -> None:
-    execution_id = await _accept()
-    await harness.age(
-        execution_id,
-        last_published_at=datetime.now(timezone.utc) - work_dispatch.REDELIVERY_WINDOW * 2,
-    )
-
-    async def broker_down(_queue: str, _message: dict) -> None:
-        raise ConnectionError("rabbitmq unavailable")
-
-    monkeypatch.setattr(work_dispatch, "publish_message", broker_down)
-    assert await work_dispatch.reconcile_work_dispatches() == 0
-    dispatch = await harness.dispatch(execution_id)
-    assert (dispatch.status, dispatch.publish_count) == ("pending", 1)
 
 
 async def test_cancelled_sync_run_wakes_its_caller(harness) -> None:
@@ -306,7 +280,7 @@ async def test_duplicate_of_a_started_run_never_wakes_its_caller(harness) -> Non
     from src.services.execution.workflow_dispatch import notify_discarded_sync_run
 
     execution_id = await _accept(sync=True)
-    message = harness.messages[0][1]
+    message = await _message(harness, execution_id)
     async with harness.sessions() as session:
         await claim_workflow_dispatch(
             session, dispatch_id=UUID(message["dispatch_id"]), execution_id=UUID(execution_id)

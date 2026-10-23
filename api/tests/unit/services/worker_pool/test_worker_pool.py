@@ -23,10 +23,9 @@ from src.services import work_dispatch
 from src.services.execution import async_executor, workflow_dispatch
 from src.services.execution.async_executor import _publish_pending
 from src.services.worker_pool import claims, controller, maintenance
-from src.services.worker_pool.manifest import build_worker_job_manifest
+from src.services.worker_pool.manifest import WorkerJobSpec, build_worker_job_manifest
 
 SETTINGS = SimpleNamespace(
-    execution_placement="pool",
     kubernetes_build_namespace="test",
     kubernetes_build_image="api:test",
     kubernetes_build_configmap="config",
@@ -42,6 +41,14 @@ SETTINGS = SimpleNamespace(
     pool_worker_memory_limit_mib=2048,
     pool_worker_cpu_request="250m",
     pool_worker_cpu_limit="2",
+)
+
+SPEC = WorkerJobSpec(
+    namespace="test",
+    image="api:test",
+    configmap="config",
+    secret="secret",
+    service_account="runner",
 )
 
 
@@ -92,14 +99,13 @@ def db(async_session_factory: async_sessionmaker[AsyncSession], monkeypatch):
 
     for module in (claims, controller, maintenance, work_dispatch):
         monkeypatch.setattr(module, "get_db_context", context)
-    monkeypatch.setattr(work_dispatch, "get_dispatch_db_context", context)
     monkeypatch.setattr(async_executor, "get_dispatch_db_context", context)
     monkeypatch.setattr("src.config.get_settings", lambda: SETTINGS)
-    publish = AsyncMock()
-    monkeypatch.setattr(work_dispatch, "publish_message", publish)
+    wake = AsyncMock()
+    monkeypatch.setattr(work_dispatch, "wake_pool_workers", wake)
     monkeypatch.setattr(workflow_dispatch, "get_redis_client", AsyncMock)
     monkeypatch.setattr("src.services.execution.queue_tracker.add_to_queue", AsyncMock())
-    return SimpleNamespace(sessions=async_session_factory, publish=publish)
+    return SimpleNamespace(sessions=async_session_factory, wake=wake)
 
 
 @pytest.fixture(autouse=True)
@@ -138,7 +144,7 @@ async def _job_worker(sessions, *, state: str = "starting") -> ExecutionWorker: 
 # --- placement -------------------------------------------------------------
 
 
-async def test_pool_placed_runs_are_never_published(db) -> None:
+async def test_accepted_runs_are_pool_placed_and_wake_the_executors(db) -> None:
     execution_id = await _accept_pool_run()
 
     async with db.sessions() as session:
@@ -148,18 +154,14 @@ async def test_pool_placed_runs_are_never_published(db) -> None:
             )
         ).scalar_one()
     assert dispatch.placement == "pool"
-    db.publish.assert_not_awaited()
-    # Even long after the fast-path grace, the reconciler does not publish it.
+    db.wake.assert_awaited_once()
+    # An unclaimed pool dispatch stays put until its claim deadline.
     async with db.sessions() as session:
         await session.execute(
             update(WorkDispatch).values(created_at=datetime.now(timezone.utc) - timedelta(minutes=5))
         )
         await session.commit()
     assert await work_dispatch.reconcile_work_dispatches() == 0
-    db.publish.assert_not_awaited()
-
-
-# --- worker side ------------------------------------------------------------
 
 
 async def test_only_the_first_pod_of_the_bound_job_is_admitted(db) -> None:
@@ -223,7 +225,7 @@ async def test_demand_launches_bounded_workers_and_binds_before_start(db) -> Non
     for _ in range(9):  # 9 runs / 2 slots would want 5 workers; the ceiling is 2
         await _accept_pool_run()
     cluster = FakeCluster()
-    replicas = [controller.WorkerPoolController(cluster, SETTINGS) for _ in range(2)]  # type: ignore[arg-type]
+    replicas = [controller.WorkerPoolController(cluster, SETTINGS, SPEC) for _ in range(2)]  # type: ignore[arg-type]
 
     await asyncio.gather(*(replica.reconcile() for replica in replicas))
     await asyncio.gather(*(replica.reconcile() for replica in replicas))
@@ -243,7 +245,7 @@ async def test_ready_free_slots_satisfy_demand_without_launching(db) -> None:
     await _accept_pool_run()
     cluster = FakeCluster()
 
-    await controller.WorkerPoolController(cluster, SETTINGS).reconcile()  # type: ignore[arg-type]
+    await controller.WorkerPoolController(cluster, SETTINGS, SPEC).reconcile()  # type: ignore[arg-type]
 
     assert cluster.created == []
 
@@ -254,12 +256,10 @@ async def test_silent_worker_is_lost_and_its_unstarted_work_released(db, monkeyp
     from src.services.execution import agent_run_dispatch, agent_run_service
     from src.services.execution.agent_run_service import enqueue_agent_run
 
-    monkeypatch.setattr(
-        agent_run_service, "get_dispatch_db_context", work_dispatch.get_dispatch_db_context
-    )
+    monkeypatch.setattr(agent_run_service, "get_dispatch_db_context", claims.get_db_context)
     monkeypatch.setattr(agent_run_dispatch, "cache_agent_context", AsyncMock())
     cluster = FakeCluster()
-    pool = controller.WorkerPoolController(cluster, SETTINGS)  # type: ignore[arg-type]
+    pool = controller.WorkerPoolController(cluster, SETTINGS, SPEC)  # type: ignore[arg-type]
     run_id = await enqueue_agent_run(agent_id=None, trigger_type="sdk", lineage=None)
     [worker_id] = await pool.launch_for_demand()
     await pool.reconcile_worker(worker_id)
@@ -337,7 +337,7 @@ async def test_ended_executors_are_pruned_and_silent_static_ones_ended(db) -> No
 
 
 def test_worker_job_is_suspended_tokenless_and_has_no_deadline() -> None:
-    manifest = build_worker_job_manifest(uuid4(), 3, SETTINGS)
+    manifest = build_worker_job_manifest(uuid4(), 3, SETTINGS, SPEC)
     spec = manifest["spec"]
     pod = spec["template"]["spec"]
     container = pod["containers"][0]
@@ -356,7 +356,7 @@ def test_worker_job_is_suspended_tokenless_and_has_no_deadline() -> None:
 async def test_warm_minimum_is_kept_ready_and_never_idles_out(db) -> None:
     warm = SimpleNamespace(**{**vars(SETTINGS), "pool_min_workers": 1})
     cluster = FakeCluster()
-    pool = controller.WorkerPoolController(cluster, warm)  # type: ignore[arg-type]
+    pool = controller.WorkerPoolController(cluster, warm, SPEC)  # type: ignore[arg-type]
 
     [worker_id] = await pool.launch_for_demand()  # no demand at all
     assert await pool.launch_for_demand() == []  # already at the minimum
@@ -374,7 +374,7 @@ async def test_runs_of_a_lost_worker_end_visibly_and_are_not_replayed(db) -> Non
     from src.services.worker_pool.recovery import EXECUTOR_LOST
 
     cluster = FakeCluster()
-    pool = controller.WorkerPoolController(cluster, SETTINGS)  # type: ignore[arg-type]
+    pool = controller.WorkerPoolController(cluster, SETTINGS, SPEC)  # type: ignore[arg-type]
     running_id = await _accept_pool_run()
     [worker_id] = await pool.launch_for_demand()
     await pool.reconcile_worker(worker_id)

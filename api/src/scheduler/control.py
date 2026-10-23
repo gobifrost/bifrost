@@ -1,4 +1,4 @@
-"""Platform control services, hosted by either the scheduler or the API.
+"""Platform control services, hosted by every API replica.
 
 The control plane owns two kinds of work:
 
@@ -6,14 +6,16 @@ The control plane owns two kinds of work:
   lease. Only the holder runs the code-owned schedule catalog. Every callback
   re-checks the conservative local lease deadline before it starts, so a
   replica that stops renewing stops producing triggers before PostgreSQL can
-  elect a successor. The lease name is shared by both hosts: during a rollout
-  an old scheduler and a new API replica can never both lead.
-- **Kubernetes build reconciliation.** Every control replica reconciles
-  concurrently. Row locks, the backend advisory lock, deterministic Job names
-  and UID binding make concurrent reconcilers launch each attempt once.
+  elect a successor. The lease name is the one older schedulers used: during a
+  rollout an old scheduler and a new API replica can never both lead.
+- **Kubernetes control.** The worker controller and the build-Job controller
+  start wherever this process may manage Jobs (``kubernetes_control``); every
+  permitted replica reconciles concurrently. Row locks, the backend advisory
+  lock, deterministic Job names and UID binding make concurrent reconcilers
+  launch each attempt once.
 
-Execution stays outside this service. Local platform jobs run in scheduler
-child processes; workflow and agent work stays on the execution workers.
+Execution stays outside this service: local platform jobs, workflows,
+agent runs and services run on the executors.
 """
 
 from __future__ import annotations
@@ -61,7 +63,6 @@ MISFIRE_OPTIONS: dict[str, Any] = {
     "coalesce": True,
 }
 
-ControlHost = str
 FailureCallback = Callable[["asyncio.Task[None]"], None]
 
 
@@ -114,7 +115,6 @@ class ControlPlane:
     def __init__(
         self,
         *,
-        host: ControlHost,
         leadership_lease: SchedulerLeadershipLease | None = None,
         settings: Settings | None = None,
         catalog: tuple[ScheduledTaskDefinition, ...] = SCHEDULED_TASKS,
@@ -122,7 +122,6 @@ class ControlPlane:
         renew_seconds: float = LEADERSHIP_RENEW_SECONDS,
         retry_seconds: float = LEADERSHIP_RETRY_SECONDS,
     ) -> None:
-        self.host = host
         self._renew_seconds = renew_seconds
         self._retry_seconds = retry_seconds
         self.settings = settings or get_settings()
@@ -153,29 +152,14 @@ class ControlPlane:
                 self._dispatch_reconcile_loop(), name="work-dispatch-reconciler"
             ),
         ]
-        if self.settings.execution_placement == "pool":
-            from src.services.worker_pool.controller import worker_pool_loop
+        from src.services.kubernetes_control import start_kubernetes_loops
 
-            self._tasks.append(
-                asyncio.create_task(
-                    worker_pool_loop(self._stop_event),
-                    name="worker-pool-controller",
-                )
-            )
-        if self.settings.platform_build_backend == "kubernetes":
-            from src.jobs.schedulers.kubernetes_jobs import kubernetes_build_loop
-
-            self._tasks.append(
-                asyncio.create_task(
-                    kubernetes_build_loop(self._stop_event),
-                    name="kubernetes-build-controller",
-                )
-            )
+        self._tasks.extend(await start_kubernetes_loops(self._stop_event, self.settings))
         for task in self._tasks:
             task.add_done_callback(self._task_done)
         logger.info(
             "Platform control started",
-            extra={"control_host": self.host, "owner_id": self.owner_id},
+            extra={"owner_id": self.owner_id},
         )
 
     def _task_done(self, task: asyncio.Task[None]) -> None:
@@ -195,7 +179,7 @@ class ControlPlane:
             await asyncio.gather(*tasks, return_exceptions=True)
         logger.info(
             "Platform control stopped",
-            extra={"control_host": self.host, "owner_id": self.owner_id},
+            extra={"owner_id": self.owner_id},
         )
 
     async def _dispatch_reconcile_loop(self) -> None:
@@ -347,7 +331,7 @@ class ControlPlane:
 
                     logger.info(
                         "Control replica became trigger leader",
-                        extra={"owner_id": self.owner_id, "control_host": self.host},
+                        extra={"owner_id": self.owner_id},
                     )
                     try:
                         await self._start_leader_services()
@@ -367,7 +351,7 @@ class ControlPlane:
 
                 logger.warning(
                     "Control replica lost trigger leadership",
-                    extra={"owner_id": self.owner_id, "control_host": self.host},
+                    extra={"owner_id": self.owner_id},
                 )
                 await self._surrender()
         finally:

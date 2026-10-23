@@ -24,6 +24,11 @@ data:
   BIFROST_DRAIN_DEADLINE_SECONDS: "300"
   BIFROST_DATABASE_POOL_SIZE: "5"
   BIFROST_DATABASE_MAX_OVERFLOW: "10"
+  # On-demand worker Jobs sized for a single-node Kind cluster: small pods,
+  # two runs each, idle out quickly so drills scale both ways in minutes.
+  BIFROST_POOL_IDLE_SECONDS: "45"
+  BIFROST_POOL_WORKER_SLOTS: "2"
+  BIFROST_POOL_WORKER_MEMORY_REQUEST_MIB: "256"
 ---
 apiVersion: v1
 kind: Secret

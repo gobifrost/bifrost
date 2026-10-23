@@ -149,10 +149,6 @@ services:
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
-      # Which process hosts platform control: scheduler (default) or api.
-      BIFROST_CONTROL_PLANE_HOST: ${BIFROST_CONTROL_PLANE_HOST:-scheduler}
-      # Where accepted runs go: broker (RabbitMQ workers, default) or pool.
-      BIFROST_EXECUTION_PLACEMENT: ${BIFROST_EXECUTION_PLACEMENT:-broker}
       # Browser-facing callbacks use the Playwright loopback client proxy.
       BIFROST_PUBLIC_URL: http://localhost:3000
       # The full E2E suite intentionally reuses session-scoped users. Keep its
@@ -228,8 +224,6 @@ services:
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
-      # Must match the API and scheduler: nested runs are accepted here too.
-      BIFROST_EXECUTION_PLACEMENT: ${BIFROST_EXECUTION_PLACEMENT:-broker}
       # Exercise the same claim/beat transitions without production idle intervals.
       BIFROST_SERVICE_CLAIM_INTERVAL_SECONDS: "1"
       BIFROST_SERVICE_HEARTBEAT_INTERVAL_SECONDS: "2"
@@ -297,10 +291,6 @@ services:
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
-      # Which process hosts platform control: scheduler (default) or api.
-      BIFROST_CONTROL_PLANE_HOST: ${BIFROST_CONTROL_PLANE_HOST:-scheduler}
-      # Where accepted runs go: broker (RabbitMQ workers, default) or pool.
-      BIFROST_EXECUTION_PLACEMENT: ${BIFROST_EXECUTION_PLACEMENT:-broker}
       # S3-compatible object storage
       BIFROST_S3_BUCKET: bifrost-test
       BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333

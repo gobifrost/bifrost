@@ -124,12 +124,8 @@ async def stage_workflow_run(
     )
 
 
-async def hand_off_workflow_run(accepted: AcceptedRun) -> bool:
-    """After commit: bridge cache, queue position, then fast-path publish.
-
-    Returns whether the fast-path publish succeeded; the reconciler publishes
-    the run otherwise.
-    """
+async def hand_off_workflow_run(accepted: AcceptedRun) -> None:
+    """After commit: bridge cache, queue position, then wake the executors."""
     from src.services.execution.queue_tracker import add_to_queue
 
     try:
@@ -151,9 +147,7 @@ async def hand_off_workflow_run(accepted: AcceptedRun) -> bool:
                 extra={"execution_id": accepted.pending["execution_id"]},
                 exc_info=True,
             )
-    return await hand_off(
-        accepted.dispatch_id, accepted.placement, QUEUE_NAME, accepted.message
-    )
+    await hand_off()
 
 
 async def claim_workflow_dispatch(

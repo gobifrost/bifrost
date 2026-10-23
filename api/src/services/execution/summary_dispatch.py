@@ -93,7 +93,7 @@ async def hand_off_summary(dispatch: WorkDispatch | None) -> None:
     if dispatch is None:
         return
     try:
-        await hand_off(dispatch.id, dispatch.placement, dispatch.queue, dispatch.message)
+        await hand_off()
     except Exception:
         logger.warning(
             "Summary hand-off failed; the reconciler will retry",

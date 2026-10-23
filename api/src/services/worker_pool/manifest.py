@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from src.jobs.platform.kubernetes_client import KubernetesConfigurationError
+from src.jobs.platform.kubernetes_client import (
+    KubernetesConfigurationError,
+    KubernetesJobClient,
+)
 
 WORKER_LABEL = "bifrost-pool-worker"
 INCARNATION_LABEL = "bifrost.gobifrost.com/worker-incarnation"
@@ -17,17 +21,41 @@ def worker_job_name(incarnation_id: UUID) -> str:
     return f"bifrost-worker-{incarnation_id.hex[:24]}"
 
 
-def _required(settings: Any, name: str) -> Any:
-    value = getattr(settings, name, None)
-    if value is None or value == "":
-        raise KubernetesConfigurationError(f"Missing required setting: {name}")
-    return value
+@dataclass(frozen=True)
+class WorkerJobSpec:
+    """Where and as what a worker Job runs."""
+
+    namespace: str
+    image: str
+    configmap: str
+    secret: str
+    service_account: str
+
+
+async def resolve_worker_job_spec(client: KubernetesJobClient, settings: Any) -> WorkerJobSpec:
+    """The build settings when set; otherwise this cluster's own defaults.
+
+    An install with no build settings runs workers in the controller's own
+    namespace and image, with the base manifests' configmap and secret, and
+    the namespace's ``default`` service account (the pod mounts no token).
+    """
+    image = settings.kubernetes_build_image or await client.own_image()
+    if not image:
+        raise KubernetesConfigurationError("No image is known for worker Jobs")
+    return WorkerJobSpec(
+        namespace=client.namespace,
+        image=image,
+        configmap=settings.kubernetes_build_configmap or "bifrost-config",
+        secret=settings.kubernetes_build_secret or "bifrost-secrets",
+        service_account=settings.kubernetes_build_service_account or "default",
+    )
 
 
 def build_worker_job_manifest(
     incarnation_id: UUID,
     slots: int,
     settings: Any,
+    spec: WorkerJobSpec,
 ) -> dict[str, Any]:
     """Render the suspended Job for one reusable worker.
 
@@ -36,11 +64,11 @@ def build_worker_job_manifest(
     reusable worker drains itself at its idle timeout or maximum lifetime
     and is never stopped mid-run by a Job deadline.
     """
-    namespace = _required(settings, "kubernetes_build_namespace")
-    image = _required(settings, "kubernetes_build_image")
-    configmap = _required(settings, "kubernetes_build_configmap")
-    secret = _required(settings, "kubernetes_build_secret")
-    service_account = _required(settings, "kubernetes_build_service_account")
+    namespace = spec.namespace
+    image = spec.image
+    configmap = spec.configmap
+    secret = spec.secret
+    service_account = spec.service_account
     if settings.pool_worker_memory_request_mib > settings.pool_worker_memory_limit_mib:
         raise KubernetesConfigurationError(
             "pool_worker_memory_request_mib must not exceed pool_worker_memory_limit_mib"
@@ -89,12 +117,6 @@ def build_worker_job_manifest(
                             ],
                             "env": [
                                 {"name": "BIFROST_WORKER_INCARNATION_ID", "value": str(incarnation_id)},
-                                # Nested runs started here must land where the
-                                # controller expects them.
-                                {
-                                    "name": "BIFROST_EXECUTION_PLACEMENT",
-                                    "value": str(settings.execution_placement),
-                                },
                                 # The controller's pool policy, so a worker never
                                 # disagrees with the controller that launched it.
                                 {
@@ -167,6 +189,8 @@ def build_worker_job_manifest(
 __all__ = [
     "INCARNATION_LABEL",
     "WORKER_LABEL",
+    "WorkerJobSpec",
     "build_worker_job_manifest",
+    "resolve_worker_job_spec",
     "worker_job_name",
 ]

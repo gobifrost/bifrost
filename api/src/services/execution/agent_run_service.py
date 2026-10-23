@@ -13,7 +13,6 @@ import redis.asyncio as aioredis
 from src.core.database import get_dispatch_db_context
 from src.core.log_safety import log_safe
 from src.models.orm.agent_runs import AgentRun
-from src.models.orm.work_dispatches import WorkDispatch
 from src.services.durable_impersonation import current_durable_impersonation
 from src.services.execution.agent_run_dispatch import (
     cache_agent_context,
@@ -56,7 +55,6 @@ class StagedAgentRun:
     agent_id: str | None
     trigger_type: str
     context: dict[str, Any]
-    dispatch: WorkDispatch
 
 
 async def stage_agent_run_request(
@@ -152,7 +150,7 @@ async def stage_agent_run_request(
     )
     # The AgentRun must exist before its dispatch references the subject.
     await db.flush()
-    dispatch = stage_agent_run(
+    stage_agent_run(
         db,
         run_id=run_uuid,
         context=context,
@@ -168,7 +166,6 @@ async def stage_agent_run_request(
         agent_id=agent_id,
         trigger_type=trigger_type,
         context=context,
-        dispatch=dispatch,
     )
 
 
@@ -190,7 +187,7 @@ async def hand_off_staged_agent_run(
                 extra={"run_id": log_safe(staged.run_id)},
                 exc_info=True,
             )
-    await hand_off_agent_run(staged.dispatch)
+    await hand_off_agent_run()
 
     logger.info(
         "Enqueued agent run %s for agent %s (trigger=%s)",

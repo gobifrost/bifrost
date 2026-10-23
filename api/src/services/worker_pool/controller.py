@@ -27,13 +27,19 @@ from sqlalchemy import func, select, text
 from src.config import Settings, get_settings
 from src.core.database import get_db_context
 from src.jobs.platform.kubernetes_client import (
+    KubernetesApiError,
     KubernetesConfigurationError,
     KubernetesJobClient,
 )
 from src.models.orm.execution_workers import ExecutionWorker
 from src.models.orm.work_dispatches import WorkDispatch
 from src.services.worker_pool.claims import CAPACITY_LOCK
-from src.services.worker_pool.manifest import build_worker_job_manifest, worker_job_name
+from src.services.worker_pool.manifest import (
+    WorkerJobSpec,
+    build_worker_job_manifest,
+    resolve_worker_job_spec,
+    worker_job_name,
+)
 from src.services.worker_pool.recovery import announce_ended_runs, end_runs_of_lost_worker
 
 logger = logging.getLogger(__name__)
@@ -50,9 +56,12 @@ def _now() -> datetime:
 
 
 class WorkerPoolController:
-    def __init__(self, client: KubernetesJobClient, settings: Settings) -> None:
+    def __init__(
+        self, client: KubernetesJobClient, settings: Settings, spec: WorkerJobSpec
+    ) -> None:
         self.client = client
         self.settings = settings
+        self.spec = spec
 
     async def reconcile(self) -> None:
         async with get_db_context() as db:
@@ -99,7 +108,7 @@ class WorkerPoolController:
             if worker.state == "reserved":
                 if remote is None:
                     remote = await self.client.create_job(
-                        build_worker_job_manifest(worker.id, worker.slots, self.settings)
+                        build_worker_job_manifest(worker.id, worker.slots, self.settings, self.spec)
                     )
                 worker.kubernetes_job_uid = remote["metadata"]["uid"]
                 worker.state = "starting"
@@ -209,13 +218,14 @@ async def worker_pool_loop(stop_event: asyncio.Event, settings: Any | None = Non
     settings = settings or get_settings()
     try:
         client = KubernetesJobClient(settings)
-    except KubernetesConfigurationError as exc:
+        spec = await resolve_worker_job_spec(client, settings)
+    except (KubernetesConfigurationError, KubernetesApiError) as exc:
         # Pool work waits visibly (and fails at its claim deadline) instead of
-        # taking down the control plane.
+        # taking down the process that hosts this loop.
         logger.error("Reusable worker controller disabled: %s", exc)
         await stop_event.wait()
         return
-    controller = WorkerPoolController(client, settings)
+    controller = WorkerPoolController(client, settings, spec)
     try:
         while not stop_event.is_set():
             try:

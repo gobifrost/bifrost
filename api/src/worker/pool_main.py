@@ -1,9 +1,11 @@
 """Pool executor: claims runs from PostgreSQL and runs each in a fresh child.
 
-Two forms share this loop. A *job* worker is started by the control plane's
-worker-pool controller as one Kubernetes Job lifetime. A *static* worker
-(``BIFROST_WORKER_FORM=static``) is a long-running Deployment or Compose
-container that registers itself and never idles out.
+Two forms share this loop. A *job* worker is started by the worker-pool
+controller as one Kubernetes Job lifetime (it carries an incarnation). A
+*static* worker is a long-running container (the ``scheduler`` and ``worker``
+services, through their entry points) that registers itself and never idles
+out. Every executor runs workflows, agent runs, summaries, services and
+local platform jobs.
 
 A job worker admits itself
 to its incarnation (Job UID bound before start, pod UID bound once), then
@@ -23,6 +25,7 @@ import signal
 import socket
 import sys
 import time
+from collections.abc import Callable
 from uuid import UUID
 
 from shared.schema_gate import wait_for_schema
@@ -31,6 +34,7 @@ from src.core.database import close_db, get_engine, init_db
 from src.core.redis_client import PendingExecution
 from src.jobs.schedulers.platform_jobs import platform_job_worker_loop
 from src.scheduler.control import replica_heartbeat_loop
+from src.services.kubernetes_control import start_kubernetes_loops
 from src.services.scheduler_diagnostics import remove_scheduler_replica
 from src.jobs.summarize_worker import handle_summarize_message
 from src.services.package_generation import (
@@ -87,13 +91,19 @@ class PoolWorker:
         incarnation_id: UUID | None = None,
         job_uid: str | None = None,
         pod_uid: str | None = None,
+        on_ready: Callable[[], None] | None = None,
     ) -> None:
-        """A job worker passes its incarnation and UIDs; a static one, none."""
+        """A job worker passes its incarnation and UIDs; a static one, none.
+
+        ``on_ready`` runs once the executor can claim work (an entry point's
+        readiness signal).
+        """
         self.settings = get_settings()
         self.static = incarnation_id is None
         self.incarnation_id: UUID = incarnation_id or UUID(int=0)
         self.job_uid = job_uid
         self.pod_uid = pod_uid
+        self._on_ready = on_ready
         self.runs_handled = 0
         self._stop = asyncio.Event()
         self._wake = asyncio.Event()
@@ -220,6 +230,13 @@ class PoolWorker:
                 for slot in range(PLATFORM_JOB_SLOTS)
             ),
         ]
+        if self.static:
+            # On an install whose executor container may manage Jobs (the
+            # builds runbook binds that Role to the scheduler), it runs the
+            # Kubernetes loops; elsewhere this starts nothing.
+            background.extend(await start_kubernetes_loops(self._platform_stop, self.settings))
+        if self._on_ready is not None:
+            self._on_ready()
         try:
             await self._claim_loop()
             await self._drain()
@@ -406,19 +423,24 @@ class PoolWorker:
             await asyncio.sleep(0.5)
 
 
-async def main() -> int:
-    if os.environ.get("BIFROST_WORKER_FORM") == "static":
-        worker = PoolWorker()
-    else:
-        incarnation = os.environ.get("BIFROST_WORKER_INCARNATION_ID")
+async def run_executor(*, on_ready: Callable[[], None] | None = None) -> int:
+    """Run this process's executor until it is stopped or drains.
+
+    An executor is a Job worker when the controller gave it an incarnation;
+    otherwise it is static (the scheduler and worker containers).
+    """
+    incarnation = os.environ.get("BIFROST_WORKER_INCARNATION_ID")
+    if incarnation:
         job_uid = os.environ.get("BIFROST_KUBERNETES_JOB_UID")
         pod_uid = os.environ.get("BIFROST_KUBERNETES_POD_UID")
-        if not incarnation or not job_uid or not pod_uid:
+        if not job_uid or not pod_uid:
             logger.error("Pool worker identity is missing from its environment")
             return 1
         worker = PoolWorker(
-            incarnation_id=UUID(incarnation), job_uid=job_uid, pod_uid=pod_uid
+            incarnation_id=UUID(incarnation), job_uid=job_uid, pod_uid=pod_uid, on_ready=on_ready
         )
+    else:
+        worker = PoolWorker(on_ready=on_ready)
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, worker.request_stop)
@@ -426,4 +448,4 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main()))
+    sys.exit(asyncio.run(run_executor()))

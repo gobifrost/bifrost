@@ -26,7 +26,6 @@ def env(monkeypatch):
         calls.append("commit")
 
     monkeypatch.setattr(agent_run_service, "get_dispatch_db_context", accept_context)
-    monkeypatch.setattr(work_dispatch, "get_dispatch_db_context", accept_context)
 
     redis = AsyncMock()
 
@@ -36,13 +35,10 @@ def env(monkeypatch):
 
     monkeypatch.setattr(agent_run_dispatch, "get_redis", redis_context)
 
-    published: list[tuple[str, dict]] = []
+    async def wake() -> None:
+        calls.append("wake")
 
-    async def publish(queue: str, message: dict) -> None:
-        calls.append("publish")
-        published.append((queue, message))
-
-    monkeypatch.setattr(work_dispatch, "publish_message", publish)
+    monkeypatch.setattr(work_dispatch, "wake_pool_workers", wake)
 
     def added(kind):  # type: ignore[no-untyped-def]
         return [call.args[0] for call in session.add.call_args_list if isinstance(call.args[0], kind)]
@@ -51,13 +47,14 @@ def env(monkeypatch):
         calls=calls,
         session=session,
         redis=redis,
-        published=published,
         runs=lambda: added(AgentRun),
         dispatches=lambda: added(WorkDispatch),
     )
 
 
 class TestEnqueueAgentRun:
+    _real_wake = staticmethod(work_dispatch.wake_pool_workers)
+
     @pytest.mark.asyncio
     async def test_persists_current_impersonation_provenance(self, env):
         operator_id, session_id = uuid4(), uuid4()
@@ -79,7 +76,7 @@ class TestEnqueueAgentRun:
         assert row.impersonation_session_id == session_id
 
     @pytest.mark.asyncio
-    async def test_commits_run_and_dispatch_together_before_publish(self, env):
+    async def test_commits_run_and_dispatch_together_before_waking_executors(self, env):
         run_id = await enqueue_agent_run(
             agent_id=str(uuid4()),
             trigger_type="event",
@@ -94,10 +91,9 @@ class TestEnqueueAgentRun:
         assert queued_run.input == {"ticket_id": 123}
         assert (dispatch.subject_id, dispatch.family) == (queued_run.id, "agent_run")
         assert dispatch.payload["input"] == {"ticket_id": 123}
-        assert env.calls[:2] == ["commit", "publish"]
-        queue, message = env.published[0]
-        assert queue == "agent-runs"
-        assert message["dispatch_id"] == str(dispatch.id)
+        assert env.calls[:2] == ["commit", "wake"]
+        assert dispatch.placement == "pool"
+        assert dispatch.message["dispatch_id"] == str(dispatch.id)
 
     @pytest.mark.asyncio
     async def test_runs_lifecycle_hook_before_queue_publish(self, env):
@@ -111,7 +107,7 @@ class TestEnqueueAgentRun:
         )
 
         before_publish.assert_awaited_once_with(run_id)
-        assert env.calls[:3] == ["commit", "lifecycle", "publish"]
+        assert env.calls[:3] == ["commit", "lifecycle", "wake"]
 
     @pytest.mark.asyncio
     async def test_context_is_durable_and_cached_for_older_workers(self, env):
@@ -220,7 +216,7 @@ class TestEnqueueAgentRun:
         assert queued_run.agent_id is None
         assert str(queued_run.conversation_id) == conversation_id
         assert env.dispatches()[0].payload["conversation_id"] == conversation_id
-        assert env.published[0][1]["agent_id"] is None
+        assert env.dispatches()[0].message["agent_id"] is None
 
     @pytest.mark.asyncio
     async def test_enqueue_uses_provided_run_id(self, env):
@@ -244,14 +240,16 @@ class TestEnqueueAgentRun:
             lineage=None,
         )
 
-        assert env.published[0][1]["sync"] is True
+        assert env.dispatches()[0].message["sync"] is True
 
     @pytest.mark.asyncio
-    async def test_broker_and_redis_outages_do_not_fail_an_accepted_run(self, env, monkeypatch):
-        async def broker_down(_queue: str, _message: dict) -> None:
-            raise RuntimeError("queue unavailable")
-
-        monkeypatch.setattr(work_dispatch, "publish_message", broker_down)
+    async def test_a_redis_outage_does_not_fail_an_accepted_run(self, env, monkeypatch):
+        """The context cache and the executor wake are both best-effort."""
+        monkeypatch.setattr(work_dispatch, "wake_pool_workers", self._real_wake)
+        monkeypatch.setattr(
+            "src.core.cache.redis_client.get_shared_redis",
+            AsyncMock(side_effect=ConnectionError("redis unavailable")),
+        )
         env.redis.set.side_effect = ConnectionError("redis unavailable")
 
         run_id = await enqueue_agent_run(agent_id=str(uuid4()), trigger_type="sdk", lineage=None)
@@ -259,7 +257,7 @@ class TestEnqueueAgentRun:
         [queued_run] = env.runs()
         assert str(queued_run.id) == run_id
         assert queued_run.status == "queued"
-        assert env.dispatches()[0].status == "pending"  # the reconciler's to publish
+        assert env.dispatches()[0].status == "pending"  # claimable from PostgreSQL
 
 
 @pytest.mark.asyncio

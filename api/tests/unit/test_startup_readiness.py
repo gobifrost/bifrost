@@ -1,16 +1,20 @@
-"""Worker and scheduler are alive but not ready while waiting at the schema gate."""
+"""The scheduler and worker entry points keep their health contracts.
+
+Both containers run the executor. The scheduler container's liveness
+heartbeat beats while the executor waits at the schema gate; each entry
+point reports ready only once the executor can claim work.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.scheduler import health as scheduler_health
-from src.scheduler.main import Scheduler
 from src.worker import health as worker_health
 
 
@@ -21,91 +25,63 @@ async def _eventually(predicate) -> None:  # type: ignore[no-untyped-def]
 
 
 @pytest.mark.asyncio
-async def test_scheduler_keeps_heartbeat_but_is_not_ready_while_gated(
+async def test_scheduler_entry_beats_while_gated_and_is_ready_once_the_executor_is(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from src.scheduler import main as scheduler_main
+
     monkeypatch.setattr(scheduler_health, "HEARTBEAT_PATH", tmp_path / "heartbeat")
     monkeypatch.setattr(scheduler_health, "READY_PATH", tmp_path / "ready")
-    gate_open = asyncio.Event()
+    gate_open, stop = asyncio.Event(), asyncio.Event()
 
-    async def gate(_engine: object) -> None:
-        await gate_open.wait()
+    async def executor(*, on_ready: Callable[[], None]) -> int:
+        await gate_open.wait()  # the schema gate
+        on_ready()
+        await stop.wait()
+        return 0
 
     async def fast_heartbeat() -> None:
         await scheduler_health.heartbeat_loop(0.01)
 
-    async def idle(*_args: object, **_kwargs: object) -> None:
-        await asyncio.Event().wait()
+    monkeypatch.setattr("src.worker.pool_main.run_executor", executor)
+    monkeypatch.setattr(scheduler_main, "heartbeat_loop", fast_heartbeat)
 
-    control = MagicMock()
-    control.owner_id = "scheduler-test"
-    control.start = AsyncMock()
-    control.tasks = ()
-    scheduler = Scheduler(control_plane=control)
+    entry = asyncio.create_task(scheduler_main.main())
+    await _eventually(scheduler_health.HEARTBEAT_PATH.exists)
+    first = os.stat(scheduler_health.HEARTBEAT_PATH).st_mtime_ns
+    await _eventually(lambda: os.stat(scheduler_health.HEARTBEAT_PATH).st_mtime_ns != first)
+    assert not scheduler_health.READY_PATH.exists()
 
-    with (
-        patch("src.scheduler.main.init_db", new=AsyncMock()),
-        patch("src.scheduler.main.get_engine", return_value=object()),
-        patch("src.scheduler.main.wait_for_schema", new=gate),
-        patch("src.scheduler.main.heartbeat_loop", new=fast_heartbeat),
-        patch("src.scheduler.main.platform_job_worker_loop", new=idle),
-        patch("src.scheduler.main.replica_heartbeat_loop", new=idle),
-    ):
-        start_task = asyncio.create_task(scheduler.start())
-        await _eventually(scheduler_health.HEARTBEAT_PATH.exists)
-        first = os.stat(scheduler_health.HEARTBEAT_PATH).st_mtime_ns
-        await _eventually(
-            lambda: os.stat(scheduler_health.HEARTBEAT_PATH).st_mtime_ns != first
-        )
-        assert not scheduler_health.READY_PATH.exists()
+    gate_open.set()
+    await _eventually(scheduler_health.is_ready)
 
-        control.start.assert_not_awaited()
-
-        gate_open.set()
-        await _eventually(scheduler_health.READY_PATH.exists)
-        assert scheduler_health.is_ready()
-        control.start.assert_awaited_once()
-
-        scheduler._shutdown_event.set()
-        scheduler.running = False
-        await asyncio.gather(start_task)
-        for task in (scheduler._heartbeat_task, *scheduler._platform_job_tasks):
-            if task is not None:
-                task.cancel()
-        if scheduler._diagnostics_task is not None:
-            scheduler._diagnostics_task.cancel()
+    stop.set()
+    assert await entry == 0
+    assert not scheduler_health.READY_PATH.exists(), "a stopped executor is not ready"
 
 
-@pytest.mark.asyncio
-async def test_worker_is_not_ready_until_gate_passes_and_consumers_start(
+def test_worker_entry_is_ready_only_while_the_executor_is(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from src.worker.app import Worker
+    from src.worker import main as worker_main
 
     monkeypatch.setattr(worker_health, "READY_PATH", tmp_path / "ready")
-    worker_health.mark_ready()
-    gate_open = asyncio.Event()
+    worker_health.mark_ready()  # left over from a previous start
+    seen: list[bool] = []
 
-    async def gate(_engine: object) -> None:
-        await gate_open.wait()
+    async def executor(*, on_ready: Callable[[], None]) -> int:
+        seen.append(worker_health.is_ready())
+        on_ready()
+        seen.append(worker_health.is_ready())
+        return 0
 
-    worker = Worker()
-    worker.settings = MagicMock(environment="test")
+    monkeypatch.setattr("src.worker.pool_main.run_executor", executor)
 
-    with (
-        patch("src.worker.app.init_db", new=AsyncMock()),
-        patch("src.worker.app.get_engine", return_value=object()),
-        patch("src.worker.app.wait_for_schema", new=gate),
-        patch.object(worker, "_start_consumers", new=AsyncMock()),
-    ):
-        start_task = asyncio.create_task(worker.start())
-        await asyncio.sleep(0.05)
-        assert not worker_health.is_ready()
+    with pytest.raises(SystemExit) as exited:
+        worker_main.run()
 
-        gate_open.set()
-        await _eventually(worker_health.is_ready)
-
-        worker._shutdown_event.set()
-        await asyncio.gather(start_task)
+    assert exited.value.code == 0
+    assert seen == [False, True]
+    assert not worker_health.is_ready()

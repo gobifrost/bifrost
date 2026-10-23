@@ -84,12 +84,18 @@ def test_worker_scaledobject_tracks_all_queue_consumers() -> None:
         assert trigger["authenticationRef"]["name"] == "bifrost-rabbitmq"
 
 
-def test_local_pods_do_not_mount_service_account_tokens() -> None:
+def test_only_the_api_mounts_a_service_account_token() -> None:
+    """The API runs the worker controller (api-rbac.yaml); nothing else may."""
     for workload in _workloads():
-        assert _pod_spec(workload).get("automountServiceAccountToken") is False, (
-            workload["kind"],
-            workload["metadata"]["name"],
-        )
+        spec = _pod_spec(workload)
+        if workload["metadata"]["name"] == "bifrost-api":
+            assert spec["serviceAccountName"] == "bifrost-api"
+            assert spec["automountServiceAccountToken"] is True
+        else:
+            assert spec.get("automountServiceAccountToken") is False, (
+                workload["kind"],
+                workload["metadata"]["name"],
+            )
 
 
 def test_local_manifests_do_not_bind_host_ports_or_node_ports() -> None:
