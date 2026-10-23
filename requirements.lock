@@ -1042,9 +1042,9 @@ frozenlist==1.8.0 \
     # via
     #   aiohttp
     #   aiosignal
-genai-prices==0.1.9 \
-    --hash=sha256:20ec774d32ec5d345510877fac415f2560bbfeb081bc4cd4e7ebce57a5503e8d \
-    --hash=sha256:3da8faa0a126e4df7be36696b90abe2be1fea8826bfcf45d39d91bc397fa9d1d
+genai-prices==0.1.13 \
+    --hash=sha256:6d2b40760a2f7f5e207bac9b98de0af80e60c58ead497872a5331a7cee610477 \
+    --hash=sha256:76c9e2dd3917fdacdf3bc562297c4591384142ea2283c477e1512fafa4e3a384
     # via
     #   pydantic-ai-harness
     #   pydantic-ai-slim
@@ -1060,9 +1060,9 @@ google-auth[requests]==2.56.3 \
     --hash=sha256:40e229fc901f0a305b553050e5fce562d509bee0435be053abfa91582b51b90c \
     --hash=sha256:8ec438808f813ad034535000261eed1067475d229d05bbf4216e78c3f2362e53
     # via google-genai
-google-genai==2.25.0 \
-    --hash=sha256:2e8f3a5f76ed00d5ffc3153f6089bc7d3511054eed53ad9cfc6095a7dc59b028 \
-    --hash=sha256:ab603baa5eee0205926ad0f8d7f93e0400df6d67650e99c33e01ab228ea16ad6
+google-genai==2.31.0 \
+    --hash=sha256:71518537de2ba967a61960cba844691dca3dd4ff07726c01a6917d132213541e \
+    --hash=sha256:c87b9d495a24b09dedb29b852a201bea69ecd0b3f6c2561dc68f4055451b1b90
     # via pydantic-ai-slim
 greenlet==3.4.0 \
     --hash=sha256:04403ac74fe295a361f650818de93be11b5038a78f49ccfb64d3b1be8fbf1267 \
@@ -2307,13 +2307,13 @@ pydantic[email]==2.13.3 \
     #   pydantic-ai-slim
     #   pydantic-graph
     #   pydantic-settings
-pydantic-ai-harness==0.55.0 \
-    --hash=sha256:3212a7c2dd53642d88f39bf28d94ef6ace72439e96468992352cd67ba7d5ee25 \
-    --hash=sha256:f360d5b1aa0d285e304bc3f4fc6d816ed47fdbfc0b1e0dbf4c34cc87b6f6547a
+pydantic-ai-harness==0.57.0 \
+    --hash=sha256:88f32fdedf2377b9187f364c10f7cdb9f00f9e076c3fb0492d6b7bcf2d6dcc38 \
+    --hash=sha256:c2f62ea4b531c418021deb534ec3ed1cbde796c6a93a716823828554f16ddc5f
     # via bifrost-api (pyproject.toml)
-pydantic-ai-slim[anthropic,google,openai,retries]==2.55.0 \
-    --hash=sha256:50b5ee70d3a0509c1f36bec759249e69f4dc060f1a816b1bbf0730af54297376 \
-    --hash=sha256:7fcea628e78c2f247af94504534f0577151496166998d74ec145505040b19c68
+pydantic-ai-slim[anthropic,google,openai,retries]==2.57.0 \
+    --hash=sha256:2c5c150bcd097e6a1e267ea13e7f279a0b504d46b346a4e00b61e1996ad05372 \
+    --hash=sha256:a07d732e09df8d51f22bd3be2ad45ab644721a904809a2481146bf5d7bb47c67
     # via
     #   bifrost-api (pyproject.toml)
     #   pydantic-ai-harness
@@ -2439,9 +2439,9 @@ pydantic-core==2.46.3 \
     --hash=sha256:ff5e7783bcc5476e1db448bf268f11cb257b1c276d3e89f00b5727be86dd0127 \
     --hash=sha256:ffe0883b56cfc05798bf994164d2b2ff03efe2d22022a2bb080f3b626176dd56
     # via pydantic
-pydantic-graph==2.55.0 \
-    --hash=sha256:461de7d0c33af634c3adeb21712f527f15878edf826d216184f024795e9c80c1 \
-    --hash=sha256:774a64db707e759e22a4b2d6f8849986331fac009bb3f36ba3ed0cb8eee7a150
+pydantic-graph==2.57.0 \
+    --hash=sha256:4c65193a1d8b58e3c6f29a15cbe7b96e1e255a1670a5bcb9a323b8600fc1686a \
+    --hash=sha256:f848857baab4030c44b30de0c3ba650749d60f2295a0723645fb325f92191cf1
     # via pydantic-ai-slim
 pydantic-settings==2.14.0 \
     --hash=sha256:24285fd4b0e0c06507dd9fdfd331ee23794305352aaec8fc4eb92d4047aeb67d \
