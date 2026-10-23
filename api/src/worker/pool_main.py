@@ -192,6 +192,13 @@ class PoolWorker:
                     del self._workflow_holds[execution_id]
         return sum(self._workflow_holds.values()) + sum(self._task_holds.values())
 
+    def _hold_service_memory(self, attempt_id: str, request_bytes: int | None) -> None:
+        """A supervised service holds its request until its attempt ends."""
+        if request_bytes is None:
+            self._task_holds.pop(f"service:{attempt_id}", None)
+        else:
+            self._task_holds[f"service:{attempt_id}"] = request_bytes
+
     def _free_bytes(self) -> int:
         assert self.budget is not None
         return max(0, self.budget.budget_bytes - self._held_bytes())
@@ -250,10 +257,10 @@ class PoolWorker:
         from src.jobs.consumers.package_install import PackageInstallConsumer
 
         self._package_consumer = PackageInstallConsumer()
-        await self._start_service_claim_loop()
-        # Measured once the parent and fork template are up: what remains is
-        # what work may use.
+        # Measured once the parent and fork template are up, before any
+        # service claims: what remains is what work may use.
         self.budget = measure_budget(self.settings.memory_pressure_threshold)
+        await self._start_service_claim_loop()
         logger.info(
             "Pool worker ready",
             extra={
@@ -523,6 +530,8 @@ class PoolWorker:
             beat_interval_seconds=self.settings.service_heartbeat_interval_seconds,
             lease_ttl_seconds=self.settings.service_lease_ttl_seconds,
             token_lifetime_seconds=self.settings.service_token_lifetime_seconds,
+            free_bytes=self._free_bytes,
+            hold_memory=self._hold_service_memory,
         )
         pool.on_service_result = self._service_claim_loop.handle_service_result
         await self._service_claim_loop.start()

@@ -124,10 +124,6 @@ class Settings(BaseSettings):
     # ==========================================================================
     # Supervised Services (Slice 3)
     # ==========================================================================
-    max_service_workers: int = Field(
-        default=20,
-        description="Maximum concurrent service children per worker"
-    )
     service_claim_interval_seconds: int = Field(
         default=5,
         description="Worker-pull claim loop tick: expire leases, beat owned attempts, claim eligible services"

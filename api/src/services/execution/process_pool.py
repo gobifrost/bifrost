@@ -238,8 +238,8 @@ class ServiceInfo:
     """
     Identity of the supervised service attempt a child is running.
 
-    Service children never hold a workflow slot: they live in
-    ``service_processes`` under the ``max_service_workers`` cap and report
+    Service children live in ``service_processes`` (their memory is held
+    from the executor's budget by the service claim loop) and report
     through ``on_service_result`` instead of ``on_result``.
     """
 
@@ -399,7 +399,6 @@ class ProcessPoolManager:
         heartbeat_interval_seconds: int = 10,
         registration_ttl_seconds: int = 30,
         on_result: ResultCallback | None = None,
-        max_service_workers: int = 20,
         on_service_result: ResultCallback | None = None,
     ):
         """
@@ -411,12 +410,6 @@ class ProcessPoolManager:
             heartbeat_interval_seconds: Interval for heartbeat publications
             registration_ttl_seconds: TTL for worker registration in Redis
             on_result: Async callback for handling execution results
-            max_service_workers: Maximum concurrent supervised service
-                children. Service children
-                are light (~tens of MB like workflow children), so this
-                bounds connection/file-descriptor sprawl and keeps rolling
-                restarts snappy rather than boxing memory; the cgroup
-                pressure gate remains the dynamic backstop.
             on_service_result: Async callback for service attempt outcomes
         """
         self.execution_timeout_seconds = execution_timeout_seconds
@@ -424,7 +417,6 @@ class ProcessPoolManager:
         self.heartbeat_interval_seconds = heartbeat_interval_seconds
         self.registration_ttl_seconds = registration_ttl_seconds
         self.on_result = on_result
-        self.max_service_workers = max_service_workers
         self.on_service_result = on_service_result
 
         # Worker ID from HOSTNAME env var (Docker container name) or UUID
@@ -454,8 +446,6 @@ class ProcessPoolManager:
         # Redis connection
         self._redis: redis.Redis | None = None  # type: ignore[type-arg]
 
-        # Notified when a service child exits (waiters in route_service).
-        self._service_slot_condition = asyncio.Condition()
 
         # Template process for fork-based workers
         self._template: TemplateProcess | None = None
@@ -1025,15 +1015,13 @@ class ProcessPoolManager:
         """
         Fork a supervised service child for one claimed attempt.
 
-        Service children run indefinitely (until the attempt ends) under the
-        separate ``max_service_workers`` cap and are never timeout-killed. The
+        Service children run indefinitely (until the attempt ends) and are
+        never timeout-killed. The
         context travels over the private work pipe like executions; the DB
         attempt row (not Redis) is the durable record, so no context or lease
         keys are written here.
 
         Raises:
-            RuntimeError: No service slot available (the claim loop retries
-                on its next tick).
             MemoryError: Memory pressure rejects the fork.
         """
         # Fail closed before forking, as with executions.
@@ -1049,9 +1037,6 @@ class ProcessPoolManager:
         # Keep template drain/restart mutually exclusive with forking, as
         # with route_execution.
         async with self._restart_lock:
-            if len(self.service_processes) >= self.max_service_workers:
-                raise RuntimeError("No service slot available")
-
             handle = self._fork_process()
             handle.service = ServiceInfo(
                 service_id=service_id,
@@ -1074,18 +1059,12 @@ class ProcessPoolManager:
             except Exception:
                 self._unregister_result_reader(handle)
                 self.service_processes.pop(handle.id, None)
-                await self._notify_service_slot_free()
                 raise
 
             logger.info(
                 f"Routed service {service_id[:8]}... attempt {attempt_id[:8]}... "
                 f"to {handle.id}"
             )
-
-    async def _notify_service_slot_free(self) -> None:
-        """Wake any tasks blocked waiting for a service slot."""
-        async with self._service_slot_condition:
-            self._service_slot_condition.notify_all()
 
     def service_owned_attempt_ids(self) -> set[str]:
         """Attempt IDs of service children currently owned by this worker."""
@@ -1809,11 +1788,8 @@ class ProcessPoolManager:
 
         # Remove crashed/orphaned processes.
         # Use pop() not del because a peer (e.g. _handle_result) may have
-        # already removed the id during one of the awaits above. Service
-        # slot waiters are notified if a service was removed here; the
-        # peer-delete path also notifies and double-notify is harmless.
+        # already removed the id during one of the awaits above.
         if to_remove:
-            removed_service_any = False
             for process_id in to_remove:
                 handle = self.processes.get(process_id)
                 if handle is not None:
@@ -1822,10 +1798,7 @@ class ProcessPoolManager:
                 handle = self.service_processes.get(process_id)
                 if handle is not None:
                     self._unregister_result_reader(handle)
-                if self.service_processes.pop(process_id, None) is not None:
-                    removed_service_any = True
-            if removed_service_any:
-                await self._notify_service_slot_free()
+                self.service_processes.pop(process_id, None)
 
     def _collect_child_exit_statuses(self) -> None:
         """Apply exit statuses gathered by the template that owns the children."""
@@ -2049,7 +2022,6 @@ class ProcessPoolManager:
 
         # pop() not check-then-del: race-safe against concurrent cleaners.
         self.service_processes.pop(handle.id, None)
-        await self._notify_service_slot_free()
 
         if callback_already_owned:
             logger.info(
@@ -2395,7 +2367,6 @@ def get_process_pool() -> ProcessPoolManager:
             graceful_shutdown_seconds=settings.graceful_shutdown_seconds,
             heartbeat_interval_seconds=settings.worker_heartbeat_interval_seconds,
             registration_ttl_seconds=settings.worker_registration_ttl_seconds,
-            max_service_workers=settings.max_service_workers,
         )
     return _pool
 

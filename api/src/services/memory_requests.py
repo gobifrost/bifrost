@@ -44,6 +44,13 @@ DANGEROUS_MEMORY_RATIO = 0.95
 LAUNCHABLE_KEY = "bifrost:worker-pool:largest-launchable-bytes"
 
 
+def workflow_request_sql(learned_memory_bytes):  # type: ignore[no-untyped-def]
+    """``workflow_request_bytes`` as a SQL expression over a learned column."""
+    return func.coalesce(
+        learned_memory_bytes + WORKFLOW_REQUEST_MARGIN_BYTES, DEFAULT_WORKFLOW_REQUEST_BYTES
+    )
+
+
 def workflow_request_bytes(learned_memory_bytes: int | None) -> int:
     """A workflow run's request: its learned peak growth plus a margin."""
     if learned_memory_bytes is None:
@@ -163,4 +170,5 @@ __all__ = [
     "memory_ratio",
     "under_pressure",
     "workflow_request_bytes",
+    "workflow_request_sql",
 ]

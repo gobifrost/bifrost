@@ -138,8 +138,7 @@ async def _cleanup_services(async_session_factory):
 
 
 class StubPool:
-    def __init__(self, max_service_workers=2):
-        self.max_service_workers = max_service_workers
+    def __init__(self):
         self.service_processes = {}
         self.route_service = AsyncMock()
         self.stop_service_child = AsyncMock(return_value=True)
@@ -194,6 +193,8 @@ def _loop(pool, **overrides):
         "claim_interval_seconds": 0.01,
         "beat_interval_seconds": 0,
         "lease_ttl_seconds": 60,
+        "free_bytes": lambda: 2**40,
+        "hold_memory": lambda attempt_id, request: None,
     }
     args.update(overrides)
     return ServiceClaimLoop(**args)
@@ -249,17 +250,40 @@ async def test_tick_claims_and_routes_with_service_context(
     pool.route_service.assert_not_awaited()
 
 
-async def test_tick_skips_when_pool_full(db_session):
+async def test_tick_skips_a_service_larger_than_the_free_budget(db_session):
     definition, _, _ = await _ensure_service(db_session)
     await db_session.commit()
-    pool = StubPool(max_service_workers=0)
-    loop = _loop(pool)
+    pool = StubPool()
+    loop = _loop(pool, free_bytes=lambda: 1)
 
     await loop.tick()
 
     pool.route_service.assert_not_awaited()
     live = await service_lifecycle.get_live_attempt(db_session, definition.id)
     assert live is None
+
+
+async def test_a_supervised_service_holds_its_request_until_it_ends(db_session):
+    from src.services.memory_requests import DEFAULT_WORKFLOW_REQUEST_BYTES
+
+    definition, _, _ = await _ensure_service(db_session)
+    await db_session.commit()
+    holds: dict = {}
+
+    def hold(attempt_id, request):  # type: ignore[no-untyped-def]
+        if request is None:
+            holds.pop(attempt_id, None)
+        else:
+            holds[attempt_id] = request
+
+    loop = _loop(StubPool(), hold_memory=hold)
+    await loop.tick()
+
+    live = await service_lifecycle.get_live_attempt(db_session, definition.id)
+    assert live is not None
+    assert holds == {str(live.id): DEFAULT_WORKFLOW_REQUEST_BYTES}
+    await loop._release(loop._owned.pop(str(live.id)))
+    assert holds == {}
 
 
 async def test_beat_renews_lease_and_rotates_token(db_session, redis_holder):

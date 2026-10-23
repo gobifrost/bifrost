@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from shared.run_lineage import unattended_lineage
+from src.services.memory_requests import workflow_request_sql
 from src.models.orm.services import _SERVICE_LIVE_STATES, ServiceAttempt, ServiceDefinition, ServiceLog
 from src.models.orm.workflows import Workflow
 
@@ -619,13 +620,16 @@ async def claim_eligible_service(
     db: AsyncSession,
     *,
     worker_id: str,
+    fits_bytes: int,
     lease_ttl_seconds: int = 60,
     now: datetime | None = None,
 ) -> ServiceAttempt | None:
     """Atomically claim one eligible service for this worker.
 
     Eligibility: enabled, desired running, no suppression, backoff elapsed,
-    and no live attempt. The definition row is locked SKIP LOCKED so workers
+    no live attempt, and a memory request (its workflow's learned peak, see
+    src.services.memory_requests) that fits ``fits_bytes``, the claiming
+    executor's free budget. The definition row is locked SKIP LOCKED so workers
     never block each other; the partial unique index backstops races.
     Returns None when nothing is eligible. The caller commits.
     """
@@ -653,6 +657,7 @@ async def claim_eligible_service(
             ServiceDefinition.organization_id.is_not(None),
             ServiceDefinition.desired_state == "running",
             ServiceDefinition.blocked_reason.is_(None),
+            workflow_request_sql(Workflow.learned_memory_bytes) <= fits_bytes,
             (
                 ServiceDefinition.restart_eligible_at.is_(None)
                 | (ServiceDefinition.restart_eligible_at <= now)

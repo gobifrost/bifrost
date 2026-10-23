@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Awaitable, cast
 from uuid import UUID
@@ -46,6 +47,11 @@ class OwnedAttempt:
     service_id: UUID
     lease_token: str
     stop_mirrored: bool = False
+    # The service's workflow, its memory request (held from the executor's
+    # budget while supervised) and the most memory it reported.
+    workflow_id: UUID | None = None
+    memory_request_bytes: int = 0
+    peak_memory_bytes: int = 0
 
 
 @dataclass
@@ -62,6 +68,10 @@ class ServiceClaimLoop:
     # The DB lease (not this wait) owns the lifetime: anything still live
     # expires and restarts elsewhere.
     handover_wait_seconds: float = 5.0
+    # The executor's free memory budget, and how it holds (bytes) or
+    # releases (None) one attempt's request (src.services.memory_requests).
+    free_bytes: Callable[[], int] | None = None
+    hold_memory: Callable[[str, int | None], None] | None = None
 
     _owned: dict[str, OwnedAttempt] = field(default_factory=dict)
     _running: bool = False
@@ -294,6 +304,7 @@ class ServiceClaimLoop:
             return
         if memory_mb is None:
             return
+        owned.peak_memory_bytes = max(owned.peak_memory_bytes, int(memory_mb * 2**20))
         try:
             from datetime import datetime, timezone
 
@@ -431,9 +442,27 @@ class ServiceClaimLoop:
                 "token rotation failed for %s: %s", owned.attempt_id, e
             )
 
+    async def _release(self, owned: OwnedAttempt | None) -> None:
+        """Return an attempt's memory to the budget and learn its peak."""
+        if owned is None:
+            return
+        if self.hold_memory is not None:
+            self.hold_memory(str(owned.attempt_id), None)
+        if owned.workflow_id is None or owned.peak_memory_bytes <= 0:
+            return
+        try:
+            from src.core.database import get_db_context
+            from src.services.memory_requests import record_peak_growth
+
+            async with get_db_context() as db:
+                await record_peak_growth(db, owned.workflow_id, owned.peak_memory_bytes, None)
+                await db.commit()
+        except Exception as e:
+            logger.debug("service memory learning failed for %s: %s", owned.attempt_id, e)
+
     async def _drop_ownership(self, owned: OwnedAttempt, stops: list[str]) -> None:
         """Forget an attempt and revoke its rotation channel."""
-        self._owned.pop(str(owned.attempt_id), None)
+        await self._release(self._owned.pop(str(owned.attempt_id), None))
         await self._clear_reported_memory(str(owned.attempt_id))
         try:
             from src.core.cache import get_redis
@@ -460,17 +489,8 @@ class ServiceClaimLoop:
 
     # -- claiming ------------------------------------------------------
 
-    def _service_capacity(self) -> int:
-        if self.pool is None:
-            return 0
-        return max(
-            0,
-            self.pool.max_service_workers
-            - len(self.pool.service_processes),
-        )
-
     async def _claim_available(self) -> None:
-        """Claim eligible services while local slots remain (worker-pull).
+        """Claim eligible services while one fits the free budget (worker-pull).
 
         The durable claim commits BEFORE the child forks: a fast outcome
         (load failure, instant return) completes through ``handle_service_result``
@@ -482,12 +502,16 @@ class ServiceClaimLoop:
         from src.core.database import get_db_context
         from src.services import service_lifecycle as lifecycle
 
-        while self._service_capacity() > 0:
+        if self.pool is None:
+            return
+        assert self.free_bytes is not None, "an executor's claim loop has a budget"
+        while True:
             async with get_db_context() as db:
                 try:
                     attempt = await lifecycle.claim_eligible_service(
                         db,
                         worker_id=self.worker_id,
+                        fits_bytes=self.free_bytes(),
                         lease_ttl_seconds=self.lease_ttl_seconds,
                     )
                     if attempt is None:
@@ -659,11 +683,25 @@ class ServiceClaimLoop:
                 self.token_lifetime_seconds + 300,
                 json.dumps({"token": token, "expires_at": expires_at}),
             )
+        from sqlalchemy import select
+
+        from src.models.orm.workflows import Workflow
+        from src.services.memory_requests import workflow_request_bytes
+
+        request = workflow_request_bytes(
+            await db.scalar(
+                select(Workflow.learned_memory_bytes).where(Workflow.id == definition.workflow_id)
+            )
+        )
         self._owned[str(attempt.id)] = OwnedAttempt(
             attempt_id=attempt.id,
             service_id=definition.id,
             lease_token=attempt.lease_token,
+            workflow_id=definition.workflow_id,
+            memory_request_bytes=request,
         )
+        if self.hold_memory is not None:
+            self.hold_memory(str(attempt.id), request)
         logger.info(
             "worker %s launched service %s (attempt %s)",
             self.worker_id,
@@ -743,6 +781,7 @@ class ServiceClaimLoop:
             return
         finally:
             owned = self._owned.pop(str(attempt_id), None)
+            await self._release(owned)
             await self._clear_reported_memory(str(attempt_id))
             # Drop any cursor staged by an earlier beat for this attempt:
             # the completion path owns the cursor from here.

@@ -1,7 +1,7 @@
 """Unit tests for supervised service children in ProcessPoolManager.
 
 Service children fork from the same template but live under separate
-slot accounting (max_service_workers), never face the execution timeout
+accounting, never face the execution timeout
 kill, and report through on_service_result.
 """
 
@@ -21,7 +21,6 @@ SERVICE_ID = "00000000-0000-4000-8000-000000000001"
 
 
 def _make_pool(**kwargs):
-    kwargs.setdefault("max_service_workers", 2)
     return ProcessPoolManager(**kwargs)
 
 
@@ -88,17 +87,6 @@ class TestRouteService:
         handle.work_queue.put_nowait.assert_called_once_with(
             ("attempt-1", _service_context())
         )
-
-    async def test_full_service_slots_raise_without_touching_workflows(self):
-        pool = _make_pool(max_service_workers=1)
-        pool._fork_process = lambda: _spawn(pool)
-
-        await _route(pool)
-        with pytest.raises(RuntimeError, match="No service slot available"):
-            await _route(pool, attempt_id="attempt-2")
-
-        assert len(pool.processes) == 0
-        assert len(pool.service_processes) == 1
 
     async def test_memory_pressure_rejects_service_fork(self):
         pool = _make_pool()

@@ -20,6 +20,9 @@ from src.services.service_lifecycle import (
 )
 
 
+# A free budget every test service fits.
+AMPLE = 2**40
+
 async def _ensure_org(db_session):
     """Insert a real Organization row (workflows FK-restrict to it)."""
     from shared.identities import ensure_default_identity
@@ -136,8 +139,7 @@ async def test_ensure_is_idempotent_and_preserves_policy(db_session):
 async def test_sync_parks_converted_rows(db_session):
     """A row converting away from service keeps history but cannot launch."""
     definition, wf = await _ensure(db_session)
-    attempt = await service_lifecycle.claim_eligible_service(
-        db_session, worker_id="w1"
+    attempt = await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1"
     )
     assert attempt is not None
 
@@ -190,7 +192,7 @@ async def test_update_policy_validates(db_session):
 async def test_stop_marks_live_attempt(db_session):
     """Stop stores desire first and asks the live attempt to stop."""
     definition, _ = await _ensure(db_session)
-    attempt = await service_lifecycle.claim_eligible_service(db_session, worker_id="w1")
+    attempt = await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1")
     assert attempt is not None
 
     stopped = await service_lifecycle.stop_service(db_session, definition)
@@ -218,7 +220,7 @@ async def test_start_requires_enabled(db_session):
 async def test_restart_asks_live_attempt_to_stop(db_session):
     """Restart keeps running desire and flags the live attempt."""
     definition, _ = await _ensure(db_session)
-    await service_lifecycle.claim_eligible_service(db_session, worker_id="w1")
+    await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1")
 
     restarted = await service_lifecycle.restart_service(db_session, definition)
     assert restarted.desired_state == "running"
@@ -241,7 +243,7 @@ async def test_claim_binds_the_workflow_identity(db_session):
     workflow.run_identity_id = identity.id
     await db_session.flush()
 
-    attempt = await service_lifecycle.claim_eligible_service(db_session, worker_id="w1")
+    attempt = await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1")
 
     assert attempt is not None
     assert attempt.run_user_id == identity.id
@@ -252,7 +254,7 @@ async def test_claim_binds_the_organization_default_when_workflow_identity_is_un
     """An unassigned org service binds its organization's default identity."""
     definition, workflow = await _ensure(db_session)
 
-    attempt = await service_lifecycle.claim_eligible_service(db_session, worker_id="w1")
+    attempt = await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1")
 
     assert attempt is not None
     assert workflow.run_identity_id is None
@@ -270,7 +272,7 @@ async def test_workflow_identity_changes_do_not_reassign_a_claimed_attempt(db_se
     workflow.run_identity_id = first_identity.id
     await db_session.flush()
 
-    attempt = await service_lifecycle.claim_eligible_service(db_session, worker_id="w1")
+    attempt = await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1")
     assert attempt is not None
 
     workflow.run_identity_id = second_identity.id
@@ -287,7 +289,7 @@ async def test_deleting_a_bound_identity_nulls_the_attempt_without_reassignment(
     identity = await _custom_identity(db_session, definition.organization_id)
     workflow.run_identity_id = identity.id
     await db_session.flush()
-    attempt = await service_lifecycle.claim_eligible_service(db_session, worker_id="w1")
+    attempt = await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1")
     assert attempt is not None
 
     # Workflow references restrict deletion; removing that source assignment
@@ -307,28 +309,28 @@ async def test_claim_returns_none_when_nothing_eligible(db_session):
     definition, _ = await _ensure(db_session)
 
     await service_lifecycle.stop_service(db_session, definition)
-    assert await service_lifecycle.claim_eligible_service(db_session, worker_id="w1") is None
+    assert await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1") is None
 
     await service_lifecycle.start_service(db_session, definition)
     await service_lifecycle.set_enabled(db_session, definition, False)
-    assert await service_lifecycle.claim_eligible_service(db_session, worker_id="w1") is None
+    assert await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1") is None
 
     await service_lifecycle.set_enabled(db_session, definition, True)
     definition.blocked_reason = "policy"
     await db_session.flush()
-    assert await service_lifecycle.claim_eligible_service(db_session, worker_id="w1") is None
+    assert await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1") is None
 
 
 @pytest.mark.asyncio
 async def test_second_claim_blocked_while_live(db_session):
     """A live attempt suppresses further claims for the same service."""
     definition, _ = await _ensure(db_session)
-    first = await service_lifecycle.claim_eligible_service(db_session, worker_id="w1")
+    first = await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1")
     assert first is not None
     assert first.state == "starting"
     assert first.restart_number == 0
 
-    assert await service_lifecycle.claim_eligible_service(db_session, worker_id="w2") is None
+    assert await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w2") is None
 
 
 @pytest.mark.asyncio
@@ -349,7 +351,7 @@ async def test_concurrent_claims_yield_single_attempt(async_session_factory):
             async with async_session_factory() as session:
                 try:
                     attempt = await service_lifecycle.claim_eligible_service(
-                        session, worker_id=worker_id
+                        session, worker_id=worker_id, fits_bytes=AMPLE
                     )
                     await session.commit()
                     return attempt.id if attempt else None
@@ -410,7 +412,7 @@ async def test_concurrent_claims_yield_single_attempt(async_session_factory):
 async def test_heartbeat_rejects_stale_token(db_session):
     """Wrong lease tokens fail heartbeat and completion."""
     definition, _ = await _ensure(db_session)
-    attempt = await service_lifecycle.claim_eligible_service(db_session, worker_id="w1")
+    attempt = await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1")
 
     renewed = await service_lifecycle.heartbeat_attempt(
         db_session, attempt_id=attempt.id, lease_token=attempt.lease_token
@@ -431,7 +433,7 @@ async def test_heartbeat_rejects_stale_token(db_session):
 async def test_ready_transitions_starting_to_running(db_session):
     """service.ready() moves the attempt to running exactly once."""
     definition, _ = await _ensure(db_session)
-    attempt = await service_lifecycle.claim_eligible_service(db_session, worker_id="w1")
+    attempt = await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1")
 
     ready = await service_lifecycle.mark_attempt_ready(
         db_session, attempt_id=attempt.id, lease_token=attempt.lease_token
@@ -447,7 +449,7 @@ async def test_ready_transitions_starting_to_running(db_session):
 async def test_clean_return_always_reschedules(db_session):
     """Clean exit under always restarts promptly without failure accounting."""
     definition, _ = await _ensure(db_session)
-    attempt = await service_lifecycle.claim_eligible_service(db_session, worker_id="w1")
+    attempt = await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1")
 
     updated = await service_lifecycle.complete_attempt(
         db_session, attempt_id=attempt.id, lease_token=attempt.lease_token,
@@ -464,7 +466,7 @@ async def test_clean_return_on_failure_blocks(db_session):
     """Clean exit under on_failure parks with a policy block."""
     definition, _ = await _ensure(db_session)
     await service_lifecycle.update_policy(db_session, definition, restart_policy="on_failure")
-    attempt = await service_lifecycle.claim_eligible_service(db_session, worker_id="w1")
+    attempt = await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1")
 
     updated = await service_lifecycle.complete_attempt(
         db_session, attempt_id=attempt.id, lease_token=attempt.lease_token,
@@ -472,7 +474,7 @@ async def test_clean_return_on_failure_blocks(db_session):
     )
     assert updated.blocked_reason == "policy"
     assert updated.restart_eligible_at is None
-    assert await service_lifecycle.claim_eligible_service(db_session, worker_id="w1") is None
+    assert await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1") is None
 
 
 @pytest.mark.asyncio
@@ -480,7 +482,7 @@ async def test_failed_never_blocks(db_session):
     """Failures under never park with a policy block."""
     definition, _ = await _ensure(db_session)
     await service_lifecycle.update_policy(db_session, definition, restart_policy="never")
-    attempt = await service_lifecycle.claim_eligible_service(db_session, worker_id="w1")
+    attempt = await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1")
 
     updated = await service_lifecycle.complete_attempt(
         db_session, attempt_id=attempt.id, lease_token=attempt.lease_token,
@@ -500,7 +502,7 @@ async def test_repeated_failures_enter_crash_loop(db_session):
     )
 
     for _ in range(3):
-        attempt = await service_lifecycle.claim_eligible_service(db_session, worker_id="w1")
+        attempt = await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1")
         assert attempt is not None
         definition = await service_lifecycle.complete_attempt(
             db_session, attempt_id=attempt.id, lease_token=attempt.lease_token,
@@ -509,12 +511,12 @@ async def test_repeated_failures_enter_crash_loop(db_session):
 
     assert definition.blocked_reason == "crash_loop"
     assert definition.restart_eligible_at is None
-    assert await service_lifecycle.claim_eligible_service(db_session, worker_id="w1") is None
+    assert await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1") is None
 
     # Manual restart clears the loop.
     restarted = await service_lifecycle.restart_service(db_session, definition)
     assert restarted.blocked_reason is None
-    assert await service_lifecycle.claim_eligible_service(db_session, worker_id="w1") is not None
+    assert await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1") is not None
 
 
 @pytest.mark.asyncio
@@ -528,7 +530,7 @@ async def test_backoff_is_bounded_by_max(db_session):
     )
 
     for i in range(4):
-        attempt = await service_lifecycle.claim_eligible_service(db_session, worker_id="w1")
+        attempt = await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1")
         assert attempt is not None
         definition = await service_lifecycle.complete_attempt(
             db_session, attempt_id=attempt.id, lease_token=attempt.lease_token,
@@ -553,7 +555,7 @@ async def test_requested_completion_reschedules_without_accounting(db_session):
         db_session, definition, crash_loop_max_restarts=2, crash_loop_window_seconds=3600
     )
     for _ in range(3):
-        attempt = await service_lifecycle.claim_eligible_service(db_session, worker_id="w1")
+        attempt = await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1")
         definition = await service_lifecycle.complete_attempt(
             db_session, attempt_id=attempt.id, lease_token=attempt.lease_token,
             reason="requested",
@@ -568,8 +570,7 @@ async def test_requested_completion_reschedules_without_accounting(db_session):
 async def test_expire_leases_fails_and_reschedules(db_session):
     """Expired leases become failed attempts with restart decisions applied."""
     definition, _ = await _ensure(db_session)
-    attempt = await service_lifecycle.claim_eligible_service(
-        db_session, worker_id="w1", lease_ttl_seconds=-1
+    attempt = await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1", lease_ttl_seconds=-1
     )
     assert attempt is not None
 
@@ -582,10 +583,10 @@ async def test_expire_leases_fails_and_reschedules(db_session):
     await db_session.refresh(definition)
     assert definition.restart_eligible_at is not None
     # Backoff gates the next claim; force eligibility to prove recovery works.
-    assert await service_lifecycle.claim_eligible_service(db_session, worker_id="w2") is None
+    assert await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w2") is None
     definition.restart_eligible_at = service_lifecycle._now()
     await db_session.flush()
-    assert await service_lifecycle.claim_eligible_service(db_session, worker_id="w2") is not None
+    assert await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w2") is not None
 
 
 # --- Observed state ---
@@ -597,7 +598,7 @@ async def test_observed_state_mapping(db_session):
     definition, _ = await _ensure(db_session)
 
     assert service_lifecycle.describe_observed_state(definition, None) == "restarting"
-    attempt = await service_lifecycle.claim_eligible_service(db_session, worker_id="w1")
+    attempt = await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1")
     assert service_lifecycle.describe_observed_state(definition, attempt) == "starting"
     await service_lifecycle.mark_attempt_ready(
         db_session, attempt_id=attempt.id, lease_token=attempt.lease_token
@@ -617,14 +618,14 @@ async def test_observed_state_mapping(db_session):
 async def test_list_attempts_paginates(db_session):
     """Attempts list newest-first with totals."""
     definition, _ = await _ensure(db_session)
-    attempt = await service_lifecycle.claim_eligible_service(db_session, worker_id="w1")
+    attempt = await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1")
     await service_lifecycle.complete_attempt(
         db_session, attempt_id=attempt.id, lease_token=attempt.lease_token,
         reason="requested",
     )
     definition.restart_eligible_at = service_lifecycle._now()
     await db_session.flush()
-    await service_lifecycle.claim_eligible_service(db_session, worker_id="w1")
+    await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1")
 
     items, total = await service_lifecycle.list_attempts(db_session, definition.id)
     assert total == 2
@@ -652,8 +653,7 @@ async def test_expired_lease_fences_owner_writes(db_session):
     from datetime import timedelta
 
     definition, _ = await _ensure(db_session)
-    attempt = await service_lifecycle.claim_eligible_service(
-        db_session, worker_id="w1", lease_ttl_seconds=60
+    attempt = await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1", lease_ttl_seconds=60
     )
     # Age the lease past expiry without sweeping.
     attempt.lease_expires_at = service_lifecycle._now() - timedelta(seconds=1)
@@ -683,16 +683,16 @@ async def test_claim_requires_active_service_source(db_session):
 
     wf.is_active = False
     await db_session.flush()
-    assert await service_lifecycle.claim_eligible_service(db_session, worker_id="w1") is None
+    assert await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1") is None
 
     wf.is_active = True
     wf.type = "workflow"
     await db_session.flush()
-    assert await service_lifecycle.claim_eligible_service(db_session, worker_id="w1") is None
+    assert await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1") is None
 
     wf.type = "service"
     await db_session.flush()
-    assert await service_lifecycle.claim_eligible_service(db_session, worker_id="w1") is not None
+    assert await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1") is not None
 
 
 @pytest.mark.asyncio
@@ -700,7 +700,7 @@ async def test_claim_skips_org_less_definitions(db_session):
     """Services are always org-scoped: org-less definitions never launch."""
     definition, _ = await _ensure(db_session, org_id=None)
     assert definition.organization_id is None
-    assert await service_lifecycle.claim_eligible_service(db_session, worker_id="w1") is None
+    assert await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1") is None
 
 
 @pytest.mark.asyncio
@@ -714,7 +714,7 @@ async def test_window_counts_terminal_time(db_session):
     await service_lifecycle.update_policy(
         db_session, definition, crash_loop_max_restarts=1, crash_loop_window_seconds=3600
     )
-    attempt = await service_lifecycle.claim_eligible_service(db_session, worker_id="w1")
+    attempt = await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1")
     # The run started two hours ago; it fails now.
     await db_session.execute(
         sa_update(ServiceAttempt)
