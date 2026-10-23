@@ -70,6 +70,20 @@ class Settings(BaseSettings):
         description="Max overflow connections beyond pool size"
     )
 
+    database_dispatch_pool_size: int = Field(
+        default=4,
+        description=(
+            "Connections kept for accepting workflow runs. Separate from the "
+            "main pool so request handlers holding a connection never wait on "
+            "each other for a second one."
+        ),
+    )
+
+    database_dispatch_max_overflow: int = Field(
+        default=6,
+        description="Max overflow connections for the work-acceptance pool",
+    )
+
     # ==========================================================================
     # RabbitMQ
     # ==========================================================================

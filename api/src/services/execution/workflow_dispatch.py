@@ -50,15 +50,29 @@ def _organization_id(org_id: str | None) -> UUID | None:
     return UUID(org_id[4:] if org_id.startswith("ORG:") else org_id)
 
 
-async def _workflow_name(db: AsyncSession, pending: PendingExecution) -> str:
+async def _row_identity(db: AsyncSession, pending: PendingExecution) -> tuple[str, UUID | None]:
+    """Display name and owning organization for the PENDING row.
+
+    Mirrors the worker: an org-scoped workflow's runs belong to the
+    workflow's organization, others to the caller's.
+    """
+    caller_org = _organization_id(pending["org_id"])
     if pending["script_name"]:
-        return pending["script_name"]
+        return pending["script_name"], caller_org
     workflow_id = pending["workflow_id"]
     if workflow_id is None:
-        return "workflow"
-    name = await db.scalar(select(Workflow.name).where(Workflow.id == UUID(workflow_id)))
-    # The worker records the resolved name when it claims the run.
-    return name or workflow_id
+        return "workflow", caller_org
+    row = (
+        await db.execute(
+            select(Workflow.name, Workflow.organization_id).where(
+                Workflow.id == UUID(workflow_id)
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        # The worker records the failure when it claims the run.
+        return workflow_id, caller_org
+    return row.name, row.organization_id or caller_org
 
 
 async def stage_workflow_run(
@@ -71,14 +85,15 @@ async def stage_workflow_run(
     """Add the run's durable records to the caller's transaction."""
     execution_id = UUID(pending["execution_id"])
     if not record_exists:
+        workflow_name, organization_id = await _row_identity(db, pending)
         db.add(
             Execution(
                 id=execution_id,
                 workflow_id=UUID(pending["workflow_id"]) if pending["workflow_id"] else None,
-                workflow_name=await _workflow_name(db, pending),
+                workflow_name=workflow_name,
                 status=ExecutionStatus.PENDING,
                 parameters=pending["parameters"],
-                organization_id=_organization_id(pending["org_id"]),
+                organization_id=organization_id,
                 executed_by=UUID(pending["user_id"]),
                 executed_by_name=pending["user_name"],
                 form_id=UUID(pending["form_id"]) if pending["form_id"] else None,
@@ -149,9 +164,17 @@ async def claim_workflow_dispatch(
     return PendingExecution(**payload)  # type: ignore[typeddict-item]
 
 
-async def run_is_waiting(db: AsyncSession, execution_id: UUID) -> bool:
-    status = await db.scalar(select(Execution.status).where(Execution.id == execution_id))
-    return status == ExecutionStatus.PENDING
+async def lock_waiting_run(db: AsyncSession, execution_id: UUID) -> bool | None:
+    """Lock the run before its dispatch (the claim's order); None if busy."""
+    status = await db.scalar(
+        select(Execution.status)
+        .where(Execution.id == execution_id)
+        .with_for_update(skip_locked=True)
+    )
+    if status is not None:
+        return status == ExecutionStatus.PENDING
+    exists = await db.scalar(select(Execution.id).where(Execution.id == execution_id))
+    return None if exists is not None else False
 
 
 async def fail_unclaimed_run(db: AsyncSession, execution_id: UUID, reason: str) -> None:
@@ -166,6 +189,83 @@ async def fail_unclaimed_run(db: AsyncSession, execution_id: UUID, reason: str) 
     )
 
 
+async def _notify_ended_before_start(
+    execution_id: UUID,
+    *,
+    status: str,
+    error: str,
+    error_type: str,
+    sync: bool,
+) -> None:
+    """Tell live views, the queue and any sync caller; all best-effort."""
+    from src.core.pubsub import publish_execution_update
+    from src.services.execution.queue_tracker import remove_from_queue
+
+    steps = [
+        remove_from_queue(str(execution_id)),
+        publish_execution_update(execution_id, status, {"error": error}),
+    ]
+    if sync:
+        steps.append(
+            get_redis_client().push_result(
+                execution_id=str(execution_id),
+                status=status,
+                error=error,
+                error_type=error_type,
+                duration_ms=0,
+            )
+        )
+    for step in steps:
+        try:
+            await step
+        except Exception:
+            logger.warning(
+                "Could not report a run that ended before it started",
+                extra={"execution_id": str(execution_id)},
+                exc_info=True,
+            )
+
+
+async def report_unclaimed_run(
+    execution_id: UUID, payload: dict[str, Any], reason: str
+) -> None:
+    await _notify_ended_before_start(
+        execution_id,
+        status=ExecutionStatus.FAILED.value,
+        error=reason,
+        error_type="DispatchNotClaimed",
+        sync=bool(payload.get("sync")),
+    )
+
+
+async def notify_discarded_sync_run(db: AsyncSession, execution_id: UUID) -> None:
+    """Wake a sync caller whose run ended before any worker started it.
+
+    A duplicate delivery of a run already started must not wake the caller,
+    so only runs that never started (no ``started_at``) are reported.
+    """
+    row = (
+        await db.execute(
+            select(Execution.status, Execution.started_at, Execution.error_message).where(
+                Execution.id == execution_id
+            )
+        )
+    ).one_or_none()
+    if row is None or row.started_at is not None:
+        return
+    if row.status not in (ExecutionStatus.CANCELLED, ExecutionStatus.FAILED):
+        return
+    await _notify_ended_before_start(
+        execution_id,
+        status=row.status.value,
+        error=row.error_message or "Execution was cancelled before it could start",
+        error_type="CancelledBeforeStart"
+        if row.status == ExecutionStatus.CANCELLED
+        else "FailedBeforeStart",
+        sync=True,
+    )
+
+
 __all__ = [
     "AcceptedRun",
     "FAMILY",
@@ -175,6 +275,8 @@ __all__ = [
     "claim_workflow_dispatch",
     "fail_unclaimed_run",
     "hand_off_workflow_run",
-    "run_is_waiting",
+    "lock_waiting_run",
+    "notify_discarded_sync_run",
+    "report_unclaimed_run",
     "stage_workflow_run",
 ]

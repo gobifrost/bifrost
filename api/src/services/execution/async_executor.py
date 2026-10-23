@@ -21,7 +21,7 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from src.core.database import get_db_context
+from src.core.database import get_dispatch_db_context
 from src.core.log_safety import log_safe
 from src.core.redis_client import PendingExecution, pending_execution_record
 from src.sdk.context import EventContext, ExecutionContext
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 async def _accept(pending: PendingExecution, message: dict[str, Any]) -> None:
     """Commit the run durably, then hand it to the broker."""
-    async with get_db_context() as db:
+    async with get_dispatch_db_context() as db:
         accepted = await stage_workflow_run(db, pending, message, record_exists=False)
         await db.commit()
     await hand_off_workflow_run(accepted)

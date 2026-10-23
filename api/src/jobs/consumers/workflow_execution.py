@@ -728,6 +728,13 @@ class WorkflowExecutionConsumer(BaseConsumer):
                     extra={"execution_id": execution_id, "dispatch_id": dispatch_id},
                 )
                 await self._redis_client.delete_pending_execution(execution_id)
+                if is_sync:
+                    from src.services.execution.workflow_dispatch import (
+                        notify_discarded_sync_run,
+                    )
+
+                    async with get_db_context() as db:
+                        await notify_discarded_sync_run(db, UUID(execution_id))
                 return
         else:
             # A message published before durable dispatch: context in Redis.
