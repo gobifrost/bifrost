@@ -576,13 +576,22 @@ async def run_claimed_platform_job(claim: ClaimedPlatformJob) -> bool:
     return False
 
 
-async def process_platform_jobs() -> tuple[int, int]:
-    """Recover expired leases, then run at most one queued platform job."""
+async def process_platform_jobs(active: set[UUID] | None = None) -> tuple[int, int]:
+    """Recover expired leases, then run at most one queued platform job.
+
+    ``active`` holds the ids of jobs this host is running, for a host that
+    must not retire while it runs one (an executor).
+    """
     recovered, recovery_failures = await recover_expired_platform_jobs()
     claim = await claim_platform_job(backend="local")
     if claim is None:
         return recovered, recovery_failures
-    succeeded = await run_claimed_platform_job(claim)
+    running = active if active is not None else set()
+    running.add(claim.id)
+    try:
+        succeeded = await run_claimed_platform_job(claim)
+    finally:
+        running.discard(claim.id)
     return recovered + 1, recovery_failures + (0 if succeeded else 1)
 
 
@@ -590,12 +599,13 @@ async def platform_job_worker_loop(
     shutdown_event: asyncio.Event,
     *,
     idle_seconds: float = PLATFORM_JOB_IDLE_SECONDS,
+    active: set[UUID] | None = None,
 ) -> None:
-    """Continuously claim one job at a time for this scheduler replica."""
+    """Continuously claim one job at a time for this host."""
     while not shutdown_event.is_set():
         processed = 0
         try:
-            processed, _ = await process_platform_jobs()
+            processed, _ = await process_platform_jobs(active)
         except asyncio.CancelledError:
             raise
         except Exception:

@@ -1003,7 +1003,7 @@ async def test_worker_loop_drains_jobs_before_waiting(
     shutdown = asyncio.Event()
     calls = 0
 
-    async def process_once() -> tuple[int, int]:
+    async def process_once(active: set | None = None) -> tuple[int, int]:
         nonlocal calls
         calls += 1
         if calls == 3:

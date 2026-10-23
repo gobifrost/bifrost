@@ -29,6 +29,9 @@ from shared.schema_gate import wait_for_schema
 from src.config import Settings, get_settings
 from src.core.database import close_db, get_engine, init_db
 from src.core.redis_client import PendingExecution
+from src.jobs.schedulers.platform_jobs import platform_job_worker_loop
+from src.scheduler.control import replica_heartbeat_loop
+from src.services.scheduler_diagnostics import remove_scheduler_replica
 from src.jobs.summarize_worker import handle_summarize_message
 from src.services.package_generation import (
     change_message,
@@ -57,6 +60,8 @@ logger = logging.getLogger(__name__)
 POLL_SECONDS = 1.0
 HEARTBEAT_SECONDS = 5.0
 DRAIN_GRACE_SECONDS = 300.0
+# Local platform jobs run one at a time per slot, as on a scheduler replica.
+PLATFORM_JOB_SLOTS = 2
 
 
 def executor_database_settings(settings: Settings) -> Settings:
@@ -105,6 +110,11 @@ class PoolWorker:
         self._agent_consumer = None
         self._package_consumer = None
         self.package_generation = 0
+        self._service_claim_loop = None
+        # Ids of the local platform jobs this executor is running.
+        self._platform_jobs: set[UUID] = set()
+        # Set to stop claiming platform jobs; running ones finish.
+        self._platform_stop = asyncio.Event()
 
     def request_stop(self) -> None:
         self._stop.set()
@@ -116,6 +126,15 @@ class PoolWorker:
             else 0
         )
         return pool_runs + len(self._tasks["workflow.execute"])
+
+    def _services(self) -> int:
+        if self._workflow_consumer is None:
+            return 0
+        return len(self._workflow_consumer._pool.service_processes)
+
+    def busy(self) -> bool:
+        """Runs, services or platform jobs: an executor with any is not idle."""
+        return self.active_runs() > 0 or self._services() > 0 or bool(self._platform_jobs)
 
     def active_runs(self) -> int:
         return self._workflow_runs() + sum(
@@ -176,6 +195,7 @@ class PoolWorker:
         from src.jobs.consumers.package_install import PackageInstallConsumer
 
         self._package_consumer = PackageInstallConsumer()
+        await self._start_service_claim_loop()
         logger.info(
             "Pool worker ready",
             extra={"incarnation_id": str(self.incarnation_id), "slots": slots},
@@ -184,6 +204,21 @@ class PoolWorker:
             asyncio.create_task(self._heartbeat_loop(), name="pool-heartbeat"),
             asyncio.create_task(self._wake_listener(), name="pool-wake"),
             asyncio.create_task(self._package_loop(), name="pool-packages"),
+            asyncio.create_task(
+                replica_heartbeat_loop(
+                    replica_id=str(self.incarnation_id),
+                    job_slots=PLATFORM_JOB_SLOTS,
+                    stop_event=self._platform_stop,
+                ),
+                name="pool-diagnostics-heartbeat",
+            ),
+            *(
+                asyncio.create_task(
+                    platform_job_worker_loop(self._platform_stop, active=self._platform_jobs),
+                    name=f"pool-platform-job-{slot + 1}",
+                )
+                for slot in range(PLATFORM_JOB_SLOTS)
+            ),
         ]
         try:
             await self._claim_loop()
@@ -193,6 +228,10 @@ class PoolWorker:
                 task.cancel()
             await asyncio.gather(*background, return_exceptions=True)
             await retire_worker(self.incarnation_id, runs_handled=self.runs_handled)
+            try:
+                await remove_scheduler_replica(str(self.incarnation_id))
+            except Exception:
+                logger.exception("Failed to remove the executor's diagnostics heartbeat")
             await self._workflow_consumer.stop_pool()
             from src.jobs.rabbitmq import rabbitmq
 
@@ -218,7 +257,7 @@ class PoolWorker:
                     self._start(claim)
                     last_activity = time.monotonic()
                     continue
-            if self.active_runs() > 0:
+            if self.busy():
                 last_activity = time.monotonic()
             elif (
                 not self.static
@@ -333,9 +372,37 @@ class PoolWorker:
                 logger.exception("Pool worker heartbeat failed")
             await asyncio.sleep(HEARTBEAT_SECONDS)
 
+    async def _start_service_claim_loop(self) -> None:
+        """Supervise services in this executor's pool (separate service slots)."""
+        from src.services.service_claim import ServiceClaimLoop
+
+        assert self._workflow_consumer is not None
+        pool = self._workflow_consumer._pool
+        self._service_claim_loop = ServiceClaimLoop(
+            worker_id=pool.worker_id,
+            pool=pool,
+            claim_interval_seconds=self.settings.service_claim_interval_seconds,
+            beat_interval_seconds=self.settings.service_heartbeat_interval_seconds,
+            lease_ttl_seconds=self.settings.service_lease_ttl_seconds,
+            token_lifetime_seconds=self.settings.service_token_lifetime_seconds,
+        )
+        pool.on_service_result = self._service_claim_loop.handle_service_result
+        await self._service_claim_loop.start()
+
     async def _drain(self) -> None:
+        """Hand services over, stop claiming platform jobs, let work finish.
+
+        Services go first, like the broker worker's stop: they restart
+        elsewhere through their lease. Running runs and platform jobs finish.
+        """
+        if self._service_claim_loop is not None:
+            try:
+                await self._service_claim_loop.stop()
+            except Exception:
+                logger.exception("Pool worker service handover failed")
+        self._platform_stop.set()
         deadline = time.monotonic() + DRAIN_GRACE_SECONDS
-        while self.active_runs() > 0 and time.monotonic() < deadline:
+        while (self.active_runs() > 0 or self._platform_jobs) and time.monotonic() < deadline:
             await asyncio.sleep(0.5)
 
 

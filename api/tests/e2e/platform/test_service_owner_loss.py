@@ -33,10 +33,11 @@ import pytest
 
 pytestmark = pytest.mark.e2e
 
-# Stack-worker service slots to occupy. Must match the worker's
-# max_service_workers setting (default 20; the test compose sets no
-# override). If it drifts, the target claim below fails loudly.
-STACK_SERVICE_SLOTS = 20
+# Service slots per stack host. Must match max_service_workers (default 20;
+# the test compose sets no override). If it drifts, the target claim below
+# fails loudly. Every registered process pool (broker worker or executor)
+# hosts services, so the stack's capacity is this times the pool count.
+SERVICE_SLOTS_PER_HOST = 20
 
 _FILLER_SOURCE = '''"""Slot filler: healthy service that idles forever."""
 
@@ -140,10 +141,10 @@ def _make_loop(pool, **overrides):
 
 @pytest.fixture(scope="module")
 def slot_fillers(e2e_client, platform_admin):
-    """Occupy every stack-worker service slot with healthy dummies.
+    """Occupy every stack service slot with healthy dummies.
 
-    Registers STACK_SERVICE_SLOTS idle services and waits until each has a
-    live attempt (i.e. the stack worker owns them all). The mechanical-test
+    Registers one idle service per stack service slot and waits until each
+    has a live attempt (i.e. the stack hosts own them all). The mechanical-test
     target registered afterwards stays eligible-but-unclaimed until the
     test-local loop claims it. Disabled afterwards to release the slots.
 
@@ -153,8 +154,12 @@ def slot_fillers(e2e_client, platform_admin):
     from tests.e2e.conftest import write_and_register
 
     headers = platform_admin.headers
+    pools = e2e_client.get("/api/platform/workers", headers=headers)
+    assert pools.status_code == 200, pools.text
+    stack_slots = SERVICE_SLOTS_PER_HOST * pools.json()["total"]
+    assert stack_slots > 0, "no stack service host is registered"
     filler_ids = []
-    for i in range(STACK_SERVICE_SLOTS):
+    for i in range(stack_slots):
         suffix = f"fill{i}{uuid4().hex[:6]}"
         function_name = f"e2e_qfill_{suffix}"
         registered = write_and_register(
@@ -186,7 +191,7 @@ def slot_fillers(e2e_client, platform_admin):
         time.sleep(2.0)
     else:
         raise AssertionError(
-            f"stack slots never filled (STACK_SERVICE_SLOTS={STACK_SERVICE_SLOTS}): {states}"
+            f"stack slots never filled ({stack_slots} slots): {states}"
         )
     yield filler_ids
 
