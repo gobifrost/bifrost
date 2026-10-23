@@ -12,13 +12,14 @@ import hashlib
 import json
 import keyword
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 from uuid import uuid4
 
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
+from pydantic_ai.function_signature import FunctionSignature
 from pydantic_ai.tools import ToolDefinition as PydanticToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets.abstract import ToolsetTool
@@ -28,6 +29,10 @@ from pydantic_core import SchemaValidator, core_schema
 from pydantic_ai_harness.code_mode import CodeMode
 
 from src.services.agent_runtime.errors import AgentRunCancelled
+from src.services.agent_runtime.sandbox_search import (
+    SandboxSearchItem,
+    search_sandbox_catalog,
+)
 from src.services.agent_runtime.toolset import get_code_mode_tool_result_scope
 from src.services.tool_schema import validate_arguments_against_schema
 
@@ -41,32 +46,56 @@ RECOMMENDED_SANDBOX_SDK_CODE_MODE_MAX_TOOL_CALLS = 64
 """Leave room for discovery without reducing the real business-call cap."""
 
 SANDBOX_SDK_INSTRUCTIONS = """Use lazy Bifrost discovery inside run_code.
-Call bifrost_search(query) to get a bounded list of approved Python callable names. Call
-bifrost_describe(name) for a callable's exact input schema and generated Python signature. Then call
-the discovered function directly using its documented keyword arguments.
+Call bifrost_search(query) to get ranked approved Python callable names, then call
+bifrost_describe(target) for direct Python declarations. Call the discovered function directly using
+its documented keyword arguments.
 
-Search and describe return {ok, data, error} envelopes and do not run business callbacks. Business
-callables return their source result directly: JSON text is decoded before it reaches code, plain text
-stays text, and source Error: receipts or JSON error payloads stay explicit source failures. A program
-may make at most 16 real business calls. Keep raw records inside code and return compact evidence.
+Search and describe return plain structured documentation and do not run business callbacks. Business
+callables return source data directly. Adapter error receipts and JSON error payloads are opaque source
+data; preserve useful uncertainty in your compact result. A program may make at most 16 real business
+calls. Keep raw records inside code and return compact evidence.
 """
 """Stable instructions for the fixed lazy discovery helpers."""
 
 _ARGS_VALIDATOR = SchemaValidator(schema=core_schema.dict_schema())
 _CONTROL_TOOL_NAMES = frozenset({"load_capability", "delegate_task", "run_code"})
 _SEARCH_TOOL_NAME = "search_tools"
-_SEARCH_RESULT_LIMIT = 8
-_SEARCH_SNIPPET_CHARS = 240
-_SEARCH_TERMS = re.compile(r"[a-z0-9]+")
-_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _INVALID_IDENTIFIER = re.compile(r"[^0-9A-Za-z_]")
 _DIRECT_RETURN_TYPES = frozenset({"object", "array", "number", "integer", "boolean", "null"})
 _RETURN_SCHEMA_COMBINATORS = frozenset({"allOf", "anyOf", "oneOf", "not"})
-_SDK_ENVELOPE_SCHEMA: dict[str, Any] = {
+_JSON_OR_TEXT_TRANSPORT = "json_or_text"
+_SEARCH_RETURN_SCHEMA: dict[str, Any] = {
     "type": "object",
-    "properties": {"ok": {"type": "boolean"}, "data": {}, "error": {}},
-    "required": ["ok", "data", "error"],
-    "additionalProperties": False,
+    "properties": {
+        "results": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "connector": {"type": "string"},
+                    "method": {"type": "string"},
+                    "description": {"type": ["string", "null"]},
+                    "kind": {"const": "method"},
+                    "score": {"type": "integer"},
+                },
+                "required": ["path", "connector", "method", "kind", "score"],
+            },
+        },
+        "total": {"type": "integer"},
+        "truncated": {"type": "boolean"},
+    },
+    "required": ["results", "total", "truncated"],
+}
+_DESCRIBE_RETURN_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "path": {"type": "string"},
+        "kind": {"enum": ["method", "connector"]},
+        "description": {"type": "string"},
+        "types": {"type": "string"},
+    },
+    "required": ["path", "kind", "types"],
 }
 
 
@@ -144,7 +173,7 @@ class _BifrostSandboxSDKToolset(WrapperToolset[object]):
         if binding is not None:
             return await self._dispatch(binding, tool_args, ctx)
         if tool.toolset is self:
-            return f"Error: Bifrost callable {name!r} is no longer available."
+            raise LookupError(f"Bifrost callable {name!r} is no longer available.")
         return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
     def _sdk_tools(self) -> dict[str, ToolsetTool[object]]:
@@ -161,62 +190,34 @@ class _BifrostSandboxSDKToolset(WrapperToolset[object]):
     async def _search(self, ctx: RunContext[object], tool_args: dict[str, Any]) -> dict[str, Any]:
         query = tool_args.get("query")
         if not isinstance(query, str):
-            return _error("Error: bifrost_search requires a string query.")
-        terms = _search_terms(query)
-        if not terms:
-            return _success([])
-
-        matches: list[tuple[int, _BoundTool]] = []
-        for binding in (await self._bound_tools(ctx)).values():
-            description = binding.tool.tool_def.description or ""
-            name_words = _search_terms(binding.alias)
-            text_words = _search_terms(description)
-            overlap = len(terms & (name_words | text_words))
-            if overlap:
-                score = overlap * 10 + len(terms & name_words) * 10
-                matches.append((score, binding))
-        matches.sort(key=lambda item: (-item[0], item[1].alias))
-        return _success(
-            [
-                {
-                    "name": binding.alias,
-                    "description": _snippet(binding.tool.tool_def.description),
-                }
-                for _, binding in matches[:_SEARCH_RESULT_LIMIT]
-            ]
+            raise ValueError("bifrost_search requires a string query.")
+        return search_sandbox_catalog(
+            query,
+            (
+                SandboxSearchItem(
+                    path=binding.alias,
+                    connector=_connector_name(binding),
+                    method=_method_name(binding),
+                    description=binding.tool.tool_def.description,
+                )
+                for binding in (await self._bound_tools(ctx)).values()
+            ),
         )
 
     async def _describe(
         self, ctx: RunContext[object], tool_args: dict[str, Any]
     ) -> dict[str, Any]:
-        name = tool_args.get("name")
-        if not isinstance(name, str):
-            return _error("Error: bifrost_describe requires a string name.")
-        binding = (await self._bound_tools(ctx)).get(name)
-        if binding is None:
-            return _unknown_tool(name)
-        direct_definition = _direct_definition(binding)
-        signature = direct_definition.function_signature
-        type_definitions = type(signature).render_type_definitions([signature], frozenset())
-        return _success(
-            {
-                "name": binding.alias,
-                "description": binding.tool.tool_def.description,
-                "python_signature": signature.render(
-                    "...",
-                    name=binding.alias,
-                    is_async=not direct_definition.sequential,
-                ),
-                "python_type_definitions": type_definitions,
-                "input_schema": binding.tool.tool_def.parameters_json_schema,
-                "source_return_schema": binding.tool.tool_def.return_schema,
-                "return_transport": (
-                    "The direct callable decodes JSON text from the source adapter before "
-                    "returning it. Plain text remains text. Source Error: receipts and decoded "
-                    "JSON error payloads remain source failures without an SDK envelope."
-                ),
-            }
-        )
+        target = tool_args.get("target")
+        if not isinstance(target, str):
+            raise ValueError("bifrost_describe requires a string target.")
+        bindings = await self._bound_tools(ctx)
+        binding = bindings.get(target)
+        if binding is not None:
+            return _describe_method(binding, bindings)
+        group = [candidate for candidate in bindings.values() if _connector_name(candidate) == target]
+        if group:
+            return _describe_connector(target, group, bindings)
+        return {"path": target, "types": f'"{target}" not found.', "kind": "method"}
 
     async def _dispatch(
         self,
@@ -228,22 +229,18 @@ class _BifrostSandboxSDKToolset(WrapperToolset[object]):
             binding.tool.tool_def.parameters_json_schema, arguments
         )
         if schema_error:
-            return (
-                "Error: The live tool schema is invalid and cannot be executed: "
-                f"{schema_error}"
-            )
+            raise RuntimeError(f"The live tool schema is invalid and cannot be executed: {schema_error}")
         if issues:
-            return f"Error: Arguments do not match the live tool schema. Issues: {issues}"
+            raise ValueError(f"Arguments do not match the live tool schema. Issues: {issues}")
 
         scope = get_code_mode_tool_result_scope()
         if scope is None:
-            return "Error: Bifrost direct bindings are only available inside run_code."
+            raise RuntimeError("Bifrost direct bindings are only available inside run_code.")
         if scope.cancellation:
             raise scope.cancellation
         if scope.business_calls >= self.max_business_calls:
-            return (
-                "Error: Bifrost sandbox business call limit of "
-                f"{self.max_business_calls} reached."
+            raise RuntimeError(
+                f"Bifrost sandbox business call limit of {self.max_business_calls} reached."
             )
         scope.business_calls += 1
 
@@ -262,7 +259,7 @@ class _BifrostSandboxSDKToolset(WrapperToolset[object]):
         except AgentRunCancelled as exc:
             scope.cancellation = exc
             raise
-        return _decode_business_result(value)
+        return _decode_business_result(value, _result_transport(binding))
 
     async def _bound_tools(self, ctx: RunContext[object]) -> dict[str, _BoundTool]:
         raw_tools = {
@@ -292,20 +289,20 @@ def _sdk_definitions() -> Sequence[PydanticToolDefinition]:
                 "required": ["query"],
                 "additionalProperties": False,
             },
-            return_schema=_SDK_ENVELOPE_SCHEMA,
+            return_schema=_SEARCH_RETURN_SCHEMA,
             include_return_schema=True,
             sequential=True,
         ),
         PydanticToolDefinition(
             name="bifrost_describe",
-            description="Describe one approved Bifrost callable's Python signature and transport.",
+            description="Describe a live Bifrost callable or connector with Python declarations.",
             parameters_json_schema={
                 "type": "object",
-                "properties": {"name": {"type": "string"}},
-                "required": ["name"],
+                "properties": {"target": {"type": "string"}},
+                "required": ["target"],
                 "additionalProperties": False,
             },
-            return_schema=_SDK_ENVELOPE_SCHEMA,
+            return_schema=_DESCRIBE_RETURN_SCHEMA,
             include_return_schema=True,
             sequential=True,
         ),
@@ -326,7 +323,10 @@ def _direct_tool(
 
 def _direct_definition(binding: _BoundTool) -> PydanticToolDefinition:
     """Keep the source input contract but document decoded direct return transport."""
-    return_schema = _direct_return_schema(binding.tool.tool_def.return_schema)
+    return_schema = _direct_return_schema(
+        binding.tool.tool_def.return_schema,
+        _result_transport(binding),
+    )
     return replace(
         binding.tool.tool_def,
         name=binding.alias,
@@ -336,8 +336,13 @@ def _direct_definition(binding: _BoundTool) -> PydanticToolDefinition:
     )
 
 
-def _direct_return_schema(source_return_schema: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Retain only source types unchanged by adapter JSON-text decoding."""
+def _direct_return_schema(
+    source_return_schema: dict[str, Any] | None,
+    result_transport: str | None,
+) -> dict[str, Any] | None:
+    """Retain native schemas while omitting types changed by JSON-text adapters."""
+    if result_transport != _JSON_OR_TEXT_TRANSPORT:
+        return source_return_schema
     if not isinstance(source_return_schema, dict):
         return None
     source_type = source_return_schema.get("type")
@@ -421,32 +426,110 @@ def _is_live_business_tool(ctx: RunContext[object], tool: ToolsetTool[object]) -
     )
 
 
-def _snippet(description: str | None) -> str:
-    if not description:
-        return ""
-    return " ".join(description.split())[:_SEARCH_SNIPPET_CHARS]
+def _connector_name(binding: _BoundTool) -> str:
+    metadata = binding.tool.tool_def.metadata or {}
+    connector = metadata.get("bifrost_connector")
+    if isinstance(connector, str) and connector:
+        return connector
+    toolset_id = binding.tool.tool_def.toolset_id
+    if isinstance(toolset_id, str) and toolset_id:
+        return toolset_id
+    toolset_id = binding.tool.toolset.id
+    return toolset_id if isinstance(toolset_id, str) and toolset_id else "tools"
 
 
-def _search_terms(value: str) -> set[str]:
-    normalized = _CAMEL_BOUNDARY.sub(" ", value).replace("_", " ")
-    return set(_SEARCH_TERMS.findall(normalized.casefold()))
+def _connector_description(bindings: Sequence[_BoundTool]) -> str | None:
+    for binding in bindings:
+        metadata = binding.tool.tool_def.metadata or {}
+        description = metadata.get("bifrost_connector_description")
+        if isinstance(description, str) and description:
+            return description
+    return None
 
 
-def _success(data: Any) -> dict[str, Any]:
-    return {"ok": True, "data": data, "error": None}
+def _method_name(binding: _BoundTool) -> str:
+    metadata = binding.tool.tool_def.metadata or {}
+    original_name = metadata.get("bifrost_original_name")
+    return original_name if isinstance(original_name, str) and original_name else binding.alias
 
 
-def _error(error: Any, *, data: Any = None) -> dict[str, Any]:
-    return {"ok": False, "data": data, "error": error}
+def _result_transport(binding: _BoundTool) -> str | None:
+    metadata = binding.tool.tool_def.metadata or {}
+    transport = metadata.get("bifrost_result_transport")
+    return transport if isinstance(transport, str) else None
 
 
-def _unknown_tool(name: str) -> dict[str, Any]:
-    return _error(f"Unknown Bifrost tool: {name}")
+def _describe_method(
+    binding: _BoundTool, bindings: dict[str, _BoundTool]
+) -> dict[str, Any]:
+    signatures, conflicts = _signatures_for(bindings.values())
+    signature = signatures[binding.alias]
+    blocks = FunctionSignature.render_type_definitions([signature], conflicts)
+    blocks.append(
+        signature.render(
+            "...",
+            name=binding.alias,
+            is_async=not _direct_definition(binding).sequential,
+            conflicting_type_names=conflicts,
+        )
+    )
+    result: dict[str, Any] = {
+        "path": binding.alias,
+        "kind": "method",
+        "types": "\n\n".join(blocks),
+    }
+    if binding.tool.tool_def.description:
+        result["description"] = binding.tool.tool_def.description
+    return result
 
 
-def _decode_business_result(value: Any) -> Any:
-    """Decode only successful JSON adapter text; preserve source failure forms."""
-    if not isinstance(value, str) or value.startswith("Error:"):
+def _describe_connector(
+    connector: str,
+    group: Sequence[_BoundTool],
+    bindings: dict[str, _BoundTool],
+) -> dict[str, Any]:
+    signatures, conflicts = _signatures_for(bindings.values())
+    group = sorted(group, key=lambda binding: binding.alias)
+    group_signatures = [signatures[binding.alias] for binding in group]
+    blocks = FunctionSignature.render_type_definitions(group_signatures, conflicts)
+    blocks.extend(
+        signature.render(
+            "...",
+            name=binding.alias,
+            is_async=not _direct_definition(binding).sequential,
+            conflicting_type_names=conflicts,
+        )
+        for binding, signature in zip(group, group_signatures, strict=True)
+    )
+    result: dict[str, Any] = {
+        "path": connector,
+        "kind": "connector",
+        "types": "\n\n".join(blocks),
+    }
+    if description := _connector_description(group):
+        result["description"] = description
+    return result
+
+
+def _signatures_for(
+    bindings: Iterable[_BoundTool],
+) -> tuple[dict[str, FunctionSignature], frozenset[str]]:
+    signatures = {
+        binding.alias: _direct_definition(binding).function_signature
+        for binding in bindings
+    }
+    signature_values = list(signatures.values())
+    conflicts = FunctionSignature.get_conflicting_type_names(signature_values)
+    return signatures, conflicts
+
+
+def _decode_business_result(value: Any, result_transport: str | None) -> Any:
+    """Decode Bifrost JSON-text adapters without changing native text results."""
+    if (
+        result_transport != _JSON_OR_TEXT_TRANSPORT
+        or not isinstance(value, str)
+        or value.startswith("Error:")
+    ):
         return value
     try:
         return json.loads(value)

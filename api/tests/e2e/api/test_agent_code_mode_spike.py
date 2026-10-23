@@ -72,10 +72,9 @@ async def test_code_mode_dispatches_one_bound_workflow_on_existing_executors(
             part = ToolCallPart("run_code", {
                 "code": (
                     f"catalog = bifrost_search(query={test_tool_workflow['name']!r})\n"
-                    "tool_name = catalog['data'][0]['name']\n"
-                    "contract = bifrost_describe(name=tool_name)\n"
-                    "assert contract['ok']\n"
-                    "assert contract['data']['python_signature']\n"
+                    "path = catalog['results'][0]['path']\n"
+                    "contract = bifrost_describe(target=path)\n"
+                    "assert contract['types']\n"
                     f"receipt = wf_{test_tool_workflow['name']}(query='code-mode-boundary')\n"
                     "{'receipt': receipt}"
                 ),

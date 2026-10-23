@@ -138,10 +138,9 @@ async def test_automatic_chat_persists_nested_code_mode_audit_and_replays_only_o
                         {
                             "code": (
                                 "catalog = bifrost_search(query='read chunk')\n"
-                                "tool_name = catalog['data'][0]['name']\n"
-                                "contract = bifrost_describe(name=tool_name)\n"
-                                "assert contract['ok']\n"
-                                "assert contract['data']['python_signature']\n"
+                                "path = catalog['results'][0]['path']\n"
+                                "contract = bifrost_describe(target=path)\n"
+                                "assert contract['types']\n"
                                 "chunks = [read_chunk(index=index) for index in range(3)]\n"
                                 "combined = ''.join(chunk['payload'] for chunk in chunks)\n"
                                 "{'combined_length': len(combined)}"

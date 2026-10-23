@@ -112,9 +112,9 @@ async def test_native_skill_load_and_tool_result_are_streamed_and_persisted(exec
                     {
                         "code": (
                             f"catalog = bifrost_search(query='{query}')\n"
-                            "name = catalog['data'][0]['name']\n"
-                            "contract = bifrost_describe(name=name)\n"
-                            "assert contract['data']['python_signature']\n"
+                            "path = catalog['results'][0]['path']\n"
+                            "contract = bifrost_describe(target=path)\n"
+                            "assert contract['types']\n"
                             f"{tool_name}()"
                         )
                     },

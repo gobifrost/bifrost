@@ -404,10 +404,13 @@ class AgentComposition:
     def _sandbox_tool_metadata(self) -> dict[str, dict[str, str]]:
         """Carry callable identity separately from human-authored descriptions."""
         original_counts = Counter(binding.original_name for binding in self._bindings.values())
+        owner_names = {deferred.agent.id: deferred.agent.name for deferred in self._deferred}
         return {
             name: {
                 "bifrost_original_name": binding.original_name,
                 "bifrost_owner_id": str(binding.owner_id),
+                "bifrost_connector": _capability_id(binding.owner_id),
+                "bifrost_connector_description": owner_names.get(binding.owner_id, "Entry agent"),
                 "bifrost_python_name": (
                     binding.original_name
                     if original_counts[binding.original_name] == 1

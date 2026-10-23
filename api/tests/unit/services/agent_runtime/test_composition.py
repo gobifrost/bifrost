@@ -91,7 +91,10 @@ async def test_callable_identity_uses_entire_composition_before_capability_loadi
     assert metadata[child_name]["bifrost_python_name"] == f"owner_{child_id.hex}_read_record"
     assert metadata["list_records"]["bifrost_python_name"] == "list_records"
     tools = await composition.entry_toolset(AsyncMock()).get_tools(SimpleNamespace())
-    assert tools[shared_name].tool_def.metadata == metadata[shared_name]
+    assert tools[shared_name].tool_def.metadata == {
+        **metadata[shared_name],
+        "bifrost_result_transport": "json_or_text",
+    }
 
 
 @pytest.mark.asyncio
@@ -214,6 +217,9 @@ async def test_loaded_skill_searches_and_reveals_only_relevant_individual_tools(
                 "bifrost_original_name": case_search.name,
                 "bifrost_owner_id": str(child_id),
                 "bifrost_python_name": case_search.name,
+                "bifrost_connector": capability_id,
+                "bifrost_connector_description": child.name,
+                "bifrost_result_transport": "json_or_text",
             }
             return ModelResponse(parts=[ToolCallPart(qualified, {"case": "123"}, "tool")])
         if requests == 5:

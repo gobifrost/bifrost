@@ -136,7 +136,10 @@ class BifrostToolset(AbstractToolset[object]):
                     return_schema=definition.return_schema,
                     include_return_schema=definition.return_schema is not None,
                     sequential=True,
-                    metadata=self._tool_metadata.get(definition.name),
+                    metadata={
+                        **self._tool_metadata.get(definition.name, {}),
+                        "bifrost_result_transport": "json_or_text",
+                    },
                 ),
                 max_retries=0,
                 args_validator=_ARGS_VALIDATOR,

@@ -25,12 +25,15 @@ Python function bindings behind lazy sandbox discovery. The generic
 has been removed. See **Direct function bindings and reference-audit correction**
 below. Those experiments remain historical observations of the previous adapter;
 they do not measure this candidate.
+The **Cloudflare source-conformance follow-up** further aligns search and describe
+with the pinned reference and preserves native return contracts.
 
-**Latest provider benchmark:** the direct-function candidate now has a fresh
+**Latest provider benchmark:** the direct-function candidate at `4db7aaa79` has a frozen
 20-attempt comparison with high thinking in both arms. Eight pairs passed the
 required structured report/action contract in both arms; median within-pair
 reductions were 52.0% input tokens, 84.4% estimated model cost, and 17.6% elapsed
-time. Separate audit found prose errors and one large raw return. See **Provider
+time. Separate audit found prose errors and one large raw return. The subsequent
+source-conformance revision below has not received another provider benchmark. See **Provider
 benchmark of direct function bindings** below for the evidence and limits.
 
 **Interpretation corrected after auditing generated code:** the initial live-model
@@ -837,8 +840,8 @@ The current candidate uses those native bindings. Generated code calls an
 approved function with its schema-derived keyword arguments and consumes the
 source result directly. JSON adapter text is decoded inside the sandbox; plain
 text, source error receipts, and decoded JSON error objects retain their source
-meaning. Only search and describe keep their fixed discovery envelopes.
-Describe supplies a generated Python signature and nested parameter type
+meaning. In that candidate, search and describe kept their fixed discovery envelopes.
+Describe supplied a generated Python signature and nested parameter type
 declarations, the original input schema, and the source return schema. An
 undeclared business result stays unknown rather than acquiring invented fields.
 Explicit structured return types are retained when JSON-text decoding cannot
@@ -1066,6 +1069,128 @@ Earlier experiment files, scores, and manifests remain unchanged. This turn
 changes documentation only; no backend or frontend suite was rerun after the
 previous 121 targeted tests and API quality checks. The benchmark's offline
 conformance and final artifact-integrity checks were run as described above.
+
+## Cloudflare source-conformance follow-up
+
+A second source audit uses Cloudflare Agents commit
+`321814b6c13f72cff82161e7eb20312574ac9b7a` (2026-10-23). It covers discovery,
+generated contracts, connector adaptation, execution, result transformation and
+output truncation. The benchmark above remains frozen at `4db7aaa79`; it does
+not measure these follow-up changes.
+
+The direct-function revision still had departures that could add model work:
+
+| Boundary | Previous behavior | Follow-up behavior |
+| --- | --- | --- |
+| Search | Basic overlap ranking; eight results; silent cutoff; SDK envelope | Cloudflare field weights, normalization, phrase/prefix bonuses and coverage threshold; 50-result cap; direct `results`, `total`, `truncated` |
+| Describe | One method; raw JSON schemas alongside Python declarations; SDK envelope | Direct method or connector documentation containing generated declarations; unknown targets return documentation saying not found |
+| Return values | All JSON-looking tool strings decoded; native string/ref/union types discarded | Only explicitly marked Bifrost JSON/text adapters decode; native functions preserve their values and declared return schemas |
+| Invocation failure | SDK validation, revocation and budget errors returned ordinary text | SDK-owned failures raise exceptions; source text receipts and JSON error-shaped data remain opaque source values |
+
+References: Cloudflare's pinned
+[search](https://github.com/cloudflare/agents/blob/321814b6c13f72cff82161e7eb20312574ac9b7a/packages/codemode/src/connectors/search.ts),
+[describe](https://github.com/cloudflare/agents/blob/321814b6c13f72cff82161e7eb20312574ac9b7a/packages/codemode/src/connectors/describe.ts)
+and [connector adaptation](https://github.com/cloudflare/agents/blob/321814b6c13f72cff82161e7eb20312574ac9b7a/packages/codemode/src/connectors/toolset.ts).
+Connector describe includes only currently loaded, authorized tools. Combined
+declarations use the native generator's conflicting-type-name resolution.
+
+Deliberate platform adaptations remain: Cloudflare exposes JavaScript
+`connector.method`; our search `path` is the actual flat Python callable alias,
+with connector and original method available separately. We retain Monty and
+the existing worker, live authorization, cancellation latch, call budgets and
+outer result cap. Equal-score searches use stable Python code-point path
+ordering rather than JavaScript locale-dependent ordering. Saved snippets and
+Cloudflare's durable approval/replay engine are separate features, not added
+by this change. No workflow-engine or customer sandbox installation change is
+required.
+
+The fixture `api/tests/fixtures/agent_runtime/cloudflare_search.json` was generated
+by running the unmodified pinned TypeScript `searchConnectors` function using
+Node 24's `stripTypeScriptTypes`, then serializing its results. Its 27 cases cover
+exact/prefix matching, camelCase/separators, cross-field coverage, repeated tokens,
+JavaScript rounding, empty/nonmatching queries, ranking and the 50-result limit. It records source
+SHA-256 `15ef317d630b3df60e6cc48bb879d835d2a4e968214f0b4096265504364981e0`.
+The port retains Cloudflare's MIT notice in `LICENSES/cloudflare-codemode-MIT.txt`.
+These are source-parity tests, not a provider benchmark or a guarantee of identical
+locale-sensitive sorting.
+
+The source also limits what parity can promise. Cloudflare's
+[`run-code.ts`](https://github.com/cloudflare/agents/blob/321814b6c13f72cff82161e7eb20312574ac9b7a/packages/codemode/src/run-code.ts)
+returns the program's result and logs. In
+[`proxy-tool.ts`](https://github.com/cloudflare/agents/blob/321814b6c13f72cff82161e7eb20312574ac9b7a/packages/codemode/src/proxy-tool.ts),
+`transformResult` is optional; without it the raw result passes through before
+model-output formatting. Its
+[`truncate.ts`](https://github.com/cloudflare/agents/blob/321814b6c13f72cff82161e7eb20312574ac9b7a/packages/codemode/src/truncate.ts)
+provides optional size reduction, not semantic selection or final-prose
+verification. Our observed raw-return and prose mistakes therefore do not
+identify a missing automatic Cloudflare filter. They remain quality limits to
+evaluate across workloads before broad deployment.
+
+A remaining contract limitation is distinct from runtime parity:
+`execution/agent_helpers.py` gives system/workflow/MCP tools the shared text
+adapter contract, and MCP catalog resolution currently consumes `inputSchema`
+without carrying its `outputSchema` through as a structured success contract.
+The frozen fixture likewise exposes generic return types. Cloudflare preserves
+available output schemas and uses unknown when absent. This follow-up preserves
+native schemas but does not invent field contracts for those adapters. A precise
+adapter result contract must account for successful structured data, text and
+source-specific failure receipts before output types can safely reach code;
+that is a separate remaining improvement. It can reduce shape-inspection work,
+but cannot guarantee correct final prose or automatic projection.
+
+Focused verification passed **130 tests**, with zero failures, errors or skips.
+The two existing E2E cases still exercise the worker dispatch and Automatic chat
+history/audit boundary; no extra worker job was added. The workflow case spent
+3.68 seconds in fixture setup, 1.66 in its request/worker path and 0.17 in teardown;
+the chat call took 0.40 seconds. The full backend and frontend suites were not
+run; no API DTO or frontend surface changed.
+
+A separate network-disabled probe described the production-shaped frozen catalog:
+21 root aliases before loading, all 24 specialists, all 237 callable aliases,
+and all 25 connector groups. It checked generated declarations, returned paths,
+and method/connector kinds, using ten explicit fresh native sessions. There were
+zero provider calls and zero business callbacks. It uses the frozen composition
+snapshot rather than live authorization reads; the Docker integration tests
+cover the worker and authorization paths separately. Private script, results,
+source hashes and verification manifest are in
+`/home/jack/workspace/code-mode-production-benchmark-2026-10-23/cloudflare-conformance-catalog-probe-20261023/`.
+The prior benchmark and catalog-probe directories remain unchanged.
+
+Exact scoped test command:
+
+```bash
+BIFROST_TEST_IMAGE_TAG=code-mode-proof-1015 BIFROST_SKIP_BUILD=1 ./test.sh \
+  tests/unit/services/agent_runtime/test_sandbox_search.py \
+  tests/unit/services/agent_runtime/test_sandbox_sdk.py \
+  tests/unit/services/agent_runtime/test_tool_policy.py \
+  tests/unit/services/test_agent_code_mode_runtime_policy.py \
+  tests/unit/services/test_agent_code_mode.py \
+  tests/unit/services/test_agent_composition_stream.py \
+  tests/unit/services/test_autonomous_agent_executor.py \
+  tests/unit/services/agent_runtime/test_composition.py \
+  tests/unit/services/test_agent_runtime_authorization.py \
+  tests/e2e/api/test_agent_code_mode_spike.py \
+  tests/e2e/api/test_agent_code_mode_chat.py -v --durations=0
+BIFROST_TEST_IMAGE_TAG=code-mode-proof-1015 BIFROST_SKIP_BUILD=1 ./test.sh quality api
+```
+
+API quality passed: Pyright reported zero errors/warnings and Ruff passed.
+The initial verification exposed a test snippet returning only inside an
+`except` block; assigning the exception message and returning a top-level
+projection repaired the test while retaining its no-effect assertion. Pyright
+also required avoiding tuple indexes in the search first-token comparisons;
+after that narrow refactor the three search tests, including all 27 upstream
+cases, passed again with zero failures/errors/skips. Exact follow-up command:
+
+```bash
+BIFROST_TEST_IMAGE_TAG=code-mode-proof-1015 BIFROST_SKIP_BUILD=1 ./test.sh \
+  tests/unit/services/agent_runtime/test_sandbox_search.py -v
+```
+
+A bounded independent read-only review found no actionable authorization or
+dispatch regression. None of these checks measures model economics, validates
+live production effects, or certifies full Cloudflare feature equivalence.
+The candidate remains undeployed.
 
 ## Primary references
 
