@@ -111,8 +111,13 @@ continue directly to 5c and the production rollout.
 | #1031 | **Merged** 2026-10-23. Gate: runtime checklist in both control modes; 85/85 scheduler, scheduling and event e2e. |
 | #1034 | **Merged** 2026-10-23. Found by the #1032 mixed-version check: the schema gate crashed an older image started against a newer database (alembic raises `ResolutionError`, not `CommandError`), breaking rolling deploys and rollback. A rollback is only safe to releases that contain this fix. |
 | #1032 | **Merged** 2026-10-23. Gate: checklist with defaults; checklist with only a #1031-code worker behind the stage 2 API (15 runs on the old worker); CodeQL findings fixed. |
-| #1033 | Rebased on `main`. Gate: all four Kind drills pass (unschedulable now starts from an empty pool and asserts the start deadline); checklist passes in Kind pool mode and Docker static-executor mode; latency at parity after the executor connection fix (below). |
-| Stages 4–5 | Planned (`2026-10-22-769-stages4-5-convergence.md`) |
+| #1033 | **Merged** 2026-10-23. Gate: all four Kind drills pass (unschedulable now starts from an empty pool and asserts the start deadline); checklist passes in Kind pool mode and Docker static-executor mode; latency at parity after the executor connection fix (below). |
+| #1035 (4a) | Draft on `main`. Package changes are a desired generation in PostgreSQL. Docker gate passed: three static executors (one frozen during the install, one started after it) all reached the generation; 30/30 runs importing the package; uninstall converged the same way. |
+| #1036 (4b) | Draft on #1035. Summaries are a durable dispatch family; the dead tuning-chat consumer is removed. Docker gate passed against a stub model: 4/4 summaries completed in pool mode, 3 backfill rounds 4/4. Found and fixed a lost update in the backfill counters (two executors left a backfill at 3/4 forever). |
+| #1037 (4c) | Draft on #1036. The executor hosts services, local platform jobs and the Diagnostics heartbeat. Docker gate passed with both containers running the executor: checklist with both, and with each alone; service e2e (lifecycle, crash loop, owner loss) on executors. |
+| #1038 (4d) | Draft on #1037. An event delivery's run commits in the delivery's own transaction across all five callers; retry and manual delivery queue only their own delivery. Gate: crash-before-commit unit tests against the database; event, scheduling and scenario e2e. |
+| Stage 4 Kind pass | Next: every stage-4 family on Job-form executors, then merge #1035–#1038 in order. |
+| Stage 5 | Planned (`2026-10-22-769-stages4-5-convergence.md`) |
 
 ## Evidence so far
 
