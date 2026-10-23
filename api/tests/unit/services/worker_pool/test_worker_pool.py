@@ -46,8 +46,7 @@ SETTINGS = SimpleNamespace(
 SPEC = WorkerJobSpec(
     namespace="test",
     image="api:test",
-    configmap="config",
-    secret="secret",
+    env_from=({"configMapRef": {"name": "config"}}, {"secretRef": {"name": "secret"}}),
     service_account="runner",
 )
 

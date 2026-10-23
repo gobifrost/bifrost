@@ -271,8 +271,8 @@ class KubernetesJobClient:
         )
         return bool(response.json().get("status", {}).get("allowed"))
 
-    async def own_image(self) -> str | None:
-        """The image of this pod's first container (the process's own image)."""
+    async def own_container(self) -> dict[str, Any] | None:
+        """This pod's first container (the process's own image and environment)."""
         name = os.environ.get("HOSTNAME")
         if not name:
             return None
@@ -280,7 +280,7 @@ class KubernetesJobClient:
             "GET", f"{self._pod_path()}/{quote(name, safe='')}", expected={200}
         )
         containers = response.json().get("spec", {}).get("containers") or []
-        return containers[0].get("image") if containers else None
+        return containers[0] if containers else None
 
     def _create_http_client(self) -> httpx.AsyncClient:
         host = os.environ.get("KUBERNETES_SERVICE_HOST")

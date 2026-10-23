@@ -27,26 +27,42 @@ class WorkerJobSpec:
 
     namespace: str
     image: str
-    configmap: str
-    secret: str
+    # The container's environment sources (configmap and secret references).
+    env_from: tuple[dict[str, Any], ...]
     service_account: str
 
 
 async def resolve_worker_job_spec(client: KubernetesJobClient, settings: Any) -> WorkerJobSpec:
-    """The build settings when set; otherwise this cluster's own defaults.
+    """The build settings when set; otherwise a copy of this controller's pod.
 
     An install with no build settings runs workers in the controller's own
-    namespace and image, with the base manifests' configmap and secret, and
-    the namespace's ``default`` service account (the pod mounts no token).
+    namespace, image and environment sources (the configmap and secret its
+    API pod reads), with the namespace's ``default`` service account (the
+    pod mounts no token).
     """
-    image = settings.kubernetes_build_image or await client.own_image()
+    own: dict[str, Any] = {}
+    if not (
+        settings.kubernetes_build_image
+        and settings.kubernetes_build_configmap
+        and settings.kubernetes_build_secret
+    ):
+        own = await client.own_container() or {}
+    image = settings.kubernetes_build_image or own.get("image")
     if not image:
         raise KubernetesConfigurationError("No image is known for worker Jobs")
+    if settings.kubernetes_build_configmap and settings.kubernetes_build_secret:
+        env_from: tuple[dict[str, Any], ...] = (
+            {"configMapRef": {"name": settings.kubernetes_build_configmap}},
+            {"secretRef": {"name": settings.kubernetes_build_secret}},
+        )
+    else:
+        env_from = tuple(own.get("envFrom") or ())
+    if not env_from:
+        raise KubernetesConfigurationError("No environment is known for worker Jobs")
     return WorkerJobSpec(
         namespace=client.namespace,
         image=image,
-        configmap=settings.kubernetes_build_configmap or "bifrost-config",
-        secret=settings.kubernetes_build_secret or "bifrost-secrets",
+        env_from=env_from,
         service_account=settings.kubernetes_build_service_account or "default",
     )
 
@@ -66,8 +82,6 @@ def build_worker_job_manifest(
     """
     namespace = spec.namespace
     image = spec.image
-    configmap = spec.configmap
-    secret = spec.secret
     service_account = spec.service_account
     if settings.pool_worker_memory_request_mib > settings.pool_worker_memory_limit_mib:
         raise KubernetesConfigurationError(
@@ -111,10 +125,7 @@ def build_worker_job_manifest(
                             "image": image,
                             "imagePullPolicy": "IfNotPresent",
                             "command": ["python", "-m", "src.worker.pool_main"],
-                            "envFrom": [
-                                {"configMapRef": {"name": configmap}},
-                                {"secretRef": {"name": secret}},
-                            ],
+                            "envFrom": [dict(source) for source in spec.env_from],
                             "env": [
                                 {"name": "BIFROST_WORKER_INCARNATION_ID", "value": str(incarnation_id)},
                                 # The controller's pool policy, so a worker never

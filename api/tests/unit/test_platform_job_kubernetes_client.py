@@ -491,7 +491,7 @@ async def test_allows_asks_the_cluster_with_a_self_subject_access_review(
     }
 
 
-async def test_own_image_is_this_pods_first_container(
+async def test_own_container_is_this_pods_first_container(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     token = tmp_path / "token"
@@ -506,7 +506,8 @@ async def test_own_image_is_this_pods_first_container(
             200, json={"spec": {"containers": [{"image": "ghcr.io/gobifrost/bifrost-api:1.5.0"}]}}
         )
 
-    assert await _cluster(handler).own_image() == "ghcr.io/gobifrost/bifrost-api:1.5.0"
+    container = await _cluster(handler).own_container()
+    assert container == {"image": "ghcr.io/gobifrost/bifrost-api:1.5.0"}
     assert paths == ["/api/v1/namespaces/builds/pods/bifrost-api-abc"]
 
 

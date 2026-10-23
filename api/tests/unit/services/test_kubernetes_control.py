@@ -27,8 +27,14 @@ class _Client:
             raise KubernetesApiError("POST", "/reviews", 500)
         return (verb, resource, group) not in self.denied
 
-    async def own_image(self) -> str:
-        return "ghcr.io/gobifrost/bifrost-api:1.5.0"
+    async def own_container(self) -> dict:
+        return {
+            "image": "ghcr.io/gobifrost/bifrost-api:1.5.0",
+            "envFrom": [
+                {"configMapRef": {"name": "bifrost-local-config"}},
+                {"secretRef": {"name": "bifrost-local-secrets"}},
+            ],
+        }
 
     async def close(self) -> None:
         self.closed = True
@@ -78,15 +84,18 @@ def _settings(**overrides: object) -> SimpleNamespace:
     return SimpleNamespace(**values)
 
 
-async def test_worker_jobs_default_to_this_install(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_worker_jobs_copy_the_controllers_pod_by_default() -> None:
+    """An install names its configmap and secret as it likes (Kind: bifrost-local-*)."""
     spec = await resolve_worker_job_spec(_Client(), _settings())  # type: ignore[arg-type]
 
-    assert (spec.namespace, spec.image, spec.configmap, spec.secret, spec.service_account) == (
+    assert (spec.namespace, spec.image, spec.service_account) == (
         "bifrost",
         "ghcr.io/gobifrost/bifrost-api:1.5.0",
-        "bifrost-config",
-        "bifrost-secrets",
         "default",
+    )
+    assert spec.env_from == (
+        {"configMapRef": {"name": "bifrost-local-config"}},
+        {"secretRef": {"name": "bifrost-local-secrets"}},
     )
 
 
@@ -102,3 +111,7 @@ async def test_build_settings_override_the_worker_job_defaults() -> None:
     )
 
     assert (spec.image, spec.service_account) == ("registry/api:pinned", "bifrost-build-runner")
+    assert spec.env_from == (
+        {"configMapRef": {"name": "bifrost-config"}},
+        {"secretRef": {"name": "bifrost-secrets"}},
+    )
