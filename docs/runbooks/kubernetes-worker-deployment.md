@@ -108,11 +108,12 @@ pod runs this release, an operator may remove the leftovers.
 
 Keep the broker and `BIFROST_RABBITMQ_URL` until the queues are empty. Each
 API pod, when it starts with `BIFROST_RABBITMQ_URL` set, tries the broker a few
-times, moves every run an earlier release left queued into PostgreSQL, logs
-`Drained work queued by an earlier release`, and disconnects; it does not poll
-again. During a rolling upgrade an older API pod can still queue work after the
-new pods have drained, so check the queues once the rollout finishes and, if
-any still hold messages, restart the API Deployment to drain them:
+times, moves every run an earlier release left queued into PostgreSQL until the
+queues have stayed empty for two minutes (covering work an older pod queues
+during the rolling upgrade), logs `Drained work queued by an earlier release`,
+and disconnects; it does not poll again. Check the queues once the rollout
+finishes; if any still hold messages (a rollout that took longer), restart the
+API Deployment to drain them:
 
 ```bash
 kubectl -n bifrost exec deploy/rabbitmq -- rabbitmqctl list_queues name messages

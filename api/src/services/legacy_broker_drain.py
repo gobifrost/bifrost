@@ -5,7 +5,8 @@ summaries in RabbitMQ, with a run's context in Redis. An install upgraded
 while such messages were waiting still has them there, and nothing else will
 ever read them. When ``BIFROST_RABBITMQ_URL`` is set, each API replica tries
 to reach the broker a few times once it starts, drains those queues until they
-are empty, disconnects and stops; there is no recurring poll. Each message
+have stayed empty for ``QUIET_SECONDS``, disconnects and stops; there is no
+recurring poll. Each message
 becomes the durable dispatch the current release would have accepted, then is
 acknowledged. Several replicas draining at once is safe: the broker gives each
 message to one consumer and a subject has at most one dispatch.
@@ -32,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -58,6 +60,10 @@ logger = logging.getLogger(__name__)
 CONNECT_ATTEMPTS = 3
 CONNECT_TIMEOUT_SECONDS = 5.0
 CONNECT_RETRY_SECONDS = 5.0
+# Empty means empty for this long, so work an older replica queues during a
+# rolling upgrade, after this one first drained, is still recovered.
+QUIET_SECONDS = 120.0
+PASS_INTERVAL_SECONDS = 10.0
 CANCELLED_BEFORE_START = "Execution was cancelled before it could start"
 LOST_IN_UPGRADE = "This run was queued by an earlier release and its context expired before it could be recovered."
 
@@ -295,7 +301,17 @@ async def drain_legacy_broker() -> None:
             logger.info("The legacy broker is unreachable; nothing to recover")
             return
         async with connection:
-            counts = {name: await _drain_queue(connection, name) for name in HANDLERS}
+            counts = dict.fromkeys(HANDLERS, 0)
+            quiet_since = time.monotonic()
+            while True:
+                for name in HANDLERS:
+                    recovered = await _drain_queue(connection, name)
+                    counts[name] += recovered
+                    if recovered:
+                        quiet_since = time.monotonic()
+                if time.monotonic() - quiet_since >= QUIET_SECONDS:
+                    break
+                await asyncio.sleep(PASS_INTERVAL_SECONDS)
         logger.info("Drained work queued by an earlier release", extra={"counts": counts})
     except Exception:
         logger.exception("Could not drain the legacy broker; the next start tries again")

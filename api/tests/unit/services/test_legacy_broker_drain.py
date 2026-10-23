@@ -325,6 +325,7 @@ async def test_a_reachable_broker_is_drained_once_and_disconnected(monkeypatch) 
     monkeypatch.setattr(drain, "wait_for_schema", AsyncMock())
     monkeypatch.setattr(drain.aio_pika, "connect", AsyncMock(side_effect=[ConnectionError, connection]))
     monkeypatch.setattr(drain, "CONNECT_RETRY_SECONDS", 0)
+    monkeypatch.setattr(drain, "QUIET_SECONDS", 0)
     drained = AsyncMock(return_value=0)
     monkeypatch.setattr(drain, "_drain_queue", drained)
 
@@ -332,6 +333,37 @@ async def test_a_reachable_broker_is_drained_once_and_disconnected(monkeypatch) 
 
     assert [c.args[1] for c in drained.await_args_list] == list(drain.HANDLERS)
     assert connection.closed
+
+
+async def test_work_queued_after_the_first_pass_is_drained_before_disconnecting(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """An older replica can still queue work during a rolling upgrade."""
+    from types import SimpleNamespace
+
+    class _Connection:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+    queued_later = {"pass": 0}
+
+    async def drain_queue(_connection, name):  # type: ignore[no-untyped-def]
+        if name == "workflow-executions":
+            queued_later["pass"] += 1
+            return 1 if queued_later["pass"] == 2 else 0
+        return 0
+
+    monkeypatch.setattr(drain, "get_settings", lambda: SimpleNamespace(rabbitmq_url="amqp://broker/"))
+    monkeypatch.setattr(drain, "wait_for_schema", AsyncMock())
+    monkeypatch.setattr(drain.aio_pika, "connect", AsyncMock(return_value=_Connection()))
+    monkeypatch.setattr(drain, "QUIET_SECONDS", 0.05)
+    monkeypatch.setattr(drain, "PASS_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(drain, "_drain_queue", drain_queue)
+
+    await drain.drain_legacy_broker()
+
+    assert queued_later["pass"] > 2
 
 
 class _Message:
