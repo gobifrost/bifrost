@@ -22,6 +22,7 @@ from src.models.orm.platform_job_memory_profiles import PlatformJobMemoryProfile
 from src.models.orm.scheduler_leases import SchedulerLease
 from src.models.orm.work_dispatches import WorkDispatch
 from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
+from src.models.orm.package_changes import PackageChange
 from src.models.orm.scheduler_diagnostics import (
     SchedulerReplica,
     SchedulerTaskRun,
@@ -103,6 +104,7 @@ __all__ = [
     "WorkDispatch",
     "ExecutionWorker",
     "ExecutionWorkerClaim",
+    "PackageChange",
     "SchedulerReplica",
     "SchedulerTaskRun",
     "SchedulerTaskState",

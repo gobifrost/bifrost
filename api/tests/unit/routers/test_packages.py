@@ -8,7 +8,12 @@ import pytest
 
 from shared.subprocess_env import package_tool_env
 from src.models import InstallPackageRequest
-from src.routers.packages import check_package_updates, check_updates, install_package
+from src.routers.packages import (
+    check_package_updates,
+    check_updates,
+    install_package,
+    uninstall_package,
+)
 
 
 @pytest.mark.asyncio
@@ -76,7 +81,17 @@ async def test_install_persists_requirements_before_broadcasting_recycle() -> No
         }
         events.append("published")
 
+    async def record(db: object, **change: object) -> None:
+        assert change == {
+            "action": "install",
+            "package": "humanize",
+            "version": "4.13.0",
+            "run_id": str(run_id),
+        }
+        events.append("recorded")
+
     with (
+        patch("src.routers.packages.record_package_change", new=record),
         patch(
             "src.routers.packages.get_requirements",
             new=AsyncMock(
@@ -96,5 +111,35 @@ async def test_install_persists_requirements_before_broadcasting_recycle() -> No
             MagicMock(),
         )
 
-    assert events == ["saved", "published"]
+    assert events == ["saved", "recorded", "published"]
     assert response.status == "success"
+
+
+@pytest.mark.asyncio
+async def test_uninstall_records_the_change_with_the_broadcast_run_id() -> None:
+    run_id = UUID("6c1f2f1e-27a4-4a8e-9d55-2f3a0f6d1c11")
+    recorded: list[dict] = []
+    published: list[dict] = []
+
+    async def record(db: object, **change: object) -> None:
+        recorded.append(change)
+
+    async def publish(*, exchange_name: str, message: dict) -> None:
+        published.append(message)
+
+    with (
+        patch("src.routers.packages.record_package_change", new=record),
+        patch(
+            "src.routers.packages.get_requirements",
+            new=AsyncMock(return_value={"content": "humanize==4.13.0\n", "hash": "x"}),
+        ),
+        patch("src.routers.packages.save_requirements", new=AsyncMock()),
+        patch("src.routers.packages.publish_broadcast", new=publish),
+        patch("src.routers.packages.uuid4", return_value=run_id),
+    ):
+        await uninstall_package("humanize", MagicMock(), MagicMock())
+
+    assert recorded == [
+        {"action": "uninstall", "package": "humanize", "version": None, "run_id": str(run_id)}
+    ]
+    assert published[0]["run_id"] == str(run_id)

@@ -1,8 +1,9 @@
 """
 Package Installation Consumer
 
-Processes package installation requests from RabbitMQ fanout exchange.
-Uses broadcast delivery so all worker instances install the package.
+Applies package changes on a worker. Broker workers receive them from the
+RabbitMQ fanout exchange; pool executors apply the recorded package changes
+(``src.services.package_generation``) and never consume the broadcast.
 
 Flow:
 1. API handler updates requirements.txt in S3 + Redis cache (persistence)

@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.orm.base import Base
@@ -37,6 +37,8 @@ class ExecutionWorker(Base):
     kubernetes_pod_uid: Mapped[str | None] = mapped_column(String(128), nullable=True)
     active_runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     runs_handled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # The package generation this executor has applied (see PackageChange).
+    package_generation: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_claim_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

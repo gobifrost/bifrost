@@ -29,6 +29,11 @@ from shared.schema_gate import wait_for_schema
 from src.config import Settings, get_settings
 from src.core.database import close_db, get_engine, init_db
 from src.core.redis_client import PendingExecution
+from src.services.package_generation import (
+    change_message,
+    current_package_generation,
+    package_changes_after,
+)
 from src.services.worker_pool.claims import (
     PoolClaim,
     admit_worker,
@@ -96,6 +101,7 @@ class PoolWorker:
         self._workflow_consumer = None
         self._agent_consumer = None
         self._package_consumer = None
+        self.package_generation = 0
 
     def request_stop(self) -> None:
         self._stop.set()
@@ -149,15 +155,17 @@ class PoolWorker:
         from src.jobs.consumers.agent_run import AgentRunConsumer
         from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
 
+        # Read the package generation before the pool installs requirements:
+        # a change committed in between is then applied again (installs are
+        # idempotent) instead of being missed.
+        self.package_generation = await current_package_generation()
         self._workflow_consumer = WorkflowExecutionConsumer()
         await self._workflow_consumer.start_pool()
         self._agent_consumer = AgentRunConsumer()
-        # Package installs still arrive by broadcast until #769 stage 4
-        # replaces them with a desired package generation.
+        # Applies recorded package changes; it never consumes the broadcast.
         from src.jobs.consumers.package_install import PackageInstallConsumer
 
         self._package_consumer = PackageInstallConsumer()
-        await self._package_consumer.start()
         logger.info(
             "Pool worker ready",
             extra={"incarnation_id": str(self.incarnation_id), "slots": slots},
@@ -165,6 +173,7 @@ class PoolWorker:
         background = [
             asyncio.create_task(self._heartbeat_loop(), name="pool-heartbeat"),
             asyncio.create_task(self._wake_listener(), name="pool-wake"),
+            asyncio.create_task(self._package_loop(), name="pool-packages"),
         ]
         try:
             await self._claim_loop()
@@ -174,7 +183,6 @@ class PoolWorker:
                 task.cancel()
             await asyncio.gather(*background, return_exceptions=True)
             await retire_worker(self.incarnation_id, runs_handled=self.runs_handled)
-            await self._package_consumer.stop()
             await self._workflow_consumer.stop_pool()
             from src.jobs.rabbitmq import rabbitmq
 
@@ -276,6 +284,25 @@ class PoolWorker:
             finally:
                 await client.aclose()
 
+    async def _package_loop(self) -> None:
+        """Apply every recorded package change newer than this executor's.
+
+        Separate from the heartbeat, because pip can run for minutes. Each
+        change is applied once, like the broadcast it replaces; a failure is
+        reported through the shared install progress.
+        """
+        assert self._package_consumer is not None
+        while True:
+            try:
+                for change in await package_changes_after(self.package_generation):
+                    await self._package_consumer.process_message(change_message(change))
+                    self.package_generation = change.id
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Pool worker package reconcile failed")
+            await asyncio.sleep(HEARTBEAT_SECONDS)
+
     async def _heartbeat_loop(self) -> None:
         while True:
             try:
@@ -283,6 +310,7 @@ class PoolWorker:
                     self.incarnation_id,
                     active_runs=self.active_runs(),
                     runs_handled=self.runs_handled,
+                    package_generation=self.package_generation,
                 )
                 if state != "ready":
                     # The controller drained or lost this worker: stop claiming.

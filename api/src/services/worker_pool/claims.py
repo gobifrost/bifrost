@@ -160,7 +160,7 @@ async def claim_next(
 
 
 async def heartbeat_worker(
-    incarnation_id: UUID, *, active_runs: int, runs_handled: int
+    incarnation_id: UUID, *, active_runs: int, runs_handled: int, package_generation: int
 ) -> str | None:
     """Renew liveness; return the state the controller sees (None if gone)."""
     async with get_db_context() as db:
@@ -174,6 +174,7 @@ async def heartbeat_worker(
                 heartbeat_at=_now(),
                 active_runs=active_runs,
                 runs_handled=runs_handled,
+                package_generation=package_generation,
             )
             .returning(ExecutionWorker.state)
         )

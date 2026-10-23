@@ -29,6 +29,7 @@ from src.core.auth import Context, CurrentActiveUser
 from src.core.database import AsyncSession, get_db
 from src.services.authorization.enforce import authorize_operation
 from src.services.authorization.evaluator import GLOBAL
+from src.services.package_generation import record_package_change
 from src.core.log_safety import log_safe
 from src.core.redis_client import get_redis_client
 from src.core.requirements_cache import (
@@ -349,17 +350,22 @@ async def install_package(
             is_update = True
             logger.info("Warmed requirements cache from S3 for recycle")
 
-        # Broadcast to all workers — they pip install + recycle processes.
-        # run_id ties all workers' phase reports to the same Redis hash so
-        # the frontend sees one aggregate status instead of N per-worker logs.
+        # Executors apply the recorded change; broker workers still take the
+        # broadcast. run_id ties every worker's phase reports to one Redis
+        # hash, so the frontend sees one aggregate status.
+        run_id = str(uuid4())
+        version = request.version if request.version else None
+        await record_package_change(
+            ctx.db, action="install", package=request.package_name, version=version, run_id=run_id
+        )
         await publish_broadcast(
             exchange_name="package-installations",
             message={
                 "type": "recycle_workers",
                 "package": request.package_name,
-                "version": request.version if request.version else None,
+                "version": version,
                 "is_update": is_update,
-                "run_id": str(uuid4()),
+                "run_id": run_id,
             },
         )
 
@@ -413,6 +419,10 @@ async def uninstall_package(
         # Tell workers to pip uninstall and recycle. The "action" field
         # is what distinguishes install from uninstall in the consumer.
         # run_id ties all workers' phase reports to the same Redis hash.
+        run_id = str(uuid4())
+        await record_package_change(
+            ctx.db, action="uninstall", package=package_name, version=None, run_id=run_id
+        )
         await publish_broadcast(
             exchange_name="package-installations",
             message={
@@ -421,7 +431,7 @@ async def uninstall_package(
                 "package": package_name,
                 "version": None,
                 "is_update": True,
-                "run_id": str(uuid4()),
+                "run_id": run_id,
             },
         )
 
