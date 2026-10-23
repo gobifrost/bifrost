@@ -1,5 +1,6 @@
 """Shared helpers for agent execution (used by both chat and autonomous executors)."""
 import logging
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -308,6 +309,16 @@ async def resolve_agent_tools(
                     or schema.get("input_schema")
                     or {"type": "object", "properties": {}}
                 )
+                # ``outputSchema`` describes only a successful MCP
+                # ``structuredContent`` payload. Preserve an advertised JSON
+                # Schema as metadata without changing Bifrost's text result
+                # transport or inferring schemas from tool output.
+                output_schema = schema.get("outputSchema")
+                structured_output_schema = (
+                    deepcopy(output_schema)
+                    if isinstance(output_schema, dict)
+                    else None
+                )
 
                 seen_names[qualified_name] = (
                     f"MCP tool '{catalog_row.tool_name}' on connection {connection.id}"
@@ -319,6 +330,7 @@ async def resolve_agent_tools(
                         description=description,
                         parameters=parameters,
                         return_schema=bifrost_adapter_return_schema(),
+                        structured_output_schema=structured_output_schema,
                     )
                 )
 

@@ -23,6 +23,7 @@ across sync runs.
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -134,14 +135,18 @@ async def sync_catalog(
 
     for tool in tools_result.tools:
         seen_names.add(tool.name)
-        # The MCP SDK exposes the JSON Schema as ``inputSchema`` on the
-        # Tool model. Persist it verbatim so the planner can re-emit it
-        # to the LLM without re-shaping.
+        # Preserve standard MCP schema metadata so the planner can re-emit it
+        # without shaping it. ``outputSchema`` describes a successful
+        # structured-content payload and is optional; absent or non-dict
+        # values remain absent rather than being inferred.
         schema = (
             tool.inputSchema
             if isinstance(tool.inputSchema, dict)
             else (tool.inputSchema.model_dump() if tool.inputSchema is not None else {})
         )
+        output_schema = getattr(tool, "outputSchema", None)
+        if isinstance(output_schema, dict):
+            schema = {**schema, "outputSchema": deepcopy(output_schema)}
 
         existing = existing_by_name.get(tool.name)
         if existing is not None:

@@ -148,12 +148,15 @@ async def _make_tool(
     enabled: bool = True,
     description: str | None = None,
     input_schema: dict | None = None,
+    output_schema: dict | None = None,
 ) -> MCPConnectionTool:
     schema: dict = {}
     if description is not None:
         schema["description"] = description
     if input_schema is not None:
         schema["inputSchema"] = input_schema
+    if output_schema is not None:
+        schema["outputSchema"] = output_schema
 
     tool = MCPConnectionTool(
         id=uuid4(),
@@ -285,6 +288,16 @@ async def test_chat_includes_all_enabled_mcp_tools(
         tool_name="chat_only_tool",
         description="A chat-only tool",
         input_schema={"type": "object", "properties": {"q": {"type": "string"}}},
+        output_schema={
+            "type": "object",
+            "properties": {
+                "matches": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                }
+            },
+            "required": ["matches"],
+        },
     )
     await _make_tool(
         db_session,
@@ -368,6 +381,19 @@ async def test_chat_includes_all_enabled_mcp_tools(
         "type": "object",
         "properties": {"q": {"type": "string"}},
     }
+    assert chat_only_def.structured_output_schema == {
+        "type": "object",
+        "properties": {
+            "matches": {
+                "type": "array",
+                "items": {"type": "string"},
+            }
+        },
+        "required": ["matches"],
+    }
+    assert chat_only_def.structured_output_schema is not conn_chat.tools[0].tool_schema[
+        "outputSchema"
+    ]
 
     # Default empty schema when tool_schema lacks inputSchema
     chat_only_no_schema_def = next(
@@ -377,6 +403,7 @@ async def test_chat_includes_all_enabled_mcp_tools(
         "type": "object",
         "properties": {},
     }
+    assert chat_only_no_schema_def.structured_output_schema is None
 
 
 # ---------------------------------------------------------------------------

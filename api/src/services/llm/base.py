@@ -35,12 +35,18 @@ def bifrost_adapter_return_schema() -> dict[str, Any]:
 
 @dataclass
 class ToolDefinition:
-    """Tool definition for LLM function calling."""
+    """Tool definition for LLM function calling.
+
+    ``structured_output_schema`` is optional metadata for the successful
+    ``structuredContent`` payload advertised by an external MCP tool. It does
+    not describe the Bifrost transport envelope or change ``return_schema``.
+    """
 
     name: str
     description: str
     parameters: dict[str, Any]  # JSON Schema format
     return_schema: dict[str, Any] | None = None
+    structured_output_schema: dict[str, Any] | None = None
 
 
 @dataclass
