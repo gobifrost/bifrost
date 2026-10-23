@@ -33,7 +33,9 @@ import pytest
 pytestmark = pytest.mark.e2e
 
 # Larger than any stack executor's budget: only the test-local loop, whose
-# budget is unlimited, can claim the fixture target.
+# budget is unlimited, can claim the fixture target. The loop is registered
+# as an executor that large, so the target is not work no executor can hold
+# (which the control plane blocks as too_large).
 TARGET_REQUEST_BYTES = 2**40
 STOP_BURST_SERVICES = 5
 
@@ -113,7 +115,42 @@ def _live_attempt(e2e_client, headers, definition_id: str) -> dict | None:
 
 
 @pytest.fixture
-async def service_def(e2e_client, platform_admin, db_session):
+async def test_loop_executor(async_session_factory):
+    """The test-local loop as a live executor whose budget holds the target."""
+    from sqlalchemy import delete, func, update
+
+    from src.models.orm.execution_workers import ExecutionWorker
+
+    worker_id = uuid4()
+    async with async_session_factory() as db:
+        db.add(ExecutionWorker(
+            id=worker_id, form="static", state="ready", resource_class="standard", slots=1,
+            hostname="e2e-test-loop", memory_budget_bytes=2 * TARGET_REQUEST_BYTES,
+            heartbeat_at=func.now(),
+        ))
+        await db.commit()
+
+    async def heartbeat() -> None:
+        while True:
+            await asyncio.sleep(5)
+            async with async_session_factory() as db:
+                await db.execute(
+                    update(ExecutionWorker)
+                    .where(ExecutionWorker.id == worker_id)
+                    .values(heartbeat_at=func.now())
+                )
+                await db.commit()
+
+    beating = asyncio.create_task(heartbeat())
+    yield worker_id
+    beating.cancel()
+    async with async_session_factory() as db:
+        await db.execute(delete(ExecutionWorker).where(ExecutionWorker.id == worker_id))
+        await db.commit()
+
+
+@pytest.fixture
+async def service_def(e2e_client, platform_admin, db_session, test_loop_executor):
     import sqlalchemy as sa
 
     headers = platform_admin.headers
@@ -134,6 +171,17 @@ async def service_def(e2e_client, platform_admin, db_session):
     e2e_client.post(f"/api/services/{definition['id']}/disable", headers=platform_admin.headers)
 
 
+def _offering(free_bytes: int):  # type: ignore[no-untyped-def]
+    """An executor gate that always offers ``free_bytes``."""
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def claiming():  # type: ignore[no-untyped-def]
+        yield free_bytes
+
+    return claiming
+
+
 def _make_loop(pool, **overrides):
     from src.services.service_claim import ServiceClaimLoop
 
@@ -144,7 +192,7 @@ def _make_loop(pool, **overrides):
         "beat_interval_seconds": 2.0,
         "lease_ttl_seconds": 10,
         "token_lifetime_seconds": 120,
-        "free_bytes": lambda: 2 * TARGET_REQUEST_BYTES,
+        "claiming": _offering(2 * TARGET_REQUEST_BYTES),
         "hold_memory": lambda attempt_id, request: None,
     }
     args.update(overrides)
