@@ -55,7 +55,6 @@ async def test_executors_read_newer_changes_in_order(sessions) -> None:  # type:
     assert await current_package_generation() == changes[-1].id
     assert await package_changes_after(changes[-1].id) == []
     assert change_message(changes[0]) == {
-        "type": "recycle_workers",
         "action": "install",
         "package": "humanize",
         "version": None,

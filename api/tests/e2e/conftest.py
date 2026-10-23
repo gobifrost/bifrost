@@ -2,7 +2,7 @@
 E2E test configuration.
 
 E2E tests run against the full API stack (API + Jobs workers) with real
-PostgreSQL, RabbitMQ, and Redis services.
+PostgreSQL, Redis and S3 services.
 
 These tests require:
 - docker-compose.test.yml services running (via ./test.sh)

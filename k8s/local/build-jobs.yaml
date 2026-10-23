@@ -1,17 +1,6 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: bifrost-build-controller
-  namespace: bifrost-local
-  labels:
-    app.kubernetes.io/name: bifrost-build-controller
-    app.kubernetes.io/component: build-controller
-    app.kubernetes.io/part-of: bifrost-local-kind
-automountServiceAccountToken: true
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
   name: bifrost-build-runner
   namespace: bifrost-local
   labels:
@@ -19,41 +8,6 @@ metadata:
     app.kubernetes.io/component: build-runner
     app.kubernetes.io/part-of: bifrost-local-kind
 automountServiceAccountToken: false
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: bifrost-build-controller
-  namespace: bifrost-local
-  labels:
-    app.kubernetes.io/name: bifrost-build-controller
-    app.kubernetes.io/component: build-controller
-    app.kubernetes.io/part-of: bifrost-local-kind
-rules:
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["get", "list", "create", "patch", "delete"]
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["get", "list"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: bifrost-build-controller
-  namespace: bifrost-local
-  labels:
-    app.kubernetes.io/name: bifrost-build-controller
-    app.kubernetes.io/component: build-controller
-    app.kubernetes.io/part-of: bifrost-local-kind
-subjects:
-  - kind: ServiceAccount
-    name: bifrost-build-controller
-    namespace: bifrost-local
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: bifrost-build-controller
 ---
 apiVersion: v1
 kind: ConfigMap

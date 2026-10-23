@@ -1,6 +1,6 @@
 # Execution Engine
 
-Distributed, process-pooled execution system with Redis-first architecture for running workflows, scripts, and data providers in isolated processes.
+Distributed, process-pooled execution system for running workflows, scripts, and data providers in isolated processes. Runs are accepted durably in PostgreSQL and claimed by executors.
 
 ## Architecture Overview
 
@@ -8,24 +8,23 @@ Distributed, process-pooled execution system with Redis-first architecture for r
                           API Request
                                |
                                v
-+---------------------------+  |  +---------------------------+
-|        service.py         |  |  |      async_executor.py    |
-|  - Workflow lookup        |<-+->|  - Store pending in Redis |
-|  - Metadata resolution    |     |  - Publish to RabbitMQ    |
-|  - Sync/async dispatch    |     |  - Return execution_id    |
-+---------------------------+     +---------------------------+
++---------------------------+  |  +-----------------------------+
+|        service.py         |  |  |      async_executor.py      |
+|  - Workflow lookup        |<-+->|  - Commit PENDING row and   |
+|  - Metadata resolution    |     |    its work dispatch        |
+|  - Sync/async dispatch    |     |  - Wake executors, return id|
++---------------------------+     +-----------------------------+
                                               |
                                               v
-                                     +----------------+
-                                     |   RabbitMQ     |
-                                     |    Queue       |
-                                     +----------------+
+                                   +--------------------+
+                                   |  work_dispatches   |
+                                   |   (PostgreSQL)     |
+                                   +--------------------+
                                               |
                                               v
 +------------------------------------------------------------------+
-|                  workflow_execution.py (Consumer)                 |
-|  - Read pending execution from Redis                              |
-|  - Create PostgreSQL record (RUNNING)                             |
+|        worker/pool_main.py (executor) + workflow_execution.py     |
+|  - Claim dispatch and run (PENDING -> RUNNING) in one transaction |
 |  - Pre-warm SDK cache                                             |
 |  - Route to ProcessPoolManager                                    |
 +------------------------------------------------------------------+
@@ -88,18 +87,18 @@ Distributed, process-pooled execution system with Redis-first architecture for r
 |------|----------------|
 | `service.py` | High-level orchestration. Workflow lookup by ID, metadata caching (Redis-first), sync/async dispatch routing. Entry point for `run_workflow()` and `run_code()`. |
 | `engine.py` | Unified execution engine. Handles workflows, inline scripts, and data providers. Sets up SDK context, captures variables via `sys.settrace()`, streams logs to Redis, handles data provider caching. |
-| `async_executor.py` | Queue management. Stores pending execution in Redis, publishes minimal message to RabbitMQ, returns execution ID immediately (<100ms target). |
+| `async_executor.py` | Acceptance. Commits the PENDING execution row and its work dispatch (`workflow_dispatch.py`), wakes the executors, returns the execution ID immediately (<100ms target). |
 | `process_pool.py` | One-shot child lifecycle management. Forks on demand up to `max_workers`, handles timeouts (SIGTERM -> SIGKILL), detects crashes, and publishes heartbeats. |
 | `simple_worker.py` | Isolated subprocess entry point. Receives one parent-assembled context over a private pipe, clears workspace modules, delegates to `engine.py`, returns one result, and exits. |
-| `workflow_execution.py` | RabbitMQ consumer. Creates PostgreSQL records, pre-warms SDK cache, routes to process pool, handles results (success/failure), flushes data to Postgres, publishes WebSocket updates. |
+| `workflow_execution.py` | Runs claimed workflow dispatches. Pre-warms SDK cache, routes to process pool, handles results (success/failure), flushes data to Postgres, publishes WebSocket updates. |
 
 ## Execution States
 
 ```
-PENDING     API accepted request, queued in RabbitMQ
+PENDING     API accepted request; its dispatch waits for an executor
     |
     v
-RUNNING     Consumer picked up, worker executing
+RUNNING     An executor claimed it, worker executing
     |
     +---> SUCCESS              Completed successfully
     |
@@ -117,19 +116,17 @@ RUNNING     Consumer picked up, worker executing
 ### Async Execution (Default)
 
 1. API calls `run_workflow()` or `run_code()`
-2. `async_executor.py` stores pending execution in Redis
-3. Minimal message published to RabbitMQ queue
-4. API returns `{execution_id, status: "Pending"}` immediately
-5. Consumer reads from RabbitMQ, fetches context from Redis
-6. Consumer creates PostgreSQL record with `RUNNING` status
-7. Consumer routes to `ProcessPoolManager`
-8. Worker process executes code, returns result via queue
-9. Consumer updates PostgreSQL, flushes logs/writes, publishes WebSocket update
-10. Client receives update via WebSocket subscription
+2. `async_executor.py` commits the `PENDING` execution row and its work dispatch
+3. API wakes the executors (a hint; they also poll) and returns `{execution_id, status: "Pending"}` immediately
+4. An executor claims the dispatch, moving the row to `RUNNING` and taking its context in one transaction
+5. The consumer routes to `ProcessPoolManager`
+6. Worker process executes code, returns result via queue
+7. Consumer updates PostgreSQL, flushes logs/writes, publishes WebSocket update
+8. Client receives update via WebSocket subscription
 
 ### Sync Execution (Tool Calls, `sync=True`)
 
-1. Steps 1-8 same as async
+1. Steps 1-6 same as async
 2. Consumer pushes result to Redis list: `bifrost:result:{execution_id}`
 3. API waits on `BLPOP` for result (up to timeout)
 4. API returns complete result to caller

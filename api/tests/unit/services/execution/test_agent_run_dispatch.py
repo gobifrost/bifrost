@@ -82,7 +82,7 @@ async def test_agent_run_and_context_are_accepted_together(
     dispatch = await _dispatch(async_session_factory, run_id)
     assert run.status == "queued"
     assert dispatch is not None
-    assert (dispatch.placement, dispatch.status) == ("pool", "pending")
+    assert dispatch.placement == "pool"
     assert dispatch.payload["input"] == {"task": "t"}
 
 

@@ -2,16 +2,14 @@
 Redis Client for Execution Management
 
 Provides:
-1. Pending execution storage (API writes, Worker reads)
-2. Sync execution results via BLPOP/RPUSH pattern
-3. Cancellation flag management
+1. Sync execution results via BLPOP/RPUSH pattern
+2. Cancellation flag management
+3. Workflow metadata caches
 
 Execution Flow:
-1. API writes pending execution to Redis
-2. API publishes to RabbitMQ
-3. Worker reads pending execution from Redis
-4. Worker writes to PostgreSQL and executes
-5. For sync: Worker pushes result, API's BLPOP returns
+1. API accepts the run in PostgreSQL (execution row and dispatch)
+2. An executor claims the dispatch and executes
+3. For sync: the executor pushes the result, the API's BLPOP returns
 """
 
 import json
@@ -30,8 +28,6 @@ logger = logging.getLogger(__name__)
 
 # Redis key prefixes
 RESULT_KEY_PREFIX = "bifrost:result:"
-PENDING_KEY_PREFIX = "bifrost:exec:"
-PENDING_KEY_SUFFIX = ":pending"
 ENDPOINT_WORKFLOW_CACHE_PREFIX = "bifrost:endpoint:workflow:"
 WORKFLOW_METADATA_CACHE_PREFIX = "bifrost:workflow:"
 
@@ -45,12 +41,9 @@ DEFAULT_TIMEOUT_SECONDS = 300
 # Result TTL for auto-cleanup (60 seconds after push)
 RESULT_TTL_SECONDS = 60
 
-# Pending execution TTL (1 hour safety for orphaned entries)
-PENDING_EXECUTION_TTL_SECONDS = 3600
-
 
 class PendingExecution(TypedDict):
-    """Schema for pending execution data stored in Redis."""
+    """A run's execution context, carried by its dispatch payload."""
     execution_id: str
     workflow_id: str | None  # UUID from database (None for inline code)
     script_name: str | None  # Name for inline code execution
@@ -75,7 +68,6 @@ class PendingExecution(TypedDict):
     # crossing the API/worker process boundary.
     impersonation_provenance: NotRequired[dict[str, str] | None]
     created_at: str  # ISO format
-    cancelled: bool
 
 
 def pending_execution_record(
@@ -100,7 +92,7 @@ def pending_execution_record(
     lineage: dict[str, str] | None,
     impersonation_provenance: dict[str, str] | None = None,
 ) -> PendingExecution:
-    """The execution context a worker needs, durable or cached."""
+    """The execution context an executor needs to run the workflow."""
     return {
         "execution_id": execution_id,
         "workflow_id": workflow_id,
@@ -122,7 +114,6 @@ def pending_execution_record(
         "lineage": lineage,
         "impersonation_provenance": impersonation_provenance,
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "cancelled": False,
     }
 
 
@@ -145,7 +136,6 @@ class RedisClient:
     Redis client wrapper for execution management.
 
     Provides:
-    - Pending execution: set/get/delete/cancel pending executions
     - Sync results: push_result/wait_for_result via BLPOP
     - Cancellation: set_cancel_flag for running executions
     """
@@ -163,140 +153,6 @@ class RedisClient:
             )
         return self._redis
 
-    # =========================================================================
-    # Pending Execution Methods (API writes, Worker reads)
-    # =========================================================================
-
-    async def set_pending_execution(
-        self,
-        execution_id: str,
-        workflow_id: str | None,
-        parameters: dict[str, Any],
-        org_id: str | None,
-        user_id: str,
-        user_name: str,
-        user_email: str,
-        form_id: str | None = None,
-        script_name: str | None = None,
-        startup: Any | None = None,
-        form_inputs: dict[str, Any] | None = None,
-        embed: dict[str, Any] | None = None,
-        api_key_id: str | None = None,
-        sync: bool = False,
-        is_platform_admin: bool = False,
-        event: dict[str, Any] | None = None,
-        artifact_workspace_id: str | None = None,
-        *,
-        lineage: dict[str, str] | None,
-        impersonation_provenance: dict[str, str] | None = None,
-    ) -> None:
-        """
-        Store pending execution in Redis.
-
-        Called by API before publishing to RabbitMQ.
-        Worker will read this data when it picks up the job.
-
-        Args:
-            execution_id: Unique execution ID (UUID)
-            workflow_id: UUID of workflow to execute (None for inline code)
-            parameters: Workflow input parameters
-            org_id: Organization ID (None for GLOBAL scope)
-            user_id: User ID who initiated execution
-            user_name: Display name of user
-            user_email: Email of user
-            form_id: Optional form ID if triggered by form
-            script_name: Optional script name for inline code execution
-            startup: Optional startup data from launch workflow (available via context.startup)
-            api_key_id: Optional workflow ID whose API key triggered this execution
-            sync: If True, worker will push result to Redis for sync execution
-            lineage: Run lineage bound to this execution (RunLineage.bound)
-        """
-        await self.store_pending_execution(
-            pending_execution_record(
-                execution_id=execution_id,
-                workflow_id=workflow_id,
-                script_name=script_name,
-                parameters=parameters,
-                org_id=org_id,
-                user_id=user_id,
-                user_name=user_name,
-                user_email=user_email,
-                form_id=form_id,
-                api_key_id=api_key_id,
-                startup=startup,
-                form_inputs=form_inputs,
-                embed=embed,
-                sync=sync,
-                is_platform_admin=is_platform_admin,
-                event=event,
-                artifact_workspace_id=artifact_workspace_id,
-                lineage=lineage,
-                impersonation_provenance=impersonation_provenance,
-            )
-        )
-
-    async def store_pending_execution(self, data: PendingExecution) -> None:
-        """Store a prebuilt pending-execution record."""
-        redis_client = await self._get_redis()
-        key = f"{PENDING_KEY_PREFIX}{data['execution_id']}{PENDING_KEY_SUFFIX}"
-        try:
-            await redis_client.setex(
-                key,
-                PENDING_EXECUTION_TTL_SECONDS,
-                json.dumps(data),
-            )
-            logger.debug(f"Stored pending execution: {key}")
-        except Exception as e:
-            logger.error(f"Failed to store pending execution: {e}")
-            raise
-
-    async def get_pending_execution(
-        self,
-        execution_id: str,
-    ) -> PendingExecution | None:
-        """
-        Get pending execution data from Redis.
-
-        Called by Worker when it picks up a job from RabbitMQ.
-
-        Args:
-            execution_id: Execution ID
-
-        Returns:
-            PendingExecution dict or None if not found
-        """
-        redis_client = await self._get_redis()
-        key = f"{PENDING_KEY_PREFIX}{execution_id}{PENDING_KEY_SUFFIX}"
-
-        try:
-            data = await redis_client.get(key)
-            if data is None:
-                logger.warning("Pending execution not found: %s", log_safe(execution_id))
-                return None
-            return json.loads(data)
-        except Exception as e:
-            logger.error(f"Failed to get pending execution: {e}")
-            raise
-
-    async def delete_pending_execution(self, execution_id: str) -> None:
-        """
-        Delete pending execution from Redis.
-
-        Called by Worker after writing to PostgreSQL.
-
-        Args:
-            execution_id: Execution ID
-        """
-        redis_client = await self._get_redis()
-        key = f"{PENDING_KEY_PREFIX}{execution_id}{PENDING_KEY_SUFFIX}"
-
-        try:
-            await redis_client.delete(key)
-            logger.debug(f"Deleted pending execution: {key}")
-        except Exception as e:
-            logger.error(f"Failed to delete pending execution: {e}")
-            raise
-
     async def get_active_execution(
         self,
         execution_id: str,
@@ -307,106 +163,6 @@ class RedisClient:
         if data is None:
             return None
         return cast(ActiveExecution, json.loads(data))
-
-    async def set_pending_cancelled(self, execution_id: str) -> bool:
-        """
-        Mark a pending execution as cancelled.
-
-        Called by API when user cancels before worker picks up.
-        Worker checks this flag before starting execution.
-
-        Args:
-            execution_id: Execution ID
-
-        Returns:
-            True if execution was found and marked cancelled, False if not found
-        """
-        redis_client = await self._get_redis()
-        key = f"{PENDING_KEY_PREFIX}{execution_id}{PENDING_KEY_SUFFIX}"
-
-        try:
-            data = await redis_client.get(key)
-            if data is None:
-                return False
-
-            pending = json.loads(data)
-            pending["cancelled"] = True
-
-            # Preserve remaining TTL
-            ttl = await redis_client.ttl(key)
-            if ttl > 0:
-                await redis_client.setex(key, ttl, json.dumps(pending))
-            else:
-                await redis_client.setex(
-                    key, PENDING_EXECUTION_TTL_SECONDS, json.dumps(pending)
-                )
-
-            logger.info(f"Marked pending execution as cancelled: {log_safe(execution_id)}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to cancel pending execution: {e}")
-            raise
-
-    async def is_pending_cancelled(self, execution_id: str) -> bool:
-        """
-        Check if a pending execution is cancelled.
-
-        Called by Worker before starting execution.
-
-        Args:
-            execution_id: Execution ID
-
-        Returns:
-            True if cancelled, False otherwise
-        """
-        pending = await self.get_pending_execution(execution_id)
-        if pending is None:
-            return False
-        return pending.get("cancelled", False)
-
-    async def update_pending_execution(
-        self,
-        execution_id: str,
-        updates: dict[str, Any],
-    ) -> bool:
-        """
-        Update fields in a pending execution record.
-
-        Called by Worker to add additional context (workflow_name, etc.)
-        that needs to be available when async results are processed.
-
-        Args:
-            execution_id: Execution ID
-            updates: Dict of fields to update
-
-        Returns:
-            True if execution was found and updated, False if not found
-        """
-        redis_client = await self._get_redis()
-        key = f"{PENDING_KEY_PREFIX}{execution_id}{PENDING_KEY_SUFFIX}"
-
-        try:
-            data = await redis_client.get(key)
-            if data is None:
-                return False
-
-            pending = json.loads(data)
-            pending.update(updates)
-
-            # Preserve remaining TTL
-            ttl = await redis_client.ttl(key)
-            if ttl > 0:
-                await redis_client.setex(key, ttl, json.dumps(pending))
-            else:
-                await redis_client.setex(
-                    key, PENDING_EXECUTION_TTL_SECONDS, json.dumps(pending)
-                )
-
-            logger.debug(f"Updated pending execution: {execution_id} with {list(updates.keys())}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to update pending execution: {e}")
-            raise
 
     # =========================================================================
     # Sync Execution Results (BLPOP/RPUSH pattern)

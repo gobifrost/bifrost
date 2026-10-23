@@ -68,6 +68,18 @@ def _queued(count: int, on_hand_off=None):  # type: ignore[no-untyped-def]
     return QueuedDeliveries(hand_offs=[hand_off for _ in range(count)])
 
 
+@pytest.fixture(autouse=True)
+async def _no_schedule_left_running(db_session):
+    """Tests commit every-minute schedules; disable them afterwards so a later
+    test that crosses a minute boundary does not see them fire again."""
+    yield
+    from sqlalchemy import update
+
+    await db_session.rollback()
+    await db_session.execute(update(ScheduleSource).values(enabled=False))
+    await db_session.commit()
+
+
 def _make_source_and_subscription(
     *,
     cron: str = "* * * * *",

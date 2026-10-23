@@ -153,7 +153,6 @@ async def test_agent_run_enqueue_sanitizes_trigger_in_log(monkeypatch, caplog):
         yield session
 
     monkeypatch.setattr(agent_run_service, "get_dispatch_db_context", accept_context)
-    monkeypatch.setattr(agent_run_service, "cache_agent_context", AsyncMock())
     monkeypatch.setattr(agent_run_service, "hand_off_agent_run", AsyncMock(return_value=True))
 
     with caplog.at_level(logging.INFO, logger=agent_run_service.__name__):
@@ -199,20 +198,3 @@ async def test_role_cache_sanitizes_user_id_in_invalidation_log(monkeypatch, cap
     message = caplog.messages[-1]
     _assert_sanitized(message)
     assert "user\\nFORGED" in message
-
-
-@pytest.mark.asyncio
-async def test_pending_execution_miss_sanitizes_execution_id_in_log(caplog):
-    from src.core import redis_client
-
-    client = redis_client.RedisClient()
-    client._redis = AsyncMock()
-    client._redis.get.return_value = None
-
-    with caplog.at_level(logging.WARNING, logger=redis_client.__name__):
-        result = await client.get_pending_execution("run\nFORGED\x1b[31m")
-
-    assert result is None
-    message = caplog.messages[-1]
-    _assert_sanitized(message)
-    assert "run\\nFORGED" in message

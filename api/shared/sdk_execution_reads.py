@@ -660,8 +660,7 @@ async def get_sdk_execution(
     """Get execution details by ID with authorization.
 
     Preserves the historical ``GET /api/executions/{id}`` behavior
-    exactly: 404 when the row is missing (including a Redis-pending
-    fallback miss), 403 when the original user cannot view the row,
+    exactly: 404 when the row is missing, 403 when the original user cannot view the row,
     dual-read logs (Redis Stream when in-progress, Postgres when
     complete, DEBUG/TRACEBACK filtered for non-admins), AI usage rows
     plus totals, permission-gated variables/context/resource fields, and the
@@ -671,7 +670,6 @@ async def get_sdk_execution(
         SdkExecutionReadError: 404 when missing; 403 when denied.
     """
     from bifrost._logging import read_logs_from_stream
-    from shared.pending_execution import get_pending_execution_fallback
     from src.models import Execution as ExecutionModel
     from src.models import ExecutionLog as ExecutionLogORM
     from src.models import ExecutionLogPublic, WorkflowExecution
@@ -691,20 +689,7 @@ async def get_sdk_execution(
     execution = result.scalar_one_or_none()
 
     if not execution:
-        pending, pending_error = await get_pending_execution_fallback(
-            execution_id,
-            caller,
-            session,
-        )
-        if pending_error == "Forbidden":
-            raise SdkExecutionReadError(
-                403, "You do not have permission to view this execution"
-            )
-        if pending is None:
-            raise SdkExecutionReadError(
-                404, f"Execution {execution_id} not found"
-            )
-        return pending
+        raise SdkExecutionReadError(404, f"Execution {execution_id} not found")
 
     access = await current_execution_read_access(caller, execution)
     if not access.visible:

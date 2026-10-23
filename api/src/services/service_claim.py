@@ -1,7 +1,7 @@
 """
 Supervised service claim loop (Slice 3, worker-pull per §18.4).
 
-Runs inside the worker container next to the RabbitMQ consumers. Each tick:
+Runs inside every executor, next to its run claims. Each tick:
 
 1. ``expire_leases`` — fail attempts whose owner stopped renewing and apply
    restart decisions (lease expiry is the worker-loss backstop).
@@ -9,7 +9,7 @@ Runs inside the worker container next to the RabbitMQ consumers. Each tick:
    ``ready()`` report, mirror ``stop_requested`` to the child (Redis stop key
    + SIGTERM), and rotate the service credential.
 3. Claim eligible services while service slots remain — the DB lease (fenced,
-   partial-unique) owns the lifetime; RabbitMQ carries no assignment.
+   partial-unique) owns the lifetime; nothing else carries an assignment.
 
 The scheduler leader only advances durable eligibility (already encoded in
 ``restart_eligible_at``/``blocked_reason`` at completion time); there is no

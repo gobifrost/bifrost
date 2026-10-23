@@ -1,6 +1,6 @@
 """Worker handles summarize message types.
 
-Validates the thin RabbitMQ consumer wrappers that delegate to
+Validates the summary message handler that delegates to
 ``run_summarizer``, and the failure-swallowing path. Summary dispatch
 (claiming, backfill fan-out) is covered in
 ``tests/unit/services/execution/test_summary_dispatch.py``.
@@ -18,14 +18,18 @@ from src.models.orm.agent_runs import AgentRun
 
 @pytest.mark.asyncio
 async def test_summarize_message_calls_summarizer():
-    """handle_summarize_message extracts run_id and delegates to summarize_run."""
+    """handle_summarize_message claims the summary, then delegates to summarize_run."""
     from src.jobs.summarize_worker import handle_summarize_message
 
     run_id = uuid4()
-    with patch(
-        "src.jobs.summarize_worker.summarize_run", new=AsyncMock()
-    ) as mock:
-        await handle_summarize_message({"run_id": str(run_id)})
+    with (
+        patch(
+            "src.services.execution.summary_dispatch.claim_summary",
+            new=AsyncMock(return_value=True),
+        ),
+        patch("src.jobs.summarize_worker.summarize_run", new=AsyncMock()) as mock,
+    ):
+        await handle_summarize_message({"run_id": str(run_id), "dispatch_id": str(uuid4())})
         mock.assert_awaited_once()
         called_run_id = mock.await_args.args[0]
         assert isinstance(called_run_id, UUID)
@@ -61,10 +65,9 @@ async def test_summarize_failure_marks_run_failed(
 ):
     """A failure inside summarize_run is caught, run.summary_status = 'failed', error stored.
 
-    The handler must NOT re-raise — that would land the message in the DLQ
-    and burn retries for what is almost always a deterministic failure
-    (bad LLM output / missing config). The UI exposes a regenerate button
-    for recovery instead.
+    The handler must NOT re-raise or retry what is almost always a
+    deterministic failure (bad LLM output / missing config). The UI exposes
+    a regenerate button for recovery instead.
     """
     from src.jobs.summarize_worker import handle_summarize_message
 
@@ -83,13 +86,19 @@ async def test_summarize_failure_marks_run_failed(
     await db_session.commit()
 
     try:
-        with patch(
-            "src.jobs.summarize_worker.summarize_run",
-            new=AsyncMock(side_effect=RuntimeError("boom")),
+        with (
+            patch(
+                "src.services.execution.summary_dispatch.claim_summary",
+                new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "src.jobs.summarize_worker.summarize_run",
+                new=AsyncMock(side_effect=RuntimeError("boom")),
+            ),
         ):
             # Should not raise — errors are swallowed to prevent retry loops.
             await handle_summarize_message(
-                {"run_id": str(run.id)},
+                {"run_id": str(run.id), "dispatch_id": str(uuid4())},
                 session_factory=async_session_factory,
             )
 

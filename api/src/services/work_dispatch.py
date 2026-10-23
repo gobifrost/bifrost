@@ -82,7 +82,6 @@ def stage_dispatch(
     subject_id: UUID,
     handler: str,
     handler_version: int,
-    queue: str,
     message: dict[str, Any],
     payload: dict[str, Any],
 ) -> WorkDispatch:
@@ -98,7 +97,6 @@ def stage_dispatch(
         subject_id=subject_id,
         handler=handler,
         handler_version=handler_version,
-        queue=queue,
         message={
             **message,
             "dispatch_id": str(dispatch_id),
@@ -107,8 +105,6 @@ def stage_dispatch(
         },
         payload=payload,
         placement="pool",
-        status="pending",
-        publish_count=0,
     )
     db.add(dispatch)
     return dispatch
@@ -183,7 +179,6 @@ async def _reconcile_one(
             # still receives the broker copy is fenced by the claim.
             row.placement = "pool"
             row.assigned_worker_id = None
-            row.status = "pending"
             replaced = True
         else:
             failure = await _settle_pool_dispatch(db, family, row)

@@ -213,10 +213,9 @@ stack_up() {
     fi
 
     echo "Booting infrastructure..."
-    docker compose -f "$COMPOSE_FILE" up -d postgres rabbitmq redis seaweedfs
+    docker compose -f "$COMPOSE_FILE" up -d postgres redis seaweedfs
 
     wait_for_service "$COMPOSE_FILE" postgres pg_isready -U bifrost -d postgres
-    wait_for_service "$COMPOSE_FILE" rabbitmq rabbitmq-diagnostics check_running
     wait_for_service "$COMPOSE_FILE" redis redis-cli ping
 
     docker compose -f "$COMPOSE_FILE" up -d pgbouncer

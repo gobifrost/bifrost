@@ -228,7 +228,7 @@ async def test_promotion_commits_a_claimable_dispatch_before_the_hand_off(db_ses
     dispatch = (
         await db_session.execute(select(WorkDispatch).where(WorkDispatch.subject_id == due.id))
     ).scalar_one()
-    assert (dispatch.placement, dispatch.status) == ("pool", "pending")
+    assert dispatch.placement == "pool"
     assert dispatch.payload["execution_id"] == str(due.id)
 
 
@@ -665,7 +665,6 @@ async def test_a_row_without_run_as_is_published_as_before(db_session):
         "artifact_workspace_id": None,
         "lineage": None,
         "impersonation_provenance": None,
-        "cancelled": False,
     }
     assert accepted.message["execution_record_exists"] is True
     await db_session.refresh(plain)

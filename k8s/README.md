@@ -27,11 +27,8 @@ k8s/
 │   └── deployment.yaml # Background job workers
 ├── scheduler/
 │   └── deployment.yaml # Scalable jobs + elected Cron trigger leader
-├── coding-agent/
-│   └── deployment.yaml # Claude Agent SDK container
-└── rabbitmq/
-    ├── deployment.yaml # RabbitMQ message broker
-    └── service.yaml    # ClusterIP service (port 5672, 15672)
+└── coding-agent/
+    └── deployment.yaml # Claude Agent SDK container
 ```
 
 ## Quick Start
@@ -52,8 +49,6 @@ kubectl create secret generic bifrost-secrets \
   --from-literal=BIFROST_SECRET_KEY='your-32-char-secret-key-here' \
   --from-literal=BIFROST_DATABASE_URL='postgresql+asyncpg://user:pass@host:5432/bifrost' \
   --from-literal=BIFROST_DATABASE_URL_SYNC='postgresql://user:pass@host:5432/bifrost' \
-  --from-literal=BIFROST_RABBITMQ_URL='amqp://bifrost:pass@rabbitmq:5672/' \
-  --from-literal=BIFROST_RABBITMQ_PASSWORD='your-rabbitmq-password' \
   --from-literal=BIFROST_REDIS_URL='redis://redis:6379/0' \
   --from-literal=BIFROST_S3_ENDPOINT_URL='https://s3.us-east-1.amazonaws.com' \
   --from-literal=BIFROST_S3_ACCESS_KEY='your-access-key' \
@@ -94,7 +89,6 @@ kubectl apply -k k8s/
 **Option B: Apply individual manifests**
 
 ```bash
-kubectl apply -f k8s/rabbitmq/
 kubectl apply -f k8s/api/
 kubectl apply -f k8s/client/
 kubectl apply -f k8s/worker/
@@ -117,6 +111,13 @@ kubectl logs -n bifrost -l app.kubernetes.io/name=bifrost-api -f
 # View worker logs
 kubectl logs -n bifrost -l app.kubernetes.io/name=bifrost-worker -f
 ```
+
+### Upgrading From a Release That Used RabbitMQ
+
+Bifrost no longer uses RabbitMQ. `kubectl apply -k k8s/` does not delete the
+`rabbitmq` Deployment and Service an earlier release created; see [Removing
+RabbitMQ and KEDA after
+upgrading](../docs/runbooks/kubernetes-worker-deployment.md#removing-rabbitmq-and-keda-after-upgrading).
 
 ## Exposing the Application
 
@@ -244,8 +245,6 @@ Scale gradually and monitor memory-pressure deferrals and queue wait time.
 | `BIFROST_SECRET_KEY` | 32+ char secret for JWT and encryption |
 | `BIFROST_DATABASE_URL` | PostgreSQL async connection string |
 | `BIFROST_DATABASE_URL_SYNC` | PostgreSQL sync connection string |
-| `BIFROST_RABBITMQ_URL` | RabbitMQ AMQP connection string |
-| `BIFROST_RABBITMQ_PASSWORD` | RabbitMQ password (for in-cluster deployment) |
 | `BIFROST_REDIS_URL` | Redis connection string (for caching) |
 | `BIFROST_S3_ENDPOINT_URL` | S3 endpoint URL |
 | `BIFROST_S3_ACCESS_KEY` | S3 access key |
@@ -294,6 +293,6 @@ kubectl logs -n bifrost <api-pod-name> -c migrate
 
 ### Workers not processing jobs
 
-1. Check RabbitMQ connection
-2. Verify worker logs for errors
-3. Ensure the queue exists in RabbitMQ
+1. Verify worker and scheduler logs for errors
+2. Check the database connection: executors claim work from PostgreSQL
+3. See `docs/runbooks/kubernetes-worker-deployment.md` for the executor model

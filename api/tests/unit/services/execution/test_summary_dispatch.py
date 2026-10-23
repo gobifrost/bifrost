@@ -198,7 +198,6 @@ async def test_a_backfill_stages_its_summaries_before_handing_them_off(world, mo
     for run_id in run_ids:
         [dispatch] = await world.dispatches(run_id)
         assert dispatch.handler == BACKFILL_HANDLER
-        assert dispatch.queue == "agent-summarization-backfill"
     assert hand_off.await_count == 2
 
 

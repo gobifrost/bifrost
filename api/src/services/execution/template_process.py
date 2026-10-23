@@ -7,7 +7,7 @@ copy-on-write (COW), drastically reducing per-worker memory overhead.
 
 The template process NEVER:
 - Starts an asyncio event loop
-- Opens Redis/DB/RabbitMQ connections
+- Opens Redis/DB connections
 - Spawns background threads
 - Initializes thread-based logging handlers
 
@@ -217,6 +217,8 @@ def _template_main(
     _SCRUB_KEYS = [
         "BIFROST_DATABASE_URL",
         "BIFROST_DATABASE_URL_SYNC",
+        # Retired broker; an install upgraded with its old compose file or
+        # manifests still sets this URL, credentials included.
         "BIFROST_RABBITMQ_URL",
         "BIFROST_REDIS_URL",
         "REDIS_URL",
@@ -254,7 +256,7 @@ def _template_main(
     # cache with inert values, then delete them from the environment.
     # Forks inherit the cached object via COW: get_settings() keeps working
     # everywhere in the child, but its secret_key is the sentinel and its
-    # DB/RabbitMQ/S3 fields are localhost defaults and Redis is an unreachable
+    # DB/S3 fields are localhost defaults and Redis is an unreachable
     # endpoint. Real platform credentials exist in neither the child's env nor
     # its memory; tokens are pre-minted by the parent, so nothing in the child
     # signs JWTs.

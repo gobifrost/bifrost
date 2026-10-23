@@ -9,10 +9,8 @@ from collections.abc import Awaitable, Hashable
 from datetime import datetime, timezone
 from typing import Any, cast
 
-import aio_pika
 import redis.asyncio as redis
 from aiobotocore.session import get_session
-from aio_pika.abc import AbstractRobustConnection
 from fastapi import APIRouter, Depends, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -26,55 +24,6 @@ router = APIRouter(prefix="/health", tags=["health"])
 
 CHECK_TIMEOUT_SECONDS = 2.0
 ComponentStatus = dict[str, str]
-
-
-class RabbitMQHealthConnection:
-    def __init__(self) -> None:
-        self.connection: AbstractRobustConnection | None = None
-        self.url: str | None = None
-        self.lock = asyncio.Lock()
-
-    @staticmethod
-    def _is_open(connection: AbstractRobustConnection) -> bool:
-        return not bool(connection.is_closed)
-
-    async def close(self) -> None:
-        connection = self.connection
-        self.connection = None
-        self.url = None
-        if connection is not None and self._is_open(connection):
-            await connection.close()
-
-    async def get(self, settings: Settings) -> AbstractRobustConnection:
-        connection = self.connection
-        if (
-            connection is not None
-            and self.url == settings.rabbitmq_url
-            and self._is_open(connection)
-        ):
-            return connection
-
-        async with self.lock:
-            connection = self.connection
-            if (
-                connection is not None
-                and self.url == settings.rabbitmq_url
-                and self._is_open(connection)
-            ):
-                return connection
-
-            if connection is not None and self._is_open(connection):
-                await connection.close()
-
-            self.connection = await aio_pika.connect_robust(settings.rabbitmq_url)
-            self.url = settings.rabbitmq_url
-            return self.connection
-
-    async def discard(self, connection: AbstractRobustConnection) -> None:
-        await connection.close()
-        if self.connection is connection:
-            self.connection = None
-            self.url = None
 
 
 class RedisHealthConnection:
@@ -170,7 +119,6 @@ class S3HealthClient:
             await self.close()
 
 
-_rabbitmq_health_connection = RabbitMQHealthConnection()
 _redis_health_connection = RedisHealthConnection()
 _s3_health_client = S3HealthClient()
 
@@ -236,30 +184,8 @@ async def check_redis(settings: Settings) -> tuple[str, ComponentStatus]:
 
 
 async def close_health_check_clients() -> None:
-    await _rabbitmq_health_connection.close()
     await _redis_health_connection.close()
     await _s3_health_client.close()
-
-
-async def close_rabbitmq_health_connection() -> None:
-    await close_health_check_clients()
-
-
-async def _get_rabbitmq_health_connection(settings: Settings) -> AbstractRobustConnection:
-    return await _rabbitmq_health_connection.get(settings)
-
-
-async def check_rabbitmq(settings: Settings) -> tuple[str, ComponentStatus]:
-    async def open_channel() -> None:
-        connection = await _get_rabbitmq_health_connection(settings)
-        try:
-            channel = await connection.channel()
-            await channel.close()
-        except Exception:
-            await _rabbitmq_health_connection.discard(connection)
-            raise
-
-    return await _checked_component("rabbitmq", "rabbitmq", open_channel())
 
 
 async def check_s3(settings: Settings) -> tuple[str, ComponentStatus]:
@@ -285,7 +211,6 @@ async def build_health_components(
     checks = await asyncio.gather(
         check_database(db),
         check_redis(settings),
-        check_rabbitmq(settings),
         check_s3(settings),
     )
     return dict(checks)
@@ -363,7 +288,6 @@ async def detailed_health_check(
     Checks:
     - Database connectivity
     - Redis connectivity
-    - RabbitMQ connectivity
     - S3 bucket availability when S3 is configured
 
     Returns:

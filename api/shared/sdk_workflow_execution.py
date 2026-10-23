@@ -97,8 +97,8 @@ async def insert_scheduled_execution(
 ) -> UUID:
     """Insert a SCHEDULED execution row.
 
-    Skips Redis/RabbitMQ — the deferred_execution_promoter job will publish
-    the row when scheduled_at matures. Shared with the form execute path.
+    Stages no dispatch — the deferred_execution_promoter job dispatches the
+    row when scheduled_at matures. Shared with the form execute path.
     ``run_as`` (from ``impersonation.scheduled_run_as``) is kept when the row
     acts as another user, so the promoter decides it again when it fires.
     """
@@ -617,7 +617,7 @@ async def execute_sdk_workflow(
 
             # Reuse one hardened dispatch snapshot for the queue boundary. It
             # includes the active-Solution gate and global-repo policy, so the
-            # worker does not repeat this query after RabbitMQ delivery.
+            # executor does not repeat this query when it claims the run.
             dispatch_metadata = await get_workflow_for_execution(
                 str(workflow.id),
                 db=session,

@@ -13,7 +13,6 @@ name: bifrost
 # Required environment variables:
 #   BIFROST_SECRET_KEY  - 32+ char secret for JWT signing and secret encryption
 #   POSTGRES_PASSWORD   - PostgreSQL password
-#   RABBITMQ_PASSWORD   - RabbitMQ password
 #
 # The BIFROST_SECRET_KEY is critical - it's used for:
 #   - JWT token signing (HS256)
@@ -43,25 +42,6 @@ services:
       test: ["CMD-SHELL", "pg_isready -U bifrost -d bifrost"]
       interval: 5s
       timeout: 5s
-      retries: 5
-
-  # RabbitMQ Message Broker
-  rabbitmq:
-    image: rabbitmq:3.13-management-alpine
-    container_name: bifrost-rabbitmq
-    environment:
-      RABBITMQ_DEFAULT_USER: bifrost
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
-    ports:
-      - "5672:5672"
-      # Management UI port (15672) only exposed in docker-compose.dev.yml
-    volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
-      - ./config/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
-      interval: 10s
-      timeout: 10s
       retries: 5
 
   # Redis (Sessions & Cache)
@@ -165,8 +145,7 @@ services:
       # Database (via PgBouncer for connection pooling)
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD}@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:${POSTGRES_PASSWORD}@pgbouncer:5432/bifrost
-      # Message Queue & Cache
-      BIFROST_RABBITMQ_URL: amqp://bifrost:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+      # Cache
       BIFROST_REDIS_URL: redis://redis:6379/0
       # S3-compatible storage (SeaweedFS locally, AWS S3 in production)
       BIFROST_S3_BUCKET: ${BIFROST_S3_BUCKET:-bifrost-local}
@@ -197,8 +176,6 @@ services:
       init:
         condition: service_completed_successfully
       pgbouncer:
-        condition: service_healthy
-      rabbitmq:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -246,8 +223,7 @@ services:
       # Database (via PgBouncer for connection pooling)
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD}@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:${POSTGRES_PASSWORD}@pgbouncer:5432/bifrost
-      # Message Queue & Cache
-      BIFROST_RABBITMQ_URL: amqp://bifrost:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+      # Cache
       BIFROST_REDIS_URL: redis://redis:6379/0
       # API URL (for SDK client injection in workflows)
       BIFROST_API_URL: http://api:8000
@@ -268,8 +244,6 @@ services:
       init:
         condition: service_completed_successfully
       pgbouncer:
-        condition: service_healthy
-      rabbitmq:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -308,8 +282,7 @@ services:
       # Database (via PgBouncer for connection pooling)
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD}@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:${POSTGRES_PASSWORD}@pgbouncer:5432/bifrost
-      # Message Queue & Cache
-      BIFROST_RABBITMQ_URL: amqp://bifrost:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+      # Cache
       BIFROST_REDIS_URL: redis://redis:6379/0
       # API URL (for SDK client injection in workflows)
       BIFROST_API_URL: http://api:8000
@@ -352,8 +325,6 @@ services:
         condition: service_completed_successfully
       pgbouncer:
         condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
       redis:
         condition: service_healthy
       api:
@@ -364,6 +335,5 @@ services:
 
 volumes:
   postgres_data:
-  rabbitmq_data:
   redis_data:
   seaweedfs_data:

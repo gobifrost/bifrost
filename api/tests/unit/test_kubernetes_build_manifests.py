@@ -127,19 +127,11 @@ def test_elastic_builds_config_and_patches_are_explicit() -> None:
 
 def test_local_build_jobs_manifest_uses_local_namespace_and_renderable_image() -> None:
     docs = _docs_by_kind_name([LOCAL_BUILD_JOBS])
-    assert docs[("ServiceAccount", "bifrost-build-controller")]["metadata"]["namespace"] == (
-        "bifrost-local"
-    )
-    assert (
-        docs[("ServiceAccount", "bifrost-build-runner")]["automountServiceAccountToken"]
-        is False
-    )
-
-    role = docs[("Role", "bifrost-build-controller")]
-    assert role["rules"][0]["resources"] == ["jobs"]
-    assert role["rules"][0]["verbs"] == ["get", "list", "create", "patch", "delete"]
-    assert role["rules"][1]["resources"] == ["pods"]
-    assert role["rules"][1]["verbs"] == ["get", "list"]
+    runner = docs[("ServiceAccount", "bifrost-build-runner")]
+    assert runner["metadata"]["namespace"] == "bifrost-local"
+    assert runner["automountServiceAccountToken"] is False
+    # The API's own account (api-rbac.yaml) runs the build-Job controller.
+    assert not any(name == "bifrost-build-controller" for _, name in docs)
 
     config = docs[("ConfigMap", "bifrost-build-jobs-config")]
     assert config["data"] == {
@@ -151,7 +143,7 @@ def test_local_build_jobs_manifest_uses_local_namespace_and_renderable_image() -
     }
 
 
-def test_local_kind_build_jobs_are_explicitly_opt_in_and_patch_only_scheduler_token() -> None:
+def test_local_kind_build_jobs_are_explicitly_opt_in_and_patch_no_tokens() -> None:
     script = LOCAL_SCRIPT.read_text()
     assert "BIFROST_KIND_BUILD_JOBS    Set to 1" in script
     assert 'if [[ "${BIFROST_KIND_BUILD_JOBS:-}" != "1" ]]; then' in script

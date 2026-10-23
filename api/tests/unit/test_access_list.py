@@ -1171,18 +1171,11 @@ def _mount_roots() -> dict[str, list[object]]:
 
 def _consumer_classes() -> list[type]:
     """Every consumer class whose handler the executor runs."""
-    import src.jobs.consumers.agent_run  # noqa: F401 - registers the consumer classes
-    import src.jobs.consumers.package_install  # noqa: F401
-    import src.jobs.consumers.workflow_execution  # noqa: F401
-    from src.jobs.rabbitmq import _AbstractConsumer
+    from src.jobs.consumers.agent_run import AgentRunConsumer
+    from src.jobs.consumers.package_install import PackageInstallConsumer
+    from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
 
-    found: list[type] = []
-    pending = [_AbstractConsumer]
-    while pending:
-        for sub in pending.pop().__subclasses__():
-            found.append(sub)
-            pending.append(sub)
-    return found
+    return [AgentRunConsumer, PackageInstallConsumer, WorkflowExecutionConsumer]
 
 
 def _scheduler_job_functions() -> list[object]:
@@ -2103,12 +2096,10 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "src.core.module_cache_sync._get_exact_scoped_module": (1, "cutover"),
     "src.core.module_cache_sync.get_module_sync": (1, "cutover"),
     "src.core.redis_client.RedisClient.get_endpoint_workflow_cache": (1, "cutover"),
-    "src.core.redis_client.RedisClient.get_pending_execution": (1, "cutover"),
     "src.core.redis_client.RedisClient.get_workflow_metadata_cache": (1, "cutover"),
     "src.core.redis_client.RedisClient.wait_for_result": (1, "cutover"),
     "src.core.requirements_cache.get_requirements": (2, "cutover"),
     "src.core.requirements_cache.get_requirements_sync": (1, "cutover"),
-    "src.jobs.consumers.agent_run.AgentRunConsumer.process_message": (1, "cutover"),
     "src.repositories.organizations.OrganizationRepository._get_from_cache": (1, "cutover"),
     "src.routers.auth.authorize_device": (2, "cutover"),
     "src.routers.auth.exchange_device_token": (1, "cutover"),
@@ -2154,11 +2145,6 @@ _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
         1,
         "Which worker holds a running execution (timeouts, cancel).",
     ),
-    "src.core.redis_client.RedisClient.set_pending_cancelled": (1, "Marks a queued run cancelled."),
-    "src.core.redis_client.RedisClient.update_pending_execution": (
-        1,
-        "Read-modify-write of a queued run's record; its identity is trusted only where the run reads it.",
-    ),
     "src.core.repo_dirty.get_repo_dirty_since": (1, "Workspace dirty timestamp."),
     "src.jobs.consumers.agent_run.AgentRunConsumer._cancel_watcher": (1, "Cancel flag; only stops a run."),
     "src.jobs.schedulers.worker_metrics_sampling.sample_worker_metrics": (1, "Worker metrics."),
@@ -2167,7 +2153,6 @@ _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
         1,
         "Cached org config values, written from the database.",
     ),
-    "src.routers.agent_runs.cancel_agent_run": (1, "Marks a queued agent run cancelled."),
     "src.routers.events._get_rate_limited_count": (1, "Rate-limit counter."),
     "src.routers.files.list_active_watchers": (1, "Active file watchers (diagnostics)."),
     "src.routers.health.check_redis": (1, "Health probe."),

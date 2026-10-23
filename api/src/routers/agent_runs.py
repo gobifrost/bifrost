@@ -668,18 +668,6 @@ async def cancel_agent_run(
             await db.refresh(agent_run)
         else:
             await db.commit()
-
-            # Also mark the Redis context so a worker holding the message skips it.
-            from src.core.cache.redis_client import get_redis
-            redis_key = f"bifrost:agent_run:{run_id}:context"
-            async with get_redis() as r:
-                context_raw = await r.get(redis_key)
-                if context_raw:
-                    ctx = json.loads(context_raw)
-                    ctx["cancelled"] = True
-                    ttl = await r.ttl(redis_key)
-                    await r.set(redis_key, json.dumps(ctx), ex=max(ttl, 60))
-
             return {"run_id": str(run_id), "status": "cancelled"}
 
     if agent_run.status in TERMINAL_STATUSES:
@@ -1259,17 +1247,15 @@ async def cancel_backfill_job(
 ) -> SummaryBackfillJobResponse:
     """Mark a backfill job as cancelled so the UI unblocks.
 
-    This does NOT drain messages already on the ``agent-summarization``
-    queue — RabbitMQ will keep delivering them and the worker will keep
-    summarising individual runs. What it does do:
+    This does NOT withdraw summaries already dispatched — executors keep
+    summarising those runs. What it does do:
 
     - flips ``status`` from ``running`` to ``cancelled``
     - sets ``completed_at`` so the row stops appearing in "active" queries
     - broadcasts final state so the progress card dismisses itself
 
-    Use this when progress has stalled (e.g. the worker was restarted
-    mid-job and prefetched messages went back on the queue but the counter
-    never advanced) — admins need a way out.
+    Use this when progress has stalled and the counter never advanced —
+    admins need a way out.
     """
     caller = await load_caller(db, user)
     reach = operation_reach(caller, "POST /api/agent-runs/backfill-jobs/{job_id}/cancel")

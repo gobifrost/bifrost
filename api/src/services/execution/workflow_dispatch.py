@@ -3,10 +3,6 @@
 Every run is accepted as a ``PENDING`` ``Execution`` plus a ``WorkDispatch``
 holding its execution context, committed together. A worker claims the run by
 moving the row to ``RUNNING`` and deleting the dispatch in one transaction.
-
-One-release bridge (remove in #769 stage 5): the accepting process also writes
-the Redis pending record, best-effort, so a worker that predates dispatches can
-still run the durable row through its ``execution_record_exists`` claim.
 """
 
 from __future__ import annotations
@@ -17,13 +13,15 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.run_cancellation import claim_pending_run_for_dispatch
 from shared.run_lineage import lineage_columns
+from src.core.database import get_db_context
 from src.core.redis_client import PendingExecution, get_redis_client
 from src.models.enums import ExecutionStatus
+from src.models.orm.execution_workers import ExecutionWorkerClaim
 from src.models.orm.executions import Execution
 from src.models.orm.workflows import Workflow
 from src.services.durable_impersonation import pending_durable_impersonation
@@ -34,13 +32,11 @@ logger = logging.getLogger(__name__)
 FAMILY = "workflow_execution"
 HANDLER = "workflow.execute"
 HANDLER_VERSION = 1
-QUEUE_NAME = "workflow-executions"
 
 
 @dataclass(frozen=True)
 class AcceptedRun:
     dispatch_id: UUID
-    placement: str
     message: dict[str, Any]
     pending: PendingExecution
 
@@ -112,30 +108,22 @@ async def stage_workflow_run(
         subject_id=execution_id,
         handler=HANDLER,
         handler_version=HANDLER_VERSION,
-        queue=QUEUE_NAME,
+        # Executors older than #769 stage 5b read this during a rolling
+        # upgrade; it goes with the work_dispatches broker columns.
         message={**message, "execution_record_exists": True},
         payload=dict(pending),
     )
     return AcceptedRun(
         dispatch_id=dispatch.id,
-        placement=dispatch.placement,
         message=dispatch.message,
         pending=pending,
     )
 
 
 async def hand_off_workflow_run(accepted: AcceptedRun) -> None:
-    """After commit: bridge cache, queue position, then wake the executors."""
+    """After commit: queue position, then wake the executors."""
     from src.services.execution.queue_tracker import add_to_queue
 
-    try:
-        await get_redis_client().store_pending_execution(accepted.pending)
-    except Exception:
-        logger.warning(
-            "Could not cache pending execution for older workers",
-            extra={"execution_id": accepted.pending["execution_id"]},
-            exc_info=True,
-        )
     # Sync callers wait on their private result list and cannot consume queue
     # position events.
     if not accepted.pending["sync"]:
@@ -164,6 +152,60 @@ async def claim_workflow_dispatch(
     if payload is None:
         raise RuntimeError(f"Pending execution {execution_id} has no dispatch {dispatch_id}")
     return PendingExecution(**payload)  # type: ignore[typeddict-item]
+
+
+async def release_workflow_run(
+    *, worker_id: UUID, message: dict[str, Any], payload: dict[str, Any]
+) -> None:
+    """Hand a claimed run back before it started: RUNNING -> PENDING.
+
+    For an executor that claimed a run but could not fork it (memory rose in
+    between). The run gets a new dispatch and loses this executor's claim
+    record, so another executor takes it as if it had never been claimed.
+    """
+    from src.core.pubsub import publish_execution_update
+
+    execution_id = UUID(payload["execution_id"])
+    async with get_db_context() as db:
+        released = await db.scalar(
+            update(Execution)
+            .where(Execution.id == execution_id, Execution.status == ExecutionStatus.RUNNING)
+            .values(status=ExecutionStatus.PENDING, started_at=None)
+            .returning(Execution.id)
+        )
+        if released is None:
+            return
+        await db.execute(
+            delete(ExecutionWorkerClaim).where(
+                ExecutionWorkerClaim.worker_id == worker_id,
+                ExecutionWorkerClaim.family == FAMILY,
+                ExecutionWorkerClaim.subject_id == execution_id,
+            )
+        )
+        stage_dispatch(
+            db,
+            family=FAMILY,
+            subject_id=execution_id,
+            handler=HANDLER,
+            handler_version=HANDLER_VERSION,
+            message=message,
+            payload=payload,
+        )
+        await db.commit()
+    logger.info("Handed a run back for another executor", extra={"execution_id": str(execution_id)})
+    if not payload.get("sync"):
+        from src.services.execution.queue_tracker import add_to_queue
+
+        try:
+            await add_to_queue(str(execution_id))
+            await publish_execution_update(str(execution_id), "Pending")
+        except Exception:
+            logger.warning(
+                "Could not show a handed-back run as waiting",
+                extra={"execution_id": str(execution_id)},
+                exc_info=True,
+            )
+    await hand_off()
 
 
 async def lock_waiting_run(db: AsyncSession, execution_id: UUID) -> bool | None:
@@ -273,12 +315,12 @@ __all__ = [
     "FAMILY",
     "HANDLER",
     "HANDLER_VERSION",
-    "QUEUE_NAME",
     "claim_workflow_dispatch",
     "fail_unclaimed_run",
     "hand_off_workflow_run",
     "lock_waiting_run",
     "notify_discarded_sync_run",
+    "release_workflow_run",
     "report_unclaimed_run",
     "stage_workflow_run",
 ]

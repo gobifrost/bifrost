@@ -117,7 +117,7 @@ its existing snapshots and reconciliation boundaries when that work lands.
 Logical runs are asynchronous objects within the existing worker; capabilities
 and child adapters create no container, shell, filesystem sandbox, scheduler,
 or process per session. Concurrent mocked-model sessions can measure this
-adapter's memory behavior, but do not establish production RabbitMQ worker
+adapter's memory behavior, but do not establish production executor
 capacity or model-provider throughput.
 
 ## Verification and usage

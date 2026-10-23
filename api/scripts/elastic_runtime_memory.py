@@ -180,12 +180,6 @@ def _stage_database(_args: argparse.Namespace) -> None:
     configure_mappers()
 
 
-def _stage_rabbitmq(_args: argparse.Namespace) -> None:
-    from src.jobs.rabbitmq import rabbitmq
-
-    _ = rabbitmq
-
-
 def _stage_workflow_consumer_import(_args: argparse.Namespace) -> None:
     from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
 
@@ -206,7 +200,7 @@ def _stage_construct_worker_consumers(_args: argparse.Namespace) -> None:
         PackageInstallConsumer(),
         AgentRunConsumer(),
     ]
-    _ = [consumer.queue_name for consumer in consumers]
+    _ = consumers
 
 
 def _stage_scheduler_import(_args: argparse.Namespace) -> None:
@@ -251,7 +245,6 @@ STAGES: tuple[Stage, ...] = (
     Stage("python", "Python interpreter after stdlib diagnostic startup", _stage_python),
     Stage("config", "Bifrost configuration imported and settings loaded", _stage_config),
     Stage("database", "Database layer imported and SQLAlchemy mappers configured", _stage_database),
-    Stage("rabbitmq", "RabbitMQ transport module imported", _stage_rabbitmq),
     Stage("workflow-consumer-import", "Workflow execution consumer class imported", _stage_workflow_consumer_import),
     Stage("executor-import", "Executor module imported", _stage_executor_import),
     Stage("construct-worker-consumers", "The executor's run handlers constructed without starting IO", _stage_construct_worker_consumers),

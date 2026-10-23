@@ -1,7 +1,6 @@
 """Unit tests for AgentRunConsumer error handling paths."""
 
 import asyncio
-import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 import time
@@ -40,6 +39,14 @@ class FakeRedisCtx:
 
     async def __aexit__(self, *args):
         pass
+
+
+def _dispatched(context):
+    """The claim takes the run's context from its dispatch."""
+    return patch(
+        "src.services.work_dispatch.take_dispatch_payload",
+        new=AsyncMock(return_value=context),
+    )
 
 
 class FakeLateExecutor:
@@ -139,56 +146,14 @@ def _chat_executor_stub(
 
 @pytest.fixture
 def consumer():
-    with (
-        patch("src.jobs.consumers.agent_run.get_settings") as mock_settings,
-        patch("src.jobs.consumers.agent_run.get_session_factory"),
-        patch("src.jobs.consumers.agent_run.BaseConsumer.__init__", return_value=None),
-    ):
-        mock_settings.return_value = MagicMock(max_concurrency=2)
-        c = AgentRunConsumer()
-        return c
-
-
-@pytest.mark.asyncio
-async def test_missing_redis_context_returns_early(consumer):
-    """Missing Redis context durably fails the queued run."""
-    queued_run = MagicMock(status="queued")
-    mock_session = AsyncMock()
-    mock_session.get.return_value = queued_run
-    mock_session_ctx = AsyncMock()
-    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-    consumer._session_factory = MagicMock(return_value=mock_session_ctx)
-
-    redis_mock = AsyncMock()
-    redis_mock.get.return_value = None
-
-    with patch(
-        "src.jobs.consumers.agent_run.get_redis",
-        return_value=FakeRedisCtx(redis_mock),
-    ):
-        await consumer.process_message(
-            {
-                "run_id": str(uuid4()),
-                "agent_id": str(uuid4()),
-                "trigger_type": "manual",
-            }
-        )
-
-    redis_mock.get.assert_called_once()
-    assert queued_run.status == "failed"
-    assert queued_run.error == "Agent run context was unavailable"
-    mock_session.commit.assert_awaited_once()
+    with patch("src.jobs.consumers.agent_run.get_session_factory"):
+        return AgentRunConsumer()
 
 
 @pytest.mark.asyncio
 async def test_agent_not_found_returns_early(consumer):
     """When the agent doesn't exist in the DB, process_message logs and returns without crashing."""
     run_id = str(uuid4())
-
-    # Redis returns valid context
-    redis_mock = AsyncMock()
-    redis_mock.get.return_value = json.dumps({"org_id": str(uuid4()), "input": "hello"})
 
     queued_run = MagicMock(status="queued")
 
@@ -206,13 +171,8 @@ async def test_agent_not_found_returns_early(consumer):
 
     consumer._session_factory = MagicMock(return_value=mock_session_ctx)
 
-    # get_redis is called multiple times (initial context read, then inside finally block)
-    # We need it to work for both calls
     with (
-        patch(
-            "src.jobs.consumers.agent_run.get_redis",
-            return_value=FakeRedisCtx(redis_mock),
-        ),
+        _dispatched({"org_id": str(uuid4()), "input": "hello"}),
         patch(
             "src.jobs.consumers.agent_run._load_acting_user",
             new=AsyncMock(return_value=_loaded_actor()),
@@ -221,6 +181,7 @@ async def test_agent_not_found_returns_early(consumer):
         await consumer.process_message(
             {
                 "run_id": run_id,
+                "dispatch_id": str(uuid4()),
                 "agent_id": str(uuid4()),
                 "trigger_type": "manual",
             }
@@ -233,35 +194,29 @@ async def test_agent_not_found_returns_early(consumer):
 
 
 @pytest.mark.asyncio
-async def test_pre_cancel_updates_existing_queued_run(consumer):
+async def test_a_run_cancelled_while_queued_is_skipped(consumer):
     run_id = str(uuid4())
-    queued_run = MagicMock(status="queued")
+    cancelled_run = MagicMock(status="cancelled")
     mock_session = AsyncMock()
-    mock_session.get.return_value = queued_run
-    mock_session.add = MagicMock()
+    mock_session.get.return_value = cancelled_run
     mock_session_ctx = AsyncMock()
     mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
     consumer._session_factory = MagicMock(return_value=mock_session_ctx)
 
-    redis_mock = AsyncMock()
-    redis_mock.get.return_value = json.dumps({"cancelled": True})
-
-    with patch(
-        "src.jobs.consumers.agent_run.get_redis",
-        return_value=FakeRedisCtx(redis_mock),
-    ):
+    with _dispatched(None):
         await consumer.process_message(
             {
                 "run_id": run_id,
+                "dispatch_id": str(uuid4()),
                 "agent_id": str(uuid4()),
                 "trigger_type": "manual",
             }
         )
 
-    assert queued_run.status == "cancelled"
-    assert queued_run.completed_at is not None
-    mock_session.add.assert_not_called()
+    assert cancelled_run.status == "cancelled"
+    mock_session.execute.assert_not_called()
+    mock_session.commit.assert_not_awaited()
     _, get_kwargs = mock_session.get.call_args
     assert get_kwargs["with_for_update"] == {"of": AgentRun}
 
@@ -278,18 +233,20 @@ async def test_unavailable_actor_fails_before_agent_execution(consumer, acting_u
     mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
     consumer._session_factory = MagicMock(return_value=mock_session_ctx)
 
-    redis_mock = AsyncMock()
-    redis_mock.get.return_value = json.dumps({"input": {}})
-
     with (
-        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
+        _dispatched({"input": {}}),
         patch(
             "src.jobs.consumers.agent_run._load_acting_user",
             new=AsyncMock(return_value=None),
         ) as load_actor,
     ):
         await consumer.process_message(
-            {"run_id": run_id, "agent_id": str(uuid4()), "trigger_type": "api"}
+            {
+                "run_id": run_id,
+                "dispatch_id": str(uuid4()),
+                "agent_id": str(uuid4()),
+                "trigger_type": "api",
+            }
         )
 
     load_actor.assert_awaited_once_with(mock_session, acting_user_id)
@@ -333,20 +290,11 @@ async def test_late_terminalized_run_is_not_overwritten(
     consumer._session_factory = async_session_factory
 
     redis_mock = AsyncMock()
-    context_key = f"bifrost:agent_run:{run_id}:context"
-    cancel_key = f"bifrost:agent_run:{run_id}:cancel"
-
-    async def _redis_get(key):
-        if key == context_key:
-            return json.dumps({"org_id": str(uuid4()), "input": "hello"})
-        if key == cancel_key:
-            return None
-        return None
-
-    redis_mock.get.side_effect = _redis_get
+    redis_mock.get.return_value = None
 
     try:
         with (
+            _dispatched({"org_id": str(uuid4()), "input": "hello"}),
             patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
             patch(
                 "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor",
@@ -358,6 +306,7 @@ async def test_late_terminalized_run_is_not_overwritten(
             await consumer.process_message(
                 {
                     "run_id": str(run_id),
+                    "dispatch_id": str(uuid4()),
                     "agent_id": str(seed_agent.id),
                     "trigger_type": "manual",
                     "sync": True,
@@ -698,21 +647,19 @@ async def test_agentless_chat_skips_agent_lookup_and_socket_dependencies(
     consumer._session_factory = MagicMock(return_value=mock_session_ctx)
 
     redis_mock = AsyncMock()
-    redis_mock.get.return_value = json.dumps(
-        {
-            "trigger_type": "chat",
-            "input": {
-                "conversation_id": str(uuid4()),
-                "content": "Hello",
-                "client_run_id": str(uuid4()),
-            },
-            "caller": {
-                "user_id": str(uuid4()),
-                "email": "caller@example.com",
-                "name": "Caller",
-            },
-        }
-    )
+    context = {
+        "trigger_type": "chat",
+        "input": {
+            "conversation_id": str(uuid4()),
+            "content": "Hello",
+            "client_run_id": str(uuid4()),
+        },
+        "caller": {
+            "user_id": str(uuid4()),
+            "email": "caller@example.com",
+            "name": "Caller",
+        },
+    }
 
     process_chat = AsyncMock()
     runtime_principal = UserPrincipal(
@@ -734,6 +681,7 @@ async def test_agentless_chat_skips_agent_lookup_and_socket_dependencies(
 
     publish_chat = AsyncMock()
     with (
+        _dispatched(context),
         patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
         patch(
             "src.jobs.consumers.agent_run._load_acting_user",
@@ -758,6 +706,7 @@ async def test_agentless_chat_skips_agent_lookup_and_socket_dependencies(
         await consumer.process_message(
             {
                 "run_id": run_id,
+                "dispatch_id": str(uuid4()),
                 "agent_id": None,
                 "trigger_type": "chat",
             }
@@ -795,26 +744,25 @@ async def test_chat_outer_failure_publishes_terminal_error_envelope(
     consumer._session_factory = MagicMock(return_value=mock_session_ctx)
 
     redis_mock = AsyncMock()
-    redis_mock.get.return_value = json.dumps(
-        {
-            "trigger_type": "chat",
-            "input": {
-                "conversation_id": str(conversation_id),
-                "content": "Hello",
-                "client_run_id": str(uuid4()),
-            },
-            "caller": {
-                "user_id": str(uuid4()),
-                "email": "caller@example.com",
-                "name": "Caller",
-            },
-        }
-    )
+    context = {
+        "trigger_type": "chat",
+        "input": {
+            "conversation_id": str(conversation_id),
+            "content": "Hello",
+            "client_run_id": str(uuid4()),
+        },
+        "caller": {
+            "user_id": str(uuid4()),
+            "email": "caller@example.com",
+            "name": "Caller",
+        },
+    }
 
     publish_chat = AsyncMock()
     publish_run = AsyncMock()
 
     with (
+        _dispatched(context),
         patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
         patch(
             "src.jobs.consumers.agent_run._load_acting_user",
@@ -835,6 +783,7 @@ async def test_chat_outer_failure_publishes_terminal_error_envelope(
         await consumer.process_message(
             {
                 "run_id": run_id,
+                "dispatch_id": str(uuid4()),
                 "agent_id": None,
                 "trigger_type": "chat",
             }
@@ -959,13 +908,9 @@ async def _cleanup_run_as_fixture(async_session_factory, contoso, lead, target, 
 
 async def _consume(consumer, run, context, runs):
     redis_mock = AsyncMock()
-    context_key = f"bifrost:agent_run:{run.id}:context"
-
-    async def _redis_get(key):
-        return json.dumps(context) if key == context_key else None
-
-    redis_mock.get.side_effect = _redis_get
+    redis_mock.get.return_value = None
     with (
+        _dispatched(context),
         patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
         patch(
             "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor",
@@ -981,6 +926,7 @@ async def _consume(consumer, run, context, runs):
         await consumer.process_message(
             {
                 "run_id": str(run.id),
+                "dispatch_id": str(uuid4()),
                 "agent_id": str(run.agent_id),
                 "trigger_type": "api",
                 "sync": True,

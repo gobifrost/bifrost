@@ -85,19 +85,11 @@ class Settings(BaseSettings):
     )
 
     # ==========================================================================
-    # RabbitMQ
-    # ==========================================================================
-    rabbitmq_url: str = Field(
-        default="amqp://bifrost:bifrost_dev@localhost:5672/",
-        description="RabbitMQ connection URL"
-    )
-
-    # ==========================================================================
     # Workflow Execution
     # ==========================================================================
     max_concurrency: int = Field(
         default=10,
-        description="Max concurrent workflow executions (controls RabbitMQ prefetch)"
+        description="Max concurrent agent runs per executor"
     )
 
     # Process Pool Configuration (on-demand only — every execution forks

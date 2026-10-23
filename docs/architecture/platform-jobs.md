@@ -129,7 +129,7 @@ twice; DST-repeated wall-clock times are distinct instants.
 
 A handler may release its scheduler slot in `waiting` state after dispatching
 durable child work. The child tracker completes the parent row later. Summary
-backfills and Solution app builds use this path so RabbitMQ fan-out or an
+backfills and Solution app builds use this path so summary fan-out or an
 isolated build process does not occupy scheduler capacity.
 
 ### Opt-in Kubernetes build execution

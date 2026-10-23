@@ -539,8 +539,8 @@ class EventDeliveryRepository(BaseRepository[EventDelivery]):
 
         A delivery is considered stuck if it's been in PENDING or QUEUED status
         for longer than timeout_minutes without completing. This catches:
-        - PENDING: Processor crashed before queueing to RabbitMQ
-        - QUEUED: Worker crashed or message was lost
+        - PENDING: Processor crashed before staging the run
+        - QUEUED: The run never reported back to its delivery
 
         Args:
             timeout_minutes: Minutes after which a delivery is considered stuck

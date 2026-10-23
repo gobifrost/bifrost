@@ -111,6 +111,7 @@ metadata:
   name: bifrost-worker
   namespace: bifrost-local
 spec:
+  replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: bifrost-worker

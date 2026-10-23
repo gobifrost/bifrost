@@ -116,16 +116,13 @@ the configured Bifrost ConfigMap and Secret through `envFrom`, with only job and
 attempt identifiers passed as Job-specific environment. Do not put payloads,
 source archives, credentials or tokens in Job manifests.
 
-## No KEDA Requirement
+## Build Job Capacity
 
-Build Jobs do not require KEDA. The scheduler controller creates bounded Jobs
-directly from persisted build placement. `BIFROST_KUBERNETES_BUILD_MAX_JOBS`
-limits concurrent remote build attempts independently of ordinary scheduler
-slots.
-
-This is separate from the existing all-role worker KEDA experiment. Worker queue
-autoscaling does not solve isolated App builds and should not be presented as
-the build-pod solution.
+The build controller creates bounded Jobs directly from persisted build
+placement. `BIFROST_KUBERNETES_BUILD_MAX_JOBS` limits concurrent remote build
+attempts independently of ordinary executor slots. This is separate from the
+on-demand worker Jobs, which run workflows and agent runs, not isolated App
+builds.
 
 ## Local Kind Opt-In
 

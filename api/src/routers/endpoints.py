@@ -12,8 +12,8 @@ Authentication:
 
 Architecture:
     - API never executes workflow code directly
-    - Sync execution: Queue to RabbitMQ, wait on Redis BLPOP for result
-    - Async execution: Queue to RabbitMQ, return immediately
+    - Sync execution: accept the run, wait on Redis BLPOP for the result
+    - Async execution: accept the run, return immediately
 """
 
 import logging

@@ -37,6 +37,7 @@ from src.scheduler.control import replica_heartbeat_loop
 from src.services.kubernetes_control import start_kubernetes_loops
 from src.services.scheduler_diagnostics import remove_scheduler_replica
 from src.jobs.summarize_worker import handle_summarize_message
+from src.services.execution.memory_monitor import get_cgroup_memory
 from src.services.package_generation import (
     change_message,
     current_package_generation,
@@ -57,8 +58,6 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
-logging.getLogger("aiormq").setLevel(logging.WARNING)
-logging.getLogger("aio_pika").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 POLL_SECONDS = 1.0
@@ -121,6 +120,7 @@ class PoolWorker:
         self._package_consumer = None
         self.package_generation = 0
         self._service_claim_loop = None
+        self._memory_pressured = False
         # Ids of the local platform jobs this executor is running.
         self._platform_jobs: set[UUID] = set()
         # Set to stop claiming platform jobs; running ones finish.
@@ -151,12 +151,32 @@ class PoolWorker:
             len(tasks) for handler, tasks in self._tasks.items() if handler != "workflow.execute"
         )
 
+    def _under_memory_pressure(self) -> bool:
+        """Over ``memory_pressure_threshold`` of this container's memory limit."""
+        current, limit = get_cgroup_memory()
+        pressured = (
+            current >= 0 and limit > 0 and current / limit > self.settings.memory_pressure_threshold
+        )
+        if pressured != self._memory_pressured:
+            self._memory_pressured = pressured
+            if pressured:
+                logger.warning(
+                    "Executor is over its memory threshold; claiming nothing new",
+                    extra={"used_mib": current // 2**20, "limit_mib": limit // 2**20},
+                )
+            else:
+                logger.info("Executor is back under its memory threshold")
+        return pressured
+
     def _claimable(self) -> tuple[tuple[str, int], ...]:
-        """Handlers with free capacity, under the broker worker's limits:
-        process-pool forks for workflow runs (``max_workers``), concurrent
-        agent runs (``max_concurrency``), and one live summary plus one
-        backfill summary at a time (the summary consumers' prefetch of 1, so
-        a large backfill never delays live summaries)."""
+        """Handlers with free capacity: process-pool forks for workflow runs
+        (``max_workers``), concurrent agent runs (``max_concurrency``), and one
+        live summary plus one backfill summary at a time, so a large backfill
+        never delays live summaries. Nothing while over the memory threshold:
+        the work waits for an executor with room, and the controller starts
+        one if none has it."""
+        if self._under_memory_pressure():
+            return ()
         handlers: list[tuple[str, int]] = []
         if self._workflow_runs() < self.settings.max_workers:
             handlers.append(("workflow.execute", 1))
@@ -250,9 +270,6 @@ class PoolWorker:
             except Exception:
                 logger.exception("Failed to remove the executor's diagnostics heartbeat")
             await self._workflow_consumer.stop_pool()
-            from src.jobs.rabbitmq import rabbitmq
-
-            await rabbitmq.close()
             await close_db()
         logger.info(
             "Pool worker retired",
@@ -311,12 +328,24 @@ class PoolWorker:
             # Workflow runs return once routed to a child (then counted by the
             # pool); agent runs return when finished.
             if claim.handler == "workflow.execute":
-                await self._workflow_consumer.process_message(
-                    claim.message,
-                    claimed=PendingExecution(**claim.claimed)  # type: ignore[typeddict-item]
-                    if claim.claimed is not None
-                    else None,
-                )
+                try:
+                    await self._workflow_consumer.process_message(
+                        claim.message,
+                        PendingExecution(**claim.claimed)  # type: ignore[typeddict-item]
+                        if claim.claimed is not None
+                        else None,
+                    )
+                except MemoryError:
+                    # Memory rose between the claim and the fork: the run
+                    # goes back to waiting for an executor with room.
+                    from src.services.execution.workflow_dispatch import release_workflow_run
+
+                    assert claim.claimed is not None
+                    await release_workflow_run(
+                        worker_id=self.incarnation_id,
+                        message=claim.message,
+                        payload=claim.claimed,
+                    )
             elif claim.handler == "agent.run":
                 await self._agent_consumer.process_message(claim.message)
             else:
@@ -379,6 +408,7 @@ class PoolWorker:
                     active_runs=self.active_runs(),
                     runs_handled=self.runs_handled,
                     package_generation=self.package_generation,
+                    memory_pressured=self._memory_pressured,
                 )
                 if state != "ready":
                     # The controller drained or lost this worker: stop claiming.
@@ -409,8 +439,9 @@ class PoolWorker:
     async def _drain(self) -> None:
         """Hand services over, stop claiming platform jobs, let work finish.
 
-        Services go first, like the broker worker's stop: they restart
-        elsewhere through their lease. Running runs and platform jobs finish.
+        Services go first: they restart elsewhere through their lease.
+        Running runs and platform jobs finish within the grace; a workflow
+        child still running at its end is recorded as interrupted by shutdown.
         """
         if self._service_claim_loop is not None:
             try:
@@ -419,8 +450,14 @@ class PoolWorker:
                 logger.exception("Pool worker service handover failed")
         self._platform_stop.set()
         deadline = time.monotonic() + DRAIN_GRACE_SECONDS
-        while (self.active_runs() > 0 or self._platform_jobs) and time.monotonic() < deadline:
+        while (
+            any(self._tasks.values()) or self._platform_jobs
+        ) and time.monotonic() < deadline:
             await asyncio.sleep(0.5)
+        if self._workflow_consumer is not None:
+            await self._workflow_consumer._pool.drain_active_executions(
+                max(0.0, deadline - time.monotonic())
+            )
 
 
 async def run_executor(*, on_ready: Callable[[], None] | None = None) -> int:

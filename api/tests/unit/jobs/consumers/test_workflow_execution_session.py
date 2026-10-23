@@ -3,7 +3,6 @@
 Validates that the consumer uses short-lived sessions (no persistent session).
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
@@ -89,141 +88,11 @@ class TestConsumerSessionLifecycle:
     """Test that consumer no longer holds a persistent DB session."""
 
     @pytest.mark.asyncio
-    async def test_start_does_not_create_persistent_session(self):
-        """Consumer.start() should NOT create a persistent DB session."""
-        from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
-
-        with patch.object(WorkflowExecutionConsumer, "__init__", lambda self: None):
-            consumer = WorkflowExecutionConsumer()
-            consumer._pool = AsyncMock()
-            consumer._pool.start = AsyncMock()
-            consumer._pool_started = False
-
-            with patch.object(
-                WorkflowExecutionConsumer.__bases__[0], "start", AsyncMock()
-            ):
-                await consumer.start()
-
-            # No _db_session attribute should exist
-            assert not hasattr(consumer, "_db_session")
-
-    @pytest.mark.asyncio
-    async def test_stop_does_not_close_session(self):
-        """Consumer.stop() should not try to close a persistent session."""
-        from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
-
-        with patch.object(WorkflowExecutionConsumer, "__init__", lambda self: None):
-            consumer = WorkflowExecutionConsumer()
-            consumer._pool = AsyncMock()
-            consumer._pool.stop = AsyncMock()
-            consumer._pool_started = True
-
-            with patch.object(
-                WorkflowExecutionConsumer.__bases__[0], "stop", AsyncMock()
-            ):
-                # Should complete without error
-                await consumer.stop()
-
-    @pytest.mark.asyncio
-    async def test_drain_waits_for_child_results_before_stopping_pool(self):
-        """Shutdown must keep result handling alive after dispatch tasks finish."""
-        from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
-
-        call_order: list[str] = []
-
-        async def drain_active_executions(_deadline: float) -> bool:
-            call_order.append("drain_children")
-            return True
-
-        async def stop_pool() -> None:
-            call_order.append("stop_pool")
-
-        async def close_channel(self) -> None:  # type: ignore[no-untyped-def]
-            call_order.append("close_channel")
-
-        queue = AsyncMock()
-        queue.cancel.side_effect = lambda _tag: call_order.append("cancel_consumer")
-        dispatch_task = asyncio.create_task(asyncio.sleep(0))
-
-        with patch.object(WorkflowExecutionConsumer, "__init__", lambda self: None):
-            consumer = WorkflowExecutionConsumer()
-            consumer._queue = queue
-            consumer._consumer_tag = "consumer-tag"
-            consumer._draining = False
-            consumer._inflight = {dispatch_task}
-            consumer._channel = AsyncMock()
-            consumer._connection_ctx = AsyncMock()
-            consumer.queue_name = "workflow-executions"
-            consumer._pool_started = True
-            consumer._pool = MagicMock()
-            consumer._pool.drain_active_executions = drain_active_executions
-            consumer._pool.active_execution_count.return_value = 0
-            consumer._pool.stop = stop_pool
-
-            with patch.object(
-                WorkflowExecutionConsumer.__bases__[0], "stop", close_channel
-            ):
-                await consumer.drain(deadline=1.0)
-
-        assert call_order == [
-            "cancel_consumer",
-            "drain_children",
-            "stop_pool",
-            "close_channel",
-        ]
-        assert consumer._pool_started is False
-
-    @pytest.mark.asyncio
     async def test_no_get_db_session_method(self):
         """Consumer should not have _get_db_session() method (removed)."""
         from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
 
         assert not hasattr(WorkflowExecutionConsumer, "_get_db_session")
-
-
-class TestConsumerStartupOrder:
-    """Pool must be fully started before RabbitMQ begins delivering messages.
-
-    Regression test for a production incident where two worker pods leaked
-    ~800 MB each: the consumer was accepting messages from RabbitMQ before
-    ProcessPoolManager.start() had finished initializing its template
-    process, and a now-removed spawn fallback created ghost worker
-    processes that were never reaped.
-    """
-
-    @pytest.mark.asyncio
-    async def test_pool_starts_before_rabbitmq_consumer(self):
-        """Consumer.start() must call pool.start() before super().start().
-
-        super().start() (BaseConsumer) is what calls queue.consume() and
-        begins message delivery. If pool.start() hasn't completed by the
-        time that happens, messages can be routed to a not-yet-ready pool.
-        """
-        from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
-
-        call_order: list[str] = []
-
-        async def mock_pool_start() -> None:
-            call_order.append("pool")
-
-        async def mock_super_start(self) -> None:  # type: ignore[no-untyped-def]
-            call_order.append("rabbitmq")
-
-        with patch.object(WorkflowExecutionConsumer, "__init__", lambda self: None):
-            consumer = WorkflowExecutionConsumer()
-            consumer._pool = MagicMock()
-            consumer._pool.start = mock_pool_start
-            consumer._pool_started = False
-
-            with patch.object(
-                WorkflowExecutionConsumer.__bases__[0], "start", mock_super_start
-            ):
-                await consumer.start()
-
-        assert call_order == ["pool", "rabbitmq"], (
-            f"Pool must start before RabbitMQ consumer; got {call_order}"
-        )
-        assert consumer._pool_started is True
 
 
 class TestSuccessfulExecutionCompletionOrder:
@@ -273,9 +142,6 @@ class TestSuccessfulExecutionCompletionOrder:
             }
             consumer._redis_client.push_result.side_effect = (
                 lambda **_kwargs: call_order.append("push_result")
-            )
-            consumer._redis_client.delete_pending_execution.side_effect = (
-                lambda _execution_id: call_order.append("delete_pending")
             )
 
             publish_execution = AsyncMock(
@@ -354,7 +220,6 @@ class TestSuccessfulExecutionCompletionOrder:
         assert call_order.index("push_result") < call_order.index("publish_execution")
         assert call_order.index("push_result") < call_order.index("publish_history")
         assert call_order.index("push_result") < call_order.index("cleanup_cache")
-        assert call_order.index("push_result") < call_order.index("delete_pending")
         update_delivery.assert_not_awaited()
         flush_logs.assert_not_awaited()
 
@@ -401,9 +266,6 @@ class TestFailedExecutionCompletionOrder:
             }
             consumer._redis_client.push_result.side_effect = (
                 lambda **_kwargs: call_order.append("push_result")
-            )
-            consumer._redis_client.delete_pending_execution.side_effect = (
-                lambda _execution_id: call_order.append("delete_pending")
             )
 
             update_delivery = AsyncMock()
@@ -481,7 +343,6 @@ class TestFailedExecutionCompletionOrder:
         assert call_order.index("push_result") < call_order.index("publish_execution")
         assert call_order.index("push_result") < call_order.index("publish_history")
         assert call_order.index("push_result") < call_order.index("cleanup_cache")
-        assert call_order.index("push_result") < call_order.index("delete_pending")
         update_delivery.assert_not_awaited()
         flush_logs.assert_not_awaited()
 

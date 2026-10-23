@@ -18,7 +18,7 @@ pytestmark = pytest.mark.slow
 
 HEAVY = {"fastapi", "starlette", "uvicorn", "anthropic", "openai", "mcp", "numpy", "pgvector"}
 # The worker-entry and template modules must be stdlib-thin, not merely heavy-free:
-THIN_EXTRA = {"sqlalchemy", "pydantic", "redis", "httpx", "aio_pika", "apscheduler", "src.worker.pool_main"}
+THIN_EXTRA = {"sqlalchemy", "pydantic", "redis", "httpx", "apscheduler", "src.worker.pool_main"}
 
 
 def closure_roots(module: str) -> set[str]:

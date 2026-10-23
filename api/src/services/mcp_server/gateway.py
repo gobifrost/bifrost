@@ -633,7 +633,6 @@ class MCPAgentGatewayService:
     ) -> dict[str, Any]:
         """Return compact status for an execution owned by the caller."""
         from src.core.database import get_db_context
-        from shared.pending_execution import get_pending_execution_fallback
         from src.services.authorization.execution_access import execution_read_access
         from src.services.execution.agent_run_access import agent_run_visibility_conditions
 
@@ -645,7 +644,6 @@ class MCPAgentGatewayService:
                 "Execution not found or you do not have access.",
             ) from exc
 
-        pending = None
         async with get_db_context() as db:
             caller = await self._caller(db)
             result = await db.execute(
@@ -661,9 +659,6 @@ class MCPAgentGatewayService:
                     )
                 )
                 agent_run = agent_result.scalar_one_or_none()
-
-            if execution is None and agent_run is None:
-                pending, _ = await get_pending_execution_fallback(parsed_execution_id, caller, db)
 
         if execution is not None:
             if not execution_read_access(caller, execution).visible:
@@ -728,25 +723,6 @@ class MCPAgentGatewayService:
                 "result_available": result_available,
                 "result": result_value,
                 "result_page": result_page,
-            }
-
-        if pending is not None:
-            return {
-                "execution_id": execution_id,
-                "execution_type": "workflow",
-                "workflow_id": pending.workflow_id,
-                "workflow_name": pending.workflow_name,
-                "agent_id": None,
-                "agent_name": None,
-                "status": pending.status.value,
-                "created_at": pending.created_at,
-                "started_at": None,
-                "completed_at": None,
-                "duration_ms": None,
-                "error": None,
-                "result_available": False,
-                "result": None,
-                "result_page": None,
             }
 
         async with get_db_context() as db:

@@ -4,14 +4,13 @@ Handles durable acceptance and queueing of workflow and inline-code runs.
 
 Flow (see ``workflow_dispatch``):
 1. API commits a PENDING Execution and a WorkDispatch holding its context
-2. API publishes the dispatch to RabbitMQ (the control plane republishes a
-   lost hand-off)
+2. API wakes the executors (a hint; they also poll)
 3. API returns execution_id immediately
-4. Worker claims PENDING -> RUNNING, taking the context from the dispatch
+4. An executor claims PENDING -> RUNNING, taking the context from the dispatch
 
 For sync execution (sync=True):
 - Caller provides execution_id
-- Worker pushes result to Redis
+- The executor pushes the result to Redis
 - Caller waits on Redis BLPOP
 """
 
@@ -152,8 +151,8 @@ async def enqueue_workflow_execution(
     """
     Enqueue a workflow for async execution.
 
-    Stores pending execution in Redis, publishes to RabbitMQ,
-    and returns execution ID immediately (<100ms target).
+    Commits the run and its dispatch, wakes the executors, and returns the
+    execution ID immediately (<100ms target).
 
     Args:
         context: Request context with org scope and user info
@@ -211,8 +210,8 @@ async def enqueue_code_execution(
     """
     Enqueue inline code for async execution.
 
-    Stores pending execution in Redis, publishes to RabbitMQ,
-    and returns execution ID immediately (<100ms target).
+    Commits the run and its dispatch, wakes the executors, and returns the
+    execution ID immediately (<100ms target).
 
     Args:
         context: Request context with org scope and user info

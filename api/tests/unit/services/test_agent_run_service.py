@@ -1,4 +1,3 @@
-import json
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -110,7 +109,7 @@ class TestEnqueueAgentRun:
         assert env.calls[:3] == ["commit", "lifecycle", "wake"]
 
     @pytest.mark.asyncio
-    async def test_context_is_durable_and_cached_for_older_workers(self, env):
+    async def test_context_is_durable_and_not_cached_in_redis(self, env):
         org_id = str(uuid4())
 
         await enqueue_agent_run(
@@ -125,8 +124,7 @@ class TestEnqueueAgentRun:
 
         [dispatch] = env.dispatches()
         assert dispatch.payload["caller"]["organization_id"] == org_id
-        env.redis.set.assert_awaited_once()
-        assert json.loads(env.redis.set.call_args.args[1]) == dispatch.payload
+        env.redis.set.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_enqueue_serializes_caller_scope_claims(self, env):
@@ -244,20 +242,19 @@ class TestEnqueueAgentRun:
 
     @pytest.mark.asyncio
     async def test_a_redis_outage_does_not_fail_an_accepted_run(self, env, monkeypatch):
-        """The context cache and the executor wake are both best-effort."""
+        """The executor wake is best-effort; the run is claimable from PostgreSQL."""
         monkeypatch.setattr(work_dispatch, "wake_pool_workers", self._real_wake)
         monkeypatch.setattr(
             "src.core.cache.redis_client.get_shared_redis",
             AsyncMock(side_effect=ConnectionError("redis unavailable")),
         )
-        env.redis.set.side_effect = ConnectionError("redis unavailable")
 
         run_id = await enqueue_agent_run(agent_id=str(uuid4()), trigger_type="sdk", lineage=None)
 
         [queued_run] = env.runs()
         assert str(queued_run.id) == run_id
         assert queued_run.status == "queued"
-        assert env.dispatches()[0].status == "pending"  # claimable from PostgreSQL
+        assert env.dispatches()[0].placement == "pool"  # claimable from PostgreSQL
 
 
 @pytest.mark.asyncio

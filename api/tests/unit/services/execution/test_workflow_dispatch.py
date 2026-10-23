@@ -125,11 +125,7 @@ async def test_acceptance_commits_a_pending_run_before_waking_executors(harness)
     assert execution.started_at is None
     dispatch = await harness.dispatch(execution_id)
     assert dispatch is not None
-    assert (dispatch.placement, dispatch.status, dispatch.assigned_worker_id) == (
-        "pool",
-        "pending",
-        None,
-    )
+    assert (dispatch.placement, dispatch.assigned_worker_id) == ("pool", None)
     assert dispatch.payload["parameters"] == {"x": 1}
     assert dispatch.message["dispatch_id"] == str(dispatch.id)
     assert dispatch.message["execution_record_exists"] is True
@@ -143,23 +139,22 @@ async def test_acceptance_commits_a_pending_run_before_waking_executors(harness)
 async def test_an_older_apis_broker_dispatch_is_replaced_into_the_pool_at_once(harness) -> None:
     """During a rolling upgrade an older API still places runs on the broker."""
     execution_id = await _accept()
-    await harness.age(execution_id, placement="broker", status="published")
+    await harness.age(execution_id, placement="broker")
     harness.wakes.reset_mock()
 
     assert await work_dispatch.reconcile_work_dispatches() == 1
 
     dispatch = await harness.dispatch(execution_id)
-    assert (dispatch.placement, dispatch.status, dispatch.assigned_worker_id) == (
-        "pool",
-        "pending",
-        None,
-    )
+    assert (dispatch.placement, dispatch.assigned_worker_id) == ("pool", None)
     harness.wakes.assert_awaited_once()
     assert await work_dispatch.reconcile_work_dispatches() == 0, "a young pool dispatch is left alone"
 
 
-async def test_redis_outage_does_not_fail_acceptance(harness) -> None:
-    harness.cache.store_pending_execution.side_effect = ConnectionError("redis down")
+async def test_redis_outage_does_not_fail_acceptance(harness, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(
+        "src.services.execution.queue_tracker.add_to_queue",
+        AsyncMock(side_effect=ConnectionError("redis down")),
+    )
 
     execution_id = await _accept()
 

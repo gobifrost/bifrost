@@ -8,15 +8,15 @@ installed packages survive container restarts.
 Persistence Flow:
 1. User installs package via /api/packages/install
 2. API handler appends package to requirements, saves to S3 + Redis cache
-3. API broadcasts "recycle_workers" to all workers
-4. Workers recycle processes; ProcessPoolManager calls install_requirements() at pool startup
+3. API records the package change; every executor applies it and recycles
+4. ProcessPoolManager calls install_requirements() at pool startup
 5. pip install runs from requirements.txt (shared filesystem, all workers inherit)
 
 Read path: Redis cache → S3 fallback (re-caches on hit)
 Source of truth: S3 (_repo/requirements.txt) via RepoStorage
 
 Related Files:
-- api/src/routers/packages.py - Saves requirements + broadcasts recycle
+- api/src/routers/packages.py - Saves requirements + records the change
 - api/scripts/init_container.py - Warms cache on container startup
 - api/src/services/execution/simple_worker.py - Installs on worker startup
 

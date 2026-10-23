@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String, text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.orm.base import Base
@@ -36,6 +36,11 @@ class ExecutionWorker(Base):
     kubernetes_job_uid: Mapped[str | None] = mapped_column(String(128), nullable=True)
     kubernetes_pod_uid: Mapped[str | None] = mapped_column(String(128), nullable=True)
     active_runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Over its memory threshold: claims nothing, so its free slots are not
+    # capacity the controller can count on.
+    memory_pressured: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     runs_handled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # The package generation this executor has applied (see PackageChange).
     package_generation: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

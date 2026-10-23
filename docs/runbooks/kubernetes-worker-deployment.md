@@ -30,7 +30,9 @@ PostgreSQL; either Deployment can be scaled or removed. Platform control
 Upgrading from an earlier release needs no manifest change: the existing
 Deployments keep their commands and probes. Apply the new base manifests to
 let the API start on-demand worker Jobs (`k8s/api/rbac.yaml`); without them,
-work runs on the static executors only.
+work runs on the static executors only. Then remove what earlier releases
+left behind (see [Removing RabbitMQ and KEDA after
+upgrading](#removing-rabbitmq-and-keda-after-upgrading)).
 
 Roll back only to a release that includes #1034, otherwise older pods
 crash-loop against the newer schema. After a rollback, an older release no
@@ -83,128 +85,71 @@ In this mode, Kubernetes owns the fixed replica count through the Deployment
 spec. Scale manually with `kubectl scale deployment bifrost-worker -n bifrost
 --replicas=<count>`.
 
-## Optional KEDA Scale-Out
+## Removing RabbitMQ and KEDA after upgrading
 
-> Legacy: KEDA scaled the worker Deployment on RabbitMQ queue length. Work is
-> claimed from PostgreSQL now, so these queues stay empty; on-demand worker
-> Jobs replace this (stage 5b of #769 removes it).
+Bifrost no longer uses RabbitMQ or KEDA. The base manifests no longer ship the
+`rabbitmq` Deployment and Service or the RabbitMQ secret keys, and the app
+ignores a leftover `BIFROST_RABBITMQ_URL`. Applying the new manifests does not
+delete what an earlier release created; after every Bifrost pod runs this
+release, an operator may remove the leftovers.
 
-The local spike also proves an opt-in operator-owned KEDA `ScaledObject` against
-the same all-role worker Deployment. While that `ScaledObject` exists, KEDA/HPA
-owns the worker replica count. The Deployment should omit `spec.replicas` in
-that ownership mode so reapplying the Deployment does not fight the autoscaler.
+Remove any KEDA `ScaledObject` and `TriggerAuthentication` that target
+`bifrost-worker`. Left in place, a `ScaledObject` keeps owning the worker
+Deployment's replica count through its HPA and scales it on queues that no
+longer receive messages:
 
-Current local example:
-
-```yaml
-apiVersion: keda.sh/v1alpha1
-kind: TriggerAuthentication
-metadata:
-  name: bifrost-rabbitmq
-  namespace: bifrost-local
-spec:
-  secretTargetRef:
-    - parameter: host
-      name: bifrost-local-secrets
-      key: BIFROST_RABBITMQ_URL
----
-apiVersion: keda.sh/v1alpha1
-kind: ScaledObject
-metadata:
-  name: bifrost-worker
-  namespace: bifrost-local
-  annotations:
-    autoscaling.keda.sh/paused-scale-in: "true"
-spec:
-  scaleTargetRef:
-    name: bifrost-worker
-  pollingInterval: 5
-  cooldownPeriod: 3600
-  minReplicaCount: 1
-  maxReplicaCount: 4
-  advanced:
-    horizontalPodAutoscalerConfig:
-      behavior:
-        scaleDown:
-          selectPolicy: Disabled
-  triggers:
-    - type: rabbitmq
-      metadata:
-        protocol: amqp
-        queueName: workflow-executions
-        mode: QueueLength
-        value: "1"
-      authenticationRef:
-        name: bifrost-rabbitmq
-    - type: rabbitmq
-      metadata:
-        protocol: amqp
-        queueName: agent-runs
-        mode: QueueLength
-        value: "1"
-      authenticationRef:
-        name: bifrost-rabbitmq
-    - type: rabbitmq
-      metadata:
-        protocol: amqp
-        queueName: agent-summarization
-        mode: QueueLength
-        value: "1"
-      authenticationRef:
-        name: bifrost-rabbitmq
-    - type: rabbitmq
-      metadata:
-        protocol: amqp
-        queueName: agent-summarization-backfill
-        mode: QueueLength
-        value: "5"
-      authenticationRef:
-        name: bifrost-rabbitmq
+```bash
+kubectl -n bifrost delete scaledobject bifrost-worker --ignore-not-found
+kubectl -n bifrost delete triggerauthentication bifrost-rabbitmq --ignore-not-found
+kubectl -n bifrost scale deployment bifrost-worker --replicas=2
 ```
 
-Include every queue the all-role worker serves. Watching only
-`workflow-executions` can strand agent-only traffic when no worker is running.
+Deleting the `ScaledObject` also deletes the HPA it owns. Restore a fixed
+replica count afterwards (the base manifest uses 2), because a Deployment
+managed by KEDA usually omits `spec.replicas`. If KEDA served nothing else in
+the cluster, uninstall it the way it was installed.
 
-Workers no longer consume `agent-tuning-chat` (it never had a publisher).
-Remove its trigger from an existing ScaledObject, and delete the empty queue
-once every worker runs this release:
-`rabbitmqctl delete_queue agent-tuning-chat`.
-The package-install broadcast exchange is not a durable scale-from-zero signal:
-exclusive auto-delete subscriber queues exist only while workers are connected.
+RabbitMQ's queues are no longer read: `workflow-executions`, `agent-runs`,
+`agent-summarization`, `agent-summarization-backfill`, `agent-tuning-chat`,
+the `package-installations` exchange, and the `-poison` dead-letter queues
+(with their `-dlx` exchanges). Before deleting the broker, an operator who
+cares about dead-lettered messages can inspect them with `rabbitmqadmin` or the
+management UI. There is nothing to replay automatically: a dead-lettered run
+was already recorded as failed, or it was never accepted durably. Earlier
+releases still connect to the broker, so delete it only once you no longer
+plan to roll back to one.
 
-Use `autoscaling.keda.sh/paused-replicas: "<count>"` for temporary fixed
-capacity while leaving the `ScaledObject` installed. Remove that annotation to
-resume autoscaling. For permanent manual ownership, remove the `ScaledObject`
-and its owned HPA, then restore `spec.replicas` on the Deployment.
+Then delete the broker and its secret keys:
 
-## Scale-Down Policy
+```bash
+kubectl -n bifrost delete deployment,service -l app.kubernetes.io/name=rabbitmq
+kubectl -n bifrost delete pvc rabbitmq-data --ignore-not-found
+kubectl -n bifrost patch secret bifrost-secrets --type=json -p='[
+  {"op": "remove", "path": "/data/BIFROST_RABBITMQ_URL"},
+  {"op": "remove", "path": "/data/BIFROST_RABBITMQ_PASSWORD"}
+]'
+```
 
-Automatic scale-down is disabled in the proven configuration.
+The shipped broker used `emptyDir` storage; the PVC exists only if it was
+switched to the `rabbitmq-data` claim its manifest suggested. The JSON patch
+fails if either key is already absent; remove only the keys present. Restart
+the Bifrost Deployments if their pods should stop carrying the removed
+variables.
 
-The workflow consumer currently acknowledges a RabbitMQ message after dispatch
-to the local child execution, before that child completes. RabbitMQ queue length
-therefore does not include acknowledged active workflow children. Scaling down
-only because the broker queue is empty can terminate work that is still running
-inside a worker pod.
+## Scale-Down And Drain
 
-The current graceful drain fix handles ordinary pod deletion: the worker stops
-new deliveries, waits for consumer tasks and active workflow children, and
-returns either the real result or a durable `WorkerShutdown` failure when the
-drain deadline is exceeded. That is enough for conservative manual drain and for
-the local deletion tests. It is not enough to enable automatic scale-in from
-queue depth.
+The `bifrost-worker` and `bifrost-scheduler` Deployments keep the replica
+counts you set. On-demand worker Jobs drain themselves after
+`BIFROST_POOL_IDLE_SECONDS` without work or `BIFROST_POOL_MAX_LIFETIME_SECONDS`
+of life, and the controller keeps at least `BIFROST_POOL_MIN_WORKERS` warm.
 
-Keep these values aligned:
+On SIGTERM an executor stops claiming, hands its supervised services over, and
+lets active runs and platform jobs finish for up to 300 seconds before it
+exits. Keep the pod's grace period above that:
 
 ```yaml
-env:
-  - name: BIFROST_DRAIN_DEADLINE_SECONDS
-    value: "300"
 terminationGracePeriodSeconds: 360
 ```
-
-The Kubernetes grace period should exceed the Bifrost drain deadline by enough
-time for connection cleanup.
 
 ## Security And RBAC
 
@@ -241,11 +186,10 @@ spec:
       emptyDir: {}
 ```
 
-KEDA has its own controller permissions from the KEDA installation. Bifrost pods
-do not receive those permissions. If Bifrost later manages Deployments, Jobs or
-KEDA resources itself, that requires a new namespace-scoped ServiceAccount,
-Role and RoleBinding for the controller role. That controller does not exist in
-the current implementation.
+Only the API manages Kubernetes resources: `k8s/api/rbac.yaml` binds the
+namespace-scoped `bifrost-worker-controller` Role to the API ServiceAccount so
+it can create, start and remove worker Jobs and read their pods. Worker Jobs run
+with the `default` ServiceAccount and no token.
 
 ## Resource Sizing
 
@@ -289,8 +233,6 @@ stay resident in the supervisor.
 
 This is still not a complete elastic dependency model:
 
-- package-install notifications are broadcasts to live workers, not durable
-  commands for future zero-replica pods;
 - ephemeral pods cannot rely on filesystem mutations made inside earlier pods;
 - requirements text is not a versioned, immutable artifact contract;
 - a pod can only safely accept work after dependency hydration succeeds.
@@ -301,7 +243,7 @@ artifact fingerprint that fully describes the dependency set it can run.
 ## External Services
 
 The local `k8s/local/` directory is a disposable Kind fixture. It includes
-PostgreSQL, PgBouncer, RabbitMQ, Redis and SeaweedFS with fixture credentials,
+PostgreSQL, PgBouncer, Redis and SeaweedFS with fixture credentials,
 `emptyDir` storage and local images. It is not production-ready.
 
 Production deployments need operator-managed services or production-grade
@@ -309,35 +251,26 @@ in-cluster equivalents:
 
 - PostgreSQL with backups, HA, maintenance, connection-pool sizing and upgrade
   procedures;
-- RabbitMQ with durable storage, HA policy, TLS/authentication and monitored
-  queue depth;
 - Redis with the selected persistence/HA posture for Bifrost's cache and result
   paths;
 - S3-compatible object storage with durable buckets, credentials rotation and
   lifecycle policy;
 - ingress, TLS, WebSocket support and public URL/WebAuthn configuration.
 
-The local KEDA example uses the AMQP URL from `BIFROST_RABBITMQ_URL`. In a real
-cluster, keep that URL fully qualified and use the deployment's normal TLS and
-network-policy posture.
-
 ## Draining Operations
 
 For manual drain:
 
-1. Pause KEDA at the desired capacity or remove the `ScaledObject` if KEDA owns
-   the Deployment.
-2. Reduce replicas gradually.
-3. Watch worker logs for graceful drain completion.
-4. Verify durable workflow or agent terminal state rather than only pod exit.
+1. Reduce replicas gradually.
+2. Watch worker logs for graceful drain completion.
+3. Verify durable workflow or agent terminal state rather than only pod exit.
 
 Useful checks:
 
 ```bash
 kubectl get pods -n bifrost -l app.kubernetes.io/name=bifrost-worker
 kubectl logs -n bifrost -l app.kubernetes.io/name=bifrost-worker --tail=200
-kubectl get hpa -n bifrost
-kubectl get scaledobject -n bifrost
+kubectl get jobs -n bifrost -l app.kubernetes.io/name=bifrost-pool-worker
 ```
 
 Graceful SIGTERM and deadline behavior were proven in local Kind. Abrupt node
@@ -352,21 +285,16 @@ solution. The concrete blockers are:
 - dynamic high-memory build pods are not implemented;
 - PlatformJob execution still runs under scheduler ownership rather than a
   remote Kubernetes Job attempt protocol;
-- there is no Bifrost controller/settings surface for runtime policy,
-  generation transitions or KEDA/Job reconciliation;
+- there is no settings surface for runtime policy or generation transitions;
 - there is no one-shot `run-one` worker path with a fixed high-memory queue and
   pod template;
 - OOM/pending-capacity attribution is not wired into durable job results;
-- scale-down remains disabled because RabbitMQ queue length does not account
-  for acknowledged active workflow children;
 - dependency hydration is not yet immutable or artifact-fingerprinted for
   zero-replica pools;
-- package-install fanout cannot wake future pods from zero replicas;
-- local fixture services are not production storage, broker, cache or ingress
+- local fixture services are not production storage, cache or ingress
   designs;
 - node autoscaling, node selectors, tolerations and priority classes remain
   operator-owned and unproven for this runtime.
 
-Until those are built, use fixed warm scheduler/worker capacity for production
-work and treat KEDA worker scale-out as an operator-controlled capacity
-experiment for the existing all-role worker.
+Until those are built, keep fixed warm scheduler/worker capacity for production
+work alongside the on-demand worker Jobs.

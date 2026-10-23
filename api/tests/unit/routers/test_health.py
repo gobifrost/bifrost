@@ -16,7 +16,6 @@ def _settings(s3_configured: bool = True):
     return SimpleNamespace(
         environment="test",
         redis_url="redis://redis-secret@example:6379/0",
-        rabbitmq_url="amqp://rabbit-secret@example:5672/",
         s3_configured=s3_configured,
         s3_bucket="bucket-secret" if s3_configured else None,
         s3_endpoint_url="http://object-store-secret:8333" if s3_configured else None,
@@ -34,36 +33,8 @@ async def _build_components(db, settings):
     return {
         "database": {"status": "healthy", "type": "postgresql"},
         "redis": {"status": "healthy", "type": "redis"},
-        "rabbitmq": {"status": "healthy", "type": "rabbitmq"},
         "s3": {"status": "healthy", "type": "s3"},
     }
-
-
-class FakeRabbitMQChannel:
-    def __init__(self):
-        self.close_count = 0
-
-    async def close(self):
-        self.close_count += 1
-
-
-class FakeRabbitMQConnection:
-    def __init__(self, channel_error: Exception | None = None):
-        self.channel_error = channel_error
-        self.channels: list[FakeRabbitMQChannel] = []
-        self.close_count = 0
-        self.is_closed = False
-
-    async def channel(self):
-        if self.channel_error:
-            raise self.channel_error
-        channel = FakeRabbitMQChannel()
-        self.channels.append(channel)
-        return channel
-
-    async def close(self):
-        self.close_count += 1
-        self.is_closed = True
 
 
 class FakeRedisClient:
@@ -156,18 +127,17 @@ async def test_ready_returns_healthy_when_core_dependencies_pass(monkeypatch):
 
     assert response.status_code == 200
     assert result.status == "healthy"
-    assert set(result.components) == {"database", "redis", "rabbitmq", "s3"}
+    assert set(result.components) == {"database", "redis", "s3"}
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("component", ["database", "redis", "rabbitmq", "s3"])
+@pytest.mark.parametrize("component", ["database", "redis", "s3"])
 async def test_ready_returns_503_when_required_dependency_fails(monkeypatch, component):
     monkeypatch.setattr(health, "get_settings", _settings)
 
     components = {
         "database": {"status": "healthy", "type": "postgresql"},
         "redis": {"status": "healthy", "type": "redis"},
-        "rabbitmq": {"status": "healthy", "type": "rabbitmq"},
         "s3": {"status": "healthy", "type": "s3"},
     }
     components[component] = {
@@ -192,69 +162,15 @@ async def test_s3_not_configured_does_not_fail_readiness(monkeypatch):
     monkeypatch.setattr(health, "get_settings", lambda: _settings(s3_configured=False))
     monkeypatch.setattr(health, "check_database", lambda db: _healthy_component("database", "postgresql"))
     monkeypatch.setattr(health, "check_redis", lambda settings: _healthy_component("redis", "redis"))
-    monkeypatch.setattr(
-        health,
-        "check_rabbitmq",
-        lambda settings: _healthy_component("rabbitmq", "rabbitmq"),
-    )
 
     response = Response()
     result = await health.ready_health_check(response, DummyDB())
 
     assert response.status_code == 200
     assert result.status == "healthy"
+    # Readiness checks exactly these dependencies; there is no message broker.
+    assert set(result.components) == {"database", "redis", "s3"}
     assert result.components["s3"] == {"status": "not_configured", "type": "s3"}
-
-
-@pytest.mark.asyncio
-async def test_rabbitmq_check_reuses_cached_connection(monkeypatch):
-    await health.close_rabbitmq_health_connection()
-    connections: list[FakeRabbitMQConnection] = []
-
-    async def connect_robust(url):
-        connection = FakeRabbitMQConnection()
-        connections.append(connection)
-        return connection
-
-    monkeypatch.setattr(health.aio_pika, "connect_robust", connect_robust)
-
-    try:
-        first_name, first_component = await health.check_rabbitmq(_settings())
-        second_name, second_component = await health.check_rabbitmq(_settings())
-    finally:
-        await health.close_rabbitmq_health_connection()
-
-    assert first_name == "rabbitmq"
-    assert second_name == "rabbitmq"
-    assert first_component == {"status": "healthy", "type": "rabbitmq"}
-    assert second_component == {"status": "healthy", "type": "rabbitmq"}
-    assert len(connections) == 1
-    assert len(connections[0].channels) == 2
-    assert [channel.close_count for channel in connections[0].channels] == [1, 1]
-
-
-@pytest.mark.asyncio
-async def test_rabbitmq_check_reports_unhealthy_when_channel_fails(monkeypatch):
-    await health.close_rabbitmq_health_connection()
-    failed_connection = FakeRabbitMQConnection(channel_error=RuntimeError("channel failed"))
-
-    async def connect_robust(url):
-        return failed_connection
-
-    monkeypatch.setattr(health.aio_pika, "connect_robust", connect_robust)
-
-    try:
-        component_name, component = await health.check_rabbitmq(_settings())
-    finally:
-        await health.close_rabbitmq_health_connection()
-
-    assert component_name == "rabbitmq"
-    assert component == {
-        "status": "unhealthy",
-        "type": "rabbitmq",
-        "error": "RuntimeError",
-    }
-    assert failed_connection.close_count == 1
 
 
 @pytest.mark.asyncio
@@ -340,30 +256,10 @@ async def test_s3_check_closes_cached_client_when_settings_change(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_rabbitmq_check_reports_unhealthy_when_connect_fails(monkeypatch):
-    await health.close_rabbitmq_health_connection()
-
-    async def connect_robust(url):
-        raise ConnectionError("cannot connect")
-
-    monkeypatch.setattr(health.aio_pika, "connect_robust", connect_robust)
-
-    component_name, component = await health.check_rabbitmq(_settings())
-
-    assert component_name == "rabbitmq"
-    assert component == {
-        "status": "unhealthy",
-        "type": "rabbitmq",
-        "error": "ConnectionError",
-    }
-
-
-@pytest.mark.asyncio
 async def test_error_output_does_not_include_secret_values(monkeypatch):
     settings = _settings()
     secret_values = [
         "redis-secret",
-        "rabbit-secret",
         "bucket-secret",
         "object-store-secret",
         "access-secret",
@@ -395,8 +291,7 @@ async def test_detailed_uses_same_component_status_logic(monkeypatch):
         return {
             "database": {"status": "healthy", "type": "postgresql"},
             "redis": {"status": "unhealthy", "type": "redis", "error": "ConnectionError"},
-            "rabbitmq": {"status": "healthy", "type": "rabbitmq"},
-            "s3": {"status": "healthy", "type": "s3"},
+                "s3": {"status": "healthy", "type": "s3"},
         }
 
     monkeypatch.setattr(health, "build_health_components", build_components)

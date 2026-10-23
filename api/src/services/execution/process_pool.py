@@ -594,10 +594,10 @@ class ProcessPoolManager:
     async def drain_active_executions(self, drain_timeout: float) -> bool:
         """Wait for active workflow children to finish within a bounded grace.
 
-        Shutdown needs to keep the parent process, database, Redis, and broker
-        alive long enough for child results to reach ``on_result``. Normal
+        Shutdown needs to keep the parent process, database and Redis alive
+        long enough for child results to reach ``on_result``. Normal
         ``stop()`` remains a hard pool close; this method is the graceful
-        pre-stop phase used by the workflow consumer.
+        pre-stop phase of an executor's drain.
         """
         deadline = time.monotonic() + drain_timeout
         while self.active_execution_count() > 0:
@@ -1662,8 +1662,9 @@ class ProcessPoolManager:
         Report an execution interrupted by worker shutdown.
 
         This is used only after the graceful drain deadline expires. At that
-        point the RabbitMQ message was already acknowledged at dispatch time,
-        so the parent must record a terminal result before closing DB/Redis.
+        point the run's dispatch was already claimed, so nothing will deliver
+        it again: the parent must record a terminal result before closing
+        DB/Redis.
         """
         exec_info = handle.current_execution
         if self.on_result is None or exec_info is None:

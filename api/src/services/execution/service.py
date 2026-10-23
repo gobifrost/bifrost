@@ -360,7 +360,7 @@ async def run_workflow(
     """
     Execute a workflow by ID.
 
-    All workflows are executed via the worker queue (RabbitMQ). The `sync` parameter
+    All workflows are executed by the executors. The `sync` parameter
     controls whether we wait for the result or return immediately with PENDING status.
 
     Args:
@@ -490,7 +490,7 @@ async def _enqueue_workflow_async(
     lineage: RunLineage | None,
 ) -> WorkflowExecutionResponse:
     """
-    Enqueue workflow for execution via RabbitMQ.
+    Accept a workflow run for the executors.
 
     If sync=True, waits for result via Redis BLPOP.
     If sync=False, returns immediately with PENDING status.
@@ -563,7 +563,7 @@ async def _enqueue_code_async(
     *,
     lineage: RunLineage | None,
 ) -> WorkflowExecutionResponse:
-    """Enqueue inline code for async execution via RabbitMQ."""
+    """Accept an inline-code run for async execution by the executors."""
     from src.services.execution.async_executor import enqueue_code_execution
 
     execution_id = await enqueue_code_execution(

@@ -120,48 +120,6 @@ class TestSyncExecution:
 class TestAsyncExecution:
     """Test asynchronous workflow execution."""
 
-    @pytest.mark.asyncio
-    async def test_redis_only_execution_is_immediately_readable(
-        self,
-        e2e_client,
-        platform_admin,
-    ):
-        """A receipt is readable before the worker creates its database row."""
-        from src.core.redis_client import RedisClient
-
-        execution_id = str(uuid.uuid4())
-        # This in-process test owns its client. The application singleton is
-        # production-lifetime state and may be bound to another pytest event
-        # loop after a broad ordered run.
-        redis_client = RedisClient()
-        await redis_client.set_pending_execution(
-            execution_id=execution_id,
-            workflow_id=None,
-            script_name="e2e_pending_receipt",
-            parameters={"domain": "example.com"},
-            org_id=None,
-            user_id=str(platform_admin.user_id),
-            user_name=platform_admin.name,
-            user_email=platform_admin.email,
-            lineage=None,
-        )
-        try:
-            response = e2e_client.get(
-                f"/api/executions/{execution_id}",
-                headers=platform_admin.headers,
-            )
-        finally:
-            await redis_client.delete_pending_execution(execution_id)
-            await redis_client.close()
-
-        assert response.status_code == 200, response.text
-        data = response.json()
-        assert data["execution_id"] == execution_id
-        assert data["workflow_name"] == "e2e_pending_receipt"
-        assert data["status"] == "Pending"
-        assert data["input_data"] == {"domain": "example.com"}
-        assert data["started_at"] is None
-
     def test_execute_async_workflow(self, e2e_client, platform_admin, async_workflow):
         """Platform admin executes async workflow."""
         response = e2e_client.post(

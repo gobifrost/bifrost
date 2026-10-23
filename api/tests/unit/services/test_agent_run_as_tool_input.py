@@ -107,12 +107,7 @@ def mock_agent():
 
 @pytest.fixture
 def consumer():
-    with (
-        patch("src.jobs.consumers.agent_run.get_settings") as mock_settings,
-        patch("src.jobs.consumers.agent_run.get_session_factory"),
-        patch("src.jobs.consumers.agent_run.BaseConsumer.__init__", return_value=None),
-    ):
-        mock_settings.return_value = MagicMock(max_concurrency=2)
+    with patch("src.jobs.consumers.agent_run.get_session_factory"):
         return AgentRunConsumer()
 
 

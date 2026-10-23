@@ -15,7 +15,6 @@ from src.core.log_safety import log_safe
 from src.models.orm.agent_runs import AgentRun
 from src.services.durable_impersonation import current_durable_impersonation
 from src.services.execution.agent_run_dispatch import (
-    cache_agent_context,
     hand_off_agent_run,
     stage_agent_run,
 )
@@ -54,7 +53,6 @@ class StagedAgentRun:
     run_id: str
     agent_id: str | None
     trigger_type: str
-    context: dict[str, Any]
 
 
 async def stage_agent_run_request(
@@ -123,7 +121,6 @@ async def stage_agent_run_request(
         "event_delivery_id": event_delivery_id,
         "conversation_id": conversation_id,
         "sync": sync,
-        "cancelled": False,
     }
     db.add(
         AgentRun(
@@ -165,7 +162,6 @@ async def stage_agent_run_request(
         run_id=run_id,
         agent_id=agent_id,
         trigger_type=trigger_type,
-        context=context,
     )
 
 
@@ -173,11 +169,11 @@ async def hand_off_staged_agent_run(
     staged: StagedAgentRun,
     before_queue_publish: Callable[[str], Awaitable[None]] | None = None,
 ) -> None:
-    """Hand a committed run to a worker; best-effort.
+    """Wake the executors for a committed run; best-effort.
 
-    A lost hand-off is republished by the control plane's reconciler.
+    The run is claimable once committed; the wake only saves executors their
+    poll interval.
     """
-    await cache_agent_context(staged.run_id, staged.context)
     if before_queue_publish is not None:
         try:
             await before_queue_publish(staged.run_id)
@@ -210,9 +206,8 @@ async def enqueue_agent_run(
 
     Accepts :func:`stage_agent_run_request`'s keyword arguments. The run and
     its dispatch (holding the execution context) are committed before the
-    queue message is published, so a returned run ID is immediately
-    queryable and survives a Redis or RabbitMQ outage: the control plane
-    republishes a lost hand-off.
+    executors are woken, so a returned run ID is immediately queryable and
+    survives a Redis outage: executors also poll for claimable work.
     """
     async with get_dispatch_db_context() as db:
         staged = await stage_agent_run_request(

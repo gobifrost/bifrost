@@ -3,9 +3,8 @@ Pytest fixtures for Bifrost API testing infrastructure.
 
 This module provides:
 1. Database fixtures (PostgreSQL with SQLAlchemy async)
-2. Message queue fixtures (RabbitMQ)
-3. Cache fixtures (Redis)
-4. Authentication/authorization fixtures
+2. Cache fixtures (Redis)
+3. Authentication/authorization fixtures
 """
 
 import logging
@@ -49,11 +48,6 @@ TEST_DATABASE_URL_SYNC = os.getenv(
     "postgresql://bifrost:bifrost_test@pgbouncer:5432/bifrost_test",
 )
 
-TEST_RABBITMQ_URL = os.getenv(
-    "BIFROST_RABBITMQ_URL",
-    "amqp://bifrost:bifrost_test@rabbitmq:5672/",
-)
-
 TEST_REDIS_URL = os.getenv(
     "BIFROST_REDIS_URL",
     "redis://redis:6379/0",
@@ -74,7 +68,6 @@ def setup_test_environment(tmp_path_factory):
     os.environ["BIFROST_ENVIRONMENT"] = "testing"
     os.environ["BIFROST_DATABASE_URL"] = TEST_DATABASE_URL
     os.environ["BIFROST_DATABASE_URL_SYNC"] = TEST_DATABASE_URL_SYNC
-    os.environ["BIFROST_RABBITMQ_URL"] = TEST_RABBITMQ_URL
     os.environ["BIFROST_REDIS_URL"] = TEST_REDIS_URL
     os.environ["BIFROST_SECRET_KEY"] = "test-secret-key-for-e2e-testing-must-be-32-chars"
 
@@ -294,15 +287,6 @@ async def isolate_file_policies(request) -> AsyncGenerator[None, None]:
 
 
 # ==================== MOCK FIXTURES ====================
-
-
-@pytest.fixture
-def mock_rabbitmq():
-    """Mock RabbitMQ connection for unit tests."""
-    mock = AsyncMock()
-    mock.publish = AsyncMock(return_value=None)
-    mock.consume = AsyncMock(return_value=None)
-    return mock
 
 
 @pytest.fixture

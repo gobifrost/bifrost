@@ -96,7 +96,7 @@ def db(async_session_factory: async_sessionmaker[AsyncSession], monkeypatch):
             yield session
             await session.commit()
 
-    for module in (claims, controller, maintenance, work_dispatch):
+    for module in (claims, controller, maintenance, work_dispatch, workflow_dispatch):
         monkeypatch.setattr(module, "get_db_context", context)
     monkeypatch.setattr(async_executor, "get_dispatch_db_context", context)
     monkeypatch.setattr("src.config.get_settings", lambda: SETTINGS)
@@ -249,14 +249,59 @@ async def test_ready_free_slots_satisfy_demand_without_launching(db) -> None:
     assert cluster.created == []
 
 
+async def test_a_memory_pressured_executor_offers_no_capacity(db) -> None:
+    """An executor over its memory threshold claims nothing, so its free
+    slots do not count and a worker Job is started for the waiting run."""
+    static_id = await claims.register_static_worker(slots=4, hostname="static-1")
+    await claims.heartbeat_worker(
+        static_id, active_runs=0, runs_handled=0, package_generation=0, memory_pressured=True
+    )
+    await _accept_pool_run()
+    cluster = FakeCluster()
+
+    await controller.WorkerPoolController(cluster, SETTINGS, SPEC).reconcile()  # type: ignore[arg-type]
+
+    assert len(cluster.created) == 1
+
+
+async def test_a_run_handed_back_before_it_started_waits_for_another_executor(db) -> None:
+    """A run whose fork was refused after its claim goes back to PENDING with
+    a fresh dispatch and without the first executor's claim record."""
+    from src.models.orm.execution_workers import ExecutionWorkerClaim
+
+    first = await claims.register_static_worker(slots=1, hostname="first")
+    execution_id = await _accept_pool_run()
+    claim = await claims.claim_next(first)
+    assert claim is not None and claim.claimed is not None
+    db.wake.reset_mock()
+
+    await workflow_dispatch.release_workflow_run(
+        worker_id=first, message=claim.message, payload=claim.claimed
+    )
+
+    async with db.sessions() as session:
+        execution = await session.get(Execution, UUID(execution_id))
+        held = (
+            await session.execute(
+                select(ExecutionWorkerClaim).where(ExecutionWorkerClaim.worker_id == first)
+            )
+        ).scalars().all()
+    assert (execution.status, execution.started_at) == (ExecutionStatus.PENDING, None)
+    assert held == []
+    db.wake.assert_awaited_once()
+    second = await claims.register_static_worker(slots=1, hostname="second")
+    again = await claims.claim_next(second)
+    assert again is not None and again.claimed is not None
+    assert again.claimed["execution_id"] == execution_id
+
+
 async def test_silent_worker_is_lost_and_its_unstarted_work_released(db, monkeypatch) -> None:
     """An agent run is claimed by its consumer after assignment; if the worker
     dies in between, the run is still queued and goes to another worker."""
-    from src.services.execution import agent_run_dispatch, agent_run_service
+    from src.services.execution import agent_run_service
     from src.services.execution.agent_run_service import enqueue_agent_run
 
     monkeypatch.setattr(agent_run_service, "get_dispatch_db_context", claims.get_db_context)
-    monkeypatch.setattr(agent_run_dispatch, "cache_agent_context", AsyncMock())
     cluster = FakeCluster()
     pool = controller.WorkerPoolController(cluster, SETTINGS, SPEC)  # type: ignore[arg-type]
     run_id = await enqueue_agent_run(agent_id=None, trigger_type="sdk", lineage=None)

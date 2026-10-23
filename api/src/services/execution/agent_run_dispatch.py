@@ -4,9 +4,6 @@ An agent run is accepted as a ``queued`` ``AgentRun`` plus a ``WorkDispatch``
 holding its execution context, committed together. The worker claims the run
 under its row lock and takes the context by deleting the dispatch in the same
 transaction (run first, then dispatch: the reconciler's lock order too).
-
-One-release bridge (remove in #769 stage 5): the context is also written to
-Redis, best-effort, so a worker that predates dispatches can still run it.
 """
 
 from __future__ import annotations
@@ -21,7 +18,6 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.cache.redis_client import get_redis
-from src.core.log_safety import log_safe
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.work_dispatches import WorkDispatch
 from src.services.work_dispatch import hand_off, stage_dispatch
@@ -31,9 +27,7 @@ logger = logging.getLogger(__name__)
 FAMILY = "agent_run"
 HANDLER = "agent.run"
 HANDLER_VERSION = 1
-QUEUE_NAME = "agent-runs"
 REDIS_PREFIX = "bifrost:agent_run"
-CONTEXT_TTL_SECONDS = 3600
 
 
 def stage_agent_run(
@@ -50,27 +44,9 @@ def stage_agent_run(
         subject_id=run_id,
         handler=HANDLER,
         handler_version=HANDLER_VERSION,
-        queue=QUEUE_NAME,
         message=message,
         payload=context,
     )
-
-
-async def cache_agent_context(run_id: str, context: dict[str, Any]) -> None:
-    """Bridge copy for workers that predate dispatches; best-effort."""
-    try:
-        async with get_redis() as redis:
-            await redis.set(
-                f"{REDIS_PREFIX}:{run_id}:context",
-                json.dumps(context),
-                ex=CONTEXT_TTL_SECONDS,
-            )
-    except Exception:
-        logger.warning(
-            "Could not cache agent run context for older workers",
-            extra={"run_id": log_safe(run_id)},
-            exc_info=True,
-        )
 
 
 async def hand_off_agent_run() -> None:
@@ -120,8 +96,6 @@ __all__ = [
     "FAMILY",
     "HANDLER",
     "HANDLER_VERSION",
-    "QUEUE_NAME",
-    "cache_agent_context",
     "fail_unclaimed_agent_run",
     "hand_off_agent_run",
     "lock_waiting_agent_run",

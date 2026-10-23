@@ -126,13 +126,26 @@ This starts:
 -   **API** (FastAPI) - proxied through client
 -   **PostgreSQL** - Database
 -   **Redis** - Caching and sessions
--   **RabbitMQ** - Message queue for async workflows
+-   **Scheduler and Worker** - Executors that run workflows and agent runs
 
 **Access the Platform:**
 
 -   **Client UI**: http://localhost:3000
 -   **API Docs (Swagger)**: http://localhost:3000/api/docs
 -   **API Docs (ReDoc)**: http://localhost:3000/api/redoc
+
+### Upgrading
+
+Bifrost no longer uses RabbitMQ. If your `docker-compose.yml` predates this, its
+`rabbitmq` service and `BIFROST_RABBITMQ_URL` settings are unused and keep
+working until you remove them. To clean up, delete the `rabbitmq` service, its
+`depends_on` entries, the `BIFROST_RABBITMQ_URL` lines and the `rabbitmq_data`
+volume from the compose file, remove `RABBITMQ_PASSWORD` from `.env`, then run:
+
+```bash
+docker compose up -d --remove-orphans
+docker volume rm bifrost_rabbitmq_data
+```
 
 ---
 
@@ -146,7 +159,7 @@ The full stack runs in Docker with hot reload enabled for both API and client:
 ./debug.sh              # Start all services with hot reload
 ```
 
-This launches PostgreSQL, Redis, RabbitMQ, SeaweedFS for S3-compatible object storage, the API, the client, the scheduler, and workers. Access the app at **http://localhost:3000** — Vite proxies `/api/*` to the API container, so you don't hit the API on a separate port.
+This launches PostgreSQL, Redis, SeaweedFS for S3-compatible object storage, the API, the client, the scheduler, and workers. Access the app at **http://localhost:3000** — Vite proxies `/api/*` to the API container, so you don't hit the API on a separate port.
 
 Changes to files in `api/src/`, `api/shared/`, and `client/src/` automatically reload — **do not restart containers for code changes.**
 
@@ -207,16 +220,17 @@ For test authoring conventions, fixture layout, and debugging tips, see [`CLAUDE
                            │
                     ┌──────┴──────┐
                     ▼             ▼
-              ┌─────────┐   ┌──────────┐
-              │  Redis  │   │ RabbitMQ │
-              │ (Cache) │   │ (Queue)  │
-              └─────────┘   └──────────┘
+              ┌─────────┐   ┌─────────────┐
+              │  Redis  │   │  Executors  │
+              │ (Cache) │   │ (scheduler, │
+              └─────────┘   │   worker)   │
+                            └─────────────┘
 ```
 
 -   **FastAPI** - Async Python API with automatic OpenAPI documentation
 -   **PostgreSQL** - Primary data store with SQLAlchemy ORM
 -   **Redis** - Session storage and caching
--   **RabbitMQ** - Async workflow execution queue
+-   **Executors** - Scheduler and worker containers that claim workflow and agent runs from PostgreSQL
 -   **React** - Modern frontend with TypeScript
 
 ---

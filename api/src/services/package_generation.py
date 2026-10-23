@@ -54,9 +54,8 @@ async def package_changes_after(generation: int) -> list[PackageChange]:
 
 
 def change_message(change: PackageChange) -> dict[str, Any]:
-    """The install consumer's message for a change (the broadcast's shape)."""
+    """The install consumer's message for a change."""
     return {
-        "type": "recycle_workers",
         "action": change.action,
         "package": change.package,
         "version": change.version,

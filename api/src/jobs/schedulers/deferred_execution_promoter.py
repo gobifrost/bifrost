@@ -1,15 +1,14 @@
 """Deferred execution promoter.
 
-Every 60 seconds, moves SCHEDULED executions whose ``scheduled_at`` has
-matured onto the RabbitMQ workflow-executions queue by flipping them to
-PENDING and staging a durable dispatch for each (``workflow_dispatch``).
+Every 60 seconds, makes SCHEDULED executions whose ``scheduled_at`` has
+matured claimable by flipping them to PENDING and staging a durable
+dispatch for each (``workflow_dispatch``).
 
 Design notes:
 
 - The promotion UPDATE and the dispatches commit together, BEFORE the
-  per-row publish loop. A publish that fails, or a scheduler that dies
-  after the commit, leaves a dispatch the control plane's reconciler
-  publishes; the row is never stranded as PENDING.
+  executors are woken. A lost wake only costs the executors' poll
+  interval; the row is never stranded as PENDING.
 - ``SELECT ... FOR UPDATE SKIP LOCKED`` keeps the job safe to run in
   parallel (multiple scheduler pods / APScheduler threads): each batch
   picks a disjoint set of rows.
@@ -22,7 +21,7 @@ Design notes:
   the time a scheduled row matures.
 - A row that acts as another user (``execution_context.run_as``) is decided
   again before it is promoted (``impersonation.recheck_run_as``). A row that
-  is no longer permitted is marked Failed and never published. A refusal is
+  is no longer permitted is marked Failed and never dispatched. A refusal is
   written to the audit log as a live one is (a person's enforced, a
   workflow's report-only), judged in a collector of its own.
 - ``execution_context.run_as`` lives only until the row runs: the worker

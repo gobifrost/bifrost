@@ -23,7 +23,6 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.log_safety import log_safe
-from src.jobs.queue_names import SUMMARIZE_BACKFILL_QUEUE, SUMMARIZE_QUEUE
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.work_dispatches import WorkDispatch
 from src.services.work_dispatch import hand_off, stage_dispatch, take_dispatch_payload
@@ -52,7 +51,6 @@ async def stage_summary(
         subject_id=run_id,
         handler=BACKFILL_HANDLER if backfill else HANDLER,
         handler_version=HANDLER_VERSION,
-        queue=SUMMARIZE_BACKFILL_QUEUE if backfill else SUMMARIZE_QUEUE,
         message={"run_id": str(run_id)},
         payload={},
     )

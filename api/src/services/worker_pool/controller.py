@@ -170,15 +170,17 @@ class WorkerPoolController:
                         ExecutionWorker.state,
                         ExecutionWorker.slots,
                         ExecutionWorker.active_runs,
+                        ExecutionWorker.memory_pressured,
                     ).where(ExecutionWorker.state.in_(LIVE_STATES))
                 )
             ).all()
             # Static executors claim pool work too, so their free slots count;
-            # the Job ceiling applies to Jobs only.
+            # the Job ceiling applies to Jobs only. An executor over its memory
+            # threshold claims nothing, so it has no free slots.
             free = sum(
                 slots if state in ("reserved", "starting") else max(0, slots - active)
-                for _form, state, slots, active in workers
-                if state != "draining"
+                for _form, state, slots, active, pressured in workers
+                if state != "draining" and not pressured
             )
             jobs = sum(1 for form, *_rest in workers if form == "job")
             undrained_jobs = sum(
