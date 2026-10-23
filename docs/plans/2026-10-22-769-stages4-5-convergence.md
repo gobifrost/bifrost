@@ -88,3 +88,40 @@ permissions are detected; no flag is needed.
 - A Docker install upgraded in place keeps its existing services working.
 - After retirement no RabbitMQ object, legacy Deployment or bridge key
   remains.
+
+## Stage 5a design (2026-10-23, from the code and production)
+
+Production (GitOps `gocovi/kubernetes`, Flux) runs API ×2 on the default
+service account, scheduler ×1 on `bifrost-build-controller` (the builds
+overlay: `jobs` create/patch/delete, `pods` get/list) with
+`BIFROST_PLATFORM_BUILD_BACKEND=kubernetes`, worker ×4, no KEDA. An
+unchanged install must keep building Apps after 5a, so control cannot simply
+move to the API: the API holds no Job permission there.
+
+- **Leadership, schedules and the dispatch reconciler run in the API.** The
+  `BIFROST_CONTROL_PLANE_HOST` switch is removed. During a rolling upgrade an
+  older scheduler still competes for the same fenced lease, which is safe.
+- **The Kubernetes loops follow the permission, not a flag.** The build-Job
+  loop and the on-demand worker controller start in every process (API or
+  executor) whose service account may create Jobs, checked once at start with
+  a `SelfSubjectAccessReview`. Both loops already tolerate several replicas
+  (SKIP LOCKED claims, the capacity lock). Unchanged production keeps them in
+  the scheduler container's executor; an install that applies D3 (the base
+  manifests' Role bound to the API) runs them in the API too.
+- **Every new dispatch is pool-placed.** The `BIFROST_EXECUTION_PLACEMENT`
+  switch is removed. The reconciler re-places a broker-placed dispatch left by
+  an older API pod during a rollout to pool at once (otherwise it would wait
+  60–90 minutes for a broker consumer, then fail). A duplicate RabbitMQ
+  delivery to a still-running older worker is fenced by the claim.
+- **Both entry points start the static executor.** `src.worker.main` and
+  `src.scheduler.main` run `PoolWorker` and keep writing their own health
+  files (`/tmp/bifrost-worker-ready`; the scheduler heartbeat and ready
+  files), so unchanged Compose healthchecks and Kubernetes probes keep
+  passing. The scheduler's liveness probe would otherwise kill it.
+- **Job specs default from the cluster.** Without build settings, worker Jobs
+  use the API pod's own namespace (service-account `namespace` file) and
+  image (its own pod spec), the `bifrost-config` / `bifrost-secrets` names of
+  the base manifests, and the `default` service account with no token.
+- **Defaults** `BIFROST_POOL_MIN_WORKERS=1`, `BIFROST_POOL_MAX_WORKERS=6`.
+  Supervised services need an executor: in Docker the static executors, on
+  Kubernetes the static executors or the warm Job worker.
