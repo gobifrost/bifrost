@@ -1192,6 +1192,74 @@ dispatch regression. None of these checks measures model economics, validates
 live production effects, or certifies full Cloudflare feature equivalence.
 The candidate remains undeployed.
 
+## MCP consolidation contract and required benchmark follow-up
+
+The intended consolidation makes MCP and Automatic CodeMode consumers of the
+same capability catalog, search/ranking, schema hydration and execution services.
+Caller, organization, selected agent and approved composition scope remain
+explicit inputs. A shared service must preserve those boundaries rather than
+give an Automatic run the entire external gateway's discovery scope. Existing
+worker execution and runtime audit/cancellation wrappers remain in use.
+This consolidation is not implemented by `6d0f446c0`; that commit aligns the
+sandbox SDK with the Cloudflare reference.
+
+The external MCP experience retains its existing contract:
+
+- `bifrost_search_capabilities` returns agents with `matching_tools`, stable
+  `tool_ref` values and explicit counts/completeness fields. Selecting `agent_id`
+  loads instructions; adding `tool_ref` loads the exact input schema. Shared
+  ranking may change match order and relevance, without replacing the response
+  with the sandbox's flat Python function catalog.
+- `bifrost_execute_tool` keeps `agent_id`, `tool_ref`, `arguments` and optional
+  `async`. Synchronous MCP calls return the selected tool's payload directly;
+  asynchronous calls return an execution receipt consumed by
+  `bifrost_get_execution`. The REST gateway's internal execution envelope is
+  not the synchronous MCP response format.
+- Required instructions, original caller authorization, execution ownership,
+  organization reach and asynchronous defaults remain enforced.
+- Output-schema information, when available, can be exposed additively during
+  exact schema hydration. It describes the actual payload or nested structured
+  content, not an unrelated transport envelope. Existing arbitrary workflow
+  returns remain valid; no mandatory output annotation or new business envelope
+  is introduced.
+
+CodeMode bindings use the same resolved capability identities and services.
+Their Python presentation is generated for the harness. This consolidation does
+not itself require an additional public MCP code-execution tool; external
+harnesses may compose the existing MCP calls in their own code environment.
+An external client still making one call per model turn does not automatically
+receive the savings from code-side batching and projection.
+
+Meaningful runtime changes require a new provider-backed benchmark after focused
+contract, authorization, worker and chat tests pass. The historical 84.4% median
+estimated-cost reduction belongs to `4db7aaa79`; neither source-parity tests nor
+the catalog probe establish that a later candidate retains it.
+
+Before generating requests, freeze candidate sources, fixtures, oracle, attempt
+counts, budgets, model/effort settings and pricing/accounting rules. Use fresh
+matched comparisons against direct tools and the last measured CodeMode version,
+with alternating execution order and identical business fixtures. Keep the
+existing complex workload, add ordinary chat and small-tool tasks, and report
+each workload separately so the favorable inventory case cannot hide overhead
+elsewhere. Provider calls use mocks; no production business effects are allowed.
+
+Quality checks cover required structured reports, authorized action receipts,
+verification, final-prose totals and identifiers, plus known previous mistakes.
+Batching, returned bytes and raw-data projection remain separate diagnostics.
+Report success rates, failures/timeouts, inclusive input/cache/output usage,
+estimated model cost, latency, corrections and cost per correct completion,
+including unsuccessful attempts in cohort totals. Show matched successful-pair
+results separately and disclose selection and sample-size limits. Do not replace
+failed attempts or tune a cohort midway through execution.
+
+Promotion requires demonstrated savings against the direct control and no
+observed quality regression on the locked cases. Compare the previous CodeMode
+candidate to detect lost savings; investigate regressions before promotion.
+Record uncertainty rather than treating the historical percentage as a universal
+guarantee or a small cohort as proof of statistical equivalence. A candidate with
+unrun benchmarks remains explicitly unbenchmarked. No new provider calls were
+made while recording this contract and verification requirement.
+
 ## Primary references
 
 - [Pydantic AI Harness CodeMode](https://pydantic.dev/docs/ai/harness/code-mode/)
