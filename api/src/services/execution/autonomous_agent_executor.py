@@ -41,10 +41,10 @@ from src.services.durable_impersonation import principal_durable_impersonation
 from src.core.cache.keys import agent_run_steps_stream_key
 from src.core.pubsub import publish_agent_run_step
 from src.services.agent_run_step_streams import append_agent_run_step
+from src.services.capabilities.catalog import resolve_capability_route
 from src.services.execution.agent_helpers import (
     build_agent_system_prompt,
     find_delegated_agent,
-    parse_mcp_tool_name,
     resolve_agent_tools,
 )
 from src.services.execution.agent_workflow_tools import (
@@ -933,16 +933,21 @@ class AutonomousAgentExecutor:
         except AgentRuntimeAuthorizationError as exc:
             raise ToolError(str(exc)) from exc
 
+        active_workflow_ids = (
+            self._tool_workflow_id_map if workflow_ids is None else workflow_ids
+        )
+        route = resolve_capability_route(agent, tool_call.name, active_workflow_ids)
+
         # Knowledge search
-        if tool_call.name == "search_knowledge" and agent.knowledge_sources:
+        if route is not None and route.source == "knowledge":
             return await self._execute_knowledge_search(tool_call, agent)
 
         # Delegation
-        if tool_call.name.startswith("delegate_to_"):
+        if route is not None and route.source == "delegation":
             return await self._execute_delegation(tool_call, agent)
 
         # System tools
-        if tool_call.name in (agent.system_tools or []):
+        if route is not None and route.source == "system":
             return await self._execute_system_tool(tool_call, agent)
 
         # External MCP tools — namespaced ``mcp__<connection_id>__<tool>``.
@@ -952,23 +957,19 @@ class AutonomousAgentExecutor:
         # execution service. The threaded ``self._acting_user_id`` is
         # what differentiates a chat-claim webhook or Run As (per-user
         # OAuth) from a fully autonomous run (service token only).
-        mcp_route = parse_mcp_tool_name(tool_call.name)
-        if mcp_route is not None:
-            connection_id, remote_tool_name = mcp_route
-            if connection_id not in {connection.id for connection in agent.mcp_connections}:
-                raise ToolError("MCP tool is no longer bound to this agent")
+        if route is not None and route.source == "external_mcp":
+            assert route.source_id is not None
+            assert route.remote_tool_name is not None
             return await self._execute_mcp_tool(
                 tool_call,
-                connection_id=connection_id,
-                remote_tool_name=remote_tool_name,
+                connection_id=route.source_id,
+                remote_tool_name=route.remote_tool_name,
             )
 
         # Workflow tools
-        workflow_id = (
-            self._tool_workflow_id_map if workflow_ids is None else workflow_ids
-        ).get(tool_call.name)
-        if not workflow_id:
+        if route is None or route.source != "workflow" or route.source_id is None:
             raise ToolError(f"Unknown tool: {tool_call.name}")
+        workflow_id = route.source_id
 
         if self._caller is None:
             raise ToolError("Agent run caller is unavailable")

@@ -86,9 +86,9 @@ from src.services.ai_behavior_service import (
     AIBehaviorService,
     DEFAULT_AGENT_EXECUTION_MODE,
 )
+from src.services.capabilities.catalog import resolve_capability_route
 from src.services.execution.agent_helpers import (
     find_delegated_agent,
-    parse_mcp_tool_name,
     resolve_agent_tools,
 )
 from src.services.execution.agent_workflow_tools import (
@@ -1654,12 +1654,21 @@ class AgentExecutor:
                     duration_ms=int((time.time() - start_time) * 1000),
                 )
 
+        active_workflow_ids = (
+            self._tool_workflow_id_map if workflow_ids is None else workflow_ids
+        )
+        route = (
+            resolve_capability_route(agent, tool_call.name, active_workflow_ids)
+            if agent is not None
+            else None
+        )
+
         # Check if this is a knowledge search tool call
-        if tool_call.name == "search_knowledge" and agent:
+        if route is not None and route.source == "knowledge":
             return await self._execute_knowledge_search(tool_call, agent)
 
         # Check if this is a delegation tool call
-        if tool_call.name.startswith("delegate_to_") and agent:
+        if route is not None and route.source == "delegation":
             return await self._execute_delegation(
                 tool_call,
                 agent,
@@ -1668,38 +1677,25 @@ class AgentExecutor:
             )
 
         # Check if this is a system tool call
-        if agent and tool_call.name in (agent.system_tools or []):
+        if route is not None and route.source == "system":
             return await self._execute_system_tool(tool_call, caller)
 
         # External MCP tools — namespaced ``mcp__<connection_id>__<tool>``.
         # MCP tools are routed BEFORE workflow tools because workflow lookup
         # would otherwise fall through to "tool not found" for an MCP name.
-        mcp_route = parse_mcp_tool_name(tool_call.name)
-        if mcp_route is not None:
-            connection_id, remote_tool_name = mcp_route
-            if agent is None or connection_id not in {
-                connection.id for connection in agent.mcp_connections
-            }:
-                return ToolResult(
-                    tool_call_id=tool_call.id,
-                    tool_name=tool_call.name,
-                    result=None,
-                    error="MCP tool is no longer bound to this agent",
-                    duration_ms=int((time.time() - start_time) * 1000),
-                )
+        if route is not None and route.source == "external_mcp":
+            assert route.source_id is not None
+            assert route.remote_tool_name is not None
             return await self._execute_mcp_tool(
                 tool_call,
-                connection_id=connection_id,
-                remote_tool_name=remote_tool_name,
+                connection_id=route.source_id,
+                remote_tool_name=route.remote_tool_name,
                 caller_user_id=caller.principal.user_id,
                 start_time=start_time,
             )
 
         try:
-            workflow_id = (
-                self._tool_workflow_id_map if workflow_ids is None else workflow_ids
-            ).get(tool_call.name)
-            if workflow_id is None or agent is None:
+            if route is None or route.source != "workflow" or route.source_id is None:
                 return ToolResult(
                     tool_call_id=tool_call.id,
                     tool_name=tool_call.name,
@@ -1707,6 +1703,7 @@ class AgentExecutor:
                     error=f"Tool '{tool_call.name}' not found",
                     duration_ms=int((time.time() - start_time) * 1000),
                 )
+            workflow_id = route.source_id
 
             execution_response = await execute_agent_workflow_tool(
                 agent_id=agent.id,
