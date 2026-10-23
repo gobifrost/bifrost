@@ -39,7 +39,8 @@ crash-loop against the newer schema. A release's init step skips migrations
 when the database is newer than its image, from the release that retired
 RabbitMQ onward. Rolling back further than that across a migration, first
 downgrade the database with the newer image, to the newest revision the
-older image ships:
+older image ships, immediately before applying the older release (the newer
+pods expect the newer schema until they are replaced):
 
 ```bash
 # Kubernetes: from a pod still running the newer image
