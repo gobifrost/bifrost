@@ -22,8 +22,8 @@ memory, is what limits workflows today.
 
 ## The rule
 
-1. **Every unit of work carries a memory request** and an `isolated` flag,
-   decided once when the work is accepted.
+1. **Every unit of work carries a memory request**, decided once when the
+   work is accepted.
 2. **Every executor knows its budget**, measured at start and kept current:
    - limit: the container's cgroup memory limit, or, with no limit (Docker's
      default), the host's memory;
@@ -42,10 +42,10 @@ memory, is what limits workflows today.
    stopped for that; only real pressure (the existing hard-limit and OOM
    handling) ends work.
 6. **The controller launches for work nothing can fit.** On Kubernetes:
-   standard Job workers for work a standard worker fits; a Job sized to the
-   request when it is larger, up to `pool_worker_max_memory_mib`; a one-shot
-   Job when `isolated` is set. Without Kubernetes, work that no executor can
-   ever fit fails visibly ("needs N MiB; the largest executor has M").
+   standard Job workers for work a standard worker fits, and a Job sized to
+   the request when it is larger, up to `pool_worker_max_memory_mib`. Work no
+   executor can ever fit fails visibly ("needs N MiB; the largest executor
+   has M"). Workers drain themselves after inactivity.
 
 ## Requests are typical, not worst case
 
@@ -64,27 +64,39 @@ run.
   maximum, one primary-key update, no scan). Its request is that value plus
   a 16 MiB margin. Acceptance reads it with the workflow lookup it already
   does.
-- **Declared when known**: a workflow's `memory_request_mib` and `isolated`
-  settings override the learned value. Like `timeout_seconds`, they are
+- **Declared when known**: a workflow's `memory_request_mib` setting
+  overrides the learned value. Like `timeout_seconds`, they are
   operational settings set through the API, CLI, MCP and UI, never from the
   decorator.
 - **New work starts small**: a workflow with no history requests 64 MiB.
 
 ## By kind of work
 
-| Work | Runs in | Request | Isolated |
-| --- | --- | --- | --- |
-| Workflow run (any trigger: schedule, event, form, endpoint, SDK, agent tool) | a fork | learned per workflow, else declared, else 64 MiB | when declared |
+| Work | Runs in | Request |
+| --- | --- | --- |
+| Workflow run (any trigger: schedule, event, form, endpoint, SDK, agent tool) | a fork | learned per workflow, else declared, else 64 MiB |
 | Scheduled run | same as any workflow run; a schedule is a trigger, not a kind of work | | |
-| Agent run | the executor process (async) | fixed 32 MiB; its tool calls are workflow runs with their own requests | no |
-| Summary (live and backfill) | the executor process | fixed 16 MiB | no |
-| Service | a long-lived fork | learned from the memory it reports, else 64 MiB; held for its lifetime | no |
-| Local platform job | a runner subprocess (a fresh interpreter) | its learned profile, else the policy's `min_memory_headroom_mb` (what admission uses today) | no |
-| Build-class platform job (deploy, SDK update, export) | its own Job on Kubernetes | as above | yes, on Kubernetes |
+| Agent run | the executor process (async) | fixed 32 MiB; its tool calls are workflow runs with their own requests |
+| Summary (live and backfill) | the executor process | fixed 16 MiB |
+| Service | a long-lived fork | learned from the memory it reports, else 64 MiB; held for its lifetime |
+| Local platform job | a runner subprocess (a fresh interpreter) | its learned profile, else the policy's `min_memory_headroom_mb` (what admission uses today) |
+| Build-class platform job (deploy, SDK update, export) | its own Job on Kubernetes | as above |
 
 Agents are low by design: the heavy work they do is workflow runs, which
 are admitted on their own. A fixed request still counts them, so a burst of
 agent runs cannot pile onto one executor unseen.
+
+## Isolation
+
+Isolation is a property of a job definition, not of a run: "this job runs
+in its own container". Build-class platform jobs are the first such jobs
+(the Kubernetes build backend gives each one its own Job); code-editing
+containers would be the next. Workflows and agents never ask for it; their
+capacity is dynamic workers the controller starts and drains. Installs that
+cannot start containers (Docker) cannot run isolated jobs; build-class jobs
+there run in the local runner, as today. Folding the build backend into the
+worker controller is a later change, made when the next isolated job type
+arrives.
 
 ## Fairness
 
@@ -102,11 +114,10 @@ for it. Large work never starves behind a stream of small runs.
   remove `max_workers`, `max_concurrency`, the summary slots and
   `pool_worker_slots` as capacity (leftover settings are ignored, never
   fatal).
-- **6b, the rest.** Declared `memory_request_mib` and `isolated` workflow
-  settings. Local platform jobs and services draw from the same
-  budget (the two platform-job slots and the separate admission ratio go);
-  build-class platform jobs are `isolated`, replacing the three-way
-  build-backend opt-in where the API may create Jobs.
+- **6b, the rest.** The declared `memory_request_mib` workflow setting.
+  Local platform jobs and services draw from the same
+  budget (the two platform-job slots, the separate admission ratio and
+  `max_service_workers` go).
 - **6c, proof.** The Kind pressure test (handoff step 3) against 6a + 6b.
 
 ## Compatibility
