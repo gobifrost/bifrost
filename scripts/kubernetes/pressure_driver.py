@@ -71,12 +71,13 @@ async def setup() -> dict:
             )
             registered.raise_for_status()
             ids[name] = registered.json()["id"]
-        agent = await http.post(
-            "/api/agents",
-            json={"name": AGENT, "system_prompt": "Reply OK.", "access_level": "authenticated"},
-        )
-        if agent.status_code not in (200, 201, 409):
-            agent.raise_for_status()
+        # Agent names are not unique: create it only once across runs.
+        agents = (await http.get("/api/agents")).json()
+        if not any(agent["name"] == AGENT for agent in agents):
+            (await http.post(
+                "/api/agents",
+                json={"name": AGENT, "system_prompt": "Reply OK.", "access_level": "authenticated"},
+            )).raise_for_status()
     finally:
         await http.aclose()
     return {"workflows": ids, "agent": AGENT}
