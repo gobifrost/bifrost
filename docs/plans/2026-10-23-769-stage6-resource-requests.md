@@ -74,8 +74,8 @@ run.
 
 | Work | Runs in | Request |
 | --- | --- | --- |
-| Workflow run (any trigger: schedule, event, form, endpoint, SDK, agent tool) | a fork | learned per workflow, else declared, else 64 MiB |
-| Scheduled run | same as any workflow run; a schedule is a trigger, not a kind of work | | |
+| Workflow run (any trigger: schedule, event, form, endpoint, SDK, agent tool) | a fork | declared, else learned per workflow, else 64 MiB |
+| Scheduled run | same as any workflow run: a schedule is a trigger, not a kind of work | |
 | Agent run | the executor process (async) | fixed 32 MiB; its tool calls are workflow runs with their own requests |
 | Summary (live and backfill) | the executor process | fixed 16 MiB |
 | Service | a long-lived fork | learned from the memory it reports, else 64 MiB; held for its lifetime |
