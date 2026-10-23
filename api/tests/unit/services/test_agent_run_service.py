@@ -91,7 +91,7 @@ class TestEnqueueAgentRun:
         assert (dispatch.subject_id, dispatch.family) == (queued_run.id, "agent_run")
         assert dispatch.payload["input"] == {"ticket_id": 123}
         assert env.calls[:2] == ["commit", "wake"]
-        assert dispatch.placement == "pool"
+        assert dispatch.assigned_worker_id is None
         assert dispatch.message["dispatch_id"] == str(dispatch.id)
 
     @pytest.mark.asyncio
@@ -254,7 +254,7 @@ class TestEnqueueAgentRun:
         [queued_run] = env.runs()
         assert str(queued_run.id) == run_id
         assert queued_run.status == "queued"
-        assert env.dispatches()[0].placement == "pool"  # claimable from PostgreSQL
+        assert env.dispatches()[0].subject_id == queued_run.id
 
 
 @pytest.mark.asyncio

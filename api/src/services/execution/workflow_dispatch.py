@@ -108,9 +108,7 @@ async def stage_workflow_run(
         subject_id=execution_id,
         handler=HANDLER,
         handler_version=HANDLER_VERSION,
-        # Executors older than #769 stage 5b read this during a rolling
-        # upgrade; it goes with the work_dispatches broker columns.
-        message={**message, "execution_record_exists": True},
+        message=message,
         payload=dict(pending),
     )
     return AcceptedRun(

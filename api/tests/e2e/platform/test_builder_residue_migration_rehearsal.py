@@ -82,13 +82,6 @@ NON_ORM_COLUMNS = {
     ("agent_runs", "search_tsv"),  # generated tsvector column
     ("workflows", "schedule"),
     ("agents", "is_coding_mode"),
-    # Broker-era dispatch columns: no longer mapped (#769 stage 5b), still
-    # written by the previous release during a rolling upgrade; dropped by
-    # the release after.
-    ("work_dispatches", "queue"),
-    ("work_dispatches", "status"),
-    ("work_dispatches", "publish_count"),
-    ("work_dispatches", "last_published_at"),
 }
 
 # Main's definitions, as created by 20260605_solution_unique_scope.

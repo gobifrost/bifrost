@@ -92,7 +92,7 @@ async def claim_next(
     incarnation_id: UUID,
     handlers: tuple[tuple[str, int], ...] = SUPPORTED_HANDLERS,
 ) -> PoolClaim | None:
-    """Assign the oldest unassigned pool dispatch this worker can take now.
+    """Assign the oldest unassigned dispatch this worker can take now.
 
     ``handlers`` narrows the claim to the (handler, version) pairs with free
     capacity on this worker; it is always a subset of what the build supports.
@@ -100,7 +100,6 @@ async def claim_next(
     candidate = (
         select(WorkDispatch.id)
         .where(
-            WorkDispatch.placement == "pool",
             WorkDispatch.assigned_worker_id.is_(None),
             tuple_(WorkDispatch.handler, WorkDispatch.handler_version).in_(
                 [pair for pair in handlers if pair in SUPPORTED_HANDLERS]

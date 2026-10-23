@@ -125,10 +125,9 @@ async def test_acceptance_commits_a_pending_run_before_waking_executors(harness)
     assert execution.started_at is None
     dispatch = await harness.dispatch(execution_id)
     assert dispatch is not None
-    assert (dispatch.placement, dispatch.assigned_worker_id) == ("pool", None)
+    assert dispatch.assigned_worker_id is None
     assert dispatch.payload["parameters"] == {"x": 1}
     assert dispatch.message["dispatch_id"] == str(dispatch.id)
-    assert dispatch.message["execution_record_exists"] is True
     assert (dispatch.message["handler"], dispatch.message["handler_version"]) == (
         "workflow.execute",
         1,
@@ -136,18 +135,19 @@ async def test_acceptance_commits_a_pending_run_before_waking_executors(harness)
     harness.wakes.assert_awaited_once()
 
 
-async def test_an_older_apis_broker_dispatch_is_replaced_into_the_pool_at_once(harness) -> None:
-    """During a rolling upgrade an older API still places runs on the broker."""
+async def test_reconciler_leaves_a_young_dispatch_alone(harness) -> None:
     execution_id = await _accept()
-    await harness.age(execution_id, placement="broker")
-    harness.wakes.reset_mock()
+    async with harness.sessions() as session:
+        await session.execute(
+            update(Execution)
+            .where(Execution.id == UUID(execution_id))
+            .values(status=ExecutionStatus.CANCELLED)
+        )
+        await session.commit()
 
-    assert await work_dispatch.reconcile_work_dispatches() == 1
+    await work_dispatch.reconcile_work_dispatches()
 
-    dispatch = await harness.dispatch(execution_id)
-    assert (dispatch.placement, dispatch.assigned_worker_id) == ("pool", None)
-    harness.wakes.assert_awaited_once()
-    assert await work_dispatch.reconcile_work_dispatches() == 0, "a young pool dispatch is left alone"
+    assert await harness.dispatch(execution_id) is not None
 
 
 async def test_redis_outage_does_not_fail_acceptance(harness, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -213,7 +213,7 @@ async def test_a_run_no_capacity_claimed_fails_visibly_and_wakes_its_caller(harn
         created_at=datetime.now(timezone.utc) - work_dispatch.POOL_CLAIM_DEADLINE * 2,
     )
 
-    assert await work_dispatch.reconcile_work_dispatches() == 0
+    await work_dispatch.reconcile_work_dispatches()
     execution = await harness.execution(execution_id)
     assert execution.status == ExecutionStatus.FAILED
     assert "No worker capacity" in (execution.error_message or "")
@@ -223,36 +223,46 @@ async def test_a_run_no_capacity_claimed_fails_visibly_and_wakes_its_caller(harn
     assert harness.cache.push_result.await_args.kwargs["status"] == "Failed"
 
 
-async def test_reconciler_drops_dispatch_claimed_by_an_older_worker(harness) -> None:
-    """An older worker claims through execution_record_exists, not the dispatch."""
-    from shared.run_cancellation import claim_pending_run_for_dispatch
-
+async def test_reconciler_drops_the_dispatch_of_a_cancelled_run(harness) -> None:
     execution_id = await _accept()
     async with harness.sessions() as session:
-        assert await claim_pending_run_for_dispatch(session, UUID(execution_id))
+        await session.execute(
+            update(Execution)
+            .where(Execution.id == UUID(execution_id))
+            .values(status=ExecutionStatus.CANCELLED)
+        )
         await session.commit()
     await harness.age(
         execution_id,
         created_at=datetime.now(timezone.utc) - timedelta(minutes=5),
     )
 
-    assert await work_dispatch.reconcile_work_dispatches() == 0
+    await work_dispatch.reconcile_work_dispatches()
+
     assert await harness.dispatch(execution_id) is None
-    assert (await harness.execution(execution_id)).status == ExecutionStatus.RUNNING
+    assert (await harness.execution(execution_id)).status == ExecutionStatus.CANCELLED
 
 
 async def test_reconciler_skips_a_run_an_executor_is_claiming(harness) -> None:
     """Lock order matches the claim (run, then dispatch): no deadlock, no theft."""
     execution_id = await _accept()
-    await harness.age(execution_id, placement="broker")
+    await harness.age(
+        execution_id,
+        created_at=datetime.now(timezone.utc) - work_dispatch.POOL_CLAIM_DEADLINE * 2,
+    )
     async with harness.sessions() as claimer:
         await claimer.execute(
             select(Execution).where(Execution.id == UUID(execution_id)).with_for_update()
         )
-        assert await work_dispatch.reconcile_work_dispatches() == 0
+        await work_dispatch.reconcile_work_dispatches()
         await claimer.rollback()
-    assert (await harness.dispatch(execution_id)).placement == "broker"
-    assert await work_dispatch.reconcile_work_dispatches() == 1
+    assert await harness.dispatch(execution_id) is not None
+    assert (await harness.execution(execution_id)).status == ExecutionStatus.PENDING
+
+    await work_dispatch.reconcile_work_dispatches()
+
+    assert await harness.dispatch(execution_id) is None
+    assert (await harness.execution(execution_id)).status == ExecutionStatus.FAILED
 
 
 async def test_cancelled_sync_run_wakes_its_caller(harness) -> None:

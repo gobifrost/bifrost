@@ -5,9 +5,8 @@ record. After commit the accepting process wakes the executors, which claim
 dispatches from PostgreSQL (the wake only saves them their poll interval).
 An executor claims a dispatch by moving its subject from waiting to running
 and deleting the dispatch in one transaction, so a duplicate or stale
-delivery finds nothing to claim. The control plane's reconciler re-places a
-dispatch an older API left on the broker during a rolling upgrade, releases
-work held by a lost executor, and fails work no capacity claimed in time.
+delivery finds nothing to claim. The control plane's reconciler releases
+work held by a lost executor and fails work no capacity claimed in time.
 
 Started work is never replayed: once claimed, a run's recovery belongs to
 its domain's terminal sweeps.
@@ -21,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import get_db_context
@@ -30,7 +29,7 @@ from src.models.orm.work_dispatches import WorkDispatch
 logger = logging.getLogger(__name__)
 
 RECONCILE_BATCH = 100
-# Pool dispatches are re-examined once they are this old (cancelled runs,
+# Dispatches are re-examined once they are this old (cancelled runs,
 # dispatches held by a lost worker), and fail visibly if no worker capacity
 # claimed them by the claim deadline.
 POOL_RECHECK_AFTER = timedelta(minutes=2)
@@ -87,8 +86,7 @@ def stage_dispatch(
 ) -> WorkDispatch:
     """Add a dispatch to the caller's transaction; hand off after commit.
 
-    Executors claim it from PostgreSQL. A dispatch an older API placed on the
-    broker during a rolling upgrade is re-placed by the reconciler.
+    Executors claim it from PostgreSQL.
     """
     dispatch_id = uuid4()
     dispatch = WorkDispatch(
@@ -104,7 +102,6 @@ def stage_dispatch(
             "handler_version": handler_version,
         },
         payload=payload,
-        placement="pool",
     )
     db.add(dispatch)
     return dispatch
@@ -147,46 +144,33 @@ async def _reconcile_one(
     dispatch_id: UUID,
     family_name: str,
     subject_id: UUID,
-) -> bool:
-    """Settle one candidate in its own short transaction; True if re-placed."""
+) -> None:
+    """Settle one candidate in its own short transaction."""
     family = families.get(family_name)
     if family is None:
         logger.error(
             "Dispatch has no registered family",
             extra={"dispatch_id": str(dispatch_id), "family": family_name},
         )
-        return False
-    failure: tuple[dict[str, Any], str] | None = None
-    replaced = False
+        return
     async with get_db_context() as db:
         waiting = await family.lock_waiting(db, subject_id)
         if waiting is None:
-            return False  # An executor is claiming it right now.
+            return  # An executor is claiming it right now.
         row = await db.scalar(
             select(WorkDispatch)
             .where(WorkDispatch.id == dispatch_id)
             .with_for_update(skip_locked=True)
         )
         if row is None:
-            return False
+            return
         if not waiting:
-            # Cancelled, or claimed through an older worker's broker delivery.
+            # The run stopped waiting (cancelled) before an executor claimed it.
             await db.delete(row)
-            return False
-        if row.placement != "pool":
-            # Placed on the broker by an older API during a rolling upgrade.
-            # Executors claim from PostgreSQL only; an older worker that
-            # still receives the broker copy is fenced by the claim.
-            row.placement = "pool"
-            row.assigned_worker_id = None
-            replaced = True
-        else:
-            failure = await _settle_pool_dispatch(db, family, row)
+            return
+        failure = await _settle_pool_dispatch(db, family, row)
     if failure is not None:
         await family.report_failed(subject_id, *failure)
-    if replaced:
-        await wake_pool_workers()
-    return replaced
 
 
 async def _settle_pool_dispatch(
@@ -220,35 +204,25 @@ async def _settle_pool_dispatch(
     return None
 
 
-async def reconcile_work_dispatches(*, limit: int = RECONCILE_BATCH) -> int:
-    """Re-place broker leftovers; settle pool work nobody holds or claimed.
+async def reconcile_work_dispatches(*, limit: int = RECONCILE_BATCH) -> None:
+    """Settle work nobody holds or claimed.
 
-    Returns the number of dispatches re-placed. Safe on every control
-    replica concurrently: each candidate is settled under SKIP LOCKED.
+    Safe on every control replica concurrently: each candidate is settled
+    under SKIP LOCKED.
     """
     now = datetime.now(timezone.utc)
     async with get_db_context() as db:
         candidates = (
             await db.execute(
                 select(WorkDispatch.id, WorkDispatch.family, WorkDispatch.subject_id)
-                .where(
-                    or_(
-                        WorkDispatch.placement != "pool",
-                        WorkDispatch.created_at <= now - POOL_RECHECK_AFTER,
-                    )
-                )
+                .where(WorkDispatch.created_at <= now - POOL_RECHECK_AFTER)
                 .order_by(WorkDispatch.created_at.asc())
                 .limit(limit)
             )
         ).all()
     families = _families()
-    replaced = 0
     for dispatch_id, family_name, subject_id in candidates:
-        if await _reconcile_one(families, dispatch_id, family_name, subject_id):
-            replaced += 1
-    if replaced:
-        logger.info("Re-placed broker dispatches", extra={"replaced": replaced})
-    return replaced
+        await _reconcile_one(families, dispatch_id, family_name, subject_id)
 
 
 __all__ = [

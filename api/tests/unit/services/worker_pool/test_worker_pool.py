@@ -140,10 +140,10 @@ async def _job_worker(sessions, *, state: str = "starting") -> ExecutionWorker: 
         return worker
 
 
-# --- placement -------------------------------------------------------------
+# --- acceptance ------------------------------------------------------------
 
 
-async def test_accepted_runs_are_pool_placed_and_wake_the_executors(db) -> None:
+async def test_accepted_runs_are_claimable_and_wake_the_executors(db) -> None:
     execution_id = await _accept_pool_run()
 
     async with db.sessions() as session:
@@ -152,15 +152,17 @@ async def test_accepted_runs_are_pool_placed_and_wake_the_executors(db) -> None:
                 select(WorkDispatch).where(WorkDispatch.subject_id == UUID(execution_id))
             )
         ).scalar_one()
-    assert dispatch.placement == "pool"
+    assert dispatch.assigned_worker_id is None
     db.wake.assert_awaited_once()
-    # An unclaimed pool dispatch stays put until its claim deadline.
+    # An unclaimed dispatch stays put until its claim deadline.
     async with db.sessions() as session:
         await session.execute(
             update(WorkDispatch).values(created_at=datetime.now(timezone.utc) - timedelta(minutes=5))
         )
         await session.commit()
-    assert await work_dispatch.reconcile_work_dispatches() == 0
+    await work_dispatch.reconcile_work_dispatches()
+    async with db.sessions() as session:
+        assert await session.get(WorkDispatch, dispatch.id) is not None
 
 
 async def test_only_the_first_pod_of_the_bound_job_is_admitted(db) -> None:
@@ -323,7 +325,7 @@ async def test_silent_worker_is_lost_and_its_unstarted_work_released(db, monkeyp
         )
         await session.commit()
     await pool.reconcile_worker(worker_id)
-    assert await work_dispatch.reconcile_work_dispatches() == 0
+    await work_dispatch.reconcile_work_dispatches()
 
     async with db.sessions() as session:
         worker = await session.get(ExecutionWorker, worker_id)

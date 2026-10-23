@@ -28,10 +28,7 @@ class WorkDispatch(Base):
     handler_version: Mapped[int] = mapped_column(Integer, nullable=False)
     message: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
-    # pool: claimed from PostgreSQL by an executor (assigned_worker_id records
-    # the claimant). broker: left by an API older than #769 stage 5a during a
-    # rolling upgrade; the reconciler re-places it to pool.
-    placement: Mapped[str] = mapped_column(String(20), nullable=False, default="pool")
+    # The executor that took the dispatch from PostgreSQL, until its claim.
     assigned_worker_id: Mapped[UUID | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("NOW()")
@@ -39,5 +36,5 @@ class WorkDispatch(Base):
 
     __table_args__ = (
         UniqueConstraint("family", "subject_id", name="uq_work_dispatches_subject"),
-        Index("ix_work_dispatches_placement_created", "placement", "created_at"),
+        Index("ix_work_dispatches_created", "created_at"),
     )

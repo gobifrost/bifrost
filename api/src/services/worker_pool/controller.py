@@ -159,7 +159,6 @@ class WorkerPoolController:
                 return []
             demand = await db.scalar(
                 select(func.count(WorkDispatch.id)).where(
-                    WorkDispatch.placement == "pool",
                     WorkDispatch.assigned_worker_id.is_(None),
                 )
             ) or 0

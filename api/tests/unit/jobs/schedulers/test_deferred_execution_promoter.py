@@ -97,7 +97,6 @@ async def test_promotes_due_rows(db_session):
 
     assert promoted == 1
     pub.assert_awaited_once()
-    assert pub.await_args.args[0].message["execution_record_exists"] is True
 
     await db_session.refresh(due)
     assert due.status == ExecutionStatus.PENDING
@@ -228,7 +227,7 @@ async def test_promotion_commits_a_claimable_dispatch_before_the_hand_off(db_ses
     dispatch = (
         await db_session.execute(select(WorkDispatch).where(WorkDispatch.subject_id == due.id))
     ).scalar_one()
-    assert dispatch.placement == "pool"
+    assert dispatch.assigned_worker_id is None
     assert dispatch.payload["execution_id"] == str(due.id)
 
 
@@ -666,7 +665,6 @@ async def test_a_row_without_run_as_is_published_as_before(db_session):
         "lineage": None,
         "impersonation_provenance": None,
     }
-    assert accepted.message["execution_record_exists"] is True
     await db_session.refresh(plain)
     assert (plain.status, plain.error_message, plain.completed_at) == (ExecutionStatus.PENDING, None, None)
 

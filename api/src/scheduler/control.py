@@ -183,7 +183,7 @@ class ControlPlane:
         )
 
     async def _dispatch_reconcile_loop(self) -> None:
-        """Publish accepted work whose broker hand-off was lost."""
+        """Settle accepted work no executor holds or claimed in time."""
         from src.services.work_dispatch import reconcile_work_dispatches
 
         while not self._stop_event.is_set():

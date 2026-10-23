@@ -82,7 +82,7 @@ async def test_agent_run_and_context_are_accepted_together(
     dispatch = await _dispatch(async_session_factory, run_id)
     assert run.status == "queued"
     assert dispatch is not None
-    assert dispatch.placement == "pool"
+    assert dispatch.assigned_worker_id is None
     assert dispatch.payload["input"] == {"task": "t"}
 
 
@@ -100,7 +100,7 @@ async def test_unclaimed_agent_run_fails_visibly_and_wakes_its_caller(
         )
         await session.commit()
 
-    assert await work_dispatch.reconcile_work_dispatches() == 0
+    await work_dispatch.reconcile_work_dispatches()
 
     run = await _run(async_session_factory, run_id)
     assert run.status == "failed"
@@ -122,6 +122,6 @@ async def test_cancelled_agent_run_dispatch_is_dropped(harness, async_session_fa
         )
         await session.commit()
 
-    assert await work_dispatch.reconcile_work_dispatches() == 0
+    await work_dispatch.reconcile_work_dispatches()
     assert await _dispatch(async_session_factory, run_id) is None
     assert (await _run(async_session_factory, run_id)).status == "cancelled"
