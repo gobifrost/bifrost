@@ -1,29 +1,45 @@
 # Kubernetes Worker Deployment
 
-This runbook describes the worker deployment behavior proven in the current
-Kubernetes spike. It documents the existing general-purpose worker running in
-Kubernetes with optional operator-owned KEDA scale-out. It does not describe a
-completed Elastic Runtime, a Bifrost-managed controller, dynamic high-memory
-build pods, or one-shot execution Jobs.
-
-For the local proof, see [local-kubernetes-spike.md](./local-kubernetes-spike.md)
-and [local-kubernetes-spike-results.md](./local-kubernetes-spike-results.md).
+Every Bifrost execution container is an **executor**
+(`api/src/worker/pool_main.py`): the `bifrost-worker` and `bifrost-scheduler`
+Deployments (static executors, through their unchanged entry points) and the
+on-demand worker Jobs that the API starts. An executor claims workflow runs,
+agent runs, summaries, supervised services and local platform jobs from
+PostgreSQL; either Deployment can be scaled or removed. Platform control
+(trigger leadership and dispatch reconciliation) runs in the API replicas.
 
 ## Current Implementation
 
-The current worker is a single all-role process:
+- **Static executors.** `python -m src.worker.main` and
+  `python -m src.scheduler.main` both start the executor and keep their own
+  health files, so existing probes keep passing.
+- **On-demand worker Jobs.** The worker controller runs in every process whose
+  service account may manage Jobs (the base manifests bind
+  `bifrost-worker-controller` to the API in `k8s/api/rbac.yaml`). It keeps
+  `BIFROST_POOL_MIN_WORKERS` (default 1) worker Jobs warm and starts more, up
+  to `BIFROST_POOL_MAX_WORKERS` (default 6), when accepted work exceeds the
+  free capacity of every executor. Idle Job workers drain back to the minimum.
+  Without build settings, a worker Job copies the controller pod's namespace,
+  image and `envFrom`, and runs with the `default` service account and no
+  token.
+- Supervised services need an executor: the static executors or the warm Job
+  worker.
 
-- workflow executions from `workflow-executions`;
-- agent runs from `agent-runs`;
-- live summaries from `agent-summarization`;
-- summary backfills from `agent-summarization-backfill`;
-- package installation broadcast messages from the `package-installations`
-  fanout exchange.
+### Upgrading and rolling back
 
-Every worker pod starts the same `python -m src.worker.main` entry point. There
-is no lane-specific worker image, no `run-one` entry point, no Bifrost controller
-that reconciles Kubernetes resources, and no Bifrost Settings surface for
-runtime policy.
+Upgrading from an earlier release needs no manifest change: the existing
+Deployments keep their commands and probes. Apply the new base manifests to
+let the API start on-demand worker Jobs (`k8s/api/rbac.yaml`); without them,
+work runs on the static executors only.
+
+Roll back only to a release that includes #1034, otherwise older pods
+crash-loop against the newer schema. After a rollback, an older release no
+longer runs the worker controller, so remove the warm worker Jobs it leaves
+(they also drain themselves within `BIFROST_POOL_MAX_LIFETIME_SECONDS`):
+
+```bash
+kubectl -n bifrost delete jobs -l app.kubernetes.io/name=bifrost-pool-worker
+```
 
 The production-oriented manifest at `k8s/worker/deployment.yaml` uses fixed
 replica ownership:
@@ -68,6 +84,10 @@ spec. Scale manually with `kubectl scale deployment bifrost-worker -n bifrost
 --replicas=<count>`.
 
 ## Optional KEDA Scale-Out
+
+> Legacy: KEDA scaled the worker Deployment on RabbitMQ queue length. Work is
+> claimed from PostgreSQL now, so these queues stay empty; on-demand worker
+> Jobs replace this (stage 5b of #769 removes it).
 
 The local spike also proves an opt-in operator-owned KEDA `ScaledObject` against
 the same all-role worker Deployment. While that `ScaledObject` exists, KEDA/HPA
