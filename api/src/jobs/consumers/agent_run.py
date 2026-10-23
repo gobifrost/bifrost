@@ -196,12 +196,17 @@ class AgentRunConsumer(BaseConsumer):
 
         logger.info(f"Processing agent run {run_id} (agent={agent_id}, trigger={trigger_type})")
 
-        # Read full context from Redis
+        # A durable dispatch carries the context in PostgreSQL; it is taken
+        # with the claim below. Messages from before dispatches use Redis.
+        dispatch_id = body.get("dispatch_id")
+        context: dict | None = None
         redis_key = f"{REDIS_PREFIX}:{run_id}:context"
-        async with get_redis() as redis:
-            context_raw = await redis.get(redis_key)
+        context_raw = None
+        if dispatch_id is None:
+            async with get_redis() as redis:
+                context_raw = await redis.get(redis_key)
 
-        if not context_raw:
+        if dispatch_id is None and not context_raw:
             logger.error(f"Agent run {run_id}: context not found in Redis")
             async with self._session_factory() as db:
                 queued_run = await db.get(AgentRun, UUID(run_id))
@@ -221,7 +226,8 @@ class AgentRunConsumer(BaseConsumer):
                 )
             return
 
-        context = json.loads(context_raw)
+        if context_raw:
+            context = json.loads(context_raw)
 
         start_time = time.time()
         agent_run: AgentRun | None = None
@@ -246,13 +252,21 @@ class AgentRunConsumer(BaseConsumer):
                 if agent_run is None:
                     logger.error(f"Agent run {run_id}: queued record not found")
                     return
+                if dispatch_id is not None:
+                    from src.services.work_dispatch import take_dispatch_payload
+
+                    context = await take_dispatch_payload(db, UUID(dispatch_id))
                 if agent_run.status != "queued":
+                    # A duplicate delivery or a cancelled run; any dispatch
+                    # left behind is dropped by the reconciler.
                     logger.info(
                         "Agent run %s: skipping message for status %s",
                         run_id,
                         agent_run.status,
                     )
                     return
+                if context is None:
+                    raise RuntimeError(f"Queued agent run {run_id} has no dispatch")
                 if context.get("cancelled"):
                     logger.info(
                         f"Agent run {run_id}: pre-cancelled, skipping execution"
@@ -643,10 +657,12 @@ class AgentRunConsumer(BaseConsumer):
                     # Stream cleanup is best-effort; write-time TTL bounds a leak.
                     logger.debug(f"failed to delete agent_run steps stream for {run_id}: {cleanup_err}")
 
-                if trigger_type == "chat" or context.get("trigger_type") == "chat":
+                # The failure may precede the claim that loads the context.
+                known = context or {}
+                if trigger_type == "chat" or known.get("trigger_type") == "chat":
                     chat_conversation_id = (
-                        context.get("input", {}).get("conversation_id")
-                        or context.get("conversation_id")
+                        (known.get("input") or {}).get("conversation_id")
+                        or known.get("conversation_id")
                         or (agent_run.conversation_id if agent_run else None)
                     )
                     if chat_conversation_id is not None:

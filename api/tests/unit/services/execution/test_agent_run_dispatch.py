@@ -1,0 +1,131 @@
+"""Durable acceptance of agent runs against real PostgreSQL."""
+
+from __future__ import annotations
+
+import asyncio
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from typing import AsyncGenerator
+from unittest.mock import AsyncMock
+from uuid import UUID
+
+import pytest
+from sqlalchemy import delete, select, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from src.models.orm.agent_runs import AgentRun
+from src.models.orm.work_dispatches import WorkDispatch
+from src.services import work_dispatch
+from src.services.execution import agent_run_dispatch, agent_run_service
+from src.services.execution.agent_run_service import enqueue_agent_run
+
+
+@pytest.fixture
+def harness(
+    async_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    @asynccontextmanager
+    async def context() -> AsyncGenerator[AsyncSession, None]:
+        async with async_session_factory() as session:
+            yield session
+            await session.commit()
+
+    monkeypatch.setattr(work_dispatch, "get_db_context", context)
+    monkeypatch.setattr(work_dispatch, "get_dispatch_db_context", context)
+    monkeypatch.setattr(agent_run_service, "get_dispatch_db_context", context)
+    monkeypatch.setattr(work_dispatch, "publish_message", AsyncMock())
+    redis = AsyncMock()
+
+    @asynccontextmanager
+    async def redis_context():
+        yield redis
+
+    monkeypatch.setattr(agent_run_dispatch, "get_redis", redis_context)
+    return redis
+
+
+async def _run(async_session_factory, run_id: str) -> AgentRun:  # type: ignore[no-untyped-def]
+    async with async_session_factory() as session:
+        return (
+            await session.execute(select(AgentRun).where(AgentRun.id == UUID(run_id)))
+        ).scalar_one()
+
+
+async def _dispatch(async_session_factory, run_id: str) -> WorkDispatch | None:  # type: ignore[no-untyped-def]
+    async with async_session_factory() as session:
+        return (
+            await session.execute(
+                select(WorkDispatch).where(WorkDispatch.subject_id == UUID(run_id))
+            )
+        ).scalar_one_or_none()
+
+
+async def _enqueue(**overrides) -> str:  # type: ignore[no-untyped-def]
+    kwargs = dict(agent_id=None, trigger_type="sdk", input_data={"task": "t"}, lineage=None)
+    kwargs.update(overrides)
+    run_id = await enqueue_agent_run(**kwargs)
+    await asyncio.gather(*work_dispatch._publish_records)
+    return run_id
+
+
+@pytest.fixture(autouse=True)
+async def _clean(async_session_factory: async_sessionmaker[AsyncSession]):
+    yield
+    async with async_session_factory() as session:
+        await session.execute(delete(WorkDispatch))
+        await session.commit()
+
+
+async def test_agent_run_and_context_are_accepted_together(
+    harness, async_session_factory
+) -> None:
+    run_id = await _enqueue()
+
+    run = await _run(async_session_factory, run_id)
+    dispatch = await _dispatch(async_session_factory, run_id)
+    assert run.status == "queued"
+    assert dispatch is not None and dispatch.status == "published"
+    assert dispatch.payload["input"] == {"task": "t"}
+
+
+async def test_unclaimed_agent_run_fails_visibly_and_wakes_its_caller(
+    harness, async_session_factory
+) -> None:
+    run_id = await _enqueue(sync=True)
+    async with async_session_factory() as session:
+        await session.execute(
+            update(WorkDispatch)
+            .where(WorkDispatch.subject_id == UUID(run_id))
+            .values(
+                publish_count=work_dispatch.MAX_PUBLISHES,
+                last_published_at=datetime.now(timezone.utc) - work_dispatch.REDELIVERY_WINDOW * 2,
+            )
+        )
+        await session.commit()
+
+    assert await work_dispatch.reconcile_work_dispatches() == 0
+
+    run = await _run(async_session_factory, run_id)
+    assert run.status == "failed"
+    assert "No executor claimed this run" in (run.error or "")
+    assert await _dispatch(async_session_factory, run_id) is None
+    harness.lpush.assert_awaited_once()
+
+
+async def test_cancelled_agent_run_dispatch_is_dropped(harness, async_session_factory) -> None:
+    run_id = await _enqueue()
+    async with async_session_factory() as session:
+        await session.execute(
+            update(AgentRun).where(AgentRun.id == UUID(run_id)).values(status="cancelled")
+        )
+        await session.execute(
+            update(WorkDispatch)
+            .where(WorkDispatch.subject_id == UUID(run_id))
+            .values(last_published_at=datetime.now(timezone.utc) - work_dispatch.REDELIVERY_WINDOW * 2)
+        )
+        await session.commit()
+
+    assert await work_dispatch.reconcile_work_dispatches() == 0
+    assert await _dispatch(async_session_factory, run_id) is None
+    assert (await _run(async_session_factory, run_id)).status == "cancelled"

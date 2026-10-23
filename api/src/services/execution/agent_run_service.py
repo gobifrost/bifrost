@@ -4,25 +4,26 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import redis.asyncio as aioredis
 
-from src.core.cache.redis_client import get_redis
-from src.core.database import get_session_factory
+from src.core.database import get_dispatch_db_context
 from src.core.log_safety import log_safe
-from src.jobs.rabbitmq import publish_message
 from src.models.orm.agent_runs import AgentRun
 from src.services.durable_impersonation import current_durable_impersonation
+from src.services.execution.agent_run_dispatch import (
+    cache_agent_context,
+    hand_off_agent_run,
+    stage_agent_run,
+)
 
 if TYPE_CHECKING:
     from shared.run_lineage import RunLineage
 
 logger = logging.getLogger(__name__)
 
-QUEUE_NAME = "agent-runs"
 REDIS_PREFIX = "bifrost:agent_run"
 
 
@@ -75,10 +76,10 @@ async def enqueue_agent_run(
     the caller. The selected actor is recorded on the row; queued context is
     never an authority source.
 
-    The database row is committed before the queue message is published so a
-    returned run ID is immediately queryable. If Redis or RabbitMQ rejects the
-    enqueue operation, the durable row is marked failed and the exception is
-    propagated to the caller.
+    The run and its dispatch (holding the execution context) are committed
+    before the queue message is published, so a returned run ID is
+    immediately queryable and survives a Redis or RabbitMQ outage: the
+    control plane republishes a lost hand-off.
     """
     if run_id is None:
         run_id = str(uuid4())
@@ -90,33 +91,6 @@ async def enqueue_agent_run(
         run_as_user_id=run_as_user_id,
     )
     impersonation = current_durable_impersonation()
-    session_factory = get_session_factory()
-    async with session_factory() as db:
-        db.add(
-            AgentRun(
-                id=run_uuid,
-                agent_id=UUID(agent_id) if agent_id else None,
-                trigger_type=trigger_type,
-                trigger_source=trigger_source,
-                event_delivery_id=(
-                    UUID(event_delivery_id) if event_delivery_id else None
-                ),
-                conversation_id=UUID(conversation_id) if conversation_id else None,
-                input=input_data,
-                output_schema=output_schema,
-                status="queued",
-                org_id=UUID(org_id) if org_id else None,
-                caller_user_id=caller_user_id,
-                caller_email=caller_email,
-                caller_name=caller_name,
-                run_user_id=lineage.run_user_id if lineage else None,
-                run_as_user_id=run_as_user_id,
-                acting_user_id=acting_user_id,
-                **impersonation.columns(),
-            )
-        )
-        await db.commit()
-
     context = {
         "run_id": run_id,
         "agent_id": agent_id,
@@ -140,42 +114,55 @@ async def enqueue_agent_run(
         "sync": sync,
         "cancelled": False,
     }
-
-    redis_key = f"{REDIS_PREFIX}:{run_id}:context"
-    try:
-        # Store full context in Redis, then publish a lightweight queue message.
-        async with get_redis() as redis:
-            await redis.set(redis_key, json.dumps(context), ex=3600)
-
-        if before_queue_publish is not None:
-            await before_queue_publish(run_id)
-
-        message = {
-            "run_id": run_id,
-            "agent_id": agent_id,
-            "trigger_type": trigger_type,
-            "sync": sync,
-        }
-        await publish_message(QUEUE_NAME, message)
-    except Exception:
-        logger.exception("Failed to enqueue agent run %s", log_safe(run_id))
-        async with session_factory() as db:
-            queued_run = await db.get(AgentRun, run_uuid)
-            if queued_run is not None and queued_run.status == "queued":
-                queued_run.status = "failed"
-                queued_run.error = "Agent run could not be queued"
-                queued_run.completed_at = datetime.now(timezone.utc)
-                await db.commit()
-        try:
-            async with get_redis() as redis:
-                await redis.delete(redis_key)
-        except Exception as cleanup_error:
-            logger.debug(
-                "Failed to clean up enqueue context for %s: %s",
-                log_safe(run_id),
-                log_safe(cleanup_error),
+    async with get_dispatch_db_context() as db:
+        db.add(
+            AgentRun(
+                id=run_uuid,
+                agent_id=UUID(agent_id) if agent_id else None,
+                trigger_type=trigger_type,
+                trigger_source=trigger_source,
+                event_delivery_id=(
+                    UUID(event_delivery_id) if event_delivery_id else None
+                ),
+                conversation_id=UUID(conversation_id) if conversation_id else None,
+                input=input_data,
+                output_schema=output_schema,
+                status="queued",
+                org_id=UUID(org_id) if org_id else None,
+                caller_user_id=caller_user_id,
+                caller_email=caller_email,
+                caller_name=caller_name,
+                run_user_id=lineage.run_user_id if lineage else None,
+                run_as_user_id=run_as_user_id,
+                acting_user_id=acting_user_id,
+                **impersonation.columns(),
             )
-        raise
+        )
+        # The AgentRun must exist before its dispatch references the subject.
+        await db.flush()
+        dispatch = stage_agent_run(
+            db,
+            run_id=run_uuid,
+            context=context,
+            message={
+                "run_id": run_id,
+                "agent_id": agent_id,
+                "trigger_type": trigger_type,
+                "sync": sync,
+            },
+        )
+
+    # Accepted durably. Everything below is best-effort: a lost hand-off is
+    # republished by the control plane's reconciler.
+    await cache_agent_context(run_id, context)
+    if before_queue_publish is not None:
+        try:
+            await before_queue_publish(run_id)
+        except Exception:
+            logger.warning(
+                "Agent run pre-publish notice failed", extra={"run_id": run_id}, exc_info=True
+            )
+    await hand_off_agent_run(dispatch)
 
     logger.info(
         "Enqueued agent run %s for agent %s (trigger=%s)",
