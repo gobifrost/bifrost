@@ -194,3 +194,15 @@ async def test_enqueue_workflow_execution_binds_lineage_to_the_execution():
         "started_by_user_id": person,
         "root_execution_id": execution_id,
     }
+
+
+def test_sync_callers_never_wait_forever() -> None:
+    from src.services.execution.service import (
+        SYNC_RESULT_MARGIN_SECONDS,
+        SYNC_WAIT_CEILING_SECONDS,
+        sync_wait_seconds,
+    )
+
+    assert sync_wait_seconds(300) == 300 + SYNC_RESULT_MARGIN_SECONDS
+    # 0 means "no workflow timeout", which must not become BLPOP's "forever".
+    assert sync_wait_seconds(0) == SYNC_WAIT_CEILING_SECONDS

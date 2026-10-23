@@ -80,6 +80,29 @@ The table therefore only ever holds unclaimed work.
    - A new worker still accepts legacy Redis-first messages, which have no
      dispatch id.
 
+## Status (2026-10-22)
+
+| Slice | Scope | State |
+| --- | --- | --- |
+| 2a | `work_dispatches` outbox, acceptance/claim, control-plane reconciler, immediate + promoted workflow and inline-code runs | Built (#1032) |
+| 2b | Agent runs: context in PostgreSQL, claim inside the locked transaction, reconciler family | Built (#1032) |
+| 2c | Shared sync-wait deadline (no infinite BLPOP; the result margin applies to endpoints too) | Built (#1032) |
+
+**Gate evidence.** All of the following are in #1032:
+- broker outage at acceptance, for both workflow and agent runs;
+- Redis flushed after acceptance;
+- duplicate delivery and cancel-before-claim;
+- reconciler republish, budget failure and lock order;
+- old and new workers serving one API;
+- impersonation, lineage and run-as preserved (unit tests plus the access-list inventory);
+- 440 execution, agent, chat, event and scenario e2e tests.
+
+**Moved to later stages, deliberately:**
+- **Handler-version enforcement → stage 3.** RabbitMQ push delivery cannot route by version. Stage 3's reusable workers claim dispatches from PostgreSQL, so the claim can select only the versions a worker accepts. Dispatches already record `handler` and `handler_version`.
+- **Event deliveries accepted inside the delivery transaction → stage 4.** Runs are already durable. What remains is a short window where a crash between the run's commit and the caller's commit of `QUEUED` leaves the delivery `PENDING`. Closing it changes the commit contract of four callers: hook route, event service, cron processor, retry.
+- **Live summaries and summary backfill dispatch → stage 4**, with the other remaining consumers.
+- **Durable waiting for parents of nested work → stage 3.** It is a worker-capacity concern: a parent waiting on children must release its slot.
+
 ## Slices (each its own PR)
 
 | Slice | Scope | Evidence |

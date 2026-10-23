@@ -316,9 +316,11 @@ async def _execute_sync(
     logger.info(f"Queued sync workflow execution: {log_safe(workflow_name)} ({execution_id})")
 
     # Wait for result from Redis
+    from src.services.execution.service import sync_wait_seconds
+
     result = await get_redis_client().wait_for_result(
         execution_id=execution_id,
-        timeout_seconds=timeout_seconds,
+        timeout_seconds=sync_wait_seconds(timeout_seconds),
     )
 
     if result is None:
