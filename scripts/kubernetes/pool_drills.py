@@ -24,7 +24,17 @@ from pathlib import Path
 import subprocess
 import time
 
-from pool_spike import POOL, enqueue, live_workers, pool_pods, sql, statuses, wait_done, wait_zero
+from pool_spike import (
+    POOL,
+    enqueue,
+    live_workers,
+    pool_pods,
+    ready_api_pod,
+    sql,
+    statuses,
+    wait_done,
+    wait_zero,
+)
 from spike import kubectl
 
 
@@ -109,7 +119,7 @@ def controller_restart_drill() -> dict:
 
 
 def oom_drill() -> dict:
-    api = json.loads(kubectl("get", "pods", "-l", "app.kubernetes.io/name=bifrost-api", "-o", "json"))["items"][0]["metadata"]["name"]
+    api = ready_api_pod()
     script = """import asyncio, base64, json
 from types import SimpleNamespace
 from sqlalchemy import text
@@ -143,15 +153,22 @@ def unschedulable_drill() -> dict:
     )
     kubectl("rollout", "status", "deployment/bifrost-api", "--timeout=300s")
     try:
+        # A warm worker from an earlier drill would serve the run; start cold.
+        wait_zero(300)
+        started = datetime.now(timezone.utc).isoformat()
         waiting = enqueue(1, 0)
         time.sleep(150)
-        lost = sql(
-            "SELECT count(*) FROM execution_workers WHERE end_reason='start_timeout'"
-        )[0][0]
+        lost = int(sql(
+            "SELECT count(*) FROM execution_workers "
+            f"WHERE end_reason='start_timeout' AND created_at >= '{started}'"
+        )[0][0])
         live = live_workers()
+        run_status = statuses(waiting)
+        assert lost >= 1, "no worker reached its start deadline"
+        assert all(s == "Pending" for s in run_status.values()), run_status
         return {
-            "run_status": statuses(waiting),
-            "workers_lost_at_start_deadline": int(lost),
+            "run_status": run_status,
+            "workers_lost_at_start_deadline": lost,
             "live_workers": len(live),
             "within_ceiling": len(live) <= 3,
         }
@@ -165,15 +182,20 @@ def unschedulable_drill() -> dict:
         kubectl("rollout", "status", "deployment/bifrost-api", "--timeout=300s")
 
 
-def run(out: Path) -> dict:
+DRILLS = (
+    ("kill", kill_drill),
+    ("controller_restart", controller_restart_drill),
+    ("oom", oom_drill),
+    ("unschedulable", unschedulable_drill),
+)
+
+
+def run(out: Path, only: list[str]) -> dict:
     out.mkdir(parents=True, exist_ok=False)
     report: dict = {"started_at": datetime.now(timezone.utc).isoformat()}
-    for name, drill in (
-        ("kill", kill_drill),
-        ("controller_restart", controller_restart_drill),
-        ("oom", oom_drill),
-        ("unschedulable", unschedulable_drill),
-    ):
+    for name, drill in DRILLS:
+        if only and name not in only:
+            continue
         report[name] = drill()
         (out / "report.json").write_text(json.dumps(report, indent=2))
     report["finally_zero_seconds"] = wait_zero(900)
@@ -185,8 +207,9 @@ def run(out: Path) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", type=Path, default=Path(f"/tmp/bifrost-pool-drills-{int(time.time())}"))
+    parser.add_argument("--only", nargs="*", default=[], choices=[name for name, _ in DRILLS])
     args = parser.parse_args()
-    print(json.dumps(run(args.out), indent=2))
+    print(json.dumps(run(args.out, args.only), indent=2))
 
 
 if __name__ == "__main__":

@@ -71,8 +71,18 @@ def live_workers() -> list[dict]:
     return [{"id": r[0], "state": r[1], "pod_uid": r[2], "runs": int(r[3])} for r in rows]
 
 
+def ready_api_pod() -> str:
+    """A Ready API pod that is not terminating; a rollout leaves old pods behind."""
+    for pod in json.loads(kubectl("get", "pods", "-l", API, "-o", "json"))["items"]:
+        conditions = pod.get("status", {}).get("conditions", [])
+        ready = any(c["type"] == "Ready" and c["status"] == "True" for c in conditions)
+        if ready and not pod["metadata"].get("deletionTimestamp"):
+            return pod["metadata"]["name"]
+    raise RuntimeError("no Ready API pod")
+
+
 def enqueue(count: int, seconds: float) -> list[str]:
-    api = json.loads(kubectl("get", "pods", "-l", API, "-o", "json"))["items"][0]["metadata"]["name"]
+    api = ready_api_pod()
     return json.loads(kubectl("exec", api, "--", "python", "-c", ENQUEUE, str(count), str(seconds)))
 
 
