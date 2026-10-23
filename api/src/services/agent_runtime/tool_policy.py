@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.services.agent_runtime.code_mode import build_code_mode_capabilities
+from src.services.agent_runtime.code_mode import build_catalog_private_code_mode_capabilities
 from src.services.agent_runtime.sandbox_sdk import (
     BifrostSandboxSDK,
     RECOMMENDED_SANDBOX_SDK_CODE_MODE_MAX_TOOL_CALLS,
-    SANDBOX_SDK_TOOL_NAMES,
+    is_sandbox_sdk_tool,
 )
 CODE_MODE_AUDIT_METADATA_KEY = "__bifrost_code_mode_audit__"
 """Private key on a completed outer ``run_code`` audit receipt."""
@@ -36,12 +36,12 @@ def build_automatic_code_mode_capabilities() -> list[Any]:
     """Return the catalog-private SDK policy for Automatic runtimes.
 
     The outer model receives ``run_code`` plus any native composition controls.
-    The SDK's fixed search/describe/call functions exist only inside that
-    sandbox and resolve the live authorized Bifrost catalog on demand.
+    Fixed search and describe helpers lazily reveal direct Python bindings that
+    resolve the live authorized Bifrost catalog at each dispatch.
     """
     return [
-        *build_code_mode_capabilities(
-            tools=sorted(SANDBOX_SDK_TOOL_NAMES),
+        *build_catalog_private_code_mode_capabilities(
+            tools=is_sandbox_sdk_tool,
             max_tool_calls=RECOMMENDED_SANDBOX_SDK_CODE_MODE_MAX_TOOL_CALLS,
         ),
         BifrostSandboxSDK(),

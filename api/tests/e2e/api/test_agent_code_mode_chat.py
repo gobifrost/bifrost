@@ -141,8 +141,9 @@ async def test_automatic_chat_persists_nested_code_mode_audit_and_replays_only_o
                                 "tool_name = catalog['data'][0]['name']\n"
                                 "contract = bifrost_describe(name=tool_name)\n"
                                 "assert contract['ok']\n"
-                                "chunks = [bifrost_call(name=tool_name, arguments={'index': index}) for index in range(3)]\n"
-                                "combined = ''.join(chunk['data']['payload'] for chunk in chunks)\n"
+                                "assert contract['data']['python_signature']\n"
+                                "chunks = [read_chunk(index=index) for index in range(3)]\n"
+                                "combined = ''.join(chunk['payload'] for chunk in chunks)\n"
                                 "{'combined_length': len(combined)}"
                             )
                         },

@@ -1,6 +1,6 @@
 """Adapter from Bifrost's stored JSON tool contracts to Pydantic AI toolsets."""
 
-from collections.abc import Awaitable, Callable, Iterator, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -110,11 +110,15 @@ class BifrostToolset(AbstractToolset[object]):
         *,
         event_handler: ToolEventHandler | None = None,
         toolset_id: str = "bifrost",
+        tool_metadata: Mapping[str, dict[str, Any]] | None = None,
     ) -> None:
         self._definitions = tuple(definitions)
         self._executor = executor
         self._event_handler = event_handler
         self._id = toolset_id
+        self._tool_metadata = {
+            name: dict(metadata) for name, metadata in (tool_metadata or {}).items()
+        }
 
     @property
     def id(self) -> str:
@@ -132,6 +136,7 @@ class BifrostToolset(AbstractToolset[object]):
                     return_schema=definition.return_schema,
                     include_return_schema=definition.return_schema is not None,
                     sequential=True,
+                    metadata=self._tool_metadata.get(definition.name),
                 ),
                 max_retries=0,
                 args_validator=_ARGS_VALIDATOR,

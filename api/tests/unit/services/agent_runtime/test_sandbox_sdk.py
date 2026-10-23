@@ -1,8 +1,10 @@
-"""Sandbox SDK coverage for catalog-private native CodeMode dispatch."""
+"""Catalog-private direct binding coverage for native CodeMode."""
 
 from __future__ import annotations
 
+import hashlib
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -17,25 +19,29 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.toolsets import FunctionToolset
 
-from src.services.agent_runtime.code_mode import build_code_mode_capabilities
+from src.services.agent_runtime.code_mode import (
+    build_catalog_private_code_mode_capabilities,
+)
 from src.services.agent_runtime.errors import AgentRunCancelled
 from src.services.agent_runtime.sandbox_sdk import (
     BifrostSandboxSDK,
     MAX_SANDBOX_SDK_BUSINESS_CALLS,
     RECOMMENDED_SANDBOX_SDK_CODE_MODE_MAX_TOOL_CALLS,
     SANDBOX_SDK_TOOL_NAMES,
-    _normalize_result,
+    _aliases_for,
+    _decode_business_result,
+    _direct_return_schema,
     is_sandbox_sdk_tool,
 )
 from src.services.agent_runtime.toolset import BifrostToolset, ToolEvent
 from src.services.llm import ToolDefinition
+from src.services.llm.base import bifrost_adapter_return_schema
 
 
 def _sdk_capabilities() -> tuple[object, ...]:
     return (
-        *build_code_mode_capabilities(
+        *build_catalog_private_code_mode_capabilities(
             tools=is_sandbox_sdk_tool,
             max_tool_calls=RECOMMENDED_SANDBOX_SDK_CODE_MODE_MAX_TOOL_CALLS,
         ),
@@ -56,42 +62,34 @@ def _tool_returns(messages: list[ModelMessage], name: str) -> list[Any]:
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
-        ("plain receipt", {"ok": True, "data": "plain receipt", "error": None}),
-        (
-            '{"id":"record-a"}',
-            {"ok": True, "data": {"id": "record-a"}, "error": None},
-        ),
-        (
-            "Error: denied by source",
-            {"ok": False, "data": "Error: denied by source", "error": "Error: denied by source"},
-        ),
-        (
-            '{"error":"denied","result":"receipt"}',
-            {
-                "ok": False,
-                "data": {"error": "denied", "result": "receipt"},
-                "error": "denied",
-            },
-        ),
-        (
-            {"is_error": True, "result": "receipt"},
-            {
-                "ok": False,
-                "data": {"is_error": True, "result": "receipt"},
-                "error": {"is_error": True, "result": "receipt"},
-            },
-        ),
+        ("plain receipt", "plain receipt"),
+        ('{"id":"record-a"}', {"id": "record-a"}),
+        ("Error: denied by source", "Error: denied by source"),
+        ('{"error":"denied","result":"receipt"}', {"error": "denied", "result": "receipt"}),
     ],
 )
-def test_sandbox_sdk_normalizes_source_transport_without_inventing_payloads(
-    value: Any, expected: dict[str, Any]
+def test_direct_bindings_decode_only_json_adapter_text(value: Any, expected: Any) -> None:
+    assert _decode_business_result(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("source_return_schema", "expected"),
+    [
+        ({"type": "object", "properties": {}}, {"type": "object", "properties": {}}),
+        ({"type": "string"}, None),
+        ({"oneOf": [{"type": "object"}, {"type": "string"}]}, None),
+        ({"type": ["object", "null"]}, None),
+        ({}, None),
+    ],
+)
+def test_direct_bindings_preserve_only_unchanged_return_schemas(
+    source_return_schema: dict[str, Any], expected: dict[str, Any] | None
 ) -> None:
-    assert _normalize_result(value) == expected
+    assert _direct_return_schema(source_return_schema) == expected
 
 
 @pytest.mark.asyncio
-async def test_sandbox_sdk_discovers_describes_and_chains_live_business_calls() -> None:
-    """One sandbox program keeps catalog and raw receipts outside model context."""
+async def test_sandbox_sdk_discovers_describes_and_chains_direct_live_bindings() -> None:
     raw_sentinels = {"raw-search-a", "raw-search-b", "raw-detail"}
     callbacks: list[tuple[str, dict[str, Any], str]] = []
     events: list[ToolEvent] = []
@@ -121,10 +119,9 @@ async def test_sandbox_sdk_discovers_describes_and_chains_live_business_calls() 
         instructions.append(info.instructions)
         if len(seen) == 1:
             names = {tool.name for tool in info.function_tools}
-            assert "run_code" in names
+            assert names == {"run_code"}
             assert not SANDBOX_SDK_TOOL_NAMES & names
-            assert "search_tools" not in names
-            assert not {"search_records", "read_record"} & names
+            assert not {"search_records", "read_record", "search_tools"} & names
             return ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -132,13 +129,18 @@ async def test_sandbox_sdk_discovers_describes_and_chains_live_business_calls() 
                         {
                             "code": (
                                 "catalog = bifrost_search(query='search records')\n"
-                                "search_name = catalog['data'][0]['name']\n"
-                                "contract = bifrost_describe(name=search_name)\n"
-                                "assert contract['data']['input_schema']['required'] == ['kind']\n"
-                                "page = bifrost_call(name=search_name, arguments={'kind': 'target'})\n"
-                                "ids = [row['id'] for row in page['data']['rows'] if row['kind'] == 'target']\n"
-                                "details = [bifrost_call(name='read_record', arguments={'record_id': record_id}) for record_id in ids]\n"
-                                "{'target_ids': ids, 'verified': [item['data']['verified'] for item in details]}"
+                                "assert catalog['ok']\n"
+                                "contract = bifrost_describe(name=catalog['data'][0]['name'])\n"
+                                "assert contract['ok']\n"
+                                "assert \"def search_records\" in contract['data']['python_signature']\n"
+                                "assert \"TypedDict\" in \"\\n\".join(contract['data']['python_type_definitions'])\n"
+                                "read_contract = bifrost_describe(name='read_record')\n"
+                                "assert read_contract['data']['source_return_schema']['type'] == 'string'\n"
+                                "assert \"-> Any\" in read_contract['data']['python_signature']\n"
+                                "page = search_records(kind='target')\n"
+                                "ids = [row['id'] for row in page['rows'] if row['kind'] == 'target']\n"
+                                "details = [read_record(record_id=record_id) for record_id in ids]\n"
+                                "{'target_ids': ids, 'verified': [item['verified'] for item in details]}"
                             )
                         },
                         "outer-code",
@@ -147,7 +149,7 @@ async def test_sandbox_sdk_discovers_describes_and_chains_live_business_calls() 
             )
         return ModelResponse(parts=[TextPart("complete")])
 
-    runtime = Agent(
+    result = await Agent(
         FunctionModel(model),
         toolsets=[
             BifrostToolset(
@@ -157,7 +159,14 @@ async def test_sandbox_sdk_discovers_describes_and_chains_live_business_calls() 
                         description="Find entities using the approved source.",
                         parameters={
                             "type": "object",
-                            "properties": {"kind": {"type": "string"}},
+                            "properties": {
+                                "kind": {"type": "string"},
+                                "criteria": {
+                                    "type": "object",
+                                    "properties": {"priority": {"type": "integer"}},
+                                    "required": ["priority"],
+                                },
+                            },
                             "required": ["kind"],
                             "additionalProperties": False,
                         },
@@ -171,6 +180,7 @@ async def test_sandbox_sdk_discovers_describes_and_chains_live_business_calls() 
                             "required": ["record_id"],
                             "additionalProperties": False,
                         },
+                        return_schema=bifrost_adapter_return_schema(),
                     ),
                 ],
                 execute,
@@ -178,9 +188,7 @@ async def test_sandbox_sdk_discovers_describes_and_chains_live_business_calls() 
             ).defer_loading()
         ],
         capabilities=_sdk_capabilities(),
-    )
-
-    result = await runtime.run("Find and verify target records.")
+    ).run("Find and verify target records.")
 
     assert result.output == "complete"
     assert [(name, arguments) for name, arguments, _ in callbacks] == [
@@ -211,13 +219,13 @@ async def test_sandbox_sdk_discovers_describes_and_chains_live_business_calls() 
 
 
 @pytest.mark.asyncio
-async def test_sandbox_sdk_denies_unknown_names_and_invalid_arguments_before_dispatch() -> None:
-    calls: list[tuple[str, dict[str, Any]]] = []
+async def test_sandbox_sdk_rejects_invalid_direct_arguments_before_dispatch() -> None:
+    calls: list[str] = []
     seen: list[list[ModelMessage]] = []
 
     async def execute(name: str, arguments: dict[str, Any], tool_call_id: str) -> str:
-        del tool_call_id
-        calls.append((name, arguments))
+        del arguments, tool_call_id
+        calls.append(name)
         return "unexpected"
 
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -228,22 +236,13 @@ async def test_sandbox_sdk_denies_unknown_names_and_invalid_arguments_before_dis
                 parts=[
                     ToolCallPart(
                         "run_code",
-                        {
-                            "code": (
-                                "unknown = bifrost_call(name='missing', arguments={})\n"
-                                "native = bifrost_call(name='load_capability', arguments={})\n"
-                                "invalid = bifrost_call(name='read_record', arguments={})\n"
-                                "{'unknown_ok': unknown['ok'], 'native_ok': native['ok'], "
-                                "'invalid_ok': invalid['ok'], "
-                                "'errors': [unknown['error'], native['error'], invalid['error']]}"
-                            )
-                        },
+                        {"code": "invalid = read_record(record_id='')\n{'invalid': invalid}"},
                     )
                 ]
             )
         return ModelResponse(parts=[TextPart("complete")])
 
-    runtime = Agent(
+    await Agent(
         FunctionModel(model),
         toolsets=[
             BifrostToolset(
@@ -253,7 +252,9 @@ async def test_sandbox_sdk_denies_unknown_names_and_invalid_arguments_before_dis
                         description="Read a record.",
                         parameters={
                             "type": "object",
-                            "properties": {"record_id": {"type": "string"}},
+                            "properties": {
+                                "record_id": {"type": "string", "minLength": 1}
+                            },
                             "required": ["record_id"],
                             "additionalProperties": False,
                         },
@@ -263,43 +264,65 @@ async def test_sandbox_sdk_denies_unknown_names_and_invalid_arguments_before_dis
             ).defer_loading()
         ],
         capabilities=_sdk_capabilities(),
-    )
-
-    await runtime.run("Check denied sandbox calls.")
+    ).run("Check direct binding validation.")
 
     assert calls == []
     [projection] = _tool_returns(seen[1], "run_code")
-    assert projection["unknown_ok"] is False
-    assert projection["native_ok"] is False
-    assert projection["invalid_ok"] is False
-    assert "Unknown Bifrost tool" in projection["errors"][0]
-    assert "Unknown Bifrost tool" in projection["errors"][1]
-    assert "Arguments do not match" in projection["errors"][2]
+    assert "Arguments do not match" in projection["invalid"]
 
 
 @pytest.mark.asyncio
-async def test_sandbox_sdk_keeps_loaded_capability_schema_out_of_the_model_catalog() -> None:
-    """Native capability loading remains available without publishing its tool schema."""
+async def test_sandbox_sdk_exposes_a_deferred_specialist_only_after_native_load() -> None:
     seen: list[list[ModelMessage]] = []
-    instructions: list[str | None] = []
 
-    def restricted_read(record_id: str) -> str:
-        """PRIVATE_SCHEMA_SENTINEL: read one restricted record."""
-        return record_id
+    def restricted_read(record_id: str) -> dict[str, str]:
+        """Read restricted evidence."""
+        return {"record_id": record_id}
 
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         seen.append(messages)
-        instructions.append(info.instructions)
         names = {tool.name for tool in info.function_tools}
-        assert "load_capability" in names
         assert "run_code" in names
-        assert "search_tools" not in names
+        assert "load_capability" in names
         assert "restricted_read" not in names
         if len(seen) == 1:
             return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "run_code",
+                        {
+                            "code": (
+                                "catalog = bifrost_search(query='restricted')\n"
+                                "{'available_before_load': catalog['data']}"
+                            )
+                        },
+                    )
+                ]
+            )
+        if len(seen) == 2:
+            return ModelResponse(
                 parts=[ToolCallPart("load_capability", {"id": "specialist"}, "load")]
             )
-        return ModelResponse(parts=[TextPart("loaded")])
+        if len(seen) == 3:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "run_code",
+                        {
+                            "code": (
+                                "catalog = bifrost_search(query='restricted')\n"
+                                "assert catalog['data'][0]['name'] == 'restricted_read'\n"
+                                "contract = bifrost_describe(name='restricted_read')\n"
+                                "assert contract['data']['source_return_schema']['type'] == 'object'\n"
+                                "assert \"async def restricted_read\" in contract['data']['python_signature']\n"
+                                "assert \"-> Any\" not in contract['data']['python_signature']\n"
+                                "await restricted_read(record_id='r-7')"
+                            )
+                        },
+                    )
+                ]
+            )
+        return ModelResponse(parts=[TextPart("complete")])
 
     result = await Agent(
         FunctionModel(model),
@@ -307,31 +330,33 @@ async def test_sandbox_sdk_keeps_loaded_capability_schema_out_of_the_model_catal
             *_sdk_capabilities(),
             Capability(id="specialist", tools=[restricted_read], defer_loading=True),
         ),
-    ).run("Load the approved specialist.")
+    ).run("Load and read specialist evidence.")
 
-    assert result.output == "loaded"
-    assert all("PRIVATE_SCHEMA_SENTINEL" not in str(messages) for messages in seen)
-    assert all("PRIVATE_SCHEMA_SENTINEL" not in (value or "") for value in instructions)
+    assert result.output == "complete"
+    assert _tool_returns(seen[1], "run_code") == [{"available_before_load": []}]
+    assert _tool_returns(seen[3], "run_code") == [
+        {"available_before_load": []},
+        {"record_id": "r-7"},
+    ]
 
 
 @pytest.mark.asyncio
-async def test_sandbox_sdk_refreshes_the_live_catalog_before_each_business_call() -> None:
-    """A result from describe never grants authority after a live revocation."""
-    target_available = True
+async def test_sandbox_sdk_refreshes_live_authority_before_direct_dispatch() -> None:
+    available = True
     callbacks: list[str] = []
     seen: list[list[ModelMessage]] = []
 
     def is_live(_: Any, tool_def: Any) -> bool:
-        return tool_def.name != "revoked_read" or target_available
+        return tool_def.name != "revoked_read" or available
 
     async def execute(name: str, arguments: dict[str, Any], tool_call_id: str) -> str:
-        nonlocal target_available
+        nonlocal available
         del arguments, tool_call_id
         callbacks.append(name)
         if name == "first_read":
-            target_available = False
+            available = False
             return json.dumps({"first": True})
-        raise AssertionError("The revoked tool must not dispatch")
+        raise AssertionError("revoked tool dispatched")
 
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         del info
@@ -343,11 +368,10 @@ async def test_sandbox_sdk_refreshes_the_live_catalog_before_each_business_call(
                         "run_code",
                         {
                             "code": (
-                                "described = bifrost_describe(name='revoked_read')\n"
-                                "first = bifrost_call(name='first_read', arguments={})\n"
-                                "revoked = bifrost_call(name='revoked_read', arguments={})\n"
-                                "{'described': described['ok'], 'first': first['ok'], "
-                                "'revoked': revoked['ok'], 'error': revoked['error']}"
+                                "contract = bifrost_describe(name='revoked_read')\n"
+                                "first = first_read()\n"
+                                "revoked = revoked_read()\n"
+                                "{'described': contract['ok'], 'first': first['first'], 'revoked': revoked}"
                             )
                         },
                     )
@@ -360,174 +384,37 @@ async def test_sandbox_sdk_refreshes_the_live_catalog_before_each_business_call(
         toolsets=[
             BifrostToolset(
                 [
-                    ToolDefinition(
-                        name="first_read",
-                        description="Read one current record.",
-                        parameters={"type": "object", "properties": {}},
-                    ),
-                    ToolDefinition(
-                        name="revoked_read",
-                        description="Read a record while authorization remains live.",
-                        parameters={"type": "object", "properties": {}},
-                    ),
+                    ToolDefinition("first_read", "Read first.", {"type": "object", "properties": {}}),
+                    ToolDefinition("revoked_read", "Read while live.", {"type": "object", "properties": {}}),
                 ],
                 execute,
             ).filtered(is_live)
         ],
         capabilities=_sdk_capabilities(),
-    ).run("Observe a revoked tool.")
+    ).run("Observe revocation.")
 
     assert callbacks == ["first_read"]
     assert _tool_returns(seen[1], "run_code") == [
         {
             "described": True,
             "first": True,
-            "revoked": False,
-            "error": "Unknown Bifrost tool: revoked_read",
+            "revoked": "Error: Bifrost callable 'revoked_read' is no longer available.",
         }
     ]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("native_toolset", [False, True])
-async def test_sandbox_sdk_propagates_cancellation_without_running_later_callbacks(
-    native_toolset: bool,
-) -> None:
-    effects: list[str] = []
+async def test_sandbox_sdk_propagates_cancellation_and_caps_business_bindings() -> None:
+    calls: list[int] = []
 
     async def execute(name: str, arguments: dict[str, Any], tool_call_id: str) -> str:
-        del arguments, tool_call_id
+        del tool_call_id
         if name == "cancel":
             raise AgentRunCancelled("Cancelled by user")
-        effects.append(name)
-        return "unexpected"
-
-    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        del info
-        assert len(messages) == 1, str(messages)
-        return ModelResponse(
-            parts=[
-                ToolCallPart(
-                    "run_code",
-                    {
-                        "code": (
-                            "bifrost_call(name='cancel', arguments={})\n"
-                            "bifrost_call(name='effect', arguments={})"
-                        )
-                    },
-                )
-            ]
-        )
-
-    async def cancel() -> str:
-        return await execute("cancel", {}, "")
-
-    async def effect() -> str:
-        return await execute("effect", {}, "")
-
-    toolset = (
-        FunctionToolset([cancel, effect])
-        if native_toolset
-        else BifrostToolset(
-            [
-                ToolDefinition(
-                    name="cancel",
-                    description="Cancel the current run.",
-                    parameters={"type": "object", "properties": {}},
-                ),
-                ToolDefinition(
-                    name="effect",
-                    description="Perform one effect.",
-                    parameters={"type": "object", "properties": {}},
-                ),
-            ],
-            execute,
-        )
-    )
-    runtime = Agent(
-        FunctionModel(model),
-        toolsets=[toolset.defer_loading()],
-        capabilities=_sdk_capabilities(),
-    )
-
-    with pytest.raises(AgentRunCancelled, match="Cancelled by user"):
-        await runtime.run("Cancel the sandbox run.")
-
-    assert effects == []
-
-
-@pytest.mark.asyncio
-async def test_sandbox_sdk_caps_real_business_callbacks_without_counting_discovery() -> None:
-    calls: list[int] = []
-    seen: list[list[ModelMessage]] = []
-
-    async def execute(name: str, arguments: dict[str, Any], tool_call_id: str) -> str:
-        del name, tool_call_id
         calls.append(arguments["index"])
         return json.dumps({"index": arguments["index"]})
 
-    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        del info
-        seen.append(messages)
-        if len(seen) == 1:
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        "run_code",
-                        {
-                            "code": (
-                                "catalog = bifrost_search(query='count')\n"
-                                "bifrost_describe(name=catalog['data'][0]['name'])\n"
-                                "results = [bifrost_call(name='count', arguments={'index': index}) for index in range(17)]\n"
-                                "{'successful': sum(item['ok'] for item in results), 'last_error': results[-1]['error']}"
-                            )
-                        },
-                    )
-                ]
-            )
-        return ModelResponse(parts=[TextPart("complete")])
-
-    runtime = Agent(
-        FunctionModel(model),
-        toolsets=[
-            BifrostToolset(
-                [
-                    ToolDefinition(
-                        name="count",
-                        description="Count one item.",
-                        parameters={
-                            "type": "object",
-                            "properties": {"index": {"type": "integer"}},
-                            "required": ["index"],
-                        },
-                    )
-                ],
-                execute,
-            ).defer_loading()
-        ],
-        capabilities=_sdk_capabilities(),
-    )
-
-    await runtime.run("Count through the sandbox SDK.")
-
-    assert calls == list(range(MAX_SANDBOX_SDK_BUSINESS_CALLS))
-    assert _tool_returns(seen[1], "run_code") == [
-        {
-            "successful": MAX_SANDBOX_SDK_BUSINESS_CALLS,
-            "last_error": "Error: Bifrost sandbox business call limit of 16 reached.",
-        }
-    ]
-
-
-@pytest.mark.asyncio
-async def test_sandbox_sdk_resets_the_business_cap_for_the_next_code_program() -> None:
-    calls: list[int] = []
     requests = 0
-
-    async def execute(name: str, arguments: dict[str, Any], tool_call_id: str) -> str:
-        del name, tool_call_id
-        calls.append(arguments["index"])
-        return json.dumps({"index": arguments["index"]})
 
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         del messages, info
@@ -540,38 +427,33 @@ async def test_sandbox_sdk_resets_the_business_cap_for_the_next_code_program() -
                         "run_code",
                         {
                             "code": (
-                                "results = [bifrost_call(name='count', arguments={'index': index}) "
-                                "for index in range(16)]\n"
-                                "sum(item['ok'] for item in results)"
+                                "bifrost_search(query='count')\n"
+                                "bifrost_describe(name='count')\n"
+                                "values = [count(index=index) for index in range(17)]\n"
+                                "{'successful': sum(isinstance(value, dict) for value in values), "
+                                "'last': values[-1]}"
                             )
                         },
-                        "first-program",
-                    )
-                ]
-            )
-        if requests == 2:
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        "run_code",
-                        {
-                            "code": "bifrost_call(name='count', arguments={'index': 99})['ok']"
-                        },
-                        "second-program",
                     )
                 ]
             )
         return ModelResponse(parts=[TextPart("complete")])
 
+    seen: list[list[ModelMessage]] = []
+
+    def recording_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        return model(messages, info)
+
     await Agent(
-        FunctionModel(model),
+        FunctionModel(recording_model),
         toolsets=[
             BifrostToolset(
                 [
                     ToolDefinition(
-                        name="count",
-                        description="Count one item.",
-                        parameters={
+                        "count",
+                        "Count one item.",
+                        {
                             "type": "object",
                             "properties": {"index": {"type": "integer"}},
                             "required": ["index"],
@@ -582,6 +464,105 @@ async def test_sandbox_sdk_resets_the_business_cap_for_the_next_code_program() -
             ).defer_loading()
         ],
         capabilities=_sdk_capabilities(),
-    ).run("Run two independent code programs.")
+    ).run("Count through direct bindings.")
 
-    assert calls == [*range(MAX_SANDBOX_SDK_BUSINESS_CALLS), 99]
+    assert calls == list(range(MAX_SANDBOX_SDK_BUSINESS_CALLS))
+    assert _tool_returns(seen[1], "run_code") == [
+        {
+            "successful": MAX_SANDBOX_SDK_BUSINESS_CALLS,
+            "last": "Error: Bifrost sandbox business call limit of 16 reached.",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sandbox_sdk_propagates_direct_binding_cancellation() -> None:
+    effects: list[str] = []
+
+    async def execute(name: str, arguments: dict[str, Any], tool_call_id: str) -> str:
+        del arguments, tool_call_id
+        if name == "cancel":
+            raise AgentRunCancelled("Cancelled by user")
+        effects.append(name)
+        return "unexpected"
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        del messages, info
+        return ModelResponse(
+            parts=[ToolCallPart("run_code", {"code": "cancel()\neffect()"})]
+        )
+
+    runtime = Agent(
+        FunctionModel(model),
+        toolsets=[
+            BifrostToolset(
+                [
+                    ToolDefinition("cancel", "Cancel.", {"type": "object", "properties": {}}),
+                    ToolDefinition("effect", "Effect.", {"type": "object", "properties": {}}),
+                ],
+                execute,
+            ).defer_loading()
+        ],
+        capabilities=_sdk_capabilities(),
+    )
+
+    with pytest.raises(AgentRunCancelled, match="Cancelled by user"):
+        await runtime.run("Cancel the direct binding.")
+    assert effects == []
+
+
+@pytest.mark.asyncio
+async def test_sandbox_sdk_honors_trusted_stable_python_alias_metadata() -> None:
+    async def execute(name: str, arguments: dict[str, Any], tool_call_id: str) -> str:
+        del name, arguments, tool_call_id
+        return "ok"
+
+    toolset = BifrostToolset(
+        [
+            ToolDefinition("bfa_first", "First duplicate.", {"type": "object", "properties": {}}),
+            ToolDefinition("bfa_second", "Second duplicate.", {"type": "object", "properties": {}}),
+        ],
+        execute,
+        tool_metadata={
+            "bfa_first": {"bifrost_python_name": "owner_aaa_read_record"},
+            "bfa_second": {"bifrost_python_name": "owner_bbb_read_record"},
+        },
+    )
+    raw_tools = await toolset.get_tools(SimpleNamespace())
+
+    assert _aliases_for(raw_tools) == {
+        "bfa_first": "owner_aaa_read_record",
+        "bfa_second": "owner_bbb_read_record",
+    }
+
+
+@pytest.mark.asyncio
+async def test_sandbox_sdk_resolves_generated_alias_collisions_deterministically() -> None:
+    async def execute(name: str, arguments: dict[str, Any], tool_call_id: str) -> str:
+        del name, arguments, tool_call_id
+        return "ok"
+
+    first_digest = hashlib.sha256(b"a").hexdigest()[:12]
+    second_digest = hashlib.sha256(b"b").hexdigest()[:12]
+    third_digest = hashlib.sha256(b"c").hexdigest()[:12]
+    toolset = BifrostToolset(
+        [
+            ToolDefinition("a", "First.", {"type": "object", "properties": {}}),
+            ToolDefinition("b", "Second.", {"type": "object", "properties": {}}),
+            ToolDefinition("c", "Third.", {"type": "object", "properties": {}}),
+        ],
+        execute,
+        tool_metadata={
+            "a": {"bifrost_python_name": "read"},
+            "b": {"bifrost_python_name": "read"},
+            "c": {"bifrost_python_name": f"read_{second_digest}"},
+        },
+    )
+
+    aliases = _aliases_for(await toolset.get_tools(SimpleNamespace()))
+
+    assert aliases == {
+        "a": f"read_{first_digest}",
+        "b": f"read_{second_digest}",
+        "c": f"read_{second_digest}_{third_digest}",
+    }

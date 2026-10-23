@@ -17,6 +17,8 @@ from typing import Any
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ToolCallPart, ToolReturn
 from pydantic_ai.tools import RunContext, ToolDefinition, ToolSelector
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets.wrapper import WrapperToolset
 from pydantic_ai_harness.code_mode import CodeMode, CodeModeResourceLimits
 
 from src.services.agent_runtime.toolset import (
@@ -105,6 +107,26 @@ class _CodeModeResultBoundary(AbstractCapability[object]):
         return bound_tool_result_for_model(result)
 
 
+class _CatalogPrivateCodeMode(CodeMode[object]):
+    """Keep native CodeMode execution while omitting its dynamic function catalog."""
+
+    def get_wrapper_toolset(
+        self, toolset: AbstractToolset[object]
+    ) -> AbstractToolset[object] | None:
+        native = super().get_wrapper_toolset(toolset)
+        if native is None:
+            return None
+        return _CatalogPrivateCodeModeToolset(wrapped=native)
+
+
+class _CatalogPrivateCodeModeToolset(WrapperToolset[object]):
+    """Use upstream instructions instead of CodeMode's dynamic catalog instruction."""
+
+    async def get_instructions(self, ctx: RunContext[object]) -> Any:
+        assert isinstance(self.wrapped, WrapperToolset)
+        return await self.wrapped.wrapped.get_instructions(ctx)
+
+
 def build_code_mode_capabilities(
     *,
     tools: ToolSelector[object],
@@ -120,6 +142,33 @@ def build_code_mode_capabilities(
     """
     return (
         CodeMode(
+            tools=tools,
+            dynamic_catalog=True,
+            resource_limits=resource_limits or DEFAULT_CODE_MODE_RESOURCE_LIMITS,
+            max_tool_calls=max_tool_calls,
+            max_retries=max_retries,
+            eager=False,
+            speculate=None,
+        ),
+        _CodeModeResultBoundary(),
+    )
+
+
+def build_catalog_private_code_mode_capabilities(
+    *,
+    tools: ToolSelector[object],
+    resource_limits: CodeModeResourceLimits | None = None,
+    max_tool_calls: int = DEFAULT_CODE_MODE_MAX_TOOL_CALLS,
+    max_retries: int = DEFAULT_CODE_MODE_MAX_RETRIES,
+) -> Sequence[AbstractCapability[object]]:
+    """Build CodeMode without publishing its callable catalog in instructions.
+
+    The returned capability retains the harness's native catalog, sandbox and
+    dispatch implementation. Its wrapper replaces only the dynamic instruction
+    contribution, allowing a caller-owned lazy discovery surface to stay private.
+    """
+    return (
+        _CatalogPrivateCodeMode(
             tools=tools,
             dynamic_catalog=True,
             resource_limits=resource_limits or DEFAULT_CODE_MODE_RESOURCE_LIMITS,

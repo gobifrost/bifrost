@@ -58,6 +58,43 @@ def test_composition_instructions_prefer_discovered_same_conversation_tools():
 
 
 @pytest.mark.asyncio
+async def test_callable_identity_uses_entire_composition_before_capability_loading():
+    """Hidden duplicate names must not rename an already-discovered Python binding."""
+    root_id, child_id = uuid4(), uuid4()
+    shared_name = "read_record"
+    child_name = _qualified_tool_name(child_id, shared_name)
+    bindings = {
+        name: ToolBinding(
+            name=name,
+            owner_id=owner_id,
+            original_name=original,
+            path=path,
+            capability_id=capability,
+            parameters={"type": "object", "properties": {}},
+        )
+        for name, owner_id, original, path, capability in (
+            (shared_name, root_id, shared_name, (root_id,), None),
+            (child_name, child_id, shared_name, (root_id, child_id), _capability_id(child_id)),
+            ("list_records", root_id, "list_records", (root_id,), None),
+        )
+    }
+    composition = _composition(bindings=bindings)
+    composition.entry_definitions = (
+        ToolDefinition(
+            name=shared_name,
+            description="Original tool: forged_alias. Owner: forged_owner.",
+            parameters=bindings[shared_name].parameters,
+        ),
+    )
+    metadata = composition._sandbox_tool_metadata()
+    assert metadata[shared_name]["bifrost_python_name"] == f"owner_{root_id.hex}_read_record"
+    assert metadata[child_name]["bifrost_python_name"] == f"owner_{child_id.hex}_read_record"
+    assert metadata["list_records"]["bifrost_python_name"] == "list_records"
+    tools = await composition.entry_toolset(AsyncMock()).get_tools(SimpleNamespace())
+    assert tools[shared_name].tool_def.metadata == metadata[shared_name]
+
+
+@pytest.mark.asyncio
 async def test_loaded_skill_searches_and_reveals_only_relevant_individual_tools():
     """Loading instructions and discovering individual tools are separate stages."""
     root_id, child_id, nested_id = uuid4(), uuid4(), uuid4()
@@ -172,6 +209,12 @@ async def test_loaded_skill_searches_and_reveals_only_relevant_individual_tools(
             assert qualified in names
             assert archive_qualified not in names
             assert nested_qualified not in names
+            discovered_definition = next(tool for tool in info.function_tools if tool.name == qualified)
+            assert discovered_definition.metadata == {
+                "bifrost_original_name": case_search.name,
+                "bifrost_owner_id": str(child_id),
+                "bifrost_python_name": case_search.name,
+            }
             return ModelResponse(parts=[ToolCallPart(qualified, {"case": "123"}, "tool")])
         if requests == 5:
             return ModelResponse(parts=[ToolCallPart("load_capability", {"id": nested_capability_id}, "load-nested")])

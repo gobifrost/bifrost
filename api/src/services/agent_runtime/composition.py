@@ -8,6 +8,7 @@ tool.  In particular, it never consults the global tool catalog.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Awaitable, Callable, Sequence
 from copy import deepcopy
 from contextvars import ContextVar
@@ -55,7 +56,8 @@ If discovery or invocation corrects an unknown callable or invalid arguments, us
 before making another call.
 
 For specialist work, load an approved capability's instructions, then use run_code and its
-Bifrost sandbox SDK to search, describe, and call individual approved tools. The SDK discovers
+Bifrost sandbox SDK to search, describe, and call approved Python functions with keyword arguments.
+The SDK discovers
 entry-agent and loaded-specialist tools inside one bounded program. Use same-conversation
 specialist tools by default. Start an isolated child only when context isolation
 or independent review is actually required; never use a child as a permission workaround. Include
@@ -396,7 +398,24 @@ class AgentComposition:
             executor,
             event_handler=event_handler,
             toolset_id=toolset_id,
+            tool_metadata=self._sandbox_tool_metadata(),
         ).defer_loading()
+
+    def _sandbox_tool_metadata(self) -> dict[str, dict[str, str]]:
+        """Carry callable identity separately from human-authored descriptions."""
+        original_counts = Counter(binding.original_name for binding in self._bindings.values())
+        return {
+            name: {
+                "bifrost_original_name": binding.original_name,
+                "bifrost_owner_id": str(binding.owner_id),
+                "bifrost_python_name": (
+                    binding.original_name
+                    if original_counts[binding.original_name] == 1
+                    else f"owner_{binding.owner_id.hex}_{binding.original_name}"
+                ),
+            }
+            for name, binding in self._bindings.items()
+        }
 
     async def _authorize_path(self, path: tuple[UUID, ...]) -> Agent:
         """Reauthorize the caller plus every active delegation edge in ``path``."""
@@ -542,6 +561,7 @@ class AgentComposition:
                             executor,
                             event_handler=event_handler,
                             toolset_id="bifrost-specialist-search",
+                            tool_metadata=self._sandbox_tool_metadata(),
                         )
                         .filtered(specialist_owner_is_loaded)
                         .defer_loading()

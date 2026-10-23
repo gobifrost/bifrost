@@ -19,6 +19,13 @@ The later Cloudflare-pattern revision replaces that candidate's model-side tool
 search with a fixed execution-resident SDK; its implementation and verification
 are described separately below.
 
+**Current candidate:** Automatic chat and background runs now use native-generated
+Python function bindings behind lazy sandbox discovery. The generic
+`bifrost_call(name, arguments)` adapter used in the recorded provider experiments
+has been removed. See **Direct function bindings and reference-audit correction**
+below. Those experiments remain historical observations of the previous adapter;
+they do not measure this candidate.
+
 **Interpretation corrected after auditing generated code:** the initial live-model
 comparison mostly measured an unfiltered tool wrapper. Generated snippets printed
 or implicitly returned complete responses and copied discovered IDs through later
@@ -808,6 +815,126 @@ probe through this frozen production model factory already verified that
 reasoning-content round trip. No additional paid thinking-mode experiment has
 been run. A later savings comparison needs fresh direct and code arms under the
 same intended production reasoning setting.
+
+## Direct function bindings and reference-audit correction
+
+An implementation audit found a material departure from the reference pattern.
+Cloudflare's pinned [proxy instructions](https://github.com/cloudflare/agents/blob/321814b6c13f72cff82161e7eb20312574ac9b7a/packages/codemode/src/proxy-tool.ts)
+tell generated code to search, describe, and call generated connector methods.
+Bifrost instead required a generic function name plus an argument dictionary and
+wrapped every business result in an SDK envelope. The existing Harness already
+supports generated Python function bindings; adding the generic business RPC
+was unnecessary.
+
+The current candidate uses those native bindings. Generated code calls an
+approved function with its schema-derived keyword arguments and consumes the
+source result directly. JSON adapter text is decoded inside the sandbox; plain
+text, source error receipts, and decoded JSON error objects retain their source
+meaning. Only search and describe keep their fixed discovery envelopes.
+Describe supplies a generated Python signature and nested parameter type
+declarations, the original input schema, and the source return schema. An
+undeclared business result stays unknown rather than acquiring invented fields.
+Explicit structured return types are retained when JSON-text decoding cannot
+change their type; text adapters and unresolved unions remain `Any`. Native
+asynchronous functions are described as asynchronous and require `await`.
+
+Native CodeMode's `dynamic_catalog=True` normally moves its generated catalog
+into model instructions; it does not make the catalog private. A narrow wrapper
+suppresses that catalog instruction while retaining native binding generation,
+Monty execution, argument handling, and tool dispatch. Search and describe still
+resolve only the live authorized entry and loaded-specialist tools. Callable
+identity comes from trusted composition metadata rather than owner/name prose.
+Names shared anywhere in the approved composition receive stable owner-qualified
+Python aliases before any specialist loads, so loading another capability does
+not rename an existing callable.
+
+Every function call refreshes the live mapping, checks its input schema, and
+passes the original name and descriptor through the assembled toolset wrapper
+chain and existing executor. The shared per-program budget still allows 16
+business callbacks and 64 total interactions; discovery does not consume the
+business allowance. Cancellation remains latched across caught exceptions.
+There is no workflow-engine, worker, deployment-topology, or customer sandbox
+installation change. Full intermediate values stay available inside code and
+in the audit; the existing outer model-result bound still applies. Automatic
+chat, background execution, and native isolated children use the shared policy.
+This remains an undeployed candidate.
+
+The reference audit also corrects how the prior experiment was described:
+
+- **All nine saved CodeMode runs batched business reads.** They performed 14–15
+  reads across 5–8 read-containing programs, with 3–6 reads in the largest batch.
+  The reported zero passes referred to our stricter requirement that all
+  dependent reads and aggregation occupy one processing program. Cloudflare
+  does not specify that as a universal acceptance rule. Some extra calculation
+  and formatting programs remain avoidable, but zero batching was not observed.
+- **The exact scripted offline program had information the model did not.**
+  The production workflows describe results in prose and expose generic return
+  contracts, without schemas for the nested response fields used by that
+  program. Discovering their actual shapes can legitimately require inspection.
+- **The compactness meter counted pure discovery returns against a business
+  evidence budget.** The separate observer result above is diagnostic; the
+  frozen protocol and raw scores remain unchanged.
+- **There is no successful paired cost comparison.** CodeMode's 9/9 captured
+  exact reports versus direct's 1/10 is evidence favoring task completion in
+  this fixture. The only successful direct counterpart is the lost CodeMode
+  receipt, so equivalent-success savings remain unmeasured. Response count,
+  input tokens, cache usage, elapsed time, and billed cost need separate reporting.
+
+The thinking-only experiment proposed above is therefore superseded as the
+immediate next step. Validate this function-binding candidate first, then freeze
+a fresh comparison with the same intended reasoning setting in both arms.
+Acceptance should measure correct completed work, authorized effects, actual
+code-side filtering/chaining, business-derived evidence separately from discovery,
+and cost and latency per successful task. A single-program target can remain a
+workload-specific diagnostic, but cannot stand in for Cloudflare conformance.
+No additional paid provider run was made for this implementation change, and the
+old experiment files and manifests remain frozen.
+
+A separate network-disabled probe exercised the new generator against the
+frozen production catalog: 25 agents, 237 bound definitions, 206 distinct
+original names. It described the 21 root aliases before specialist loading,
+loaded all 24 specialists, and described all 237 generated aliases successfully.
+The outer catalog remained `run_code` and `load_capability`; the probe made zero
+provider calls and zero business callbacks. Its script and source-hashed result
+are in the private `function-bindings-catalog-probe-20261023` directory alongside,
+outside the frozen experiment directory. This verifies catalog compatibility,
+not completion quality or economics.
+
+That probe also clarified the native resource boundary: 128 suspensions is a
+cumulative limit for one Monty REPL session, not an allowance renewed by every
+snippet. Describing the entire catalog exceeded it. The final catalog-only probe
+uses nine explicit fresh sessions, discarding unneeded state between chunks;
+it does not increase a limit or replay business effects. Automatic code retains
+native `restart: true` for a fresh session, while the SDK's 16-business-call and
+64-total-call bounds remain per outer invocation.
+
+Focused verification of this candidate passed **121 tests** with zero failures,
+errors, or skips, plus API Pyright (zero errors/warnings) and Ruff. The selected
+checks cover direct dependent reads, typed discovery, catalog privacy, capability
+loading, live revocation, schema denial, cancellation, call budgets, stable
+composition identity, chat history/audit separation, and one workflow dispatch
+through the existing worker. The two existing E2E cases were updated rather than
+adding another worker job. The full backend and frontend suites were not run.
+No API DTO or frontend surface changed.
+The workflow E2E spent 4.10 seconds in fixture setup, 1.70 in the request/worker
+path, and 0.28 in teardown; the chat E2E call took 0.48 seconds.
+
+Exact commands from the worktree (using its existing Docker test image):
+
+```bash
+BIFROST_TEST_IMAGE_TAG=code-mode-proof-1015 BIFROST_SKIP_BUILD=1 ./test.sh \
+  tests/unit/services/agent_runtime/test_sandbox_sdk.py \
+  tests/unit/services/agent_runtime/test_tool_policy.py \
+  tests/unit/services/test_agent_code_mode_runtime_policy.py \
+  tests/unit/services/test_agent_code_mode.py \
+  tests/unit/services/test_agent_composition_stream.py \
+  tests/unit/services/test_autonomous_agent_executor.py \
+  tests/unit/services/agent_runtime/test_composition.py \
+  tests/unit/services/test_agent_runtime_authorization.py \
+  tests/e2e/api/test_agent_code_mode_spike.py \
+  tests/e2e/api/test_agent_code_mode_chat.py -v --durations=0
+BIFROST_TEST_IMAGE_TAG=code-mode-proof-1015 BIFROST_SKIP_BUILD=1 ./test.sh quality api
+```
 
 ## Primary references
 

@@ -83,8 +83,9 @@ async def test_automatic_policy_uses_code_mode_for_a_non_delegated_toolset() -> 
                                 "tool_name = catalog['data'][0]['name']\n"
                                 "contract = bifrost_describe(name=tool_name)\n"
                                 "assert contract['ok']\n"
-                                "chunks = [bifrost_call(name=tool_name, arguments={'index': index}) for index in range(3)]\n"
-                                "combined = ''.join(chunk['data']['payload'] for chunk in chunks)\n"
+                                "assert contract['data']['python_signature']\n"
+                                "chunks = [read_chunk(index=index) for index in range(3)]\n"
+                                "combined = ''.join(chunk['payload'] for chunk in chunks)\n"
                                 "{'combined_length': len(combined)}"
                             )
                         },
@@ -154,9 +155,10 @@ async def test_automatic_sdk_deepseek_wire_exposes_only_run_code() -> None:
                                     "code": (
                                         "catalog = bifrost_search(query='read chunk')\n"
                                         "name = catalog['data'][0]['name']\n"
-                                        "bifrost_describe(name=name)\n"
-                                        "receipt = bifrost_call(name=name, arguments={'index': 0})\n"
-                                        "{'payload': receipt['data']['payload']}"
+                                        "contract = bifrost_describe(name=name)\n"
+                                        "assert contract['data']['python_signature']\n"
+                                        "receipt = read_chunk(index=0)\n"
+                                        "{'payload': receipt['payload']}"
                                     )
                                 }
                             ),
@@ -295,8 +297,9 @@ async def test_chat_automatic_code_mode_audits_three_nested_reads_and_projects_h
                                 "tool_name = catalog['data'][0]['name']\n"
                                 "contract = bifrost_describe(name=tool_name)\n"
                                 "assert contract['ok']\n"
-                                "chunks = [bifrost_call(name=tool_name, arguments={'index': index}) for index in range(3)]\n"
-                                "combined = ''.join(chunk['data']['payload'] for chunk in chunks)\n"
+                                "assert contract['data']['python_signature']\n"
+                                "chunks = [read_chunk(index=index) for index in range(3)]\n"
+                                "combined = ''.join(chunk['payload'] for chunk in chunks)\n"
                                 "{'combined_length': len(combined)}"
                             )
                         },

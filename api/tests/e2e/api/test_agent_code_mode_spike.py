@@ -71,12 +71,13 @@ async def test_code_mode_dispatches_one_bound_workflow_on_existing_executors(
             assert tool_name not in names
             part = ToolCallPart("run_code", {
                 "code": (
-                    "catalog = bifrost_search(query='bfa')\n"
+                    f"catalog = bifrost_search(query={test_tool_workflow['name']!r})\n"
                     "tool_name = catalog['data'][0]['name']\n"
                     "contract = bifrost_describe(name=tool_name)\n"
                     "assert contract['ok']\n"
-                    "receipt = bifrost_call(name=tool_name, arguments={'query': 'code-mode-boundary'})\n"
-                    "{'receipt': receipt['data']}"
+                    "assert contract['data']['python_signature']\n"
+                    f"receipt = wf_{test_tool_workflow['name']}(query='code-mode-boundary')\n"
+                    "{'receipt': receipt}"
                 ),
             })
         else:
