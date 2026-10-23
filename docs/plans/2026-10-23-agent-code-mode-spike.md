@@ -484,6 +484,50 @@ Concurrent harness resets were eliminated by giving the parent exclusive stack
 ownership. No retries, skips or broad-failure waivers were added. Full backend
 and frontend suites, production deployment and worker-density testing were not run.
 
+## Reference-architecture and benchmark-confound audit
+
+The observed increase must not be presented as normal CodeMode overhead.
+[Anthropic documents](https://platform.claude.com/docs/en/agents-and-tools/tool-use/programmatic-tool-calling)
+that small sequential workloads can cost more (roughly 8% in one cited benchmark),
+while large-result/fan-out workloads are its stronger fit. That does not explain
+or validate this candidate's observed 49.9% input increase, especially with missing
+fixture coverage.
+
+The more specific reference comparison is:
+
+| Concern | Published implementation | Candidate |
+| --- | --- | --- |
+| Discovery | [Cloudflare's runtime](https://github.com/cloudflare/agents/blob/main/docs/codemode/index.md) exposes `search`/`describe` inside running code, allowing focused discovery data to remain there | Native capability loading and ToolSearch remain separate model exchanges. This is valid Pydantic behavior, but not equivalent to Cloudflare's execution-resident discovery interface. |
+| Result processing | Anthropic recommends documented JSON structures/field types and processing intermediate results within execution | The candidate documents a serialized string transport. It does not yet expose reliable inner result schemas. |
+| Cache stability | [Pydantic's guidance](https://pydantic.dev/docs/ai/harness/code-mode/) recommends `dynamic_catalog=True` with discovery | Already enabled. The active code-tool schema stayed stable at 4,946 measured bytes; this is not an omitted setting to toggle again. |
+
+Trace counts also narrow the diagnosis: **both arms made one capability load and
+two tool searches in every repetition**. Those discovery calls alone do not
+explain the extra CodeMode turns. Their placement is an architectural difference
+to test, not an isolated cause of this increase. CodeMode moved discovered
+signatures into instructions, while reducing the active tool-schema footprint;
+neither byte count is itself provider token attribution.
+
+The mocks introduced concrete confounds. CodeMode repetitions 1 and 2 each tried
+`list_items(limit=200)` twice. The input schema permits that value, but the replay
+matcher rejected it; calls omitting the limit succeeded. Repetition 3 queried
+permissions for files whose permission results were not captured. Three native
+code retries were JSON-decoding failures after these missing replay responses;
+one further retry involved an undiscovered direct tool name. These are not clean
+steady-state execution samples. Do not infer that the published approach normally
+increases usage from this matrix.
+
+Before another provider comparison, the benchmark needs operation-level mock
+semantics instead of exact historical argument matching where equivalence can
+be established. A page-size variation may use captured data only when the source
+and operation prove that capture complete. Uncaptured permission states must
+remain unknown; use a separately declared complete synthetic corpus or additional
+read-only captures rather than inventing historical answers. The candidate also
+needs an execution-resident search/describe/call interface over the same live
+authorization path, plus truthful structured return contracts. These changes
+must be tested independently before attributing a future result to any one of
+them. This audit made no provider calls and did not change the frozen matrix.
+
 ## Primary references
 
 - [Pydantic AI Harness CodeMode](https://pydantic.dev/docs/ai/harness/code-mode/)
