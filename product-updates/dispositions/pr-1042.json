@@ -1,0 +1,10 @@
+{
+  "key": "pr:1042",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal test-harness fix: each worktree tags its own test API image; no customer-facing change.",
+  "review": {
+    "status": "approved",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1042"]
+  }
+}
