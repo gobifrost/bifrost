@@ -354,13 +354,9 @@ async def process_schedule_sources() -> dict[str, Any]:
                     # source. If queueing fails outright, the event is still
                     # recorded with pending deliveries before the error is
                     # reported for this source.
-                    from src.services.events.processor import (
-                        EventProcessor,
-                        QueuedDeliveries,
-                    )
+                    from src.services.events.processor import EventProcessor
 
                     processor = EventProcessor(db)
-                    queued = QueuedDeliveries()
                     try:
                         async with db.begin_nested():
                             queued = await processor.queue_event_deliveries(event.id)

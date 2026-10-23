@@ -97,7 +97,7 @@ def _create_processor() -> "EventProcessor":
 
         session = AsyncMock()
         # Each delivery is queued in its own savepoint of the caller's session.
-        session.begin_nested = MagicMock(side_effect=lambda: _Savepoint())
+        session.begin_nested = MagicMock(side_effect=_Savepoint)
         processor = EventProcessor(session)
         processor._delivery_repo = MagicMock()
         processor._delivery_repo.update_event_status = AsyncMock()
