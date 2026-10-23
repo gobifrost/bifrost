@@ -73,7 +73,7 @@ def kill_drill() -> dict:
     victim_runs = enqueue(2, 90)
     wait_status(victim_runs, {"Running"}, 120)
     [pod] = [p for p in pool_pods() if p["status"].get("phase") == "Running"]
-    queued = enqueue(3, 1)  # waits behind the busy slots (2 per worker)
+    queued = enqueue(3, 1)  # accepted while the worker dies
     killed_at = time.monotonic()
     node_kill(pod)
     deadline = time.monotonic() + 120

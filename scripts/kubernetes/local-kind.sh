@@ -17,7 +17,7 @@ KIND_BIN="${BIN_DIR}/kind-${KIND_VERSION}"
 
 usage() {
   cat <<USAGE
-Usage: $0 <up|status|down|collect|build-experiment|control-experiment|pool-experiment|pool-drills|kubectl -- <args>>
+Usage: $0 <up|status|down|collect|build-experiment|control-experiment|pool-experiment|pool-drills|pressure-test|kubectl -- <args>>
 
 Environment overrides:
   BIFROST_KIND_CLUSTER_NAME  Cluster name (default: bifrost-<worktree-hash>)
@@ -273,6 +273,7 @@ case "${1:-}" in
   control-experiment) shift; exec python3 "${ROOT_DIR}/scripts/kubernetes/control_spike.py" "$@" ;;
   pool-experiment) shift; exec python3 "${ROOT_DIR}/scripts/kubernetes/pool_spike.py" "$@" ;;
   pool-drills) shift; exec python3 "${ROOT_DIR}/scripts/kubernetes/pool_drills.py" "$@" ;;
+  pressure-test) shift; exec python3 "${ROOT_DIR}/scripts/kubernetes/pressure_test.py" "$@" ;;
   up) up ;;
   status) status ;;
   down) down ;;

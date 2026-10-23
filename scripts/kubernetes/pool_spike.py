@@ -9,9 +9,9 @@ Phases (recorded in report.json), against the base manifests' defaults
 
 - floor: the static executors (scheduler and worker) are ready and exactly
   the warm minimum of worker Jobs is ready, with no waiting work.
-- burst: a backlog larger than every static slot plus the Job ceiling
-  scales the worker Jobs up to the ceiling, never past it; every run
-  succeeds.
+- burst: a backlog larger than the static executors' memory budgets plus
+  the Job ceiling's scales the worker Jobs up to the ceiling, never past it;
+  every run succeeds.
 - race: a run accepted while the extra Jobs drain still completes.
 - drain: with no work, the extra Jobs drain themselves and the pool returns
   to the warm minimum.
@@ -68,12 +68,13 @@ def pool_pods() -> list[dict]:
 
 def live_workers(form: str = "job") -> list[dict]:
     rows = sql(
-        "SELECT id, state, coalesce(kubernetes_pod_uid,''), runs_handled, slots FROM execution_workers "
+        "SELECT id, state, coalesce(kubernetes_pod_uid,''), runs_handled, "
+        "coalesce(memory_budget_bytes, 0) FROM execution_workers "
         f"WHERE form = '{form}' AND state IN ('reserved','starting','ready','draining') "
         "ORDER BY created_at"
     )
     return [
-        {"id": r[0], "state": r[1], "pod_uid": r[2], "runs": int(r[3]), "slots": int(r[4])}
+        {"id": r[0], "state": r[1], "pod_uid": r[2], "runs": int(r[3]), "budget": int(r[4])}
         for r in rows
     ]
 
@@ -136,11 +137,16 @@ def run(out: Path) -> dict:
 
     static = [w for w in live_workers("static") if w["state"] == "ready"]
     assert len(static) >= 2, f"expected the scheduler and worker executors: {static}"
-    report["floor"] = {"seconds": wait_floor(300), "static_slots": sum(w["slots"] for w in static)}
+    # Inline runs request the default; that many fit an executor's budget.
+    per_run = 64 * 2**20
+    report["floor"] = {
+        "seconds": wait_floor(300),
+        "static_runs": sum(w["budget"] // per_run for w in static),
+    }
     assert int(sql("SELECT count(*) FROM work_dispatches")[0][0]) == 0
 
     [floor_worker] = live_workers()
-    burst_runs = report["floor"]["static_slots"] + CEILING * floor_worker["slots"] + 8
+    burst_runs = report["floor"]["static_runs"] + CEILING * (floor_worker["budget"] // per_run) + 8
     peak = {"workers": 0, "pods": 0}
 
     def sample() -> None:
