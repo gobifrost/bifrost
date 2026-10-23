@@ -503,6 +503,7 @@ class AgentComposition:
                             f"Owner: {deferred.agent.name}. Original tool: {binding.original_name}."
                         ),
                         parameters=definition.parameters,
+                        return_schema=deepcopy(definition.return_schema),
                     )
                 )
                 owner_capability_by_tool_name[qualified_name] = deferred.capability_id
@@ -655,6 +656,7 @@ async def build_agent_composition(
                                 name=definition.name,
                                 description=definition.description,
                                 parameters=deepcopy(definition.parameters),
+                                return_schema=deepcopy(definition.return_schema),
                             )
                             for definition in definitions
                         ),

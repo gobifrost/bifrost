@@ -113,9 +113,12 @@ async def test_native_skill_load_and_tool_result_are_streamed_and_persisted(exec
                         )
                     ]
                 )
-            if tool_name not in returned:
-                assert tool_name in visible
-                return ModelResponse(parts=[ToolCallPart(tool_name, {}, "read")])
+            if "run_code" not in returned:
+                assert tool_name not in visible
+                assert "run_code" in visible
+                return ModelResponse(parts=[ToolCallPart(
+                    "run_code", {"code": f"{tool_name}()"}, "code",
+                )])
             return ModelResponse(parts=[TextPart("Verified.")])
 
     executor._save_message = AsyncMock(side_effect=_saved_message)
@@ -144,16 +147,25 @@ async def test_native_skill_load_and_tool_result_are_streamed_and_persisted(exec
 
     calls = [chunk.tool_call.name for chunk in chunks if chunk.type == "tool_call"]
     results = [chunk.tool_result.tool_name for chunk in chunks if chunk.type == "tool_result"]
-    assert calls == ["load_capability", "search_tools", tool_name]
-    assert results == calls
+    assert [chunk.error for chunk in chunks if chunk.type == "error"] == []
+    assert calls == ["load_capability", "search_tools", "run_code", tool_name]
+    assert results == ["load_capability", "search_tools", tool_name, "run_code"]
     assert chunks[-1].type == "done"
     persisted_results = [
         call.kwargs for call in executor._save_message.await_args_list
         if call.kwargs.get("role") == MessageRole.TOOL
     ]
-    assert [row["tool_name"] for row in persisted_results] == calls
-    assert [row["tool_call_id"] for row in persisted_results] == ["load", "search", "read"]
-    assert executor._update_tool_call_message.await_count == 3
+    assert [row["tool_name"] for row in persisted_results] == results
+    nested_call = next(
+        chunk.tool_call for chunk in chunks
+        if chunk.type == "tool_call" and chunk.tool_call.name == tool_name
+    )
+    assert [row["tool_call_id"] for row in persisted_results] == ["load", "search", nested_call.id, "code"]
+    completed = [
+        call for call in executor._update_tool_call_message.await_args_list
+        if call.kwargs["tool_state"] == "completed"
+    ]
+    assert len(completed) == 4
     executor._execute_tool.assert_awaited_once()
     assert executor._execute_tool.await_args.args[0].name == ("read" if tool_name == "specialist_read" else tool_name)
     assert executor._execute_tool.await_args.args[1] is (owner if tool_name == "specialist_read" else agent)

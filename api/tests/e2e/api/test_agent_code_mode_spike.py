@@ -1,6 +1,6 @@
 """One real workflow dispatch from CodeMode in the existing autonomous loop.
 
-This spike adds capabilities only to this test's runtime. The single workflow
+The production Automatic policy supplies CodeMode without test injection. The single workflow
 job proves nested calls still cross the shared PostgreSQL executor boundary;
 schema, result-size, sandbox and cancellation cases live in the unit tests.
 """
@@ -22,8 +22,6 @@ from sqlalchemy import delete, select
 
 from src.models.orm.agent_runs import AgentRun, AgentRunStep
 from src.models.orm.executions import Execution
-from src.services.agent_runtime.budgets import build_runtime_capabilities
-from src.services.agent_runtime.code_mode import build_code_mode_capabilities
 from src.services.agent_runtime.composition import _qualified_tool_name
 from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
 from src.services.llm.base import LLMConfig
@@ -77,12 +75,6 @@ async def test_code_mode_dispatches_one_bound_workflow_on_existing_executors(
             return ModelResponse(parts=[TextPart("Bound workflow verified.")])
         return ModelResponse(parts=[part])
 
-    def spike_capabilities(budget, *, context_window):
-        return [
-            *build_runtime_capabilities(budget, context_window=context_window),
-            *build_code_mode_capabilities(tools=[tool_name]),
-        ]
-
     try:
         root_agent = await _load_agent(db_session, root["id"])
         db_session.add(AgentRun(
@@ -103,10 +95,6 @@ async def test_code_mode_dispatches_one_bound_workflow_on_existing_executors(
             patch(
                 "src.services.agent_runtime.model_factory.create_agent_model",
                 return_value=FunctionModel(respond),
-            ),
-            patch(
-                "src.services.execution.autonomous_agent_executor.build_runtime_capabilities",
-                side_effect=spike_capabilities,
             ),
         ):
             result = await executor.run(

@@ -39,6 +39,8 @@ DEFAULT_CODE_MODE_MAX_RETRIES = 3
 CODE_MODE_INSTRUCTIONS = """Use run_code as an execution boundary: printed output AND the final expression are
 sent to the model. A bare tool call or a variable containing a full response as the last expression
 returns that whole response. Keep intermediate records inside code.
+Sandbox variables are local to the current run. On a later chat turn, use persisted compact
+receipts and identifiers; do not assume earlier variables survive or repeat completed mutations.
 
 After discovering exact callable names and input schemas, complete a related read phase in one
 snippet: fetch, decode, extract identifiers, perform dependent reads, then filter/project/aggregate.
@@ -85,6 +87,7 @@ class _CodeModeResultBoundary(AbstractCapability[object]):
         # active. ContextVar propagation keeps the exception local to those
         # calls, including awaits, and resets before another model tool runs.
         with unbounded_model_tool_results() as scope:
+            scope.outer_tool_call_id = call.tool_call_id
             try:
                 result = await handler(args)
             except BaseException:

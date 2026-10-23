@@ -65,6 +65,7 @@ from src.services.agent_runtime import (
 )
 from src.services.agent_runtime.empty_output import EmptyOutputCircuitBreaker
 from src.services.agent_runtime.composition import build_agent_composition
+from src.services.agent_runtime.tool_policy import build_automatic_code_mode_capabilities
 from src.services.ai_behavior_service import (
     AGENT_EXECUTION_MODE_METADATA_KEY,
     AgentExecutionMode,
@@ -742,6 +743,14 @@ class AutonomousAgentExecutor:
         # Usage for every attempt — including rejected ones — is already
         # charged to the shared UsageLimits ledger by ObservedModel.
         empty_output_guard = EmptyOutputCircuitBreaker()
+        automatic_code_mode_capabilities = (
+            build_automatic_code_mode_capabilities(
+                has_tool_search=composition is not None,
+            )
+                if self._agent_execution_mode == "automatic"
+                and (tool_definitions or composition is not None)
+            else []
+        )
         runtime = PydanticAgent(
             chain.model,
             system_prompt=build_agent_system_prompt(
@@ -754,6 +763,7 @@ class AutonomousAgentExecutor:
                 empty_output_guard,
                 *(composition.capabilities(execute_tool, record_tool_event)
                   if composition is not None else []),
+                *automatic_code_mode_capabilities,
             ],
             model_settings=chain.primary_settings,
             # One bounded correction for malformed tool names/arguments. The

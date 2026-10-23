@@ -47,11 +47,17 @@ class CodeModeToolResultScope:
     """State shared by one outer CodeMode call and its nested dispatches."""
 
     cancellation: AgentRunCancelled | None = None
+    outer_tool_call_id: str | None = None
 
 
 _CODE_MODE_TOOL_RESULT_SCOPE: ContextVar[CodeModeToolResultScope | None] = ContextVar(
     "code_mode_tool_result_scope", default=None
 )
+
+
+def get_code_mode_tool_result_scope() -> CodeModeToolResultScope | None:
+    """Return the current outer CodeMode scope, if this is a nested dispatch."""
+    return _CODE_MODE_TOOL_RESULT_SCOPE.get()
 
 
 @contextmanager
@@ -122,6 +128,8 @@ class BifrostToolset(AbstractToolset[object]):
                     name=definition.name,
                     description=definition.description,
                     parameters_json_schema=definition.parameters,
+                    return_schema=definition.return_schema,
+                    include_return_schema=definition.return_schema is not None,
                     sequential=True,
                 ),
                 max_retries=0,

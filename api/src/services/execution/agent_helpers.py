@@ -13,7 +13,7 @@ from src.models.orm.external_mcp import (
     MCPConnection,
     MCPServer,
 )
-from src.services.llm import ToolDefinition
+from src.services.llm.base import ToolDefinition, bifrost_adapter_return_schema
 from src.services.mcp_client.auth_resolution import service_token_binding_error
 from src.services.tool_registry import ToolRegistry
 
@@ -157,6 +157,7 @@ async def resolve_agent_tools(
                     name=t["id"],
                     description=t["description"],
                     parameters=t["parameters"],
+                    return_schema=bifrost_adapter_return_schema(),
                 )
                 seen_names[td.name] = f"system tool '{td.name}'"
                 tool_definitions.append(td)
@@ -177,6 +178,7 @@ async def resolve_agent_tools(
                         name=td.name,
                         description=td.description,
                         parameters=td.parameters,
+                        return_schema=bifrost_adapter_return_schema(),
                     )
                 )
             else:
@@ -206,6 +208,7 @@ async def resolve_agent_tools(
                             },
                             "required": ["task"],
                         },
+                        return_schema=bifrost_adapter_return_schema(),
                     )
                 )
 
@@ -315,6 +318,7 @@ async def resolve_agent_tools(
                         name=qualified_name,
                         description=description,
                         parameters=parameters,
+                        return_schema=bifrost_adapter_return_schema(),
                     )
                 )
 
