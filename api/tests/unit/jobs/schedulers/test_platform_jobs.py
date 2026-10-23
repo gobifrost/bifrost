@@ -31,6 +31,10 @@ from src.models.orm.solutions import Solution
 from src.services.platform_jobs import enqueue_platform_job
 
 
+
+# A free budget every test job fits.
+AMPLE = 2**40
+
 async def _queued_job(db_session: AsyncSession) -> PlatformJob:
     await db_session.execute(delete(PlatformJob))
     await db_session.commit()
@@ -180,7 +184,7 @@ async def test_default_claim_ignores_kubernetes_backend_jobs(
 ) -> None:
     job = await _queued_remote_build_job(db_session)
 
-    assert await scheduler.claim_platform_job() is None
+    assert await scheduler.claim_platform_job(fits_bytes=AMPLE) is None
     await db_session.refresh(job)
     assert job.status == "queued"
     assert job.lease_token is None
@@ -273,7 +277,7 @@ async def test_type_concurrency_limit_counts_opposite_backend_jobs(
     )
     monkeypatch.setattr(registry, "get_platform_job_definition", lambda _type: limited)
 
-    assert await scheduler.claim_platform_job(backend="local") is None
+    assert await scheduler.claim_platform_job(backend="local", fits_bytes=AMPLE) is None
     await db_session.refresh(queued)
     assert queued.status == "queued"
     assert queued.lease_token is None
@@ -292,7 +296,7 @@ async def test_resource_lock_counts_opposite_backend_jobs(
     queued.execution_backend = "local"
     queued.resource_lock_key = "application:shared"
 
-    assert await scheduler.claim_platform_job(backend="local") is None
+    assert await scheduler.claim_platform_job(backend="local", fits_bytes=AMPLE) is None
     await db_session.refresh(queued)
     assert queued.status == "queued"
     assert queued.lease_token is None
@@ -394,7 +398,7 @@ async def test_claim_assigns_fenced_lease(
     db_session: AsyncSession,
 ) -> None:
     job = await _queued_job(db_session)
-    claim = await scheduler.claim_platform_job()
+    claim = await scheduler.claim_platform_job(fits_bytes=AMPLE)
     assert claim is not None
     assert claim.id == job.id
     await db_session.refresh(job)
@@ -404,7 +408,7 @@ async def test_claim_assigns_fenced_lease(
     assert job.lease_owner
     assert job.lease_expires_at is not None
 
-    assert await scheduler.claim_platform_job() is None
+    assert await scheduler.claim_platform_job(fits_bytes=AMPLE) is None
 
 
 @pytest.mark.asyncio
@@ -435,8 +439,8 @@ async def test_concurrent_replicas_claim_each_row_once(
     )
 
     claims = await asyncio.gather(
-        scheduler.claim_platform_job(),
-        scheduler.claim_platform_job(),
+        scheduler.claim_platform_job(fits_bytes=AMPLE),
+        scheduler.claim_platform_job(fits_bytes=AMPLE),
     )
     claimed = [claim for claim in claims if claim is not None]
 
@@ -659,42 +663,39 @@ async def test_final_expired_lease_fails_linked_solution_export_and_clears_optio
 
 
 @pytest.mark.asyncio
-async def test_memory_admission_defers_without_claiming(
+async def test_a_job_larger_than_the_free_budget_waits_for_executor_memory(
     db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     job = await _queued_job(db_session)
     mib = 1024 * 1024
-    monkeypatch.setattr(
-        scheduler,
-        "get_cgroup_memory",
-        lambda: (900 * mib, 1024 * mib),
-    )
-    assert await scheduler.claim_platform_job() is None
+    job.memory_required_bytes = 512 * mib
+
+    assert await scheduler.claim_platform_job(fits_bytes=256 * mib) is None
     await db_session.refresh(job)
     assert job.status == "queued"
-    assert job.phase == "Waiting for scheduler memory"
+    assert job.phase == "Waiting for executor memory"
     assert job.lease_token is None
 
 
 @pytest.mark.asyncio
-async def test_memory_admission_uses_persisted_requirement(
+async def test_a_job_that_fits_the_free_budget_is_claimed(
     db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     job = await _queued_job(db_session)
     mib = 1024 * 1024
     job.memory_required_bytes = 128 * mib
-    monkeypatch.setattr(
-        scheduler,
-        "get_cgroup_memory",
-        lambda: (850 * mib, 1024 * mib),
-    )
 
-    claim = await scheduler.claim_platform_job()
+    claim = await scheduler.claim_platform_job(fits_bytes=128 * mib)
 
     assert claim is not None
     assert claim.id == job.id
+    assert claim.memory_required_bytes == 128 * mib
+
+
+@pytest.mark.asyncio
+async def test_a_local_claim_needs_the_free_budget() -> None:
+    with pytest.raises(ValueError):
+        await scheduler.claim_platform_job(backend="local")
 
 
 @pytest.mark.asyncio
@@ -718,7 +719,7 @@ async def test_claims_highest_priority_first(db_session: AsyncSession) -> None:
         action_url=None,
     )
 
-    claim = await scheduler.claim_platform_job()
+    claim = await scheduler.claim_platform_job(fits_bytes=AMPLE)
 
     assert claim is not None
     assert claim.id == high.id
@@ -752,8 +753,8 @@ async def test_resource_lock_serializes_matching_jobs(
         action_url=None,
     )
 
-    first_claim = await scheduler.claim_platform_job()
-    second_claim = await scheduler.claim_platform_job()
+    first_claim = await scheduler.claim_platform_job(fits_bytes=AMPLE)
+    second_claim = await scheduler.claim_platform_job(fits_bytes=AMPLE)
 
     assert first_claim is not None
     assert first_claim.id in {first.id, second.id}
@@ -812,7 +813,7 @@ async def test_blocked_jobs_do_not_starve_runnable_job_beyond_first_twenty(
         action_url=None,
     )
 
-    claim = await scheduler.claim_platform_job()
+    claim = await scheduler.claim_platform_job(fits_bytes=AMPLE)
 
     assert claim is not None
     assert claim.id == runnable.id
@@ -845,8 +846,8 @@ async def test_type_concurrency_limit_is_enforced(
     )
     monkeypatch.setattr(registry, "get_platform_job_definition", lambda _type: limited)
 
-    assert await scheduler.claim_platform_job() is not None
-    assert await scheduler.claim_platform_job() is None
+    assert await scheduler.claim_platform_job(fits_bytes=AMPLE) is not None
+    assert await scheduler.claim_platform_job(fits_bytes=AMPLE) is None
 
 
 @pytest.mark.asyncio
@@ -872,8 +873,8 @@ async def test_publish_jobs_serialize_at_concurrency_one_by_default(
             action_url=None,
         )
 
-    assert await scheduler.claim_platform_job() is not None
-    assert await scheduler.claim_platform_job() is None
+    assert await scheduler.claim_platform_job(fits_bytes=AMPLE) is not None
+    assert await scheduler.claim_platform_job(fits_bytes=AMPLE) is None
 
 
 @pytest.mark.asyncio
@@ -915,13 +916,14 @@ async def test_timeout_stops_child_and_requeues_fenced_attempt(
         timedelta(hours=1),
     )
     job = await _queued_job(db_session)
-    claim = await scheduler.claim_platform_job()
+    claim = await scheduler.claim_platform_job(fits_bytes=AMPLE)
     assert claim is not None
     claim = scheduler.ClaimedPlatformJob(
         id=claim.id,
         lease_token=claim.lease_token,
         timeout_seconds=1,
         hard_memory_ratio=0.95,
+        memory_required_bytes=0,
     )
 
     class NeverExits:
@@ -964,7 +966,7 @@ async def test_hard_memory_pressure_stops_child_and_requeues_attempt(
         timedelta(hours=1),
     )
     job = await _queued_job(db_session)
-    claim = await scheduler.claim_platform_job()
+    claim = await scheduler.claim_platform_job(fits_bytes=AMPLE)
     assert claim is not None
 
     class NeverExits:
@@ -997,28 +999,6 @@ async def test_hard_memory_pressure_stops_child_and_requeues_attempt(
 
 
 @pytest.mark.asyncio
-async def test_worker_loop_drains_jobs_before_waiting(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    shutdown = asyncio.Event()
-    calls = 0
-
-    async def process_once(active: set | None = None) -> tuple[int, int]:
-        nonlocal calls
-        calls += 1
-        if calls == 3:
-            shutdown.set()
-            return 0, 0
-        return 1, 0
-
-    monkeypatch.setattr(scheduler, "process_platform_jobs", process_once)
-
-    await scheduler.platform_job_worker_loop(shutdown, idle_seconds=0.001)
-
-    assert calls == 3
-
-
-@pytest.mark.asyncio
 async def test_cancelling_worker_stops_active_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1046,6 +1026,7 @@ async def test_cancelling_worker_stops_active_child(
         lease_token=uuid4(),
         timeout_seconds=60,
         hard_memory_ratio=0.95,
+        memory_required_bytes=0,
     )
 
     task = asyncio.create_task(scheduler.run_claimed_platform_job(claim))
@@ -1097,8 +1078,8 @@ async def test_settings_concurrency_override_replaces_policy_default(
         "application.deploy", 2, updated_by="test"
     )
 
-    assert await scheduler.claim_platform_job() is not None
-    assert await scheduler.claim_platform_job() is not None
+    assert await scheduler.claim_platform_job(fits_bytes=AMPLE) is not None
+    assert await scheduler.claim_platform_job(fits_bytes=AMPLE) is not None
 
     await db_session.execute(delete(PlatformJob))
     await _enqueue_deploy()
@@ -1107,8 +1088,8 @@ async def test_settings_concurrency_override_replaces_policy_default(
         "application.deploy", 1, updated_by="test"
     )
 
-    assert await scheduler.claim_platform_job() is not None
-    assert await scheduler.claim_platform_job() is None
+    assert await scheduler.claim_platform_job(fits_bytes=AMPLE) is not None
+    assert await scheduler.claim_platform_job(fits_bytes=AMPLE) is None
 
     # Restore the code default so later suites see a pristine state.
     await service.set_job_type_concurrency(

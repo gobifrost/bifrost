@@ -30,6 +30,7 @@ from src.models.orm.scheduler_diagnostics import (
     SystemDiagnosticLog,
 )
 from src.models.orm.scheduler_leases import SchedulerLease
+from src.services.platform_jobs import WAITING_FOR_MEMORY
 from src.scheduler.leadership import TRIGGER_LEASE_NAME
 from src.scheduler.registry import SCHEDULED_TASKS, SCHEDULED_TASKS_BY_ID
 from src.services.scheduler_diagnostics import (
@@ -117,7 +118,7 @@ async def get_scheduler_diagnostics(
             id=row.id,
             hostname=row.hostname,
             pid=row.pid,
-            job_slots=row.job_slots,
+            runs_platform_jobs=row.job_slots > 0,
             is_leader=row.id == leader_owner,
             online=row.last_heartbeat_at >= online_cutoff,
             started_at=row.started_at,
@@ -129,10 +130,10 @@ async def get_scheduler_diagnostics(
         )
         for row in replica_rows
     ]
-    # Capacity describes platform-job execution. API control replicas report
-    # zero slots and stay in the replica list, but not in these figures.
+    # Capacity describes platform-job execution. API control replicas run
+    # none and stay in the replica list, but not in these figures.
     online_replicas = [
-        replica for replica in replicas if replica.online and replica.job_slots > 0
+        replica for replica in replicas if replica.online and replica.runs_platform_jobs
     ]
 
     state_rows = {
@@ -204,11 +205,10 @@ async def get_scheduler_diagnostics(
     ]
     capacity = SchedulerCapacityStatus(
         replicas_online=len(online_replicas),
-        slots_total=sum(replica.job_slots for replica in online_replicas),
-        slots_running=sum(replica.active_platform_jobs for replica in online_replicas),
+        platform_jobs_running=sum(replica.active_platform_jobs for replica in online_replicas),
         jobs_queued=len(queued_rows),
         jobs_waiting_for_memory=sum(
-            1 for _, phase in queued_rows if phase == "Waiting for scheduler memory"
+            1 for _, phase in queued_rows if phase == WAITING_FOR_MEMORY
         ),
         oldest_queued_seconds=oldest_queued_seconds,
         max_memory_utilization_percent=max(utilization) if utilization else None,

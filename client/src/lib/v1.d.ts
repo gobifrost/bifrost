@@ -26350,10 +26350,8 @@ export interface components {
         SchedulerCapacityStatus: {
             /** Replicas Online */
             replicas_online: number;
-            /** Slots Total */
-            slots_total: number;
-            /** Slots Running */
-            slots_running: number;
+            /** Platform Jobs Running */
+            platform_jobs_running: number;
             /** Jobs Queued */
             jobs_queued: number;
             /** Jobs Waiting For Memory */
@@ -26397,8 +26395,8 @@ export interface components {
             hostname: string;
             /** Pid */
             pid: number;
-            /** Job Slots */
-            job_slots: number;
+            /** Runs Platform Jobs */
+            runs_platform_jobs: boolean;
             /** Is Leader */
             is_leader: boolean;
             /** Online */

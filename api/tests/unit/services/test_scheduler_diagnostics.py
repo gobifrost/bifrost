@@ -56,7 +56,7 @@ async def test_records_replica_schedule_run_and_curated_logs(
         replica_id=replica_id,
         hostname="scheduler-1",
         pid=42,
-        job_slots=2,
+        runs_platform_jobs=True,
         started_at=now,
     )
     await diagnostics.publish_task_states(
@@ -83,7 +83,7 @@ async def test_records_replica_schedule_run_and_curated_logs(
     assert replica is not None
     assert replica.memory_current_bytes == 600
     assert replica.memory_limit_bytes == 1000
-    assert replica.job_slots == 2
+    assert replica.job_slots == 1
 
     state = await db_session.get(SchedulerTaskState, task_id)
     assert state is not None
@@ -121,7 +121,7 @@ async def test_scheduler_snapshot_explains_capacity_pressure(
         replica_id=replica_id,
         hostname="scheduler-1",
         pid=42,
-        job_slots=2,
+        runs_platform_jobs=True,
         started_at=now,
     )
     response = await get_scheduler_diagnostics(
@@ -131,10 +131,10 @@ async def test_scheduler_snapshot_explains_capacity_pressure(
 
     replica = next(item for item in response.replicas if item.id == replica_id)
     assert response.capacity.replicas_online >= 1
-    assert response.capacity.slots_total >= 2
+    assert response.capacity.replicas_online >= 1
     assert response.capacity.max_memory_utilization_percent is not None
     assert response.capacity.max_memory_utilization_percent >= 60
-    assert replica.job_slots == 2
+    assert replica.runs_platform_jobs is True
     assert replica.active_platform_jobs == 0
     assert {task.task_id for task in response.tasks} >= {
         "oauth_token_refresh",
@@ -185,7 +185,7 @@ async def test_scheduler_snapshot_drops_expired_replicas(
         replica_id=f"scheduler-live-{uuid4().hex}",
         hostname="scheduler-live",
         pid=43,
-        job_slots=1,
+        runs_platform_jobs=True,
         started_at=now,
     )
     assert await db_session.get(SchedulerReplica, expired_id) is None

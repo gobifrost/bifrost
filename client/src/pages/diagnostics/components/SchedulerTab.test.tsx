@@ -23,8 +23,7 @@ vi.mock("@/services/schedulerDiagnostics", async () => {
 			},
 			capacity: {
 				replicas_online: 2,
-				slots_total: 2,
-				slots_running: 2,
+				platform_jobs_running: 2,
 				jobs_queued: 3,
 				jobs_waiting_for_memory: 1,
 				oldest_queued_seconds: 180,
@@ -35,7 +34,7 @@ vi.mock("@/services/schedulerDiagnostics", async () => {
 					id: "scheduler-a",
 					hostname: "scheduler-1",
 					pid: 1,
-					job_slots: 2,
+					runs_platform_jobs: true,
 					is_leader: true,
 					online: true,
 					started_at: "2026-08-05T21:00:00Z",
@@ -152,7 +151,7 @@ describe("SchedulerTab", () => {
 		).toBeInTheDocument();
 		expect(screen.getByText("Scheduler Replicas")).toBeInTheDocument();
 		expect(screen.getByText(/waiting for memory/i)).toBeInTheDocument();
-		expect(screen.getByText(/Add scheduler replicas/i)).toBeInTheDocument();
+		expect(screen.getByText("2 platform jobs running")).toBeInTheDocument();
 		await user.click(screen.getByRole("tab", { name: "System Schedules" }));
 		expect(
 			(await screen.findAllByText("Refresh Expiring OAuth Tokens"))[0],

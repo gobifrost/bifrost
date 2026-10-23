@@ -7,8 +7,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
-from src.jobs.schedulers import platform_jobs
 from src.services.memory_requests import MIB, MemoryBudget
+from src.worker import pool_main
 from src.worker.pool_main import PoolClaim, PoolWorker
 
 GIB = 1024 * MIB
@@ -42,22 +42,36 @@ def test_services_and_platform_jobs_keep_an_executor_busy_but_free_no_run_slots(
     assert with_job.active_runs() == 0
 
 
-async def test_a_platform_job_is_active_only_while_it_runs(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    claim = SimpleNamespace(id=uuid4())
-    seen_during_run: list[bool] = []
-    active: set = set()
+async def test_a_platform_job_holds_its_memory_only_while_it_runs(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from src.services.memory_requests import MemoryBudget
+
+    worker = _worker_with_pool()
+    worker.budget = MemoryBudget(limit_bytes=2 * GIB, baseline_bytes=0, threshold=0.5)
+    claim = SimpleNamespace(id=uuid4(), memory_required_bytes=300 * 2**20)
+    seen: list[tuple[bool, int]] = []
+    fits: list[int] = []
+
+    async def claim_platform_job(*, backend, fits_bytes):  # type: ignore[no-untyped-def]
+        fits.append(fits_bytes)
+        return claim if len(fits) == 1 else None
 
     async def run(claimed) -> bool:  # type: ignore[no-untyped-def]
-        seen_during_run.append(claimed.id in active)
+        seen.append((claimed.id in worker._platform_jobs, worker._held_bytes()))
+        worker._platform_stop.set()
         return True
 
-    monkeypatch.setattr(platform_jobs, "recover_expired_platform_jobs", AsyncMock(return_value=(0, 0)))
-    monkeypatch.setattr(platform_jobs, "claim_platform_job", AsyncMock(return_value=claim))
-    monkeypatch.setattr(platform_jobs, "run_claimed_platform_job", run)
+    monkeypatch.setattr(pool_main, "recover_expired_platform_jobs", AsyncMock(return_value=(0, 0)))
+    monkeypatch.setattr(pool_main, "claim_platform_job", claim_platform_job)
+    monkeypatch.setattr(pool_main, "run_claimed_platform_job", run)
+    monkeypatch.setattr(pool_main, "under_pressure", lambda threshold: False)
 
-    assert await platform_jobs.process_platform_jobs(active) == (1, 0)
-    assert seen_during_run == [True]
-    assert active == set()
+    await worker._platform_job_loop()
+    await asyncio.sleep(0)
+
+    assert fits[0] == GIB
+    assert seen == [(True, 300 * 2**20)]
+    assert worker._platform_jobs == set()
+    assert worker._held_bytes() == 0
 
 
 async def test_draining_hands_services_over_first_and_waits_for_platform_jobs(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -146,7 +160,7 @@ async def test_the_process_pool_is_ready_before_any_work_is_claimed(monkeypatch)
 
     for name in ("init_db", "wait_for_schema", "close_db", "begin_drain", "retire_worker",
                  "remove_scheduler_replica", "replica_heartbeat_loop",
-                 "platform_job_worker_loop"):
+                 "recover_expired_platform_jobs", "claim_platform_job"):
         monkeypatch.setattr(pool_main, name, AsyncMock())
     monkeypatch.setattr(pool_main, "get_engine", lambda *args: None)
     monkeypatch.setattr(pool_main, "register_static_worker", AsyncMock(return_value=uuid4()))

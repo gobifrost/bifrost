@@ -17,7 +17,6 @@ from sqlalchemy import func, or_, select, text
 
 from src.config import get_settings
 from src.core.database import get_db_context
-from src.jobs.platform.base import PlatformJobPolicy
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solution_export_jobs import SolutionExportJob
 from src.services.execution.memory_monitor import get_cgroup_memory
@@ -25,6 +24,7 @@ from src.services.platform_job_memory_profiles import (
     record_platform_job_memory_profile,
 )
 from src.services.platform_jobs import (
+    WAITING_FOR_MEMORY,
     publish_platform_job_update,
 )
 
@@ -32,7 +32,6 @@ LEASE_DURATION = timedelta(seconds=30)
 HEARTBEAT_INTERVAL_SECONDS = 5
 RUNNER_TERMINATE_GRACE_SECONDS = 5
 RUNNER_RETRY_DELAY = timedelta(seconds=5)
-PLATFORM_JOB_IDLE_SECONDS = 2.0
 
 logger = logging.getLogger(__name__)
 
@@ -85,21 +84,6 @@ async def _fail_linked_solution_export(
     export.failure_message = "Backup export runner stopped before completion"
     export.encrypted_options = None
     export.completed_at = completed_at
-
-
-def _memory_allows_start(
-    policy: PlatformJobPolicy,
-    *,
-    memory_required_bytes: int,
-) -> bool:
-    current, limit = get_cgroup_memory()
-    if current < 0 or limit <= 0:
-        return True
-    headroom_bytes = max(limit - current, 0)
-    return (
-        current / limit <= policy.admission_memory_ratio
-        and headroom_bytes >= memory_required_bytes
-    )
 
 
 def _memory_exceeds_hard_limit(hard_ratio: float) -> bool:
@@ -169,6 +153,7 @@ class ClaimedPlatformJob:
     lease_token: UUID
     timeout_seconds: int
     hard_memory_ratio: float
+    memory_required_bytes: int
     job_type: str = ""
 
 
@@ -184,10 +169,18 @@ def _remote_job_name(job_id: UUID, lease_token: UUID) -> str:
 async def claim_platform_job(
     *,
     backend: str = "local",
+    fits_bytes: int | None = None,
     remote_limit: int = 2,
     remote_memory_bytes: int = 1024 * 1024 * 1024,
 ) -> ClaimedPlatformJob | None:
-    """Claim one admissible queued job using row locking and a fenced lease."""
+    """Claim one admissible queued job using row locking and a fenced lease.
+
+    A local job is claimed only when its memory requirement fits
+    ``fits_bytes``, the claiming executor's free budget
+    (src.services.memory_requests); it waits otherwise.
+    """
+    if backend == "local" and fits_bytes is None:
+        raise ValueError("A local platform-job claim needs the executor's free budget")
     updated: list[PlatformJob] = []
     async with get_db_context() as db:
         candidate_ids = (
@@ -316,12 +309,9 @@ async def claim_platform_job(
                         job.revision += 1
                         updated.append(job)
                     continue
-            elif not _memory_allows_start(
-                definition.policy,
-                memory_required_bytes=job.memory_required_bytes,
-            ):
-                if job.phase != "Waiting for scheduler memory":
-                    job.phase = "Waiting for scheduler memory"
+            elif fits_bytes is not None and job.memory_required_bytes > fits_bytes:
+                if job.phase != WAITING_FOR_MEMORY:
+                    job.phase = WAITING_FOR_MEMORY
                     job.revision += 1
                     updated.append(job)
                 continue
@@ -365,6 +355,7 @@ async def claim_platform_job(
                 lease_token=token,
                 timeout_seconds=job.timeout_seconds,
                 hard_memory_ratio=definition.policy.hard_memory_ratio,
+                memory_required_bytes=job.memory_required_bytes,
                 job_type=job.job_type,
             )
             for changed_job in updated:
@@ -576,57 +567,10 @@ async def run_claimed_platform_job(claim: ClaimedPlatformJob) -> bool:
     return False
 
 
-async def process_platform_jobs(active: set[UUID] | None = None) -> tuple[int, int]:
-    """Recover expired leases, then run at most one queued platform job.
-
-    ``active`` holds the ids of jobs this host is running, for a host that
-    must not retire while it runs one (an executor).
-    """
-    recovered, recovery_failures = await recover_expired_platform_jobs()
-    claim = await claim_platform_job(backend="local")
-    if claim is None:
-        return recovered, recovery_failures
-    running = active if active is not None else set()
-    running.add(claim.id)
-    try:
-        succeeded = await run_claimed_platform_job(claim)
-    finally:
-        running.discard(claim.id)
-    return recovered + 1, recovery_failures + (0 if succeeded else 1)
-
-
-async def platform_job_worker_loop(
-    shutdown_event: asyncio.Event,
-    *,
-    idle_seconds: float = PLATFORM_JOB_IDLE_SECONDS,
-    active: set[UUID] | None = None,
-) -> None:
-    """Continuously claim one job at a time for this host."""
-    while not shutdown_event.is_set():
-        processed = 0
-        try:
-            processed, _ = await process_platform_jobs(active)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Platform-job worker iteration failed")
-
-        if processed:
-            continue
-
-        try:
-            await asyncio.wait_for(shutdown_event.wait(), timeout=idle_seconds)
-        except TimeoutError:
-            # The idle interval elapsed; the next loop iteration may claim work.
-            continue
-
-
 __all__ = [
     "HEARTBEAT_INTERVAL_SECONDS",
     "LEASE_DURATION",
     "claim_platform_job",
-    "platform_job_worker_loop",
-    "process_platform_jobs",
     "recover_expired_platform_jobs",
     "run_claimed_platform_job",
 ]

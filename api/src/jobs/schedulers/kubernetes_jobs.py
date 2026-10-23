@@ -121,6 +121,7 @@ class KubernetesBuildController:
             claim = ClaimedPlatformJob(
                 id=row.id, lease_token=token, timeout_seconds=row.timeout_seconds,
                 hard_memory_ratio=definition.policy.hard_memory_ratio,
+                memory_required_bytes=row.memory_required_bytes,
                 job_type=row.job_type,
             )
             manifest = build_job_manifest(claim, self.settings)

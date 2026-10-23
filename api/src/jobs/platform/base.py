@@ -17,7 +17,6 @@ class PlatformJobPolicy:
     retry_on_runner_loss: bool = True
     retry_on_failure: bool = False
     min_memory_headroom_mb: int = 256
-    admission_memory_ratio: float = 0.85
     hard_memory_ratio: float = 0.95
     allow_running_cancellation: bool = False
     execution_class: Literal["default", "build"] = "default"

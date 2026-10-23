@@ -39,6 +39,7 @@ def _claim() -> ClaimedPlatformJob:
         lease_token=UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
         timeout_seconds=900,
         hard_memory_ratio=1.0,
+        memory_required_bytes=256 * 2**20,
     )
 
 

@@ -48,16 +48,6 @@ export function schedulerRecommendations(
 			`Scheduler memory reached ${capacity.max_memory_utilization_percent.toFixed(0)}%. Add memory before admitting larger jobs.`,
 		);
 	}
-	if (
-		capacity.jobs_queued > 0 &&
-		capacity.slots_total > 0 &&
-		capacity.slots_running >= capacity.slots_total &&
-		(capacity.oldest_queued_seconds ?? 0) >= 60
-	) {
-		recommendations.push(
-			`All ${capacity.slots_total} scheduler slots are busy and the oldest job has waited ${Math.round((capacity.oldest_queued_seconds ?? 0) / 60)} minute(s). Add scheduler replicas.`,
-		);
-	}
 	return recommendations;
 }
 
@@ -246,7 +236,7 @@ export function SchedulerTab() {
 					<StatCard
 						title="Replicas"
 						value={`${data.capacity.replicas_online}`}
-						detail={`${data.capacity.slots_running} of ${data.capacity.slots_total} job slots busy`}
+						detail={`${data.capacity.platform_jobs_running} platform job${data.capacity.platform_jobs_running === 1 ? "" : "s"} running`}
 						icon={Server}
 					/>
 					<StatCard

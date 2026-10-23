@@ -40,7 +40,7 @@ class TestSchedulerDiagnostics:
             time.sleep(0.25)
 
         assert body["leader"]["healthy"]
-        assert body["capacity"]["slots_total"] >= 1
+        assert body["capacity"]["replicas_online"] >= 1
         tasks = {task["task_id"]: task for task in body["tasks"]}
         expected = {
             "schedule_processor",
@@ -162,11 +162,10 @@ async def test_api_control_replicas_are_listed_but_not_counted_as_capacity(
         replicas = {replica["id"]: replica for replica in body["replicas"]}
         executors = [
             replica for replica in replicas.values()
-            if replica["online"] and replica["job_slots"] > 0
+            if replica["online"] and replica["runs_platform_jobs"]
         ]
-        assert replicas[replica_id]["job_slots"] == 0
+        assert replicas[replica_id]["runs_platform_jobs"] is False
         assert body["capacity"]["replicas_online"] == len(executors)
-        assert body["capacity"]["slots_total"] == sum(r["job_slots"] for r in executors)
         # The control replica's 90% memory never reads as scheduler pressure.
         assert (body["capacity"]["max_memory_utilization_percent"] or 0) < 90
     finally:

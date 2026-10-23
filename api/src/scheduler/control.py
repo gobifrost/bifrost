@@ -88,7 +88,7 @@ async def wait_or_stop(stop_event: asyncio.Event, seconds: float) -> None:
 async def replica_heartbeat_loop(
     *,
     replica_id: str,
-    job_slots: int,
+    runs_platform_jobs: bool,
     stop_event: asyncio.Event,
 ) -> None:
     """Publish this process to Diagnostics until stopped."""
@@ -99,7 +99,7 @@ async def replica_heartbeat_loop(
                 replica_id=replica_id,
                 hostname=socket.gethostname(),
                 pid=os.getpid(),
-                job_slots=job_slots,
+                runs_platform_jobs=runs_platform_jobs,
                 started_at=started_at,
             )
         except asyncio.CancelledError:

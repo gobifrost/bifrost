@@ -38,6 +38,8 @@ from src.services.notification_service import get_notification_service
 logger = logging.getLogger(__name__)
 ACTIVE_PLATFORM_JOB_STATUSES = ("queued", "running", "waiting", "cancel_requested")
 TERMINAL_PLATFORM_JOB_STATUSES = ("succeeded", "failed", "cancelled", "requires_action")
+# A queued local job whose memory requirement no executor's free budget holds yet.
+WAITING_FOR_MEMORY = "Waiting for executor memory"
 
 #: Job types eligible for Kubernetes placement when the build backend is
 #: enabled. Mirrors the config default so partial settings doubles in tests

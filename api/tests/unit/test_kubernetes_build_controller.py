@@ -19,6 +19,7 @@ from src.jobs.schedulers.platform_jobs import ClaimedPlatformJob
 def fixture(monkeypatch):
     now = datetime.now(timezone.utc)
     row = SimpleNamespace(
+        memory_required_bytes=256 * 2**20,
         id=uuid4(), lease_token=uuid4(), job_type="application.deploy",
         execution_backend="kubernetes", kubernetes_namespace="test", status="running", timeout_seconds=120,
         kubernetes_job_uid=None, kubernetes_pod_uid=None, runner_started_at=None,
@@ -53,7 +54,7 @@ def fixture(monkeypatch):
     client.namespace = "test"
     client.get_job.return_value = None
     client.list_pods.return_value = []
-    claim = ClaimedPlatformJob(row.id, row.lease_token, 120, 0.95)
+    claim = ClaimedPlatformJob(row.id, row.lease_token, 120, 0.95, row.memory_required_bytes)
     manifest = build_job_manifest(claim, settings)
     remote = {**manifest, "metadata": {**manifest["metadata"], "uid": "job-uid"}}
     client.create_job.return_value = remote

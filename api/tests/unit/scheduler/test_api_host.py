@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.scheduler import api_host
-from src.scheduler.api_host import API_CONTROL_JOB_SLOTS, ApiControlHost
+from src.scheduler.api_host import ApiControlHost
 
 
 class FakeControl:
@@ -66,7 +66,7 @@ async def test_api_serves_before_control_joins_after_schema_gate(
     await asyncio.wait_for(control.started.wait(), timeout=1)
     await asyncio.sleep(0)
     assert gated.heartbeats[0]["replica_id"] == "api-host:7"
-    assert gated.heartbeats[0]["job_slots"] == API_CONTROL_JOB_SLOTS == 0
+    assert gated.heartbeats[0]["runs_platform_jobs"] is False
 
     await host.stop()
     assert control.stops == 1

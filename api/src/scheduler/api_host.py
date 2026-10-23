@@ -25,8 +25,6 @@ from src.services.scheduler_diagnostics import remove_scheduler_replica
 
 logger = logging.getLogger(__name__)
 
-# API control replicas run no platform-job handlers.
-API_CONTROL_JOB_SLOTS = 0
 RESTART_BACKOFF_SECONDS = 30.0
 
 
@@ -97,7 +95,7 @@ class ApiControlHost:
         heartbeat = asyncio.create_task(
             replica_heartbeat_loop(
                 replica_id=self.control.owner_id,
-                job_slots=API_CONTROL_JOB_SLOTS,
+                runs_platform_jobs=False,
                 stop_event=heartbeat_stop,
             ),
             name="api-control-heartbeat",
@@ -136,4 +134,4 @@ class ApiControlHost:
             logger.exception("API platform control supervisor failed")
 
 
-__all__ = ["API_CONTROL_JOB_SLOTS", "ApiControlHost", "RESTART_BACKOFF_SECONDS"]
+__all__ = ["ApiControlHost", "RESTART_BACKOFF_SECONDS"]

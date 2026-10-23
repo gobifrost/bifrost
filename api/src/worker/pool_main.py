@@ -19,6 +19,7 @@ runs finish, retires and exits 0. SIGTERM drains the same way.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import signal
@@ -32,7 +33,11 @@ from shared.schema_gate import wait_for_schema
 from src.config import Settings, get_settings
 from src.core.database import close_db, get_engine, init_db
 from src.core.redis_client import PendingExecution
-from src.jobs.schedulers.platform_jobs import platform_job_worker_loop
+from src.jobs.schedulers.platform_jobs import (
+    claim_platform_job,
+    recover_expired_platform_jobs,
+    run_claimed_platform_job,
+)
 from src.scheduler.control import replica_heartbeat_loop
 from src.services.kubernetes_control import start_kubernetes_loops
 from src.services.scheduler_diagnostics import remove_scheduler_replica
@@ -68,8 +73,8 @@ logger = logging.getLogger(__name__)
 POLL_SECONDS = 1.0
 HEARTBEAT_SECONDS = 5.0
 DRAIN_GRACE_SECONDS = 300.0
-# Local platform jobs run one at a time per slot, as on a scheduler replica.
-PLATFORM_JOB_SLOTS = 2
+# How long the platform-job loop waits when nothing fits or is queued.
+PLATFORM_JOB_IDLE_SECONDS = 2.0
 
 
 def executor_database_settings(settings: Settings) -> Settings:
@@ -264,18 +269,12 @@ class PoolWorker:
             asyncio.create_task(
                 replica_heartbeat_loop(
                     replica_id=str(self.incarnation_id),
-                    job_slots=PLATFORM_JOB_SLOTS,
+                    runs_platform_jobs=True,
                     stop_event=self._platform_stop,
                 ),
                 name="pool-diagnostics-heartbeat",
             ),
-            *(
-                asyncio.create_task(
-                    platform_job_worker_loop(self._platform_stop, active=self._platform_jobs),
-                    name=f"pool-platform-job-{slot + 1}",
-                )
-                for slot in range(PLATFORM_JOB_SLOTS)
-            ),
+            asyncio.create_task(self._platform_job_loop(), name="pool-platform-jobs"),
         ]
         if self.static:
             # On an install whose executor container may manage Jobs (the
@@ -406,6 +405,47 @@ class PoolWorker:
             self._routing.discard(str(claim.subject_id))
             self._task_holds.pop(str(claim.dispatch_id), None)
             self.runs_handled += 1
+
+    async def _platform_job_loop(self) -> None:
+        """Claim local platform jobs while their memory fits the free budget.
+
+        Each claimed job runs in its own runner process and holds its memory
+        requirement until it ends, sharing the budget with runs.
+        """
+        running: set[asyncio.Task[None]] = set()
+        while not self._platform_stop.is_set():
+            claimed = False
+            try:
+                await recover_expired_platform_jobs()
+                if not self._under_memory_pressure():
+                    claim = await claim_platform_job(backend="local", fits_bytes=self._free_bytes())
+                    if claim is not None:
+                        claimed = True
+                        self._task_holds[str(claim.id)] = claim.memory_required_bytes
+                        self._platform_jobs.add(claim.id)
+                        task = asyncio.create_task(
+                            self._run_platform_job(claim), name=f"pool-platform-job-{claim.id}"
+                        )
+                        running.add(task)
+                        task.add_done_callback(running.discard)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Platform-job claim failed")
+            if not claimed:
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(
+                        self._platform_stop.wait(), timeout=PLATFORM_JOB_IDLE_SECONDS
+                    )
+
+    async def _run_platform_job(self, claim) -> None:  # type: ignore[no-untyped-def]
+        try:
+            await run_claimed_platform_job(claim)
+        except Exception:
+            logger.exception("Platform job runner failed", extra={"job_id": str(claim.id)})
+        finally:
+            self._platform_jobs.discard(claim.id)
+            self._task_holds.pop(str(claim.id), None)
 
     async def _wake_listener(self) -> None:
         """Turn acceptance hints into an immediate claim attempt."""

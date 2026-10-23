@@ -16,7 +16,8 @@ class SchedulerReplicaStatus(BaseModel):
     id: str
     hostname: str
     pid: int
-    job_slots: int
+    # Executors run platform jobs; API control replicas do not.
+    runs_platform_jobs: bool
     is_leader: bool
     online: bool
     started_at: datetime
@@ -55,8 +56,7 @@ class SchedulerTaskStatus(BaseModel):
 
 class SchedulerCapacityStatus(BaseModel):
     replicas_online: int
-    slots_total: int
-    slots_running: int
+    platform_jobs_running: int
     jobs_queued: int
     jobs_waiting_for_memory: int
     oldest_queued_seconds: float | None = None
