@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 import sys
 import time
 import uuid
@@ -159,7 +160,21 @@ async def _api_client():  # type: ignore[no-untyped-def]
         },
     )
     login.raise_for_status()
-    client.headers["Authorization"] = f"Bearer {login.json()['access_token']}"
+    token = login.json().get("access_token")
+    if not token:
+        # A production-mode stack: the seeded user has MFA (TOTP_SECRET).
+        import pyotp
+
+        verified = await client.post(
+            "/auth/mfa/login",
+            json={
+                "mfa_token": login.json()["mfa_token"],
+                "code": pyotp.TOTP(os.environ["TOTP_SECRET"]).now(),
+            },
+        )
+        verified.raise_for_status()
+        token = verified.json()["access_token"]
+    client.headers["Authorization"] = f"Bearer {token}"
     return client
 
 
