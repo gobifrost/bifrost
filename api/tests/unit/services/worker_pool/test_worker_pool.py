@@ -549,6 +549,56 @@ async def test_runs_of_a_lost_worker_end_visibly_and_are_not_replayed(db) -> Non
     assert execution.error_message == EXECUTOR_LOST
 
 
+async def test_a_run_lost_with_its_worker_learns_the_worker_s_budget(db) -> None:
+    """The lost run could not report what it used; most likely it ran the
+    executor out of memory, so its next run should fit an executor alone."""
+    from src.services.execution.workflow_dispatch import claim_workflow_dispatch
+
+    workflow = Workflow(
+        id=uuid4(), name=f"lost-{uuid4().hex[:8]}", function_name="main",
+        path="workflows/lost.py", type="workflow", is_active=True,
+        learned_memory_bytes=16 * MIB,
+    )
+    async with db.sessions() as session:
+        session.add(workflow)
+        await session.commit()
+    execution_id = str(uuid4())
+    await _publish_pending(
+        execution_id=execution_id, workflow_id=str(workflow.id), parameters={}, org_id=None,
+        user_id="00000000-0000-0000-0000-000000000001", user_name="Dev", user_email="",
+        form_id=None, startup=None, form_inputs={}, embed={}, api_key_id=None,
+        sync=False, is_platform_admin=True, file_path=None, lineage=None,
+    )
+    cluster = FakeCluster()
+    pool = controller.WorkerPoolController(cluster, SETTINGS, SPEC)  # type: ignore[arg-type]
+    [worker_id] = await pool.launch_for_demand()
+    await pool.reconcile_worker(worker_id)
+    async with db.sessions() as session:
+        job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
+    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod")
+    await _report_budget(worker_id, 546 * MIB)
+    claim = await _claim(worker_id)
+    assert claim is not None
+    async with db.sessions() as session:
+        await claim_workflow_dispatch(
+            session, dispatch_id=claim.dispatch_id, execution_id=UUID(execution_id)
+        )
+        await session.commit()
+
+    async with db.sessions() as session:
+        await session.execute(
+            update(ExecutionWorker).values(heartbeat_at=datetime.now(timezone.utc) - timedelta(minutes=5))
+        )
+        await session.commit()
+    await pool.reconcile_worker(worker_id)
+
+    async with db.sessions() as session:
+        learned = await session.scalar(
+            select(Workflow.learned_memory_bytes).where(Workflow.id == workflow.id)
+        )
+    assert learned == 546 * MIB - WORKFLOW_REQUEST_MARGIN_BYTES
+
+
 # --- sizing by memory -----------------------------------------------------------
 
 

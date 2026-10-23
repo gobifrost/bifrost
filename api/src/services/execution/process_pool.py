@@ -418,6 +418,10 @@ class ProcessPoolManager:
         self.registration_ttl_seconds = registration_ttl_seconds
         self.on_result = on_result
         self.on_service_result = on_service_result
+        # What a run the kernel killed for memory teaches its workflow: the
+        # executor's budget less the request margin, so its next run fits an
+        # executor alone. Set by the executor once it has measured its budget.
+        self.memory_kill_growth_bytes: int | None = None
 
         # Worker ID from HOSTNAME env var (Docker container name) or UUID
         self.worker_id = os.environ.get("HOSTNAME", str(uuid.uuid4()))
@@ -1399,6 +1403,13 @@ class ProcessPoolManager:
                     metrics.get("peak_process_rss_bytes") or 0,
                     sampler.peak_process_rss_bytes,
                 )
+                # The parent's own reading, so a run that never reported
+                # (crash, timeout, kill) still teaches its workflow.
+                if sampler.start_process_rss_bytes is not None:
+                    metrics["peak_memory_growth_bytes"] = max(
+                        metrics.get("peak_memory_growth_bytes") or 0,
+                        sampler.peak_process_rss_bytes - sampler.start_process_rss_bytes,
+                    )
 
     async def _report_timeout(self, handle: ProcessHandle) -> None:
         """
@@ -1866,15 +1877,27 @@ class ProcessPoolManager:
         if self.on_result is None or exec_info is None:
             return
         handle.result_reported = True
+        # This pool never sends SIGKILL without first marking the handle
+        # KILLED, so an unmarked SIGKILL came from the kernel's OOM killer.
+        killed_for_memory = handle.process.exitcode == -signal.SIGKILL
         result = exec_info.attach_transport_metadata({
             "type": "result",
             "execution_id": exec_info.execution_id,
             "success": False,
-            "error": "Worker process crashed unexpectedly",
-            "error_type": "ProcessCrashError",
+            "error": (
+                "Stopped by the system: the executor ran out of memory."
+                if killed_for_memory
+                else "Worker process crashed unexpectedly"
+            ),
+            "error_type": "MemoryLimitExceeded" if killed_for_memory else "ProcessCrashError",
             "duration_ms": int(exec_info.elapsed_seconds * 1000),
         })
         self._attach_resource_peaks(handle, result)
+        if killed_for_memory and self.memory_kill_growth_bytes is not None:
+            metrics = result.setdefault("metrics", {})
+            metrics["peak_memory_growth_bytes"] = max(
+                metrics.get("peak_memory_growth_bytes") or 0, self.memory_kill_growth_bytes
+            )
         try:
             await self.on_result(result)
         except Exception as e:

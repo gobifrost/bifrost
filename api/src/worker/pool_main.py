@@ -44,6 +44,7 @@ from src.services.scheduler_diagnostics import remove_scheduler_replica
 from src.jobs.summarize_worker import handle_summarize_message
 from src.services.memory_requests import (
     DEFAULT_WORKFLOW_REQUEST_BYTES,
+    WORKFLOW_REQUEST_MARGIN_BYTES,
     MemoryBudget,
     measure_budget,
     under_pressure,
@@ -260,6 +261,9 @@ class PoolWorker:
         # Measured once the parent and fork template are up, before any
         # service claims: what remains is what work may use.
         self.budget = measure_budget(self.settings.memory_pressure_threshold)
+        self._workflow_consumer._pool.memory_kill_growth_bytes = max(
+            0, self.budget.budget_bytes - WORKFLOW_REQUEST_MARGIN_BYTES
+        )
         await self._start_service_claim_loop()
         logger.info(
             "Pool worker ready",

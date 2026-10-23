@@ -246,12 +246,41 @@ def test_reported_process_highwater_survives_lower_parent_sample():
     handle = MagicMock()
     handle.cpu_sampler.peak_cpu_cores = 0.8
     handle.cpu_sampler.peak_process_rss_bytes = 80 * 1024 * 1024
+    handle.cpu_sampler.start_process_rss_bytes = 30 * 1024 * 1024
     result = {"metrics": {"peak_process_rss_bytes": 120 * 1024 * 1024}}
 
     pool._attach_resource_peaks(handle, result)
 
     assert result["metrics"]["peak_process_rss_bytes"] == 120 * 1024 * 1024
     assert result["metrics"]["peak_cpu_cores"] == 0.8
+
+
+def test_parent_reading_supplies_growth_a_run_never_reported():
+    """A crashed or killed child never reports its growth; the parent's own
+    samples still teach the workflow its size."""
+    pool = ProcessPoolManager()
+    handle = MagicMock()
+    handle.cpu_sampler.peak_cpu_cores = None
+    handle.cpu_sampler.peak_process_rss_bytes = 230 * 2**20
+    handle.cpu_sampler.start_process_rss_bytes = 30 * 2**20
+    result: dict = {}
+
+    pool._attach_resource_peaks(handle, result)
+
+    assert result["metrics"]["peak_memory_growth_bytes"] == 200 * 2**20
+
+
+def test_child_reported_growth_wins_when_larger():
+    pool = ProcessPoolManager()
+    handle = MagicMock()
+    handle.cpu_sampler.peak_cpu_cores = None
+    handle.cpu_sampler.peak_process_rss_bytes = 80 * 2**20
+    handle.cpu_sampler.start_process_rss_bytes = 30 * 2**20
+    result = {"metrics": {"peak_memory_growth_bytes": 300 * 2**20}}
+
+    pool._attach_resource_peaks(handle, result)
+
+    assert result["metrics"]["peak_memory_growth_bytes"] == 300 * 2**20
 
 
 class TestProcessPoolManagerStart:
@@ -1511,7 +1540,7 @@ class TestCrashedProcessReport:
 
     @pytest.mark.asyncio
     async def test_sigkilled_worker_crashes_get_reported_within_seconds(self):
-        """A BUSY worker whose process died unexpectedly (e.g. SIGKILL) should
+        """A BUSY worker whose process died unexpectedly (e.g. SIGSEGV) should
         have on_result called with success=False and error_type='ProcessCrashError'
         synchronously within _check_process_health — no reaper wait needed."""
         callback = AsyncMock()
@@ -1519,7 +1548,7 @@ class TestCrashedProcessReport:
 
         mock_process = MagicMock()
         mock_process.is_alive.return_value = False  # process is dead
-        mock_process.exitcode = -9  # SIGKILL
+        mock_process.exitcode = -11  # SIGSEGV
 
         exec_info = ExecutionInfo(
             execution_id="exec-sigkill-789",
@@ -1555,6 +1584,44 @@ class TestCrashedProcessReport:
 
         # result_reported must be True — reaper-of-last-resort must not re-fire
         assert handle.result_reported is True
+
+    @pytest.mark.asyncio
+    async def test_a_child_the_kernel_killed_is_reported_as_out_of_memory(self):
+        """The pool marks a handle KILLED before every SIGKILL it sends, so an
+        unmarked SIGKILL is the kernel's OOM killer. The run teaches its
+        workflow the executor's budget, so its next run fits alone."""
+        callback = AsyncMock()
+        pool = ProcessPoolManager(on_result=callback)
+        pool.memory_kill_growth_bytes = 530 * 2**20
+
+        mock_process = MagicMock()
+        mock_process.is_alive.return_value = False
+        mock_process.exitcode = -9  # SIGKILL, not sent by the pool
+
+        handle = ProcessHandle(
+            id="process-oom",
+            process=mock_process,
+            pid=99998,
+            state=ProcessState.BUSY,
+            work_queue=MagicMock(),
+            result_queue=MagicMock(),
+            started_at=datetime.now(timezone.utc),
+            current_execution=ExecutionInfo(
+                execution_id="exec-oom",
+                started_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+                timeout_seconds=300,
+                active_execution=_active_execution("exec-oom"),
+            ),
+            result_reported=False,
+        )
+        handle.result_queue.get_nowait.side_effect = Empty
+        pool.processes["process-oom"] = handle
+
+        await pool._check_process_health()
+
+        result = callback.call_args[0][0]
+        assert result["error_type"] == "MemoryLimitExceeded"
+        assert result["metrics"]["peak_memory_growth_bytes"] == 530 * 2**20
 
     @pytest.mark.asyncio
     async def test_sigkilled_worker_already_reported_does_not_double_fire(self):
