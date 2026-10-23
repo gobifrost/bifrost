@@ -1,0 +1,14 @@
+{
+  "key": "pr:1041",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Upgrading from an earlier release no longer loses runs it left queued: the API moves them out of RabbitMQ once at start, and runs it scheduled ahead keep running for the user who started them. Keep RabbitMQ until the API logs that it drained, then remove it.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1041",
+      "Claude drafted this summary on 2026-10-23 under Jack's standing authority for the #769 rollout; Jack chose the drain behaviour and the 'run as recorded user' lineage rule in session on 2026-10-23."
+    ]
+  }
+}
