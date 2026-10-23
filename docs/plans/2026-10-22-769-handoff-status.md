@@ -1,134 +1,152 @@
-# #769 status and handoff (2026-10-22, end of session)
+# #769 handoff: from three PRs to one self-scaling worker (overnight plan)
 
-Read with: `2026-10-22-api-owned-unified-kubernetes-runtime.md` (original
-handoff, PR #1030), `2026-10-22-769-stage2-durable-dispatch.md`,
-`2026-10-22-769-stage3-reusable-workers.md`,
-`2026-10-22-769-stages4-5-convergence.md`.
+Updated 2026-10-22, late. Read with `2026-10-22-769-stage2-durable-dispatch.md`,
+`2026-10-22-769-stage3-reusable-workers.md` and
+`2026-10-22-769-stages4-5-convergence.md`. The original handoff is PR #1030.
 
-## PRs
+## Target (Jack, 2026-10-22)
 
-Nothing is queued or set to auto-merge.
+- One worker image runs every kind of work. The API runs control (schedules
+  and launching workers).
+- On Kubernetes, workers scale on demand from **1 to 6** by default
+  (`MIN=1`, `MAX=6`) and drain back to 1 when idle.
+- The `scheduler` and `worker` services are equals: both run the same
+  executor, so either can be torn down.
+- RabbitMQ is removed. So are the transitional switches
+  (`BIFROST_CONTROL_PLANE_HOST`, `BIFROST_EXECUTION_PLACEMENT`, the
+  `api-control` overlay) and the bridge code.
+- An install that changes nothing keeps working after upgrading.
+  - Docker: its existing `scheduler` and `worker` services become two fixed
+    executors (scale with `--scale`). Dynamic scaling is Kubernetes only.
+  - Kubernetes: needs the API to be allowed to create Jobs. See decision D3.
+- Subsecond workflow execution is kept. The warm floor (`MIN=1`, or a
+  long-running worker) serves interactive runs; a cold Job worker takes
+  about 12 s.
 
-| PR | Stage | Base | State |
-| --- | --- | --- | --- |
-| #1031 | 1: API-hosted control (opt-in) | `main` | Ready. CI green: unit, e2e, CodeQL, lint, Product Updates. |
-| #1032 | 2: durable acceptance, workflow + agent runs | #1031 | Draft. Stacked; retarget to `main` once #1031 merges. |
-| #1033 | 3: pool executors + on-demand Kubernetes workers (opt-in) | #1032 | Draft. Stacked; 3b drills partly done (see below). |
+## Authority for this run
 
-Merge in order. Each PR is reviewable on its own diff.
+- **Merges:** Jack consents to merging each PR, in order through the merge
+  queue (`gh pr merge <N>`, no strategy flag), **once its gate below passes
+  in the debug stack**. A failed gate means fix with a test; never skip.
+- **Production:** no deploys and no GitOps changes. "Roll out" means merge
+  to `main`. Nightly images will contain the merged work. Everything before
+  the final flip is off by default, so those images are safe.
+- **Decisions still open.** Stop and ask before the steps that depend on
+  them:
+  - **D1:** confirm "roll out" means merge only.
+  - **D2:** accept that Docker installs get fixed executors, not dynamic
+    scaling.
+  - **D3:** may the base `k8s/` manifests give the API the Job-creating
+    service account (namespace-scoped `jobs` create/patch/delete, `pods`
+    get/list), so an unchanged Kubernetes install scales on its next sync?
+    Without it, those installs keep a fixed worker Deployment until they
+    apply the RBAC.
 
-## Why each PR is safe to merge: protecting existing environments
+## Ground rules for every step
 
-**#1031 (stage 1). Nothing changes unless an operator opts in.**
-- `BIFROST_CONTROL_PLANE_HOST` defaults to `scheduler`, which runs exactly
-  the old control loop. The schedule catalog that drives it is pinned by
-  test to the previous schedule set.
-- Opting in moves control into the API. Mixed versions cannot double-run
-  triggers, because both hosts compete for the same `scheduler-triggers`
-  lease.
-- Schedule occurrences gained a unique key and a scan cursor, so failover
-  neither drops nor duplicates them. Unkeyed events written by an older
-  image during a rollout or rollback also count as fired.
-- The migration is additive. Its unique index is built `CONCURRENTLY` and
-  is partial, so existing rows are unaffected.
-- Evidence:
-  - Kind, two API replicas: leader process SIGKILLed, takeover at lease
-    expiry (24–25 s); rolling restart with no gap; the scheduler never led.
-  - Docker, API-hosted control: 95/95 scheduler e2e tests pass. Docker,
-    mixed hosts: fenced failover.
-  - Full unit suite 9,832 passed; CodeQL 0 on changed lines.
+- Work in the stage worktrees under `.claude/worktrees/769-*`. Rebase on
+  `origin/main` before each merge. After a base PR merges, retarget the next
+  stacked PR to `main` and rebase it.
+- Verify with the **debug stack** (`./debug.sh up` in the worktree): it
+  runs the real services from source. Also verify the **production image**
+  (`api/Dockerfile`) through Kind (`./test.sh kubernetes up`). Use
+  `./test.sh` for unit and e2e.
+- **Every-job checklist** (run in the mode under test; record results in
+  the PR):
+  1. All system schedules in `api/src/scheduler/registry.py` run and
+     succeed. Check Diagnostics → Scheduler (every task has a successful
+     last run), or query `scheduler_task_runs`.
+  2. Platform jobs: one local job (e.g. file-index reconciliation) and one
+     build-class job (App deploy). On Kind, the build-class job must run in
+     a remote Job.
+  3. Workflows:
+     - sync, async, scheduled (deferred);
+     - from a form, via an endpoint, as a data provider;
+     - an SDK nested run, an inline-code run;
+     - cancelling a pending run and a running run.
+  4. Agents: API run, chat run, an event-triggered run, an agent tool that
+     runs a workflow, and a delegated agent.
+  5. Package install: install a package, then run a workflow that imports
+     it on every live worker, including a newly started one (stage 4
+     onwards).
+  6. Latency: `scripts/kubernetes/sync_latency_bench.py`, run in an API container. The p50
+     must stay within 10 ms of the broker baseline (about 47 ms) on the
+     same stack.
+- Never retry until green, skip, or extend timeouts. Every failure gets a
+  cause.
+- After each merge, comment on #769 and update the status table below.
 
-**#1032 (stage 2). Applies to every install. This is the one to review hardest.**
-- Every workflow, inline-code and agent run is now accepted as a durable
-  row plus a dispatch, committed before it is published.
-- A Redis outage, a flushed Redis, or a broker failure no longer loses or
-  fails an accepted run. The control plane republishes lost hand-offs and
-  fails a run visibly once its delivery budget is spent. Started work is
-  never replayed.
-- Mixed versions are covered by a one-release bridge: an old worker served
-  the new API alongside a new worker, 55/55 e2e. It also fixes a latent bug
-  where the deferred promoter could strand a run forever after crashing at
-  the wrong moment.
-- Evidence:
-  - Drills: broker down during acceptance, then completed after recovery;
-    Redis `FLUSHALL` after acceptance, then completed.
-  - 224 execution e2e tests and 216 agent, chat and scenario e2e tests.
-  - Real-PostgreSQL tests of lock order, duplicates, cancel-before-claim
-    and the reconciler.
-- Cost: about +4–7 ms on a trivial sync run (39 → 43–46 ms p50). Workflow
-  execution stays well subsecond.
+## Sequence and gates
 
-**#1033 (stage 3). Nothing changes unless an operator opts in.**
-- `BIFROST_EXECUTION_PLACEMENT` defaults to `broker`, which keeps the
-  stage 2 path unchanged.
-- The new tables are additive. The only default-visible change is one
-  hourly maintenance task, listed in Diagnostics.
+| # | Work | Gate before merge |
+| --- | --- | --- |
+| 1 | **#1031** (stage 1) | Every-job checklist with defaults, then with `BIFROST_CONTROL_PLANE_HOST=api`. Already CI green. |
+| 2 | **#1032** (stage 2, all installs) | Retarget to `main` and rebase. Checklist with defaults. Rolling-upgrade check: an old-image worker plus the new API, which was done for e2e; repeat for the checklist. |
+| 3 | **#1033** finish (3b) | Re-run the unschedulable drill (fix the harness to pick a Ready, non-terminating API pod after `rollout status`). Re-measure pool latency after the claim fold. Checklist in pool mode (Docker static executor; Kind on-demand). |
+| 4a | **Stage 4, package installs** | Replace the RabbitMQ fanout with a desired package generation in PostgreSQL. Executors reach it before admitting work and reconcile it on heartbeat. Gate: checklist item 5, including a worker that was down during the install. |
+| 4b | **Stage 4, summaries** | Live summaries and backfill become dispatch families, so a pending summary is never stranded. Remove the dead tuning-chat consumer and its queue. Gate: summaries complete in pool mode; the backfill PlatformJob completes. |
+| 4c | **Stage 4, services and platform jobs** | The supervised-service claim loop and the local platform-job claim loops run inside the executor, so the `scheduler` and `worker` processes are identical. Gate: full checklist with both containers running the executor, then again with either one stopped. |
+| 4d | **Stage 4, event deliveries** | The run is accepted inside the delivery's own transaction. Gate: event e2e plus a crash between commits (unit). |
+| 5a | **Flip defaults** (the only PR that changes everyone) | Remove the two switches: the API always runs control and work always goes to executors. `src.worker.main` and `src.scheduler.main` both start the executor, so unchanged Compose files and manifests work. Defaults `MIN=1`, `MAX=6`. Gate: **upgrade rehearsal**. Start the previous release's images with the user's unchanged compose file and data, upgrade only the image tag, then run the full checklist. The same on Kind with the unchanged base manifests (plus D3). Then a rollback rehearsal. |
+| 5b | **Retire RabbitMQ** | Remove consumers, publishers, topology, bridge code, the RabbitMQ health check, the test-stack and CI service, the KEDA ScaledObject, the worker-Deployment-only settings, and the `api-control` overlay. Tolerate a leftover `BIFROST_RABBITMQ_URL` or `rabbitmq` service in a user's compose (ignored, never fatal). Before removal, a startup check confirms no broker-placed dispatches remain. Document deleting the old queues and their dead-letter recovery. Gate: full checklist, the upgrade rehearsal again, and `grep -ri rabbit api/src` returns nothing but the migration note. |
+| 5c | **Final proof** | Kind with unchanged base manifests: 1 warm worker scales to 6 under a burst, drains back to 1, and the checklist passes. Docker with the unchanged compose: the checklist passes on the two executors. |
 
-## Dynamic worker scaling now exists
+Stopping anywhere before 5a leaves `main` safe, because every earlier PR is
+off by default or invisible. Do not start 5a in a session that cannot also
+finish its rehearsal.
 
-- **0, 1 or more workers.** With `BIFROST_EXECUTION_PLACEMENT=pool`:
-  - runs wait in PostgreSQL for whatever executors exist;
-  - an executor is either a static container (Docker installs, warm
-    capacity) or an on-demand Kubernetes Job that the API-hosted controller
-    launches for demand;
-  - Job workers are capped by `BIFROST_POOL_MAX_WORKERS`, kept warm by
-    `BIFROST_POOL_MIN_WORKERS`, and drain to zero after
-    `BIFROST_POOL_IDLE_SECONDS`.
-  - Kubernetes node autoscaling reacts to their resource requests, the same
-    model as today's dynamic build containers.
-- **Proven in Kind** (twice, no broker workers):
+## Status
 
-  | Phase | Result |
-  | --- | --- |
-  | Zero | no worker pods |
-  | First run | worker launched from zero; cold start 12.6–12.9 s |
-  | Reuse | further runs on the same pod (3 runs in 3.5 s) |
-  | Burst | 16 × 6 s runs used exactly the ceiling of 3 workers |
-  | Idle | every worker drained itself back to zero (~49 s with a 45 s idle) |
-  | Drain race | a run arriving while its worker drained still completed, on a new worker |
+| Item | State |
+| --- | --- |
+| #1031 | Ready, CI green, not merged |
+| #1032 | Draft, stacked on #1031 |
+| #1033 | Draft, stacked on #1032. 3a proven in Kind and Docker; 3b: kill, controller-restart and OOM drills pass, unschedulable pending |
+| Stages 4–5 | Planned (`2026-10-22-769-stages4-5-convergence.md`) |
 
-- **Failure drills in Kind:**
-  - worker SIGKILLed mid-run: lost in 28.6 s, its runs ended at once with a
-    clear error and never replayed, queued work moved to another worker;
-  - every API pod deleted mid-burst: no duplicate Jobs, burst completed;
-  - run exceeding pod memory: that run failed visibly, the pool kept
-    serving.
-- **Docker** (pool placement, one static executor, no broker worker):
-  236 execution, agent, chat, event and scenario e2e tests passed.
-- **Latency on the same stack:** broker 47 ms p50, pool 55–57 ms p50
-  before folding the pool claim into one transaction (that fold is
-  committed but not yet re-measured). A cold Job worker takes about 12 s,
-  so the interactive path must keep warm capacity: a static executor or
-  `POOL_MIN_WORKERS`. This is in the stage 3 and stage 4–5 plans.
+## Evidence so far
 
-## Next steps, in order
+These are the numbers to repeat or beat.
 
-1. Re-run the unschedulable drill. It aborted on a harness race: it
-   launched its run against an API pod that was being replaced mid-rollout
-   (`kubectl exec` exit 137). Fix: select a Ready, non-terminating API pod
-   after `rollout status`. Then record the 3b results in the stage 3 plan
-   and #1033.
-2. Re-measure pool latency after the claim fold:
-   `/tmp/769-e2e-bench.py`, run in an API container, against a static
-   executor started with
-   `docker compose run -d -e BIFROST_WORKER_FORM=static worker python -m src.worker.pool_main`.
-3. Stage 4 (`2026-10-22-769-stages4-5-convergence.md`): move summaries,
-   package installs (as a desired package generation), supervised services
-   and local platform jobs onto the executor, so the scheduler and worker
-   containers become identical.
-4. Stage 5: flip the defaults, drain, and retire RabbitMQ and the legacy
-   objects with forward cleanup, so no dead resources remain.
+**Stage 1 (Kind, two API replicas):**
+- leader SIGKILLed, takeover at lease expiry in 24–25 s;
+- rolling restart with no gap;
+- 95/95 scheduler e2e tests with API control.
 
-## How to resume
+**Stage 2:**
+- broker down at acceptance, then the run completed;
+- Redis `FLUSHALL` after acceptance, then the run completed;
+- old and new workers together, 55/55;
+- 440 execution, agent, chat and scenario e2e tests;
+- +4–7 ms on a trivial sync run.
 
-- Worktrees: `.claude/worktrees/769-api-control-stage1`,
-  `769-durable-dispatch-stage2`, `769-reusable-workers-stage3`. Each has its
-  own test stack (`./test.sh stack status`).
-- Kind pool mode:
+**Stage 3:**
+- **Kind:**
+  - zero to first worker: cold start about 13 s;
+  - reuse: further runs on the same pod;
+  - burst: grew to exactly the cap of 3;
+  - idle: back to zero;
+  - drain race: the run completed on a new worker.
+- **Drills:**
+  - worker killed mid-run: its runs failed at once ("executor lost"), not replayed;
+  - every API pod deleted mid-burst: no duplicate Jobs;
+  - run over its memory limit: failed visibly, the pool kept serving.
+- **Docker pool mode:** 236 e2e tests.
+- **Latency:** pool 55–57 ms p50 against broker 47 ms, before the claim
+  fold.
+
+## Tooling
+
+- **Kind:**
   `BIFROST_KIND_BUILD_JOBS=1 BIFROST_KIND_API_CONTROL=1 BIFROST_KIND_POOL=1 ./test.sh kubernetes up`,
-  then `./test.sh kubernetes pool-experiment` and `./test.sh kubernetes pool-drills`.
-- Docker pool mode: recreate `api` and `scheduler` with
-  `BIFROST_EXECUTION_PLACEMENT=pool`, stop `worker-1`, and start a static
-  executor as in step 2. Run e2e through `test-runner` with
-  `-e BIFROST_EXECUTION_PLACEMENT=pool`, because `./test.sh` restarts the
-  broker worker.
+  then `pool-experiment`, `pool-drills` and `control-experiment`.
+- **Docker pool mode:**
+  1. Recreate `api` and `scheduler` with `BIFROST_EXECUTION_PLACEMENT=pool`
+     and `--no-deps --force-recreate`.
+  2. Stop `worker-1`.
+  3. Start a static executor:
+     `docker compose run -d -e BIFROST_WORKER_FORM=static worker python -m src.worker.pool_main`.
+  4. Run e2e through `test-runner` with `-e BIFROST_EXECUTION_PLACEMENT=pool`,
+     because `./test.sh` restarts the broker worker.
+- **Latency:** `scripts/kubernetes/sync_latency_bench.py` (sync inline-code runs). Copy it into
+  the API container and run it with `python /tmp/e2e.py 200`.

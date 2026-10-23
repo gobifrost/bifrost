@@ -69,6 +69,16 @@ Status: planned. Parent plan: `docs/plans/2026-10-22-api-owned-unified-kubernete
    - make RabbitMQ an optional dependency, then drop it from compose and
      the manifests.
 
+**Removed at the end (transitional only):**
+- `BIFROST_CONTROL_PLANE_HOST` and `BIFROST_EXECUTION_PLACEMENT`;
+- the `deploy/kubernetes/api-control` overlay;
+- the Redis pending-record bridge and the legacy message paths.
+
+The capacity settings stay, renamed to read naturally (for example
+`BIFROST_WORKERS_MIN=1`, `BIFROST_WORKERS_MAX=6`, the idle timeout, and
+worker CPU and memory). On-demand workers turn on when Kubernetes Job
+permissions are detected; no flag is needed.
+
 **Gate:**
 - Every scheduler catalog entry and every legacy consumer family is mapped
   to a tested owner.
