@@ -26,7 +26,7 @@ import time
 from uuid import UUID
 
 from shared.schema_gate import wait_for_schema
-from src.config import get_settings
+from src.config import Settings, get_settings
 from src.core.database import close_db, get_engine, init_db
 from src.core.redis_client import PendingExecution
 from src.services.worker_pool.claims import (
@@ -51,6 +51,22 @@ logger = logging.getLogger(__name__)
 POLL_SECONDS = 1.0
 HEARTBEAT_SECONDS = 5.0
 DRAIN_GRACE_SECONDS = 300.0
+
+
+def executor_database_settings(settings: Settings) -> Settings:
+    """Keep every connection the executor may open, instead of discarding overflow.
+
+    An executor uses the database on every claim and every run. SQLAlchemy
+    closes overflow connections when they are returned, so with a small pool
+    each run reconnected (and re-read asyncpg's type catalogue) on the hot
+    path. The total stays ``pool_size + max_overflow``; only the churn goes.
+    """
+    return settings.model_copy(
+        update={
+            "database_pool_size": settings.database_pool_size + settings.database_max_overflow,
+            "database_max_overflow": 0,
+        }
+    )
 
 
 class PoolWorker:
@@ -107,6 +123,7 @@ class PoolWorker:
         return tuple(handlers)
 
     async def run(self) -> int:
+        get_engine(executor_database_settings(self.settings))
         await init_db()
         await wait_for_schema(get_engine())
         from sqlalchemy.orm import configure_mappers
