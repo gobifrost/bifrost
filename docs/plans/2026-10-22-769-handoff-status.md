@@ -217,6 +217,24 @@ These are the numbers to repeat or beat.
 
 ## Next session
 
+0. **Independent review first (Jack, 2026-10-23):** have Fable or Astra
+   (whichever has usage) review stage 6
+   (`git diff origin/main...769-stage6-resource-requests`) against
+   `docs/plans/2026-10-23-769-stage6-resource-requests.md`. Focus areas: the
+   claim, hold and release accounting in `src/worker/pool_main.py` (leaks or
+   double counts), the controller's memory sizing in
+   `src/services/worker_pool/controller.py`, and the two pressure-test
+   findings below, including Claude's proposed mitigation for the Kubernetes
+   whole-pod OOM:
+   - an unmeasured workflow (no measured run, or code changed since) runs at
+     most one at a time per executor until a run is measured;
+   - an unmeasured run lost with its executor learns at least that
+     executor's whole budget, so its next run gets a sized Job;
+   - the watchdog samples every 250 ms and acts at 90%;
+   - `singleProcessOOMKill` (Kubernetes 1.32+) is noted in the runbook for
+     operators who can set it, not relied on.
+   Bring the review to Jack before building the fixes.
+
 1. **Pressure test** (`./test.sh kubernetes pressure-test`, harness
    `scripts/kubernetes/pressure_test.py` + `pressure_driver.py`) on Kind with
    the stage-6 image. **First run (2026-10-23 ~15:00 ET): learning, sized and
