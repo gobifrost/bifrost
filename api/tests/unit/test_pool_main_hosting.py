@@ -146,8 +146,8 @@ async def test_the_process_pool_is_ready_before_any_work_is_claimed(monkeypatch)
     monkeypatch.setattr(pool_main, "start_kubernetes_loops", AsyncMock(return_value=[]))
     monkeypatch.setattr(pool_main, "claim_next", claim_next)
     monkeypatch.setattr(workflow_execution, "WorkflowExecutionConsumer", _Workflows)
-    monkeypatch.setattr(agent_run, "AgentRunConsumer", lambda: object())
-    monkeypatch.setattr(package_install, "PackageInstallConsumer", lambda: object())
+    monkeypatch.setattr(agent_run, "AgentRunConsumer", object)
+    monkeypatch.setattr(package_install, "PackageInstallConsumer", object)
 
     worker = PoolWorker()
     for loop in ("_heartbeat_loop", "_wake_listener", "_package_loop",
