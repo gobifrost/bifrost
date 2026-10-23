@@ -108,7 +108,7 @@ continue directly to 5c and the production rollout.
 
 | Item | State |
 | --- | --- |
-| #1031 | Ready, CI green, not merged |
+| #1031 | Ready, CI green, not merged. **Step 1 gate, debug stack:** `scripts/runtime_checklist.py` passed in default mode and with `BIFROST_CONTROL_PLANE_HOST=api` (API pod held the lease): every schedule callback, the leader's startup runs, a platform job, inline sync and async, HTTP sync and async, and a deferred run. **Next:** run the #1031-relevant e2e suites (scheduler diagnostics, scheduling flow, events), then merge #1031. |
 | #1032 | Draft, stacked on #1031 |
 | #1033 | Draft, stacked on #1032. 3a proven in Kind and Docker; 3b: kill, controller-restart and OOM drills pass, unschedulable pending |
 | Stages 4–5 | Planned (`2026-10-22-769-stages4-5-convergence.md`) |
@@ -145,6 +145,14 @@ These are the numbers to repeat or beat.
   fold.
 
 ## Tooling
+
+- **Runtime checklist:** `scripts/runtime_checklist.py`, run inside an API
+  container: `docker cp` it in, then
+  `docker exec -w /app <api> python /tmp/checklist.py > out.json`. Summarise
+  with `python3 scripts/runtime_checklist_summary.py out.json`. On a debug
+  stack, change a setting with `./debug.sh down`, then
+  `SETTING=value BIFROST_FORCE_PORT=1 ./debug.sh up`, because `up` on a
+  running stack is a no-op.
 
 - **Kind:**
   `BIFROST_KIND_BUILD_JOBS=1 BIFROST_KIND_API_CONTROL=1 BIFROST_KIND_POOL=1 ./test.sh kubernetes up`,
