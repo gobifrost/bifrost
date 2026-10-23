@@ -35,9 +35,22 @@ left behind (see [Removing RabbitMQ and KEDA after
 upgrading](#removing-rabbitmq-and-keda-after-upgrading)).
 
 Roll back only to a release that includes #1034, otherwise older pods
-crash-loop against the newer schema. After a rollback, an older release no
-longer runs the worker controller, so remove the warm worker Jobs it leaves
-(they also drain themselves within `BIFROST_POOL_MAX_LIFETIME_SECONDS`):
+crash-loop against the newer schema. A release's init step skips migrations
+when the database is newer than its image, from the release that retired
+RabbitMQ onward. Rolling back further than that across a migration, first
+downgrade the database with the newer image, to the newest revision the
+older image ships:
+
+```bash
+# Kubernetes: from a pod still running the newer image
+kubectl -n bifrost exec deploy/bifrost-api -- alembic downgrade <older-head>
+# Docker Compose: with the newer image still in API_IMAGE / the compose file
+docker compose run --rm --no-deps --entrypoint alembic init downgrade <older-head>
+```
+
+After a rollback to a release without the worker controller, remove the warm
+worker Jobs it leaves (they also drain themselves within
+`BIFROST_POOL_MAX_LIFETIME_SECONDS`):
 
 ```bash
 kubectl -n bifrost delete jobs -l app.kubernetes.io/name=bifrost-pool-worker

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -153,3 +154,44 @@ def test_real_history_treats_a_newer_revision_as_ahead() -> None:
     assert is_at_or_ahead(
         {"20991231_from_a_newer_image"}, script.get_heads(), ancestors_of
     )
+
+
+@pytest.mark.asyncio
+async def test_init_skips_migrations_on_a_database_a_newer_image_migrated(monkeypatch) -> None:
+    """A rollback starts an older image's init against a newer database; it
+    must not run ``alembic upgrade``, which cannot find the newer revision."""
+    from scripts import init_container
+
+    async def newer(engine, **_kwargs):  # type: ignore[no-untyped-def]
+        return frozenset({"20991231_from_a_newer_release"})
+
+    def must_not_migrate() -> bool:
+        raise AssertionError("alembic upgrade ran against a newer database")
+
+    monkeypatch.setattr("shared.schema_gate.revisions_from_a_newer_image", newer)
+    monkeypatch.setattr(init_container, "run_migrations", must_not_migrate)
+    monkeypatch.setattr(init_container, "warm_requirements_cache", AsyncMock(return_value=True))
+
+    assert await init_container.main() == 0
+
+
+@pytest.mark.asyncio
+async def test_a_revision_missing_from_this_image_is_from_a_newer_one() -> None:
+    from shared.schema_gate import revisions_from_a_newer_image
+
+    class _Engine:
+        def connect(self):  # type: ignore[no-untyped-def]
+            return _Connection()
+
+    class _Connection:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __aexit__(self, *_args):  # type: ignore[no-untyped-def]
+            return False
+
+        async def execute(self, _statement):  # type: ignore[no-untyped-def]
+            return [("c",), ("z",)]
+
+    newer = await revisions_from_a_newer_image(_Engine(), ancestors_of=_ancestors_of)  # type: ignore[arg-type]
+    assert newer == {"z"}

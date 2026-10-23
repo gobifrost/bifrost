@@ -67,6 +67,23 @@ async def current_revisions(engine: AsyncEngine) -> frozenset[str]:
         return frozenset(row[0] for row in result)
 
 
+async def revisions_from_a_newer_image(
+    engine: AsyncEngine,
+    *,
+    ancestors_of: Callable[[str], frozenset[str] | None] | None = None,
+) -> frozenset[str]:
+    """Recorded revisions this image does not know: a newer release wrote them.
+
+    The init step must not try to migrate such a database (an older image
+    started for a rollback): ``alembic upgrade`` cannot locate the revision.
+    """
+    if ancestors_of is None:
+        ancestors_of = _known_ancestors(_script_directory())
+    return frozenset(
+        revision for revision in await current_revisions(engine) if ancestors_of(revision) is None
+    )
+
+
 def is_at_or_ahead(
     current: Collection[str],
     heads: Collection[str],
