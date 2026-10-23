@@ -1,0 +1,12 @@
+{
+  "key": "pr:1033",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Opt-in runtime infrastructure (pool placement and on-demand Kubernetes workers); default installations are unchanged apart from one more maintenance task listed in Diagnostics.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1033"
+    ]
+  }
+}
