@@ -49,6 +49,7 @@ from src.services.memory_requests import (
     measure_budget,
     under_pressure,
 )
+from src.worker.admission import Admission
 from src.services.package_generation import (
     change_message,
     current_package_generation,
@@ -131,15 +132,12 @@ class PoolWorker:
         self._package_consumer = None
         self.package_generation = 0
         self._service_claim_loop = None
-        self._memory_pressured = False
         # Measured once the executor is ready (src.services.memory_requests).
         self.budget: MemoryBudget | None = None
-        # Requests of the work this executor holds: workflow runs by
-        # execution id (held until their child ends), other work by dispatch.
-        self._workflow_holds: dict[str, int] = {}
-        self._task_holds: dict[str, int] = {}
-        # Workflow claims still being routed to a child.
-        self._routing: set[str] = set()
+        # The memory gate every claim goes through (src.worker.admission):
+        # workflow runs are held by execution id until their child ends,
+        # other work by dispatch, platform job or service attempt id.
+        self.admission: Admission | None = None
         # Ids of the local platform jobs this executor is running.
         self._platform_jobs: set[UUID] = set()
         # Set to stop claiming platform jobs; running ones finish.
@@ -149,12 +147,14 @@ class PoolWorker:
         self._stop.set()
 
     def _workflow_runs(self) -> int:
+        """Runs with a child, plus claimed runs still being routed to one."""
         pool_runs = (
             self._workflow_consumer._pool.active_execution_count()
             if self._workflow_consumer is not None
             else 0
         )
-        return pool_runs + len(self._tasks["workflow.execute"])
+        routing = self.admission.starting_workflows() if self.admission is not None else 0
+        return pool_runs + routing
 
     def _services(self) -> int:
         if self._workflow_consumer is None:
@@ -170,49 +170,19 @@ class PoolWorker:
             len(tasks) for handler, tasks in self._tasks.items() if handler != "workflow.execute"
         )
 
-    def _under_memory_pressure(self) -> bool:
-        """Real memory over ``memory_pressure_threshold`` of the limit."""
-        pressured = under_pressure(self.settings.memory_pressure_threshold)
-        if pressured != self._memory_pressured:
-            self._memory_pressured = pressured
-            if pressured:
-                logger.warning("Executor is over its memory threshold; claiming nothing new")
-            else:
-                logger.info("Executor is back under its memory threshold")
-        return pressured
-
-    def _held_bytes(self) -> int:
-        """What the work this executor holds requested.
-
-        A workflow run is held from its claim until its child ends.
-        """
-        if self._workflow_consumer is not None:
-            running = self._workflow_consumer._pool.active_execution_ids()
-            for execution_id in list(self._workflow_holds):
-                if execution_id not in running and execution_id not in self._routing:
-                    del self._workflow_holds[execution_id]
-        return sum(self._workflow_holds.values()) + sum(self._task_holds.values())
-
     def _hold_service_memory(self, attempt_id: str, request_bytes: int | None) -> None:
         """A supervised service holds its request until its attempt ends."""
+        assert self.admission is not None
         if request_bytes is None:
-            self._task_holds.pop(f"service:{attempt_id}", None)
+            self.admission.release(f"service:{attempt_id}")
         else:
-            self._task_holds[f"service:{attempt_id}"] = request_bytes
-
-    def _free_bytes(self) -> int:
-        assert self.budget is not None
-        return max(0, self.budget.budget_bytes - self._held_bytes())
+            self.admission.hold(f"service:{attempt_id}", request_bytes)
 
     def _claimable(self) -> tuple[tuple[str, int], ...]:
-        """Handlers this executor may claim now; the claim takes only work
-        whose request fits the free budget. One live summary plus one
-        backfill summary at a time is policy, so a large backfill never
-        delays live summaries. Nothing while over the memory threshold: the
-        work waits for an executor with room, and the controller starts one
-        if none has it."""
-        if self._under_memory_pressure():
-            return ()
+        """Handlers this executor may claim; the claim takes only work whose
+        request fits the free budget (``Admission``). One live summary plus
+        one backfill summary at a time is policy, so a large backfill never
+        delays live summaries."""
         handlers: list[tuple[str, int]] = [("workflow.execute", 1), ("agent.run", 1)]
         for summary_handler in ("agent.summarize", "agent.summarize_backfill"):
             if not self._tasks[summary_handler]:
@@ -261,8 +231,16 @@ class PoolWorker:
         # Measured once the parent and fork template are up, before any
         # service claims: what remains is what work may use.
         self.budget = measure_budget(self.settings.memory_pressure_threshold)
-        self._workflow_consumer._pool.memory_kill_growth_bytes = max(
+        pool = self._workflow_consumer._pool
+        pool.memory_kill_growth_bytes = max(
             0, self.budget.budget_bytes - WORKFLOW_REQUEST_MARGIN_BYTES
+        )
+        threshold = self.settings.memory_pressure_threshold
+        self.admission = Admission(
+            budget_bytes=self.budget.budget_bytes,
+            under_pressure=lambda: under_pressure(threshold),
+            running_workflow_ids=pool.active_execution_ids,
+            workflow_growth=pool.workflow_growth,
         )
         await self._start_service_claim_loop()
         logger.info(
@@ -321,19 +299,24 @@ class PoolWorker:
             # Clear before looking, so a hint that lands during the claim
             # attempt still wakes the wait below instead of being lost.
             self._wake.clear()
-            handlers = self._claimable()
-            if handlers:
-                assert self.budget is not None
-                claim = await claim_next(
-                    self.incarnation_id,
-                    handlers,
-                    fits_bytes=self._free_bytes(),
-                    budget_bytes=self.budget.budget_bytes,
-                )
-                if claim is not None:
-                    self._start(claim)
-                    last_activity = time.monotonic()
-                    continue
+            assert self.admission is not None
+            claim = None
+            async with self.admission.claiming() as fits:
+                # Nothing while over the memory threshold: the work waits for
+                # an executor with room, and the controller starts one if
+                # none has it.
+                if fits is not None:
+                    claim = await claim_next(
+                        self.incarnation_id,
+                        self._claimable(),
+                        fits_bytes=fits,
+                        budget_bytes=self.admission.budget_bytes,
+                    )
+                    if claim is not None:
+                        self._start(claim)
+            if claim is not None:
+                last_activity = time.monotonic()
+                continue
             if self.busy():
                 last_activity = time.monotonic()
             elif (
@@ -366,11 +349,11 @@ class PoolWorker:
         return max(1, budget.budget_bytes // DEFAULT_WORKFLOW_REQUEST_BYTES)
 
     def _start(self, claim: PoolClaim) -> None:
+        assert self.admission is not None
         if claim.handler == "workflow.execute":
-            self._workflow_holds[str(claim.subject_id)] = claim.memory_request_bytes
-            self._routing.add(str(claim.subject_id))
+            self.admission.hold(str(claim.subject_id), claim.memory_request_bytes, workflow=True)
         else:
-            self._task_holds[str(claim.dispatch_id)] = claim.memory_request_bytes
+            self.admission.hold(str(claim.dispatch_id), claim.memory_request_bytes)
         task = asyncio.create_task(self._run_claim(claim), name=f"pool-run-{claim.dispatch_id}")
         in_flight = self._tasks[claim.handler]
         in_flight.add(task)
@@ -378,6 +361,7 @@ class PoolWorker:
 
     async def _run_claim(self, claim: PoolClaim) -> None:
         assert self._workflow_consumer is not None and self._agent_consumer is not None
+        assert self.admission is not None
         try:
             # Workflow runs return once routed to a child (then counted by the
             # pool); agent runs return when finished.
@@ -394,7 +378,7 @@ class PoolWorker:
                     # goes back to waiting for an executor with room.
                     from src.services.execution.workflow_dispatch import release_workflow_run
 
-                    self._workflow_holds.pop(str(claim.subject_id), None)
+                    self.admission.release(str(claim.subject_id))
                     assert claim.claimed is not None
                     await release_workflow_run(
                         worker_id=self.incarnation_id,
@@ -412,9 +396,11 @@ class PoolWorker:
                 extra={"dispatch_id": str(claim.dispatch_id)},
             )
         finally:
-            # A routed workflow run stays held until its child ends.
-            self._routing.discard(str(claim.subject_id))
-            self._task_holds.pop(str(claim.dispatch_id), None)
+            if claim.handler == "workflow.execute":
+                # A routed workflow run stays held until its child ends.
+                self.admission.started(str(claim.subject_id))
+            else:
+                self.admission.release(str(claim.dispatch_id))
             self.runs_handled += 1
 
     async def _platform_job_loop(self) -> None:
@@ -423,22 +409,26 @@ class PoolWorker:
         Each claimed job runs in its own runner process and holds its memory
         requirement until it ends, sharing the budget with runs.
         """
+        assert self.admission is not None
         running: set[asyncio.Task[None]] = set()
         while not self._platform_stop.is_set():
             claimed = False
             try:
                 await recover_expired_platform_jobs()
-                if not self._under_memory_pressure():
-                    claim = await claim_platform_job(backend="local", fits_bytes=self._free_bytes())
-                    if claim is not None:
-                        claimed = True
-                        self._task_holds[str(claim.id)] = claim.memory_required_bytes
-                        self._platform_jobs.add(claim.id)
-                        task = asyncio.create_task(
-                            self._run_platform_job(claim), name=f"pool-platform-job-{claim.id}"
-                        )
-                        running.add(task)
-                        task.add_done_callback(running.discard)
+                claim = None
+                async with self.admission.claiming() as fits:
+                    if fits is not None:
+                        claim = await claim_platform_job(backend="local", fits_bytes=fits)
+                        if claim is not None:
+                            self.admission.hold(str(claim.id), claim.memory_required_bytes)
+                if claim is not None:
+                    claimed = True
+                    self._platform_jobs.add(claim.id)
+                    task = asyncio.create_task(
+                        self._run_platform_job(claim), name=f"pool-platform-job-{claim.id}"
+                    )
+                    running.add(task)
+                    task.add_done_callback(running.discard)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -456,7 +446,8 @@ class PoolWorker:
             logger.exception("Platform job runner failed", extra={"job_id": str(claim.id)})
         finally:
             self._platform_jobs.discard(claim.id)
-            self._task_holds.pop(str(claim.id), None)
+            assert self.admission is not None
+            self.admission.release(str(claim.id))
 
     async def _wake_listener(self) -> None:
         """Turn acceptance hints into an immediate claim attempt."""
@@ -508,9 +499,13 @@ class PoolWorker:
                     active_runs=self.active_runs(),
                     runs_handled=self.runs_handled,
                     package_generation=self.package_generation,
-                    memory_pressured=self._memory_pressured,
+                    memory_pressured=(
+                        self.admission is not None and self.admission.pressured()
+                    ),
                     memory_budget_bytes=None if self.budget is None else self.budget.budget_bytes,
-                    memory_reserved_bytes=self._held_bytes(),
+                    memory_reserved_bytes=(
+                        0 if self.admission is None else self.admission.held_bytes()
+                    ),
                 )
                 if state != "ready":
                     # The controller drained or lost this worker: stop claiming.
@@ -525,7 +520,7 @@ class PoolWorker:
         """Supervise services in this executor's pool (separate service slots)."""
         from src.services.service_claim import ServiceClaimLoop
 
-        assert self._workflow_consumer is not None
+        assert self._workflow_consumer is not None and self.admission is not None
         pool = self._workflow_consumer._pool
         self._service_claim_loop = ServiceClaimLoop(
             worker_id=pool.worker_id,
@@ -534,7 +529,7 @@ class PoolWorker:
             beat_interval_seconds=self.settings.service_heartbeat_interval_seconds,
             lease_ttl_seconds=self.settings.service_lease_ttl_seconds,
             token_lifetime_seconds=self.settings.service_token_lifetime_seconds,
-            free_bytes=self._free_bytes,
+            claiming=self.admission.claiming,
             hold_memory=self._hold_service_memory,
         )
         pool.on_service_result = self._service_claim_loop.handle_service_result

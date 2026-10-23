@@ -751,6 +751,40 @@ class TestDangerousMemory:
         assert result["metrics"]["peak_memory_growth_bytes"] == 900 * 2**20
 
 
+    @pytest.mark.asyncio
+    async def test_a_service_that_grew_most_is_stopped_too(self, monkeypatch):
+        from src.services.execution import process_pool as module
+        from src.services.execution.cpu_sampler import CPUSampler
+        from src.services.execution.process_pool import ServiceInfo
+
+        pool = ProcessPoolManager(on_result=AsyncMock(), on_service_result=AsyncMock())
+        self._busy(pool, "run", 40)
+        sampler = CPUSampler(pid=1, clock_ticks=100)
+        sampler.start_process_rss_bytes = 60 * 2**20
+        sampler.last_process_rss_bytes = 760 * 2**20
+        service = ProcessHandle(
+            id="svc", process=MagicMock(), pid=None, state=ProcessState.BUSY,
+            work_queue=MagicMock(), result_queue=MagicMock(),
+            started_at=datetime.now(timezone.utc),
+        )
+        service.service = ServiceInfo(
+            service_id="service-1", attempt_id="attempt-1", lease_token="lease",
+            graceful_shutdown_seconds=5,
+        )
+        service.cpu_sampler = sampler
+        pool.service_processes["svc"] = service
+        monkeypatch.setattr(module, "memory_ratio", lambda: 0.97)
+
+        await pool._stop_largest_when_dangerous()
+
+        assert pool.service_processes == {}
+        assert set(pool.processes) == {"run"}
+        [envelope] = pool.on_service_result.await_args.args
+        assert envelope["attempt_id"] == "attempt-1"
+        assert envelope["error_type"] == "MemoryLimitExceeded"
+        pool.on_result.assert_not_awaited()
+
+
 class TestProcessPoolManagerTimeouts:
     """Tests for timeout handling."""
 

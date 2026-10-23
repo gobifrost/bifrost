@@ -66,6 +66,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _CLEAN_EXIT_RESULT_GRACE = timedelta(seconds=2)
+# How often the monitor samples children and checks memory: often enough
+# that the dangerous-memory stop beats most growth to the kernel.
+MONITOR_INTERVAL_SECONDS = 0.25
 _ACTIVE_EXECUTION_REFRESH_SECONDS = 10 * 60
 
 # Context fields that must never reach the diagnostic Redis copy of an
@@ -566,6 +569,22 @@ class ProcessPoolManager:
             if handle.state == ProcessState.BUSY and handle.current_execution is not None
         }
 
+    def workflow_growth(self) -> dict[str, int]:
+        """How much each running workflow child has grown since it started,
+        by execution id (its latest sample; the executor holds the larger
+        of this and the run's request)."""
+        growth: dict[str, int] = {}
+        for handle in self.processes.values():
+            if (
+                handle.state == ProcessState.BUSY
+                and handle.current_execution is not None
+                and handle.cpu_sampler is not None
+            ):
+                grown = handle.cpu_sampler.growth_bytes()
+                if grown is not None:
+                    growth[handle.current_execution.execution_id] = grown
+        return growth
+
     def active_execution_count(self) -> int:
         """Return child executions still owned by the parent drain path."""
         return sum(
@@ -1048,9 +1067,10 @@ class ProcessPoolManager:
                 lease_token=lease_token,
                 graceful_shutdown_seconds=graceful_shutdown_seconds,
             )
-            # Service children are not workflow executions; CPU sampling is
-            # scoped to workflow children only.
-            handle.cpu_sampler = None
+            # Sampled like a run so the memory watchdog sees its growth.
+            if handle.pid is not None:
+                handle.cpu_sampler = CPUSampler(pid=handle.pid, clock_ticks=get_clock_ticks())
+                handle.cpu_sampler.set_baseline(time.monotonic())
             # Service children live under service-slot accounting, not the
             # workflow pool.
             del self.processes[handle.id]
@@ -1183,7 +1203,7 @@ class ProcessPoolManager:
         """
         Monitor loop for health checks and timeout handling.
 
-        Runs every 1 second to:
+        Runs every MONITOR_INTERVAL_SECONDS to:
         1. Check for timed-out executions and kill processes
         2. Check for crashed processes
         3. Periodically clean stale queue entries (every 60s)
@@ -1227,22 +1247,20 @@ class ProcessPoolManager:
             except Exception as e:
                 logger.exception(f"Monitor loop error: {e}")
 
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(MONITOR_INTERVAL_SECONDS)
 
         logger.info("Monitor loop stopped")
 
     def _sample_resources(self) -> None:
-        """Sample CPU and RSS for BUSY workflow children.
+        """Sample CPU and RSS for BUSY workflow and service children.
 
         Runs synchronously inside the monitor loop. A /proc read per running
-        child per second is acceptable; missing or unreadable entries are
+        child per tick is acceptable; missing or unreadable entries are
         ignored so telemetry never blocks completion.
         """
         now = time.monotonic()
-        for handle in self.processes.values():
+        for handle in [*self.processes.values(), *self.service_processes.values()]:
             if handle.state != ProcessState.BUSY:
-                continue
-            if handle.service is not None:
                 continue
             sampler = handle.cpu_sampler
             if sampler is None:
@@ -1258,22 +1276,21 @@ class ProcessPoolManager:
                 logger.debug(f"Resource sample failed for {handle.id}: {e}")
 
     async def _stop_largest_when_dangerous(self) -> None:
-        """Stop the run that has grown the most once memory is dangerous.
+        """Stop the run or service that has grown the most once memory is dangerous.
 
-        A run may use more than it requested; only when the container's real
-        memory passes DANGEROUS_MEMORY_RATIO does the run that has grown the
-        most since it started get stopped, so one runaway run never takes the
-        executor and every other run with it. One run per pass: the next pass
-        sees the memory the kill freed.
+        Work may use more than it requested; only when the container's real
+        memory passes DANGEROUS_MEMORY_RATIO does the child that has grown
+        the most since it started get stopped, so one runaway never takes
+        the executor and everything else with it. One child per pass: the
+        next pass sees the memory the kill freed.
         """
         if memory_ratio() < DANGEROUS_MEMORY_RATIO:
             return
         candidates = [
             (growth, handle)
-            for handle in self.processes.values()
+            for handle in [*self.processes.values(), *self.service_processes.values()]
             if handle.state == ProcessState.BUSY
-            and handle.service is None
-            and handle.current_execution is not None
+            and (handle.current_execution is not None or handle.service is not None)
             and handle.cpu_sampler is not None
             and (growth := handle.cpu_sampler.growth_bytes()) is not None
         ]
@@ -1281,10 +1298,13 @@ class ProcessPoolManager:
             return
         growth, handle = max(candidates, key=lambda candidate: candidate[0])
         exec_info = handle.current_execution
-        assert exec_info is not None
         logger.warning(
-            "Stopping the run that grew the most: executor memory is dangerously high",
-            extra={"execution_id": exec_info.execution_id, "growth_mib": growth // 2**20},
+            "Stopping the child that grew the most: executor memory is dangerously high",
+            extra={
+                "execution_id": exec_info.execution_id if exec_info is not None else None,
+                "attempt_id": handle.service.attempt_id if handle.service is not None else None,
+                "growth_mib": growth // 2**20,
+            },
         )
         self._unregister_result_reader(handle)
         handle.state = ProcessState.KILLED
@@ -1295,16 +1315,37 @@ class ProcessPoolManager:
             except ProcessLookupError:
                 # It exited on its own in the meantime.
                 pass
+        error = (
+            f"Stopped after using {growth // 2**20} MiB: the executor was "
+            "about to run out of memory."
+        )
+        if handle.service is not None:
+            self.service_processes.pop(handle.id, None)
+            if not handle.result_reported:
+                handle.result_reported = True
+                if self.on_service_result is not None:
+                    try:
+                        await self.on_service_result(
+                            self._service_envelope(handle, {
+                                "type": "result",
+                                "attempt_id": handle.service.attempt_id,
+                                "success": False,
+                                "status": "Failed",
+                                "error": error,
+                                "error_type": "MemoryLimitExceeded",
+                            })
+                        )
+                    except Exception:
+                        logger.exception("Error reporting a service stopped for memory")
+            return
+        assert exec_info is not None
         if self.on_result is not None and not handle.result_reported:
             handle.result_reported = True
             result = exec_info.attach_transport_metadata({
                 "type": "result",
                 "execution_id": exec_info.execution_id,
                 "success": False,
-                "error": (
-                    f"Stopped after using {growth // 2**20} MiB: the executor was "
-                    "about to run out of memory."
-                ),
+                "error": error,
                 "error_type": "MemoryLimitExceeded",
                 "duration_ms": int(exec_info.elapsed_seconds * 1000),
                 "metrics": {"peak_memory_growth_bytes": growth},

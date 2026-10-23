@@ -26,6 +26,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import Awaitable, cast
 from uuid import UUID
@@ -68,9 +69,10 @@ class ServiceClaimLoop:
     # The DB lease (not this wait) owns the lifetime: anything still live
     # expires and restarts elsewhere.
     handover_wait_seconds: float = 5.0
-    # The executor's free memory budget, and how it holds (bytes) or
-    # releases (None) one attempt's request (src.services.memory_requests).
-    free_bytes: Callable[[], int] | None = None
+    # The executor's memory gate (src.worker.admission.Admission.claiming:
+    # yields the bytes a claim may take, None while over the threshold), and
+    # how it holds (bytes) or releases (None) one attempt's request.
+    claiming: Callable[[], AbstractAsyncContextManager[int | None]] | None = None
     hold_memory: Callable[[str, int | None], None] | None = None
 
     _owned: dict[str, OwnedAttempt] = field(default_factory=dict)
@@ -446,8 +448,7 @@ class ServiceClaimLoop:
         """Return an attempt's memory to the budget and learn its peak."""
         if owned is None:
             return
-        if self.hold_memory is not None:
-            self.hold_memory(str(owned.attempt_id), None)
+        self._release_memory(str(owned.attempt_id))
         if owned.workflow_id is None or owned.peak_memory_bytes <= 0:
             return
         try:
@@ -498,61 +499,79 @@ class ServiceClaimLoop:
         whose child then fails to launch completes without failure
         accounting (``requested``/``route_failed``) so the service relaunches
         promptly instead of leaking a childless live attempt.
+
+        Each claim and launch happens inside the executor's memory gate, and
+        the attempt's request is held before its child forks, so no other
+        claim can spend the same free bytes.
         """
+        if self.pool is None:
+            return
+        assert self.claiming is not None, "an executor's claim loop has a budget"
+        while True:
+            async with self.claiming() as fits:
+                if fits is None or not await self._claim_and_launch(fits):
+                    return
+
+    async def _claim_and_launch(self, fits_bytes: int) -> bool:
+        """Claim one eligible service that fits and launch it; True when one
+        launched (look for another)."""
         from src.core.database import get_db_context
         from src.services import service_lifecycle as lifecycle
 
-        if self.pool is None:
-            return
-        assert self.free_bytes is not None, "an executor's claim loop has a budget"
-        while True:
-            async with get_db_context() as db:
-                try:
-                    attempt = await lifecycle.claim_eligible_service(
-                        db,
-                        worker_id=self.worker_id,
-                        fits_bytes=self.free_bytes(),
-                        lease_ttl_seconds=self.lease_ttl_seconds,
-                    )
-                    if attempt is None:
-                        await db.rollback()
-                        return
-                    # Durable before fork: completions must observe this row.
-                    await db.commit()
-                    # Read back inside the session: commit expires attributes.
-                    attempt_id, lease_token, service_id = (
-                        attempt.id,
-                        attempt.lease_token,
-                        attempt.service_id,
-                    )
-                except lifecycle.ServiceClaimConflict:
-                    await db.rollback()
-                    return
-                except Exception as e:
-                    logger.warning("service claim failed: %s", e)
-                    await db.rollback()
-                    return
+        async with get_db_context() as db:
             try:
-                async with get_db_context() as db:
-                    # Re-attach by id: the claim above committed in a closed
-                    # session, so the ORM object is detached here.
-                    from src.models.orm.services import ServiceAttempt
-
-                    fresh = await db.get(ServiceAttempt, attempt_id)
-                    if fresh is None:
-                        return
-                    await self._launch_claimed(db, fresh)
-                    await db.commit()
+                attempt = await lifecycle.claim_eligible_service(
+                    db,
+                    worker_id=self.worker_id,
+                    fits_bytes=fits_bytes,
+                    lease_ttl_seconds=self.lease_ttl_seconds,
+                )
+                if attempt is None:
+                    await db.rollback()
+                    return False
+                # Durable before fork: completions must observe this row.
+                await db.commit()
+                # Read back inside the session: commit expires attributes.
+                attempt_id, lease_token, service_id = (
+                    attempt.id,
+                    attempt.lease_token,
+                    attempt.service_id,
+                )
             except lifecycle.ServiceClaimConflict:
-                return
+                await db.rollback()
+                return False
             except Exception as e:
-                logger.warning(
-                    "service launch failed for %s: %s", attempt_id, e
-                )
-                await self._complete_route_failure(
-                    attempt_id, lease_token, service_id
-                )
-                return
+                logger.warning("service claim failed: %s", e)
+                await db.rollback()
+                return False
+        try:
+            async with get_db_context() as db:
+                # Re-attach by id: the claim above committed in a closed
+                # session, so the ORM object is detached here.
+                from src.models.orm.services import ServiceAttempt
+
+                fresh = await db.get(ServiceAttempt, attempt_id)
+                if fresh is None:
+                    return False
+                await self._launch_claimed(db, fresh)
+                await db.commit()
+            return True
+        except lifecycle.ServiceClaimConflict:
+            self._release_memory(str(attempt_id))
+            return False
+        except Exception as e:
+            logger.warning(
+                "service launch failed for %s: %s", attempt_id, e
+            )
+            self._release_memory(str(attempt_id))
+            await self._complete_route_failure(
+                attempt_id, lease_token, service_id
+            )
+            return False
+
+    def _release_memory(self, attempt_id: str) -> None:
+        if self.hold_memory is not None:
+            self.hold_memory(attempt_id, None)
 
     async def _complete_route_failure(
         self, attempt_id, lease_token: str, service_id
@@ -670,19 +689,6 @@ class ServiceClaimLoop:
                 "token_expires_at": expires_at,
             },
         }
-        await self.pool.route_service(
-            service_id=str(definition.id),
-            attempt_id=str(attempt.id),
-            lease_token=attempt.lease_token,
-            context=context,
-            graceful_shutdown_seconds=definition.graceful_shutdown_seconds,
-        )
-        async with get_redis() as r:
-            await r.setex(
-                service_token_key(str(attempt.id)),
-                self.token_lifetime_seconds + 300,
-                json.dumps({"token": token, "expires_at": expires_at}),
-            )
         from sqlalchemy import select
 
         from src.models.orm.workflows import Workflow
@@ -696,6 +702,22 @@ class ServiceClaimLoop:
             )
         ).one()
         request = workflow_request_bytes(learned, declared)
+        # Held before the fork: the claim's free bytes are spent here.
+        if self.hold_memory is not None:
+            self.hold_memory(str(attempt.id), request)
+        await self.pool.route_service(
+            service_id=str(definition.id),
+            attempt_id=str(attempt.id),
+            lease_token=attempt.lease_token,
+            context=context,
+            graceful_shutdown_seconds=definition.graceful_shutdown_seconds,
+        )
+        async with get_redis() as r:
+            await r.setex(
+                service_token_key(str(attempt.id)),
+                self.token_lifetime_seconds + 300,
+                json.dumps({"token": token, "expires_at": expires_at}),
+            )
         self._owned[str(attempt.id)] = OwnedAttempt(
             attempt_id=attempt.id,
             service_id=definition.id,
@@ -703,8 +725,6 @@ class ServiceClaimLoop:
             workflow_id=definition.workflow_id,
             memory_request_bytes=request,
         )
-        if self.hold_memory is not None:
-            self.hold_memory(str(attempt.id), request)
         logger.info(
             "worker %s launched service %s (attempt %s)",
             self.worker_id,
