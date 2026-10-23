@@ -61,6 +61,10 @@ class SchedulerCapacityStatus(BaseModel):
     jobs_waiting_for_memory: int
     oldest_queued_seconds: float | None = None
     max_memory_utilization_percent: float | None = Field(default=None, ge=0)
+    # Accepted work (workflow runs, agent runs, summaries) no executor has
+    # claimed yet, and how long the oldest has waited.
+    runs_waiting: int = 0
+    oldest_waiting_run_seconds: float | None = None
 
 
 class SystemDiagnosticLogPublic(BaseModel):

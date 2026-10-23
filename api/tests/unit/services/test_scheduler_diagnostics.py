@@ -143,6 +143,37 @@ async def test_scheduler_snapshot_explains_capacity_pressure(
 
 
 @pytest.mark.asyncio
+async def test_scheduler_snapshot_reports_how_long_runs_wait_for_an_executor(
+    db_session: AsyncSession,
+    diagnostics_context: None,
+) -> None:
+    from sqlalchemy import delete
+
+    from src.models.orm.work_dispatches import WorkDispatch
+
+    waiting = WorkDispatch(
+        id=uuid4(), family="workflow_execution", subject_id=uuid4(),
+        handler="workflow.execute", handler_version=1, message={}, payload={},
+        memory_request_bytes=64 * 2**20,
+        created_at=datetime.now(timezone.utc) - timedelta(minutes=2),
+    )
+    db_session.add(waiting)
+    await db_session.commit()
+    try:
+        response = await get_scheduler_diagnostics(
+            SimpleNamespace(db=db_session),  # type: ignore[arg-type]
+            SimpleNamespace(is_superuser=True),  # type: ignore[arg-type]
+        )
+    finally:
+        await db_session.execute(delete(WorkDispatch).where(WorkDispatch.id == waiting.id))
+        await db_session.commit()
+
+    assert response.capacity.runs_waiting >= 1
+    assert response.capacity.oldest_waiting_run_seconds is not None
+    assert response.capacity.oldest_waiting_run_seconds >= 110
+
+
+@pytest.mark.asyncio
 async def test_scheduler_snapshot_drops_expired_replicas(
     db_session: AsyncSession,
     diagnostics_context: None,

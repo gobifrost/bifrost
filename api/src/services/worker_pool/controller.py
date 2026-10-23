@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, literal, select, text
 
 from src.config import Settings, get_settings
 from src.core.database import get_db_context
@@ -32,7 +32,9 @@ from src.jobs.platform.kubernetes_client import (
     KubernetesJobClient,
 )
 from src.models.orm.execution_workers import ExecutionWorker
+from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.work_dispatches import WorkDispatch
+from src.services.platform_jobs import WAITING_FOR_MEMORY
 from src.services.memory_requests import (
     JOB_BASELINE_ESTIMATE_BYTES,
     LAUNCHABLE_KEY,
@@ -189,12 +191,13 @@ class WorkerPoolController:
     async def launch_for_demand(self) -> list[UUID]:
         """Reserve incarnations for waiting work, sized by memory, within ceilings.
 
-        Waiting requests are placed oldest first into the free budget of
+        Waiting requests (dispatches, and local platform jobs waiting for
+        executor memory) are placed oldest first into the free budget of
         executors that can claim (a Job that has not reported its budget
         counts as the one expected). What does not fit goes into new
         standard Jobs, or a Job sized for one request a standard Job cannot
-        hold. The warm minimum is kept, and Jobs never exceed
-        ``pool_max_workers``.
+        hold (reserved for it when it is a dispatch). The warm minimum is
+        kept, and Jobs never exceed ``pool_max_workers``.
         """
         async with get_db_context() as db:
             locked = (
@@ -207,13 +210,29 @@ class WorkerPoolController:
                 return []
             waiting = (
                 await db.execute(
-                    select(WorkDispatch.id, WorkDispatch.memory_request_bytes)
-                    .where(
-                                        WorkDispatch.assigned_worker_id.is_(None),
+                    select(
+                        WorkDispatch.id.label("id"),
+                        WorkDispatch.memory_request_bytes.label("memory_request_bytes"),
+                        WorkDispatch.created_at.label("created_at"),
+                        literal(True).label("is_dispatch"),
                     )
-                    .order_by(WorkDispatch.created_at.asc())
+                    .where(WorkDispatch.assigned_worker_id.is_(None))
+                    .union_all(
+                        select(
+                            PlatformJob.id,
+                            PlatformJob.memory_required_bytes,
+                            PlatformJob.created_at,
+                            literal(False),
+                        ).where(
+                            PlatformJob.status == "queued",
+                            PlatformJob.execution_backend == "local",
+                            PlatformJob.phase == WAITING_FOR_MEMORY,
+                        )
+                    )
+                    .order_by(text("created_at"))
                 )
             ).all()
+            dispatch_ids = {row.id for row in waiting if row.is_dispatch}
             workers = (
                 await db.execute(
                     select(ExecutionWorker).where(ExecutionWorker.state.in_(LIVE_STATES))
@@ -252,8 +271,14 @@ class WorkerPoolController:
                 largest_budget=largest_budget,
             )
             jobs = sum(1 for worker in workers if worker.form == "job")
+            # Only standard Jobs make up the warm minimum; a sized Job exists
+            # for its large work and drains once idle.
             undrained = sum(
-                1 for worker in workers if worker.form == "job" and worker.state != "draining"
+                1
+                for worker in workers
+                if worker.form == "job"
+                and worker.resource_class == "standard"
+                and worker.state != "draining"
             )
             warm = max(
                 0, self.settings.pool_min_workers - undrained - plan.standard - len(plan.sized)
@@ -267,9 +292,12 @@ class WorkerPoolController:
                     self._reserve(
                         db,
                         memory_limit_bytes=sized_job_limit_bytes(
-                            request, self.settings.memory_pressure_threshold, baseline
+                            request,
+                            self.settings.memory_pressure_threshold,
+                            baseline,
+                            max(standard_limit, self.settings.pool_worker_max_memory_mib * 2**20),
                         ),
-                        reserved_for=dispatch_id,
+                        reserved_for=dispatch_id if dispatch_id in dispatch_ids else None,
                     )
                 )
             for _ in range(plan.standard + warm):
@@ -355,14 +383,14 @@ def _plan_launches(
 
 
 def _job_baseline(workers: Any, settings: Settings) -> int:
-    """A Job worker's own memory, from the largest any standard Job reported."""
+    """A Job worker's own memory, from the largest any Job reported (its
+    limit at the threshold, less the budget it measured)."""
     standard_limit = settings.pool_worker_memory_limit_mib * 2**20
     reported = [
-        int(standard_limit * settings.memory_pressure_threshold) - worker.memory_budget_bytes
+        int((worker.memory_limit_bytes or standard_limit) * settings.memory_pressure_threshold)
+        - worker.memory_budget_bytes
         for worker in workers
-        if worker.form == "job"
-        and worker.memory_limit_bytes is None
-        and worker.memory_budget_bytes is not None
+        if worker.form == "job" and worker.memory_budget_bytes is not None
     ]
     return max(reported, default=JOB_BASELINE_ESTIMATE_BYTES)
 

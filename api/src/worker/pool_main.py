@@ -366,6 +366,7 @@ class PoolWorker:
     async def _run_claim(self, claim: PoolClaim) -> None:
         assert self._workflow_consumer is not None and self._agent_consumer is not None
         assert self.admission is not None
+        handed_back = False
         try:
             # Workflow runs return once routed to a child (then counted by the
             # pool); agent runs return when finished.
@@ -383,12 +384,14 @@ class PoolWorker:
                     from src.services.execution.workflow_dispatch import release_workflow_run
 
                     self.admission.release(str(claim.subject_id))
+                    handed_back = True
                     assert claim.claimed is not None
                     await release_workflow_run(
                         worker_id=self.incarnation_id,
                         message=claim.message,
                         payload=claim.claimed,
                         memory_request_bytes=claim.memory_request_bytes,
+                        queued_at=claim.queued_at,
                     )
             elif claim.handler == "agent.run":
                 await self._agent_consumer.process_message(claim.message)
@@ -401,8 +404,10 @@ class PoolWorker:
             )
         finally:
             if claim.handler == "workflow.execute":
-                # A routed workflow run stays held until its child ends.
-                self.admission.started(str(claim.subject_id))
+                # A routed workflow run stays held until its child ends. A run
+                # handed back may already be claimed again (its own hold).
+                if not handed_back:
+                    self.admission.started(str(claim.subject_id))
             else:
                 self.admission.release(str(claim.dispatch_id))
             self.runs_handled += 1

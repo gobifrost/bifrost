@@ -78,11 +78,20 @@ async def test_a_run_of_unknown_code_decays_the_learned_peak(db_session) -> None
 def test_a_sized_job_limit_is_the_smallest_step_whose_budget_fits(request_bytes: int) -> None:
     threshold, baseline = 0.85, 768 * MIB
 
-    limit = sized_job_limit_bytes(request_bytes, threshold, baseline)
+    limit = sized_job_limit_bytes(request_bytes, threshold, baseline, 64 * GIB)
 
     assert limit % JOB_LIMIT_STEP_BYTES == 0
     assert job_budget_bytes(limit, threshold, baseline) >= request_bytes
     assert job_budget_bytes(limit - JOB_LIMIT_STEP_BYTES, threshold, baseline) < request_bytes
+
+
+def test_a_sized_job_limit_never_exceeds_the_largest_job() -> None:
+    """A maximum that is not a step multiple: the budget at the maximum
+    already holds the request, so the rounded-up step is not needed."""
+    threshold, baseline, largest = 0.85, 768 * MIB, 8000 * MIB
+    request = job_budget_bytes(largest, threshold, baseline)
+
+    assert sized_job_limit_bytes(request, threshold, baseline, largest) == largest
 
 
 def _no_cgroup_limit(monkeypatch, current: int) -> None:  # type: ignore[no-untyped-def]

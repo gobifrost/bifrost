@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -191,6 +192,9 @@ async def test_the_process_pool_is_ready_before_any_work_is_claimed(monkeypatch)
     assert order == ["pool started", "claim", "pool stopped"]
 
 
+QUEUED_AT = datetime(2026, 10, 23, tzinfo=timezone.utc)
+
+
 def _workflow_claim(execution_id: str, request: int) -> PoolClaim:
     return PoolClaim(
         dispatch_id=uuid4(),
@@ -198,6 +202,7 @@ def _workflow_claim(execution_id: str, request: int) -> PoolClaim:
         message={"execution_id": execution_id},
         subject_id=UUID(execution_id),
         memory_request_bytes=request,
+        queued_at=QUEUED_AT,
         claimed={"execution_id": execution_id, "sync": False},
     )
 
@@ -239,6 +244,7 @@ async def test_a_refused_fork_hands_the_run_back(monkeypatch) -> None:  # type: 
         message={"execution_id": execution_id},
         payload={"execution_id": execution_id, "sync": False},
         memory_request_bytes=100 * MIB,
+        queued_at=QUEUED_AT,
     )
     assert worker.admission.free_bytes() == GIB, "the hold went back with the run"
 

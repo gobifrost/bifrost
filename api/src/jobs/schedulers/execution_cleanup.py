@@ -73,13 +73,20 @@ async def cleanup_stuck_executions() -> dict[str, Any]:
 
         session_factory = get_session_factory()
         async with session_factory() as db:
-            # Find stuck PENDING executions
+            # Find stuck PENDING executions. A run still waiting in a work
+            # dispatch is not stuck: it waits for capacity, and the dispatch
+            # reconciler fails it at its claim deadline.
+            from src.models.orm.work_dispatches import WorkDispatch
+
             pending_cutoff = now - timedelta(minutes=PENDING_TIMEOUT_MINUTES)
             pending_result = await db.execute(
                 select(ExecutionModel).where(
                     and_(
                         ExecutionModel.status == ExecutionStatus.PENDING.value,
                         ExecutionModel.started_at < pending_cutoff,
+                        ~select(WorkDispatch.id)
+                        .where(WorkDispatch.subject_id == ExecutionModel.id)
+                        .exists(),
                     )
                 )
             )

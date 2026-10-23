@@ -128,9 +128,14 @@ def db(async_session_factory: async_sessionmaker[AsyncSession], monkeypatch):
 
 
 async def _clear_pool_state(sessions) -> None:  # type: ignore[no-untyped-def]
+    from src.models.orm.platform_jobs import PlatformJob
+
     async with sessions() as session:
         await session.execute(delete(WorkDispatch))
         await session.execute(delete(ExecutionWorker))
+        # Queued platform jobs count as launch demand; the stack's scheduler
+        # enqueues some (model catalog, Solution updates) during the reset.
+        await session.execute(delete(PlatformJob).where(PlatformJob.status == "queued"))
         await session.commit()
     # What a worker controller last published it can launch.
     async with get_redis() as redis:
@@ -322,6 +327,52 @@ async def test_a_worker_launched_for_a_dispatch_claims_it_first(db) -> None:
         assert (await session.get(ExecutionWorker, worker.id)).reserved_for_dispatch_id is None
 
 
+async def test_a_worker_launched_for_a_dispatch_takes_it_even_when_smaller_than_planned(db) -> None:
+    """Otherwise the dispatch stays uncovered and the controller launches
+    another Job of the same wrong size, again and again."""
+    worker = await _job_worker(db.sessions, state="ready")
+    reserved = await _accept_pool_run()
+    await _set_request(db.sessions, reserved, 900 * MIB)
+    async with db.sessions() as session:
+        dispatch_id = await session.scalar(
+            select(WorkDispatch.id).where(WorkDispatch.subject_id == UUID(reserved))
+        )
+        await session.execute(
+            update(ExecutionWorker)
+            .where(ExecutionWorker.id == worker.id)
+            .values(reserved_for_dispatch_id=dispatch_id)
+        )
+        await session.commit()
+
+    claim = await _claim(worker.id, fits=800 * MIB, budget=800 * MIB)
+
+    assert claim is not None and claim.dispatch_id == dispatch_id
+
+
+def test_the_job_baseline_learns_from_sized_jobs_too() -> None:
+    sized = SimpleNamespace(
+        form="job", memory_limit_bytes=4 * GIB, memory_budget_bytes=2 * GIB
+    )
+    expected = int(4 * GIB * SETTINGS.memory_pressure_threshold) - 2 * GIB
+    assert controller._job_baseline([sized], SETTINGS) == expected  # type: ignore[arg-type]
+
+
+async def test_a_sized_job_drains_when_idle_and_is_never_the_warm_minimum(db) -> None:
+    sized = await _job_worker(db.sessions, state="ready")
+    async with db.sessions() as session:
+        await session.execute(
+            update(ExecutionWorker)
+            .where(ExecutionWorker.id == sized.id)
+            .values(resource_class="sized", memory_limit_bytes=8 * GIB)
+        )
+        await session.commit()
+
+    warm = SimpleNamespace(**{**vars(SETTINGS), "pool_min_workers": 1})
+    launched = await controller.WorkerPoolController(FakeCluster(), warm, SPEC).launch_for_demand()  # type: ignore[arg-type]
+    assert len(launched) == 1, "the warm minimum is a standard Job"
+    assert await claims.begin_idle_drain(sized.id, keep_ready=1)
+
+
 # --- controller ---------------------------------------------------------------
 
 
@@ -370,8 +421,8 @@ async def test_a_memory_pressured_executor_offers_no_capacity(db) -> None:
 
 async def test_a_run_handed_back_before_it_started_waits_for_another_executor(db) -> None:
     """A run whose fork was refused after its claim goes back to PENDING with
-    a fresh dispatch carrying the same request, and without the first
-    executor's claim record."""
+    a fresh dispatch carrying the same request and its place in line, and
+    without the first executor's claim record."""
     from src.models.orm.execution_workers import ExecutionWorkerClaim
 
     first = await claims.register_static_worker(slots=1, hostname="first", memory_budget_bytes=GIB)
@@ -384,7 +435,7 @@ async def test_a_run_handed_back_before_it_started_waits_for_another_executor(db
 
     await workflow_dispatch.release_workflow_run(
         worker_id=first, message=claim.message, payload=claim.claimed,
-        memory_request_bytes=claim.memory_request_bytes,
+        memory_request_bytes=claim.memory_request_bytes, queued_at=claim.queued_at,
     )
 
     async with db.sessions() as session:
@@ -402,6 +453,7 @@ async def test_a_run_handed_back_before_it_started_waits_for_another_executor(db
     assert again is not None and again.claimed is not None
     assert again.claimed["execution_id"] == execution_id
     assert again.memory_request_bytes == 200 * MIB
+    assert again.queued_at == claim.queued_at, "it keeps its place and claim deadline"
 
 
 async def test_silent_worker_is_lost_and_its_unstarted_work_released(db, monkeypatch) -> None:
@@ -707,6 +759,32 @@ async def test_a_run_lost_with_its_worker_learns_the_worker_s_budget(db) -> None
     assert learned == 546 * MIB - WORKFLOW_REQUEST_MARGIN_BYTES
 
 
+async def test_a_run_waiting_for_capacity_is_not_failed_as_stuck(db, monkeypatch) -> None:
+    """Its claim deadline (POOL_CLAIM_DEADLINE) decides; the stuck-run
+    cleanup only fails pending runs nothing is waiting to claim."""
+    from src.jobs.schedulers import execution_cleanup as cleanup
+
+    for name in ("publish_execution_update", "publish_history_update"):
+        monkeypatch.setattr(cleanup, name, AsyncMock())
+    monkeypatch.setattr(cleanup, "get_session_factory", lambda: db.sessions)
+    waiting = await _accept_pool_run()
+    orphan = await _accept_pool_run()
+    async with db.sessions() as session:
+        await session.execute(delete(WorkDispatch).where(WorkDispatch.subject_id == UUID(orphan)))
+        await session.execute(
+            update(Execution)
+            .where(Execution.id.in_([UUID(waiting), UUID(orphan)]))
+            .values(started_at=datetime.now(timezone.utc) - timedelta(minutes=20))
+        )
+        await session.commit()
+
+    await cleanup.cleanup_stuck_executions()
+
+    async with db.sessions() as session:
+        assert (await session.get(Execution, UUID(waiting))).status == ExecutionStatus.PENDING
+        assert (await session.get(Execution, UUID(orphan))).status == ExecutionStatus.TIMEOUT
+
+
 # --- sizing by memory -----------------------------------------------------------
 
 
@@ -758,7 +836,7 @@ async def test_a_sized_worker_is_launched_once_for_its_dispatch(db) -> None:
     baseline = 768 * MIB  # no standard worker has reported its budget yet
     assert worker.resource_class == "sized"
     assert worker.reserved_for_dispatch_id == dispatch_id
-    assert worker.memory_limit_bytes == sized_job_limit_bytes(3 * GIB, 0.85, baseline)
+    assert worker.memory_limit_bytes == sized_job_limit_bytes(3 * GIB, 0.85, baseline, 8192 * MIB)
     # Every reconcile publishes the largest budget it could launch.
     await pool.reconcile()
     async with get_redis() as redis:
@@ -806,6 +884,84 @@ async def test_work_larger_than_the_largest_executor_fails_visibly(db) -> None:
     assert execution.status == ExecutionStatus.FAILED
     assert "needs 1024 MiB" in (execution.error_message or "")
     assert "can hold 512 MiB" in (execution.error_message or "")
+
+
+async def test_work_no_executor_can_hold_fails_within_seconds(db) -> None:
+    static_id = await claims.register_static_worker(slots=1, hostname="static-1", memory_budget_bytes=GIB)
+    await _report_budget(static_id, 512 * MIB)
+    execution_id = await _accept_pool_run()
+    await _set_request(db.sessions, execution_id, GIB)
+
+    await work_dispatch.reconcile_work_dispatches()
+
+    async with db.sessions() as session:
+        assert (await session.get(Execution, UUID(execution_id))).status == ExecutionStatus.FAILED
+
+
+async def test_a_draining_executor_s_budget_is_not_capacity(db) -> None:
+    draining = await claims.register_static_worker(slots=1, hostname="leaving", memory_budget_bytes=4 * GIB)
+    await claims.begin_drain(draining, "stopped")
+    ready = await claims.register_static_worker(slots=1, hostname="staying", memory_budget_bytes=GIB)
+    await _report_budget(ready, 512 * MIB)
+
+    async with db.sessions() as session:
+        assert await work_dispatch.largest_budget(session) == 512 * MIB
+
+
+async def test_a_platform_job_no_executor_can_hold_fails_visibly(db) -> None:
+    from src.models.orm.platform_jobs import PlatformJob
+    from src.services.worker_pool import unfit
+
+    def job(required: int) -> PlatformJob:
+        return PlatformJob(
+            job_type="workspace.reindex", payload={}, requested_by_user_id=str(uuid4()),
+            requested_by_email="person@contoso.example", requested_by_name="Contoso User",
+            title="Contoso Reindex", memory_required_bytes=required,
+        )
+
+    large, small = job(GIB), job(256 * MIB)
+    async with db.sessions() as session:
+        session.add_all([large, small])
+        await session.commit()
+        failed = await unfit.fail_platform_jobs_that_never_fit(session, 512 * MIB)
+        await session.commit()
+        statuses = {
+            row.id: (row.status, row.error_code)
+            for row in (
+                await session.scalars(
+                    select(PlatformJob).where(PlatformJob.id.in_([large.id, small.id]))
+                )
+            ).all()
+        }
+        await session.execute(delete(PlatformJob).where(PlatformJob.id.in_([large.id, small.id])))
+        await session.commit()
+
+    assert [row.id for row in failed] == [large.id]
+    assert statuses == {large.id: ("failed", "too_large"), small.id: ("queued", None)}
+
+
+async def test_a_platform_job_waiting_for_memory_launches_a_worker(db) -> None:
+    from src.models.orm.platform_jobs import PlatformJob
+    from src.services.platform_jobs import WAITING_FOR_MEMORY
+
+    waiting = PlatformJob(
+        job_type="workspace.reindex", payload={}, requested_by_user_id=str(uuid4()),
+        requested_by_email="person@contoso.example", requested_by_name="Contoso User",
+        title="Contoso Reindex", memory_required_bytes=512 * MIB, phase=WAITING_FOR_MEMORY,
+    )
+    async with db.sessions() as session:
+        session.add(waiting)
+        await session.commit()
+    try:
+        launched = await controller.WorkerPoolController(FakeCluster(), SETTINGS, SPEC).launch_for_demand()  # type: ignore[arg-type]
+        assert len(launched) == 1
+        async with db.sessions() as session:
+            worker = await session.get(ExecutionWorker, launched[0])
+        assert worker.reserved_for_dispatch_id is None
+    finally:
+        async with db.sessions() as session:
+            await session.execute(delete(PlatformJob).where(PlatformJob.id == waiting.id))
+            await session.commit()
 
 
 async def test_large_work_waits_while_no_executor_has_reported_a_budget(db) -> None:

@@ -28,6 +28,8 @@ vi.mock("@/services/schedulerDiagnostics", async () => {
 				jobs_waiting_for_memory: 1,
 				oldest_queued_seconds: 180,
 				max_memory_utilization_percent: 92,
+				runs_waiting: 4,
+				oldest_waiting_run_seconds: 95,
 			},
 			replicas: [
 				{
@@ -110,8 +112,11 @@ vi.mock("@/services/websocket", () => ({
 	},
 }));
 
-import { getSchedulerDiagnostics } from "@/services/schedulerDiagnostics";
-import { SchedulerTab } from "./SchedulerTab";
+import {
+	getSchedulerDiagnostics,
+	type SchedulerDiagnosticsResponse,
+} from "@/services/schedulerDiagnostics";
+import { SchedulerTab, schedulerRecommendations } from "./SchedulerTab";
 
 describe("SchedulerTab", () => {
 	it("offers recovery when the initial scheduler snapshot fails", async () => {
@@ -152,6 +157,8 @@ describe("SchedulerTab", () => {
 		expect(screen.getByText("Scheduler Replicas")).toBeInTheDocument();
 		expect(screen.getByText(/waiting for memory/i)).toBeInTheDocument();
 		expect(screen.getByText("2 platform jobs running")).toBeInTheDocument();
+		expect(screen.getByText("Runs Waiting")).toBeInTheDocument();
+		expect(screen.getByText("Oldest waiting 95s")).toBeInTheDocument();
 		await user.click(screen.getByRole("tab", { name: "System Schedules" }));
 		expect(
 			(await screen.findAllByText("Refresh Expiring OAuth Tokens"))[0],
@@ -191,5 +198,27 @@ describe("SchedulerTab", () => {
 		expect(await screen.findByRole("dialog")).toHaveTextContent(
 			"Refresh Expiring OAuth Tokens",
 		);
+	});
+
+	it("recommends capacity once runs wait a minute for an executor", () => {
+		const snapshot = (oldest: number | null) =>
+			({
+				capacity: {
+					replicas_online: 1,
+					platform_jobs_running: 0,
+					jobs_queued: 0,
+					jobs_waiting_for_memory: 0,
+					oldest_queued_seconds: null,
+					max_memory_utilization_percent: 10,
+					runs_waiting: oldest == null ? 0 : 3,
+					oldest_waiting_run_seconds: oldest,
+				},
+			}) as unknown as SchedulerDiagnosticsResponse;
+
+		expect(schedulerRecommendations(snapshot(null))).toEqual([]);
+		expect(schedulerRecommendations(snapshot(5))).toEqual([]);
+		expect(schedulerRecommendations(snapshot(75))).toEqual([
+			"3 runs are waiting for an executor with room; the oldest for 75s. Add executors or executor memory.",
+		]);
 	});
 });

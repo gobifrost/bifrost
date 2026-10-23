@@ -31,11 +31,22 @@ import {
 import { PlatformJobsPanel } from "./PlatformJobsPanel";
 import { SchedulerRunDrawer } from "./SchedulerRunDrawer";
 
+// Work normally starts within a second; a minute means capacity is short.
+const RUN_WAIT_WARNING_SECONDS = 60;
+
 export function schedulerRecommendations(
 	data: SchedulerDiagnosticsResponse,
 ): string[] {
 	const { capacity } = data;
 	const recommendations: string[] = [];
+	if (
+		capacity.oldest_waiting_run_seconds != null &&
+		capacity.oldest_waiting_run_seconds >= RUN_WAIT_WARNING_SECONDS
+	) {
+		recommendations.push(
+			`${capacity.runs_waiting} run${capacity.runs_waiting === 1 ? " is" : "s are"} waiting for an executor with room; the oldest for ${Math.round(capacity.oldest_waiting_run_seconds)}s. Add executors or executor memory.`,
+		);
+	}
 	if (capacity.jobs_waiting_for_memory > 0) {
 		recommendations.push(
 			`${capacity.jobs_waiting_for_memory} queued job${capacity.jobs_waiting_for_memory === 1 ? " is" : "s are"} waiting for memory admission. Compare available and required headroom in Platform Jobs below.`,
@@ -232,7 +243,17 @@ export function SchedulerTab() {
 					</Alert>
 				)}
 
-				<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+				<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+					<StatCard
+						title="Runs Waiting"
+						value={`${data.capacity.runs_waiting}`}
+						detail={
+							data.capacity.oldest_waiting_run_seconds == null
+								? "No runs waiting"
+								: `Oldest waiting ${Math.round(data.capacity.oldest_waiting_run_seconds)}s`
+						}
+						icon={Clock3}
+					/>
 					<StatCard
 						title="Replicas"
 						value={`${data.capacity.replicas_online}`}

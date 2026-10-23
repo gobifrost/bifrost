@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 StartupPolicy = Literal["automatic", "manual"]
 RestartPolicy = Literal["always", "on_failure", "never"]
 DesiredState = Literal["running", "stopped"]
-BlockedReason = Literal["policy", "crash_loop", "disabled"]
+BlockedReason = Literal["policy", "crash_loop", "disabled", "too_large"]
 
 
 class ServicePolicyUpdate(BaseModel):

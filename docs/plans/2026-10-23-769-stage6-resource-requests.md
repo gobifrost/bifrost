@@ -31,21 +31,36 @@ memory, is what limits workflows today.
      fork template, services it already runs are counted as work);
    - budget = limit × `memory_pressure_threshold` (0.85) − baseline.
 3. **An executor claims the oldest waiting work whose request fits** in its
-   free budget (budget minus the requests of the work it holds), and also
-   only while its real memory is under the threshold. The request is held
-   from claim to finish. One budget covers every kind of work.
+   free budget (budget minus what the work it holds reserves), and also
+   only while its real memory is under the threshold. A workflow run
+   reserves the larger of its request and its live growth (sampled every
+   250 ms). Once it holds two pieces of work, an executor waits for the last
+   run to reach its child and 100 ms more before claiming again, so the
+   real-memory check sees what the last start did (Temporal's
+   `rampThrottle`). Every kind of work claims through one serialized gate
+   (`src/worker/admission.py`): read the free budget, claim, hold.
 4. **No count caps.** `max_workers`, `max_concurrency`, the summary slots,
    `pool_worker_slots` and the platform-job slots stop being capacity.
    Policy limits stay: per-type platform-job concurrency (one deploy per
    App) and resource locks.
-5. **The kernel stays the backstop.** A run that outgrows its request is not
-   stopped for that; only real pressure (the existing hard-limit and OOM
-   handling) ends work.
+5. **Only dangerous memory stops work.** A run may grow past its request;
+   at 95% of the container's real memory the run or service that grew most
+   is stopped. A run killed for memory (by that stop, by the kernel, or lost
+   with its executor) teaches its workflow the executor's budget less the
+   16 MiB margin, so its next run fits an executor alone. The one case
+   nothing catches, a never-measured burst that allocates within its first
+   instant, costs at most one learning kill per new or changed workflow
+   (accepted by Jack, 2026-10-23).
 6. **The controller launches for work nothing can fit.** On Kubernetes:
    standard Job workers for work a standard worker fits, and a Job sized to
-   the request when it is larger, up to `pool_worker_max_memory_mib`. Work no
-   executor can ever fit fails visibly ("needs N MiB; the largest executor
-   has M"). Workers drain themselves after inactivity.
+   the request when it is larger, up to `pool_worker_max_memory_mib` (local
+   platform jobs waiting for memory count as demand too). Work no executor
+   can ever fit fails visibly within seconds ("needs N MiB; the largest
+   executor can hold M"): runs and platform jobs fail, services are blocked
+   `too_large` until an executor can hold them. Work that merely waits is a
+   metric (Diagnostics: runs waiting and the oldest wait) and fails only at
+   its claim deadline. Workers drain themselves after inactivity; a sized
+   Job is never the warm minimum.
 
 ## Requests are typical, not worst case
 
@@ -60,7 +75,7 @@ run.
   (`peak_memory_bytes`), which misses memory freed before the end.
 - **Learned per workflow**, in the completion update the executor already
   makes: the workflow's learned peak rises at once to any larger run and
-  otherwise moves 1/20 of the way down toward each smaller one (a decaying
+  otherwise moves 1/10 of the way down toward each smaller one (a decaying
   maximum, one primary-key update, no scan). Its request is that value plus
   a 16 MiB margin. Acceptance reads it with the workflow lookup it already
   does.
@@ -97,6 +112,19 @@ cannot start containers (Docker) cannot run isolated jobs; build-class jobs
 there run in the local runner, as today. Folding the build backend into the
 worker controller is a later change, made when the next isolated job type
 arrives.
+
+## Lost executors
+
+An executor heartbeats every 5 s with the database's clock. It is lost once
+it has not heartbeated for 30 s while the database was reachable: each
+control loop (the Job controller; the dispatch reconciler for static
+executors) judges that only after it has itself reached the database for
+30 s without a break, so an outage never marks every executor lost. A lost
+executor's runs fail visibly and are never replayed. Results are written
+only by the executor that still holds the run's claim, so a lost executor's
+late result never overwrites the loss; an executor told it is lost stops its
+runs instead of draining. Resilient Workflows retries (after #769) build on
+this fencing.
 
 ## Fairness
 

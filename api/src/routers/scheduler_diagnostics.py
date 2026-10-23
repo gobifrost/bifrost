@@ -5,7 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, HTTPException, Query, status
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from src.core.auth import Context, CurrentActiveUser
 from src.core.database import AsyncSession, get_db
@@ -30,6 +30,7 @@ from src.models.orm.scheduler_diagnostics import (
     SystemDiagnosticLog,
 )
 from src.models.orm.scheduler_leases import SchedulerLease
+from src.models.orm.work_dispatches import WorkDispatch
 from src.services.platform_jobs import WAITING_FOR_MEMORY
 from src.scheduler.leadership import TRIGGER_LEASE_NAME
 from src.scheduler.registry import SCHEDULED_TASKS, SCHEDULED_TASKS_BY_ID
@@ -196,6 +197,13 @@ async def get_scheduler_diagnostics(
         oldest_queued_seconds = max(
             0.0, (now - min(created_at for created_at, _ in queued_rows)).total_seconds()
         )
+    runs_waiting, oldest_run = (
+        await ctx.db.execute(
+            select(func.count(WorkDispatch.id), func.min(WorkDispatch.created_at)).where(
+                WorkDispatch.assigned_worker_id.is_(None)
+            )
+        )
+    ).one()
     utilization = [
         100 * replica.memory_current_bytes / replica.memory_limit_bytes
         for replica in online_replicas
@@ -212,6 +220,10 @@ async def get_scheduler_diagnostics(
         ),
         oldest_queued_seconds=oldest_queued_seconds,
         max_memory_utilization_percent=max(utilization) if utilization else None,
+        runs_waiting=runs_waiting,
+        oldest_waiting_run_seconds=(
+            None if oldest_run is None else max(0.0, (now - oldest_run).total_seconds())
+        ),
     )
 
     return SchedulerDiagnosticsResponse(

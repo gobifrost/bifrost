@@ -110,13 +110,16 @@ def job_budget_bytes(limit_bytes: int, threshold: float, baseline_bytes: int) ->
     return max(0, int(limit_bytes * threshold) - baseline_bytes)
 
 
-def sized_job_limit_bytes(request_bytes: int, threshold: float, baseline_bytes: int) -> int:
+def sized_job_limit_bytes(
+    request_bytes: int, threshold: float, baseline_bytes: int, max_limit_bytes: int
+) -> int:
     """The smallest Job memory limit (a JOB_LIMIT_STEP_BYTES multiple) whose
-    budget fits ``request_bytes``."""
+    budget fits ``request_bytes``, never above ``max_limit_bytes`` (the
+    planner sizes only requests that limit's budget holds)."""
     limit = JOB_LIMIT_STEP_BYTES
     while job_budget_bytes(limit, threshold, baseline_bytes) < request_bytes:
         limit += JOB_LIMIT_STEP_BYTES
-    return limit
+    return min(limit, max_limit_bytes)
 
 
 def measure_budget(threshold: float) -> MemoryBudget:

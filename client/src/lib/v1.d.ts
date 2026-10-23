@@ -26360,6 +26360,13 @@ export interface components {
             oldest_queued_seconds?: number | null;
             /** Max Memory Utilization Percent */
             max_memory_utilization_percent?: number | null;
+            /**
+             * Runs Waiting
+             * @default 0
+             */
+            runs_waiting: number;
+            /** Oldest Waiting Run Seconds */
+            oldest_waiting_run_seconds?: number | null;
         };
         /** SchedulerDiagnosticsResponse */
         SchedulerDiagnosticsResponse: {
@@ -26995,7 +27002,7 @@ export interface components {
              * Blocked Reason
              * @description Launch suppression, if any
              */
-            blocked_reason?: ("policy" | "crash_loop" | "disabled") | null;
+            blocked_reason?: ("policy" | "crash_loop" | "disabled" | "too_large") | null;
             /**
              * Restart Eligible At
              * @description Earliest next attempt

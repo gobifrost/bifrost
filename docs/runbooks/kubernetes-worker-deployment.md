@@ -255,6 +255,31 @@ exist. A high-memory build path should use a separate fixed-template pod or Job
 with its own request and limit. That path is not implemented by this worker
 deployment.
 
+### How executors use their memory
+
+Every executor admits work by memory (`docs/plans/2026-10-23-769-stage6-resource-requests.md`):
+its budget is 85% of its container's limit (`memory_pressure_threshold`)
+minus what the executor itself uses, and work claims from it by its memory
+request. At 95% of the container's real memory, the executor stops the run
+or service that grew most; the stopped run teaches its workflow a larger
+request.
+
+**Whole-container OOM on Kubernetes.** On cgroup v2, Kubernetes sets
+`memory.oom.group` on containers, so when the kernel's OOM killer acts it
+kills every process in the container, the executor included, not only the
+run that grew (Docker kills only that run). The executor's runs then fail
+as lost, and their workflows learn the executor's budget so their next run
+fits an executor alone. Clusters on Kubernetes 1.32 or later can set the
+kubelet's `singleProcessOOMKill: true` to kill one process instead; Bifrost
+does not rely on it. Size the worker limit with headroom for the largest
+workflow you run.
+
+**Docker.** A static executor has no container limit by default, so its
+budget is 85% of the host's memory. Two executors on one host (the
+`scheduler` and `worker` services) each believe they have that budget; the
+real-memory check, measured against the host, is what keeps them within it.
+Set a memory limit on each service to give them separate budgets.
+
 ## Dependency Hydration
 
 Current workers install and inspect Python requirements during startup or

@@ -676,3 +676,21 @@ async def test_startup_grace_breach_fails_unready_attempt(db_session):
     assert attempt.state == "failed"
     assert attempt.exit_reason == "startup_grace_exceeded"
     assert attempt_id not in loop._owned
+
+
+async def test_a_service_no_executor_can_hold_is_blocked_until_one_can(db_session):
+    from src.services.memory_requests import DEFAULT_WORKFLOW_REQUEST_BYTES, MIB
+    from src.services.worker_pool.unfit import TOO_LARGE, block_services_that_never_fit
+
+    definition, _, _ = await _ensure_service(db_session)
+    await db_session.commit()
+
+    await block_services_that_never_fit(db_session, DEFAULT_WORKFLOW_REQUEST_BYTES - MIB)
+    await db_session.commit()
+    await db_session.refresh(definition)
+    assert definition.blocked_reason == TOO_LARGE
+
+    await block_services_that_never_fit(db_session, DEFAULT_WORKFLOW_REQUEST_BYTES)
+    await db_session.commit()
+    await db_session.refresh(definition)
+    assert definition.blocked_reason is None

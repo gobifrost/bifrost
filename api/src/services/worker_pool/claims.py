@@ -36,6 +36,8 @@ class PoolClaim:
     message: dict[str, Any]
     subject_id: UUID
     memory_request_bytes: int
+    # When the work was accepted: work handed back keeps its place in line.
+    queued_at: datetime
     # A workflow run is claimed (PENDING -> RUNNING) in the same transaction
     # as its dispatch; this is its context. None when the consumer still has
     # to claim (agent runs) or when the run had already moved on.
@@ -112,7 +114,9 @@ async def claim_next(
     ``handlers`` narrows the claim to the (handler, version) pairs with free
     capacity on this worker; it is always a subset of what the build supports.
     Only work whose memory request fits ``fits_bytes`` (the free budget) is
-    taken. A worker launched for one dispatch takes it first. When older work
+    taken, except that a worker launched for one dispatch takes it first
+    whatever it measured: it exists for that work, and the real-memory gate
+    and the dangerous-memory stop still apply. When older work
     that fits ``budget_bytes`` (but not the free budget) has waited past
     HEAD_OF_LINE_WAIT, nothing newer is taken until it fits.
     """
@@ -128,7 +132,10 @@ async def claim_next(
     )
     candidate = (
         select(WorkDispatch.id, WorkDispatch.created_at)
-        .where(*unassigned, WorkDispatch.memory_request_bytes <= fits_bytes)
+        .where(
+            *unassigned,
+            (WorkDispatch.memory_request_bytes <= fits_bytes) | (WorkDispatch.id == reserved_for),
+        )
         .order_by(
             (WorkDispatch.id == reserved_for).is_(True).desc(),
             WorkDispatch.created_at.asc(),
@@ -168,6 +175,7 @@ async def claim_next(
                     WorkDispatch.family.label("dispatch_family"),
                     WorkDispatch.subject_id.label("subject"),
                     WorkDispatch.memory_request_bytes.label("memory_request_bytes"),
+                    WorkDispatch.created_at.label("queued_at"),
                 )
             )
         ).one_or_none()
@@ -201,6 +209,7 @@ async def claim_next(
         message=row.message,
         subject_id=row.subject,
         memory_request_bytes=row.memory_request_bytes,
+        queued_at=row.queued_at,
         claimed=dict(claimed) if claimed is not None else None,
     )
 
@@ -260,12 +269,21 @@ async def begin_idle_drain(incarnation_id: UUID, *, keep_ready: int) -> bool:
             text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
             {"key": CAPACITY_LOCK},
         )
+        # A sized Job always drains once idle: only standard Jobs make up the
+        # warm minimum.
+        sized = await db.scalar(
+            select(ExecutionWorker.resource_class == "sized").where(
+                ExecutionWorker.id == incarnation_id
+            )
+        )
         ready_jobs = await db.scalar(
             select(func.count(ExecutionWorker.id)).where(
-                ExecutionWorker.form == "job", ExecutionWorker.state == "ready"
+                ExecutionWorker.form == "job",
+                ExecutionWorker.resource_class == "standard",
+                ExecutionWorker.state == "ready",
             )
         ) or 0
-        if ready_jobs <= keep_ready:
+        if not sized and ready_jobs <= keep_ready:
             return False
         drained = await db.scalar(
             update(ExecutionWorker)
@@ -287,6 +305,7 @@ async def retire_worker(incarnation_id: UUID, *, runs_handled: int) -> None:
             .values(
                 state="retired",
                 active_runs=0,
+                memory_reserved_bytes=0,
                 runs_handled=runs_handled,
                 ended_at=_now(),
             )

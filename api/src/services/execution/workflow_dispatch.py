@@ -187,12 +187,14 @@ async def release_workflow_run(
     message: dict[str, Any],
     payload: dict[str, Any],
     memory_request_bytes: int,
+    queued_at: datetime,
 ) -> None:
     """Hand a claimed run back before it started: RUNNING -> PENDING.
 
     For an executor that claimed a run but could not fork it (memory rose in
-    between). The run gets a new dispatch and loses this executor's claim
-    record, so another executor takes it as if it had never been claimed.
+    between). The run gets a new dispatch, keeping its place in line and its
+    claim deadline, and loses this executor's claim record, so another
+    executor takes it as if it had never been claimed.
     """
     from src.core.pubsub import publish_execution_update
 
@@ -222,6 +224,7 @@ async def release_workflow_run(
             message=message,
             payload=payload,
             memory_request_bytes=memory_request_bytes,
+            queued_at=queued_at,
         )
         await db.commit()
     logger.info("Handed a run back for another executor", extra={"execution_id": str(execution_id)})
