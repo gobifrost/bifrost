@@ -1,7 +1,7 @@
 """Work requests memory from an executor (#769 stage 6a)
 
 Revision ID: 20261023_resource_requests
-Revises: 20261023_worker_memory_pressure
+Revises: 20261023_drop_dispatch_broker
 Create Date: 2026-10-23
 
 Every dispatch carries the memory its work is expected to add; an executor
@@ -21,7 +21,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "20261023_resource_requests"
-down_revision: Union[str, None] = "20261023_worker_memory_pressure"
+down_revision: Union[str, None] = "20261023_drop_dispatch_broker"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
