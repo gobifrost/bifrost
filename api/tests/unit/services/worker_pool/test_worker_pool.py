@@ -248,16 +248,26 @@ async def test_ready_free_slots_satisfy_demand_without_launching(db) -> None:
     assert cluster.created == []
 
 
-async def test_silent_worker_is_lost_and_its_work_released(db) -> None:
+async def test_silent_worker_is_lost_and_its_unstarted_work_released(db, monkeypatch) -> None:
+    """An agent run is claimed by its consumer after assignment; if the worker
+    dies in between, the run is still queued and goes to another worker."""
+    from src.services.execution import agent_run_dispatch, agent_run_service
+    from src.services.execution.agent_run_service import enqueue_agent_run
+
+    monkeypatch.setattr(
+        agent_run_service, "get_dispatch_db_context", work_dispatch.get_dispatch_db_context
+    )
+    monkeypatch.setattr(agent_run_dispatch, "cache_agent_context", AsyncMock())
     cluster = FakeCluster()
     pool = controller.WorkerPoolController(cluster, SETTINGS)  # type: ignore[arg-type]
-    execution_id = await _accept_pool_run()
+    run_id = await enqueue_agent_run(agent_id=None, trigger_type="sdk", lineage=None)
     [worker_id] = await pool.launch_for_demand()
     await pool.reconcile_worker(worker_id)
     async with db.sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
     assert await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod") == 2
-    assert await claims.claim_next(worker_id) is not None
+    claim = await claims.claim_next(worker_id)
+    assert claim is not None and claim.handler == "agent.run"
 
     # The node dies: no heartbeat, the pod never claims the run.
     async with db.sessions() as session:
@@ -275,7 +285,7 @@ async def test_silent_worker_is_lost_and_its_work_released(db) -> None:
         worker = await session.get(ExecutionWorker, worker_id)
         dispatch = (
             await session.execute(
-                select(WorkDispatch).where(WorkDispatch.subject_id == UUID(execution_id))
+                select(WorkDispatch).where(WorkDispatch.subject_id == UUID(run_id))
             )
         ).scalar_one()
     assert (worker.state, worker.end_reason) == ("lost", "heartbeat_lost")

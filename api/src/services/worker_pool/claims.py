@@ -29,6 +29,10 @@ class PoolClaim:
     dispatch_id: UUID
     handler: str
     message: dict[str, Any]
+    # A workflow run is claimed (PENDING -> RUNNING) in the same transaction
+    # as its dispatch; this is its context. None when the consumer still has
+    # to claim (agent runs) or when the run had already moved on.
+    claimed: dict[str, Any] | None = None
 
 
 def _now() -> datetime:
@@ -132,12 +136,27 @@ async def claim_next(
                 subject_id=row.subject,
             )
         )
+        claimed = None
+        if row.handler == "workflow.execute":
+            from src.services.execution.workflow_dispatch import claim_workflow_dispatch
+
+            # One transaction for assignment and the run's own claim. A run
+            # that moved on (cancelled) leaves claimed None: the consumer then
+            # finds nothing to claim and discards it, waking a sync caller.
+            claimed = await claim_workflow_dispatch(
+                db, dispatch_id=row.dispatch_id, execution_id=row.subject
+            )
         await db.execute(
             update(ExecutionWorker)
             .where(ExecutionWorker.id == incarnation_id)
             .values(last_claim_at=_now())
         )
-    return PoolClaim(dispatch_id=row.dispatch_id, handler=row.handler, message=row.message)
+    return PoolClaim(
+        dispatch_id=row.dispatch_id,
+        handler=row.handler,
+        message=row.message,
+        claimed=dict(claimed) if claimed is not None else None,
+    )
 
 
 async def heartbeat_worker(

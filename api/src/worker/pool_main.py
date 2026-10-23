@@ -28,6 +28,7 @@ from uuid import UUID
 from shared.schema_gate import wait_for_schema
 from src.config import get_settings
 from src.core.database import close_db, get_engine, init_db
+from src.core.redis_client import PendingExecution
 from src.services.worker_pool.claims import (
     PoolClaim,
     admit_worker,
@@ -215,15 +216,18 @@ class PoolWorker:
 
     async def _run_claim(self, claim: PoolClaim) -> None:
         assert self._workflow_consumer is not None and self._agent_consumer is not None
-        consumer = (
-            self._workflow_consumer
-            if claim.handler == "workflow.execute"
-            else self._agent_consumer
-        )
         try:
             # Workflow runs return once routed to a child (then counted by the
             # pool); agent runs return when finished.
-            await consumer.process_message(claim.message)
+            if claim.handler == "workflow.execute":
+                await self._workflow_consumer.process_message(
+                    claim.message,
+                    claimed=PendingExecution(**claim.claimed)  # type: ignore[typeddict-item]
+                    if claim.claimed is not None
+                    else None,
+                )
+            else:
+                await self._agent_consumer.process_message(claim.message)
         except Exception:
             logger.exception(
                 "Pool run failed in its consumer",
