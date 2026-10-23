@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, Index, Integer, String, text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.orm.base import Base
@@ -47,3 +47,24 @@ class ExecutionWorker(Base):
     )
 
     __table_args__ = (Index("ix_execution_workers_state", "state"),)
+
+
+class ExecutionWorkerClaim(Base):
+    """Which executor took which run, so a lost executor's runs can be ended.
+
+    Written in the pool claim's transaction; removed with its executor row.
+    """
+
+    __tablename__ = "execution_worker_claims"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    worker_id: Mapped[UUID] = mapped_column(
+        ForeignKey("execution_workers.id", ondelete="CASCADE"), nullable=False
+    )
+    family: Mapped[str] = mapped_column(String(50), nullable=False)
+    subject_id: Mapped[UUID] = mapped_column(nullable=False)
+    claimed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("NOW()")
+    )
+
+    __table_args__ = (Index("ix_execution_worker_claims_worker", "worker_id"),)

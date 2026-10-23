@@ -357,3 +357,36 @@ async def test_warm_minimum_is_kept_ready_and_never_idles_out(db) -> None:
 
     assert not await claims.begin_idle_drain(worker_id, keep_ready=1)
     assert await claims.begin_idle_drain(worker_id, keep_ready=0)
+
+
+async def test_runs_of_a_lost_worker_end_visibly_and_are_not_replayed(db) -> None:
+    from src.services.execution.workflow_dispatch import claim_workflow_dispatch
+    from src.services.worker_pool.recovery import EXECUTOR_LOST
+
+    cluster = FakeCluster()
+    pool = controller.WorkerPoolController(cluster, SETTINGS)  # type: ignore[arg-type]
+    running_id = await _accept_pool_run()
+    [worker_id] = await pool.launch_for_demand()
+    await pool.reconcile_worker(worker_id)
+    async with db.sessions() as session:
+        job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
+    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod")
+    claim = await claims.claim_next(worker_id)
+    assert claim is not None
+    async with db.sessions() as session:
+        await claim_workflow_dispatch(
+            session, dispatch_id=claim.dispatch_id, execution_id=UUID(running_id)
+        )
+        await session.commit()
+
+    async with db.sessions() as session:
+        await session.execute(
+            update(ExecutionWorker).values(heartbeat_at=datetime.now(timezone.utc) - timedelta(minutes=5))
+        )
+        await session.commit()
+    await pool.reconcile_worker(worker_id)
+
+    async with db.sessions() as session:
+        execution = await session.get(Execution, UUID(running_id))
+    assert execution.status == ExecutionStatus.FAILED
+    assert execution.error_message == EXECUTOR_LOST

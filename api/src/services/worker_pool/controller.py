@@ -34,6 +34,7 @@ from src.models.orm.execution_workers import ExecutionWorker
 from src.models.orm.work_dispatches import WorkDispatch
 from src.services.worker_pool.claims import CAPACITY_LOCK
 from src.services.worker_pool.manifest import build_worker_job_manifest, worker_job_name
+from src.services.worker_pool.recovery import announce_ended_runs, end_runs_of_lost_worker
 
 logger = logging.getLogger(__name__)
 
@@ -107,18 +108,24 @@ class WorkerPoolController:
                 await self.client.start_job(name, remote["metadata"]["uid"])
                 return
 
+            reason = None
             if remote is None:
-                self._lose(worker, "job_missing", now)
+                reason = "job_missing"
             elif worker.state == "starting":
                 if remote.get("spec", {}).get("suspend"):
                     await self.client.start_job(name, remote["metadata"]["uid"])
                 elif now - worker.created_at >= timedelta(
                     seconds=self.settings.pool_start_timeout_seconds
                 ):
-                    self._lose(worker, "start_timeout", now)
+                    reason = "start_timeout"
             elif worker.heartbeat_at is None or now - worker.heartbeat_at >= HEARTBEAT_LOST_AFTER:
-                self._lose(worker, "heartbeat_lost", now)
+                reason = "heartbeat_lost"
+            ended: list[UUID] = []
+            if reason is not None:
+                self._lose(worker, reason, now)
+                ended = await end_runs_of_lost_worker(db, worker.id)
             await db.commit()
+        await announce_ended_runs(ended)
 
     @staticmethod
     def _lose(worker: ExecutionWorker, reason: str, now: datetime) -> None:

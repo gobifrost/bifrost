@@ -50,6 +50,27 @@ def upgrade() -> None:
         ),
     )
     op.create_index("ix_execution_workers_state", "execution_workers", ["state"])
+    op.create_table(
+        "execution_worker_claims",
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "worker_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("execution_workers.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("family", sa.String(length=50), nullable=False),
+        sa.Column("subject_id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column(
+            "claimed_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("NOW()"),
+        ),
+    )
+    op.create_index(
+        "ix_execution_worker_claims_worker", "execution_worker_claims", ["worker_id"]
+    )
     op.add_column(
         "work_dispatches",
         sa.Column("placement", sa.String(length=20), nullable=False, server_default="broker"),
@@ -69,5 +90,7 @@ def downgrade() -> None:
     op.drop_index("ix_work_dispatches_placement_created", table_name="work_dispatches")
     op.drop_column("work_dispatches", "assigned_worker_id")
     op.drop_column("work_dispatches", "placement")
+    op.drop_index("ix_execution_worker_claims_worker", table_name="execution_worker_claims")
+    op.drop_table("execution_worker_claims")
     op.drop_index("ix_execution_workers_state", table_name="execution_workers")
     op.drop_table("execution_workers")

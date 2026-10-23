@@ -10,7 +10,7 @@ from uuid import UUID
 from sqlalchemy import exists, func, select, text, tuple_, update
 
 from src.core.database import get_db_context
-from src.models.orm.execution_workers import ExecutionWorker
+from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
 from src.models.orm.work_dispatches import WorkDispatch
 
 # Shared with the capacity controller: launches and idle drains serialize.
@@ -114,17 +114,30 @@ async def claim_next(
                 update(WorkDispatch)
                 .where(WorkDispatch.id == candidate, ready)
                 .values(assigned_worker_id=incarnation_id)
-                .returning(WorkDispatch.id, WorkDispatch.handler, WorkDispatch.message)
+                .returning(
+                    WorkDispatch.id.label("dispatch_id"),
+                    WorkDispatch.handler.label("handler"),
+                    WorkDispatch.message.label("message"),
+                    WorkDispatch.family.label("dispatch_family"),
+                    WorkDispatch.subject_id.label("subject"),
+                )
             )
         ).one_or_none()
         if row is None:
             return None
+        db.add(
+            ExecutionWorkerClaim(
+                worker_id=incarnation_id,
+                family=row.dispatch_family,
+                subject_id=row.subject,
+            )
+        )
         await db.execute(
             update(ExecutionWorker)
             .where(ExecutionWorker.id == incarnation_id)
             .values(last_claim_at=_now())
         )
-    return PoolClaim(dispatch_id=row.id, handler=row.handler, message=row.message)
+    return PoolClaim(dispatch_id=row.dispatch_id, handler=row.handler, message=row.message)
 
 
 async def heartbeat_worker(
