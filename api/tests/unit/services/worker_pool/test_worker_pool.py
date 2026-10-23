@@ -259,7 +259,7 @@ async def test_unsupported_handler_versions_wait_for_a_compatible_worker(db) -> 
 
 
 async def test_static_executors_register_ready_and_claim(db) -> None:
-    worker_id = await claims.register_static_worker(slots=3, hostname="worker-1")
+    worker_id = await claims.register_static_worker(slots=3, hostname="worker-1", memory_budget_bytes=GIB)
     await _accept_pool_run()
 
     assert await _claim(worker_id) is not None
@@ -269,7 +269,7 @@ async def test_static_executors_register_ready_and_claim(db) -> None:
 
 
 async def test_work_larger_than_the_free_budget_waits_while_smaller_work_is_claimed(db) -> None:
-    worker_id = await claims.register_static_worker(slots=1, hostname="static-1")
+    worker_id = await claims.register_static_worker(slots=1, hostname="static-1", memory_budget_bytes=GIB)
     large = await _accept_pool_run()
     await _set_request(db.sessions, large, 500 * MIB, age=timedelta(seconds=5))
     small = await _accept_pool_run()
@@ -280,7 +280,7 @@ async def test_work_larger_than_the_free_budget_waits_while_smaller_work_is_clai
 
 
 async def test_long_waiting_work_an_executor_could_hold_blocks_newer_claims(db) -> None:
-    worker_id = await claims.register_static_worker(slots=1, hostname="static-1")
+    worker_id = await claims.register_static_worker(slots=1, hostname="static-1", memory_budget_bytes=GIB)
     large = await _accept_pool_run()
     await _set_request(
         db.sessions, large, 500 * MIB, age=claims.HEAD_OF_LINE_WAIT + timedelta(seconds=5)
@@ -338,7 +338,7 @@ async def test_demand_launches_bounded_workers_and_binds_before_start(db) -> Non
 
 
 async def test_a_free_reported_budget_satisfies_demand_without_launching(db) -> None:
-    static_id = await claims.register_static_worker(slots=4, hostname="static-1")
+    static_id = await claims.register_static_worker(slots=4, hostname="static-1", memory_budget_bytes=GIB)
     await _report_budget(static_id, GIB)
     await _accept_pool_run()
     cluster = FakeCluster()
@@ -351,7 +351,7 @@ async def test_a_free_reported_budget_satisfies_demand_without_launching(db) -> 
 async def test_a_memory_pressured_executor_offers_no_capacity(db) -> None:
     """An executor over its memory threshold claims nothing, so its free
     budget does not count and a worker Job is started for the waiting run."""
-    static_id = await claims.register_static_worker(slots=4, hostname="static-1")
+    static_id = await claims.register_static_worker(slots=4, hostname="static-1", memory_budget_bytes=GIB)
     await _report_budget(static_id, GIB, pressured=True)
     await _accept_pool_run()
     cluster = FakeCluster()
@@ -367,7 +367,7 @@ async def test_a_run_handed_back_before_it_started_waits_for_another_executor(db
     executor's claim record."""
     from src.models.orm.execution_workers import ExecutionWorkerClaim
 
-    first = await claims.register_static_worker(slots=1, hostname="first")
+    first = await claims.register_static_worker(slots=1, hostname="first", memory_budget_bytes=GIB)
     execution_id = await _accept_pool_run()
     await _set_request(db.sessions, execution_id, 200 * MIB)
     claim = await _claim(first)
@@ -390,7 +390,7 @@ async def test_a_run_handed_back_before_it_started_waits_for_another_executor(db
     assert (execution.status, execution.started_at) == (ExecutionStatus.PENDING, None)
     assert held == []
     db.wake.assert_awaited_once()
-    second = await claims.register_static_worker(slots=1, hostname="second")
+    second = await claims.register_static_worker(slots=1, hostname="second", memory_budget_bytes=GIB)
     again = await _claim(second)
     assert again is not None and again.claimed is not None
     assert again.claimed["execution_id"] == execution_id
@@ -460,7 +460,7 @@ async def test_pool_run_fails_visibly_when_no_capacity_arrives(db) -> None:
 
 
 async def test_ended_executors_are_pruned_and_silent_static_ones_ended(db) -> None:
-    static_id = await claims.register_static_worker(slots=1, hostname="gone")
+    static_id = await claims.register_static_worker(slots=1, hostname="gone", memory_budget_bytes=GIB)
     old = await _job_worker(db.sessions, state="retired")
     async with db.sessions() as session:
         await session.execute(
@@ -601,6 +601,8 @@ async def test_a_sized_worker_is_launched_once_for_its_dispatch(db) -> None:
     assert worker.resource_class == "sized"
     assert worker.reserved_for_dispatch_id == dispatch_id
     assert worker.memory_limit_bytes == sized_job_limit_bytes(3 * GIB, 0.85, baseline)
+    # Every reconcile publishes the largest budget it could launch.
+    await pool.reconcile()
     async with get_redis() as redis:
         launchable = int(await redis.get(LAUNCHABLE_KEY))
     assert launchable == job_budget_bytes(8192 * MIB, 0.85, baseline)
@@ -635,7 +637,7 @@ async def _waiting_run_of(sessions, request: int) -> str:  # type: ignore[no-unt
 
 
 async def test_work_larger_than_the_largest_executor_fails_visibly(db) -> None:
-    static_id = await claims.register_static_worker(slots=1, hostname="static-1")
+    static_id = await claims.register_static_worker(slots=1, hostname="static-1", memory_budget_bytes=GIB)
     await _report_budget(static_id, 512 * MIB)
     execution_id = await _waiting_run_of(db.sessions, GIB)
 
@@ -649,7 +651,7 @@ async def test_work_larger_than_the_largest_executor_fails_visibly(db) -> None:
 
 
 async def test_large_work_waits_while_no_executor_has_reported_a_budget(db) -> None:
-    await claims.register_static_worker(slots=1, hostname="static-1")
+    await claims.register_static_worker(slots=1, hostname="static-1", memory_budget_bytes=GIB)
     execution_id = await _waiting_run_of(db.sessions, GIB)
 
     await work_dispatch.reconcile_work_dispatches()

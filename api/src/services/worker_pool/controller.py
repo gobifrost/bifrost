@@ -55,6 +55,9 @@ HEARTBEAT_LOST_AFTER = timedelta(seconds=30)
 # How long a lost worker's Job is kept under watch for deletion.
 LOST_JOB_CLEANUP = timedelta(hours=1)
 RECONCILE_SECONDS = 2.0
+# The reconciler treats a missing value as "no controller"; it outlives a
+# few failed reconciles.
+LAUNCHABLE_TTL_SECONDS = 300
 
 
 def _now() -> datetime:
@@ -70,6 +73,15 @@ class WorkerPoolController:
         self.spec = spec
 
     async def reconcile(self) -> None:
+        # Before anything that can fail on the Kubernetes API, so the
+        # reconciler never mistakes a struggling controller for none.
+        async with get_db_context() as db:
+            workers = (
+                await db.execute(
+                    select(ExecutionWorker).where(ExecutionWorker.state.in_(LIVE_STATES))
+                )
+            ).scalars().all()
+            await _publish_launchable(self._limits(_job_baseline(workers, self.settings))[2])
         async with get_db_context() as db:
             ids = (
                 await db.scalars(
@@ -203,7 +215,6 @@ class WorkerPoolController:
             ).scalars().all()
             baseline = _job_baseline(workers, self.settings)
             standard_limit, standard_budget, largest_budget = self._limits(baseline)
-            await _publish_launchable(largest_budget)
 
             requests = {row.id: row.memory_request_bytes for row in waiting}
             free: list[int] = []
@@ -238,7 +249,9 @@ class WorkerPoolController:
             undrained = sum(
                 1 for worker in workers if worker.form == "job" and worker.state != "draining"
             )
-            warm = max(0, self.settings.pool_min_workers - undrained - plan.standard)
+            warm = max(
+                0, self.settings.pool_min_workers - undrained - plan.standard - len(plan.sized)
+            )
             room = max(0, self.settings.pool_max_workers - jobs)
             launched: list[UUID] = []
             for dispatch_id, request in plan.sized:
@@ -353,7 +366,7 @@ async def _publish_launchable(largest_budget: int) -> None:
     from src.core.cache.redis_client import get_redis
 
     async with get_redis() as redis:
-        await redis.set(LAUNCHABLE_KEY, str(largest_budget), ex=60)
+        await redis.set(LAUNCHABLE_KEY, str(largest_budget), ex=LAUNCHABLE_TTL_SECONDS)
 
 
 async def worker_pool_loop(stop_event: asyncio.Event, settings: Any | None = None) -> None:

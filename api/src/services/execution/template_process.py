@@ -421,6 +421,9 @@ def _handle_fork_request(
         })
     else:
         # ----- Child -----
+        from src.services.execution.oom_priority import volunteer_for_oom_kill
+
+        volunteer_for_oom_kill()
         # Close the template's control pipe — child doesn't need it
         try:
             pipe.close()

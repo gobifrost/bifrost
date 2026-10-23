@@ -73,14 +73,21 @@ async def admit_worker(incarnation_id: UUID, *, job_uid: str, pod_uid: str) -> i
         )
 
 
-async def register_static_worker(*, slots: int, hostname: str) -> UUID:
-    """A long-running executor joins the pool directly as ``ready``."""
+async def register_static_worker(
+    *, slots: int, hostname: str, memory_budget_bytes: int
+) -> UUID:
+    """A long-running executor joins the pool directly as ``ready``.
+
+    ``memory_budget_bytes`` is measured before its pool starts; the first
+    heartbeat replaces it with the budget measured once ready.
+    """
     now = _now()
     worker = ExecutionWorker(
         form="static",
         state="ready",
         resource_class="standard",
         slots=slots,
+        memory_budget_bytes=memory_budget_bytes,
         hostname=hostname,
         ready_at=now,
         heartbeat_at=now,

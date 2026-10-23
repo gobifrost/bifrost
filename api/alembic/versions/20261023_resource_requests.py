@@ -64,9 +64,14 @@ def upgrade() -> None:
         "workflows",
         sa.Column("learned_memory_bytes", sa.BigInteger(), nullable=True),
     )
+    op.add_column(
+        "workflows",
+        sa.Column("learned_memory_code_hash", sa.String(length=64), nullable=True),
+    )
 
 
 def downgrade() -> None:
+    op.drop_column("workflows", "learned_memory_code_hash")
     op.drop_column("workflows", "learned_memory_bytes")
     op.drop_column("executions", "peak_memory_growth_bytes")
     op.drop_column("execution_workers", "reserved_for_dispatch_id")

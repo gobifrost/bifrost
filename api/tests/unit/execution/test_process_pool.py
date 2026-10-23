@@ -669,6 +669,59 @@ class TestProcessPoolManagerRouting:
 
 
 
+class TestDangerousMemory:
+    """Only dangerous memory stops a run, and then the one that grew most."""
+
+    def _busy(self, pool, name: str, growth_mib: int):  # type: ignore[no-untyped-def]
+        from src.services.execution.cpu_sampler import CPUSampler
+
+        sampler = CPUSampler(pid=1, clock_ticks=100)
+        sampler.start_process_rss_bytes = 60 * 2**20
+        sampler.last_process_rss_bytes = (60 + growth_mib) * 2**20
+        handle = ProcessHandle(
+            id=name, process=MagicMock(), pid=None, state=ProcessState.BUSY,
+            work_queue=MagicMock(), result_queue=MagicMock(),
+            started_at=datetime.now(timezone.utc),
+            current_execution=ExecutionInfo(
+                execution_id=f"exec-{name}", started_at=datetime.now(timezone.utc),
+                timeout_seconds=300, active_execution=_active_execution(f"exec-{name}"),
+            ),
+        )
+        handle.cpu_sampler = sampler
+        pool.processes[name] = handle
+        return handle
+
+    @pytest.mark.asyncio
+    async def test_below_the_dangerous_line_every_run_keeps_going(self, monkeypatch):
+        from src.services.execution import process_pool as module
+
+        pool = ProcessPoolManager(on_result=AsyncMock())
+        self._busy(pool, "big", 900)
+        monkeypatch.setattr(module, "memory_ratio", lambda: 0.9)
+
+        await pool._stop_largest_when_dangerous()
+
+        assert "big" in pool.processes
+        pool.on_result.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_past_the_dangerous_line_the_run_that_grew_most_is_stopped(self, monkeypatch):
+        from src.services.execution import process_pool as module
+
+        pool = ProcessPoolManager(on_result=AsyncMock())
+        self._busy(pool, "small", 40)
+        self._busy(pool, "big", 900)
+        monkeypatch.setattr(module, "memory_ratio", lambda: 0.97)
+
+        await pool._stop_largest_when_dangerous()
+
+        assert set(pool.processes) == {"small"}
+        [result] = pool.on_result.await_args.args
+        assert result["execution_id"] == "exec-big"
+        assert result["error_type"] == "MemoryLimitExceeded"
+        assert result["metrics"]["peak_memory_growth_bytes"] == 900 * 2**20
+
+
 class TestProcessPoolManagerTimeouts:
     """Tests for timeout handling."""
 

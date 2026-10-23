@@ -32,15 +32,16 @@ def test_a_learned_workflow_requests_its_peak_plus_the_margin() -> None:
     assert workflow_request_bytes(200 * MIB) == 200 * MIB + WORKFLOW_REQUEST_MARGIN_BYTES
 
 
-async def _learned_after(db_session, growths: list[int]) -> int | None:  # type: ignore[no-untyped-def]
+async def _learned_after(db_session, growths: list[int | tuple[int, str | None]]) -> int | None:  # type: ignore[no-untyped-def]
     workflow = Workflow(
         id=uuid4(), name=f"learn-{uuid4().hex[:8]}", function_name="main",
         path="workflows/learn.py", type="workflow", is_active=True,
     )
     db_session.add(workflow)
     await db_session.flush()
-    for growth in growths:
-        await record_peak_growth(db_session, workflow.id, growth)
+    for run in growths:
+        growth, code_hash = run if isinstance(run, tuple) else (run, "v1")
+        await record_peak_growth(db_session, workflow.id, growth, code_hash)
     await db_session.refresh(workflow)
     return workflow.learned_memory_bytes
 
@@ -53,9 +54,19 @@ async def test_a_larger_run_raises_the_learned_peak_to_it(db_session) -> None:  
     assert await _learned_after(db_session, [100 * MIB, 300 * MIB]) == 300 * MIB
 
 
-async def test_a_smaller_run_moves_the_learned_peak_a_twentieth_down(db_session) -> None:  # type: ignore[no-untyped-def]
+async def test_a_smaller_run_moves_the_learned_peak_a_tenth_down(db_session) -> None:  # type: ignore[no-untyped-def]
     learned = await _learned_after(db_session, [300 * MIB, 100 * MIB])
-    assert learned == 300 * MIB - (200 * MIB) // 20
+    assert learned == 300 * MIB - (200 * MIB) // 10
+
+
+async def test_the_first_run_of_changed_code_replaces_the_learned_peak(db_session) -> None:  # type: ignore[no-untyped-def]
+    learned = await _learned_after(db_session, [(2048 * MIB, "buggy"), (100 * MIB, "fixed")])
+    assert learned == 100 * MIB
+
+
+async def test_a_run_of_unknown_code_decays_the_learned_peak(db_session) -> None:  # type: ignore[no-untyped-def]
+    learned = await _learned_after(db_session, [(300 * MIB, "v1"), (100 * MIB, None)])
+    assert learned == 300 * MIB - (200 * MIB) // 10
 
 
 @pytest.mark.parametrize("request_bytes", [1, 900 * MIB, 3 * GIB, 7 * GIB + 1])
@@ -112,3 +123,20 @@ def test_with_a_container_limit_pressure_is_its_working_set_ratio(monkeypatch) -
         "src.services.execution.memory_monitor.get_cgroup_memory", lambda: (850 * MIB, limit)
     )
     assert not under_pressure(0.85), "at the threshold is not over it"
+
+
+def test_work_volunteers_to_be_the_kernels_first_out_of_memory_choice(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import builtins
+
+    score = tmp_path / "oom_score_adj"
+    real_open = builtins.open
+    monkeypatch.setattr(
+        builtins, "open",
+        lambda path, *a, **k: real_open(score if path == "/proc/self/oom_score_adj" else path, *a, **k),
+    )
+
+    from src.services.execution.oom_priority import volunteer_for_oom_kill
+
+    volunteer_for_oom_kill()
+
+    assert score.read_text() == "1000"

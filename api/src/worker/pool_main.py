@@ -214,9 +214,10 @@ class PoolWorker:
 
         configure_mappers()
         if self.static:
-            slots: int | None = self._nominal_slots(measure_budget(self.settings.memory_pressure_threshold))
+            early = measure_budget(self.settings.memory_pressure_threshold)
+            slots: int | None = self._nominal_slots(early)
             self.incarnation_id = await register_static_worker(
-                slots=slots, hostname=socket.gethostname()
+                slots=slots, hostname=socket.gethostname(), memory_budget_bytes=early.budget_bytes
             )
         else:
             assert self.job_uid is not None and self.pod_uid is not None

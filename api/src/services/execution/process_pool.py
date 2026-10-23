@@ -55,7 +55,7 @@ from src.core.redis_client import ActiveExecution
 from src.models.contracts.notifications import NotificationCategory, NotificationCreate, NotificationStatus
 from src.services.execution.cpu_sampler import CPUSampler, get_clock_ticks
 from src.services.execution.memory_monitor import get_cgroup_memory
-from src.services.memory_requests import under_pressure
+from src.services.memory_requests import DANGEROUS_MEMORY_RATIO, memory_ratio, under_pressure
 from src.services.execution.requirements_setup_result import RequirementsInstallResult
 from src.services.notification_service import get_notification_service
 from src.services.execution.template_process import TemplateProcess
@@ -1230,6 +1230,7 @@ class ProcessPoolManager:
                 await self._check_timeouts()
                 await self._check_process_health()
                 self._sample_resources()
+                await self._stop_largest_when_dangerous()
 
                 # Periodic stale queue cleanup
                 now = _time.monotonic()
@@ -1272,6 +1273,65 @@ class ProcessPoolManager:
                 sampler.sample(now)
             except Exception as e:
                 logger.debug(f"Resource sample failed for {handle.id}: {e}")
+
+    async def _stop_largest_when_dangerous(self) -> None:
+        """Stop the run that has grown the most once memory is dangerous.
+
+        A run may use more than it requested; only when the container's real
+        memory passes DANGEROUS_MEMORY_RATIO does the run that has grown the
+        most since it started get stopped, so one runaway run never takes the
+        executor and every other run with it. One run per pass: the next pass
+        sees the memory the kill freed.
+        """
+        if memory_ratio() < DANGEROUS_MEMORY_RATIO:
+            return
+        candidates = [
+            (growth, handle)
+            for handle in self.processes.values()
+            if handle.state == ProcessState.BUSY
+            and handle.service is None
+            and handle.current_execution is not None
+            and handle.cpu_sampler is not None
+            and (growth := handle.cpu_sampler.growth_bytes()) is not None
+        ]
+        if not candidates:
+            return
+        growth, handle = max(candidates, key=lambda candidate: candidate[0])
+        exec_info = handle.current_execution
+        assert exec_info is not None
+        logger.warning(
+            "Stopping the run that grew the most: executor memory is dangerously high",
+            extra={"execution_id": exec_info.execution_id, "growth_mib": growth // 2**20},
+        )
+        self._unregister_result_reader(handle)
+        handle.state = ProcessState.KILLED
+        handle.killed_at = datetime.now(timezone.utc)
+        if handle.pid is not None:
+            try:
+                os.kill(handle.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                # It exited on its own in the meantime.
+                pass
+        if self.on_result is not None and not handle.result_reported:
+            handle.result_reported = True
+            result = exec_info.attach_transport_metadata({
+                "type": "result",
+                "execution_id": exec_info.execution_id,
+                "success": False,
+                "error": (
+                    f"Stopped after using {growth // 2**20} MiB: the executor was "
+                    "about to run out of memory."
+                ),
+                "error_type": "MemoryLimitExceeded",
+                "duration_ms": int(exec_info.elapsed_seconds * 1000),
+                "metrics": {"peak_memory_growth_bytes": growth},
+            })
+            self._attach_resource_peaks(handle, result)
+            try:
+                await self.on_result(result)
+            except Exception:
+                logger.exception("Error reporting a run stopped for memory")
+        self.processes.pop(handle.id, None)
 
     async def _check_timeouts(self) -> None:
         """

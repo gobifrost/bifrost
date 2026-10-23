@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import case, update
+from sqlalchemy import case, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.orm.workflows import Workflow
@@ -31,12 +31,15 @@ WORKFLOW_REQUEST_MARGIN_BYTES = 16 * MIB
 AGENT_RUN_REQUEST_BYTES = 32 * MIB
 SUMMARY_REQUEST_BYTES = 16 * MIB
 # Each smaller run moves the learned peak this fraction of the way down.
-LEARNED_DECAY = 20
+LEARNED_DECAY = 10
 # A Job worker's own memory (parent and fork template) before one of that
 # size has reported its budget.
 JOB_BASELINE_ESTIMATE_BYTES = 768 * MIB
 # Sized Job limits are rounded up to this.
 JOB_LIMIT_STEP_BYTES = 256 * MIB
+# Real memory at which the executor stops the run that has grown the most,
+# before the kernel has to kill something.
+DANGEROUS_MEMORY_RATIO = 0.95
 # Where the worker controller publishes the largest budget it can launch.
 LAUNCHABLE_KEY = "bifrost:worker-pool:largest-launchable-bytes"
 
@@ -48,21 +51,28 @@ def workflow_request_bytes(learned_memory_bytes: int | None) -> int:
     return learned_memory_bytes + WORKFLOW_REQUEST_MARGIN_BYTES
 
 
-async def record_peak_growth(session: AsyncSession, workflow_id: UUID, growth_bytes: int) -> None:
+async def record_peak_growth(
+    session: AsyncSession, workflow_id: UUID, growth_bytes: int, code_hash: str | None
+) -> None:
     """Fold one run's peak growth into its workflow's learned peak.
 
     A decaying maximum: a larger run raises it at once; a smaller one moves
-    it 1/LEARNED_DECAY of the way down. One primary-key update, no scan.
+    it 1/LEARNED_DECAY of the way down. The learned peak belongs to a code
+    version: the first run of changed code (``code_hash``) replaces it, so
+    a fixed memory problem is forgotten at once. One primary-key update.
     """
     learned = Workflow.learned_memory_bytes
+    learned_hash = Workflow.learned_memory_code_hash
+    new_code = learned_hash.is_distinct_from(code_hash) if code_hash is not None else False
     await session.execute(
         update(Workflow)
         .where(Workflow.id == workflow_id)
         .values(
             learned_memory_bytes=case(
-                (learned.is_(None) | (learned <= growth_bytes), growth_bytes),
+                (learned.is_(None) | new_code | (learned <= growth_bytes), growth_bytes),
                 else_=learned - (learned - growth_bytes) / LEARNED_DECAY,
-            )
+            ),
+            learned_memory_code_hash=func.coalesce(code_hash, learned_hash),
         )
     )
 
@@ -86,9 +96,12 @@ def job_budget_bytes(limit_bytes: int, threshold: float, baseline_bytes: int) ->
 
 
 def sized_job_limit_bytes(request_bytes: int, threshold: float, baseline_bytes: int) -> int:
-    """The smallest Job memory limit whose budget fits ``request_bytes``."""
-    needed = -(-(request_bytes + baseline_bytes) * 100 // int(threshold * 100))
-    return -(-needed // JOB_LIMIT_STEP_BYTES) * JOB_LIMIT_STEP_BYTES
+    """The smallest Job memory limit (a JOB_LIMIT_STEP_BYTES multiple) whose
+    budget fits ``request_bytes``."""
+    limit = JOB_LIMIT_STEP_BYTES
+    while job_budget_bytes(limit, threshold, baseline_bytes) < request_bytes:
+        limit += JOB_LIMIT_STEP_BYTES
+    return limit
 
 
 def measure_budget(threshold: float) -> MemoryBudget:
@@ -117,16 +130,20 @@ def host_memory_bytes() -> int:
     return _meminfo()["MemTotal"]
 
 
-def under_pressure(threshold: float) -> bool:
-    """Real memory over ``threshold`` of the container's limit, or of the
-    host's memory when the container has no limit."""
+def memory_ratio() -> float:
+    """Real memory in use: of the container's limit, or of the host's
+    memory when the container has no limit."""
     from src.services.execution.memory_monitor import get_cgroup_memory
 
     current, limit = get_cgroup_memory()
     if limit > 0 and current >= 0:
-        return current / limit > threshold
+        return current / limit
     info = _meminfo()
-    return (info["MemTotal"] - info["MemAvailable"]) / info["MemTotal"] > threshold
+    return (info["MemTotal"] - info["MemAvailable"]) / info["MemTotal"]
+
+
+def under_pressure(threshold: float) -> bool:
+    return memory_ratio() > threshold
 
 
 __all__ = [
@@ -142,6 +159,8 @@ __all__ = [
     "host_memory_bytes",
     "measure_budget",
     "record_peak_growth",
+    "DANGEROUS_MEMORY_RATIO",
+    "memory_ratio",
     "under_pressure",
     "workflow_request_bytes",
 ]

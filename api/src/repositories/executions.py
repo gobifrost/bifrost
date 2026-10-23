@@ -292,7 +292,9 @@ class ExecutionRepository(BaseRepository[Execution]):
         if workflow_id is not None and growth is not None:
             from src.services.memory_requests import record_peak_growth
 
-            await record_peak_growth(self.session, workflow_id, growth)
+            await record_peak_growth(
+                self.session, workflow_id, growth, (metrics or {}).get("code_hash")
+            )
 
         # Store logs in ExecutionLog table
         if logs:

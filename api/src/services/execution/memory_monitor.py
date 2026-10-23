@@ -81,8 +81,8 @@ def get_cgroup_memory() -> tuple[int, int]:
     if not cgroup_stat.exists():
         if not _warned_no_cgroup:
             logger.warning(
-                "cgroup v2 memory files not found - cgroup admission disabled. "
-                "This is expected on macOS local development."
+                "cgroup v2 memory files not found - executors size themselves "
+                "from the host's memory. This is expected on macOS local development."
             )
             _warned_no_cgroup = True
         return (-1, -1)
@@ -122,8 +122,8 @@ def get_cgroup_memory() -> tuple[int, int]:
             if max_raw == "max":
                 if not _warned_no_cgroup:
                     logger.warning(
-                        "cgroup memory.max is 'max' (no limit) - "
-                        "cgroup admission disabled. Set a memory limit on the container."
+                        "cgroup memory.max is 'max' (no limit) - executors size "
+                        "themselves from the host's memory."
                     )
                     _warned_no_cgroup = True
             else:

@@ -169,4 +169,7 @@ async def _main(job_id: str, lease_token: str) -> int:
 if __name__ == "__main__":
     if len(sys.argv) != 3:
         raise SystemExit("usage: platform.runner JOB_ID LEASE_TOKEN")
+    from src.services.execution.oom_priority import volunteer_for_oom_kill
+
+    volunteer_for_oom_kill()
     raise SystemExit(asyncio.run(_main(sys.argv[1], sys.argv[2])))
