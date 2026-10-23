@@ -1,7 +1,7 @@
 # #769 stage 2: durable work acceptance and dispatch
 
 Status: in progress. Parent plan: `docs/plans/2026-10-22-api-owned-unified-kubernetes-runtime.md`
-(PR #1030), stage 2. Stage 1 (API-hosted control) is PR #STAGE1.
+(PR #1030), stage 2. Stage 1 (API-hosted control) is PR #1031.
 
 ## Gate
 
