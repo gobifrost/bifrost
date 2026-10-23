@@ -55,7 +55,7 @@ worktree's local cluster, including its data.
 | Experiment | Script |
 | --- | --- |
 | `control-experiment` | `control_spike.py`: one API replica holds the trigger lease; failover and rollouts never run a schedule minute twice. |
-| `pool-experiment` | `pool_spike.py`: on-demand worker Jobs start for backlog, are reused, stay under the ceiling and drain when idle. |
+| `pool-experiment` | `pool_spike.py`: from the warm minimum (1) beside the static executors, a backlog beyond every slot scales worker Jobs to the ceiling (6) and never past it, a run accepted during the drain completes, and the pool returns to the minimum. |
 | `pool-drills` | `pool_drills.py`: killed, unschedulable and out-of-memory workers and a restarted controller end visibly and never replay a run. |
 | `build-experiment` | `build_spike.py`: isolated App build Jobs (requires `BIFROST_KIND_BUILD_JOBS=1`). |
 

@@ -99,6 +99,11 @@ require_stack_up() {
         echo "  ./test.sh stack up" >&2
         exit 1
     fi
+    # A unit-only run stops the API; every caller resets state next, which
+    # starts it again and waits for it to serve.
+    if [ -z "$(docker compose -f "$COMPOSE_FILE" ps -q --status running api)" ]; then
+        return 0
+    fi
     # Containers may report "running" before the API is actually serving
     # traffic (uvicorn boot, alembic, app startup hooks). Block here until
     # /health/ready returns 200 so callers don't race the API. Idempotent
@@ -328,10 +333,12 @@ run_pytest() {
     require_stack_up
     prepare_test_state
     if [[ "$unit_only" == "1" ]]; then
-        # Unit tests create committed service rows while exercising claim
-        # logic. A live scheduler/worker can claim those rows before the test
-        # loop does, making the result depend on an unrelated process tick.
-        docker compose -f "$COMPOSE_FILE" stop worker scheduler > /dev/null
+        # Unit tests create committed dispatch and service rows while
+        # exercising claim and reconcile logic. The live executors (scheduler
+        # and worker) would claim them and the API's control plane would
+        # reconcile them before the test does, making the result depend on an
+        # unrelated process tick. The next e2e run's state reset starts them.
+        docker compose -f "$COMPOSE_FILE" stop api worker scheduler > /dev/null
     fi
     # LOG_DIR is mkdir'd on the host as the runner/host user, then bind-mounted
     # into the test-runner container at /tmp/bifrost. The container runs as

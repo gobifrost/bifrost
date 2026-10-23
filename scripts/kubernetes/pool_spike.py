@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
-"""Prove on-demand reusable workers in local Kind (#769 stage 3 gate).
+"""Prove on-demand workers scale with the unified executors in local Kind.
 
-Usage: BIFROST_KIND_BUILD_JOBS=1 ./test.sh kubernetes up
+Usage: ./test.sh kubernetes up
        ./test.sh kubernetes pool-experiment [--out DIR]
 
-Phases (recorded in report.json):
+Phases (recorded in report.json), against the base manifests' defaults
+(BIFROST_POOL_MIN_WORKERS=1, BIFROST_POOL_MAX_WORKERS=6):
 
-- zero: no worker pods and no live executors.
-- first: one run starts the first worker; cold start is measured.
-- reuse: more runs before idle expiry are handled by the same pod.
-- burst: a backlog launches extra workers, never past the ceiling (3).
-- idle: with no work, every worker drains itself and the pool returns to zero.
-- race: a run accepted while its worker is draining still completes (a new
-  worker is launched for it).
+- floor: the static executors (scheduler and worker) are ready and exactly
+  the warm minimum of worker Jobs is ready, with no waiting work.
+- burst: a backlog larger than every static slot plus the Job ceiling
+  scales the worker Jobs up to the ceiling, never past it; every run
+  succeeds.
+- race: a run accepted while the extra Jobs drain still completes.
+- drain: with no work, the extra Jobs drain themselves and the pool returns
+  to the warm minimum.
 """
 from __future__ import annotations
 
@@ -26,7 +28,9 @@ from spike import kubectl
 
 API = "app.kubernetes.io/name=bifrost-api"
 POOL = "app.kubernetes.io/name=bifrost-pool-worker"
-CEILING = 3
+FLOOR = 1
+CEILING = 6
+RUN_SECONDS = 30
 ENQUEUE = """import asyncio, base64, json, sys, uuid
 from types import SimpleNamespace
 from sqlalchemy import text
@@ -62,22 +66,30 @@ def pool_pods() -> list[dict]:
     return [pod for pod in items if pod.get("status", {}).get("phase") in ("Pending", "Running")]
 
 
-def live_workers() -> list[dict]:
+def live_workers(form: str = "job") -> list[dict]:
     rows = sql(
-        "SELECT id, state, coalesce(kubernetes_pod_uid,''), runs_handled FROM execution_workers "
-        "WHERE state IN ('reserved','starting','ready','draining') ORDER BY created_at"
+        "SELECT id, state, coalesce(kubernetes_pod_uid,''), runs_handled, slots FROM execution_workers "
+        f"WHERE form = '{form}' AND state IN ('reserved','starting','ready','draining') "
+        "ORDER BY created_at"
     )
-    return [{"id": r[0], "state": r[1], "pod_uid": r[2], "runs": int(r[3])} for r in rows]
+    return [
+        {"id": r[0], "state": r[1], "pod_uid": r[2], "runs": int(r[3]), "slots": int(r[4])}
+        for r in rows
+    ]
 
 
-def ready_api_pod() -> str:
+def ready_api_pod(timeout: float = 300) -> str:
     """A Ready API pod that is not terminating; a rollout leaves old pods behind."""
-    for pod in json.loads(kubectl("get", "pods", "-l", API, "-o", "json"))["items"]:
-        conditions = pod.get("status", {}).get("conditions", [])
-        ready = any(c["type"] == "Ready" and c["status"] == "True" for c in conditions)
-        if ready and not pod["metadata"].get("deletionTimestamp"):
-            return pod["metadata"]["name"]
-    raise RuntimeError("no Ready API pod")
+    deadline = time.monotonic() + timeout
+    while True:
+        for pod in json.loads(kubectl("get", "pods", "-l", API, "-o", "json"))["items"]:
+            conditions = pod.get("status", {}).get("conditions", [])
+            ready = any(c["type"] == "Ready" and c["status"] == "True" for c in conditions)
+            if ready and not pod["metadata"].get("deletionTimestamp"):
+                return pod["metadata"]["name"]
+        if time.monotonic() >= deadline:
+            raise RuntimeError("no Ready API pod")
+        time.sleep(2)
 
 
 def enqueue(count: int, seconds: float) -> list[str]:
@@ -105,63 +117,59 @@ def wait_done(ids: list[str], timeout: float, sample=None) -> float:  # type: ig
     raise TimeoutError(f"runs not done: {statuses(ids)}")
 
 
-def wait_zero(timeout: float) -> float:
+def wait_floor(timeout: float) -> float:
+    """Wait until only the warm minimum of Job workers is left, all ready."""
     started = time.monotonic()
     while time.monotonic() - started < timeout:
-        if not live_workers() and not pool_pods():
+        workers = live_workers()
+        if len(workers) == FLOOR and all(w["state"] == "ready" for w in workers) and len(
+            pool_pods()
+        ) == FLOOR:
             return round(time.monotonic() - started, 1)
         time.sleep(2)
-    raise TimeoutError(f"pool did not return to zero: {live_workers()}")
+    raise TimeoutError(f"pool did not return to the warm minimum: {live_workers()}")
 
 
 def run(out: Path) -> dict:
     out.mkdir(parents=True, exist_ok=False)
     report: dict = {"started_at": datetime.now(timezone.utc).isoformat()}
 
-    assert not pool_pods() and not live_workers(), "pool is not at zero"
-    assert int(sql("SELECT count(*) FROM work_dispatches WHERE placement='pool'")[0][0]) == 0
-    report["zero"] = {"pool_pods": 0, "live_executors": 0}
+    static = [w for w in live_workers("static") if w["state"] == "ready"]
+    assert len(static) >= 2, f"expected the scheduler and worker executors: {static}"
+    report["floor"] = {"seconds": wait_floor(300), "static_slots": sum(w["slots"] for w in static)}
+    assert int(sql("SELECT count(*) FROM work_dispatches")[0][0]) == 0
 
-    first = enqueue(1, 0)
-    report["first"] = {"cold_start_seconds": wait_done(first, 300)}
-    [worker] = live_workers()
-    report["first"]["worker"] = worker
-
-    reuse = enqueue(3, 1)
-    reuse_seconds = wait_done(reuse, 120)
-    workers = live_workers()
-    assert [w["id"] for w in workers] == [worker["id"]], workers
-    assert workers[0]["pod_uid"] == worker["pod_uid"]
-    report["reuse"] = {"seconds": reuse_seconds, "same_pod": True, "runs_handled": workers[0]["runs"]}
-
+    [floor_worker] = live_workers()
+    burst_runs = report["floor"]["static_slots"] + CEILING * floor_worker["slots"] + 8
     peak = {"workers": 0, "pods": 0}
 
     def sample() -> None:
         peak["workers"] = max(peak["workers"], len(live_workers()))
         peak["pods"] = max(peak["pods"], len(pool_pods()))
 
-    burst = enqueue(16, 6)
-    report["burst"] = {"runs": 16, "seconds": wait_done(burst, 600, sample), "peak": peak}
+    burst = enqueue(burst_runs, RUN_SECONDS)
+    report["burst"] = {
+        "runs": burst_runs,
+        "seconds": wait_done(burst, 900, sample),
+        "peak": dict(peak),
+    }
     assert peak["workers"] <= CEILING and peak["pods"] <= CEILING, peak
-    assert peak["workers"] > 1, "burst never added a worker"
+    assert peak["workers"] == CEILING, f"burst never reached the ceiling: {peak}"
 
-    report["idle"] = {"seconds_to_zero": wait_zero(300)}
-    ended = sql(
-        "SELECT state, coalesce(end_reason,''), count(*) FROM execution_workers GROUP BY 1, 2"
-    )
-    report["idle"]["executors"] = ended
-    assert all(state == "retired" for state, *_ in ended), ended
-
-    warm = enqueue(1, 0)
-    wait_done(warm, 300)
+    # A run accepted while the extra Jobs drain still completes.
     deadline = time.monotonic() + 300
     while time.monotonic() < deadline and not any(
         w["state"] == "draining" for w in live_workers()
     ):
         time.sleep(0.5)
     race = enqueue(1, 0)
-    report["race"] = {"seconds": wait_done(race, 300), "workers_after": live_workers()}
-    report["idle_again"] = {"seconds_to_zero": wait_zero(300)}
+    report["race"] = {"seconds": wait_done(race, 300)}
+
+    report["drain"] = {"seconds_to_floor": wait_floor(600)}
+    report["drain"]["executors"] = sql(
+        "SELECT form, state, coalesce(end_reason,''), count(*) FROM execution_workers "
+        "GROUP BY 1, 2, 3 ORDER BY 1, 2"
+    )
     report["finished_at"] = datetime.now(timezone.utc).isoformat()
     (out / "report.json").write_text(json.dumps(report, indent=2))
     return report

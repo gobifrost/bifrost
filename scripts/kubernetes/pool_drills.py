@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Failure drills for on-demand reusable workers in local Kind (#769 stage 3b).
+"""Failure drills for on-demand worker Jobs in local Kind (#769).
 
-Usage (on a pool-mode cluster, see pool_spike.py):
-       ./test.sh kubernetes pool-drills [--out DIR]
+Usage: ./test.sh kubernetes pool-drills [--out DIR] [--only NAME ...]
+
+The drills exercise worker Jobs, so the static executors (the scheduler and
+worker Deployments) are scaled to zero for their duration and restored
+afterwards; the API keeps the warm minimum of Jobs.
 
 - kill: SIGKILL a worker's process mid-run on its node. The worker is marked
   lost after missing heartbeats and its Job deleted; queued work moves to a
@@ -12,8 +15,9 @@ Usage (on a pool-mode cluster, see pool_spike.py):
   and the burst completes.
 - oom: a run that exceeds the pod's memory limit ends visibly; the pool
   keeps serving other runs.
-- unschedulable: workers that cannot be scheduled are marked lost at their
-  start deadline and replaced within the ceiling; queued work waits visibly.
+- unschedulable: workers that cannot be scheduled (the warm minimum
+  included) are marked lost at their start deadline and replaced within the
+  ceiling; queued work waits visibly.
 """
 from __future__ import annotations
 
@@ -25,6 +29,7 @@ import subprocess
 import time
 
 from pool_spike import (
+    CEILING,
     POOL,
     enqueue,
     live_workers,
@@ -33,7 +38,7 @@ from pool_spike import (
     sql,
     statuses,
     wait_done,
-    wait_zero,
+    wait_floor,
 )
 from spike import kubectl
 
@@ -59,7 +64,9 @@ def wait_status(ids: list[str], wanted: set[str], timeout: float) -> dict[str, s
 
 
 def job_count() -> int:
-    return len(json.loads(kubectl("get", "jobs", "-l", POOL, "-o", "json"))["items"])
+    """Unfinished worker Jobs (finished ones stay until their TTL as history)."""
+    jobs = json.loads(kubectl("get", "jobs", "-l", POOL, "-o", "json"))["items"]
+    return sum(1 for job in jobs if not job["status"].get("succeeded") and not job["status"].get("failed"))
 
 
 def kill_drill() -> dict:
@@ -153,9 +160,10 @@ def unschedulable_drill() -> dict:
     )
     kubectl("rollout", "status", "deployment/bifrost-api", "--timeout=300s")
     try:
-        # A warm worker from an earlier drill would serve the run; start cold.
-        wait_zero(300)
+        # Replace every worker, the warm minimum included, with ones that
+        # cannot be scheduled; nothing else can serve the run.
         started = datetime.now(timezone.utc).isoformat()
+        kubectl("delete", "jobs", "-l", POOL, "--wait=true")
         waiting = enqueue(1, 0)
         time.sleep(150)
         lost = int(sql(
@@ -170,7 +178,7 @@ def unschedulable_drill() -> dict:
             "run_status": run_status,
             "workers_lost_at_start_deadline": lost,
             "live_workers": len(live),
-            "within_ceiling": len(live) <= 3,
+            "within_ceiling": len(live) <= CEILING,
         }
     finally:
         kubectl(
@@ -190,15 +198,30 @@ DRILLS = (
 )
 
 
+STATIC = ("deployment/bifrost-scheduler", "deployment/bifrost-worker")
+
+
+def scale_static(replicas: int) -> None:
+    for deployment in STATIC:
+        kubectl("scale", deployment, f"--replicas={replicas}")
+    for deployment in STATIC:
+        kubectl("rollout", "status", deployment, "--timeout=600s")
+
+
 def run(out: Path, only: list[str]) -> dict:
     out.mkdir(parents=True, exist_ok=False)
     report: dict = {"started_at": datetime.now(timezone.utc).isoformat()}
-    for name, drill in DRILLS:
-        if only and name not in only:
-            continue
-        report[name] = drill()
-        (out / "report.json").write_text(json.dumps(report, indent=2))
-    report["finally_zero_seconds"] = wait_zero(900)
+    scale_static(0)
+    try:
+        report["jobs_only_floor_seconds"] = wait_floor(300)
+        for name, drill in DRILLS:
+            if only and name not in only:
+                continue
+            report[name] = drill()
+            (out / "report.json").write_text(json.dumps(report, indent=2))
+    finally:
+        scale_static(1)
+    report["finally_floor_seconds"] = wait_floor(900)
     report["finished_at"] = datetime.now(timezone.utc).isoformat()
     (out / "report.json").write_text(json.dumps(report, indent=2))
     return report
