@@ -102,3 +102,37 @@ deferred from stage 2.
 | 3a | `execution_workers` incarnations, dispatch placement, pool claim loop + idle drain in the worker, static executor form (no Job binding, no drain), incarnation pruning, capacity controller with suspended-create/UID binding, Kind harness (zero workers) and experiment |
 | 3b | Failure drills: cancellation, OOM, node loss, controller restart, unschedulable capacity; resource classes; measurements (cold start, image pull, idle tail) |
 | 3c | One-shot placement through the same controller for build/heavy handlers (the existing build Jobs move onto incarnations) |
+
+## Evidence (2026-10-22)
+
+**Kind** (`BIFROST_KIND_POOL=1`, two API replicas hosting control, no broker
+worker pods, ceiling 3 workers × 2 slots, idle 45 s;
+`./test.sh kubernetes pool-experiment`):
+
+| Phase | Result |
+| --- | --- |
+| Zero | 0 worker pods, 0 live executors |
+| First run | worker launched from zero; cold start 12.6 s |
+| Reuse | 3 more runs on the same pod in 3.5 s |
+| Burst | 16 × 6 s runs in 27.4 s; peak 3 workers / 3 pods (the ceiling) |
+| Idle | every worker drained itself (`retired`/`idle`); zero in 49 s |
+| Drain race | run accepted while its worker was draining finished on a new worker in 12.9 s; zero again in 47 s |
+
+**Docker, pool placement with one static executor and no broker worker:**
+236 execution, agent, chat, event and scenario e2e tests passed (2 skipped).
+
+**Latency,** end-to-end trivial sync run, 200 runs each, same stack:
+
+| Path | p50 | p95 | p99 |
+| --- | --- | --- | --- |
+| Broker | 47 ms | 64–68 ms | 81–100 ms |
+| Pool (static executor) | 55–57 ms | 86–94 ms | 109–128 ms |
+
+Both paths are subsecond. The pool path's extra ~8 ms at p50 comes from
+two hops:
+- the Redis wake hint;
+- an assignment transaction ahead of the run's own claim.
+
+Folding the two transactions together is the next optimization. A cold
+Job worker takes seconds, so interactive runs need warm capacity:
+`BIFROST_POOL_MIN_WORKERS` or a static executor.

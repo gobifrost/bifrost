@@ -307,3 +307,40 @@ def test_local_runtime_renderer_hosts_control_in_two_api_replicas(tmp_path) -> N
     assert scheduler["containers"][0]["env"] == control_env
     worker = deployments["bifrost-worker"]["spec"]["template"]["spec"]
     assert all(e["name"] != "BIFROST_CONTROL_PLANE_HOST" for e in worker["containers"][0]["env"])
+
+
+def test_local_runtime_renderer_pool_mode_leaves_no_broker_workers(tmp_path) -> None:
+    script = LOCAL_SCRIPT.read_text()
+    start = script.index("render_runtime_manifest() {")
+    end = script.index("\n}\n", start) + 3
+    output = tmp_path / "runtime.yaml"
+    subprocess.run(
+        [
+            "bash",
+            "-c",
+            (
+                script[start:end]
+                + '\nIMAGE_NAME="img"; BIFROST_KIND_BUILD_JOBS=1; BIFROST_KIND_API_CONTROL=1; '
+                + 'BIFROST_KIND_POOL=1; render_runtime_manifest "$1" "$2" rev'
+            ),
+            "renderer-test",
+            str(REPO_ROOT / "k8s" / "local" / "bifrost.yaml"),
+            str(output),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    deployments = {
+        doc["metadata"]["name"]: doc
+        for doc in yaml.safe_load_all(output.read_text())
+        if doc and doc.get("kind") == "Deployment"
+    }
+    assert deployments["bifrost-worker"]["spec"]["replicas"] == 0
+    for name in ("bifrost-api", "bifrost-scheduler"):
+        env = {
+            item["name"]: item["value"]
+            for item in deployments[name]["spec"]["template"]["spec"]["containers"][0]["env"]
+        }
+        assert env["BIFROST_EXECUTION_PLACEMENT"] == "pool"
+    assert "if [[ \"${BIFROST_KIND_POOL:-}\" == \"1\" ]]; then" in script

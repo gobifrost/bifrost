@@ -95,6 +95,20 @@ def build_worker_job_manifest(
                                     "name": "BIFROST_EXECUTION_PLACEMENT",
                                     "value": str(settings.execution_placement),
                                 },
+                                # The controller's pool policy, so a worker never
+                                # disagrees with the controller that launched it.
+                                {
+                                    "name": "BIFROST_POOL_IDLE_SECONDS",
+                                    "value": str(settings.pool_idle_seconds),
+                                },
+                                {
+                                    "name": "BIFROST_POOL_MAX_LIFETIME_SECONDS",
+                                    "value": str(settings.pool_max_lifetime_seconds),
+                                },
+                                {
+                                    "name": "BIFROST_POOL_MIN_WORKERS",
+                                    "value": str(settings.pool_min_workers),
+                                },
                                 # One slot budget for both run kinds.
                                 {"name": "BIFROST_MAX_WORKERS", "value": str(slots)},
                                 {"name": "BIFROST_MAX_CONCURRENCY", "value": str(slots)},
