@@ -3,9 +3,12 @@
 Releases before the unified runtime queued workflow runs, agent runs and
 summaries in RabbitMQ, with a run's context in Redis. An install upgraded
 while such messages were waiting still has them there, and nothing else will
-ever read them. When ``BIFROST_RABBITMQ_URL`` names a reachable broker, the
-trigger leader drains those queues: each message becomes the durable
-dispatch the current release would have accepted, then is acknowledged.
+ever read them. When ``BIFROST_RABBITMQ_URL`` is set, each API replica tries
+to reach the broker a few times once it starts, drains those queues until they
+are empty, disconnects and stops; there is no recurring poll. Each message
+becomes the durable dispatch the current release would have accepted, then is
+acknowledged. Several replicas draining at once is safe: the broker gives each
+message to one consumer and a subject has at most one dispatch.
 
 - A message that already names a dispatch (``dispatch_id``) came from a
   release that also committed the dispatch; it is only acknowledged.
@@ -14,6 +17,8 @@ dispatch the current release would have accepted, then is acknowledged.
   a row is logged.
 - Dead-lettered (``-poison``) messages stay where they are: those runs
   already ended.
+- A message that cannot be recovered stays queued; that queue's drain stops
+  and the next start tries again.
 
 Without a configured or reachable broker this does nothing.
 """
@@ -32,21 +37,21 @@ import aio_pika
 from aio_pika.abc import AbstractIncomingMessage
 from sqlalchemy import select, update
 
+from shared.schema_gate import wait_for_schema
 from src.config import get_settings
 from src.core.cache.redis_client import get_redis
-from src.core.database import get_dispatch_db_context
+from src.core.database import get_dispatch_db_context, get_engine
 from src.core.log_safety import log_safe
 from src.models.enums import ExecutionStatus
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.executions import Execution
 from src.models.orm.summary_backfill_job import SummaryBackfillJob
-from src.scheduler.registry import ScheduledTaskOutcome
 
 logger = logging.getLogger(__name__)
 
+CONNECT_ATTEMPTS = 3
 CONNECT_TIMEOUT_SECONDS = 5.0
-# Messages per queue per pass; the next pass continues.
-BATCH = 200
+CONNECT_RETRY_SECONDS = 5.0
 LOST_IN_UPGRADE = "This run was queued by an earlier release and its context expired before it could be recovered."
 
 
@@ -194,7 +199,7 @@ HANDLERS: dict[str, Callable[[dict[str, Any]], Awaitable[None]]] = {
 
 
 async def _drain_queue(connection: aio_pika.abc.AbstractConnection, name: str) -> int:
-    """Recover up to BATCH messages; a failure leaves its message queued."""
+    """Recover messages until the queue is empty; a failure leaves its message queued."""
     channel = await connection.channel()
     try:
         queue = await channel.declare_queue(name, passive=True)
@@ -202,7 +207,7 @@ async def _drain_queue(connection: aio_pika.abc.AbstractConnection, name: str) -
         return 0  # This install never had the queue.
     recovered = 0
     try:
-        for _ in range(BATCH):
+        while True:
             message: AbstractIncomingMessage | None = await queue.get(no_ack=False, fail=False)
             if message is None:
                 break
@@ -219,18 +224,29 @@ async def _drain_queue(connection: aio_pika.abc.AbstractConnection, name: str) -
     return recovered
 
 
-async def drain_legacy_broker() -> ScheduledTaskOutcome:
-    """Scheduled by the trigger leader; see the module docstring."""
+async def _connect(url: str) -> aio_pika.abc.AbstractConnection | None:
+    for attempt in range(1, CONNECT_ATTEMPTS + 1):
+        try:
+            return await asyncio.wait_for(aio_pika.connect(url), CONNECT_TIMEOUT_SECONDS)
+        except Exception:
+            if attempt < CONNECT_ATTEMPTS:
+                await asyncio.sleep(CONNECT_RETRY_SECONDS)
+    return None
+
+
+async def drain_legacy_broker() -> None:
+    """Run once per API start; see the module docstring."""
     url = get_settings().rabbitmq_url
     if not url:
-        return ScheduledTaskOutcome(summary="No legacy broker configured")
+        return
     try:
-        connection = await asyncio.wait_for(aio_pika.connect(url), CONNECT_TIMEOUT_SECONDS)
+        await wait_for_schema(get_engine())
+        connection = await _connect(url)
+        if connection is None:
+            logger.info("The legacy broker is unreachable; nothing to recover")
+            return
+        async with connection:
+            counts = {name: await _drain_queue(connection, name) for name in HANDLERS}
+        logger.info("Drained work queued by an earlier release", extra={"counts": counts})
     except Exception:
-        return ScheduledTaskOutcome(summary="Legacy broker unreachable")
-    async with connection:
-        counts = {name: await _drain_queue(connection, name) for name in HANDLERS}
-    recovered = sum(counts.values())
-    if recovered:
-        logger.info("Recovered work queued by an earlier release", extra={"counts": counts})
-    return ScheduledTaskOutcome(summary=f"Recovered {recovered} queued item(s)")
+        logger.exception("Could not drain the legacy broker; the next start tries again")

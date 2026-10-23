@@ -4,6 +4,7 @@ Bifrost API - FastAPI Application
 Main entry point for the FastAPI application.
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -186,12 +187,20 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await control_host.start()
     logger.info("Platform control hosted by this API replica")
 
+    from src.services.legacy_broker_drain import drain_legacy_broker
+
+    legacy_drain = asyncio.create_task(drain_legacy_broker(), name="legacy-broker-drain")
+
     logger.info(f"Bifrost API started in {settings.environment} mode")
 
     yield
 
     # Shutdown
     logger.info("Shutting down Bifrost API...")
+
+    # An unfinished drain leaves its unacknowledged message queued.
+    legacy_drain.cancel()
+    await asyncio.gather(legacy_drain, return_exceptions=True)
 
     # Surrender the trigger lease while the database is still open.
     await control_host.stop()

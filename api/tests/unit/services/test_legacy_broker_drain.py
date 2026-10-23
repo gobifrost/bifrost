@@ -220,16 +220,55 @@ async def test_no_configured_broker_does_nothing(monkeypatch) -> None:  # type: 
     from types import SimpleNamespace
 
     monkeypatch.setattr(drain, "get_settings", lambda: SimpleNamespace(rabbitmq_url=None))
-    assert (await drain.drain_legacy_broker()).summary == "No legacy broker configured"
+    monkeypatch.setattr(drain, "wait_for_schema", AsyncMock(side_effect=AssertionError))
+    connect = AsyncMock()
+    monkeypatch.setattr(drain.aio_pika, "connect", connect)
+
+    await drain.drain_legacy_broker()
+
+    connect.assert_not_awaited()
 
 
-async def test_an_unreachable_broker_is_left_for_the_next_pass(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+async def test_an_unreachable_broker_is_tried_a_few_times_then_left(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     from types import SimpleNamespace
 
     monkeypatch.setattr(
         drain, "get_settings", lambda: SimpleNamespace(rabbitmq_url="amqp://nobody@127.0.0.1:1/")
     )
-    assert (await drain.drain_legacy_broker()).summary == "Legacy broker unreachable"
+    monkeypatch.setattr(drain, "wait_for_schema", AsyncMock())
+    monkeypatch.setattr(drain, "CONNECT_RETRY_SECONDS", 0)
+    connect = AsyncMock(side_effect=ConnectionError)
+    monkeypatch.setattr(drain.aio_pika, "connect", connect)
+
+    await drain.drain_legacy_broker()
+
+    assert connect.await_count == drain.CONNECT_ATTEMPTS
+
+
+async def test_a_reachable_broker_is_drained_once_and_disconnected(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from types import SimpleNamespace
+
+    class _Connection:
+        closed = False
+
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            self.closed = True
+
+    connection = _Connection()
+    monkeypatch.setattr(drain, "get_settings", lambda: SimpleNamespace(rabbitmq_url="amqp://broker/"))
+    monkeypatch.setattr(drain, "wait_for_schema", AsyncMock())
+    monkeypatch.setattr(drain.aio_pika, "connect", AsyncMock(side_effect=[ConnectionError, connection]))
+    monkeypatch.setattr(drain, "CONNECT_RETRY_SECONDS", 0)
+    drained = AsyncMock(return_value=0)
+    monkeypatch.setattr(drain, "_drain_queue", drained)
+
+    await drain.drain_legacy_broker()
+
+    assert [c.args[1] for c in drained.await_args_list] == list(drain.HANDLERS)
+    assert connection.closed
 
 
 class _Message:
@@ -273,3 +312,28 @@ async def test_a_failed_recovery_leaves_its_message_queued(monkeypatch) -> None:
 
     assert await drain._drain_queue(_Connection(), "workflow-executions") == 1  # type: ignore[arg-type]
     assert (good.acked, bad.nacked, later.acked) == (True, True, False)
+
+
+async def test_a_queue_drains_until_empty(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    messages = [_Message(b'{"n": %d}' % n) for n in range(500)]
+    pending = list(messages)
+
+    class _Queue:
+        async def get(self, **_kwargs):  # type: ignore[no-untyped-def]
+            return pending.pop(0) if pending else None
+
+    class _Channel:
+        async def declare_queue(self, name, passive):  # type: ignore[no-untyped-def]
+            return _Queue()
+
+        async def close(self) -> None:
+            return None
+
+    class _Connection:
+        async def channel(self):  # type: ignore[no-untyped-def]
+            return _Channel()
+
+    monkeypatch.setitem(drain.HANDLERS, "agent-runs", AsyncMock())
+
+    assert await drain._drain_queue(_Connection(), "agent-runs") == 500  # type: ignore[arg-type]
+    assert all(m.acked for m in messages)
