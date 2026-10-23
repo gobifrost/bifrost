@@ -69,6 +69,15 @@ def _validate_required_settings(settings: Any) -> str:
     return namespace
 
 
+def oom_killed(pods: list[dict[str, Any]]) -> bool:
+    """Whether Kubernetes stopped any of these pods' containers for memory."""
+    return any(
+        container.get("state", {}).get("terminated", {}).get("reason") == "OOMKilled"
+        for pod in pods
+        for container in pod.get("status", {}).get("containerStatuses", [])
+    )
+
+
 def _lease_token_fingerprint(lease_token: UUID) -> str:
     """Return a non-credential fingerprint identifying one fenced attempt.
 

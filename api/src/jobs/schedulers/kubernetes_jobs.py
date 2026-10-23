@@ -16,6 +16,7 @@ from src.jobs.platform.kubernetes_client import (
     KubernetesConfigurationError,
     KubernetesJobClient,
     build_job_manifest,
+    oom_killed,
     validate_build_settings,
 )
 from src.jobs.platform.registry import get_platform_job_definition
@@ -36,10 +37,8 @@ def _pods_stopped(pods: list[dict[str, Any]]) -> bool:
 
 
 def _failure(job: dict[str, Any], pods: list[dict[str, Any]]) -> tuple[str, str]:
-    for pod in pods:
-        for container in pod.get("status", {}).get("containerStatuses", []):
-            if container.get("state", {}).get("terminated", {}).get("reason") == "OOMKilled":
-                return "memory_pressure", "The build pod exceeded its memory limit."
+    if oom_killed(pods):
+        return "memory_pressure", "The build pod exceeded its memory limit."
     for condition in job.get("status", {}).get("conditions", []):
         if condition.get("status") == "True" and condition.get("reason") == "DeadlineExceeded":
             return "timeout", "The Kubernetes build pod exceeded its deadline."

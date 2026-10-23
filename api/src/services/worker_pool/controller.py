@@ -30,6 +30,7 @@ from src.jobs.platform.kubernetes_client import (
     KubernetesApiError,
     KubernetesConfigurationError,
     KubernetesJobClient,
+    oom_killed,
 )
 from src.models.orm.execution_workers import ExecutionWorker
 from src.models.orm.platform_jobs import PlatformJob
@@ -162,8 +163,15 @@ class WorkerPoolController:
                 reason = "heartbeat_lost"
             ended: list[UUID] = []
             if reason is not None:
-                self._lose(worker, reason, now)
-                ended = await end_runs_of_lost_worker(db, worker.id)
+                # Its runs teach their workflows a larger request only when
+                # Kubernetes stopped the worker for memory.
+                out_of_memory = (
+                    remote is not None
+                    and worker.kubernetes_job_uid is not None
+                    and oom_killed(await self.client.list_pods(worker.kubernetes_job_uid))
+                )
+                self._lose(worker, "out_of_memory" if out_of_memory else reason, now)
+                ended = await end_runs_of_lost_worker(db, worker.id, out_of_memory=out_of_memory)
             await db.commit()
         await announce_ended_runs(ended)
 

@@ -268,8 +268,10 @@ request.
 `memory.oom.group` on containers, so when the kernel's OOM killer acts it
 kills every process in the container, the executor included, not only the
 run that grew (Docker kills only that run). The executor's runs then fail
-as lost, and their workflows learn the executor's budget so their next run
-fits an executor alone. Clusters on Kubernetes 1.32 or later can set the
+as lost. When it was a Job worker, the controller sees the pod OOMKilled and
+those runs' workflows learn the executor's budget, so their next run fits an
+executor alone; a static executor (a Deployment pod) restarts without that
+lesson. Clusters on Kubernetes 1.32 or later can set the
 kubelet's `singleProcessOOMKill: true` to kill one process instead; Bifrost
 does not rely on it. Size the worker limit with headroom for the largest
 workflow you run.

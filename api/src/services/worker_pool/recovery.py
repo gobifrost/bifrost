@@ -25,17 +25,21 @@ EXECUTOR_LOST = (
 )
 
 
-async def end_runs_of_lost_worker(db: AsyncSession, worker_id: UUID) -> list[UUID]:
+async def end_runs_of_lost_worker(
+    db: AsyncSession, worker_id: UUID, *, out_of_memory: bool = False
+) -> list[UUID]:
     """Fail the lost worker's runs that are still running; return the workflow runs ended.
 
     Runs it finished, or never managed to claim, are left as they are.
     Summaries it was generating are requested again instead: a summary has
     no effect outside its own run, so repeating it is safe.
 
-    An executor lost mid-run most likely ran out of memory, and its runs
-    could not report what they used. Each ended run's workflow learns the
-    executor's whole budget (less the request margin), so its next run fits
-    an executor alone; smaller runs then bring it back down.
+    When the executor was stopped for memory (``out_of_memory``: Kubernetes
+    reported it OOMKilled), its runs could not report what they used: each
+    ended run's workflow learns the executor's whole budget (less the
+    request margin), so its next run fits an executor alone; smaller runs
+    then bring it back down. Any other loss (a crash, a forced stop, a lost
+    node) teaches nothing.
     """
     claims = (
         await db.execute(
@@ -69,7 +73,7 @@ async def end_runs_of_lost_worker(db: AsyncSession, worker_id: UUID) -> list[UUI
         budget = await db.scalar(
             select(ExecutionWorker.memory_budget_bytes).where(ExecutionWorker.id == worker_id)
         )
-        if budget is not None and budget > WORKFLOW_REQUEST_MARGIN_BYTES:
+        if out_of_memory and budget is not None and budget > WORKFLOW_REQUEST_MARGIN_BYTES:
             for workflow_id in sorted({wf for _, wf in rows if wf is not None}):
                 await record_peak_growth(
                     db, workflow_id, budget - WORKFLOW_REQUEST_MARGIN_BYTES, None

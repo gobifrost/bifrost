@@ -10,16 +10,20 @@ Phases (recorded in report.json), against the base manifests' defaults:
 - learning: a workflow's learned request follows its runs' peak growth.
 - sized: work a standard worker cannot hold gets a Job sized for it.
 - too_large: work no worker can hold fails visibly instead of waiting.
-- understated: runs that use far more than their request drive the real
-  memory gate; the pool keeps serving afterwards.
+- understated: a burst of runs that use far more than their request. The
+  gate may admit too much before it sees them (a never-measured burst can
+  cost one learning kill); every run ends, any kill is visible, the pool
+  keeps serving, the workflow learns its size, and the same burst again all
+  succeeds.
 - ramp: sustained mixed load (async, sync, scheduled, heavy, agent runs)
   with an API pod and a busy worker pod killed part-way; the Job count
   curve is sampled throughout.
 - drain: the pool returns to the warm minimum.
 
 Every accepted run must reach a terminal state. Failures are allowed only
-where the phase expects them (the killed worker's runs, understated runs
-the kernel stopped, agent runs without a configured model).
+where the phase expects them (the killed worker's runs, the first
+understated burst's runs stopped or lost for memory, agent runs without a
+configured model).
 """
 from __future__ import annotations
 
@@ -40,6 +44,9 @@ DRIVER = (ROOT / "scripts/kubernetes/pressure_driver.py").read_text()
 MIB = 2**20
 TERMINAL = {"Success", "Failed", "Cancelled", "Timeout", "CompletedWithErrors", "Stuck"}
 EXECUTOR_LOST = "The worker running this stopped before it finished"
+# How a run stopped for memory ends: by the executor's dangerous-memory stop,
+# by the kernel, or lost with its executor.
+MEMORY_STOPS = ("Stopped after using", "Stopped by the system", EXECUTOR_LOST)
 
 
 def driver(mode: str, arg: str = "") -> dict:
@@ -254,24 +261,37 @@ def run(out: Path, ramp_seconds: int) -> dict:
     [(status, error)] = too_large_runs.values()
     assert status == "Failed" and "MiB of memory" in error, too_large_runs
 
-    # understated: requests ten times too small drive the real memory gate.
+    # understated: requests ten times too small; recovery, then the same burst.
     seed_learned(workflows["pressure_spike"], 16)
+    burst = [
+        {"workflow": workflows["pressure_spike"], "params": {"seconds": 10, "mb": 200}, "count": 12, "mode": "async"},
+    ]
     with Curve() as spike_curve:
-        spike = driver("submit", json.dumps([
-            {"workflow": workflows["pressure_spike"], "params": {"seconds": 10, "mb": 200}, "count": 12, "mode": "async"},
-        ]))
-        spike_runs = wait_terminal(spike["ids"], 900)
+        spike_runs = wait_terminal(driver("submit", json.dumps(burst))["ids"], 900)
     after_spike = driver("submit", json.dumps([
         {"workflow": workflows["pressure_light"], "params": {"seconds": 0.1, "mb": 5}, "count": 10, "mode": "async"},
     ]))
     after_spike_runs = wait_terminal(after_spike["ids"], 600)
+    learned_after_spike = learned_mib(workflows["pressure_spike"])
+    with Curve() as again_curve:
+        again_runs = wait_terminal(driver("submit", json.dumps(burst))["ids"], 900)
     report["understated"] = {
         "runs": tally(spike_runs),
         "after": tally(after_spike_runs),
+        "learned_mib": learned_after_spike,
+        "again": tally(again_runs),
         "pressured_samples": spike_curve.pressured_samples(),
         "curve": spike_curve.samples,
+        "again_curve": again_curve.samples,
     }
+    unexplained = {
+        k: v for k, v in spike_runs.items()
+        if v[0] != "Success" and not v[1].startswith(MEMORY_STOPS)
+    }
+    assert not unexplained, unexplained
     assert all(s == "Success" for s, _ in after_spike_runs.values()), after_spike_runs
+    assert learned_after_spike is not None and learned_after_spike >= 190, report["understated"]["learned_mib"]
+    assert all(s == "Success" for s, _ in again_runs.values()), again_runs
 
     # ramp: sustained mixed load with kills.
     ids: list[str] = []
@@ -353,7 +373,9 @@ def main() -> None:
     args = parser.parse_args()
     report = run(args.out, args.ramp_seconds)
     print(json.dumps({k: v for k, v in report.items() if k not in ("ramp", "sized", "understated")}, indent=2))
-    print(json.dumps({k: v for k, v in report["understated"].items() if k != "curve"}, indent=2))
+    print(json.dumps(
+        {k: v for k, v in report["understated"].items() if k not in ("curve", "again_curve")}, indent=2
+    ))
     print(json.dumps({k: v for k, v in report["ramp"].items() if k != "curve"}, indent=2))
 
 

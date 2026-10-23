@@ -70,6 +70,8 @@ class FakeCluster:
 
     def __init__(self) -> None:
         self.jobs: dict[str, dict[str, Any]] = {}
+        # Pods by Job UID (only what a test sets).
+        self.pods: dict[str, list[dict[str, Any]]] = {}
         self.created: list[str] = []
         self.started: list[str] = []
         self.deleted: list[str] = []
@@ -95,6 +97,10 @@ class FakeCluster:
         job["spec"]["suspend"] = False
         self.started.append(name)
         return copy.deepcopy(job)
+
+    async def list_pods(self, job_uid: str) -> list[dict[str, Any]]:
+        await asyncio.sleep(0)
+        return copy.deepcopy(self.pods.get(job_uid, []))
 
     async def delete_job(self, name: str, uid: str) -> None:
         assert self.jobs[name]["metadata"]["uid"] == uid
@@ -709,14 +715,15 @@ async def test_the_executor_holding_a_run_writes_its_result(db) -> None:
     assert execution.status == ExecutionStatus.SUCCESS
 
 
-async def test_a_run_lost_with_its_worker_learns_the_worker_s_budget(db) -> None:
-    """The lost run could not report what it used; most likely it ran the
-    executor out of memory, so its next run should fit an executor alone."""
+async def _lose_running_job_worker(db, *, oom: bool) -> tuple[UUID, UUID]:  # type: ignore[no-untyped-def]
+    """A Job worker with one claimed run of a 16 MiB workflow goes silent;
+    Kubernetes reports its pod OOMKilled or not. Returns (workflow, worker)."""
     from src.services.execution.workflow_dispatch import claim_workflow_dispatch
 
+    suffix = uuid4().hex[:8]
     workflow = Workflow(
-        id=uuid4(), name=f"lost-{uuid4().hex[:8]}", function_name="main",
-        path="workflows/lost.py", type="workflow", is_active=True,
+        id=uuid4(), name=f"lost-{suffix}", function_name="main",
+        path=f"workflows/lost_{suffix}.py", type="workflow", is_active=True,
         learned_memory_bytes=16 * MIB,
     )
     async with db.sessions() as session:
@@ -743,20 +750,43 @@ async def test_a_run_lost_with_its_worker_learns_the_worker_s_budget(db) -> None
         await claim_workflow_dispatch(
             session, dispatch_id=claim.dispatch_id, execution_id=UUID(execution_id)
         )
-        await session.commit()
-
-    async with db.sessions() as session:
         await session.execute(
             update(ExecutionWorker).values(heartbeat_at=datetime.now(timezone.utc) - timedelta(minutes=5))
         )
         await session.commit()
+    reason = "OOMKilled" if oom else "Error"
+    cluster.pods[job_uid] = [
+        {"status": {"containerStatuses": [{"state": {"terminated": {"reason": reason}}}]}}
+    ]
     await pool.reconcile_worker(worker_id)
+    return workflow.id, worker_id
+
+
+async def test_a_run_lost_to_an_oom_killed_worker_learns_the_worker_s_budget(db) -> None:
+    """Its run could not report what it used, so its next run should fit an
+    executor alone."""
+    workflow_id, worker_id = await _lose_running_job_worker(db, oom=True)
 
     async with db.sessions() as session:
         learned = await session.scalar(
-            select(Workflow.learned_memory_bytes).where(Workflow.id == workflow.id)
+            select(Workflow.learned_memory_bytes).where(Workflow.id == workflow_id)
         )
+        worker = await session.get(ExecutionWorker, worker_id)
     assert learned == 546 * MIB - WORKFLOW_REQUEST_MARGIN_BYTES
+    assert (worker.state, worker.end_reason) == ("lost", "out_of_memory")
+
+
+async def test_a_run_lost_for_any_other_reason_teaches_nothing(db) -> None:
+    """A crash, a forced stop or a lost node says nothing about memory."""
+    workflow_id, worker_id = await _lose_running_job_worker(db, oom=False)
+
+    async with db.sessions() as session:
+        learned = await session.scalar(
+            select(Workflow.learned_memory_bytes).where(Workflow.id == workflow_id)
+        )
+        worker = await session.get(ExecutionWorker, worker_id)
+    assert learned == 16 * MIB
+    assert (worker.state, worker.end_reason) == ("lost", "heartbeat_lost")
 
 
 async def test_a_run_waiting_for_capacity_is_not_failed_as_stuck(db, monkeypatch) -> None:

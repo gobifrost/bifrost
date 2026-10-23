@@ -46,8 +46,10 @@ memory, is what limits workflows today.
 5. **Only dangerous memory stops work.** A run may grow past its request;
    at 95% of the container's real memory the run or service that grew most
    is stopped. A run killed for memory (by that stop, by the kernel, or lost
-   with its executor) teaches its workflow the executor's budget less the
-   16 MiB margin, so its next run fits an executor alone. The one case
+   with a Job worker Kubernetes reports OOMKilled) teaches its workflow the
+   executor's budget less the 16 MiB margin, so its next run fits an
+   executor alone. Any other loss (a crash, a forced stop, a lost node)
+   teaches nothing. The one case
    nothing catches, a never-measured burst that allocates within its first
    instant, costs at most one learning kill per new or changed workflow
    (accepted by Jack, 2026-10-23).
