@@ -12,8 +12,8 @@ to provide a separate sandbox service or privileged Linux namespace setup?
 This branch supplies an opt-in runtime capability, a credential-free synthetic
 probe, focused regression tests, and one real workflow dispatch. It does not
 enable CodeMode in production chat or autonomous configuration. Automatic mode
-alone retains the existing result cap. Provider token savings have not been
-measured.
+alone retains the existing result cap. A follow-up frozen production-derived
+comparison measures actual provider usage; its limitations and results are below.
 
 ## Execution and ownership
 
@@ -64,8 +64,11 @@ libraries.
 The experiment sets a 10-second code-execution budget, 128 MiB sandbox heap,
 128 suspensions, and at most 16 nested tool calls per snippet. Host tool waiting
 and process/cgroup overhead are separate from the interpreter heap. Existing
-sequential tool flags remain intact. Eager and speculative execution are off;
-automatic code retries are disabled. Missing sandbox dependencies must produce
+sequential tool flags remain intact. Eager and speculative execution are off.
+The capability permits three native correction attempts: the model receives
+feedback and supplies a revised snippet within its existing run budget. It does
+not automatically replay a snippet or its completed effects. Explicit callers
+may select a smaller allowance. Missing sandbox dependencies must produce
 an explicit failure, never execution through unrestricted Python.
 
 ## Result and cancellation boundaries
@@ -134,8 +137,9 @@ BIFROST_SKIP_BUILD=1 ./test.sh quality api
 git diff --check
 ```
 
-No full backend suite, frontend suites, real-provider comparison, or
-production deployment was run. Initial failures were resolved: explicitly
+The initial synthetic validation did not run the full backend or frontend
+suites, a real-provider comparison, or a production deployment. Initial failures
+were resolved: explicitly
 loading the built dependency image fixed the missing-package harness state;
 generated code now follows the existing sequential tools' synchronous Python
 signatures; invalid-input tests use compile-valid strings to exercise the live
@@ -165,8 +169,8 @@ key. Those byte counts are not provider token counts or a cost forecast.
 Its prescribed program does not establish how often a live model will choose
 good programs, preserve necessary evidence, or recover from malformed code.
 
-Production rollout needs a reviewed fixture comparison using actual provider
-input/output/cache usage and cost per successful task. It also needs deliberate
+Production rollout needs broader fixture coverage and actual cost per
+successful task beyond the production-derived sample below. It also needs deliberate
 configuration and per-run policy pinning, chat-history continuation, code-run
 presentation, and worker-density/cancellation measurements at realistic
 concurrency. This spike introduces no autonomous crash-resume contract for
@@ -179,6 +183,84 @@ integration must distinguish that evidence from provider-facing input when
 reporting context or predicting a request budget. Return-schema propagation
 also remains future work: the existing Bifrost adapter currently exposes
 `Any` results to the generated program, and upstream emits an explicit warning.
+
+## Frozen production-derived comparison
+
+A follow-up private experiment completed 36 provider-backed agent runs: six
+strict transcript diagnostics, 18 frozen comparisons across three expensive
+Automatic cases and three repetitions, three one-correction SharePoint controls,
+and nine CodeMode runs with the requested three-correction allowance. The last
+arm reuses the unchanged nine Automatic baselines. All business effects went
+through frozen mocks; real business executor calls were zero.
+
+The sources are recent identity, SharePoint, and device runs originally using
+about 511k, 341k, and 266k tokens. Historical prompts were not retained. Both arms
+therefore use identical original inputs/results, current prompts and schemas
+from 25 approved agents, and `claude-sonnet-5-5` with its production 8,000-token
+output cap. Input, prompt, graph, schema, and fixture hashes match across arms.
+These are production-derived simulations, not exact historical replays.
+
+Mocks reject unknown data instead of borrowing an answer from another query.
+They support pagination over complete captured text, equivalent Graph select
+ordering, and search over an explicitly closed-world captured SharePoint site
+corpus. Missing captures make a comparison inconclusive. Prescribed diagnostic
+calls and effect arguments are a conservative contract, not a general semantic
+quality judge.
+
+| Three-correction arm, three repetitions | Automatic | CodeMode |
+| --- | ---: | ---: |
+| SharePoint prescribed task / fully covered passes | 3 / 3 | 3 / 2 |
+| SharePoint median input tokens | 248,440 | 249,102 |
+| SharePoint median output tokens | 4,269 | 3,579 |
+| SharePoint median cache-write tokens | 27,082 | 46,717 |
+| SharePoint median model responses | 8 | 8 |
+| Identity prescribed task / fully covered passes | 3 / 0 | 1 / 0 |
+| Device comparisons | Inconclusive | Inconclusive |
+
+SharePoint median input is effectively flat (+0.27%), with more cache writes
+(+72.5%). One CodeMode repetition has a mock gap, so those medians are descriptive,
+not a fully controlled savings estimate. The two fully covered SharePoint pairs
+used 22.10% and 1.02% less input but 27.87% and 70.94% more cache-write tokens.
+This small sample does not establish a repeatable overall token or dollar saving.
+Provider input/output/cache counts were measured; no billed-dollar claim is made.
+
+Grace is necessary: the zero-correction arm had three fatal `run_code` errors.
+The three-correction arm had none and recovered from an undiscovered function
+name and JSON-string/dictionary confusion. One ordinary `load_capability` lookup
+still exhausted its separate existing allowance. Incomplete identity/device
+captures limit outcome comparisons, and early exits never count as savings.
+The three-correction setting retains the shared run budget; it does not replay
+completed effects automatically or weaken callback authorization/cancellation.
+
+Automatic remains the production default. The next evidence needed is broader
+coverage of exploratory reads and cost per successful task. Typed return schemas
+and values are a concrete integration issue: current string-valued/`Any` tool
+results make generated code more error-prone. No workflow-engine change or
+separate sandbox service was required for this experiment. The provider runs do
+not exercise live authorization, production worker claims, business-tool latency,
+or worker density. Private source captures, fixtures, responses, integrity
+manifests, and detailed judgments are retained outside Git.
+
+The three-correction follow-up passed eight native CodeMode unit tests, the
+existing single-workflow CodeMode E2E, and API Pyright/Ruff. The new tests cover
+three syntax corrections before one successful effect, bounded retry exhaustion,
+and a partial effect followed by model-selected correction without automatic
+replay. The E2E still starts one workflow job.
+
+The shared mutable test-image tag initially selected an older image missing
+Monty. That collection failure was resolved by pinning the already-built Monty
+image through a temporary external Compose override; no application fallback,
+retry, or skip was added. The temporary wrapper/override was removed and the
+shared image tag restored. Exact follow-up commands (the PATH prefix supplied
+that image-pinning wrapper) were:
+
+```bash
+PATH=/tmp/code-mode-grace-docker:$PATH BIFROST_SKIP_BUILD=1 ./test.sh tests/unit/services/test_agent_code_mode.py -v
+PATH=/tmp/code-mode-grace-docker:$PATH BIFROST_SKIP_BUILD=1 ./test.sh tests/e2e/api/test_agent_code_mode_spike.py -v
+PATH=/tmp/code-mode-grace-docker:$PATH BIFROST_SKIP_BUILD=1 ./test.sh quality api
+```
+
+The full backend/frontend suites and a production deployment were not run.
 
 ## Primary references
 

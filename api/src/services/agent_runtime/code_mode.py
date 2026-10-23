@@ -33,6 +33,9 @@ DEFAULT_CODE_MODE_RESOURCE_LIMITS: CodeModeResourceLimits = {
 DEFAULT_CODE_MODE_MAX_TOOL_CALLS = 16
 """Nested dispatch budget for one model-visible ``run_code`` call."""
 
+DEFAULT_CODE_MODE_MAX_RETRIES = 3
+"""Native model-correction attempts after a failed ``run_code`` snippet."""
+
 
 class _CodeModeResultBoundary(AbstractCapability[object]):
     """Scope unbounded nested values and cap the sole model-visible result."""
@@ -75,7 +78,7 @@ def build_code_mode_capabilities(
     tools: ToolSelector[object],
     resource_limits: CodeModeResourceLimits | None = None,
     max_tool_calls: int = DEFAULT_CODE_MODE_MAX_TOOL_CALLS,
-    max_retries: int = 0,
+    max_retries: int = DEFAULT_CODE_MODE_MAX_RETRIES,
 ) -> Sequence[AbstractCapability[object]]:
     """Build the small, explicit capability set used by the CodeMode spike.
 

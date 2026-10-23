@@ -8,15 +8,18 @@ from typing import Any
 import pytest
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import ToolSearch
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 from src.services.agent_runtime.code_mode import build_code_mode_capabilities
 from src.services.agent_runtime.errors import AgentRunCancelled
@@ -62,6 +65,163 @@ def _tool_returns(messages: list[ModelMessage], name: str) -> list[Any]:
         for part in message.parts
         if isinstance(part, ToolReturnPart) and part.tool_name == name
     ]
+
+
+def _retry_feedback(messages: list[ModelMessage], tool_name: str) -> list[RetryPromptPart]:
+    return [
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, RetryPromptPart) and part.tool_name == tool_name
+    ]
+
+
+@pytest.mark.asyncio
+async def test_code_mode_default_allows_three_model_corrections_before_one_effect() -> None:
+    """Syntax failures return feedback; only the model's corrected code executes."""
+    effects: list[str] = []
+    seen: list[list[ModelMessage]] = []
+
+    async def execute(name: str, arguments: dict[str, Any], tool_call_id: str) -> Any:
+        del tool_call_id
+        assert name == "record"
+        effects.append(arguments["value"])
+        return {"recorded": arguments["value"]}
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        del info
+        seen.append(messages)
+        if len(seen) == 1:
+            return ModelResponse(parts=[ToolCallPart("search_tools", {"queries": ["record"]})])
+        if 2 <= len(seen) <= 4:
+            if len(seen) > 2:
+                assert _retry_feedback(messages, "run_code")
+            return ModelResponse(parts=[ToolCallPart("run_code", {"code": "record(value=)"})])
+        if len(seen) == 5:
+            assert _retry_feedback(messages, "run_code")
+            return ModelResponse(parts=[ToolCallPart("run_code", {"code": "record(value='once')"})])
+        return ModelResponse(parts=[TextPart("complete")])
+
+    runtime = Agent(
+        FunctionModel(respond),
+        toolsets=[
+            BifrostToolset(
+                [
+                    ToolDefinition(
+                        name="record",
+                        description="Record one effect.",
+                        parameters={
+                            "type": "object",
+                            "properties": {"value": {"type": "string"}},
+                            "required": ["value"],
+                        },
+                    )
+                ],
+                execute,
+            ).defer_loading()
+        ],
+        capabilities=(
+            ToolSearch(strategy="keywords"),
+            *build_code_mode_capabilities(tools=["record"]),
+        ),
+    )
+
+    result = await runtime.run(
+        "Correct your code after syntax feedback.",
+        usage_limits=UsageLimits(request_limit=6),
+    )
+
+    assert result.output == "complete"
+    assert effects == ["once"]
+    assert result.usage.requests == 6
+
+
+@pytest.mark.asyncio
+async def test_code_mode_model_correction_does_not_replay_completed_effects() -> None:
+    """A retry asks the model for fresh code instead of re-executing a partial snippet."""
+    effects: list[str] = []
+    seen: list[list[ModelMessage]] = []
+
+    async def execute(name: str, arguments: dict[str, Any], tool_call_id: str) -> Any:
+        del tool_call_id
+        assert name == "record"
+        effects.append(arguments["value"])
+        return {"recorded": arguments["value"]}
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        del info
+        seen.append(messages)
+        if len(seen) == 1:
+            return ModelResponse(parts=[ToolCallPart("search_tools", {"queries": ["record"]})])
+        if len(seen) == 2:
+            return ModelResponse(
+                parts=[ToolCallPart("run_code", {"code": "record(value='once')\n1 / 0"})]
+            )
+        if len(seen) == 3:
+            assert _retry_feedback(messages, "run_code")
+            return ModelResponse(parts=[ToolCallPart("run_code", {"code": "{'complete': True}"})])
+        return ModelResponse(parts=[TextPart("complete")])
+
+    runtime = Agent(
+        FunctionModel(respond),
+        toolsets=[
+            BifrostToolset(
+                [
+                    ToolDefinition(
+                        name="record",
+                        description="Record one effect.",
+                        parameters={
+                            "type": "object",
+                            "properties": {"value": {"type": "string"}},
+                            "required": ["value"],
+                        },
+                    )
+                ],
+                execute,
+            ).defer_loading()
+        ],
+        capabilities=(
+            ToolSearch(strategy="keywords"),
+            *build_code_mode_capabilities(tools=["record"]),
+        ),
+    )
+
+    result = await runtime.run(
+        "Correct the code without repeating completed work.",
+        usage_limits=UsageLimits(request_limit=4),
+    )
+
+    assert result.output == "complete"
+    assert effects == ["once"]
+    assert result.usage.requests == 4
+
+
+@pytest.mark.asyncio
+async def test_code_mode_default_stops_after_exhausted_corrections_with_no_effects() -> None:
+    """The native retry cap and run-wide usage limit prevent an endless loop."""
+    seen: list[list[ModelMessage]] = []
+    usage = RunUsage()
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        del info
+        seen.append(messages)
+        return ModelResponse(parts=[ToolCallPart("run_code", {"code": "("})])
+
+    runtime = Agent(
+        FunctionModel(respond),
+        capabilities=build_code_mode_capabilities(tools=[]),
+    )
+
+    with pytest.raises(UnexpectedModelBehavior, match="max retries count of 3"):
+        await runtime.run(
+            "Keep submitting invalid syntax.",
+            usage_limits=UsageLimits(request_limit=5),
+            usage=usage,
+        )
+
+    assert len(seen) == 4
+    assert usage.requests == 4 <= 5
 
 
 @pytest.mark.asyncio
