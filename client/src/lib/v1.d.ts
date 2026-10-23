@@ -152,7 +152,6 @@ export interface paths {
          *     Checks:
          *     - Database connectivity
          *     - Redis connectivity
-         *     - RabbitMQ connectivity
          *     - S3 bucket availability when S3 is configured
          *
          *     Returns:
@@ -6280,17 +6279,15 @@ export interface paths {
          * Cancel Backfill Job
          * @description Mark a backfill job as cancelled so the UI unblocks.
          *
-         *     This does NOT drain messages already on the ``agent-summarization``
-         *     queue — RabbitMQ will keep delivering them and the worker will keep
-         *     summarising individual runs. What it does do:
+         *     This does NOT withdraw summaries already dispatched — executors keep
+         *     summarising those runs. What it does do:
          *
          *     - flips ``status`` from ``running`` to ``cancelled``
          *     - sets ``completed_at`` so the row stops appearing in "active" queries
          *     - broadcasts final state so the progress card dismisses itself
          *
-         *     Use this when progress has stalled (e.g. the worker was restarted
-         *     mid-job and prefetched messages went back on the queue but the counter
-         *     never advanced) — admins need a way out.
+         *     Use this when progress has stalled and the counter never advanced —
+         *     admins need a way out.
          */
         post: operations["cancel_backfill_job_api_agent_runs_backfill_jobs__job_id__cancel_post"];
         delete?: never;
@@ -34589,9 +34586,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkflowExecution"] | {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["WorkflowExecution"];
                 };
             };
             /** @description Validation Error */

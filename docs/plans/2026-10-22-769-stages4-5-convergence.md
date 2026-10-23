@@ -125,3 +125,49 @@ move to the API: the API holds no Job permission there.
 - **Defaults** `BIFROST_POOL_MIN_WORKERS=1`, `BIFROST_POOL_MAX_WORKERS=6`.
   Supervised services need an executor: in Docker the static executors, on
   Kubernetes the static executors or the warm Job worker.
+
+## Stage 5b design (2026-10-23)
+
+5a already started no broker consumer, so 5b removes code and topology that
+nothing runs any more, plus the one-release bridges:
+
+- **Broker code:** `src.jobs.rabbitmq`, the consumer base classes, the
+  package-install broadcast, the RabbitMQ readiness check and
+  `BIFROST_RABBITMQ_URL` in settings, and the `aio-pika` dependency. Settings
+  ignore unknown variables, so an older compose file or manifest that still
+  sets the URL keeps starting; the execution template still scrubs it from
+  children, because it carries credentials.
+- **Redis bridges:** the pending-execution record and the agent-run context
+  that new APIs wrote for older workers, the Redis-only "pending receipt"
+  read and cancel paths, and the consumer's Redis-first message path. Every
+  run has its PostgreSQL row and dispatch from acceptance (stage 2).
+- **Topology:** the rabbitmq service in every compose file, the Kubernetes
+  RabbitMQ manifests, KEDA, and the Kind `experiment` harness built on it.
+  The runbooks say how to delete the leftovers; the queues and dead letters
+  are not read and nothing replays them.
+- **Dispatch table:** `queue`, `status`, `publish_count` and
+  `last_published_at` are no longer written or mapped. 5a pods still write
+  them during a rolling upgrade, so this release only relaxes them (nullable
+  or defaulted) and the `execution_record_exists` message field stays; the
+  next release drops both.
+
+**Memory gating restored.** Under RabbitMQ a fork refused for memory
+pressure NACKed the message to another worker. With PostgreSQL claims the
+refusal came after the claim and left the run RUNNING with no child. Now:
+
+- an executor over `memory_pressure_threshold` claims nothing new and says
+  so in its heartbeat (`execution_workers.memory_pressured`);
+- the worker controller does not count a pressured executor's free slots,
+  so it starts a worker Job for the work left unclaimed;
+- a fork still refused after a claim hands the run back (RUNNING → PENDING,
+  a fresh dispatch, the claim record removed) for another executor.
+
+**Executor drain.** An executor's drain now ends with the process pool's own
+drain, so runs still active at the grace deadline are recorded as
+interrupted by shutdown and in-flight result handling completes, as the
+broker consumer's drain did.
+
+**Production rollout.** Production runs an image from before #1031, whose
+in-flight RabbitMQ messages have no dispatch rows. Roll it to a stage-4
+image first (dispatch rows plus broker consumers), then to 5a/5b, whose
+reconciler re-places any broker-placed dispatch at once.
