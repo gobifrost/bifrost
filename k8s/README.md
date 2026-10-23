@@ -261,7 +261,6 @@ Scale gradually and monitor memory-pressure deferrals and queue wait time.
 | `BIFROST_ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | JWT access token TTL |
 | `BIFROST_REFRESH_TOKEN_EXPIRE_DAYS` | `7` | Refresh token TTL |
 | `BIFROST_MFA_ENABLED` | `true` | Enable MFA |
-| `BIFROST_MAX_CONCURRENCY` | `10` | Worker concurrency |
 | `BIFROST_WEBAUTHN_RP_ID` | (required) | WebAuthn relying party ID (your domain) |
 | `BIFROST_WEBAUTHN_RP_NAME` | `Bifrost` | WebAuthn display name |
 | `BIFROST_WEBAUTHN_ORIGIN` | (required) | WebAuthn origin URL (e.g., https://bifrost.example.com) |

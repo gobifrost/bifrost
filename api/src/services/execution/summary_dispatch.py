@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.log_safety import log_safe
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.work_dispatches import WorkDispatch
+from src.services.memory_requests import SUMMARY_REQUEST_BYTES
 from src.services.work_dispatch import hand_off, stage_dispatch, take_dispatch_payload
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,7 @@ async def stage_summary(
         handler_version=HANDLER_VERSION,
         message={"run_id": str(run_id)},
         payload={},
+        memory_request_bytes=SUMMARY_REQUEST_BYTES,
     )
     db.expunge(dispatch)
     inserted = await db.scalar(

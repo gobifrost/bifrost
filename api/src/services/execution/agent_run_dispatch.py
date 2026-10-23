@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.cache.redis_client import get_redis
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.work_dispatches import WorkDispatch
+from src.services.memory_requests import AGENT_RUN_REQUEST_BYTES
 from src.services.work_dispatch import hand_off, stage_dispatch
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ def stage_agent_run(
         handler_version=HANDLER_VERSION,
         message=message,
         payload=context,
+        memory_request_bytes=AGENT_RUN_REQUEST_BYTES,
     )
 
 

@@ -37,7 +37,12 @@ from src.scheduler.control import replica_heartbeat_loop
 from src.services.kubernetes_control import start_kubernetes_loops
 from src.services.scheduler_diagnostics import remove_scheduler_replica
 from src.jobs.summarize_worker import handle_summarize_message
-from src.services.execution.memory_monitor import get_cgroup_memory
+from src.services.memory_requests import (
+    DEFAULT_WORKFLOW_REQUEST_BYTES,
+    MemoryBudget,
+    measure_budget,
+    under_pressure,
+)
 from src.services.package_generation import (
     change_message,
     current_package_generation,
@@ -121,6 +126,14 @@ class PoolWorker:
         self.package_generation = 0
         self._service_claim_loop = None
         self._memory_pressured = False
+        # Measured once the executor is ready (src.services.memory_requests).
+        self.budget: MemoryBudget | None = None
+        # Requests of the work this executor holds: workflow runs by
+        # execution id (held until their child ends), other work by dispatch.
+        self._workflow_holds: dict[str, int] = {}
+        self._task_holds: dict[str, int] = {}
+        # Workflow claims still being routed to a child.
+        self._routing: set[str] = set()
         # Ids of the local platform jobs this executor is running.
         self._platform_jobs: set[UUID] = set()
         # Set to stop claiming platform jobs; running ones finish.
@@ -152,36 +165,42 @@ class PoolWorker:
         )
 
     def _under_memory_pressure(self) -> bool:
-        """Over ``memory_pressure_threshold`` of this container's memory limit."""
-        current, limit = get_cgroup_memory()
-        pressured = (
-            current >= 0 and limit > 0 and current / limit > self.settings.memory_pressure_threshold
-        )
+        """Real memory over ``memory_pressure_threshold`` of the limit."""
+        pressured = under_pressure(self.settings.memory_pressure_threshold)
         if pressured != self._memory_pressured:
             self._memory_pressured = pressured
             if pressured:
-                logger.warning(
-                    "Executor is over its memory threshold; claiming nothing new",
-                    extra={"used_mib": current // 2**20, "limit_mib": limit // 2**20},
-                )
+                logger.warning("Executor is over its memory threshold; claiming nothing new")
             else:
                 logger.info("Executor is back under its memory threshold")
         return pressured
 
+    def _held_bytes(self) -> int:
+        """What the work this executor holds requested.
+
+        A workflow run is held from its claim until its child ends.
+        """
+        if self._workflow_consumer is not None:
+            running = self._workflow_consumer._pool.active_execution_ids()
+            for execution_id in list(self._workflow_holds):
+                if execution_id not in running and execution_id not in self._routing:
+                    del self._workflow_holds[execution_id]
+        return sum(self._workflow_holds.values()) + sum(self._task_holds.values())
+
+    def _free_bytes(self) -> int:
+        assert self.budget is not None
+        return max(0, self.budget.budget_bytes - self._held_bytes())
+
     def _claimable(self) -> tuple[tuple[str, int], ...]:
-        """Handlers with free capacity: process-pool forks for workflow runs
-        (``max_workers``), concurrent agent runs (``max_concurrency``), and one
-        live summary plus one backfill summary at a time, so a large backfill
-        never delays live summaries. Nothing while over the memory threshold:
-        the work waits for an executor with room, and the controller starts
-        one if none has it."""
+        """Handlers this executor may claim now; the claim takes only work
+        whose request fits the free budget. One live summary plus one
+        backfill summary at a time is policy, so a large backfill never
+        delays live summaries. Nothing while over the memory threshold: the
+        work waits for an executor with room, and the controller starts one
+        if none has it."""
         if self._under_memory_pressure():
             return ()
-        handlers: list[tuple[str, int]] = []
-        if self._workflow_runs() < self.settings.max_workers:
-            handlers.append(("workflow.execute", 1))
-        if len(self._tasks["agent.run"]) < self.settings.max_concurrency:
-            handlers.append(("agent.run", 1))
+        handlers: list[tuple[str, int]] = [("workflow.execute", 1), ("agent.run", 1)]
         for summary_handler in ("agent.summarize", "agent.summarize_backfill"):
             if not self._tasks[summary_handler]:
                 handlers.append((summary_handler, 1))
@@ -195,9 +214,9 @@ class PoolWorker:
 
         configure_mappers()
         if self.static:
-            slots: int | None = self.settings.max_workers
+            slots: int | None = self._nominal_slots(measure_budget(self.settings.memory_pressure_threshold))
             self.incarnation_id = await register_static_worker(
-                slots=self.settings.max_workers, hostname=socket.gethostname()
+                slots=slots, hostname=socket.gethostname()
             )
         else:
             assert self.job_uid is not None and self.pod_uid is not None
@@ -226,9 +245,16 @@ class PoolWorker:
 
         self._package_consumer = PackageInstallConsumer()
         await self._start_service_claim_loop()
+        # Measured once the parent and fork template are up: what remains is
+        # what work may use.
+        self.budget = measure_budget(self.settings.memory_pressure_threshold)
         logger.info(
             "Pool worker ready",
-            extra={"incarnation_id": str(self.incarnation_id), "slots": slots},
+            extra={
+                "incarnation_id": str(self.incarnation_id),
+                "budget_mib": self.budget.budget_bytes // 2**20,
+                "limit_mib": self.budget.limit_bytes // 2**20,
+            },
         )
         background = [
             asyncio.create_task(self._heartbeat_loop(), name="pool-heartbeat"),
@@ -286,7 +312,13 @@ class PoolWorker:
             self._wake.clear()
             handlers = self._claimable()
             if handlers:
-                claim = await claim_next(self.incarnation_id, handlers)
+                assert self.budget is not None
+                claim = await claim_next(
+                    self.incarnation_id,
+                    handlers,
+                    fits_bytes=self._free_bytes(),
+                    budget_bytes=self.budget.budget_bytes,
+                )
                 if claim is not None:
                     self._start(claim)
                     last_activity = time.monotonic()
@@ -316,7 +348,18 @@ class PoolWorker:
             wake.cancel()
         await begin_drain(self.incarnation_id, "stopped")
 
+    @staticmethod
+    def _nominal_slots(budget: MemoryBudget) -> int:
+        """Typical runs the budget fits. Only an older worker controller
+        reads slots (during a rolling upgrade); capacity is the budget."""
+        return max(1, budget.budget_bytes // DEFAULT_WORKFLOW_REQUEST_BYTES)
+
     def _start(self, claim: PoolClaim) -> None:
+        if claim.handler == "workflow.execute":
+            self._workflow_holds[str(claim.subject_id)] = claim.memory_request_bytes
+            self._routing.add(str(claim.subject_id))
+        else:
+            self._task_holds[str(claim.dispatch_id)] = claim.memory_request_bytes
         task = asyncio.create_task(self._run_claim(claim), name=f"pool-run-{claim.dispatch_id}")
         in_flight = self._tasks[claim.handler]
         in_flight.add(task)
@@ -340,11 +383,13 @@ class PoolWorker:
                     # goes back to waiting for an executor with room.
                     from src.services.execution.workflow_dispatch import release_workflow_run
 
+                    self._workflow_holds.pop(str(claim.subject_id), None)
                     assert claim.claimed is not None
                     await release_workflow_run(
                         worker_id=self.incarnation_id,
                         message=claim.message,
                         payload=claim.claimed,
+                        memory_request_bytes=claim.memory_request_bytes,
                     )
             elif claim.handler == "agent.run":
                 await self._agent_consumer.process_message(claim.message)
@@ -356,6 +401,9 @@ class PoolWorker:
                 extra={"dispatch_id": str(claim.dispatch_id)},
             )
         finally:
+            # A routed workflow run stays held until its child ends.
+            self._routing.discard(str(claim.subject_id))
+            self._task_holds.pop(str(claim.dispatch_id), None)
             self.runs_handled += 1
 
     async def _wake_listener(self) -> None:
@@ -409,6 +457,8 @@ class PoolWorker:
                     runs_handled=self.runs_handled,
                     package_generation=self.package_generation,
                     memory_pressured=self._memory_pressured,
+                    memory_budget_bytes=None if self.budget is None else self.budget.budget_bytes,
+                    memory_reserved_bytes=self._held_bytes(),
                 )
                 if state != "ready":
                     # The controller drained or lost this worker: stop claiming.

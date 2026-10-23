@@ -69,11 +69,16 @@ async def resolve_worker_job_spec(client: KubernetesJobClient, settings: Any) ->
 
 def build_worker_job_manifest(
     incarnation_id: UUID,
-    slots: int,
     settings: Any,
     spec: WorkerJobSpec,
+    *,
+    memory_limit_bytes: int | None,
 ) -> dict[str, Any]:
     """Render the suspended Job for one reusable worker.
+
+    A standard worker has the configured memory request and limit. A worker
+    sized for one large request (``memory_limit_bytes``) requests its whole
+    limit, so it is only scheduled where that memory exists.
 
     The pod runs the ordinary worker runtime in pool mode, with the worker
     Deployment's credentials and no Kubernetes token. It has no deadline: a
@@ -87,6 +92,11 @@ def build_worker_job_manifest(
         raise KubernetesConfigurationError(
             "pool_worker_memory_request_mib must not exceed pool_worker_memory_limit_mib"
         )
+    if memory_limit_bytes is None:
+        memory_request = f"{settings.pool_worker_memory_request_mib}Mi"
+        memory_limit = f"{settings.pool_worker_memory_limit_mib}Mi"
+    else:
+        memory_request = memory_limit = f"{memory_limit_bytes // 2**20}Mi"
     labels = {
         "app.kubernetes.io/name": WORKER_LABEL,
         INCARNATION_LABEL: str(incarnation_id),
@@ -142,9 +152,6 @@ def build_worker_job_manifest(
                                     "name": "BIFROST_POOL_MIN_WORKERS",
                                     "value": str(settings.pool_min_workers),
                                 },
-                                # One slot budget for both run kinds.
-                                {"name": "BIFROST_MAX_WORKERS", "value": str(slots)},
-                                {"name": "BIFROST_MAX_CONCURRENCY", "value": str(slots)},
                                 {"name": "BIFROST_DATABASE_POOL_SIZE", "value": "1"},
                                 {"name": "BIFROST_DATABASE_MAX_OVERFLOW", "value": "2"},
                                 {"name": "PIP_NO_CACHE_DIR", "value": "1"},
@@ -167,11 +174,11 @@ def build_worker_job_manifest(
                             ],
                             "resources": {
                                 "requests": {
-                                    "memory": f"{settings.pool_worker_memory_request_mib}Mi",
+                                    "memory": memory_request,
                                     "cpu": str(settings.pool_worker_cpu_request),
                                 },
                                 "limits": {
-                                    "memory": f"{settings.pool_worker_memory_limit_mib}Mi",
+                                    "memory": memory_limit,
                                     "cpu": str(settings.pool_worker_cpu_limit),
                                 },
                             },

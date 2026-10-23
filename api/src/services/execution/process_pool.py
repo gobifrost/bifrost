@@ -2,15 +2,14 @@
 Process Pool Manager for Execution Isolation.
 
 Each execution forks a fresh worker process from a long-lived template
-and the worker exits after returning its result. There is no warm pool;
-the only throttles are `max_workers` (concurrency cap) and a cgroup
-memory-pressure check on the way in.
+and the worker exits after returning its result. There is no warm pool.
+The executor admits work by memory (src.services.memory_requests); the pool
+only refuses a fork under real memory pressure.
 
 Key features:
 - One-shot worker processes (fork → run one execution → exit)
-- Cap concurrent forks at `max_workers`; queued executions wait on a
-  condition variable that is notified when a worker exits
-- Memory-pressure admission control (cgroup working-set)
+- Memory-pressure refusal at fork time (cgroup working set, or the host's
+  memory without a limit)
 - Automatic timeout handling with graceful shutdown (SIGTERM -> SIGKILL)
 - Crash detection
 - Heartbeat publishing for UI visibility
@@ -20,7 +19,7 @@ Key features:
 Architecture:
     ProcessPoolManager (runs in consumer process)
         |
-        +-- up to max_workers concurrent one-shot children
+        +-- one one-shot child per admitted execution
         +-- Each child: work_queue (in) + result_queue (out)
         +-- Monitor loop checks health and timeouts
         +-- Result loop collects execution results
@@ -55,7 +54,8 @@ from src.core.cache.keys import TTL_ACTIVE_EXECUTION, active_execution_key
 from src.core.redis_client import ActiveExecution
 from src.models.contracts.notifications import NotificationCategory, NotificationCreate, NotificationStatus
 from src.services.execution.cpu_sampler import CPUSampler, get_clock_ticks
-from src.services.execution.memory_monitor import get_cgroup_memory, has_sufficient_memory_cgroup
+from src.services.execution.memory_monitor import get_cgroup_memory
+from src.services.memory_requests import under_pressure
 from src.services.execution.requirements_setup_result import RequirementsInstallResult
 from src.services.notification_service import get_notification_service
 from src.services.execution.template_process import TemplateProcess
@@ -377,15 +377,12 @@ class ProcessPoolManager:
     Manages a pool of one-shot worker processes for execution isolation.
 
     Each execution forks a fresh child from the template process and the
-    child exits after returning its result. There is no warm pool — the
-    `max_workers` cap is the only throttle, plus a memory-pressure check
-    on the way in.
+    child exits after returning its result. There is no warm pool; the
+    executor admits work by memory, and the pool refuses a fork only under
+    real memory pressure.
 
     Usage:
-        pool = ProcessPoolManager(
-            max_workers=10,
-            on_result=handle_result,
-        )
+        pool = ProcessPoolManager(on_result=handle_result)
         await pool.start()
 
         # Route execution
@@ -397,7 +394,6 @@ class ProcessPoolManager:
 
     def __init__(
         self,
-        max_workers: int = 10,
         execution_timeout_seconds: int = 300,
         graceful_shutdown_seconds: int = 5,
         heartbeat_interval_seconds: int = 10,
@@ -410,22 +406,19 @@ class ProcessPoolManager:
         Initialize the process pool manager.
 
         Args:
-            max_workers: Maximum number of concurrent worker processes
             execution_timeout_seconds: Default execution timeout in seconds
             graceful_shutdown_seconds: Seconds to wait after SIGTERM before SIGKILL
             heartbeat_interval_seconds: Interval for heartbeat publications
             registration_ttl_seconds: TTL for worker registration in Redis
             on_result: Async callback for handling execution results
             max_service_workers: Maximum concurrent supervised service
-                children. Service slots are separate from max_workers:
-                services never consume workflow capacity. Service children
+                children. Service children
                 are light (~tens of MB like workflow children), so this
                 bounds connection/file-descriptor sprawl and keeps rolling
                 restarts snappy rather than boxing memory; the cgroup
                 pressure gate remains the dynamic backstop.
             on_service_result: Async callback for service attempt outcomes
         """
-        self.max_workers = max_workers
         self.execution_timeout_seconds = execution_timeout_seconds
         self.graceful_shutdown_seconds = graceful_shutdown_seconds
         self.heartbeat_interval_seconds = heartbeat_interval_seconds
@@ -461,11 +454,7 @@ class ProcessPoolManager:
         # Redis connection
         self._redis: redis.Redis | None = None  # type: ignore[type-arg]
 
-        # Notified when a worker exits and frees a slot. Waiters in
-        # route_execution use this to wake up the moment a slot opens
-        # rather than spinning on a timeout.
-        self._slot_condition = asyncio.Condition()
-        # Same for service slots (waiters in route_service).
+        # Notified when a service child exits (waiters in route_service).
         self._service_slot_condition = asyncio.Condition()
 
         # Template process for fork-based workers
@@ -571,14 +560,17 @@ class ProcessPoolManager:
                 for handle in list(self.service_processes.values())
             ))
 
-            # Wake anyone blocked on a slot — drain may have removed
-            # everything from self.processes while the route-side waiter
-            # was still parked.
-            await self._notify_slot_free()
-
             # Restart template with fresh sys.modules — future forks
             # (driven by route_execution) will see newly installed packages.
             await self.restart_template()
+
+    def active_execution_ids(self) -> set[str]:
+        """Execution ids of the workflow children still running."""
+        return {
+            handle.current_execution.execution_id
+            for handle in self.processes.values()
+            if handle.state == ProcessState.BUSY and handle.current_execution is not None
+        }
 
     def active_execution_count(self) -> int:
         """Return child executions still owned by the parent drain path."""
@@ -721,9 +713,7 @@ class ProcessPoolManager:
             logger.warning("ProcessPoolManager already started")
             return
 
-        logger.info(
-            f"ProcessPoolManager starting (max_workers={self.max_workers})"
-        )
+        logger.info("ProcessPoolManager starting")
 
         self._started = True
         self._shutdown = False
@@ -905,26 +895,6 @@ class ProcessPoolManager:
                 pass
             handle.process.join(timeout=1)
 
-    async def _wait_for_slot(self, timeout: float = 30.0) -> bool:
-        """
-        Wait until `len(self.processes) < self.max_workers`.
-
-        Used by route_execution when the pool is saturated. Returns True
-        as soon as a slot opens (a worker exited and notified the
-        condition), or False if `timeout` seconds elapse first.
-        """
-        async with self._slot_condition:
-            try:
-                await asyncio.wait_for(
-                    self._slot_condition.wait_for(
-                        lambda: len(self.processes) < self.max_workers
-                    ),
-                    timeout=timeout,
-                )
-                return True
-            except asyncio.TimeoutError:
-                return False
-
     async def route_execution(
         self,
         execution_id: str,
@@ -934,8 +904,7 @@ class ProcessPoolManager:
         """
         Fork a one-shot worker for this execution.
 
-        Waits for a free slot under the `max_workers` cap if the pool is
-        saturated. The context is retained in Redis for durability and
+        The context is retained in Redis for durability and
         diagnostics, then sent with the execution ID to the forked child over
         its private work pipe.
 
@@ -954,9 +923,10 @@ class ProcessPoolManager:
         # Write context to Redis
         await self._write_context_to_redis(execution_id, context)
 
-        # Admission control: check memory pressure before forking
+        # Refuse the fork under real memory pressure; the executor hands
+        # the run back for one with room.
         settings = get_settings()
-        if not has_sufficient_memory_cgroup(threshold=settings.memory_pressure_threshold):
+        if under_pressure(settings.memory_pressure_threshold):
             # Clean up the context we just wrote
             r = await self._get_redis()
             await r.delete(f"bifrost:exec:{execution_id}:context")
@@ -982,12 +952,7 @@ class ProcessPoolManager:
         timeout: int,
         active_execution: ActiveExecution,
     ) -> None:
-        """Claim or fork one child and send its sole execution."""
-        # Wait until a result frees a slot when every child is busy.
-        if len(self.processes) >= self.max_workers:
-            if not await self._wait_for_slot():
-                raise RuntimeError("No worker slot available after timeout")
-
+        """Fork one child and send its sole execution."""
         handle = self._fork_process()
 
         started_at = datetime.now(timezone.utc)
@@ -1029,7 +994,6 @@ class ProcessPoolManager:
         except Exception:
             self._unregister_result_reader(handle)
             self.processes.pop(handle.id, None)
-            await self._notify_slot_free()
             try:
                 r = await self._get_redis()
                 await r.delete(
@@ -1062,8 +1026,7 @@ class ProcessPoolManager:
         Fork a supervised service child for one claimed attempt.
 
         Service children run indefinitely (until the attempt ends) under the
-        separate ``max_service_workers`` cap — they never consume
-        ``max_workers`` workflow slots and are never timeout-killed. The
+        separate ``max_service_workers`` cap and are never timeout-killed. The
         context travels over the private work pipe like executions; the DB
         attempt row (not Redis) is the durable record, so no context or lease
         keys are written here.
@@ -1077,7 +1040,7 @@ class ProcessPoolManager:
         validate_execution_context(context)
 
         settings = get_settings()
-        if not has_sufficient_memory_cgroup(threshold=settings.memory_pressure_threshold):
+        if under_pressure(settings.memory_pressure_threshold):
             raise MemoryError(
                 f"Cannot route service {service_id[:8]}: memory pressure "
                 f"exceeds {settings.memory_pressure_threshold:.0%} threshold"
@@ -1342,7 +1305,6 @@ class ProcessPoolManager:
                 # pop() not del: a peer (_handle_result) may have removed it
                 # during the _kill_process / _report_timeout awaits above.
                 self.processes.pop(handle.id, None)
-                await self._notify_slot_free()
 
     async def _kill_process(self, handle: ProcessHandle) -> None:
         """
@@ -1621,7 +1583,6 @@ class ProcessPoolManager:
                 # pop() not del: a peer (_handle_result) may have removed it
                 # during the _kill_process / _report_cancellation awaits.
                 self.processes.pop(handle.id, None)
-                await self._notify_slot_free()
 
                 return
 
@@ -1788,25 +1749,21 @@ class ProcessPoolManager:
 
         # Remove crashed/orphaned processes.
         # Use pop() not del because a peer (e.g. _handle_result) may have
-        # already removed the id during one of the awaits above. We still
-        # notify slot waiters if anything was removed here, since the
+        # already removed the id during one of the awaits above. Service
+        # slot waiters are notified if a service was removed here; the
         # peer-delete path also notifies and double-notify is harmless.
         if to_remove:
-            removed_any = False
             removed_service_any = False
             for process_id in to_remove:
                 handle = self.processes.get(process_id)
                 if handle is not None:
                     self._unregister_result_reader(handle)
-                if self.processes.pop(process_id, None) is not None:
-                    removed_any = True
+                self.processes.pop(process_id, None)
                 handle = self.service_processes.get(process_id)
                 if handle is not None:
                     self._unregister_result_reader(handle)
                 if self.service_processes.pop(process_id, None) is not None:
                     removed_service_any = True
-            if removed_any:
-                await self._notify_slot_free()
             if removed_service_any:
                 await self._notify_service_slot_free()
 
@@ -1959,9 +1916,8 @@ class ProcessPoolManager:
         Handle a result from a worker process.
 
         One-shot workflow children have already exited (or are about to);
-        their handle is removed, freeing a max_workers slot. Service
-        children report terminal attempt outcomes through on_service_result
-        and free a service slot instead.
+        their handle is removed. Service children report terminal attempt
+        outcomes through on_service_result and free a service slot instead.
         """
         self._unregister_result_reader(handle)
 
@@ -1985,11 +1941,8 @@ class ProcessPoolManager:
         handle.current_execution = None
         handle.executions_completed += 1
 
-        # Remove the handle (frees a slot under max_workers) and wake any
-        # waiters in route_execution that were blocked on a free slot.
         # pop() not check-then-del: race-safe against concurrent cleaners.
         self.processes.pop(handle.id, None)
-        await self._notify_slot_free()
 
         if callback_already_owned:
             logger.info(
@@ -2095,11 +2048,6 @@ class ProcessPoolManager:
             )
         except Exception as e:
             logger.exception(f"Error reporting service crash: {e}")
-
-    async def _notify_slot_free(self) -> None:
-        """Wake any tasks blocked in `_wait_for_slot`."""
-        async with self._slot_condition:
-            self._slot_condition.notify_all()
 
     async def _heartbeat_loop(self) -> None:
         """
@@ -2383,7 +2331,6 @@ def get_process_pool() -> ProcessPoolManager:
     if _pool is None:
         settings = get_settings()
         _pool = ProcessPoolManager(
-            max_workers=settings.max_workers,
             execution_timeout_seconds=settings.execution_timeout_seconds,
             graceful_shutdown_seconds=settings.graceful_shutdown_seconds,
             heartbeat_interval_seconds=settings.worker_heartbeat_interval_seconds,

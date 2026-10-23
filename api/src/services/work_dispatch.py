@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import get_db_context
@@ -83,8 +83,12 @@ def stage_dispatch(
     handler_version: int,
     message: dict[str, Any],
     payload: dict[str, Any],
+    memory_request_bytes: int,
 ) -> WorkDispatch:
     """Add a dispatch to the caller's transaction; hand off after commit.
+
+    ``memory_request_bytes`` is what the work is expected to add
+    (src.services.memory_requests); executors claim it only when it fits.
 
     Executors claim it from PostgreSQL.
     """
@@ -102,6 +106,7 @@ def stage_dispatch(
             "handler_version": handler_version,
         },
         payload=payload,
+        memory_request_bytes=memory_request_bytes,
     )
     db.add(dispatch)
     return dispatch
@@ -195,6 +200,16 @@ async def _settle_pool_dispatch(
             # The worker that took it is gone before claiming the run.
             row.assigned_worker_id = None
         return None
+    largest = await _largest_budget(db)
+    if largest is not None and row.memory_request_bytes > largest:
+        reason = (
+            f"This work needs {row.memory_request_bytes // 2**20} MiB of memory; "
+            f"the largest executor can hold {largest // 2**20} MiB."
+        )
+        await family.fail(db, row.subject_id, reason)
+        payload = row.payload
+        await db.delete(row)
+        return payload, reason
     if row.created_at <= datetime.now(timezone.utc) - POOL_CLAIM_DEADLINE:
         reason = "No worker capacity became available for this run."
         await family.fail(db, row.subject_id, reason)
@@ -202,6 +217,25 @@ async def _settle_pool_dispatch(
         await db.delete(row)
         return payload, reason
     return None
+
+
+async def _largest_budget(db: AsyncSession) -> int | None:
+    """The most memory any executor can hand to one piece of work: the
+    largest live budget, or what the worker controller can launch. None
+    while no executor has reported (an outage is not too-large work)."""
+    from src.core.cache.redis_client import get_redis
+    from src.models.orm.execution_workers import ExecutionWorker
+    from src.services.memory_requests import LAUNCHABLE_KEY
+
+    live = await db.scalar(
+        select(func.max(ExecutionWorker.memory_budget_bytes)).where(
+            ExecutionWorker.state.in_(("ready", "draining"))
+        )
+    )
+    async with get_redis() as redis:
+        launchable = await redis.get(LAUNCHABLE_KEY)
+    sizes = [size for size in (live, int(launchable) if launchable else None) if size is not None]
+    return max(sizes) if sizes else None
 
 
 async def reconcile_work_dispatches(*, limit: int = RECONCILE_BATCH) -> None:

@@ -98,17 +98,8 @@ class Settings(BaseSettings):
     # ==========================================================================
     # Workflow Execution
     # ==========================================================================
-    max_concurrency: int = Field(
-        default=10,
-        description="Max concurrent agent runs per executor"
-    )
-
-    # Process Pool Configuration (on-demand only — every execution forks
-    # a fresh one-shot worker, capped at `max_workers` concurrent forks).
-    max_workers: int = Field(
-        default=10,
-        description="Maximum concurrent worker processes (queue cap)"
-    )
+    # Every execution forks a fresh one-shot worker. Executors admit work by
+    # memory (src.services.memory_requests), not by count.
     execution_timeout_seconds: int = Field(
         default=300,
         description="Default execution timeout in seconds (5 minutes)"
@@ -135,7 +126,7 @@ class Settings(BaseSettings):
     # ==========================================================================
     max_service_workers: int = Field(
         default=20,
-        description="Maximum concurrent service children per worker (never consumes max_workers workflow slots)"
+        description="Maximum concurrent service children per worker"
     )
     service_claim_interval_seconds: int = Field(
         default=5,
@@ -170,11 +161,6 @@ class Settings(BaseSettings):
             "capacity: this minimum or static executors."
         ),
     )
-    pool_worker_slots: int = Field(
-        default=4,
-        ge=1,
-        description="Concurrent runs one reusable worker accepts",
-    )
     pool_idle_seconds: int = Field(
         default=300,
         ge=1,
@@ -191,7 +177,17 @@ class Settings(BaseSettings):
         description="Seconds a launched worker may take to become ready",
     )
     pool_worker_memory_request_mib: int = Field(default=512, ge=1)
-    pool_worker_memory_limit_mib: int = Field(default=2048, ge=1)
+    pool_worker_memory_limit_mib: int = Field(
+        default=2048, ge=1, description="Memory limit of a standard worker Job"
+    )
+    pool_worker_max_memory_mib: int = Field(
+        default=8192,
+        ge=1,
+        description=(
+            "Largest worker Job the controller launches for work a standard "
+            "worker cannot fit; work needing more fails visibly"
+        ),
+    )
     pool_worker_cpu_request: str = Field(default="250m")
     pool_worker_cpu_limit: str = Field(default="2")
 

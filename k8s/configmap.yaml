@@ -23,9 +23,6 @@ data:
   BIFROST_MFA_ENABLED: "true"
   BIFROST_MFA_TOTP_ISSUER: "Bifrost"
 
-  # Worker Concurrency
-  BIFROST_MAX_CONCURRENCY: "10"
-
   # WebAuthn/Passkeys Configuration
   BIFROST_WEBAUTHN_RP_ID: "bifrost.example.com"
   BIFROST_WEBAUTHN_RP_NAME: "Bifrost"

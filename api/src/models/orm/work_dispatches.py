@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, Index, Integer, String, UniqueConstraint, text
+from sqlalchemy import BigInteger, DateTime, Index, Integer, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,6 +30,11 @@ class WorkDispatch(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     # The executor that took the dispatch from PostgreSQL, until its claim.
     assigned_worker_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    # Memory the work is expected to add (src.services.memory_requests); an
+    # executor claims it only while it fits the executor's free budget.
+    memory_request_bytes: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("67108864")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("NOW()")
     )

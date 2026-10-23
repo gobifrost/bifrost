@@ -58,12 +58,16 @@ run.
   is the most memory the run itself added). Not RSS, which counts the shared
   template (about 55 MiB a fork), and not end-of-run PSS growth
   (`peak_memory_bytes`), which misses memory freed before the end.
-- **Learned per workflow**, off the hot path: when a run completes, the
-  executor recomputes the workflow's request as the 90th percentile of its
-  last 50 measured runs plus a 16 MiB margin, and stores it on the workflow
-  row. Acceptance reads it with the workflow lookup it already does.
-- **Declared when known**: `@workflow(memory_mib=..., isolated=...)` overrides
-  the learned value.
+- **Learned per workflow**, in the completion update the executor already
+  makes: the workflow's learned peak rises at once to any larger run and
+  otherwise moves 1/20 of the way down toward each smaller one (a decaying
+  maximum, one primary-key update, no scan). Its request is that value plus
+  a 16 MiB margin. Acceptance reads it with the workflow lookup it already
+  does.
+- **Declared when known**: a workflow's `memory_request_mib` and `isolated`
+  settings override the learned value. Like `timeout_seconds`, they are
+  operational settings set through the API, CLI, MCP and UI, never from the
+  decorator.
 - **New work starts small**: a workflow with no history requests 64 MiB.
 
 ## By kind of work
@@ -94,10 +98,12 @@ for it. Large work never starves behind a stream of small runs.
 - **6a, pool work.** Request columns on dispatches; budget, reserved and
   largest-free on `execution_workers` heartbeats; claim by fit; learned
   workflow requests; the controller sizes by memory and launches sized Jobs;
+  work no executor can ever fit fails visibly;
   remove `max_workers`, `max_concurrency`, the summary slots and
   `pool_worker_slots` as capacity (leftover settings are ignored, never
   fatal).
-- **6b, the rest.** Local platform jobs and services draw from the same
+- **6b, the rest.** Declared `memory_request_mib` and `isolated` workflow
+  settings. Local platform jobs and services draw from the same
   budget (the two platform-job slots and the separate admission ratio go);
   build-class platform jobs are `isolated`, replacing the three-way
   build-backend opt-in where the API may create Jobs.

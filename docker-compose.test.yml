@@ -205,8 +205,6 @@ services:
       BIFROST_S3_ACCESS_KEY: bifrost
       BIFROST_S3_SECRET_KEY: bifrost_test_key
       BIFROST_S3_REGION: us-east-1
-      # Lower concurrency for E2E queue position testing (10 executions, 3 concurrent = 7 queued)
-      BIFROST_MAX_CONCURRENCY: ${BIFROST_MAX_CONCURRENCY:-3}
       # Executors run Git sync platform jobs too.
       GITHUB_TEST_PAT: ${GITHUB_TEST_PAT:-}
       GITHUB_TEST_REPO: ${GITHUB_TEST_REPO:-jackmusick/e2e-test-workspace}
@@ -278,7 +276,6 @@ services:
       # The same executor tuning as the worker service.
       BIFROST_SERVICE_CLAIM_INTERVAL_SECONDS: "1"
       BIFROST_SERVICE_HEARTBEAT_INTERVAL_SECONDS: "2"
-      BIFROST_MAX_CONCURRENCY: ${BIFROST_MAX_CONCURRENCY:-3}
     volumes:
       - ./api/src:/app/src
       - /app/src/services/app_compiler/node_modules  # preserve npm deps from image

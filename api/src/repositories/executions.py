@@ -272,6 +272,8 @@ class ExecutionRepository(BaseRepository[Execution]):
                 update_values["peak_cpu_cores"] = metrics["peak_cpu_cores"]
             if "peak_process_rss_bytes" in metrics:
                 update_values["peak_process_rss_bytes"] = metrics["peak_process_rss_bytes"]
+            if "peak_memory_growth_bytes" in metrics:
+                update_values["peak_memory_growth_bytes"] = metrics["peak_memory_growth_bytes"]
 
         # Economics
         if time_saved is not None:
@@ -280,11 +282,17 @@ class ExecutionRepository(BaseRepository[Execution]):
             update_values["value"] = value
 
         # Execute update
-        await self.session.execute(
+        workflow_id = await self.session.scalar(
             update(Execution)
             .where(Execution.id == UUID(execution_id))
             .values(**update_values)
+            .returning(Execution.workflow_id)
         )
+        growth = (metrics or {}).get("peak_memory_growth_bytes")
+        if workflow_id is not None and growth is not None:
+            from src.services.memory_requests import record_peak_growth
+
+            await record_peak_growth(self.session, workflow_id, growth)
 
         # Store logs in ExecutionLog table
         if logs:

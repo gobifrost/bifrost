@@ -25,6 +25,7 @@ from src.models.orm.execution_workers import ExecutionWorkerClaim
 from src.models.orm.executions import Execution
 from src.models.orm.workflows import Workflow
 from src.services.durable_impersonation import pending_durable_impersonation
+from src.services.memory_requests import workflow_request_bytes
 from src.services.work_dispatch import hand_off, stage_dispatch, take_dispatch_payload
 
 logger = logging.getLogger(__name__)
@@ -47,29 +48,45 @@ def _organization_id(org_id: str | None) -> UUID | None:
     return UUID(org_id[4:] if org_id.startswith("ORG:") else org_id)
 
 
-async def _row_identity(db: AsyncSession, pending: PendingExecution) -> tuple[str, UUID | None]:
-    """Display name and owning organization for the PENDING row.
+async def _row_identity(
+    db: AsyncSession, pending: PendingExecution
+) -> tuple[str, UUID | None, int]:
+    """Display name, owning organization and memory request for the PENDING row.
 
     Mirrors the worker: an org-scoped workflow's runs belong to the
     workflow's organization, others to the caller's.
     """
     caller_org = _organization_id(pending["org_id"])
     if pending["script_name"]:
-        return pending["script_name"], caller_org
+        return pending["script_name"], caller_org, workflow_request_bytes(None)
     workflow_id = pending["workflow_id"]
     if workflow_id is None:
-        return "workflow", caller_org
+        return "workflow", caller_org, workflow_request_bytes(None)
     row = (
         await db.execute(
-            select(Workflow.name, Workflow.organization_id).where(
-                Workflow.id == UUID(workflow_id)
-            )
+            select(
+                Workflow.name, Workflow.organization_id, Workflow.learned_memory_bytes
+            ).where(Workflow.id == UUID(workflow_id))
         )
     ).one_or_none()
     if row is None:
         # The worker records the failure when it claims the run.
-        return workflow_id, caller_org
-    return row.name, row.organization_id or caller_org
+        return workflow_id, caller_org, workflow_request_bytes(None)
+    return (
+        row.name,
+        row.organization_id or caller_org,
+        workflow_request_bytes(row.learned_memory_bytes),
+    )
+
+
+async def _request_for(db: AsyncSession, pending: PendingExecution) -> int:
+    """The memory request of a run whose row already exists."""
+    if pending["script_name"] or pending["workflow_id"] is None:
+        return workflow_request_bytes(None)
+    learned = await db.scalar(
+        select(Workflow.learned_memory_bytes).where(Workflow.id == UUID(pending["workflow_id"]))
+    )
+    return workflow_request_bytes(learned)
 
 
 async def stage_workflow_run(
@@ -81,8 +98,10 @@ async def stage_workflow_run(
 ) -> AcceptedRun:
     """Add the run's durable records to the caller's transaction."""
     execution_id = UUID(pending["execution_id"])
-    if not record_exists:
-        workflow_name, organization_id = await _row_identity(db, pending)
+    if record_exists:
+        memory_request_bytes = await _request_for(db, pending)
+    else:
+        workflow_name, organization_id, memory_request_bytes = await _row_identity(db, pending)
         db.add(
             Execution(
                 id=execution_id,
@@ -110,6 +129,7 @@ async def stage_workflow_run(
         handler_version=HANDLER_VERSION,
         message=message,
         payload=dict(pending),
+        memory_request_bytes=memory_request_bytes,
     )
     return AcceptedRun(
         dispatch_id=dispatch.id,
@@ -153,7 +173,11 @@ async def claim_workflow_dispatch(
 
 
 async def release_workflow_run(
-    *, worker_id: UUID, message: dict[str, Any], payload: dict[str, Any]
+    *,
+    worker_id: UUID,
+    message: dict[str, Any],
+    payload: dict[str, Any],
+    memory_request_bytes: int,
 ) -> None:
     """Hand a claimed run back before it started: RUNNING -> PENDING.
 
@@ -188,6 +212,7 @@ async def release_workflow_run(
             handler_version=HANDLER_VERSION,
             message=message,
             payload=payload,
+            memory_request_bytes=memory_request_bytes,
         )
         await db.commit()
     logger.info("Handed a run back for another executor", extra={"execution_id": str(execution_id)})

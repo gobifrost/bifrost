@@ -33,7 +33,7 @@ Distributed, process-pooled execution system for running workflows, scripts, and
 +------------------------------------------------------------------+
 |                    process_pool.py (ProcessPoolManager)           |
 |  - Fork one-shot children on demand                               |
-|  - Cap concurrent children at max_workers                         |
+|  - Refuse a fork only under real memory pressure                 |
 |  - Monitor timeouts and crashes                                   |
 |  - Heartbeat publishing for UI visibility                         |
 +------------------------------------------------------------------+
@@ -88,7 +88,7 @@ Distributed, process-pooled execution system for running workflows, scripts, and
 | `service.py` | High-level orchestration. Workflow lookup by ID, metadata caching (Redis-first), sync/async dispatch routing. Entry point for `run_workflow()` and `run_code()`. |
 | `engine.py` | Unified execution engine. Handles workflows, inline scripts, and data providers. Sets up SDK context, captures variables via `sys.settrace()`, streams logs to Redis, handles data provider caching. |
 | `async_executor.py` | Acceptance. Commits the PENDING execution row and its work dispatch (`workflow_dispatch.py`), wakes the executors, returns the execution ID immediately (<100ms target). |
-| `process_pool.py` | One-shot child lifecycle management. Forks on demand up to `max_workers`, handles timeouts (SIGTERM -> SIGKILL), detects crashes, and publishes heartbeats. |
+| `process_pool.py` | One-shot child lifecycle management. Forks one child per admitted run (executors admit work by memory, see `src/services/memory_requests.py`), handles timeouts (SIGTERM -> SIGKILL), detects crashes, and publishes heartbeats. |
 | `simple_worker.py` | Isolated subprocess entry point. Receives one parent-assembled context over a private pipe, clears workspace modules, delegates to `engine.py`, returns one result, and exits. |
 | `workflow_execution.py` | Runs claimed workflow dispatches. Pre-warms SDK cache, routes to process pool, handles results (success/failure), flushes data to Postgres, publishes WebSocket updates. |
 
@@ -223,7 +223,6 @@ await _handle_cancel_request(execution_id)
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `max_workers` | 10 | Maximum worker processes |
 | `execution_timeout_seconds` | 300 | Default timeout per execution |
 | `graceful_shutdown_seconds` | 5 | Time between SIGTERM and SIGKILL |
 | `worker_heartbeat_interval_seconds` | 10 | Heartbeat publish interval |
@@ -231,7 +230,6 @@ await _handle_cancel_request(execution_id)
 
 Environment variables:
 ```bash
-BIFROST_MAX_WORKERS=10
 BIFROST_EXECUTION_TIMEOUT_SECONDS=300
 ```
 

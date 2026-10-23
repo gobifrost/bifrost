@@ -20,13 +20,11 @@ data:
   BIFROST_WEBAUTHN_RP_ID: localhost
   BIFROST_WEBAUTHN_RP_NAME: Bifrost Local Kind
   BIFROST_WEBAUTHN_ORIGIN: http://localhost:8000
-  BIFROST_MAX_CONCURRENCY: "10"
   BIFROST_DATABASE_POOL_SIZE: "5"
   BIFROST_DATABASE_MAX_OVERFLOW: "10"
-  # On-demand worker Jobs sized for a single-node Kind cluster: small pods,
-  # two runs each, idle out quickly so drills scale both ways in minutes.
+  # On-demand worker Jobs sized for a single-node Kind cluster: small pods
+  # that idle out quickly, so drills scale both ways in minutes.
   BIFROST_POOL_IDLE_SECONDS: "45"
-  BIFROST_POOL_WORKER_SLOTS: "2"
   BIFROST_POOL_WORKER_MEMORY_REQUEST_MIB: "256"
 ---
 apiVersion: v1

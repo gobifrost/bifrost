@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
@@ -15,6 +15,9 @@ from src.models.orm.work_dispatches import WorkDispatch
 
 # Shared with the capacity controller: launches and idle drains serialize.
 CAPACITY_LOCK = "bifrost:worker-pool:capacity"
+# Work that has waited this long without fitting anywhere stops executors
+# that could hold it from claiming newer work, so it is never starved.
+HEAD_OF_LINE_WAIT = timedelta(seconds=30)
 
 # Handlers this worker build can run, by version. A dispatch for any other
 # (handler, version) stays for a compatible worker.
@@ -31,6 +34,8 @@ class PoolClaim:
     dispatch_id: UUID
     handler: str
     message: dict[str, Any]
+    subject_id: UUID
+    memory_request_bytes: int
     # A workflow run is claimed (PENDING -> RUNNING) in the same transaction
     # as its dispatch; this is its context. None when the consumer still has
     # to claim (agent runs) or when the run had already moved on.
@@ -91,33 +96,63 @@ async def register_static_worker(*, slots: int, hostname: str) -> UUID:
 async def claim_next(
     incarnation_id: UUID,
     handlers: tuple[tuple[str, int], ...] = SUPPORTED_HANDLERS,
+    *,
+    fits_bytes: int,
+    budget_bytes: int,
 ) -> PoolClaim | None:
     """Assign the oldest unassigned dispatch this worker can take now.
 
     ``handlers`` narrows the claim to the (handler, version) pairs with free
     capacity on this worker; it is always a subset of what the build supports.
+    Only work whose memory request fits ``fits_bytes`` (the free budget) is
+    taken. A worker launched for one dispatch takes it first. When older work
+    that fits ``budget_bytes`` (but not the free budget) has waited past
+    HEAD_OF_LINE_WAIT, nothing newer is taken until it fits.
     """
+    pairs = [pair for pair in handlers if pair in SUPPORTED_HANDLERS]
+    unassigned = (
+        WorkDispatch.assigned_worker_id.is_(None),
+        tuple_(WorkDispatch.handler, WorkDispatch.handler_version).in_(pairs),
+    )
+    reserved_for = (
+        select(ExecutionWorker.reserved_for_dispatch_id)
+        .where(ExecutionWorker.id == incarnation_id)
+        .scalar_subquery()
+    )
     candidate = (
-        select(WorkDispatch.id)
-        .where(
-            WorkDispatch.assigned_worker_id.is_(None),
-            tuple_(WorkDispatch.handler, WorkDispatch.handler_version).in_(
-                [pair for pair in handlers if pair in SUPPORTED_HANDLERS]
-            ),
+        select(WorkDispatch.id, WorkDispatch.created_at)
+        .where(*unassigned, WorkDispatch.memory_request_bytes <= fits_bytes)
+        .order_by(
+            (WorkDispatch.id == reserved_for).is_(True).desc(),
+            WorkDispatch.created_at.asc(),
         )
-        .order_by(WorkDispatch.created_at.asc())
         .limit(1)
         .with_for_update(skip_locked=True)
-        .scalar_subquery()
     )
     ready = exists().where(
         ExecutionWorker.id == incarnation_id, ExecutionWorker.state == "ready"
     )
     async with get_db_context() as db:
+        picked = (await db.execute(candidate)).one_or_none()
+        if picked is None:
+            return None
+        blocked = await db.scalar(
+            select(
+                exists().where(
+                    *unassigned,
+                    WorkDispatch.created_at < picked.created_at,
+                    WorkDispatch.created_at < _now() - HEAD_OF_LINE_WAIT,
+                    WorkDispatch.memory_request_bytes > fits_bytes,
+                    WorkDispatch.memory_request_bytes <= budget_bytes,
+                )
+            )
+        )
+        if blocked:
+            return None
         row = (
             await db.execute(
                 update(WorkDispatch)
-                .where(WorkDispatch.id == candidate, ready)
+                .where(WorkDispatch.id == picked.id, ready)
                 .values(assigned_worker_id=incarnation_id)
                 .returning(
                     WorkDispatch.id.label("dispatch_id"),
@@ -125,6 +160,7 @@ async def claim_next(
                     WorkDispatch.message.label("message"),
                     WorkDispatch.family.label("dispatch_family"),
                     WorkDispatch.subject_id.label("subject"),
+                    WorkDispatch.memory_request_bytes.label("memory_request_bytes"),
                 )
             )
         ).one_or_none()
@@ -150,12 +186,14 @@ async def claim_next(
         await db.execute(
             update(ExecutionWorker)
             .where(ExecutionWorker.id == incarnation_id)
-            .values(last_claim_at=_now())
+            .values(last_claim_at=_now(), reserved_for_dispatch_id=None)
         )
     return PoolClaim(
         dispatch_id=row.dispatch_id,
         handler=row.handler,
         message=row.message,
+        subject_id=row.subject,
+        memory_request_bytes=row.memory_request_bytes,
         claimed=dict(claimed) if claimed is not None else None,
     )
 
@@ -167,6 +205,8 @@ async def heartbeat_worker(
     runs_handled: int,
     package_generation: int,
     memory_pressured: bool,
+    memory_budget_bytes: int | None,
+    memory_reserved_bytes: int,
 ) -> str | None:
     """Renew liveness; return the state the controller sees (None if gone)."""
     async with get_db_context() as db:
@@ -182,6 +222,8 @@ async def heartbeat_worker(
                 runs_handled=runs_handled,
                 package_generation=package_generation,
                 memory_pressured=memory_pressured,
+                memory_budget_bytes=memory_budget_bytes,
+                memory_reserved_bytes=memory_reserved_bytes,
             )
             .returning(ExecutionWorker.state)
         )

@@ -41,6 +41,16 @@ class ExecutionWorker(Base):
     memory_pressured: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
+    # Memory this executor may hand to work, and how much its held work
+    # requested (src.services.memory_requests). None until it reports.
+    memory_budget_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    memory_reserved_bytes: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    # A Job worker's container memory limit; None for the standard size.
+    memory_limit_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # A worker launched for one large dispatch claims it before anything else.
+    reserved_for_dispatch_id: Mapped[UUID | None] = mapped_column(nullable=True)
     runs_handled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # The package generation this executor has applied (see PackageChange).
     package_generation: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
