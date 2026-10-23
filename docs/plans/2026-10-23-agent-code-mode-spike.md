@@ -690,6 +690,125 @@ synthetic data reductions or relax its quality gate. A production decision needs
 representative operating prompts, task-outcome evaluation rather than prescribed
 call sequences, and a competent model-generated filtering/chaining trace.
 
+### Focused proof with production prompts
+
+The next comparison preserves the frozen production graph: 25 agents, 237 tool
+definitions, 206 distinct original tool names, the ticket owner's operating
+prompt, and each specialist's operating prompt. Both arms use the production
+composition and Bifrost toolset with snapshot authorization and a closed-world
+mock executor. This tests model behavior, not live authorization or production
+effects. The direct arm retains native discovery; Automatic uses the sandbox
+SDK and native capability loading.
+
+The single fictional task inventories five SharePoint folders, 300 files, and
+210 permission records. It joins file metadata with folder permissions, filters
+CSV files by size, and records exact counts, byte totals, and anonymous permission
+IDs in one mocked terminal action. Each complete read response is below the
+existing 32,000-character cap: the largest observed serialized response is 29,284
+characters, including mock listing metadata. The source inventory/permission
+payloads total 249,636 characters. Neither arm loses required evidence
+to truncation. This is deliberately a favorable mechanism test, not a historical
+production replay or a representative estimate for all Automatic traffic.
+
+The preregistered matrix has ten pairs, alternating which arm runs first. Both
+use direct `deepseek-flash` with thinking explicitly disabled, the same request
+and token budgets, and three native code-correction attempts. A private ordinary
+HTTP client disables transport retries in both arms while retaining the shared
+production model factory and DeepSeek profile. The production transport's
+bounded retries are otherwise still present; setting the provider SDK's retry
+count to zero alone does not disable them.
+
+Success requires exact structured report facts, complete evidence coverage,
+one correct terminal action to the requesting employee, and no forbidden effects.
+The behavior gate separately requires dependent reads and aggregation in one
+processing program, compact returned evidence, and no full raw business results.
+Promotion requires at least eight successful matched pairs, at least eight code
+semantic/action and behavior passes, no material success deficit, at least 25%
+median per-pair input reduction, and no increase in median model responses.
+Failed tasks receive no savings credit. Input tokens already include cached
+tokens in the pinned Pydantic AI version; cache reads must not be added again.
+
+Before provider execution, a network-disabled Docker check traversed 327 normal
+mock operations, including inherited permission reads for all 300 listed files,
+with no missing responses or real executor calls. Both scripted arms passed the
+semantic/action oracle. Additional checks rejected wrong aggregates and answer
+leakage, exercised actual raw printed and final-expression CodeMode returns,
+verified one HTTP attempt on an injected 429, and checked DeepSeek's inclusive
+cache accounting. Source, shared modules, fixture, model settings, and private
+runner/analyzer hashes were frozen before the first paid call.
+
+The initial writer saved six trials, then failed while serializing a Python set
+inside a captured CodeMode return for repetition 4. That attempt's receipt and
+usage are unknown. It remains an invalid observation; it is not a model failure,
+a zero-cost run, or a successful matched pair. It was not repeated. A separate
+recording-only wrapper retained the original frozen hashes, recorded each later
+provider response to a durable JSONL log, and normalized set containers when
+writing artifacts. An offline test exercised that path through actual CodeMode.
+The wrapper continued the thirteen remaining scheduled trials. Whole-cohort
+provider billing remains incomplete because the lost receipt cannot be priced.
+
+The promotion decision was already closed after the first three observed
+CodeMode trials failed the behavior gate: at most seven of ten could subsequently
+pass its eight-pass threshold. Completing the remaining trials characterizes
+the result; it cannot convert this failed gate into rollout approval. No prompts,
+model settings, tool policies, or runtime source were tuned between paid trials.
+
+The completed cohort contains ten direct receipts, nine CodeMode receipts, and
+the one lost CodeMode attempt. These are descriptive observations across
+different task-success rates, not matched-success savings:
+
+| Captured observations | Direct | CodeMode |
+| --- | ---: | ---: |
+| Exact structured report and terminal contract | 1 / 10 | 9 / 9 |
+| Median inclusive input tokens | 530,516.5 | 292,573 |
+| Median output tokens | 4,937.5 | 4,355 |
+| Median model responses | 10 | 17 |
+| Median elapsed time | 32.37 s | 35.27 s |
+| Required combined processing program | Not applicable | 0 / 9 |
+
+The only successful direct repetition was number 4, whose CodeMode receipt is
+lost. There are therefore zero successful matched pairs, and the preregistered
+efficiency comparison is not estimable. Among captured requests, direct used
+6,286,860 inclusive input tokens (4,413,568 cached; 1,873,292 misses), while
+CodeMode used 2,750,420 (2,622,464 cached; 127,956 misses). The different run
+counts, different success rates, and unknown lost usage preclude a whole-cohort
+cost or savings claim. No captured run had a provider error or real business
+executor call.
+
+Source-based inspection confirms that none of the nine captured CodeMode
+traces returned a complete business response container larger than 10 KB.
+This is evidence of code-side projection, not proof against clipped/partial
+field exposure. Programs still printed small raw metadata or clipped permission
+values and split the task across 14–17 snippets, including discovery and separate
+calculation/formatting snippets. Extra successful turns, rather than exhausted
+code-correction attempts, account for the fragmentation.
+
+Two evaluation limits are retained explicitly. The frozen byte counter includes
+discovery-only returns although the protocol describes business-derived
+evidence. A separate observer analysis excluding pure discovery measures
+8,117–36,470 bytes per run; no run has the required combined processing program,
+so the zero-pass behavior disposition is unchanged. Also, exact JSON success
+does not certify every narrative sentence: source review found contradictory
+threshold prose in repetition 7 and incorrect direct-versus-inherited wording
+in repetitions 1 and 8. The structured reports remain exact under the frozen
+oracle; these prose defects remain additional reasons to withhold promotion.
+
+**Disposition:** runtime conformance passed, code-side data processing is
+demonstrated, and the focused promotion gate failed. The shared Automatic/chat
+implementation remains undeployed. This one favorable fictional workload does
+not establish general quality or efficiency across Automatic traffic.
+
+Astra recommends a separate causal test with ten CodeMode-only repetitions,
+changing only DeepSeek Flash thinking from disabled to its normal high setting.
+Require at least eight exact report/action and compact-behavior passes and at
+most ten median model responses before running another paired cohort. DeepSeek
+[documents thinking as enabled by default](https://api-docs.deepseek.com/guides/thinking_mode/)
+and requires reasoning content to survive tool turns. A network-disabled mock
+probe through this frozen production model factory already verified that
+reasoning-content round trip. No additional paid thinking-mode experiment has
+been run. A later savings comparison needs fresh direct and code arms under the
+same intended production reasoning setting.
+
 ## Primary references
 
 - [Pydantic AI Harness CodeMode](https://pydantic.dev/docs/ai/harness/code-mode/)
