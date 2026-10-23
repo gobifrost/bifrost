@@ -30449,6 +30449,16 @@ export interface components {
              * @default 1800
              */
             timeout_seconds: number;
+            /**
+             * Memory Request Mib
+             * @description Declared memory a run of this workflow requests from an executor; when unset, the learned value is used
+             */
+            memory_request_mib?: number | null;
+            /**
+             * Learned Memory Bytes
+             * @description Peak memory its recent runs added (learned per code version); None before a measured run
+             */
+            learned_memory_bytes?: number | null;
             /** @description Retry configuration */
             retry_policy?: components["schemas"]["RetryPolicy"] | null;
             /**
@@ -30877,6 +30887,11 @@ export interface components {
              * @description Cache TTL in seconds for data providers (0-86400, default 300)
              */
             cache_ttl_seconds?: number | null;
+            /**
+             * Memory Request Mib
+             * @description Declared memory (MiB) a run requests from an executor; null uses the learned value
+             */
+            memory_request_mib?: number | null;
             /**
              * Tags
              * @description Tags for categorization and search

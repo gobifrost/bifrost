@@ -161,6 +161,8 @@ def convert_workflow_orm_to_schema(
         parameters=parameters,
         execution_mode=execution_mode,
         timeout_seconds=workflow.timeout_seconds if workflow.timeout_seconds is not None else 1800,
+        memory_request_mib=workflow.memory_request_mib,
+        learned_memory_bytes=workflow.learned_memory_bytes,
         retry_policy=None,
         endpoint_enabled=workflow.endpoint_enabled or False,
         allowed_methods=workflow.allowed_methods or ["POST"],

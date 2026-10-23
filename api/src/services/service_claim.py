@@ -688,11 +688,14 @@ class ServiceClaimLoop:
         from src.models.orm.workflows import Workflow
         from src.services.memory_requests import workflow_request_bytes
 
-        request = workflow_request_bytes(
-            await db.scalar(
-                select(Workflow.learned_memory_bytes).where(Workflow.id == definition.workflow_id)
+        learned, declared = (
+            await db.execute(
+                select(Workflow.learned_memory_bytes, Workflow.memory_request_mib).where(
+                    Workflow.id == definition.workflow_id
+                )
             )
-        )
+        ).one()
+        request = workflow_request_bytes(learned, declared)
         self._owned[str(attempt.id)] = OwnedAttempt(
             attempt_id=attempt.id,
             service_id=definition.id,

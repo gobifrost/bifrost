@@ -91,6 +91,9 @@ class Workflow(Base):
     # and the code version it was learned from.
     learned_memory_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     learned_memory_code_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Declared memory request (operational setting, API/CLI/MCP/UI); when set
+    # it replaces the learned value.
+    memory_request_mib: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Tool configuration (for AI agent tool calling when type='tool')
     tool_description: Mapped[str | None] = mapped_column(Text, default=None)

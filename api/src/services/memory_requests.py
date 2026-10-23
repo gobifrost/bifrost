@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import case, func, update
+from sqlalchemy import BigInteger, case, cast, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.orm.workflows import Workflow
@@ -44,15 +44,23 @@ DANGEROUS_MEMORY_RATIO = 0.95
 LAUNCHABLE_KEY = "bifrost:worker-pool:largest-launchable-bytes"
 
 
-def workflow_request_sql(learned_memory_bytes):  # type: ignore[no-untyped-def]
-    """``workflow_request_bytes`` as a SQL expression over a learned column."""
+def workflow_request_sql(workflow):  # type: ignore[no-untyped-def]
+    """``workflow_request_bytes`` as a SQL expression over a workflow table."""
+    # 64-bit throughout: the declared column is 32-bit MiB.
     return func.coalesce(
-        learned_memory_bytes + WORKFLOW_REQUEST_MARGIN_BYTES, DEFAULT_WORKFLOW_REQUEST_BYTES
+        cast(workflow.memory_request_mib, BigInteger) * MIB,
+        workflow.learned_memory_bytes + WORKFLOW_REQUEST_MARGIN_BYTES,
+        DEFAULT_WORKFLOW_REQUEST_BYTES,
     )
 
 
-def workflow_request_bytes(learned_memory_bytes: int | None) -> int:
-    """A workflow run's request: its learned peak growth plus a margin."""
+def workflow_request_bytes(
+    learned_memory_bytes: int | None, declared_mib: int | None = None
+) -> int:
+    """A workflow run's request: the declared setting, else its learned peak
+    growth plus a margin, else the default."""
+    if declared_mib is not None:
+        return declared_mib * MIB
     if learned_memory_bytes is None:
         return DEFAULT_WORKFLOW_REQUEST_BYTES
     return learned_memory_bytes + WORKFLOW_REQUEST_MARGIN_BYTES

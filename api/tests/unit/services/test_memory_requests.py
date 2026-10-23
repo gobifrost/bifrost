@@ -32,6 +32,11 @@ def test_a_learned_workflow_requests_its_peak_plus_the_margin() -> None:
     assert workflow_request_bytes(200 * MIB) == 200 * MIB + WORKFLOW_REQUEST_MARGIN_BYTES
 
 
+def test_a_declared_request_replaces_the_learned_one() -> None:
+    assert workflow_request_bytes(200 * MIB, declared_mib=512) == 512 * MIB
+    assert workflow_request_bytes(None, declared_mib=32) == 32 * MIB
+
+
 async def _learned_after(db_session, growths: list[int | tuple[int, str | None]]) -> int | None:  # type: ignore[no-untyped-def]
     workflow = Workflow(
         id=uuid4(), name=f"learn-{uuid4().hex[:8]}", function_name="main",

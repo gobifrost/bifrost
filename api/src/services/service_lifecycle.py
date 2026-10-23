@@ -657,7 +657,7 @@ async def claim_eligible_service(
             ServiceDefinition.organization_id.is_not(None),
             ServiceDefinition.desired_state == "running",
             ServiceDefinition.blocked_reason.is_(None),
-            workflow_request_sql(Workflow.learned_memory_bytes) <= fits_bytes,
+            workflow_request_sql(Workflow) <= fits_bytes,
             (
                 ServiceDefinition.restart_eligible_at.is_(None)
                 | (ServiceDefinition.restart_eligible_at <= now)

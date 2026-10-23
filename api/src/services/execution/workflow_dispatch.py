@@ -65,7 +65,10 @@ async def _row_identity(
     row = (
         await db.execute(
             select(
-                Workflow.name, Workflow.organization_id, Workflow.learned_memory_bytes
+                Workflow.name,
+                Workflow.organization_id,
+                Workflow.learned_memory_bytes,
+                Workflow.memory_request_mib,
             ).where(Workflow.id == UUID(workflow_id))
         )
     ).one_or_none()
@@ -75,7 +78,7 @@ async def _row_identity(
     return (
         row.name,
         row.organization_id or caller_org,
-        workflow_request_bytes(row.learned_memory_bytes),
+        workflow_request_bytes(row.learned_memory_bytes, row.memory_request_mib),
     )
 
 
@@ -83,10 +86,16 @@ async def _request_for(db: AsyncSession, pending: PendingExecution) -> int:
     """The memory request of a run whose row already exists."""
     if pending["script_name"] or pending["workflow_id"] is None:
         return workflow_request_bytes(None)
-    learned = await db.scalar(
-        select(Workflow.learned_memory_bytes).where(Workflow.id == UUID(pending["workflow_id"]))
-    )
-    return workflow_request_bytes(learned)
+    row = (
+        await db.execute(
+            select(Workflow.learned_memory_bytes, Workflow.memory_request_mib).where(
+                Workflow.id == UUID(pending["workflow_id"])
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        return workflow_request_bytes(None)
+    return workflow_request_bytes(row.learned_memory_bytes, row.memory_request_mib)
 
 
 async def stage_workflow_run(
