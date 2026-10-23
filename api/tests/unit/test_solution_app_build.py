@@ -167,6 +167,34 @@ def test_build_timeout_translated_to_deploy_failure(monkeypatch):
 
 
 @pytest.mark.e2e
+def test_build_step_failure_surfaces_tool_output(monkeypatch):
+    """A failing npm/vite step surfaces as the deploy's build-failure exception
+    carrying the tail of the tool's stderr, so the deploy job reports the cause."""
+
+    monkeypatch.setattr(sdkpkg, "build_sdk_tarball", lambda v: b"FAKE_TGZ")
+    app_id = uuid.uuid4()
+    b = SolutionAppBuilder()
+    stderr = b"".join(f"npm verbose line {i}\n".encode() for i in range(40))
+    stderr += b"npm error Cannot read properties of null (reading 'edgesOut')\n"
+
+    def _fail(workdir, base="/"):
+        raise subprocess.CalledProcessError(
+            1, ["npm", "install", "--no-audit"], output=b"", stderr=stderr
+        )
+
+    monkeypatch.setattr(b, "_run_vite_build", _fail)
+
+    with pytest.raises(SolutionDeployConflict) as raised:
+        b.compile_dist(app_id, src_files={}, dependencies={}, prebuilt_dist=None)
+
+    message = str(raised.value)
+    assert message.startswith(f"`npm install` failed for app {app_id} (exit 1):")
+    assert message.endswith("npm error Cannot read properties of null (reading 'edgesOut')")
+    assert "npm verbose line 20" not in message
+    assert len(message.splitlines()) == 1 + ab._FAILURE_OUTPUT_LINES
+
+
+@pytest.mark.e2e
 async def test_redeploy_clears_stale_dist_files(monkeypatch):
     """A second build with a different file set must not leave the old files
     fetchable (full replace of the dist/ artifact)."""
