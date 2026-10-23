@@ -60,6 +60,10 @@ class WorkflowExecutionConsumer:
     }
     """
 
+    # The executor incarnation this consumer writes results for: a result is
+    # written only while that executor still holds the run.
+    owner_worker_id: UUID | None = None
+
     def __init__(self):
         from src.services.execution.process_pool import get_process_pool
 
@@ -248,6 +252,14 @@ class WorkflowExecutionConsumer:
                 exc_info=True,
             )
 
+    @staticmethod
+    def _drop_fenced_result(execution_id: str) -> None:
+        logger.warning(
+            "Dropped the result of a run this executor no longer holds "
+            "(it was declared lost and the run already ended)",
+            extra={"execution_id": execution_id},
+        )
+
     async def _process_success(
         self,
         execution_id: str,
@@ -298,7 +310,7 @@ class WorkflowExecutionConsumer:
         # (log flush reads Redis internally but DB writes share the session)
         session_factory = get_session_factory()
         async with session_factory() as session:
-            await update_execution(
+            written = await update_execution(
                 execution_id=execution_id,
                 status=status,
                 result=workflow_result,
@@ -311,7 +323,12 @@ class WorkflowExecutionConsumer:
                 time_saved=roi_time_saved,
                 value=roi_value,
                 session=session,
+                owner_worker_id=self.owner_worker_id,
             )
+            if not written:
+                await session.rollback()
+                self._drop_fenced_result(execution_id)
+                return
             execution_update_ms = (time.perf_counter() - completion_started) * 1000
 
             if metadata.get("event") is not None or recovered_from_database:
@@ -479,7 +496,7 @@ class WorkflowExecutionConsumer:
             # samples). Failed executions are the highest-memory samples, so
             # dropping them here would bias any future lane-sizing data low.
             failure_metrics = result.get("metrics")
-            await update_execution(
+            written = await update_execution(
                 execution_id=execution_id,
                 status=status,
                 error_message=error,
@@ -487,7 +504,12 @@ class WorkflowExecutionConsumer:
                 duration_ms=duration_ms,
                 metrics=failure_metrics,
                 session=session,
+                owner_worker_id=self.owner_worker_id,
             )
+            if not written:
+                await session.rollback()
+                self._drop_fenced_result(execution_id)
+                return
 
             if metadata.get("event") is not None or recovered_from_database:
                 try:

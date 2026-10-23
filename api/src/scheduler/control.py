@@ -183,15 +183,22 @@ class ControlPlane:
         )
 
     async def _dispatch_reconcile_loop(self) -> None:
-        """Settle accepted work no executor holds or claimed in time."""
+        """End silent static executors, then settle accepted work no executor
+        holds or claimed in time."""
         from src.services.work_dispatch import reconcile_work_dispatches
+        from src.services.worker_pool.liveness import Reachability, end_silent_static_executors
 
+        reachability = Reachability()
         while not self._stop_event.is_set():
             try:
+                if reachability.steady():
+                    await end_silent_static_executors()
                 await reconcile_work_dispatches()
+                reachability.connected()
             except asyncio.CancelledError:
                 raise
             except Exception:
+                reachability.broken()
                 logger.exception("Work dispatch reconciliation failed")
             await wait_or_stop(self._stop_event, DISPATCH_RECONCILE_SECONDS)
 

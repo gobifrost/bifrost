@@ -66,7 +66,7 @@ async def admit_worker(incarnation_id: UUID, *, job_uid: str, pod_uid: str) -> i
                 state="ready",
                 kubernetes_pod_uid=pod_uid,
                 ready_at=now,
-                heartbeat_at=now,
+                heartbeat_at=func.now(),
                 last_claim_at=now,
             )
             .returning(ExecutionWorker.slots)
@@ -90,7 +90,7 @@ async def register_static_worker(
         memory_budget_bytes=memory_budget_bytes,
         hostname=hostname,
         ready_at=now,
-        heartbeat_at=now,
+        heartbeat_at=func.now(),
         last_claim_at=now,
     )
     async with get_db_context() as db:
@@ -224,7 +224,8 @@ async def heartbeat_worker(
                 ExecutionWorker.state.in_(("ready", "draining")),
             )
             .values(
-                heartbeat_at=_now(),
+                # The database's clock: liveness is judged against it.
+                heartbeat_at=func.now(),
                 active_runs=active_runs,
                 runs_handled=runs_handled,
                 package_generation=package_generation,

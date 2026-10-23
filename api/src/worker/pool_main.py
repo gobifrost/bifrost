@@ -142,6 +142,9 @@ class PoolWorker:
         self._platform_jobs: set[UUID] = set()
         # Set to stop claiming platform jobs; running ones finish.
         self._platform_stop = asyncio.Event()
+        # The control plane declared this executor lost and ended its runs:
+        # stop them instead of letting them finish (their results are refused).
+        self._lost = False
 
     def request_stop(self) -> None:
         self._stop.set()
@@ -222,6 +225,7 @@ class PoolWorker:
         # idempotent) instead of being missed.
         self.package_generation = await current_package_generation()
         self._workflow_consumer = WorkflowExecutionConsumer()
+        self._workflow_consumer.owner_worker_id = self.incarnation_id
         await self._workflow_consumer.start_pool()
         self._agent_consumer = AgentRunConsumer()
         # Applies recorded package changes; it never consumes the broadcast.
@@ -507,6 +511,12 @@ class PoolWorker:
                         0 if self.admission is None else self.admission.held_bytes()
                     ),
                 )
+                if state is None and not self._lost:
+                    logger.error(
+                        "This executor was declared lost; stopping its runs",
+                        extra={"incarnation_id": str(self.incarnation_id)},
+                    )
+                    self._lost = True
                 if state != "ready":
                     # The controller drained or lost this worker: stop claiming.
                     self._stop.set()
@@ -541,6 +551,7 @@ class PoolWorker:
         Services go first: they restart elsewhere through their lease.
         Running runs and platform jobs finish within the grace; a workflow
         child still running at its end is recorded as interrupted by shutdown.
+        An executor declared lost has no grace: its runs already ended.
         """
         if self._service_claim_loop is not None:
             try:
@@ -548,7 +559,7 @@ class PoolWorker:
             except Exception:
                 logger.exception("Pool worker service handover failed")
         self._platform_stop.set()
-        deadline = time.monotonic() + DRAIN_GRACE_SECONDS
+        deadline = time.monotonic() + (0.0 if self._lost else DRAIN_GRACE_SECONDS)
         while (
             any(self._tasks.values()) or self._platform_jobs
         ) and time.monotonic() < deadline:

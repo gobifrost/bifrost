@@ -40,6 +40,8 @@ def _orm(**overrides):
         parameters_schema=None,
         execution_mode=None,
         timeout_seconds=None,
+        memory_request_mib=None,
+        learned_memory_bytes=None,
         endpoint_enabled=None,
         allowed_methods=None,
         disable_global_key=None,

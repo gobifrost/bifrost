@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
 from src.config import Settings, get_settings
 from src.core.database import get_db_context
@@ -46,12 +46,12 @@ from src.services.worker_pool.manifest import (
     resolve_worker_job_spec,
     worker_job_name,
 )
+from src.services.worker_pool.liveness import Reachability, silent_executor
 from src.services.worker_pool.recovery import announce_ended_runs, end_runs_of_lost_worker
 
 logger = logging.getLogger(__name__)
 
 LIVE_STATES = ("reserved", "starting", "ready", "draining")
-HEARTBEAT_LOST_AFTER = timedelta(seconds=30)
 # How long a lost worker's Job is kept under watch for deletion.
 LOST_JOB_CLEANUP = timedelta(hours=1)
 RECONCILE_SECONDS = 2.0
@@ -71,6 +71,8 @@ class WorkerPoolController:
         self.client = client
         self.settings = settings
         self.spec = spec
+        # Lost needs a steadily reachable database (worker_pool.liveness).
+        self.reachability = Reachability()
 
     async def reconcile(self) -> None:
         # Before anything that can fail on the Kubernetes API, so the
@@ -150,7 +152,11 @@ class WorkerPoolController:
                     seconds=self.settings.pool_start_timeout_seconds
                 ):
                     reason = "start_timeout"
-            elif worker.heartbeat_at is None or now - worker.heartbeat_at >= HEARTBEAT_LOST_AFTER:
+            elif self.reachability.steady() and await db.scalar(
+                select(func.count())
+                .select_from(ExecutionWorker)
+                .where(ExecutionWorker.id == worker.id, silent_executor())
+            ):
                 reason = "heartbeat_lost"
             ended: list[UUID] = []
             if reason is not None:
@@ -385,9 +391,11 @@ async def worker_pool_loop(stop_event: asyncio.Event, settings: Any | None = Non
         while not stop_event.is_set():
             try:
                 await controller.reconcile()
+                controller.reachability.connected()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                controller.reachability.broken()
                 logger.error(
                     "Reusable worker reconciliation failed (%s): %s",
                     type(exc).__name__,

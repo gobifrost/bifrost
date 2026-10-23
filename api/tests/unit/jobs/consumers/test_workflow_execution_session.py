@@ -165,7 +165,7 @@ class TestSuccessfulExecutionCompletionOrder:
                     return_value=session_factory,
                 ),
                 patch(
-                    "src.repositories.executions.update_execution",
+                    "src.jobs.consumers.workflow_execution.update_execution",
                     new_callable=AsyncMock,
                 ),
                 patch(
@@ -277,7 +277,7 @@ class TestFailedExecutionCompletionOrder:
                     return_value=session_factory,
                 ),
                 patch(
-                    "src.repositories.executions.update_execution",
+                    "src.jobs.consumers.workflow_execution.update_execution",
                     new_callable=AsyncMock,
                 ),
                 patch(
@@ -382,7 +382,7 @@ class TestFailedExecutionCompletionOrder:
                     return_value=session_factory,
                 ),
                 patch(
-                    "src.repositories.executions.update_execution",
+                    "src.jobs.consumers.workflow_execution.update_execution",
                     new_callable=AsyncMock,
                 ),
                 patch(

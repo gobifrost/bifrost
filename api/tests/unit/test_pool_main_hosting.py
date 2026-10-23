@@ -241,3 +241,18 @@ async def test_a_refused_fork_hands_the_run_back(monkeypatch) -> None:  # type: 
         memory_request_bytes=100 * MIB,
     )
     assert worker.admission.free_bytes() == GIB, "the hold went back with the run"
+
+
+async def test_an_executor_declared_lost_stops_its_runs_without_a_grace(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The control plane already ended its runs; their results are refused."""
+    worker = _worker_with_pool()
+    monkeypatch.setattr(pool_main, "heartbeat_worker", AsyncMock(return_value=None))
+    beating = asyncio.create_task(worker._heartbeat_loop())
+    await asyncio.wait_for(worker._stop.wait(), timeout=1)
+    beating.cancel()
+
+    await worker._drain()
+
+    assert worker._lost
+    pool = worker._workflow_consumer._pool  # type: ignore[union-attr]
+    pool.drain_active_executions.assert_awaited_once_with(0.0)

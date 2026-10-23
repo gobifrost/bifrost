@@ -202,9 +202,16 @@ class ExecutionRepository(BaseRepository[Execution]):
         metrics: dict | None = None,
         time_saved: int | None = None,
         value: float | None = None,
-    ) -> None:
+        owner_worker_id: UUID | None = None,
+    ) -> bool:
         """
         Update an execution record with results.
+
+        An executor passes its incarnation as ``owner_worker_id``: its result
+        is written only while the run is still running and that executor
+        still holds its claim, so the late result of an executor declared
+        lost never overwrites how the run ended. Returns whether the row
+        was written.
 
         Args:
             execution_id: Execution ID
@@ -282,12 +289,30 @@ class ExecutionRepository(BaseRepository[Execution]):
             update_values["value"] = value
 
         # Execute update
-        workflow_id = await self.session.scalar(
-            update(Execution)
-            .where(Execution.id == UUID(execution_id))
-            .values(**update_values)
-            .returning(Execution.workflow_id)
-        )
+        statement = update(Execution).where(Execution.id == UUID(execution_id))
+        if owner_worker_id is not None:
+            from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
+
+            statement = statement.where(
+                Execution.status.in_((ExecutionStatus.RUNNING, ExecutionStatus.CANCELLING)),
+                select(ExecutionWorkerClaim.worker_id)
+                .join(ExecutionWorker, ExecutionWorker.id == ExecutionWorkerClaim.worker_id)
+                .where(
+                    ExecutionWorkerClaim.worker_id == owner_worker_id,
+                    ExecutionWorkerClaim.family == "workflow_execution",
+                    ExecutionWorkerClaim.subject_id == Execution.id,
+                    ExecutionWorker.state.in_(("ready", "draining")),
+                )
+                .exists(),
+            )
+        written = (
+            await self.session.execute(
+                statement.values(**update_values).returning(Execution.workflow_id)
+            )
+        ).one_or_none()
+        if written is None:
+            return False
+        workflow_id = written.workflow_id
         growth = (metrics or {}).get("peak_memory_growth_bytes")
         if workflow_id is not None and growth is not None:
             from src.services.memory_requests import record_peak_growth
@@ -311,6 +336,7 @@ class ExecutionRepository(BaseRepository[Execution]):
 
         await self.session.flush()
         logger.debug(f"Updated execution {log_safe(execution_id)} to status {log_safe(status_value)}")
+        return True
 
     # =========================================================================
     # Read Operations (used by API endpoints)
@@ -774,23 +800,26 @@ async def update_execution(
     time_saved: int | None = None,
     value: float | None = None,
     session: "AsyncSession | None" = None,
-) -> None:
+    owner_worker_id: UUID | None = None,
+) -> bool:
     """
-    Update an execution record with results.
+    Update an execution record with results; whether it was written.
 
     Standalone function for workers/consumers that manage their own DB sessions.
 
     Args:
         session: Optional database session. If provided, uses it and
                  caller is responsible for commit. If None, creates own session.
+        owner_worker_id: The writing executor (see
+                 ``ExecutionRepository.update_execution``).
     """
     from sqlalchemy.ext.asyncio import AsyncSession as AsyncSessionType
 
     from src.core.database import get_session_factory
 
-    async def _do_update(db: AsyncSessionType) -> None:
+    async def _do_update(db: AsyncSessionType) -> bool:
         repo = ExecutionRepository(db)
-        await repo.update_execution(
+        return await repo.update_execution(
             execution_id=execution_id,
             status=status,
             result=result,
@@ -803,14 +832,15 @@ async def update_execution(
             metrics=metrics,
             time_saved=time_saved,
             value=value,
+            owner_worker_id=owner_worker_id,
         )
 
     if session is not None:
         # Use provided session (caller manages commit)
-        await _do_update(session)
-    else:
-        # Backward compatible: create own session
-        session_factory = get_session_factory()
-        async with session_factory() as db:
-            await _do_update(db)
-            await db.commit()
+        return await _do_update(session)
+    # Backward compatible: create own session
+    session_factory = get_session_factory()
+    async with session_factory() as db:
+        written = await _do_update(db)
+        await db.commit()
+    return written

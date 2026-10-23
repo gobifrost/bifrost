@@ -34,8 +34,6 @@ RECONCILE_BATCH = 100
 # claimed them by the claim deadline.
 POOL_RECHECK_AFTER = timedelta(minutes=2)
 POOL_CLAIM_DEADLINE = timedelta(minutes=30)
-# A worker of either form that has not heartbeated this long holds nothing.
-WORKER_SILENT_AFTER = timedelta(minutes=2)
 
 
 @dataclass(frozen=True)
@@ -185,18 +183,10 @@ async def _settle_pool_dispatch(
     from src.models.orm.execution_workers import ExecutionWorker
 
     if row.assigned_worker_id is not None:
-        worker = (
-            await db.execute(
-                select(ExecutionWorker.state, ExecutionWorker.heartbeat_at).where(
-                    ExecutionWorker.id == row.assigned_worker_id
-                )
-            )
-        ).one_or_none()
-        silent = worker is not None and (
-            worker.heartbeat_at is None
-            or worker.heartbeat_at <= datetime.now(timezone.utc) - WORKER_SILENT_AFTER
+        state = await db.scalar(
+            select(ExecutionWorker.state).where(ExecutionWorker.id == row.assigned_worker_id)
         )
-        if worker is None or worker.state in ("lost", "retired") or silent:
+        if state is None or state in ("lost", "retired"):
             # The worker that took it is gone before claiming the run.
             row.assigned_worker_id = None
         return None

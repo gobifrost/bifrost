@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -31,7 +32,7 @@ from src.services.memory_requests import (
     MIB,
     WORKFLOW_REQUEST_MARGIN_BYTES,
 )
-from src.services.worker_pool import claims, controller, maintenance
+from src.services.worker_pool import claims, controller, liveness, maintenance
 from src.services.worker_pool.manifest import WorkerJobSpec, build_worker_job_manifest
 
 GIB = 1024 * MIB
@@ -109,8 +110,14 @@ def db(async_session_factory: async_sessionmaker[AsyncSession], monkeypatch):
             yield session
             await session.commit()
 
-    for module in (claims, controller, maintenance, work_dispatch, workflow_dispatch):
+    for module in (claims, controller, liveness, maintenance, work_dispatch, workflow_dispatch):
         monkeypatch.setattr(module, "get_db_context", context)
+    # These controllers have long reached the database (liveness.Reachability).
+    monkeypatch.setattr(
+        controller,
+        "Reachability",
+        lambda: liveness.Reachability(connected_since=time.monotonic() - 3600),
+    )
     monkeypatch.setattr(async_executor, "get_dispatch_db_context", context)
     monkeypatch.setattr("src.config.get_settings", lambda: SETTINGS)
     wake = AsyncMock()
@@ -459,15 +466,9 @@ async def test_pool_run_fails_visibly_when_no_capacity_arrives(db) -> None:
     assert "No worker capacity" in (execution.error_message or "")
 
 
-async def test_ended_executors_are_pruned_and_silent_static_ones_ended(db) -> None:
-    static_id = await claims.register_static_worker(slots=1, hostname="gone", memory_budget_bytes=GIB)
+async def test_ended_executors_are_pruned(db) -> None:
     old = await _job_worker(db.sessions, state="retired")
     async with db.sessions() as session:
-        await session.execute(
-            update(ExecutionWorker)
-            .where(ExecutionWorker.id == static_id)
-            .values(heartbeat_at=datetime.now(timezone.utc) - timedelta(hours=1))
-        )
         await session.execute(
             update(ExecutionWorker)
             .where(ExecutionWorker.id == old.id)
@@ -478,8 +479,73 @@ async def test_ended_executors_are_pruned_and_silent_static_ones_ended(db) -> No
     await maintenance.prune_execution_workers()
 
     async with db.sessions() as session:
-        assert (await session.get(ExecutionWorker, static_id)).state == "lost"
         assert await session.get(ExecutionWorker, old.id) is None
+
+
+async def test_a_silent_static_executor_is_lost_and_its_runs_end(db) -> None:
+    from src.services.execution.workflow_dispatch import claim_workflow_dispatch
+    from src.services.worker_pool.recovery import EXECUTOR_LOST
+
+    silent = await claims.register_static_worker(slots=1, hostname="gone", memory_budget_bytes=GIB)
+    alive = await claims.register_static_worker(slots=1, hostname="here", memory_budget_bytes=GIB)
+    execution_id = await _accept_pool_run()
+    claim = await _claim(silent)
+    assert claim is not None
+    async with db.sessions() as session:
+        await claim_workflow_dispatch(
+            session, dispatch_id=claim.dispatch_id, execution_id=UUID(execution_id)
+        )
+        await session.execute(
+            update(ExecutionWorker)
+            .where(ExecutionWorker.id == silent)
+            .values(heartbeat_at=datetime.now(timezone.utc) - timedelta(seconds=45))
+        )
+        await session.commit()
+
+    assert await liveness.end_silent_static_executors() == [UUID(execution_id)]
+
+    async with db.sessions() as session:
+        assert (await session.get(ExecutionWorker, silent)).end_reason == "heartbeat_lost"
+        assert (await session.get(ExecutionWorker, alive)).state == "ready"
+        execution = await session.get(Execution, UUID(execution_id))
+    assert (execution.status, execution.error_message) == (ExecutionStatus.FAILED, EXECUTOR_LOST)
+
+
+async def test_no_executor_is_lost_until_the_database_was_reachable_long_enough(db) -> None:
+    """After a database outage every heartbeat looks old at once; the
+    controller waits until executors have had time to heartbeat again."""
+    pool = controller.WorkerPoolController(FakeCluster(), SETTINGS, SPEC)  # type: ignore[arg-type]
+    pool.reachability = liveness.Reachability()
+    await _accept_pool_run()
+    [worker_id] = await pool.launch_for_demand()
+    await pool.reconcile_worker(worker_id)
+    async with db.sessions() as session:
+        job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
+    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod")
+    async with db.sessions() as session:
+        await session.execute(
+            update(ExecutionWorker).values(heartbeat_at=datetime.now(timezone.utc) - timedelta(minutes=5))
+        )
+        await session.commit()
+
+    pool.reachability.connected()
+    await pool.reconcile_worker(worker_id)
+
+    async with db.sessions() as session:
+        assert (await session.get(ExecutionWorker, worker_id)).state == "ready"
+
+
+def test_reachability_is_steady_only_after_an_unbroken_lost_window() -> None:
+    reachability = liveness.Reachability()
+    assert not reachability.steady()
+    reachability = liveness.Reachability(
+        connected_since=time.monotonic() - liveness.HEARTBEAT_LOST_AFTER.total_seconds()
+    )
+    assert reachability.steady()
+    reachability.broken()
+    assert not reachability.steady()
+    reachability.connected()
+    assert not reachability.steady(), "counting starts again"
 
 
 def test_worker_job_is_suspended_tokenless_and_has_no_deadline() -> None:
@@ -547,6 +613,48 @@ async def test_runs_of_a_lost_worker_end_visibly_and_are_not_replayed(db) -> Non
         execution = await session.get(Execution, UUID(running_id))
     assert execution.status == ExecutionStatus.FAILED
     assert execution.error_message == EXECUTOR_LOST
+
+    # The lost executor's late result is refused, not written over the loss.
+    from src.repositories.executions import update_execution
+
+    async with db.sessions() as session:
+        written = await update_execution(
+            execution_id=running_id, status=ExecutionStatus.SUCCESS, session=session,
+            owner_worker_id=worker_id,
+        )
+        await session.commit()
+        execution = await session.get(Execution, UUID(running_id))
+    assert not written
+    assert execution.status == ExecutionStatus.FAILED
+
+
+async def test_the_executor_holding_a_run_writes_its_result(db) -> None:
+    from src.repositories.executions import update_execution
+    from src.services.execution.workflow_dispatch import claim_workflow_dispatch
+
+    worker_id = await claims.register_static_worker(slots=1, hostname="here", memory_budget_bytes=GIB)
+    other = await claims.register_static_worker(slots=1, hostname="other", memory_budget_bytes=GIB)
+    execution_id = await _accept_pool_run()
+    claim = await _claim(worker_id)
+    assert claim is not None
+    async with db.sessions() as session:
+        await claim_workflow_dispatch(
+            session, dispatch_id=claim.dispatch_id, execution_id=UUID(execution_id)
+        )
+        await session.commit()
+
+    async with db.sessions() as session:
+        assert not await update_execution(
+            execution_id=execution_id, status=ExecutionStatus.SUCCESS, session=session,
+            owner_worker_id=other,
+        ), "an executor that does not hold the run cannot end it"
+        assert await update_execution(
+            execution_id=execution_id, status=ExecutionStatus.SUCCESS, session=session,
+            owner_worker_id=worker_id,
+        )
+        await session.commit()
+        execution = await session.get(Execution, UUID(execution_id))
+    assert execution.status == ExecutionStatus.SUCCESS
 
 
 async def test_a_run_lost_with_its_worker_learns_the_worker_s_budget(db) -> None:
