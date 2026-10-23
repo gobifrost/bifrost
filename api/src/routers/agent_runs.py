@@ -247,13 +247,19 @@ async def list_agent_runs(
                 detail="cursor is invalid",
             )
     # Global history stays root-only so one orchestration is counted once.
+    # Older external MCP invocations have an explicit gateway source and no
+    # parent. Legacy chat children can also lack a parent run ID; keep those
+    # children out of root history rather than inventing a missing parent.
     # An individual agent's history includes delegated runs because those are
     # real executions of that agent and should not disappear from its Runs tab.
     query = select(AgentRun).join(AgentRun.agent)
     if agent_id is None:
         query = query.where(
             AgentRun.parent_run_id.is_(None),
-            AgentRun.trigger_type != "delegation",
+            or_(
+                AgentRun.trigger_type != "delegation",
+                AgentRun.trigger_source.startswith("mcp_gateway:"),
+            ),
         )
 
     query = query.where(*agent_run_visibility_conditions(caller))

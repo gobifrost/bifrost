@@ -611,7 +611,7 @@ class TestChatDelegation:
 
         tool_call = ToolCallRequest(
             id="tc1",
-            name="delegate_to_data_analyst",
+            name="delegate_task",
             arguments={"task": "Analyze revenue trends"},
         )
         child_run_id = uuid4()
@@ -638,6 +638,7 @@ class TestChatDelegation:
             result = await executor._execute_delegation(
                 tool_call,
                 agent,
+                target_agent_id=delegated.id,
                 conversation=conversation,
                 caller=contoso_caller,
             )
@@ -654,7 +655,8 @@ class TestChatDelegation:
         }
         mock_sub.run_delegation.assert_awaited_once_with(
             parent_agent=agent,
-            tool_call=tool_call,
+            target_agent_id=delegated.id,
+            task="Analyze revenue trends",
             conversation_id=conversation.id,
             caller=contoso_caller,
             acting_user_id=contoso_caller.principal.user_id,
@@ -666,7 +668,7 @@ class TestChatDelegation:
         )
 
     def test_parent_history_keeps_failure_explicit_with_partial_result(self):
-        """The owner can recover from partial data without mistaking it for success."""
+        """Stored legacy delegation history remains readable after alias retirement."""
         tool_result = ToolResult(
             tool_call_id="tc1",
             tool_name="delegate_to_specialist",
@@ -707,7 +709,7 @@ class TestChatDelegation:
 
         tool_call = ToolCallRequest(
             id="tc1",
-            name="delegate_to_troubleshooting_agent",
+            name="delegate_task",
             arguments={"task": "Fix the issue"},
         )
 
@@ -731,12 +733,13 @@ class TestChatDelegation:
             MockExecutorClass.return_value = mock_sub
 
             result = await executor._execute_delegation(
-                tool_call, agent, caller=contoso_caller
+                tool_call, agent, target_agent_id=delegated.id, caller=contoso_caller
             )
 
         mock_sub.run_delegation.assert_awaited_once_with(
             parent_agent=agent,
-            tool_call=tool_call,
+            target_agent_id=delegated.id,
+            task="Fix the issue",
             conversation_id=None,
             caller=contoso_caller,
             acting_user_id=contoso_caller.principal.user_id,
@@ -749,31 +752,12 @@ class TestChatDelegation:
         assert result.error is None
 
     @pytest.mark.asyncio
-    async def test_delegation_agent_not_found(self, executor, contoso_caller):
-        """Returns error when delegated agent doesn't match."""
-        from src.services.llm.base import ToolCallRequest
-
-        agent = MagicMock()
-        agent.delegated_agents = []
-
-        tool_call = ToolCallRequest(
-            id="tc1",
-            name="delegate_to_nonexistent",
-            arguments={"task": "Do something"},
-        )
-
-        result = await executor._execute_delegation(
-            tool_call, agent, caller=contoso_caller
-        )
-        assert result.error is not None
-        assert "not found" in result.error
-
-    @pytest.mark.asyncio
     async def test_delegation_no_task(self, executor, contoso_caller):
         """Returns error when no task is provided."""
         from src.services.llm.base import ToolCallRequest
 
         delegated = MagicMock()
+        delegated.id = uuid4()
         delegated.name = "Helper"
         delegated.is_active = True
 
@@ -782,12 +766,12 @@ class TestChatDelegation:
 
         tool_call = ToolCallRequest(
             id="tc1",
-            name="delegate_to_helper",
+            name="delegate_task",
             arguments={},
         )
 
         result = await executor._execute_delegation(
-            tool_call, agent, caller=contoso_caller
+            tool_call, agent, target_agent_id=delegated.id, caller=contoso_caller
         )
         assert result.error is not None
         assert "No task" in result.error
@@ -810,7 +794,7 @@ class TestChatDelegation:
 
         tool_call = ToolCallRequest(
             id="tc1",
-            name="delegate_to_broken_agent",
+            name="delegate_task",
             arguments={"task": "Do something"},
         )
 
@@ -836,7 +820,7 @@ class TestChatDelegation:
             MockExecutorClass.return_value = mock_sub
 
             result = await executor._execute_delegation(
-                tool_call, agent, caller=contoso_caller
+                tool_call, agent, target_agent_id=delegated.id, caller=contoso_caller
             )
 
         assert result.error == "LLM call failed"
@@ -902,10 +886,11 @@ class TestChatDelegation:
             result = await executor._execute_delegation(
                 ToolCallRequest(
                     id="tc1",
-                    name="delegate_to_lifecycle_agent",
+                    name="delegate_task",
                     arguments={"task": "Exercise lifecycle"},
                 ),
                 agent,
+                target_agent_id=delegated.id,
                 caller=contoso_caller,
             )
 
@@ -934,7 +919,7 @@ class TestChatDelegation:
 
         tool_call = ToolCallRequest(
             id="tc1",
-            name="delegate_to_crasher",
+            name="delegate_task",
             arguments={"task": "Crash please"},
         )
 
@@ -951,7 +936,7 @@ class TestChatDelegation:
             MockExecutorClass.return_value = mock_sub
 
             result = await executor._execute_delegation(
-                tool_call, agent, caller=contoso_caller
+                tool_call, agent, target_agent_id=delegated.id, caller=contoso_caller
             )
 
         assert result.error is not None
@@ -974,7 +959,7 @@ class TestChatDelegation:
 
         tool_call = ToolCallRequest(
             id="tc1",
-            name="delegate_to_slow_agent",
+            name="delegate_task",
             arguments={"task": "Take forever"},
         )
 
@@ -1002,7 +987,7 @@ class TestChatDelegation:
             MockExecutorClass.return_value = mock_sub
 
             result = await executor._execute_delegation(
-                tool_call, agent, caller=contoso_caller
+                tool_call, agent, target_agent_id=delegated.id, caller=contoso_caller
             )
 
         assert result.result is None

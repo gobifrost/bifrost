@@ -200,22 +200,6 @@ TOOLS = [
 ]
 
 
-def register_tools(mcp: Any, get_context_fn: Any) -> None:
-    """Register all Table tools with FastMCP."""
-    from src.services.mcp_server.generators.fastmcp_generator import register_tool_with_context
-
-    tool_funcs = {
-        "bifrost_table_list": bifrost_table_list,
-        "bifrost_table_get": bifrost_table_get,
-        "bifrost_table_create": bifrost_table_create,
-        "bifrost_table_update": bifrost_table_update,
-        "bifrost_table_delete": bifrost_table_delete,
-    }
-
-    for tool_id, _name, description in TOOLS:
-        register_tool_with_context(mcp, tool_funcs[tool_id], tool_id, description, get_context_fn)
-
-
 __all__ = [
     "TOOLS",
     "bifrost_table_create",
@@ -223,5 +207,4 @@ __all__ = [
     "bifrost_table_get",
     "bifrost_table_list",
     "bifrost_table_update",
-    "register_tools",
 ]

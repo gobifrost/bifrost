@@ -355,6 +355,7 @@
 | DELETE | `/api/mcp/config` |
 | GET | `/api/mcp/config` |
 | PUT | `/api/mcp/config` |
+| POST | `/api/mcp/gateway/agents/{agent_id}/execute` |
 | POST | `/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}/execute` |
 | POST | `/api/mcp/gateway/capabilities/search` |
 | GET | `/api/mcp/gateway/executions/{execution_id}` |

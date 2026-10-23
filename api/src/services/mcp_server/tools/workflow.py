@@ -471,26 +471,6 @@ TOOLS = [
 ]
 
 
-def register_tools(mcp: Any, get_context_fn: Any) -> None:
-    """Register all workflow tools with FastMCP."""
-    from src.services.mcp_server.generators.fastmcp_generator import register_tool_with_context
-
-    tool_funcs = {
-        "bifrost_workflow_execute": bifrost_workflow_execute,
-        "bifrost_workflow_list": bifrost_workflow_list,
-        "bifrost_workflow_validate": bifrost_workflow_validate,
-        "bifrost_workflow_get": bifrost_workflow_get,
-        "bifrost_workflow_register": bifrost_workflow_register,
-        "bifrost_workflow_update": bifrost_workflow_update,
-        "bifrost_workflow_delete": bifrost_workflow_delete,
-        "bifrost_workflow_role_grant": bifrost_workflow_role_grant,
-        "bifrost_workflow_role_revoke": bifrost_workflow_role_revoke,
-    }
-
-    for tool_id, _name, description in TOOLS:
-        register_tool_with_context(mcp, tool_funcs[tool_id], tool_id, description, get_context_fn)
-
-
 __all__ = [
     "TOOLS",
     "bifrost_workflow_delete",
@@ -502,5 +482,4 @@ __all__ = [
     "bifrost_workflow_role_revoke",
     "bifrost_workflow_update",
     "bifrost_workflow_validate",
-    "register_tools",
 ]

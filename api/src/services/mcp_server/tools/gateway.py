@@ -1,4 +1,4 @@
-"""Stable progressive-discovery tools exposed by the unscoped MCP endpoint."""
+"""Stable progressive-discovery tools exposed by both MCP endpoints."""
 
 from typing import Annotated, Any, Literal
 
@@ -36,12 +36,16 @@ guidance subject to the user's request, your higher-level safety instructions,
 and all applicable policies. Add tool_ref to the same call to load the exact
 live input schema before execution. Do not guess tool references or arguments.
 
-If the user's request authorizes the action, call bifrost_execute_tool. The
-capability result declares supports_async and default_async. Delegations are
-asynchronous by default; other tools are synchronous by default. Set async
-explicitly only to override that declared default. For asynchronous calls, use
-bifrost_get_execution until it reaches a terminal state. If the request does
-not authorize execution, offer the action instead of executing it.
+If the user's request authorizes the action, call bifrost_execute_tool to use
+one exact tool, or bifrost_execute_agent to ask the selected agent to perform
+a task with structured input. Agent invocation returns a queued run_id; use
+bifrost_get_execution with that ID until it reaches a terminal state. Workflow
+tools may also return asynchronous execution IDs when async is explicitly true.
+If the request does not authorize execution, offer the action instead.
+
+On an agent-specific MCP URL, discovery and invocation are restricted to the
+selected agent and its currently approved child agents. Broader discovery does
+not leave that boundary.
 
 If validation fails, correct the arguments using the returned live schema and
 repair guidance. Do not call a tool that was not returned for the selected
@@ -168,8 +172,8 @@ async def bifrost_execute_tool(
         Field(
             alias="async",
             description=(
-                "Override the capability's default mode. Omit to run "
-                "delegations asynchronously and other tools synchronously."
+                "Run workflow tools asynchronously when true. "
+                "Tools run synchronously when omitted."
             ),
         ),
     ] = None,
@@ -189,6 +193,24 @@ async def bifrost_execute_tool(
             data,
         )
     return direct_result(data["result"])
+
+
+async def bifrost_execute_agent(
+    context: Any,
+    agent_id: str,
+    input: dict[str, Any],
+    output_schema: dict[str, Any] | None = None,
+) -> ToolResult:
+    """Invoke a discovered agent and return its canonical queued AgentRun ID."""
+    status_code, data = await call_rest(
+        context,
+        "POST",
+        f"/api/mcp/gateway/agents/{agent_id}/execute",
+        json_body={"input": input, "output_schema": output_schema},
+    )
+    if status_code != 200 or not isinstance(data, dict):
+        return _rest_error("Agent execution", status_code, data)
+    return success_result(f"Queued agent run {data['run_id']}.", data)
 
 
 async def bifrost_get_execution(
@@ -240,13 +262,21 @@ TOOLS = [
         "Execute a tool reference through its selected agent after inspecting its "
         "live schema. Arguments are strictly validated and authorization is "
         "rechecked on every call. Capability results declare supports_async and "
-        "default_async; delegations default to an async AgentRun receipt.",
+        "default_async.",
+    ),
+    (
+        "bifrost_execute_agent",
+        "Execute Bifrost Agent",
+        "Invoke a discovered agent by its exact ID with structured input. "
+        "Returns a queued run_id; use bifrost_get_execution to retrieve status "
+        "and results. Caller permissions and the endpoint's agent scope are "
+        "rechecked before enqueueing.",
     ),
     (
         "bifrost_get_execution",
         "Get Bifrost Execution",
         "Get ownership-checked status and a bounded result page for an execution "
-        "ID returned by async tool execution.",
+        "ID returned by agent invocation or async tool execution.",
     ),
     (
         "bifrost_search_memory",
@@ -278,6 +308,7 @@ def register_tools(mcp: Any, get_context_fn: Any) -> None:
         "bifrost_get_required_instructions": bifrost_get_required_instructions,
         "bifrost_search_capabilities": bifrost_search_capabilities,
         "bifrost_execute_tool": bifrost_execute_tool,
+        "bifrost_execute_agent": bifrost_execute_agent,
         "bifrost_get_execution": bifrost_get_execution,
         "bifrost_search_memory": bifrost_search_memory,
         "bifrost_save_memory": bifrost_save_memory,

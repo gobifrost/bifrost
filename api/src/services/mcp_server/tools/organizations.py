@@ -229,19 +229,3 @@ TOOLS = [
     ("bifrost_organization_update", "Update Organization", "Update an organization (name, is_active)."),
     ("bifrost_organization_delete", "Delete Organization", "Delete (soft-delete) an organization."),
 ]
-
-
-def register_tools(mcp: Any, get_context_fn: Any) -> None:
-    """Register all organizations tools with FastMCP."""
-    from src.services.mcp_server.generators.fastmcp_generator import register_tool_with_context
-
-    tool_funcs = {
-        "bifrost_organization_list": bifrost_organization_list,
-        "bifrost_organization_get": bifrost_organization_get,
-        "bifrost_organization_create": bifrost_organization_create,
-        "bifrost_organization_update": bifrost_organization_update,
-        "bifrost_organization_delete": bifrost_organization_delete,
-    }
-
-    for tool_id, name, description in TOOLS:
-        register_tool_with_context(mcp, tool_funcs[tool_id], tool_id, description, get_context_fn)

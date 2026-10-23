@@ -5,14 +5,13 @@ Two MCP surfaces:
 
 - POST /mcp                — progressive agent discovery and dispatch through
                               stable gateway tools.
-- POST /mcp/{agent_id}     — agent-scoped: tools/list and tool calls
-                              are limited to that one agent.
+- POST /mcp/{agent_id}     — agent-scoped: stable gateway discovery and
+                              calls are limited to that one agent.
 
 Regression coverage:
 
-1. search_knowledge is auto-injected into tools/list when an agent has
-   knowledge_sources, even if system_tools doesn't list it (mirror of
-   agent_helpers.py:140 behavior in native chat).
+1. search_knowledge is discovered for an agent with knowledge_sources, even
+   when system_tools is empty.
 2. /mcp dispatches search through one explicitly selected agent, rather than
    combining namespaces across every accessible agent.
 3. /mcp/{agent_id} sees ONLY that agent's namespaces.
@@ -104,11 +103,13 @@ def _gateway_call(
     headers: dict[str, str],
     tool_name: str,
     arguments: dict,
+    *,
+    path: str = "/mcp",
 ) -> dict:
-    """Call one default-endpoint gateway tool and return structured data."""
+    """Call one gateway tool and return its structured data."""
     payload = _mcp_call_tool(
         e2e_client,
-        "/mcp",
+        path,
         headers,
         tool_name,
         arguments,
@@ -137,7 +138,9 @@ def _embedding_config(e2e_client, platform_admin):
         },
         headers=platform_admin.headers,
     )
-    assert connection_resp.status_code == 201, f"Embedding connection failed: {connection_resp.text}"
+    assert connection_resp.status_code == 201, (
+        f"Embedding connection failed: {connection_resp.text}"
+    )
     connection = connection_resp.json()
     config = {
         "connection_id": connection["id"],
@@ -272,6 +275,7 @@ class TestMCPKnowledgeScoping:
             "bifrost_get_required_instructions",
             "bifrost_search_capabilities",
             "bifrost_execute_tool",
+            "bifrost_execute_agent",
             "bifrost_get_execution",
             "bifrost_search_memory",
             "bifrost_save_memory",
@@ -291,18 +295,37 @@ class TestMCPKnowledgeScoping:
             for tool in loaded["agents"][0]["matching_tools"]
         )
 
-    def test_agent_scoped_lists_search_knowledge(
+    def test_agent_scoped_discovers_search_knowledge(
         self, e2e_client, platform_admin, _knowledge_scoping_setup
     ):
-        """/mcp/{agent_id} tools/list includes search_knowledge for an
-        agent with knowledge_sources, even if system_tools is empty."""
-        url = f"/mcp/{_knowledge_scoping_setup['agent_alpha_id']}"
+        """A scoped gateway discovers knowledge without exposing native tools."""
+        agent_id = _knowledge_scoping_setup["agent_alpha_id"]
+        url = f"/mcp/{agent_id}"
         _mcp_initialize(e2e_client, url, platform_admin.headers)
-        tools = _mcp_list_tools(e2e_client, url, platform_admin.headers)
-
-        names = [t["name"] for t in tools]
-        assert "search_knowledge" in names, (
-            f"search_knowledge missing from agent-scoped /mcp/<agent>: {names}"
+        names = {
+            tool["name"]
+            for tool in _mcp_list_tools(e2e_client, url, platform_admin.headers)
+        }
+        assert names == {
+            "bifrost_get_required_instructions",
+            "bifrost_search_capabilities",
+            "bifrost_execute_tool",
+            "bifrost_execute_agent",
+            "bifrost_get_execution",
+            "bifrost_search_memory",
+            "bifrost_save_memory",
+            "bifrost_remove_memory",
+        }
+        discovered = _gateway_call(
+            e2e_client,
+            platform_admin.headers,
+            "bifrost_search_capabilities",
+            {"agent_id": agent_id, "query": "search knowledge"},
+            path=url,
+        )
+        assert any(
+            tool["name"] == "search_knowledge"
+            for tool in discovered["agents"][0]["matching_tools"]
         )
 
     def test_gateway_search_uses_the_selected_agent(
@@ -367,20 +390,49 @@ class TestMCPKnowledgeScoping:
         url = f"/mcp/{_knowledge_scoping_setup['agent_alpha_id']}"
         _mcp_initialize(e2e_client, url, platform_admin.headers)
 
-        result = _mcp_call_tool(
-            e2e_client, url, platform_admin.headers, "search_knowledge",
-            {"query": _knowledge_scoping_setup["marker_alpha"]},
+        discovered = _gateway_call(
+            e2e_client,
+            platform_admin.headers,
+            "bifrost_search_capabilities",
+            {
+                "agent_id": _knowledge_scoping_setup["agent_alpha_id"],
+                "query": "search knowledge",
+            },
+            path=url,
         )
-        text_blob = str(result.get("result", ""))
+        search_ref = next(
+            tool["tool_ref"]
+            for tool in discovered["agents"][0]["matching_tools"]
+            if tool["name"] == "search_knowledge"
+        )
+        result = _gateway_call(
+            e2e_client,
+            platform_admin.headers,
+            "bifrost_execute_tool",
+            {
+                "agent_id": _knowledge_scoping_setup["agent_alpha_id"],
+                "tool_ref": search_ref,
+                "arguments": {"query": _knowledge_scoping_setup["marker_alpha"]},
+            },
+            path=url,
+        )
+        text_blob = str(result)
         assert _knowledge_scoping_setup["ns_alpha"] in text_blob, (
             f"Expected ns_alpha hit on agent-scoped query; got {result}"
         )
 
-        result = _mcp_call_tool(
-            e2e_client, url, platform_admin.headers, "search_knowledge",
-            {"query": _knowledge_scoping_setup["marker_beta"]},
+        result = _gateway_call(
+            e2e_client,
+            platform_admin.headers,
+            "bifrost_execute_tool",
+            {
+                "agent_id": _knowledge_scoping_setup["agent_alpha_id"],
+                "tool_ref": search_ref,
+                "arguments": {"query": _knowledge_scoping_setup["marker_beta"]},
+            },
+            path=url,
         )
-        text_blob = str(result.get("result", ""))
+        text_blob = str(result)
         assert _knowledge_scoping_setup["ns_beta"] not in text_blob, (
             f"agent-scoped session leaked ns_beta into a query "
             f"that should only see ns_alpha. Result: {result}"
@@ -396,14 +448,36 @@ class TestMCPKnowledgeScoping:
         url = f"/mcp/{_knowledge_scoping_setup['agent_alpha_id']}"
         _mcp_initialize(e2e_client, url, platform_admin.headers)
 
-        result = _mcp_call_tool(
-            e2e_client, url, platform_admin.headers, "search_knowledge",
+        discovered = _gateway_call(
+            e2e_client,
+            platform_admin.headers,
+            "bifrost_search_capabilities",
             {
-                "query": _knowledge_scoping_setup["marker_beta"],
-                "namespace": _knowledge_scoping_setup["ns_beta"],
+                "agent_id": _knowledge_scoping_setup["agent_alpha_id"],
+                "query": "search knowledge",
             },
+            path=url,
         )
-        text_blob = str(result.get("result", ""))
+        search_ref = next(
+            tool["tool_ref"]
+            for tool in discovered["agents"][0]["matching_tools"]
+            if tool["name"] == "search_knowledge"
+        )
+        result = _gateway_call(
+            e2e_client,
+            platform_admin.headers,
+            "bifrost_execute_tool",
+            {
+                "agent_id": _knowledge_scoping_setup["agent_alpha_id"],
+                "tool_ref": search_ref,
+                "arguments": {
+                    "query": _knowledge_scoping_setup["marker_beta"],
+                    "namespace": _knowledge_scoping_setup["ns_beta"],
+                },
+            },
+            path=url,
+        )
+        text_blob = str(result)
         assert "Access denied" in text_blob or "not accessible" in text_blob, (
             f"Cross-namespace request on agent-scoped mount was not "
             f"rejected. Got: {result}"

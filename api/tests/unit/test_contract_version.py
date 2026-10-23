@@ -395,7 +395,9 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     #
     # File move request/response DTOs for `bifrost files move` (2026-10-20).
     # ADDITIVE: new CLI command and routes; existing DTOs are unchanged.
-    "ff39a5a6350ecc40fa2f74a63a896213a938522a459c1a65a63664ce85abfbde"
+    # MCPGatewayAgentExecuteRequest (2026-10-21) is a new, additive shared
+    # request. Existing CLI/SDK DTOs and minimum version remain unchanged.
+    "d63ef8b5c07e8039c095edf135426642e169f84669966b52f7c2e39a48d460bc"
 )
 
 

@@ -1131,14 +1131,13 @@ def _middleware_roots(middleware: list) -> list[object]:
 def _mount_roots() -> dict[str, list[object]]:
     """Starlette routes and mounts outside the access list: each mounted
     app's in-scope ASGI layers, routes, middleware (FastMCP ``on_*``
-    middleware included) and lifespan, plus the dynamically registered MCP
-    ``WorkflowTool.run``."""
+    middleware included) and lifespan, plus the registered MCP gateway tools."""
     from starlette.routing import Mount, Route
 
-    from src.services.mcp_server import server as mcp_server
+    from src.services.mcp_server.tools import gateway
 
     roots: dict[str, list[object]] = {
-        "MCP WorkflowTool.run": [mcp_server.WorkflowTool.run],
+        "MCP gateway tools": [getattr(gateway, tool_id) for tool_id, _, _ in gateway.TOOLS],
         "APP middleware": _middleware_roots(app.user_middleware),
     }
     for route in app.routes:
@@ -2002,7 +2001,6 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.services.manifest_import.ManifestResolver._resolve_file_policy": (1, "internal_authorized_resource"),
     "src.services.manifest_import.ManifestResolver._resolve_table": (1, "internal_authorized_resource"),
     "src.services.mcp_server.auth.BifrostAuthProvider.verify_token": (4, "actor_facts"),
-    "src.services.mcp_server.gateway.MCPAgentGatewayService._dispatch_delegation": (2, "actor_facts"),
     "src.services.mcp_server.server._get_context_from_token": (3, "actor_facts"),
     "src.services.mcp_server.server._get_runtime_context": (3, "actor_facts"),
     "src.services.mcp_server.server.context_from_principal": (3, "actor_facts"),
@@ -2487,6 +2485,7 @@ class TestEveryPowerIsNoted:
 
         agent_routes = {
             ("POST", "/api/agent-runs/enqueue"): sdk_agent_runs.enqueue_sdk_agent_run,
+            ("POST", "/api/mcp/gateway/agents/{agent_id}/execute"): sdk_agent_runs.enqueue_sdk_agent_run,
             ("POST", "/api/agent-runs/execute"): agent_runs.execute_agent_run,
             ("POST", "/api/agent-runs/{run_id}/dry-run"): agent_runs.dry_run_agent_run,
             ("POST", "/api/agent-runs/{run_id}/rerun"): agent_runs.rerun_agent_run,
@@ -2678,7 +2677,7 @@ class TestScannerBlindSpots:
         assert [_qualname(r) for r in roots] == ["src.core.embed_middleware.EmbedScopeMiddleware.dispatch"]
         assert "promote_due_executions" in {f.__name__ for f in _scheduler_job_functions()}
         labels = set(_extra_entry_roots())
-        for label in ("MCP WorkflowTool.run", "MOUNT /", "JOB application.deploy", "CONSUMER AgentRunConsumer",
+        for label in ("MCP gateway tools", "MOUNT /", "JOB application.deploy", "CONSUMER AgentRunConsumer",
                       "STARTUP lifespan", "AUTH resolvers", "WORKER process", "SDK bifrost package"):
             assert label in labels, label
 

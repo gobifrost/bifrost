@@ -2,8 +2,8 @@
 
 Bifrost chat and autonomous runs use Pydantic AI's existing model/tool/model loop.
 The entry agent owns the conversation, evidence, final answer, budget and choice
-of when to delegate. Its approved specialist agents supply deferred instruction
-capabilities. The coordinator loads a specialist's instructions, then searches
+of when to delegate. In Automatic mode, approved specialist agents supply deferred
+instruction capabilities. The coordinator loads a specialist's instructions, then searches
 for the individual tools needed from that specialist. Loading instructions does
 not reveal the specialist's whole toolset. An isolated child run is an explicit
 choice.
@@ -34,7 +34,7 @@ An always-on native capability contributes the source toolset, filtered by
 `ToolSearch(strategy="keywords")` discovers individual eligible tools. The
 client-executed strategy keeps discovery exchanges portable in the existing
 chat DTOs while retaining the framework's provider-native wire representation
-where supported. Composed entry-agent tools also use native per-tool search;
+where supported. Automatic entry-agent tools also use native per-tool search;
 framework controls remain available. Agents without a composed delegate tree
 retain their existing tool surface.
 
@@ -78,10 +78,10 @@ conversation lacks. Specialist model profiles apply to that intentional,
 isolated delegation.
 `delegate_task` uses the existing Bifrost child executor and durable `AgentRun`
 record; it does not start a second framework-owned child model loop. Automatic
-discovery hides legacy `delegate_to_*` aliases in both entry and specialist
-toolsets. Their underlying bindings still support native children. Delegated
-mode and direct external MCP calls keep their existing delegation surface and
-use the same lifecycle.
+and Delegated modes both use this native child interface. Child bindings carry
+the target UUID and approved graph path, with no generated `delegate_to_*`
+callables. Delegated mode retains its directly available root tools; Automatic
+mode retains deferred specialist instructions and per-tool discovery.
 
 A failed child returns its run ID, status, partial output and existing sanitized
 evidence, allowing the owner to provide missing context or verify an uncertain
@@ -98,12 +98,39 @@ receipts and safe completion guards.
 
 ## Existing surfaces and durability
 
-Agents, webhooks, schedules, chat and explicit child runs keep their existing
-entry points and execution worker. Agent-scoped and gateway MCP discovery and
-execution contracts are unchanged: external coding agents can continue using
-the existing catalog and source-qualified tool references. Internal composition
-uses the same source tool resolver and effect authorization boundaries; it does
-not create another public MCP endpoint.
+Agents, webhooks, schedules, chat and explicit child runs use the existing
+execution worker. Both `/mcp` and `/mcp/{agent_id}` expose the progressive
+gateway. The scoped endpoint limits discovery, hydration, tool dispatch, direct
+agent invocation and execution lookup to its selected agent's approved graph.
+The original caller's current reach and permissions apply throughout; requesting
+broader discovery does not expand this graph.
+
+External clients invoke a discovered agent using `bifrost_execute_agent` with
+its exact UUID and structured input. This calls the same queued execution
+service as SDK agent invocation and returns its existing `run_id` receipt.
+`bifrost_get_execution` supplies status and bounded results. An external
+invocation is a root run; Bifrost does not invent a parent relationship for an
+external client. The existing `bifrost_execute_tool` remains the interface for
+an individual discovered tool.
+
+Tool definitions are resolved live. There is no per-process native workflow
+registration or refresh step. Existing MCP clients on agent-specific URLs must
+refresh their tool catalog to use the gateway surface. Custom agent prompts
+must use runtime-provided callables instead of retired synthetic delegation
+names. Saved workflow
+allow/block entries migrate to stable workflow IDs. Ambiguous entries retain
+restrictive semantics; unresolvable block entries disable MCP pending an
+administrator's review rather than permitting a formerly blocked operation.
+In MCP settings, Allow All Tools represents an unrestricted allowlist. Turning
+it off with no tools selected permits no tools or agent invocations. Explicit
+agent invocation entries authorize the whole agent; a blocked capability in its
+approved graph still prevents invoking it as a way around that restriction.
+
+Historical `delegate_to_*` steps and native `delegate_task` steps share the
+activity presentation. Persisted child run IDs and `parent_run_id` remain the
+source of truth for links and cost rollups. Parentless historical MCP runs
+appear in root history. Ambiguous historical step-to-child links are left
+unbound; no lineage or execution facts are rewritten.
 
 Chat records native load and search calls/results through the existing
 message/event contract and reconstructs typed parts on a later turn. Loaded

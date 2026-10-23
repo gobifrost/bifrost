@@ -19,7 +19,6 @@ from src.repositories.knowledge import KnowledgeDocument
 from src.services.agent_runtime import AgentRunBudget, BifrostToolset
 from src.services.authorization.enforce import Caller
 from src.services.authorization.agent_runtime import AgentRuntimeAuthorizationError
-from src.services.execution.agent_helpers import find_delegated_agent
 from src.services.execution.autonomous_agent_executor import (
     ActingUser,
     AutonomousAgentExecutor,
@@ -255,8 +254,12 @@ def authorized_agent_runtime(mock_agent):
     """
 
     async def authorize(_session, caller, agent_id):
-        assert agent_id == mock_agent.id
-        return caller, mock_agent
+        if agent_id == mock_agent.id:
+            return caller, mock_agent
+        child = next(
+            item for item in mock_agent.delegated_agents if item.id == agent_id
+        )
+        return caller, child
 
     child_caller = _canonical_caller(
         None, fallback_organization_id=mock_agent.organization_id
@@ -270,9 +273,13 @@ def authorized_agent_runtime(mock_agent):
         unit and DB/E2E coverage. Preserve this module's explicit tool scripts.
         """
         async def resolve(name, arguments):
+            target = next(iter(agent.delegated_agents), None)
             return SimpleNamespace(
                 owner=agent, original_name=name, arguments=arguments,
                 workflow_ids=kwargs["entry_workflow_ids"],
+                delegated_target_id=(
+                    target.id if name == "delegate_task" and target is not None else None
+                ),
             )
 
         def entry_toolset(execute, event_handler=None, toolset_id="test-entry"):
@@ -472,7 +479,7 @@ class TestAutonomousAgentExecutor:
         }
         tool_call = ToolCallRequest(
             id="tc1",
-            name="delegate_to_chat_specialist",
+            name="delegate_task",
             arguments={"task": "Investigate the request"},
         )
         executor = AutonomousAgentExecutor(mock_session)
@@ -500,7 +507,8 @@ class TestAutonomousAgentExecutor:
         ):
             outcome = await executor.run_delegation(
                 parent_agent=mock_agent,
-                tool_call=tool_call,
+                target_agent_id=delegated.id,
+                task=tool_call.arguments["task"],
                 conversation_id=conversation_id,
                 caller=_canonical_caller(caller),
                 acting_user_id=UUID(caller["user_id"]),
@@ -782,7 +790,7 @@ class TestAutonomousAgentExecutor:
         )
         tool_call = ToolCallRequest(
             id="tc1",
-            name="delegate_to_lifecycle_specialist",
+            name="delegate_task",
             arguments={"task": "Exercise lifecycle"},
         )
 
@@ -799,7 +807,8 @@ class TestAutonomousAgentExecutor:
         ):
             outcome = await executor.run_delegation(
                 parent_agent=mock_agent,
-                tool_call=tool_call,
+                target_agent_id=delegated.id,
+                task=tool_call.arguments["task"],
                 parent_run_id=str(uuid4()),
                 caller=caller,
                 acting_user_id=caller.principal.user_id,
@@ -855,11 +864,8 @@ class TestAutonomousAgentExecutor:
         ):
             outcome = await executor.run_delegation(
                 parent_agent=mock_agent,
-                tool_call=ToolCallRequest(
-                    id="tc1",
-                    name="delegate_to_crasher",
-                    arguments={"task": "Crash"},
-                ),
+                target_agent_id=delegated.id,
+                task="Crash",
                 parent_run_id=str(uuid4()),
                 caller=caller,
                 acting_user_id=caller.principal.user_id,
@@ -958,11 +964,8 @@ class TestAutonomousAgentExecutor:
         ):
             outcome = await executor.run_delegation(
                 parent_agent=mock_agent,
-                tool_call=ToolCallRequest(
-                    id="tc1",
-                    name="delegate_to_slow_specialist",
-                    arguments={"task": "Take too long"},
-                ),
+                target_agent_id=delegated.id,
+                task="Take too long",
                 parent_run_id=str(uuid4()),
                 caller=caller,
                 acting_user_id=caller.principal.user_id,
@@ -1041,19 +1044,19 @@ class TestAutonomousAgentExecutor:
         delegated.is_active = True
         delegated.organization_id = uuid4()
         mock_agent.delegated_agents = [delegated]
+        query_result = MagicMock()
+        query_result.scalar_one_or_none.return_value = None
+        mock_session._mock_session.execute = AsyncMock(return_value=query_result)
 
         executor = AutonomousAgentExecutor(mock_session)
         caller = _canonical_caller(
             None, fallback_organization_id=mock_agent.organization_id
         )
-        with pytest.raises(ToolError, match="outside the parent agent's organization"):
+        with pytest.raises(ToolError, match="no longer active, authorized, or in scope"):
             await executor.run_delegation(
                 parent_agent=mock_agent,
-                tool_call=ToolCallRequest(
-                    id="tc1",
-                    name="delegate_to_other_org_specialist",
-                    arguments={"task": "Cross a boundary"},
-                ),
+                target_agent_id=delegated.id,
+                task="Cross a boundary",
                 parent_run_id=str(uuid4()),
                 caller=caller,
                 acting_user_id=caller.principal.user_id,
@@ -1090,11 +1093,8 @@ class TestAutonomousAgentExecutor:
         ):
             await executor.run_delegation(
                 parent_agent=mock_agent,
-                tool_call=ToolCallRequest(
-                    id="tc1",
-                    name="delegate_to_former_specialist",
-                    arguments={"task": "Use a stale parent relationship"},
-                ),
+                target_agent_id=delegated.id,
+                task="Use a stale parent relationship",
                 parent_run_id=str(uuid4()),
                 caller=caller,
                 acting_user_id=caller.principal.user_id,
@@ -1167,11 +1167,8 @@ class TestAutonomousAgentExecutor:
         ), pytest.raises(asyncio.CancelledError):
             await executor.run_delegation(
                 parent_agent=mock_agent,
-                tool_call=ToolCallRequest(
-                    id="tc1",
-                    name="delegate_to_cancelled_specialist",
-                    arguments={"task": "Wait"},
-                ),
+                target_agent_id=delegated.id,
+                task="Wait",
                 parent_run_id=str(uuid4()),
                 caller=caller,
                 acting_user_id=caller.principal.user_id,
@@ -1233,12 +1230,9 @@ class TestAutonomousAgentExecutor:
 
         with pytest.raises(ToolError, match="Provider unavailable"):
             await executor._execute_delegation(
-                ToolCallRequest(
-                    id="tc1",
-                    name="delegate_to_broken_specialist",
-                    arguments={"task": "Do work"},
-                ),
-                mock_agent,
+                parent_agent=mock_agent,
+                target_agent_id=uuid4(),
+                task="Do work",
             )
 
     @pytest.mark.asyncio
@@ -1268,12 +1262,9 @@ class TestAutonomousAgentExecutor:
 
         with pytest.raises(ToolError, match="completed step evidence-step"):
             await executor._execute_delegation(
-                ToolCallRequest(
-                    id="tc1",
-                    name="delegate_to_slow_specialist",
-                    arguments={"task": "Do work"},
-                ),
-                mock_agent,
+                parent_agent=mock_agent,
+                target_agent_id=uuid4(),
+                task="Do work",
             )
 
     @pytest.mark.asyncio
@@ -1288,12 +1279,9 @@ class TestAutonomousAgentExecutor:
 
         with pytest.raises(ToolError, match="acting user is unavailable"):
             await executor._execute_delegation(
-                ToolCallRequest(
-                    id="tc1",
-                    name="delegate_to_missing_actor",
-                    arguments={"task": "Do work"},
-                ),
-                mock_agent,
+                parent_agent=mock_agent,
+                target_agent_id=uuid4(),
+                task="Do work",
             )
 
         executor.run_delegation.assert_not_awaited()
@@ -1644,10 +1632,10 @@ class TestAutonomousAgentExecutor:
     @pytest.mark.asyncio
     @patch("src.services.agent_runtime.model_factory.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
-    async def test_delegation_uses_find_delegated_agent(
+    async def test_delegation_uses_uuid_target_binding(
         self, mock_resolve_tools, mock_create_model, mock_session, mock_agent
     ):
-        """Delegation tool calls use find_delegated_agent to resolve target."""
+        """Delegation receives its target directly from the native child binding."""
         # Create a delegated agent
         delegated = MagicMock()
         delegated.id = uuid4()
@@ -1666,14 +1654,9 @@ class TestAutonomousAgentExecutor:
 
         mock_agent.delegated_agents = [delegated]
 
-        # Verify find_delegated_agent resolves correctly
-        found = find_delegated_agent(mock_agent, "delegate_to_sub_agent")
-        assert found is delegated
-        assert find_delegated_agent(mock_agent, "delegate_to_nonexistent") is None
-
         # Set up the main agent to make a delegation call
         mock_resolve_tools.return_value = (
-            [_tool("delegate_to_sub_agent")],
+            [_tool("delegate_task")],
             {},
         )
 
@@ -1689,7 +1672,7 @@ class TestAutonomousAgentExecutor:
                 content=None,
                 tool_calls=[ToolCallRequest(
                     id="tc1",
-                    name="delegate_to_sub_agent",
+                    name="delegate_task",
                     arguments={"task": "Summarize data"},
                 )],
                 finish_reason="tool_use",
@@ -1758,7 +1741,7 @@ class TestAutonomousAgentExecutor:
         mock_agent.delegated_agents = [delegated]
 
         mock_resolve_tools.return_value = (
-            [_tool("delegate_to_troubleshooting_agent")],
+            [_tool("delegate_task")],
             {},
         )
 
@@ -1787,7 +1770,7 @@ class TestAutonomousAgentExecutor:
                 content=None,
                 tool_calls=[ToolCallRequest(
                     id="tc1",
-                    name="delegate_to_troubleshooting_agent",
+                    name="delegate_task",
                     arguments={"task": "Fix the issue"},
                 )],
                 finish_reason="tool_use",
@@ -1852,7 +1835,7 @@ class TestAutonomousAgentExecutor:
         mock_agent.delegated_agents = [delegated]
 
         mock_resolve_tools.return_value = (
-            [_tool("delegate_to_sub_agent")],
+            [_tool("delegate_task")],
             {},
         )
 
@@ -1865,7 +1848,7 @@ class TestAutonomousAgentExecutor:
             LLMResponse(
                 content=None,
                 tool_calls=[ToolCallRequest(
-                    id="tc1", name="delegate_to_sub_agent",
+                    id="tc1", name="delegate_task",
                     arguments={"task": "Do work"},
                 )],
                 finish_reason="tool_use",
@@ -1924,7 +1907,7 @@ class TestAutonomousAgentExecutor:
         mock_agent.delegated_agents = [delegated]
 
         mock_resolve_tools.return_value = (
-            [_tool("delegate_to_deep_agent")],
+            [_tool("delegate_task")],
             {},
         )
 
@@ -1933,7 +1916,7 @@ class TestAutonomousAgentExecutor:
             LLMResponse(
                 content=None,
                 tool_calls=[ToolCallRequest(
-                    id="tc1", name="delegate_to_deep_agent",
+                    id="tc1", name="delegate_task",
                     arguments={"task": "Go deeper"},
                 )],
                 finish_reason="tool_use",
@@ -1990,7 +1973,7 @@ class TestAutonomousAgentExecutor:
         mock_agent.delegated_agents = [delegated]
 
         mock_resolve_tools.return_value = (
-            [_tool("delegate_to_slow_agent")],
+            [_tool("delegate_task")],
             {},
         )
 
@@ -2003,7 +1986,7 @@ class TestAutonomousAgentExecutor:
             LLMResponse(
                 content=None,
                 tool_calls=[ToolCallRequest(
-                    id="tc1", name="delegate_to_slow_agent",
+                    id="tc1", name="delegate_task",
                     arguments={"task": "Take forever"},
                 )],
                 finish_reason="tool_use",
@@ -2115,7 +2098,7 @@ class TestAutonomousAgentExecutor:
         mock_agent.delegated_agents = [delegated]
 
         mock_resolve_tools.return_value = (
-            [_tool("delegate_to_child_agent")],
+            [_tool("delegate_task")],
             {},
         )
 
@@ -2128,7 +2111,7 @@ class TestAutonomousAgentExecutor:
             LLMResponse(
                 content=None,
                 tool_calls=[ToolCallRequest(
-                    id="tc1", name="delegate_to_child_agent",
+                    id="tc1", name="delegate_task",
                     arguments={"task": "Do work"},
                 )],
                 finish_reason="tool_use",
@@ -2304,12 +2287,12 @@ def _contoso_portal_user(organization_id) -> ActingUser:
     )
 
 
-def _calls_one_tool(name: str) -> LegacyMockModel:
+def _calls_one_tool(name: str, arguments: dict | None = None) -> LegacyMockModel:
     llm = AsyncMock()
     llm.complete = AsyncMock(side_effect=[
         LLMResponse(
             content=None,
-            tool_calls=[ToolCallRequest(id="tc1", name=name, arguments={})],
+            tool_calls=[ToolCallRequest(id="tc1", name=name, arguments=arguments or {})],
             finish_reason="tool_use",
             input_tokens=10,
             output_tokens=5,
@@ -2435,8 +2418,12 @@ class TestRunAsActingUser:
         caller = _canonical_caller(caller_data)
         run_user_id = caller.principal.user_id
         run_as = _contoso_portal_user(contoso) if with_run_as else None
-        mock_resolve_tools.return_value = ([_tool("delegate_to_contoso_specialist")], {})
-        mock_create_model.return_value = _calls_one_tool("delegate_to_contoso_specialist")
+        delegated = SimpleNamespace(id=uuid4())
+        mock_agent.delegated_agents = [delegated]
+        mock_resolve_tools.return_value = ([_tool("delegate_task")], {})
+        mock_create_model.return_value = _calls_one_tool(
+            "delegate_task", {"task": "Check the mailbox"}
+        )
         run_id = str(uuid4())
 
         with patch.object(
@@ -2462,9 +2449,8 @@ class TestRunAsActingUser:
 
         mock_run_delegation.assert_awaited_once_with(
             parent_agent=mock_agent,
-            tool_call=ToolCallRequest(
-                id="tc1", name="delegate_to_contoso_specialist", arguments={}
-            ),
+            target_agent_id=delegated.id,
+            task="Check the mailbox",
             parent_run_id=run_id,
             caller=caller,
             acting_user_id=(
@@ -2528,11 +2514,8 @@ class TestRunAsActingUser:
         ):
             await executor.run_delegation(
                 parent_agent=mock_agent,
-                tool_call=ToolCallRequest(
-                    id="tc1",
-                    name="delegate_to_contoso_specialist",
-                    arguments={"task": "Check the mailbox"},
-                ),
+                target_agent_id=delegated.id,
+                task="Check the mailbox",
                 parent_run_id=str(uuid4()),
                 caller=caller,
                 acting_user_id=(

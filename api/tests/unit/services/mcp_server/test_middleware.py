@@ -111,7 +111,7 @@ class TestOnListTools:
                 return_value=token,
             ),
             patch(
-                "src.services.mcp_server.middleware._get_agent_id_from_scope",
+                "src.services.mcp_server.middleware.get_scoped_agent_id",
                 return_value=None,
             ),
         ):
@@ -138,7 +138,7 @@ class TestOnListTools:
                 return_value=token,
             ),
             patch(
-                "src.services.mcp_server.middleware._get_agent_id_from_scope",
+                "src.services.mcp_server.middleware.get_scoped_agent_id",
                 return_value=None,
             ),
             patch("src.core.database.get_db_context") as mock_db_context,
@@ -192,7 +192,7 @@ class TestOnCallTool:
                 return_value=token,
             ),
             patch(
-                "src.services.mcp_server.middleware._get_agent_id_from_scope",
+                "src.services.mcp_server.middleware.get_scoped_agent_id",
                 return_value=None,
             ),
         ):
@@ -220,13 +220,68 @@ class TestOnCallTool:
                 return_value=token,
             ),
             patch(
-                "src.services.mcp_server.middleware._get_agent_id_from_scope",
+                "src.services.mcp_server.middleware.get_scoped_agent_id",
                 return_value=None,
             ),
         ):
             with pytest.raises(Exception) as exc_info:
                 await middleware.on_call_tool(mock_context, call_next)
 
-        assert "not available on the unscoped MCP endpoint" in str(exc_info.value)
+        assert "not available" in str(exc_info.value)
+        assert "gateway tools" in str(exc_info.value)
         assert "bifrost_workflow_execute" in str(exc_info.value)
         call_next.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_scoped_gateway_call_rechecks_execution_and_propagates_scope(
+        self, mock_context, mock_access_token
+    ):
+        """A scoped mount carries its UUID through the gateway's REST boundary."""
+        from src.services.mcp_server.middleware import ToolFilterMiddleware
+        from src.services.mcp_server.server import MCPContext
+
+        middleware = ToolFilterMiddleware()
+        agent_id = uuid4()
+        organization_id = uuid4()
+        mcp_context = MCPContext(user_id=uuid4(), org_id=organization_id)
+        snapshot = MagicMock()
+        snapshot.agent.organization_id = organization_id
+        service = MagicMock()
+        service.get_agent_snapshot = AsyncMock(return_value=snapshot)
+        service._caller = AsyncMock(return_value=MagicMock())
+        db = MagicMock()
+        db_context = MagicMock()
+        db_context.__aenter__ = AsyncMock(return_value=db)
+        db_context.__aexit__ = AsyncMock(return_value=False)
+        mock_context.message.name = "bifrost_execute_agent"
+        call_next = AsyncMock(return_value={"run_id": str(uuid4())})
+
+        with (
+            patch(
+                "src.services.mcp_server.middleware.get_access_token",
+                return_value=mock_access_token(),
+            ),
+            patch(
+                "src.services.mcp_server.middleware.get_scoped_agent_id",
+                return_value=agent_id,
+            ),
+            patch(
+                "src.services.mcp_server.server._get_context_from_token",
+                return_value=mcp_context,
+            ),
+            patch(
+                "src.services.mcp_server.gateway.MCPAgentGatewayService",
+                return_value=service,
+            ),
+            patch("src.core.database.get_db_context", return_value=db_context),
+            patch(
+                "src.services.authorization.enforce.require_named_permission"
+            ) as require_permission,
+        ):
+            result = await middleware.on_call_tool(mock_context, call_next)
+
+        assert result == call_next.return_value
+        assert mcp_context.scoped_agent_id == agent_id
+        service.get_agent_snapshot.assert_awaited_once_with(str(agent_id))
+        require_permission.assert_called_once()
+        call_next.assert_awaited_once_with(mock_context)

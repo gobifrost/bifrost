@@ -8169,6 +8169,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mcp/gateway/agents/{agent_id}/execute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Execute Gateway Agent
+         * @description Invoke a discovered agent through the canonical queued AgentRun service.
+         */
+        post: operations["execute_gateway_agent_api_mcp_gateway_agents__agent_id__execute_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/mcp/run": {
         parameters: {
             query?: never;
@@ -8284,8 +8304,8 @@ export interface paths {
          * List Mcp Tools
          * @description List underlying MCP tools available to the current user.
          *
-         *     This inventory backs platform allow/block configuration. The unscoped
-         *     protocol endpoint itself exposes the stable gateway tools.
+         *     This inventory backs platform allow/block configuration. Both protocol
+         *     endpoints expose the stable gateway tools.
          */
         get: operations["list_mcp_tools_api_mcp_tools_get"];
         put?: never;
@@ -21833,6 +21853,20 @@ export interface components {
             service_oauth_token_id?: string | null;
         };
         /**
+         * MCPGatewayAgentExecuteRequest
+         * @description Structured input for a discovered agent's canonical queued execution.
+         */
+        MCPGatewayAgentExecuteRequest: {
+            /** Input */
+            input?: {
+                [key: string]: unknown;
+            } | null;
+            /** Output Schema */
+            output_schema?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /**
          * MCPGatewayCapabilityAgent
          * @description One agent and the bounded subset of tools relevant to the search.
          */
@@ -21923,7 +21957,7 @@ export interface components {
             };
             /**
              * Async
-             * @description Override the capability's default execution mode. When omitted, delegations run asynchronously and other tools run synchronously.
+             * @description Run workflow tools asynchronously when true. Tools run synchronously when omitted.
              */
             async?: boolean | null;
         };
@@ -45660,7 +45694,9 @@ export interface operations {
     search_gateway_capabilities_api_mcp_gateway_capabilities_search_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Bifrost-MCP-Agent-ID"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -45697,7 +45733,9 @@ export interface operations {
                 offset?: number;
                 limit?: number;
             };
-            header?: never;
+            header?: {
+                "X-Bifrost-MCP-Agent-ID"?: string | null;
+            };
             path: {
                 execution_id: string;
             };
@@ -45728,7 +45766,9 @@ export interface operations {
     execute_gateway_tool_api_mcp_gateway_agents__agent_id__tools__tool_ref__execute_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Bifrost-MCP-Agent-ID"?: string | null;
+            };
             path: {
                 agent_id: string;
                 tool_ref: string;
@@ -45748,6 +45788,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MCPGatewayExecuteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    execute_gateway_agent_api_mcp_gateway_agents__agent_id__execute_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Bifrost-MCP-Agent-ID"?: string | null;
+            };
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MCPGatewayAgentExecuteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentRunEnqueueResponse"];
                 };
             };
             /** @description Validation Error */

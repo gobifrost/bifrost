@@ -798,28 +798,6 @@ TOOLS = [
 ]
 
 
-def register_tools(mcp: Any, get_context_fn: Any) -> None:
-    """Register all apps tools with FastMCP."""
-    from src.services.mcp_server.generators.fastmcp_generator import register_tool_with_context
-
-    tool_funcs = {
-        "bifrost_app_list": bifrost_app_list,
-        "bifrost_app_create": bifrost_app_create,
-        "bifrost_app_get": bifrost_app_get,
-        "bifrost_app_update": bifrost_app_update,
-        "bifrost_app_delete": bifrost_app_delete,
-        "bifrost_app_publish": bifrost_app_publish,
-        "bifrost_app_replace": bifrost_app_replace,
-        "bifrost_app_validate": bifrost_app_validate,
-        "push_files": push_files,
-        "bifrost_app_dependencies_get": bifrost_app_dependencies_get,
-        "bifrost_app_dependencies_update": bifrost_app_dependencies_update,
-    }
-
-    for tool_id, _name, description in TOOLS:
-        register_tool_with_context(mcp, tool_funcs[tool_id], tool_id, description, get_context_fn)
-
-
 __all__ = [
     "TOOLS",
     "bifrost_app_create",
@@ -834,5 +812,4 @@ __all__ = [
     "bifrost_app_validate",
     "get_app_schema",
     "push_files",
-    "register_tools",
 ]

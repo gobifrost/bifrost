@@ -137,6 +137,8 @@ async def rest_client(context: "MCPContext") -> AsyncIterator[httpx.AsyncClient]
         # this bridge call's audit rows with surface="mcp".
         "X-Bifrost-Surface": "mcp",
     }
+    if context.scoped_agent_id is not None:
+        headers["X-Bifrost-MCP-Agent-ID"] = str(context.scoped_agent_id)
 
     override_base = os.environ.get(_BRIDGE_URL_ENV)
     if override_base:

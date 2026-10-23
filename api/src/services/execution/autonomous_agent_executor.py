@@ -22,14 +22,14 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import redis.asyncio as aioredis
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 from pydantic_ai import Agent as PydanticAgent
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.usage import RunUsage
 
-from src.models.orm.agents import Agent, AgentDelegation
+from src.models.orm.agents import Agent
 from src.models.orm.agent_runs import AgentRun, AgentRunStep
 from src.services.authorization.enforce import Caller, load_caller
 from src.services.authorization.agent_runtime import (
@@ -43,7 +43,6 @@ from src.core.pubsub import publish_agent_run_step
 from src.services.agent_run_step_streams import append_agent_run_step
 from src.services.execution.agent_helpers import (
     build_agent_system_prompt,
-    find_delegated_agent,
     parse_mcp_tool_name,
     resolve_agent_tools,
 )
@@ -65,6 +64,7 @@ from src.services.agent_runtime import (
 )
 from src.services.agent_runtime.empty_output import EmptyOutputCircuitBreaker
 from src.services.agent_runtime.composition import build_agent_composition
+from src.services.agent_runtime.graph import load_approved_child
 from src.services.ai_behavior_service import (
     AGENT_EXECUTION_MODE_METADATA_KEY,
     AgentExecutionMode,
@@ -535,7 +535,7 @@ class AutonomousAgentExecutor:
                 caller_user_id=self._acting_user_id,
             )
         composition = None
-        if self._agent_execution_mode == "automatic" and agent.delegated_agents:
+        if agent.delegated_agents:
             try:
                 composition = await build_agent_composition(
                     agent,
@@ -544,6 +544,7 @@ class AutonomousAgentExecutor:
                     caller_user_id=self._acting_user_id,
                     entry_definitions=tool_definitions,
                     entry_workflow_ids=self._tool_workflow_id_map,
+                    automatic=self._agent_execution_mode == "automatic",
                 )
             except AgentRuntimeAuthorizationError as exc:
                 return {
@@ -643,16 +644,22 @@ class AutonomousAgentExecutor:
                 raise AgentRunCancelled("Cancelled by user during tool execution")
             self._last_workflow_execution_id = None
             self._last_workflow_execution_is_error = False
-            if name.startswith("delegate_to_") or name == "delegate_task":
+            if name == "delegate_task":
                 self._last_delegation_run_id = None
             owner = agent
             workflow_ids = None
             if composition is not None:
                 binding = await composition.resolve_call(name, arguments)
                 owner = binding.owner
-                name = binding.original_name
                 arguments = binding.arguments
                 workflow_ids = binding.workflow_ids
+                if binding.delegated_target_id is not None:
+                    return await self._execute_delegation(
+                        parent_agent=owner,
+                        target_agent_id=binding.delegated_target_id,
+                        task=arguments["task"],
+                    )
+                name = binding.original_name
             return await self._execute_tool(
                 ToolCallRequest(id=tool_call_id, name=name, arguments=arguments),
                 owner,
@@ -694,9 +701,7 @@ class AutonomousAgentExecutor:
                 content["result"] = result
                 if result_truncated:
                     content["result_truncated"] = True
-            if self._last_delegation_run_id and (
-                event.tool_name.startswith("delegate_to_") or event.tool_name == "delegate_task"
-            ):
+            if self._last_delegation_run_id and event.tool_name == "delegate_task":
                 content["child_run_id"] = self._last_delegation_run_id
             if self._last_workflow_execution_id:
                 content["execution_id"] = self._last_workflow_execution_id
@@ -925,10 +930,6 @@ class AutonomousAgentExecutor:
         # Knowledge search
         if tool_call.name == "search_knowledge" and agent.knowledge_sources:
             return await self._execute_knowledge_search(tool_call, agent)
-
-        # Delegation
-        if tool_call.name.startswith("delegate_to_"):
-            return await self._execute_delegation(tool_call, agent)
 
         # System tools
         if tool_call.name in (agent.system_tools or []):
@@ -1222,7 +1223,8 @@ class AutonomousAgentExecutor:
         self,
         *,
         parent_agent: Agent,
-        tool_call: ToolCallRequest,
+        target_agent_id: UUID,
+        task: str,
         parent_run_id: str | None = None,
         conversation_id: UUID | None = None,
         caller: Caller,
@@ -1242,33 +1244,15 @@ class AutonomousAgentExecutor:
             raise ToolError("Agent run was cancelled")
         if self._delegation_depth >= MAX_DELEGATION_DEPTH:
             logger.warning(
-                f"Delegation depth limit ({MAX_DELEGATION_DEPTH}) exceeded for {tool_call.name}"
+                f"Delegation depth limit ({MAX_DELEGATION_DEPTH}) exceeded for {target_agent_id}"
             )
             raise ToolError(
                 f"Delegation depth limit ({MAX_DELEGATION_DEPTH}) exceeded — "
                 "cannot delegate further."
             )
 
-        task = tool_call.arguments.get("task", "")
-        if not task:
+        if not isinstance(task, str) or not task.strip():
             raise ToolError("No task provided for delegation")
-
-        target_agent = find_delegated_agent(parent_agent, tool_call.name)
-        if not target_agent:
-            raise ToolError(f"Delegation target for '{tool_call.name}' not found.")
-        if (
-            target_agent.organization_id is not None
-            and target_agent.organization_id != parent_agent.organization_id
-        ):
-            raise ToolError(
-                f"Delegation target '{target_agent.name}' is outside the "
-                "parent agent's organization."
-            )
-
-        logger.info(
-            f"Agent '{parent_agent.name}' delegating to '{target_agent.name}' "
-            f"(depth={self._delegation_depth + 1}/{MAX_DELEGATION_DEPTH})"
-        )
 
         sub_run_id = uuid4()
         effective_execution_mode = agent_execution_mode or self._agent_execution_mode
@@ -1280,33 +1264,28 @@ class AutonomousAgentExecutor:
             delegation_org_id = caller.principal.organization_id
 
         async with self._session_factory() as db:
-            result = await db.execute(
-                select(Agent)
-                .join(
-                    AgentDelegation,
-                    AgentDelegation.child_agent_id == Agent.id,
-                )
-                .options(
-                    selectinload(Agent.tools),
-                    selectinload(Agent.delegated_agents),
-                )
-                .where(
-                    Agent.id == target_agent.id,
-                    Agent.is_active.is_(True),
-                    AgentDelegation.parent_agent_id == parent_agent.id,
-                    or_(
-                        Agent.organization_id.is_(None),
-                        Agent.organization_id == parent_agent.organization_id,
-                    ),
-                )
-                .with_for_update()
+            refreshed_caller, live_parent = await authorize_agent_execution(
+                db, caller, parent_agent.id
             )
-            target_agent = result.scalar_one_or_none()
+            target_agent = await load_approved_child(
+                db,
+                parent=live_parent,
+                child_id=target_agent_id,
+                for_update=True,
+            )
             if target_agent is None:
                 raise ToolError(
-                    f"Delegation target for '{tool_call.name}' is no longer "
+                    "Delegation target is no longer "
                     "active, authorized, or in scope."
                 )
+            _, target_agent = await authorize_agent_execution(
+                db, refreshed_caller, target_agent.id
+            )
+
+            logger.info(
+                f"Agent '{live_parent.name}' delegating to '{target_agent.name}' "
+                f"(depth={self._delegation_depth + 1}/{MAX_DELEGATION_DEPTH})"
+            )
 
             sub_run = AgentRun(
                 id=sub_run_id,
@@ -1315,10 +1294,10 @@ class AutonomousAgentExecutor:
                 trigger_source=(
                     f"conversation:{conversation_id}"
                     if conversation_id
-                    else f"agent:{parent_agent.name}"
+                    else f"agent:{live_parent.name}"
                 ),
                 conversation_id=conversation_id,
-                input={"task": task, "_delegated_from": parent_agent.name},
+                input={"task": task, "_delegated_from": live_parent.name},
                 status="running",
                 org_id=delegation_org_id,
                 caller_user_id=str(caller.principal.user_id),
@@ -1377,7 +1356,7 @@ class AutonomousAgentExecutor:
                     agent=target_agent,
                     input_data={
                         "task": task,
-                        "_delegated_from": parent_agent.name,
+                        "_delegated_from": live_parent.name,
                     },
                     run_id=str(sub_run_id),
                     caller=child_caller,
@@ -1558,8 +1537,10 @@ class AutonomousAgentExecutor:
 
     async def _execute_delegation(
         self,
-        tool_call: ToolCallRequest,
-        agent: Agent,
+        *,
+        parent_agent: Agent,
+        target_agent_id: UUID,
+        task: str,
     ) -> str:
         """Execute delegation for an autonomous parent run."""
         if self._caller is None:
@@ -1567,8 +1548,9 @@ class AutonomousAgentExecutor:
         if self._acting_user_id is None:
             raise ToolError("Agent run acting user is unavailable")
         outcome = await self.run_delegation(
-            parent_agent=agent,
-            tool_call=tool_call,
+            parent_agent=parent_agent,
+            target_agent_id=target_agent_id,
+            task=task,
             parent_run_id=self._current_run_id,
             caller=self._caller,
             acting_user_id=self._acting_user_id,

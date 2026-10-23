@@ -268,6 +268,49 @@ describe("run activity projection", () => {
 		});
 	});
 
+	it("links a native delegate_task result to its persisted child run", () => {
+		const activity = buildRunActivity(
+			[
+				step(
+					"tool_call",
+					{
+						tool_name: "delegate_task",
+						arguments: {
+							agent_name: "Endpoint Evidence Collector",
+							task: "Collect endpoint evidence",
+						},
+					},
+					1,
+				),
+				step(
+					"tool_result",
+					{
+						tool_name: "delegate_task",
+						result: { status: "complete" },
+						child_run_id: "child-1",
+					},
+					2,
+				),
+			],
+			["child-1"],
+			[
+				child(
+					"child-1",
+					"Endpoint Evidence Collector",
+					"Collect endpoint evidence",
+				),
+			],
+		);
+
+		expect(activity).toHaveLength(1);
+		expect(activity[0]).toMatchObject({
+			kind: "delegation",
+			childRunId: "child-1",
+			title: "Endpoint Evidence Collector",
+			task: "Collect endpoint evidence",
+		});
+	});
+
 	it("keeps a failed handoff identifiable as delegated work", () => {
 		const activity = buildRunActivity([
 			step(

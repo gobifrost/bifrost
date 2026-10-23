@@ -14,6 +14,7 @@ GATEWAY_TOOLS = {
     "bifrost_get_required_instructions",
     "bifrost_search_capabilities",
     "bifrost_execute_tool",
+    "bifrost_execute_agent",
     "bifrost_get_execution",
     "bifrost_search_memory",
     "bifrost_save_memory",
@@ -60,11 +61,12 @@ def _mcp_request(
     return payload
 
 
-def _call_gateway(token: str, name: str, arguments: dict) -> dict:
+def _call_gateway(token: str, name: str, arguments: dict, *, path: str = "/mcp") -> dict:
     payload = _mcp_request(
         token,
         "tools/call",
         {"name": name, "arguments": arguments},
+        path=path,
     )
     result = payload["result"]
     structured = result.get("structuredContent")
@@ -167,7 +169,7 @@ class TestMCPAgentGateway:
             params={"path": path},
         )
 
-    def test_default_and_agent_scoped_surfaces_are_distinct(self):
+    def test_default_and_agent_scoped_surfaces_share_the_gateway(self):
         initialize = _mcp_request(
             self.token,
             "initialize",
@@ -202,11 +204,25 @@ class TestMCPAgentGateway:
             path=f"/mcp/{self.agent_id}",
         )["result"]["tools"]
         scoped_names = {tool["name"] for tool in scoped_tools}
-        assert any(
-            name == self.function_name or name.endswith(self.function_name)
-            for name in scoped_names
+        assert scoped_names == GATEWAY_TOOLS
+        assert not any(name.startswith("delegate_to_") for name in scoped_names)
+
+    def test_scoped_gateway_cannot_leave_its_agent_graph(self):
+        path = f"/mcp/{self.delegated_agent_id}"
+        discovered = _call_gateway(
+            self.token,
+            "bifrost_search_capabilities",
+            {"query": self.agent_name, "discovery_scope": "all"},
+            path=path,
         )
-        assert not (scoped_names & GATEWAY_TOOLS)
+        assert all(agent["id"] == self.delegated_agent_id for agent in discovered["agents"])
+        for name, arguments in (
+            ("bifrost_search_capabilities", {"agent_id": self.agent_id}),
+            ("bifrost_execute_agent", {"agent_id": self.agent_id, "input": {"task": "Must not run"}}),
+            ("bifrost_execute_tool", {"agent_id": self.agent_id, "tool_ref": str(uuid.uuid4()), "arguments": {}}),
+        ):
+            denied = _call_gateway(self.token, name, arguments, path=path)
+            assert denied["code"] == "AGENT_NOT_FOUND_OR_FORBIDDEN"
 
     def test_required_instructions_can_be_empty(self):
         result = _call_gateway(
@@ -322,6 +338,43 @@ class TestMCPAgentGateway:
                 headers=self.headers,
             )
 
+    def test_direct_agent_invocation_respects_mcp_restrictions(self):
+        config_url = f"{TEST_API_URL}/api/mcp/config"
+        original_response = requests.get(config_url, headers=self.headers)
+        assert original_response.status_code == 200, original_response.text
+        original = original_response.json()
+        try:
+            for allowed, blocked in (([], []), (None, ["get_docs"])):
+                changed = requests.put(
+                    config_url,
+                    headers=self.headers,
+                    json={
+                        "enabled": True,
+                        "allowed_tool_ids": allowed,
+                        "blocked_tool_ids": blocked,
+                    },
+                )
+                assert changed.status_code == 200, changed.text
+                denied = _call_gateway(
+                    self.token,
+                    "bifrost_execute_agent",
+                    {"agent_id": self.agent_id, "input": {"task": "Must not run"}},
+                    path=f"/mcp/{self.agent_id}",
+                )
+                assert denied["code"] == "AUTHORIZATION_FORBIDDEN"
+                assert "run_id" not in denied
+        finally:
+            if original["is_configured"]:
+                restored = requests.put(
+                    config_url, headers=self.headers,
+                    json={key: original[key] for key in (
+                        "enabled", "allowed_tool_ids", "blocked_tool_ids",
+                    )},
+                )
+            else:
+                restored = requests.delete(config_url, headers=self.headers)
+            assert restored.status_code == 200, restored.text
+
     def test_live_discovery_schema_execution_and_revocation(self):
         found = _call_gateway(
             self.token,
@@ -343,7 +396,7 @@ class TestMCPAgentGateway:
         selected_agent = loaded["agents"][0]
         assert selected_agent["instructions"] == self.prompt
         assert selected_agent["matching_tools"] == []
-        assert selected_agent["total_tools"] == 3
+        assert selected_agent["total_tools"] == 2
         assert selected_agent["returned_tools"] == 0
         assert selected_agent["complete"] is False
 
@@ -361,18 +414,17 @@ class TestMCPAgentGateway:
         assert workflow_tool["supports_async"] is True
         assert workflow_tool["default_async"] is False
 
-        delegation_search = _call_gateway(
+        child_search = _call_gateway(
             self.token,
             "bifrost_search_capabilities",
-            {"agent_id": self.agent_id, "query": self.delegated_agent_name},
+            {"query": self.delegated_agent_name},
+            path=f"/mcp/{self.agent_id}",
         )
-        delegation_tool = next(
-            tool
-            for tool in delegation_search["agents"][0]["matching_tools"]
-            if tool["source"] == "delegation"
+        assert any(agent["id"] == self.delegated_agent_id for agent in child_search["agents"])
+        assert all(
+            tool["source"] != "delegation"
+            for agent in child_search["agents"] for tool in agent["matching_tools"]
         )
-        assert delegation_tool["supports_async"] is True
-        assert delegation_tool["default_async"] is True
 
         system_search = _call_gateway(
             self.token,
@@ -442,26 +494,33 @@ class TestMCPAgentGateway:
         assert async_result["result"] == [{"echo": "later"}]
         assert async_result["result_page"]["has_more"] is False
 
+        # Ownership alone cannot expose a parent's workflow through a child-only URL.
+        outside_execution = _call_gateway(
+            self.token,
+            "bifrost_get_execution",
+            {"execution_id": async_receipt["execution_id"]},
+            path=f"/mcp/{self.delegated_agent_id}",
+        )
+        assert outside_execution["code"] == "EXECUTION_NOT_FOUND_OR_FORBIDDEN"
+
         delegation_receipt = _call_gateway(
             self.token,
-            "bifrost_execute_tool",
+            "bifrost_execute_agent",
             {
-                "agent_id": self.agent_id,
-                "tool_ref": delegation_tool["tool_ref"],
-                "arguments": {"task": "Return a concise gateway proof."},
+                "agent_id": self.delegated_agent_id,
+                "input": {"task": "Return a concise gateway proof."},
             },
+            path=f"/mcp/{self.agent_id}",
         )
-        assert delegation_receipt["async"] is True
-        assert delegation_receipt["execution_type"] == "agent_run"
-        assert delegation_receipt["status"] == "Pending"
-        assert delegation_receipt["execution_id"]
+        assert delegation_receipt["status"] == "queued"
+        assert delegation_receipt["run_id"]
 
         deadline = time.monotonic() + 15
         while True:
             delegation_result = _call_gateway(
                 self.token,
                 "bifrost_get_execution",
-                {"execution_id": delegation_receipt["execution_id"]},
+                {"execution_id": delegation_receipt["run_id"]},
             )
             if delegation_result["status"] not in {"Pending", "Running"}:
                 break
@@ -474,6 +533,30 @@ class TestMCPAgentGateway:
             assert delegation_result["error"]
         else:
             assert delegation_result["result"]
+
+        # An external MCP invocation is a canonical root run, not a fabricated child.
+        run = requests.get(
+            f"{TEST_API_URL}/api/agent-runs/{delegation_receipt['run_id']}",
+            headers=self.headers,
+        )
+        assert run.status_code == 200, run.text
+        assert run.json()["parent_run_id"] is None
+        assert run.json()["trigger_type"] == "api"
+
+        removed_child = requests.put(
+            f"{TEST_API_URL}/api/agents/{self.agent_id}",
+            headers=self.headers,
+            json={"delegated_agent_ids": []},
+        )
+        assert removed_child.status_code == 200, removed_child.text
+        assert removed_child.json()["delegated_agent_ids"] == []
+        revoked_child = _call_gateway(
+            self.token,
+            "bifrost_execute_agent",
+            {"agent_id": self.delegated_agent_id, "input": {"task": "Must not run"}},
+            path=f"/mcp/{self.agent_id}",
+        )
+        assert revoked_child["code"] == "AGENT_NOT_FOUND_OR_FORBIDDEN"
 
         unsupported_async = _call_gateway(
             self.token,

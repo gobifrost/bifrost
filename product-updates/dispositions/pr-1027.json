@@ -1,0 +1,15 @@
+{
+  "key": "pr:1027",
+  "classification": "highlight",
+  "entry_ids": [
+    "2856e2fa-c7f2-4c67-9ed2-c9e5e4649bf5"
+  ],
+  "action_required": true,
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1027",
+      "Draft action-required notice: scoped MCP tools/list now exposes the shared gateway instead of native workflow names; custom synthetic delegation references are removed. Verified by scoped MCP wire, native runtime, configuration migration and browser tests. Awaiting maintainer approval of this upgrade notice and merge."
+    ]
+  }
+}

@@ -8,7 +8,7 @@ Architecture:
     - FastMCP server is mounted as an ASGI sub-application at /mcp
     - JWT Bearer token authentication using Bifrost's existing auth system
     - /mcp exposes stable agent discovery, dispatch, instruction, and memory tools
-    - /mcp/{agent_id} preserves the native agent-scoped tool surface
+    - /mcp/{agent_id} scopes the same gateway to its approved agent graph
 
 Authentication:
     Users authenticate through Bifrost's normal login flow (UI or CLI) and use
@@ -29,15 +29,17 @@ Usage:
 """
 
 import logging
-from typing import NoReturn
+from typing import Annotated, NoReturn
+from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Header, HTTPException, Query, status
 from fastapi.responses import Response
 from starlette.middleware.cors import CORSMiddleware
 
 from src.config import get_settings
 from src.core.auth import CurrentActiveUser
-from shared.run_lineage import principal_lineage
+from shared.models import MCPGatewayAgentExecuteRequest
+from src.models.contracts.agent_runs import AgentRunEnqueueResponse
 from src.core.db_deps import DbSession
 from src.models.contracts.mcp import (
     MCPConfigRequest,
@@ -68,12 +70,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 
 
-def _gateway_service(current_user: CurrentActiveUser):
+GatewayAgentScope = Annotated[UUID | None, Header(alias="X-Bifrost-MCP-Agent-ID")]
+
+
+def _gateway_service(current_user: CurrentActiveUser, scoped_agent_id: UUID | None = None):
     """Create the canonical gateway service for an authenticated REST caller."""
     from src.services.mcp_server.gateway import MCPAgentGatewayService
     from src.services.mcp_server.server import context_from_principal
 
-    return MCPAgentGatewayService(context_from_principal(current_user))
+    context = context_from_principal(current_user)
+    context.scoped_agent_id = scoped_agent_id
+    return MCPAgentGatewayService(context)
 
 
 async def _require_mcp_enabled(db: DbSession) -> None:
@@ -118,11 +125,12 @@ async def search_gateway_capabilities(
     request: MCPGatewayCapabilitySearchRequest,
     current_user: CurrentActiveUser,
     db: DbSession,
+    scoped_agent_id: GatewayAgentScope = None,
 ) -> dict:
     """Search agents and tools or hydrate one exact capability."""
     await _require_mcp_enabled(db)
     try:
-        return await _gateway_service(current_user).search_capabilities(
+        return await _gateway_service(current_user, scoped_agent_id).search_capabilities(
             query=request.query,
             agent_id=request.agent_id,
             tool_ref=request.tool_ref,
@@ -141,6 +149,7 @@ async def get_gateway_execution(
     execution_id: str,
     current_user: CurrentActiveUser,
     db: DbSession,
+    scoped_agent_id: GatewayAgentScope = None,
     result_path: str = "",
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
@@ -148,7 +157,7 @@ async def get_gateway_execution(
     """Read compact status and a bounded result page for an owned execution."""
     await _require_mcp_enabled(db)
     try:
-        return await _gateway_service(current_user).get_execution(
+        return await _gateway_service(current_user, scoped_agent_id).get_execution(
             execution_id,
             result_path=result_path,
             offset=offset,
@@ -168,19 +177,52 @@ async def execute_gateway_tool(
     request: MCPGatewayExecuteRequest,
     current_user: CurrentActiveUser,
     db: DbSession,
+    scoped_agent_id: GatewayAgentScope = None,
 ) -> dict:
     """Re-resolve, validate, and execute an agent-bound tool."""
     await _require_mcp_enabled(db)
     try:
-        return await _gateway_service(current_user).execute_agent_tool(
+        return await _gateway_service(current_user, scoped_agent_id).execute_agent_tool(
             agent_id,
             tool_ref,
             request.arguments,
             async_execution=request.async_,
-            lineage=await principal_lineage(db, current_user),
         )
     except Exception as exc:
         _raise_gateway_http_error(exc)
+
+
+@router.post(
+    "/gateway/agents/{agent_id}/execute",
+    response_model=AgentRunEnqueueResponse,
+)
+async def execute_gateway_agent(
+    agent_id: UUID,
+    request: MCPGatewayAgentExecuteRequest,
+    current_user: CurrentActiveUser,
+    db: DbSession,
+    scoped_agent_id: GatewayAgentScope = None,
+) -> AgentRunEnqueueResponse:
+    """Invoke a discovered agent through the canonical queued AgentRun service."""
+    from shared.sdk_agent_runs import SdkAgentRunError, enqueue_sdk_agent_run
+
+    await _require_mcp_enabled(db)
+    try:
+        await _gateway_service(current_user, scoped_agent_id).authorize_agent_invocation(agent_id)
+        result = await enqueue_sdk_agent_run(
+            db,
+            current_user,
+            agent_id=agent_id,
+            input_data=request.input,
+            output_schema=request.output_schema,
+        )
+    except SdkAgentRunError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except Exception as exc:
+        _raise_gateway_http_error(exc)
+    if not isinstance(result, AgentRunEnqueueResponse):
+        raise HTTPException(status_code=409, detail="Agent is paused")
+    return result
 
 
 # =============================================================================
@@ -286,8 +328,8 @@ def get_mcp_asgi_app():
     """
     Create the FastMCP ASGI application for mounting.
 
-    This creates a FastMCP server with the stable gateway tools plus the native
-    tools retained for agent-scoped URLs, then returns the root-mounted ASGI app.
+    This creates a FastMCP server with the same stable gateway tools for global
+    and agent-scoped URLs, then returns the root-mounted ASGI app.
 
     Authentication:
         Uses BifrostAuthProvider which implements OAuth 2.1 with:
@@ -314,7 +356,6 @@ def get_mcp_asgi_app():
     from src.services.mcp_server.server import (
         BifrostMCPServer,
         MCPContext,
-        _register_workflow_tools,
     )
 
     # Create OAuth 2.1 auth provider for Bifrost
@@ -351,17 +392,9 @@ def get_mcp_asgi_app():
     # Store original lifespan before wrapping
     original_lifespan = getattr(mcp_app, 'lifespan', None)
 
-    # Create combined lifespan that registers workflow tools on startup
     @asynccontextmanager
     async def combined_lifespan(app):
-        """Combined lifespan that registers workflow tools and runs FastMCP lifespan."""
-        # Register workflow tools on startup
-        try:
-            count = await _register_workflow_tools(fastmcp_server)
-            logger.info(f"Registered {count} workflow tools during MCP startup")
-        except Exception as e:
-            logger.warning(f"Failed to register workflow tools: {e}")
-
+        """Run the gateway transport lifespan without a static tool registry."""
         # Run original FastMCP lifespan if present
         if original_lifespan:
             async with original_lifespan(app):
@@ -498,8 +531,8 @@ async def list_mcp_tools(
     """
     List underlying MCP tools available to the current user.
 
-    This inventory backs platform allow/block configuration. The unscoped
-    protocol endpoint itself exposes the stable gateway tools.
+    This inventory backs platform allow/block configuration. Both protocol
+    endpoints expose the stable gateway tools.
     """
     from src.services.mcp_server.tool_access import MCPToolAccessService
 

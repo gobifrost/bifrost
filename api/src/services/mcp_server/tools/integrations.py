@@ -383,20 +383,3 @@ TOOLS = [
     ("bifrost_integration_mapping_create", "Add Integration Mapping", "Create an integration↔organization mapping."),
     ("bifrost_integration_mapping_update", "Update Integration Mapping", "Update an integration mapping by ID."),
 ]
-
-
-def register_tools(mcp: Any, get_context_fn: Any) -> None:
-    """Register all integrations tools with FastMCP."""
-    from src.services.mcp_server.generators.fastmcp_generator import register_tool_with_context
-
-    tool_funcs = {
-        "bifrost_integration_list": bifrost_integration_list,
-        "bifrost_integration_get": bifrost_integration_get,
-        "bifrost_integration_create": bifrost_integration_create,
-        "bifrost_integration_update": bifrost_integration_update,
-        "bifrost_integration_mapping_create": bifrost_integration_mapping_create,
-        "bifrost_integration_mapping_update": bifrost_integration_mapping_update,
-    }
-
-    for tool_id, name, description in TOOLS:
-        register_tool_with_context(mcp, tool_funcs[tool_id], tool_id, description, get_context_fn)

@@ -353,12 +353,13 @@ class TestMCPStatusEndpoint(_PersistedMCPCallers):
             "bifrost_get_required_instructions",
             "bifrost_search_capabilities",
             "bifrost_execute_tool",
+            "bifrost_execute_agent",
             "bifrost_get_execution",
             "bifrost_search_memory",
             "bifrost_save_memory",
             "bifrost_remove_memory",
         }
-        assert data["tools_count"] == 7
+        assert data["tools_count"] == 8
 
 
 # ==================== Bifrost Agent Plugin Endpoint Tests ====================

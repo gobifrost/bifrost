@@ -5111,6 +5111,20 @@
     "mcp_tool": null,
     "method": "POST",
     "operation_id": null,
+    "path": "/api/mcp/gateway/agents/{agent_id}/execute",
+    "permission": "agents.execute",
+    "reason": "Canonical SDK enqueue enforces current original-user permission, Agent sharing, execution identity and Solution availability; MCP configuration and endpoint graph are additional restrictions."
+  },
+  {
+    "access_class": "permission",
+    "boundary": "organization",
+    "current_gate": "authenticated",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "POST",
+    "operation_id": null,
     "path": "/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}/execute",
     "permission": "agents.execute",
     "reason": "Current original-user named permissions and reach; shared resource and private ownership gates remain independent."

@@ -1,5 +1,7 @@
 """Contracts for the shared agent-runtime composition adapter."""
 
+import json
+
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -20,17 +22,19 @@ from pydantic_ai.models.function import FunctionModel
 from src.services.agent_runtime.composition import (
     AgentComposition,
     COMPOSITION_INSTRUCTIONS,
+    DELEGATED_COMPOSITION_INSTRUCTIONS,
     AgentCompositionError,
+    ChildBinding,
     ToolBinding,
     _DeferredAgent,
     _capability_id,
-    _delegate_name,
+    composition_instructions,
     _qualified_tool_name,
 )
 from src.services.llm import ToolDefinition
 
 
-def _composition(*, deferred=(), delegates=None, bindings=None):
+def _composition(*, deferred=(), delegates=None, bindings=None, automatic=True):
     root_id = uuid4()
     return AgentComposition(
         root_id=root_id,
@@ -42,6 +46,7 @@ def _composition(*, deferred=(), delegates=None, bindings=None):
         bindings=bindings or {},
         deferred=deferred,
         isolated_delegates=delegates or {},
+        automatic=automatic,
     )
 
 
@@ -54,7 +59,19 @@ def test_composition_instructions_prefer_discovered_same_conversation_tools():
     assert "same-conversation specialist tools by default" in instructions
     assert "context isolation or independent review" in instructions
     assert "permission workaround" in instructions
-    assert "legacy delegate_to_" not in instructions
+    assert "delegate_to_" not in instructions
+
+
+def test_delegated_composition_instructions_name_only_direct_tools_and_native_children():
+    """Delegated mode must not prompt the model to use unavailable discovery."""
+    instructions = " ".join(composition_instructions(automatic=False).split())
+
+    assert instructions == " ".join(DELEGATED_COMPOSITION_INSTRUCTIONS.split())
+    assert "exact callable name and input schema" in instructions
+    assert "directly by the runtime" in instructions
+    assert "delegate_task" in instructions
+    assert "search_tools" not in instructions
+    assert "load an approved capability" not in instructions
 
 
 @pytest.mark.asyncio
@@ -278,25 +295,16 @@ async def test_guessed_action_name_is_corrected_before_discovery_and_effect():
 
 
 @pytest.mark.asyncio
-async def test_automatic_toolsets_hide_legacy_delegate_aliases_but_keep_native_subagents():
-    """Automatic discovery exposes domain tools and native isolation only."""
+async def test_automatic_toolsets_keep_native_subagents_outside_discovery():
+    """Automatic discovery defers domain tools while native children stay available."""
     root_id, child_id = uuid4(), uuid4()
     child = SimpleNamespace(id=child_id, name="Case Specialist", system_prompt="Find cases.")
     capability_id = _capability_id(child_id)
-    delegate_name = _delegate_name(child)
+    delegate_name = child_id.hex
     root_case = ToolDefinition(
         name="halopsa_get_case",
         description="Get one HaloPSA case.",
         parameters={"type": "object", "properties": {}},
-    )
-    root_legacy_delegate = ToolDefinition(
-        name="delegate_to_case_specialist",
-        description="Legacy delegation alias.",
-        parameters={
-            "type": "object",
-            "properties": {"task": {"type": "string"}},
-            "required": ["task"],
-        },
     )
     child_case = ToolDefinition(
         name="halopsa_search_case_notes",
@@ -307,13 +315,7 @@ async def test_automatic_toolsets_hide_legacy_delegate_aliases_but_keep_native_s
             "required": ["case_id"],
         },
     )
-    child_legacy_delegate = ToolDefinition(
-        name="delegate_to_nested_specialist",
-        description="Legacy nested delegation alias.",
-        parameters=root_legacy_delegate.parameters,
-    )
     qualified_child_case = _qualified_tool_name(child_id, child_case.name)
-    qualified_child_legacy = _qualified_tool_name(child_id, child_legacy_delegate.name)
     bindings = {
         definition.name: ToolBinding(
             name=definition.name,
@@ -323,7 +325,7 @@ async def test_automatic_toolsets_hide_legacy_delegate_aliases_but_keep_native_s
             capability_id=None,
             parameters=definition.parameters,
         )
-        for definition in (root_case, root_legacy_delegate)
+        for definition in (root_case,)
     }
     bindings.update({
         qualified_child_case: ToolBinding(
@@ -334,23 +336,11 @@ async def test_automatic_toolsets_hide_legacy_delegate_aliases_but_keep_native_s
             capability_id=capability_id,
             parameters=child_case.parameters,
         ),
-        qualified_child_legacy: ToolBinding(
-            name=qualified_child_legacy,
-            owner_id=child_id,
-            original_name=child_legacy_delegate.name,
-            path=(root_id, child_id),
-            capability_id=capability_id,
-            parameters=child_legacy_delegate.parameters,
-        ),
     })
-    delegate_binding = ToolBinding(
-        name="delegate_task",
+    delegate_binding = ChildBinding(
         owner_id=root_id,
-        original_name=root_legacy_delegate.name,
-        path=(root_id,),
-        capability_id=None,
-        parameters=root_legacy_delegate.parameters,
-        delegated_target_path=(root_id, child_id),
+        parent_path=(root_id,),
+        target_path=(root_id, child_id),
     )
     composition = AgentComposition(
         root_id=root_id,
@@ -358,13 +348,13 @@ async def test_automatic_toolsets_hide_legacy_delegate_aliases_but_keep_native_s
         session_factory=AsyncMock(),
         caller_user_id=uuid4(),
         instructions="",
-        entry_definitions=(root_case, root_legacy_delegate),
+        entry_definitions=(root_case,),
         bindings=bindings,
         deferred=(
             _DeferredAgent(
                 agent=child,
                 path=(root_id, child_id),
-                definitions=(child_case, child_legacy_delegate),
+                definitions=(child_case,),
                 capability_id=capability_id,
             ),
         ),
@@ -380,13 +370,11 @@ async def test_automatic_toolsets_hide_legacy_delegate_aliases_but_keep_native_s
         names = {tool.name for tool in info.function_tools}
         if requests == 1:
             assert root_case.name not in names
-            assert root_legacy_delegate.name not in names
             return ModelResponse(parts=[ToolCallPart(
                 "search_tools", {"queries": ["get case"]}, "search-root",
             )])
         if requests == 2:
             assert root_case.name in names
-            assert root_legacy_delegate.name not in names
             return ModelResponse(parts=[ToolCallPart(root_case.name, {}, "root-case")])
         if requests == 3:
             return ModelResponse(parts=[ToolCallPart(
@@ -394,21 +382,16 @@ async def test_automatic_toolsets_hide_legacy_delegate_aliases_but_keep_native_s
             )])
         if requests == 4:
             assert qualified_child_case not in names
-            assert qualified_child_legacy not in names
             return ModelResponse(parts=[ToolCallPart(
                 "search_tools", {"queries": ["case notes"]}, "search-child",
             )])
         if requests == 5:
             assert qualified_child_case in names
-            assert qualified_child_legacy not in names
-            assert root_legacy_delegate.name not in names
             return ModelResponse(parts=[ToolCallPart(
                 qualified_child_case, {"case_id": 123}, "child-case",
             )])
         if requests == 6:
             assert "delegate_task" in names
-            assert root_legacy_delegate.name not in names
-            assert qualified_child_legacy not in names
             return ModelResponse(parts=[ToolCallPart(
                 "delegate_task", {"agent_name": delegate_name, "task": "independently review"},
                 "delegate",
@@ -433,16 +416,11 @@ async def test_automatic_toolsets_hide_legacy_delegate_aliases_but_keep_native_s
 async def test_native_subagents_routes_one_isolated_child_callback_without_a_model_call():
     """The framework's delegate_task wrapper forwards its real tool-call id."""
     root_id, child_id = uuid4(), uuid4()
-    child = SimpleNamespace(id=child_id, name="Investigate", system_prompt="Investigate.")
-    name = _delegate_name(child)
-    binding = ToolBinding(
-        name="delegate_task",
+    name = child_id.hex
+    binding = ChildBinding(
         owner_id=root_id,
-        original_name="delegate_to_investigate",
-        path=(root_id,),
-        capability_id=None,
-        parameters={"type": "object", "properties": {"task": {"type": "string"}}},
-        delegated_target_path=(root_id, child_id),
+        parent_path=(root_id,),
+        target_path=(root_id, child_id),
     )
     composition = _composition(delegates={name: binding})
     composition.root_id = root_id
@@ -471,19 +449,122 @@ async def test_native_subagents_routes_one_isolated_child_callback_without_a_mod
 
 
 @pytest.mark.asyncio
+async def test_native_delegate_resolves_a_uuid_bound_child_without_a_legacy_alias():
+    """The selection key maps directly to its approved child UUID and paths."""
+    root_id, child_id = uuid4(), uuid4()
+    parent = SimpleNamespace(id=root_id)
+    child = SimpleNamespace(id=child_id)
+    binding = ChildBinding(
+        owner_id=root_id,
+        parent_path=(root_id,),
+        target_path=(root_id, child_id),
+    )
+    composition = _composition(delegates={child_id.hex: binding})
+    composition.root_id = root_id
+    composition._authorize_path = AsyncMock(side_effect=[parent, child])
+
+    resolved = await composition.resolve_call(
+        "delegate_task", {"agent_name": child_id.hex, "task": "inspect the case"}
+    )
+
+    assert resolved.owner is parent
+    assert resolved.arguments == {"task": "inspect the case"}
+    assert resolved.delegated_target_id == child_id
+    assert resolved.provenance["delegated_agent_id"] == str(child_id)
+    assert [call.args for call in composition._authorize_path.await_args_list] == [
+        ((root_id,),),
+        ((root_id, child_id),),
+    ]
+    composition.session_factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delegated_mode_exposes_direct_root_tools_and_native_children_without_discovery():
+    """Delegated mode keeps direct tools while using the same native child bridge."""
+    root_id, child_id = uuid4(), uuid4()
+    root_tool = ToolDefinition(
+        name="read_case",
+        description="Read a case.",
+        parameters={"type": "object", "properties": {}},
+    )
+    composition = AgentComposition(
+        root_id=root_id,
+        caller=SimpleNamespace(),
+        session_factory=AsyncMock(),
+        caller_user_id=uuid4(),
+        instructions="",
+        entry_definitions=(root_tool,),
+        bindings={
+            root_tool.name: ToolBinding(
+                name=root_tool.name,
+                owner_id=root_id,
+                original_name=root_tool.name,
+                path=(root_id,),
+                capability_id=None,
+                parameters=root_tool.parameters,
+            )
+        },
+        deferred=(),
+        isolated_delegates={
+            child_id.hex: ChildBinding(
+                owner_id=root_id,
+                parent_path=(root_id,),
+                target_path=(root_id, child_id),
+                target_name="Case Review Specialist",
+                target_description="Reviews case evidence independently.",
+            )
+        },
+        automatic=False,
+    )
+    executed = AsyncMock(return_value="child receipt")
+    requests = 0
+
+    def model(messages, info):
+        nonlocal requests
+        requests += 1
+        names = {tool.name for tool in info.function_tools}
+        assert root_tool.name in names
+        assert "delegate_task" in names
+        assert "search_tools" not in names
+        assert "load_capability" not in names
+        delegate_task = next(tool for tool in info.function_tools if tool.name == "delegate_task")
+        catalog = "\n".join((
+            info.instructions or "",
+            json.dumps(delegate_task.parameters_json_schema),
+        ))
+        assert "Case Review Specialist" in catalog
+        assert "Reviews case evidence independently." in catalog
+        if requests == 1:
+            return ModelResponse(parts=[ToolCallPart(
+                "delegate_task",
+                {"agent_name": child_id.hex, "task": "review independently"},
+                "delegate",
+            )])
+        return ModelResponse(parts=[TextPart("done")])
+
+    result = await PydanticAgent(
+        FunctionModel(model),
+        toolsets=[composition.entry_toolset(executed)],
+        capabilities=composition.capabilities(executed),
+    ).run("review")
+
+    assert result.output == "done"
+    executed.assert_awaited_once_with(
+        "delegate_task",
+        {"agent_name": child_id.hex, "task": "review independently"},
+        "delegate",
+    )
+
+
+@pytest.mark.asyncio
 async def test_native_subagent_returns_a_failure_receipt_so_parent_can_enrich_and_retry():
     """A child failure is recoverable evidence, matching the legacy toolset."""
     root_id, child_id = uuid4(), uuid4()
-    child = SimpleNamespace(id=child_id, name="Investigate", system_prompt="Investigate.")
-    name = _delegate_name(child)
-    binding = ToolBinding(
-        name="delegate_task",
+    name = child_id.hex
+    binding = ChildBinding(
         owner_id=root_id,
-        original_name="delegate_to_investigate",
-        path=(root_id,),
-        capability_id=None,
-        parameters={"type": "object", "properties": {"task": {"type": "string"}}},
-        delegated_target_path=(root_id, child_id),
+        parent_path=(root_id,),
+        target_path=(root_id, child_id),
     )
     composition = _composition(delegates={name: binding})
     composition.root_id = root_id
@@ -520,13 +601,11 @@ async def test_native_subagent_returns_a_failure_receipt_so_parent_can_enrich_an
 @pytest.mark.parametrize("correct_selection", [True, False])
 async def test_unknown_subagent_gets_one_selection_correction_without_an_effect(correct_selection):
     root_id, child_id = uuid4(), uuid4()
-    child = SimpleNamespace(id=child_id, name="Investigator")
-    name = _delegate_name(child)
-    binding = ToolBinding(
-        name="delegate_task", owner_id=root_id, original_name="delegate_to_investigator",
-        path=(root_id,), capability_id=None,
-        parameters={"type": "object", "properties": {"task": {"type": "string"}}},
-        delegated_target_path=(root_id, child_id),
+    name = child_id.hex
+    binding = ChildBinding(
+        owner_id=root_id,
+        parent_path=(root_id,),
+        target_path=(root_id, child_id),
     )
     composition = _composition(delegates={name: binding})
     executed = AsyncMock(return_value="verified child receipt")
@@ -619,16 +698,7 @@ def test_qualified_names_keep_same_source_prefixes_distinct_and_ascii_bounded():
     assert first.isascii()
 
 
-def test_long_subagent_names_retain_the_owner_identity():
-    first = SimpleNamespace(id=uuid4(), name="Shared specialist name " * 10)
-    second = SimpleNamespace(id=uuid4(), name=first.name)
-    assert _delegate_name(first) != _delegate_name(second)
-    assert _delegate_name(first).endswith(first.id.hex)
-    assert len(_delegate_name(first)) <= 64
-
-
 def test_owner_names_do_not_conflate_uuid_prefixes():
     first = UUID("12345678-1234-0000-0000-000000000001")
     second = UUID("12345678-1234-0000-0000-000000000002")
     assert _qualified_tool_name(first, "read") != _qualified_tool_name(second, "read")
-    assert _delegate_name(SimpleNamespace(id=first, name="Same")) != _delegate_name(SimpleNamespace(id=second, name="Same"))

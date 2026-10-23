@@ -363,14 +363,14 @@ def test_exact_tool_hydration_includes_only_the_selected_live_schema():
     assert found_tool["default_async"] is False
 
 
-def test_delegation_capability_declares_async_default():
-    tool = replace(_resolved_tool(), source="delegation")
+def test_workflow_capability_declares_sync_default():
+    tool = _resolved_tool()
 
     compact = tool.compact()
 
-    assert compact["source"] == "delegation"
+    assert compact["source"] == "workflow"
     assert compact["supports_async"] is True
-    assert compact["default_async"] is True
+    assert compact["default_async"] is False
 
 
 def test_execution_result_pages_large_values_without_invalid_json_truncation():
@@ -779,7 +779,6 @@ async def test_execute_validates_before_dispatch():
                 snapshot,
                 tool,
                 {"ticket_id": "invalid"},
-                lineage=None,
             )
 
     assert exc_info.value.code == "INVALID_ARGUMENTS"
@@ -806,7 +805,7 @@ async def test_execute_keeps_legacy_empty_schema_permissive():
         "_dispatch",
         new=AsyncMock(return_value={"output": "ok"}),
     ) as dispatch:
-        result = await service.execute_tool(snapshot, tool, arguments, lineage=None)
+        result = await service.execute_tool(snapshot, tool, arguments)
 
     assert result["result"] == {"output": "ok"}
     dispatch.assert_awaited_once_with(
@@ -814,7 +813,6 @@ async def test_execute_keeps_legacy_empty_schema_permissive():
         tool,
         arguments,
         async_execution=False,
-        lineage=None,
     )
 
 
@@ -834,7 +832,6 @@ async def test_execute_returns_auditable_envelope():
             snapshot,
             tool,
             {"ticket_id": 42},
-            lineage=None,
         )
 
     assert result["agent_id"] == str(agent.id)
@@ -846,62 +843,8 @@ async def test_execute_returns_auditable_envelope():
     assert isinstance(result["duration_ms"], int)
 
 
-@pytest.mark.asyncio
-async def test_delegation_defaults_to_async_execution():
-    service = MCPAgentGatewayService(_context())
-    agent = _agent()
-    tool = replace(_resolved_tool(), source="delegation")
-    snapshot = AgentToolSnapshot(agent=agent, tools=[tool])
-    execution_id = str(uuid4())
-
-    with patch.object(
-        service,
-        "_dispatch",
-        new=AsyncMock(
-            return_value={
-                "execution_id": execution_id,
-                "execution_type": "agent_run",
-                "status": "Pending",
-            }
-        ),
-    ) as dispatch:
-        result = await service.execute_tool(
-            snapshot,
-            tool,
-            {"ticket_id": 42},
-            lineage=None,
-        )
-
-    assert dispatch.await_args.kwargs["async_execution"] is True
-    assert result["async"] is True
-    assert result["execution_id"] == execution_id
-    assert result["execution_type"] == "agent_run"
-    assert result["result"] is None
 
 
-@pytest.mark.asyncio
-async def test_delegation_allows_explicit_synchronous_execution():
-    service = MCPAgentGatewayService(_context())
-    agent = _agent()
-    tool = replace(_resolved_tool(), source="delegation")
-    snapshot = AgentToolSnapshot(agent=agent, tools=[tool])
-
-    with patch.object(
-        service,
-        "_dispatch",
-        new=AsyncMock(return_value={"text": "Done"}),
-    ) as dispatch:
-        result = await service.execute_tool(
-            snapshot,
-            tool,
-            {"ticket_id": 42},
-            async_execution=False,
-            lineage=None,
-        )
-
-    assert dispatch.await_args.kwargs["async_execution"] is False
-    assert result["async"] is False
-    assert result["result"] == {"text": "Done"}
 
 
 @pytest.mark.asyncio
@@ -974,136 +917,14 @@ async def test_async_rejects_unsupported_sources_without_dispatching():
                 tool,
                 {"ticket_id": 42},
                 async_execution=True,
-                lineage=None,
             )
 
     assert exc_info.value.code == "ASYNC_NOT_SUPPORTED"
     dispatch.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-async def test_async_delegation_enqueues_agent_run():
-    context = _context()
-    service = MCPAgentGatewayService(context)
-    parent = _agent()
-    delegated = _agent()
-    delegated.name = "Process Agent"
-    delegated.is_active = True
-    delegated.organization_id = context.org_id
-    tool = replace(
-        _resolved_tool(
-            name="delegate_to_process_agent",
-            parameters={
-                "type": "object",
-                "properties": {"task": {"type": "string"}},
-                "required": ["task"],
-            },
-        ),
-        source="delegation",
-        source_id=delegated.id,
-    )
-    db = AsyncMock()
-    query = MagicMock()
-    query.where.return_value = query
-    delegated_result = MagicMock()
-    delegated_result.scalar_one_or_none.return_value = delegated
-    db.execute = AsyncMock(return_value=delegated_result)
-    db_context = MagicMock()
-    db_context.__aenter__ = AsyncMock(return_value=db)
-    db_context.__aexit__ = AsyncMock(return_value=None)
-    execution_id = str(uuid4())
-
-    with (
-        patch("src.core.database.get_db_context", return_value=db_context),
-        patch("src.services.agent_write_policy.agent_query_in_reach", return_value=query),
-        patch(
-            "src.services.execution.agent_run_service.enqueue_agent_run",
-            new=AsyncMock(return_value=execution_id),
-        ) as enqueue,
-    ):
-        result = await service._dispatch_delegation(
-            parent,
-            tool,
-            {"task": "Assemble the customer report"},
-            async_execution=True,
-            lineage=None,
-        )
-
-    assert result == {
-        "execution_id": execution_id,
-        "execution_type": "agent_run",
-        "status": "Pending",
-    }
-    assert enqueue.await_args.kwargs["sync"] is False
-    assert enqueue.await_args.kwargs["trigger_type"] == "delegation"
-    assert enqueue.await_args.kwargs["caller_user_id"] == str(context.user_id)
 
 
-@pytest.mark.asyncio
-async def test_sync_delegation_waits_for_queued_agent_run_result():
-    service = MCPAgentGatewayService(_context())
-    parent = _agent()
-    delegated = _agent()
-    delegated.name = "Process Agent"
-    delegated.is_active = True
-    delegated.organization_id = service.context.org_id
-    delegated.max_run_timeout = 240
-    tool = replace(
-        _resolved_tool(
-            name="delegate_to_process_agent",
-            parameters={
-                "type": "object",
-                "properties": {"task": {"type": "string"}},
-                "required": ["task"],
-            },
-        ),
-        source="delegation",
-        source_id=delegated.id,
-    )
-    db = AsyncMock()
-    query = MagicMock()
-    query.where.return_value = query
-    delegated_result = MagicMock()
-    delegated_result.scalar_one_or_none.return_value = delegated
-    db.execute = AsyncMock(return_value=delegated_result)
-    db_context = MagicMock()
-    db_context.__aenter__ = AsyncMock(return_value=db)
-    db_context.__aexit__ = AsyncMock(return_value=None)
-    execution_id = str(uuid4())
-
-    with (
-        patch("src.core.database.get_db_context", return_value=db_context),
-        patch("src.services.agent_write_policy.agent_query_in_reach", return_value=query),
-        patch(
-            "src.services.execution.agent_run_service.enqueue_agent_run",
-            new=AsyncMock(return_value=execution_id),
-        ) as enqueue,
-        patch(
-            "src.services.execution.agent_run_service.wait_for_agent_run_result",
-            new=AsyncMock(
-                return_value={
-                    "status": "completed",
-                    "output": {"text": "Done"},
-                    "iterations_used": 1,
-                }
-            ),
-        ) as wait_for_result,
-    ):
-        result = await service._dispatch_delegation(
-            parent,
-            tool,
-            {"task": "Assemble the customer report"},
-            async_execution=False,
-            lineage=None,
-        )
-
-    assert result == {
-        "status": "completed",
-        "output": {"text": "Done"},
-        "iterations_used": 1,
-    }
-    assert enqueue.await_args.kwargs["sync"] is True
-    wait_for_result.assert_awaited_once_with(execution_id, timeout=240)
 
 
 @pytest.mark.asyncio
@@ -1184,13 +1005,9 @@ def test_external_dispatch_preserves_structured_error_details():
 
 
 @pytest.mark.asyncio
-async def test_gateway_workflow_tool_passes_current_caller_instead_of_supplied_lineage():
-    from shared.run_lineage import RunLineage
-
+async def test_gateway_workflow_tool_passes_current_caller_to_shared_gate():
     service = MCPAgentGatewayService(_context())
     tool = _resolved_tool()
-    run_user, root = uuid4(), uuid4()
-    lineage = RunLineage(run_user, run_user, root)
     response = MagicMock(execution_id=str(uuid4()), status=MagicMock(value="Success"), result={})
 
     with patch(
@@ -1198,7 +1015,7 @@ async def test_gateway_workflow_tool_passes_current_caller_instead_of_supplied_l
         new_callable=AsyncMock,
         return_value=response,
     ) as execute:
-        await service._dispatch(_agent(), tool, {"ticket_id": 1}, lineage=lineage)
+        await service._dispatch(_agent(), tool, {"ticket_id": 1})
 
     assert "lineage" not in execute.await_args.kwargs
     assert execute.await_args.kwargs["caller"].ctx.user_id == service.context.user_id

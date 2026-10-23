@@ -140,30 +140,10 @@ TOOLS = [
 ]
 
 
-def register_tools(mcp: Any, get_context_fn: Any) -> None:
-    """Register all file policy parity tools with FastMCP."""
-    from src.services.mcp_server.generators.fastmcp_generator import (
-        register_tool_with_context,
-    )
-
-    tool_funcs = {
-        "bifrost_file_policy_list": bifrost_file_policy_list,
-        "bifrost_file_policy_get": bifrost_file_policy_get,
-        "bifrost_file_policy_set": bifrost_file_policy_set,
-        "bifrost_file_policy_delete": bifrost_file_policy_delete,
-    }
-
-    for tool_id, _name, description in TOOLS:
-        register_tool_with_context(
-            mcp, tool_funcs[tool_id], tool_id, description, get_context_fn
-        )
-
-
 __all__ = [
     "TOOLS",
     "bifrost_file_policy_delete",
     "bifrost_file_policy_get",
     "bifrost_file_policy_list",
-    "register_tools",
     "bifrost_file_policy_set",
 ]

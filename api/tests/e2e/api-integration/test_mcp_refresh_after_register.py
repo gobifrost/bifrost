@@ -1,24 +1,6 @@
-"""
-Regression test: a freshly registered tool must appear in MCP tools/list
-without restarting the API container.
+"""Gateway discovery refresh coverage for workflow registration and rename."""
 
-Bug: register_workflow called refresh_workflow_tools() after db.flush() but
-before the request transaction committed. refresh_workflow_tools() opens its
-own session via get_db_context(), which (at READ COMMITTED isolation) cannot
-see the uncommitted INSERT. The new workflow was therefore missing from the
-in-memory FastMCP registry until the next API restart re-ran startup
-registration against a fresh, committed snapshot.
-
-This test exercises the full path:
-    POST /api/workflows/register  (registers a @tool function as type=tool)
-    POST /api/agents              (attaches the new tool to an agent)
-    POST /mcp/{agent_id} tools/list (must include the new tool name)
-
-Without the fix, tools/list omits the new tool because FastMCP's in-memory
-registry has no entry for it — middleware filters on `tool.name in all_tools`,
-and `all_tools` comes from FastMCP, not the DB.
-"""
-
+import json
 import os
 import uuid
 
@@ -37,125 +19,59 @@ def _mcp_headers(headers: dict[str, str]) -> dict[str, str]:
     }
 
 
+def _gateway_call(
+    headers: dict[str, str],
+    tool_name: str,
+    arguments: dict,
+    *,
+    path: str = "/mcp",
+) -> dict:
+    response = requests.post(
+        f"{TEST_API_URL}{path}",
+        headers=_mcp_headers(headers),
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": tool_name, "arguments": arguments},
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert "error" not in payload, payload
+    result = payload["result"]
+    structured = result.get("structuredContent")
+    if structured is not None:
+        return structured
+    return json.loads(result["content"][0]["text"])
+
+
+def _discover_workflow_tool(headers: dict[str, str], agent_id: str, query: str) -> dict:
+    discovered = _gateway_call(
+        headers,
+        "bifrost_search_capabilities",
+        {"agent_id": agent_id, "query": query},
+        path=f"/mcp/{agent_id}",
+    )
+    agent = next(item for item in discovered["agents"] if item["id"] == agent_id)
+    tools = [item for item in agent["matching_tools"] if item["source"] == "workflow"]
+    assert len(tools) == 1, discovered
+    return tools[0]
+
+
 @pytest.mark.e2e
 class TestMCPRefreshAfterRegister:
-    """A workflow registered via POST /api/workflows/register must appear in
-    MCP tools/list immediately, without an API restart."""
+    """Workflow metadata is immediately visible through stable gateway discovery."""
 
-    def test_registered_tool_appears_in_mcp_tools_list_immediately(self, platform_admin):
+    def test_registered_and_renamed_tool_refreshes_gateway_metadata(
+        self, platform_admin
+    ):
         suffix = uuid.uuid4().hex[:8]
         path = f"workflows/test_mcp_refresh_{suffix}.py"
         function_name = f"test_mcp_refresh_{suffix}"
-
-        admin_h = platform_admin.headers
-        mcp_h = _mcp_headers(platform_admin.headers)
-
-        agent_id: str | None = None
-        workflow_id: str | None = None
-        try:
-            file_content = f'''
-from bifrost import tool
-
-@tool(name="MCP Refresh Test {suffix}")
-def {function_name}(message: str) -> dict:
-    """Echoes the message — exists only to verify MCP refresh-after-register."""
-    return {{"message": message}}
-'''
-            write_resp = requests.put(
-                f"{TEST_API_URL}/api/files/editor/content",
-                headers=admin_h,
-                json={"path": path, "content": file_content, "encoding": "utf-8"},
-            )
-            assert write_resp.status_code in (200, 201), write_resp.text
-
-            reg_resp = requests.post(
-                f"{TEST_API_URL}/api/workflows/register",
-                headers=admin_h,
-                json={"path": path, "function_name": function_name},
-            )
-            assert reg_resp.status_code == 201, reg_resp.text
-            reg = reg_resp.json()
-            workflow_id = reg["id"]
-            assert reg["type"] == "tool", f"expected type=tool, got {reg}"
-
-            agent_resp = requests.post(
-                f"{TEST_API_URL}/api/agents",
-                headers=admin_h,
-                json={
-                    "name": f"MCP Refresh Test Agent {suffix}",
-                    "system_prompt": "Test agent for MCP refresh regression",
-                    "channels": ["chat"],
-                    "tool_ids": [workflow_id],
-                },
-            )
-            assert agent_resp.status_code == 201, agent_resp.text
-            agent_id = agent_resp.json()["id"]
-
-            init_resp = requests.post(
-                f"{TEST_API_URL}/mcp/{agent_id}",
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "initialize",
-                    "params": {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": {},
-                        "clientInfo": {"name": "test", "version": "1.0"},
-                    },
-                },
-                headers=mcp_h,
-            )
-            assert init_resp.status_code == 200, init_resp.text
-
-            list_resp = requests.post(
-                f"{TEST_API_URL}/mcp/{agent_id}",
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 2,
-                    "method": "tools/list",
-                    "params": {},
-                },
-                headers=mcp_h,
-            )
-            assert list_resp.status_code == 200, list_resp.text
-            payload = list_resp.json()
-            assert "result" in payload, payload
-            tools = payload["result"]["tools"]
-            tool_names = [t["name"] for t in tools]
-
-            # The MCP tool name comes from _normalize_tool_name(workflow.name),
-            # and workflow.name == function_name on register.
-            assert function_name in tool_names, (
-                f"Newly registered tool {function_name!r} missing from MCP "
-                f"tools/list — refresh_workflow_tools() likely ran before the "
-                f"register transaction committed. Tools returned: {tool_names}"
-            )
-        finally:
-            if agent_id:
-                requests.delete(
-                    f"{TEST_API_URL}/api/agents/{agent_id}",
-                    headers=admin_h,
-                )
-            if workflow_id:
-                requests.delete(
-                    f"{TEST_API_URL}/api/workflows/{workflow_id}",
-                    headers=admin_h,
-                )
-            requests.delete(
-                f"{TEST_API_URL}/api/files/editor",
-                headers=admin_h,
-                params={"path": path},
-            )
-
-    def test_updated_workflow_name_replaces_mcp_tool_name_immediately(self, platform_admin):
-        suffix = uuid.uuid4().hex[:8]
-        path = f"workflows/test_mcp_rename_{suffix}.py"
-        function_name = f"test_mcp_rename_{suffix}"
         renamed_tool_name = f"renamed_tool_{suffix}"
 
         admin_h = platform_admin.headers
-        mcp_h = _mcp_headers(platform_admin.headers)
-
         agent_id: str | None = None
         workflow_id: str | None = None
         try:
@@ -164,7 +80,7 @@ from bifrost import tool
 
 @tool
 def {function_name}(message: str) -> dict:
-    """Echoes the message for MCP rename refresh regression coverage."""
+    """Echoes the message for MCP gateway discovery refresh coverage."""
     return {{"message": message}}
 '''
             write_resp = requests.put(
@@ -180,23 +96,24 @@ def {function_name}(message: str) -> dict:
                 json={"path": path, "function_name": function_name},
             )
             assert reg_resp.status_code == 201, reg_resp.text
-            reg = reg_resp.json()
-            workflow_id = reg["id"]
-            assert reg["name"] == function_name
-            assert reg["type"] == "tool", reg
+            registered = reg_resp.json()
+            workflow_id = registered["id"]
+            assert registered["type"] == "tool", registered
 
             agent_resp = requests.post(
                 f"{TEST_API_URL}/api/agents",
                 headers=admin_h,
                 json={
-                    "name": f"MCP Rename Test Agent {suffix}",
-                    "system_prompt": "Test agent for MCP rename regression",
+                    "name": f"MCP Refresh Test Agent {suffix}",
+                    "system_prompt": "Test agent for MCP gateway refresh regression",
                     "channels": ["chat"],
                     "tool_ids": [workflow_id],
                 },
             )
             assert agent_resp.status_code == 201, agent_resp.text
             agent_id = agent_resp.json()["id"]
+
+            original = _discover_workflow_tool(admin_h, agent_id, function_name)
 
             patch_resp = requests.patch(
                 f"{TEST_API_URL}/api/workflows/{workflow_id}",
@@ -206,23 +123,11 @@ def {function_name}(message: str) -> dict:
             assert patch_resp.status_code == 200, patch_resp.text
             assert patch_resp.json()["name"] == renamed_tool_name
 
-            list_resp = requests.post(
-                f"{TEST_API_URL}/mcp/{agent_id}",
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 2,
-                    "method": "tools/list",
-                    "params": {},
-                },
-                headers=mcp_h,
-            )
-            assert list_resp.status_code == 200, list_resp.text
-            payload = list_resp.json()
-            assert "result" in payload, payload
-            tool_names = [t["name"] for t in payload["result"]["tools"]]
-
-            assert renamed_tool_name in tool_names
-            assert function_name not in tool_names
+            renamed = _discover_workflow_tool(admin_h, agent_id, renamed_tool_name)
+            assert renamed_tool_name in renamed["name"]
+            assert function_name not in renamed["name"]
+            assert renamed["name"] != original["name"]
+            assert renamed["tool_ref"] == original["tool_ref"]
         finally:
             if agent_id:
                 requests.delete(

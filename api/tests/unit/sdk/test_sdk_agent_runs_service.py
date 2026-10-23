@@ -283,7 +283,8 @@ def _redis_stream_context(entries):
 
 @pytest.mark.asyncio
 class TestEnqueueSdkAgentRun:
-    async def test_success_enqueues_with_actor_attribution(self, db_session):
+    @pytest.mark.parametrize("use_agent_id", [False, True], ids=["name", "uuid"])
+    async def test_success_enqueues_with_actor_attribution(self, db_session, use_agent_id):
         org = await _seed_org(db_session)
         # AUTHENTICATED so a non-bypass principal (no role grants seeded)
         # passes the access check resolve_executable_agent now enforces —
@@ -295,6 +296,7 @@ class TestEnqueueSdkAgentRun:
         )
         principal = _principal(org.id, name="Caller Name")
         receipt_id = str(uuid4())
+        identity = {"agent_id": agent.id} if use_agent_id else {"agent_name": "Ticket Agent"}
 
         with patch(
             "src.services.execution.agent_run_service.enqueue_agent_run",
@@ -303,7 +305,7 @@ class TestEnqueueSdkAgentRun:
             result = await enqueue_sdk_agent_run(
                 db_session,
                 principal,
-                agent_name="Ticket Agent",
+                **identity,
                 input_data={"ticket_id": 42},
                 output_schema={"type": "object"},
             )
@@ -362,6 +364,26 @@ class TestEnqueueSdkAgentRun:
         assert exc_info.value.detail == "Agent 'No Such Agent' not found"
         mock_enqueue.assert_not_awaited()
 
+    async def test_uuid_lookup_enforces_the_same_agent_read_policy(self, db_session):
+        agent = await _seed_agent(db_session, "Restricted UUID Agent")
+
+        with (
+            patch(
+                "shared.sdk_agent_runs.can_read_agent",
+                new=AsyncMock(return_value=False),
+            ),
+            _patch_enqueue() as mock_enqueue,
+            pytest.raises(SdkAgentRunError) as exc_info,
+        ):
+            await enqueue_sdk_agent_run(
+                db_session,
+                _global_agent_principal(),
+                agent_id=agent.id,
+            )
+
+        assert exc_info.value.status_code == 404
+        mock_enqueue.assert_not_awaited()
+
     async def test_paused_agent_returns_paused_response(self, db_session):
         agent = await _seed_agent(db_session, "Paused Agent", is_active=False)
 
@@ -382,11 +404,13 @@ class TestEnqueueSdkAgentRun:
         assert result.agent_id == agent.id
         mock_enqueue.assert_not_awaited()
 
-    async def test_inactive_solution_is_409(self, db_session):
+    @pytest.mark.parametrize("use_agent_id", [False, True], ids=["name", "uuid"])
+    async def test_inactive_solution_is_409(self, db_session, use_agent_id):
         solution = await _seed_solution(db_session, status="inactive")
-        await _seed_agent(
+        agent = await _seed_agent(
             db_session, "Solution Agent", solution_id=solution.id
         )
+        identity = {"agent_id": agent.id} if use_agent_id else {"agent_name": "Solution Agent"}
 
         with patch(
             "src.services.execution.agent_run_service.enqueue_agent_run",
@@ -396,7 +420,7 @@ class TestEnqueueSdkAgentRun:
                 await enqueue_sdk_agent_run(
                     db_session,
                     _global_agent_principal(),
-                    agent_name="Solution Agent",
+                    **identity,
                 )
 
         assert exc_info.value.status_code == 409
@@ -405,6 +429,19 @@ class TestEnqueueSdkAgentRun:
             "Reinstall the solution to execute this agent."
         )
         mock_enqueue.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        "identity",
+        [{}, {"agent_name": "Ticket Agent", "agent_id": uuid4()}],
+        ids=["missing", "both"],
+    )
+    async def test_enqueue_requires_exactly_one_agent_identity(self, db_session, identity):
+        with pytest.raises(ValueError, match="Provide exactly one agent name or ID"):
+            await enqueue_sdk_agent_run(
+                db_session,
+                _global_agent_principal(),
+                **identity,
+            )
 
     async def test_active_solution_enqueues(self, db_session):
         solution = await _seed_solution(db_session, status="active")

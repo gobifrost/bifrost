@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 
 import { renderWithProviders } from "@/test-utils";
+import type { components } from "@/lib/v1";
 import { MCP } from "./MCP";
+
+type MCPConfigResponse = components["schemas"]["MCPConfigResponse"];
 
 const api = vi.hoisted(() => ({
 	useQuery: vi.fn(),
@@ -20,7 +23,7 @@ vi.mock("@/lib/api-client", () => ({
 
 vi.mock("sonner", () => ({ toast }));
 
-const config = {
+const config: MCPConfigResponse = {
 	enabled: true,
 	allowed_tool_ids: null,
 	blocked_tool_ids: [],
@@ -53,7 +56,7 @@ function mockQueries({
 }: {
 	configError?: boolean;
 	toolsError?: boolean;
-	configData?: typeof config | null;
+	configData?: MCPConfigResponse | null;
 	toolsData?: typeof tools | null;
 } = {}) {
 	api.useQuery.mockImplementation((_method, path) => {
@@ -164,6 +167,105 @@ describe("MCP settings", () => {
 		expect(
 			screen.getByRole("button", { name: "Save Configuration" }),
 		).toBeEnabled();
+	});
+
+	it("preserves a loaded empty allowed list when saving another change", async () => {
+		mockQueries({
+			configData: { ...config, allowed_tool_ids: [] },
+		});
+		const { user } = renderWithProviders(<MCP />);
+
+		expect(
+			screen.getByRole("switch", { name: "Allow All Tools" }),
+		).not.toBeChecked();
+		await user.click(
+			screen.getByRole("switch", { name: "Enable MCP Access" }),
+		);
+		await user.click(
+			screen.getByRole("button", { name: "Save Configuration" }),
+		);
+
+		expect(saveMutation.mutateAsync).toHaveBeenCalledWith({
+			body: {
+				enabled: false,
+				allowed_tool_ids: [],
+				blocked_tool_ids: [],
+			},
+		});
+	});
+
+	it("widens tool access only when Allow All Tools is explicitly enabled", async () => {
+		mockQueries({
+			configData: { ...config, allowed_tool_ids: ["workflow.run"] },
+		});
+		const { user } = renderWithProviders(<MCP />);
+
+		const allowAll = screen.getByRole("switch", {
+			name: "Allow All Tools",
+		});
+		expect(allowAll).not.toBeChecked();
+		await user.click(allowAll);
+		await user.click(
+			screen.getByRole("button", { name: "Save Configuration" }),
+		);
+
+		expect(saveMutation.mutateAsync).toHaveBeenCalledWith({
+			body: {
+				enabled: true,
+				allowed_tool_ids: null,
+				blocked_tool_ids: [],
+			},
+		});
+	});
+
+	it("keeps an empty allowed list after removing the last selected tool", async () => {
+		mockQueries({
+			configData: { ...config, allowed_tool_ids: ["workflow.run"] },
+		});
+		const { user } = renderWithProviders(<MCP />);
+
+		await user.click(
+			screen.getByRole("button", {
+				name: "Remove workflow.run from Allowed Tools",
+			}),
+		);
+		expect(
+			screen.getByRole("switch", { name: "Allow All Tools" }),
+		).not.toBeChecked();
+		await user.click(
+			screen.getByRole("button", { name: "Save Configuration" }),
+		);
+
+		expect(saveMutation.mutateAsync).toHaveBeenCalledWith({
+			body: {
+				enabled: true,
+				allowed_tool_ids: [],
+				blocked_tool_ids: [],
+			},
+		});
+	});
+
+	it("keeps an empty allowed list after deselecting the last picker option", async () => {
+		mockQueries({
+			configData: { ...config, allowed_tool_ids: ["workflow.run"] },
+		});
+		const { user } = renderWithProviders(<MCP />);
+
+		await user.click(
+			screen.getByRole("combobox", { name: "Select Allowed Tools" }),
+		);
+		await user.click(screen.getByText("workflow.run"));
+		await user.click(
+			screen.getByRole("button", { name: "Save Configuration" }),
+		);
+
+		expect(saveMutation.mutateAsync).toHaveBeenCalledWith({
+			body: {
+				enabled: true,
+				allowed_tool_ids: [],
+				blocked_tool_ids: [],
+			},
+		});
 	});
 
 	it("keeps the reset dialog open and shows inline failure", async () => {

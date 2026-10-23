@@ -389,7 +389,7 @@ async def test_run_threads_user_id_from_caller(
 @patch(
     "src.services.execution.autonomous_agent_executor.resolve_agent_tools"
 )
-async def test_delegated_mode_keeps_direct_child_tools_without_composition(
+async def test_delegated_mode_attaches_native_children_without_deferred_discovery(
     mock_resolve_tools, mock_get_llm, mock_session_factory, mock_agent
 ):
     mock_agent.delegated_agents = [MagicMock(id=uuid4())]
@@ -408,9 +408,14 @@ async def test_delegated_mode_keeps_direct_child_tools_without_composition(
     mock_get_llm.return_value = LegacyMockModel(mock_llm)
 
     executor = AutonomousAgentExecutor(mock_session_factory)
+    composition = MagicMock()
+    composition.entry_definitions = ()
+    composition.instructions = ""
+    composition.entry_toolset.return_value = MagicMock()
+    composition.capabilities.return_value = []
     with patch(
         "src.services.execution.autonomous_agent_executor.build_agent_composition",
-        new=AsyncMock(),
+        new=AsyncMock(return_value=composition),
     ) as build_composition:
         await executor.run(
             agent=mock_agent,
@@ -422,7 +427,8 @@ async def test_delegated_mode_keeps_direct_child_tools_without_composition(
             agent_execution_mode="delegated",
         )
 
-    build_composition.assert_not_awaited()
+    build_composition.assert_awaited_once()
+    assert build_composition.await_args.kwargs["automatic"] is False
 
 
 @pytest.mark.asyncio
