@@ -108,9 +108,10 @@ continue directly to 5c and the production rollout.
 
 | Item | State |
 | --- | --- |
-| #1031 | Ready, CI green, not merged. **Step 1 gate, debug stack:** `scripts/runtime_checklist.py` passed in default mode and with `BIFROST_CONTROL_PLANE_HOST=api` (API pod held the lease): every schedule callback, the leader's startup runs, a platform job, inline sync and async, HTTP sync and async, and a deferred run. **Next:** run the #1031-relevant e2e suites (scheduler diagnostics, scheduling flow, events), then merge #1031. |
-| #1032 | Draft, stacked on #1031 |
-| #1033 | Draft, stacked on #1032. 3a proven in Kind and Docker; 3b: kill, controller-restart and OOM drills pass, unschedulable pending |
+| #1031 | **Merged** 2026-10-23. Gate: runtime checklist in both control modes; 85/85 scheduler, scheduling and event e2e. |
+| #1034 | **Merged** 2026-10-23. Found by the #1032 mixed-version check: the schema gate crashed an older image started against a newer database (alembic raises `ResolutionError`, not `CommandError`), breaking rolling deploys and rollback. A rollback is only safe to releases that contain this fix. |
+| #1032 | **Merged** 2026-10-23. Gate: checklist with defaults; checklist with only a #1031-code worker behind the stage 2 API (15 runs on the old worker); CodeQL findings fixed. |
+| #1033 | Rebased on `main`. Gate: all four Kind drills pass (unschedulable now starts from an empty pool and asserts the start deadline); checklist passes in Kind pool mode and Docker static-executor mode; latency at parity after the executor connection fix (below). |
 | Stages 4–5 | Planned (`2026-10-22-769-stages4-5-convergence.md`) |
 
 ## Evidence so far
@@ -141,8 +142,21 @@ These are the numbers to repeat or beat.
   - every API pod deleted mid-burst: no duplicate Jobs;
   - run over its memory limit: failed visibly, the pool kept serving.
 - **Docker pool mode:** 236 e2e tests.
-- **Latency:** pool 55–57 ms p50 against broker 47 ms, before the claim
-  fold.
+- **Latency (2026-10-23, after the claim fold):**
+  - Kind, same cluster: pool p50 50–53 ms, broker 50–53 ms.
+  - Docker, same stack, 8 interleaved samples of 200 sync runs: pool p50
+    median 58 ms, broker 60 ms. Before the fix pool was about 12 ms
+    behind: the worker's 1 + 2 overflow database connections made every
+    run reconnect (overflow connections are closed on return). The
+    executor now pools its whole allowance; the connection cap is
+    unchanged. The host was loaded (load average 7–13), so compare only
+    interleaved samples.
+- **Kind drills (2026-10-23):** kill: lost after 29 s, queued runs
+  completed, interrupted runs failed and were not replayed;
+  controller restart: peak 3 Jobs, no duplicates; OOM: failed visibly,
+  pool kept serving; unschedulable: 2 workers lost at their start
+  deadline, the run waited as Pending, within the ceiling, drained to
+  zero after the settings were restored.
 
 ## Tooling
 
