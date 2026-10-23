@@ -1,0 +1,12 @@
+{
+  "key": "pr:1032",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Reliability infrastructure: workflow runs are accepted durably before dispatch, so a lost message or Redis entry no longer loses a queued run. No new customer-facing capability.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1032"
+    ]
+  }
+}
