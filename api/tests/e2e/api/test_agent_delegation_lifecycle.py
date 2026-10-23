@@ -187,8 +187,9 @@ async def test_chat_delegation_creates_terminal_run_with_conversation_and_caller
                 side_effect=child_run,
             ),
             patch(
-                "src.services.execution.run_summarizer.enqueue_summarize",
+                "src.services.execution.summary_dispatch.stage_summary",
                 new_callable=AsyncMock,
+                return_value=None,
             ),
         ):
             outcome = await executor.run_delegation(
@@ -494,8 +495,9 @@ async def test_chat_executor_receives_durable_child_callback(
                 ],
             ),
             patch(
-                "src.services.execution.run_summarizer.enqueue_summarize",
+                "src.services.execution.summary_dispatch.stage_summary",
                 new_callable=AsyncMock,
+                return_value=None,
             ),
         ):
             session_factory = _session_factory_for(db_session)

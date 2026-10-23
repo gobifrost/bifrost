@@ -77,7 +77,7 @@ from src.services.execution.agent_run_service import (
     wait_for_agent_run_result,
 )
 from src.services.execution.dry_run import evaluate_against_prompt
-from src.services.execution.run_summarizer import enqueue_summarize
+from src.services.execution.summary_dispatch import hand_off_summary, request_summary
 from src.services.execution.tuning_service import (
     append_user_message_and_reply,
     get_or_create_conversation,
@@ -907,11 +907,10 @@ async def regenerate_summary(
     caller = await load_caller(db, user)
     require_operation(caller, "POST /api/agent-runs/{run_id}/regenerate-summary", org_target(run.org_id))
 
-    run.summary_status = "pending"
-    run.summary_error = None
+    summary = await request_summary(db, run)
     await db.commit()
 
-    await enqueue_summarize(run_id)
+    await hand_off_summary(summary)
 
     return {"status": "enqueued", "run_id": str(run_id)}
 
@@ -1172,6 +1171,8 @@ async def backfill_summaries(
         estimated_cost_usd=estimated_total,
     )
     db.add(job)
+    # The runs reference the job, so it must exist before they are updated.
+    await db.flush()
 
     # Flip all targeted runs back to pending so the UI reflects the queued state
     # immediately (the summarizer's idempotent short-circuit on 'completed' will
@@ -1180,7 +1181,11 @@ async def backfill_summaries(
     await db.execute(
         sql_update(AgentRun)
         .where(AgentRun.id.in_(run_ids))
-        .values(summary_status="pending", summary_error=None)
+        .values(
+            summary_status="pending",
+            summary_error=None,
+            summary_backfill_job_id=central_job_id,
+        )
     )
     from src.jobs.platform.summary_backfill import (
         SUMMARY_BACKFILL_DEFINITION,

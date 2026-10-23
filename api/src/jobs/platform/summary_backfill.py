@@ -55,8 +55,11 @@ async def run_summary_backfill(
     context: PlatformJobContext,
     payload: SummaryBackfillPayload,
 ) -> dict:
-    from src.jobs.rabbitmq import publish_message
-    from src.services.execution.run_summarizer import SUMMARIZE_BACKFILL_QUEUE
+    from src.core.database import get_db_context
+    from src.services.execution.summary_dispatch import (
+        hand_off_summary,
+        stage_backfill_summaries,
+    )
 
     await context.report(
         "Dispatching summary work",
@@ -64,11 +67,12 @@ async def run_summary_backfill(
         total=len(payload.run_ids),
         percent=0,
     )
-    for run_id in payload.run_ids:
-        await publish_message(
-            SUMMARIZE_BACKFILL_QUEUE,
-            {"run_id": str(run_id), "backfill_job_id": str(payload.backfill_job_id)},
-        )
+    # Durable before any hand-off: a lost hand-off is the reconciler's, and a
+    # retried attempt keeps the dispatches already staged.
+    async with get_db_context() as db:
+        staged = await stage_backfill_summaries(db, payload.run_ids)
+    for dispatch in staged:
+        await hand_off_summary(dispatch)
     raise PlatformJobDeferred(
         "Waiting for summary workers",
         {"backfill_job_id": str(payload.backfill_job_id)},

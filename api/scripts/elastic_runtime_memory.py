@@ -203,7 +203,6 @@ def _stage_construct_worker_consumers(_args: argparse.Namespace) -> None:
     from src.jobs.summarize_worker import (
         SummarizeBackfillConsumer,
         SummarizeConsumer,
-        TuneChatConsumer,
     )
 
     consumers = [
@@ -212,7 +211,6 @@ def _stage_construct_worker_consumers(_args: argparse.Namespace) -> None:
         AgentRunConsumer(),
         SummarizeConsumer(),
         SummarizeBackfillConsumer(),
-        TuneChatConsumer(),
     ]
     _ = [consumer.queue_name for consumer in consumers]
 

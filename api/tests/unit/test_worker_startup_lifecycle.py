@@ -64,7 +64,7 @@ async def test_stop_waits_for_blocked_startup_and_prevents_late_subscriptions():
         drain_started,
         drain_release,
     )
-    late_consumers = [_RecordingConsumer() for _ in range(5)]
+    late_consumers = [_RecordingConsumer() for _ in range(4)]
 
     worker = Worker()
     worker.settings = MagicMock(environment="test")
@@ -86,7 +86,6 @@ async def test_stop_waits_for_blocked_startup_and_prevents_late_subscriptions():
             "src.worker.app.SummarizeBackfillConsumer",
             return_value=late_consumers[3],
         ),
-        patch("src.worker.app.TuneChatConsumer", return_value=late_consumers[4]),
     ):
         start_task = asyncio.create_task(worker.start())
         await blocked_started.wait()
@@ -102,9 +101,8 @@ async def test_stop_waits_for_blocked_startup_and_prevents_late_subscriptions():
 
     assert blocked_consumer.start_calls == 1
     assert blocked_consumer.drain_calls == 1
-    assert [consumer.start_calls for consumer in late_consumers] == [0, 0, 0, 0, 0]
+    assert [consumer.start_calls for consumer in late_consumers] == [0, 0, 0, 0]
     assert [consumer.drain_calls for consumer in late_consumers] == [
-        1,
         1,
         1,
         1,

@@ -503,8 +503,9 @@ async def test_delegation_task_cannot_name_the_childs_acting_user(
             return_value={"output": "checked", "status": "completed"},
         ) as mock_child_run,
         patch(
-            "src.services.execution.run_summarizer.enqueue_summarize",
+            "src.services.execution.summary_dispatch.stage_summary",
             new_callable=AsyncMock,
+            return_value=None,
         ),
         patch(
             "src.services.execution.autonomous_agent_executor.load_runtime_principal",

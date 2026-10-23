@@ -21,6 +21,8 @@ CAPACITY_LOCK = "bifrost:worker-pool:capacity"
 SUPPORTED_HANDLERS: tuple[tuple[str, int], ...] = (
     ("workflow.execute", 1),
     ("agent.run", 1),
+    ("agent.summarize", 1),
+    ("agent.summarize_backfill", 1),
 )
 
 

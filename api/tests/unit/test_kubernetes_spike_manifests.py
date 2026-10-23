@@ -16,7 +16,6 @@ EXPECTED_WORKER_QUEUES = {
     "agent-runs": "1",
     "agent-summarization": "1",
     "agent-summarization-backfill": "5",
-    "agent-tuning-chat": "1",
 }
 
 

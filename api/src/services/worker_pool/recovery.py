@@ -13,6 +13,8 @@ from src.models.enums import ExecutionStatus
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.execution_workers import ExecutionWorkerClaim
 from src.models.orm.executions import Execution
+from src.services.execution.summary_dispatch import FAMILY as SUMMARY_FAMILY
+from src.services.execution.summary_dispatch import stage_summary
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,8 @@ async def end_runs_of_lost_worker(db: AsyncSession, worker_id: UUID) -> list[UUI
     """Fail the lost worker's runs that are still running; return the workflow runs ended.
 
     Runs it finished, or never managed to claim, are left as they are.
+    Summaries it was generating are requested again instead: a summary has
+    no effect outside its own run, so repeating it is safe.
     """
     claims = (
         await db.execute(
@@ -36,6 +40,7 @@ async def end_runs_of_lost_worker(db: AsyncSession, worker_id: UUID) -> list[UUI
     ).all()
     workflow_ids = [subject for family, subject in claims if family == "workflow_execution"]
     agent_ids = [subject for family, subject in claims if family == "agent_run"]
+    summary_ids = [subject for family, subject in claims if family == SUMMARY_FAMILY]
     now = datetime.now(timezone.utc)
     ended: list[UUID] = []
     if workflow_ids:
@@ -64,6 +69,17 @@ async def end_runs_of_lost_worker(db: AsyncSession, worker_id: UUID) -> list[UUI
             .where(AgentRun.id.in_(agent_ids), AgentRun.status.in_(("running", "cancelling")))
             .values(status="failed", error=EXECUTOR_LOST, completed_at=now)
         )
+    if summary_ids:
+        interrupted = (
+            await db.execute(
+                update(AgentRun)
+                .where(AgentRun.id.in_(summary_ids), AgentRun.summary_status == "generating")
+                .values(summary_status="pending")
+                .returning(AgentRun.id, AgentRun.summary_backfill_job_id)
+            )
+        ).all()
+        for run_id, backfill_job_id in interrupted:
+            await stage_summary(db, run_id, backfill=backfill_job_id is not None)
     if ended or agent_ids:
         logger.warning(
             "Ended runs of a lost executor",

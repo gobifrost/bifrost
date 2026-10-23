@@ -439,8 +439,9 @@ async def test_native_delegate_task_runs_a_transitive_child_without_a_middle_run
                 side_effect=[parent_model, child_model],
             ) as create_model,
             patch(
-                "src.services.execution.run_summarizer.enqueue_summarize",
+                "src.services.execution.summary_dispatch.stage_summary",
                 new_callable=AsyncMock,
+                return_value=None,
             ),
         ):
             result = await executor.run(

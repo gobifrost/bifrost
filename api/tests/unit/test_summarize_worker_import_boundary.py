@@ -20,7 +20,6 @@ print(json.dumps({
     "backfill_queue_identity": (
         worker.SUMMARIZE_BACKFILL_QUEUE is queue_names.SUMMARIZE_BACKFILL_QUEUE
     ),
-    "tune_queue_identity": worker.TUNE_CHAT_QUEUE is queue_names.TUNE_CHAT_QUEUE,
 }))
 """
     completed = subprocess.run(
@@ -37,5 +36,4 @@ print(json.dumps({
         "tuning_service_loaded": False,
         "summarize_queue_identity": True,
         "backfill_queue_identity": True,
-        "tune_queue_identity": True,
     }

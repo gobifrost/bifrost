@@ -29,6 +29,7 @@ from shared.schema_gate import wait_for_schema
 from src.config import Settings, get_settings
 from src.core.database import close_db, get_engine, init_db
 from src.core.redis_client import PendingExecution
+from src.jobs.summarize_worker import handle_summarize_message
 from src.services.package_generation import (
     change_message,
     current_package_generation,
@@ -92,11 +93,13 @@ class PoolWorker:
         self._stop = asyncio.Event()
         self._wake = asyncio.Event()
         # In-flight consumer calls by handler. A workflow call returns once its
-        # run is routed to a child (then the pool counts it); an agent call
-        # returns when the run ends.
+        # run is routed to a child (then the pool counts it); agent runs and
+        # summaries return when they end.
         self._tasks: dict[str, set[asyncio.Task[None]]] = {
             "workflow.execute": set(),
             "agent.run": set(),
+            "agent.summarize": set(),
+            "agent.summarize_backfill": set(),
         }
         self._workflow_consumer = None
         self._agent_consumer = None
@@ -115,17 +118,24 @@ class PoolWorker:
         return pool_runs + len(self._tasks["workflow.execute"])
 
     def active_runs(self) -> int:
-        return self._workflow_runs() + len(self._tasks["agent.run"])
+        return self._workflow_runs() + sum(
+            len(tasks) for handler, tasks in self._tasks.items() if handler != "workflow.execute"
+        )
 
     def _claimable(self) -> tuple[tuple[str, int], ...]:
-        """Handlers with free capacity, under the same two limits as the
-        broker worker: process-pool forks for workflow runs
-        (``max_workers``) and concurrent agent runs (``max_concurrency``)."""
+        """Handlers with free capacity, under the broker worker's limits:
+        process-pool forks for workflow runs (``max_workers``), concurrent
+        agent runs (``max_concurrency``), and one live summary plus one
+        backfill summary at a time (the summary consumers' prefetch of 1, so
+        a large backfill never delays live summaries)."""
         handlers: list[tuple[str, int]] = []
         if self._workflow_runs() < self.settings.max_workers:
             handlers.append(("workflow.execute", 1))
         if len(self._tasks["agent.run"]) < self.settings.max_concurrency:
             handlers.append(("agent.run", 1))
+        for summary_handler in ("agent.summarize", "agent.summarize_backfill"):
+            if not self._tasks[summary_handler]:
+                handlers.append((summary_handler, 1))
         return tuple(handlers)
 
     async def run(self) -> int:
@@ -251,8 +261,10 @@ class PoolWorker:
                     if claim.claimed is not None
                     else None,
                 )
-            else:
+            elif claim.handler == "agent.run":
                 await self._agent_consumer.process_message(claim.message)
+            else:
+                await handle_summarize_message(claim.message)
         except Exception:
             logger.exception(
                 "Pool run failed in its consumer",

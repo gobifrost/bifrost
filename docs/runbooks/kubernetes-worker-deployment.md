@@ -17,7 +17,6 @@ The current worker is a single all-role process:
 - agent runs from `agent-runs`;
 - live summaries from `agent-summarization`;
 - summary backfills from `agent-summarization-backfill`;
-- tuning chat work from `agent-tuning-chat`;
 - package installation broadcast messages from the `package-installations`
   fanout exchange.
 
@@ -141,18 +140,15 @@ spec:
         value: "5"
       authenticationRef:
         name: bifrost-rabbitmq
-    - type: rabbitmq
-      metadata:
-        protocol: amqp
-        queueName: agent-tuning-chat
-        mode: QueueLength
-        value: "1"
-      authenticationRef:
-        name: bifrost-rabbitmq
 ```
 
 Include every queue the all-role worker serves. Watching only
 `workflow-executions` can strand agent-only traffic when no worker is running.
+
+Workers no longer consume `agent-tuning-chat` (it never had a publisher).
+Remove its trigger from an existing ScaledObject, and delete the empty queue
+once every worker runs this release:
+`rabbitmqctl delete_queue agent-tuning-chat`.
 The package-install broadcast exchange is not a durable scale-from-zero signal:
 exclusive auto-delete subscriber queues exist only while workers are connected.
 

@@ -65,7 +65,7 @@ class DispatchFamily:
 
 
 def _families() -> dict[str, DispatchFamily]:
-    from src.services.execution import agent_run_dispatch, workflow_dispatch
+    from src.services.execution import agent_run_dispatch, summary_dispatch, workflow_dispatch
 
     return {
         workflow_dispatch.FAMILY: DispatchFamily(
@@ -77,6 +77,11 @@ def _families() -> dict[str, DispatchFamily]:
             lock_waiting=agent_run_dispatch.lock_waiting_agent_run,
             fail=agent_run_dispatch.fail_unclaimed_agent_run,
             report_failed=agent_run_dispatch.report_unclaimed_agent_run,
+        ),
+        summary_dispatch.FAMILY: DispatchFamily(
+            lock_waiting=summary_dispatch.lock_waiting_summary,
+            fail=summary_dispatch.fail_unclaimed_summary,
+            report_failed=summary_dispatch.report_unclaimed_summary,
         ),
     }
 

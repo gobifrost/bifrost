@@ -974,8 +974,8 @@ async def _consume(consumer, run, context, runs):
         patch("src.jobs.consumers.agent_run.publish_agent_run_update", AsyncMock()),
         patch("src.jobs.consumers.agent_run._publish_sync_result", AsyncMock()) as sync_mock,
         patch(
-            "src.services.execution.run_summarizer.enqueue_summarize",
-            AsyncMock(),
+            "src.services.execution.summary_dispatch.stage_summary",
+            AsyncMock(return_value=None),
         ),
     ):
         await consumer.process_message(

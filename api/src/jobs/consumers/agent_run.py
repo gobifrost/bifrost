@@ -512,6 +512,7 @@ class AgentRunConsumer(BaseConsumer):
             # Update run record and flush buffered steps (brief DB session)
             duration_ms = int((time.time() - start_time) * 1000)
             consumer_applied_result = False
+            summary = None
             async with self._session_factory() as db:
                 # Re-fetch the AgentRun in this session to update it, but only
                 # if it is still live. A scheduler may have already terminalized
@@ -559,6 +560,14 @@ class AgentRunConsumer(BaseConsumer):
                 if executor:
                     await executor.flush_to_db(db)
 
+                # A completed run's summary is requested with its result, so
+                # it is never stranded; failures and cancellations are not
+                # summarized (the UI offers regenerate from any state).
+                if consumer_applied_result and run_obj.status == "completed":
+                    from src.services.execution.summary_dispatch import stage_summary
+
+                    summary = await stage_summary(db, run_obj.id)
+
                 await db.commit()
 
                 # Re-read for publish (need agent relationship)
@@ -576,19 +585,9 @@ class AgentRunConsumer(BaseConsumer):
 
             await publish_agent_run_update(agent_run, agent.name)
 
-            # Enqueue post-run summarization for completed runs only.
-            # Failures/timeouts/cancellations don't get summarized; the UI
-            # exposes a regenerate button to retry from any state.
-            # Errors here MUST NOT crash the run — summary_status stays
-            # 'pending' and the UI offers a regenerate path.
-            if consumer_applied_result and agent_run.status == "completed":
-                try:
-                    from src.services.execution.run_summarizer import enqueue_summarize
-                    await enqueue_summarize(UUID(run_id))
-                except Exception:
-                    logger.exception(
-                        f"Failed to enqueue summarizer for run {run_id}"
-                    )
+            from src.services.execution.summary_dispatch import hand_off_summary
+
+            await hand_off_summary(summary)
 
             # Update event delivery status if triggered by event
             if context.get("event_delivery_id"):

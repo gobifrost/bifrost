@@ -5,8 +5,8 @@ This module owns:
 - :func:`summarize_run`: load the completed run, render the input/output, ask
   the configured summarization model, and persist the parsed result onto
   ``AgentRun`` (asked/did/confidence/run_metadata/summary_status).
-- :func:`enqueue_summarize`: thin RabbitMQ publish helper used by the
-  ``agent-runs`` consumer once a run finishes.
+
+Summaries are requested through :mod:`src.services.execution.summary_dispatch`.
 
 Failure semantics: any error during the LLM call or JSON parsing is caught,
 recorded on ``run.summary_error`` with ``summary_status='failed'``, and
@@ -26,11 +26,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.pubsub import publish_agent_run_update
 from src.core.cache import get_shared_redis
-from src.jobs.queue_names import (
-    SUMMARIZE_BACKFILL_QUEUE as SUMMARIZE_BACKFILL_QUEUE,
-    SUMMARIZE_QUEUE,
-)
-from src.jobs.rabbitmq import publish_message
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.agents import Agent
 from src.services.ai_behavior_service import AGENT_EXECUTION_MODE_METADATA_KEY
@@ -422,8 +417,3 @@ async def summarize_run(
         )
         await db.commit()
         await _broadcast_run(run, db)
-
-
-async def enqueue_summarize(run_id: UUID) -> None:
-    """Publish a summarize message for the agent-summarization worker."""
-    await publish_message(SUMMARIZE_QUEUE, {"run_id": str(run_id)})

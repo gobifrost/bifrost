@@ -1475,6 +1475,8 @@ class AutonomousAgentExecutor:
             evidence=evidence,
         )
 
+        from src.services.execution.summary_dispatch import hand_off_summary, stage_summary
+
         async with self._session_factory() as db:
             sub_run_obj = await db.get(AgentRun, sub_run_id)
             if sub_run_obj is None:
@@ -1500,18 +1502,12 @@ class AutonomousAgentExecutor:
                 }
 
             await sub_executor.flush_to_db(db)
+            summary = (
+                await stage_summary(db, sub_run_id) if status == "completed" else None
+            )
             await db.commit()
 
-        if status == "completed":
-            try:
-                from src.services.execution.run_summarizer import enqueue_summarize
-
-                await enqueue_summarize(sub_run_id)
-            except Exception:
-                logger.exception(
-                    "Failed to enqueue summarizer for delegated run %s",
-                    sub_run_id,
-                )
+        await hand_off_summary(summary)
 
         if self.redis_client:
             try:

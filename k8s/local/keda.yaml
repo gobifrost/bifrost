@@ -61,11 +61,3 @@ spec:
         value: "5"
       authenticationRef:
         name: bifrost-rabbitmq
-    - type: rabbitmq
-      metadata:
-        protocol: amqp
-        queueName: agent-tuning-chat
-        mode: QueueLength
-        value: "1"
-      authenticationRef:
-        name: bifrost-rabbitmq

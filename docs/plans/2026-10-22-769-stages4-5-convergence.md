@@ -65,7 +65,8 @@ Status: planned. Parent plan: `docs/plans/2026-10-22-api-owned-unified-kubernete
    - remove the worker Deployment, the KEDA ScaledObject and the
      scheduler-only RBAC, with documented manifest steps and a startup
      check that names any leftover object it finds;
-   - delete RabbitMQ queues and exchanges in a one-time cleanup;
+   - delete RabbitMQ queues and exchanges in a one-time cleanup,
+     including `agent-tuning-chat` (no consumer since stage 4b);
    - make RabbitMQ an optional dependency, then drop it from compose and
      the manifests.
 

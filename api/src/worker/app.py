@@ -29,7 +29,6 @@ from src.jobs.consumers.agent_run import AgentRunConsumer
 from src.jobs.summarize_worker import (
     SummarizeBackfillConsumer,
     SummarizeConsumer,
-    TuneChatConsumer,
 )
 
 # Configure logging
@@ -165,7 +164,6 @@ class Worker:
             AgentRunConsumer(),
             SummarizeConsumer(),
             SummarizeBackfillConsumer(),
-            TuneChatConsumer(),
         ]
 
         # Start each consumer
