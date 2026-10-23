@@ -4,7 +4,8 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 import redis.asyncio as aioredis
@@ -12,6 +13,7 @@ import redis.asyncio as aioredis
 from src.core.database import get_dispatch_db_context
 from src.core.log_safety import log_safe
 from src.models.orm.agent_runs import AgentRun
+from src.models.orm.work_dispatches import WorkDispatch
 from src.services.durable_impersonation import current_durable_impersonation
 from src.services.execution.agent_run_dispatch import (
     cache_agent_context,
@@ -20,6 +22,8 @@ from src.services.execution.agent_run_dispatch import (
 )
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from shared.run_lineage import RunLineage
 
 logger = logging.getLogger(__name__)
@@ -44,7 +48,19 @@ def _acting_user_id(
     return lineage.run_user_id if lineage is not None else None
 
 
-async def enqueue_agent_run(
+@dataclass(frozen=True)
+class StagedAgentRun:
+    """An agent run staged in a transaction, to hand off once it commits."""
+
+    run_id: str
+    agent_id: str | None
+    trigger_type: str
+    context: dict[str, Any]
+    dispatch: WorkDispatch
+
+
+async def stage_agent_run_request(
+    db: AsyncSession,
     agent_id: str | None,
     trigger_type: str,
     input_data: dict | None = None,
@@ -63,11 +79,10 @@ async def enqueue_agent_run(
     conversation_id: str | None = None,
     sync: bool = False,
     run_id: str | None = None,
-    before_queue_publish: Callable[[str], Awaitable[None]] | None = None,
     lineage: RunLineage | None,
     run_as_user_id: UUID | None = None,
-) -> str:
-    """Persist and enqueue an agent run for worker processing.
+) -> StagedAgentRun:
+    """Add an agent run and its dispatch to the caller's transaction.
 
     ``lineage`` says who the run is for (shared.run_lineage); the row records
     its run user. None when it can't be known.
@@ -76,10 +91,8 @@ async def enqueue_agent_run(
     the caller. The selected actor is recorded on the row; queued context is
     never an authority source.
 
-    The run and its dispatch (holding the execution context) are committed
-    before the queue message is published, so a returned run ID is
-    immediately queryable and survives a Redis or RabbitMQ outage: the
-    control plane republishes a lost hand-off.
+    Nothing is committed here. Hand the run off with
+    :func:`hand_off_staged_agent_run` once the caller's transaction commits.
     """
     if run_id is None:
         run_id = str(uuid4())
@@ -91,7 +104,7 @@ async def enqueue_agent_run(
         run_as_user_id=run_as_user_id,
     )
     impersonation = current_durable_impersonation()
-    context = {
+    context: dict[str, Any] = {
         "run_id": run_id,
         "agent_id": agent_id,
         "trigger_type": trigger_type,
@@ -114,65 +127,102 @@ async def enqueue_agent_run(
         "sync": sync,
         "cancelled": False,
     }
-    async with get_dispatch_db_context() as db:
-        db.add(
-            AgentRun(
-                id=run_uuid,
-                agent_id=UUID(agent_id) if agent_id else None,
-                trigger_type=trigger_type,
-                trigger_source=trigger_source,
-                event_delivery_id=(
-                    UUID(event_delivery_id) if event_delivery_id else None
-                ),
-                conversation_id=UUID(conversation_id) if conversation_id else None,
-                input=input_data,
-                output_schema=output_schema,
-                status="queued",
-                org_id=UUID(org_id) if org_id else None,
-                caller_user_id=caller_user_id,
-                caller_email=caller_email,
-                caller_name=caller_name,
-                run_user_id=lineage.run_user_id if lineage else None,
-                run_as_user_id=run_as_user_id,
-                acting_user_id=acting_user_id,
-                **impersonation.columns(),
-            )
+    db.add(
+        AgentRun(
+            id=run_uuid,
+            agent_id=UUID(agent_id) if agent_id else None,
+            trigger_type=trigger_type,
+            trigger_source=trigger_source,
+            event_delivery_id=(
+                UUID(event_delivery_id) if event_delivery_id else None
+            ),
+            conversation_id=UUID(conversation_id) if conversation_id else None,
+            input=input_data,
+            output_schema=output_schema,
+            status="queued",
+            org_id=UUID(org_id) if org_id else None,
+            caller_user_id=caller_user_id,
+            caller_email=caller_email,
+            caller_name=caller_name,
+            run_user_id=lineage.run_user_id if lineage else None,
+            run_as_user_id=run_as_user_id,
+            acting_user_id=acting_user_id,
+            **impersonation.columns(),
         )
-        # The AgentRun must exist before its dispatch references the subject.
-        await db.flush()
-        dispatch = stage_agent_run(
-            db,
-            run_id=run_uuid,
-            context=context,
-            message={
-                "run_id": run_id,
-                "agent_id": agent_id,
-                "trigger_type": trigger_type,
-                "sync": sync,
-            },
-        )
+    )
+    # The AgentRun must exist before its dispatch references the subject.
+    await db.flush()
+    dispatch = stage_agent_run(
+        db,
+        run_id=run_uuid,
+        context=context,
+        message={
+            "run_id": run_id,
+            "agent_id": agent_id,
+            "trigger_type": trigger_type,
+            "sync": sync,
+        },
+    )
+    return StagedAgentRun(
+        run_id=run_id,
+        agent_id=agent_id,
+        trigger_type=trigger_type,
+        context=context,
+        dispatch=dispatch,
+    )
 
-    # Accepted durably. Everything below is best-effort: a lost hand-off is
-    # republished by the control plane's reconciler.
-    await cache_agent_context(run_id, context)
+
+async def hand_off_staged_agent_run(
+    staged: StagedAgentRun,
+    before_queue_publish: Callable[[str], Awaitable[None]] | None = None,
+) -> None:
+    """Hand a committed run to a worker; best-effort.
+
+    A lost hand-off is republished by the control plane's reconciler.
+    """
+    await cache_agent_context(staged.run_id, staged.context)
     if before_queue_publish is not None:
         try:
-            await before_queue_publish(run_id)
+            await before_queue_publish(staged.run_id)
         except Exception:
             logger.warning(
                 "Agent run pre-publish notice failed",
-                extra={"run_id": log_safe(run_id)},
+                extra={"run_id": log_safe(staged.run_id)},
                 exc_info=True,
             )
-    await hand_off_agent_run(dispatch)
+    await hand_off_agent_run(staged.dispatch)
 
     logger.info(
         "Enqueued agent run %s for agent %s (trigger=%s)",
-        log_safe(run_id),
-        log_safe(agent_id),
-        log_safe(trigger_type),
+        log_safe(staged.run_id),
+        log_safe(staged.agent_id),
+        log_safe(staged.trigger_type),
     )
-    return run_id
+
+
+async def enqueue_agent_run(
+    agent_id: str | None,
+    trigger_type: str,
+    input_data: dict | None = None,
+    *,
+    before_queue_publish: Callable[[str], Awaitable[None]] | None = None,
+    lineage: RunLineage | None,
+    **run: Any,
+) -> str:
+    """Persist and enqueue an agent run for worker processing.
+
+    Accepts :func:`stage_agent_run_request`'s keyword arguments. The run and
+    its dispatch (holding the execution context) are committed before the
+    queue message is published, so a returned run ID is immediately
+    queryable and survives a Redis or RabbitMQ outage: the control plane
+    republishes a lost hand-off.
+    """
+    async with get_dispatch_db_context() as db:
+        staged = await stage_agent_run_request(
+            db, agent_id, trigger_type, input_data, lineage=lineage, **run
+        )
+    await hand_off_staged_agent_run(staged, before_queue_publish)
+    return staged.run_id
 
 
 async def wait_for_agent_run_result(run_id: str, timeout: int = 1800) -> dict | None:

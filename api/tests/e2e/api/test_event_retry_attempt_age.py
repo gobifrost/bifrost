@@ -11,7 +11,7 @@ from src.models.enums import EventDeliveryStatus
 from src.models.orm.events import Event, EventDelivery
 from src.repositories.events import EventDeliveryRepository
 from src.routers.events import retry_delivery
-from src.services.events.processor import EventProcessor
+from src.services.events.processor import EventProcessor, QueuedDeliveries
 from tests.e2e.api.test_events import (
     event_source as event_source,
     subscription as subscription,
@@ -43,7 +43,9 @@ async def test_retry_timeout_uses_attempt_age(
     )
     db_session.add_all([event, delivery])
     await db_session.flush()
-    monkeypatch.setattr(EventProcessor, "queue_event_deliveries", AsyncMock(return_value=1))
+    monkeypatch.setattr(
+        EventProcessor, "queue_event_deliveries", AsyncMock(return_value=QueuedDeliveries())
+    )
 
     principal = UserPrincipal(
         user_id=platform_admin.user_id,

@@ -3,8 +3,8 @@ Unit tests for EventProcessor agent target routing.
 
 Verifies that queue_event_deliveries correctly routes deliveries
 to either _queue_agent_run or _queue_workflow_execution based on
-the subscription's target_type, and that _queue_agent_run calls
-enqueue_agent_run with the expected parameters.
+the subscription's target_type, and that _queue_agent_run stages the
+agent run in the processor's own session with the expected parameters.
 """
 
 import base64
@@ -77,6 +77,14 @@ def _make_delivery(
     return delivery
 
 
+class _Savepoint:
+    async def __aenter__(self) -> "_Savepoint":
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+
 def _create_processor() -> "EventProcessor":
     """Create an EventProcessor with all repos mocked out."""
     with (
@@ -88,6 +96,8 @@ def _create_processor() -> "EventProcessor":
         from src.services.events.processor import EventProcessor
 
         session = AsyncMock()
+        # Each delivery is queued in its own savepoint of the caller's session.
+        session.begin_nested = MagicMock(side_effect=lambda: _Savepoint())
         processor = EventProcessor(session)
         processor._delivery_repo = MagicMock()
         processor._delivery_repo.update_event_status = AsyncMock()
@@ -130,7 +140,7 @@ async def test_queue_deliveries_routes_agent_subscription():
     processor._queue_workflow_execution = AsyncMock()
     processor._broadcast_event_update = AsyncMock()
 
-    count = await processor.queue_event_deliveries(event_id)
+    count = (await processor.queue_event_deliveries(event_id)).count
 
     assert count == 1
     assert delivery.status == EventDeliveryStatus.QUEUED
@@ -153,7 +163,7 @@ async def test_queue_deliveries_routes_workflow_subscription():
     processor._queue_workflow_execution = AsyncMock()
     processor._broadcast_event_update = AsyncMock()
 
-    count = await processor.queue_event_deliveries(event_id)
+    count = (await processor.queue_event_deliveries(event_id)).count
 
     assert count == 1
     assert delivery.status == EventDeliveryStatus.QUEUED
@@ -176,7 +186,7 @@ async def test_queue_deliveries_skips_non_pending():
     processor._queue_workflow_execution = AsyncMock()
     processor._broadcast_event_update = AsyncMock()
 
-    count = await processor.queue_event_deliveries(event_id)
+    count = (await processor.queue_event_deliveries(event_id)).count
 
     assert count == 0
     processor._queue_agent_run.assert_not_awaited()
@@ -201,7 +211,7 @@ async def test_queue_deliveries_rechecks_filter_before_dispatch():
     processor._queue_workflow_execution = AsyncMock()
     processor._broadcast_event_update = AsyncMock()
 
-    count = await processor.queue_event_deliveries(event_id)
+    count = (await processor.queue_event_deliveries(event_id)).count
 
     assert count == 0
     assert delivery.status == EventDeliveryStatus.SKIPPED
@@ -214,7 +224,7 @@ async def test_queue_deliveries_rechecks_filter_before_dispatch():
 
 @pytest.mark.asyncio
 async def test_queue_agent_run_calls_enqueue():
-    """_queue_agent_run should call enqueue_agent_run with correct parameters."""
+    """_queue_agent_run stages the run in its own session with the right parameters."""
     processor = _create_processor()
 
     agent = MagicMock()
@@ -232,9 +242,9 @@ async def test_queue_agent_run_calls_enqueue():
         patch("src.services.authorization.callers.load_human_caller", new=AsyncMock(return_value=caller)) as load,
         patch("src.services.authorization.agent_runtime.authorize_agent_execution", new=AsyncMock()) as authorize,
         patch(
-            "src.services.execution.agent_run_service.enqueue_agent_run",
+            "src.services.execution.agent_run_service.stage_agent_run_request",
             new_callable=AsyncMock,
-            return_value=str(run_id),
+            return_value=MagicMock(run_id=str(run_id)),
         ) as mock_enqueue,
     ):
         await processor._queue_agent_run(delivery, event)
@@ -282,9 +292,9 @@ async def test_queue_agent_run_receives_trusted_byte_exact_raw_webhook_body():
         patch("src.services.authorization.callers.load_human_caller", new=AsyncMock(return_value=caller)),
         patch("src.services.authorization.agent_runtime.authorize_agent_execution", new=AsyncMock()),
         patch(
-            "src.services.execution.agent_run_service.enqueue_agent_run",
+            "src.services.execution.agent_run_service.stage_agent_run_request",
             new_callable=AsyncMock,
-            return_value=str(uuid.uuid4()),
+            return_value=MagicMock(run_id=str(uuid.uuid4())),
         ) as mock_enqueue,
     ):
         await processor._queue_agent_run(delivery, event)
@@ -314,7 +324,7 @@ async def test_queue_deliveries_uses_fallback_message_for_empty_exception():
     )
     processor._broadcast_event_update = AsyncMock()
 
-    count = await processor.queue_event_deliveries(event_id)
+    count = (await processor.queue_event_deliveries(event_id)).count
 
     assert count == 0
     assert delivery.status == EventDeliveryStatus.FAILED
@@ -340,9 +350,9 @@ async def test_event_agent_run_is_for_the_agent_organization_identity():
         patch("src.services.authorization.callers.load_human_caller", new=AsyncMock(return_value=caller)) as load,
         patch("src.services.authorization.agent_runtime.authorize_agent_execution", new=AsyncMock()) as authorize,
         patch(
-            "src.services.execution.agent_run_service.enqueue_agent_run",
+            "src.services.execution.agent_run_service.stage_agent_run_request",
             new_callable=AsyncMock,
-            return_value=str(uuid.uuid4()),
+            return_value=MagicMock(run_id=str(uuid.uuid4())),
         ) as mock_enqueue,
     ):
         await processor._queue_agent_run(delivery, _make_event())

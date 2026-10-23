@@ -1975,7 +1975,7 @@ async def create_delivery(
     added after the event originally arrived.
     """
     import uuid
-    from src.services.events.processor import EventProcessor
+    from src.services.events.processor import EventProcessor, QueuedDeliveries
 
     # Get event
     result = await db.execute(
@@ -2038,14 +2038,16 @@ async def create_delivery(
     db.add(delivery)
     await db.flush()
 
-    # Agent runs are created in a separate transaction and reference this
-    # delivery by foreign key, so the delivery must be durable before queueing.
-    await db.commit()
-
-    # Queue the execution
+    # The run commits with this delivery and its record of the run. Only
+    # this delivery is queued: other pending deliveries of the event belong
+    # to whoever created them.
     processor = EventProcessor(db)
+    queued = QueuedDeliveries()
     try:
-        await processor.queue_event_deliveries(event_id)
+        async with db.begin_nested():
+            queued = await processor.queue_event_deliveries(
+                event_id, delivery_ids={delivery.id}
+            )
     except Exception as e:
         error_message = format_exception_message(
             e,
@@ -2055,6 +2057,8 @@ async def create_delivery(
         delivery.status = EventDeliveryStatus.FAILED
         delivery.error_message = error_message
         await db.flush()
+    await db.commit()
+    await queued.hand_off()
 
     logger.info(
         f"Created delivery {delivery.id} for event {log_safe(event_id)} subscription {subscription.id}"
@@ -2127,7 +2131,9 @@ async def retry_delivery(
 
     # Reset delivery status to pending
     processor = EventProcessor(db)
-    message = await processor.retry_delivery(delivery)
+    message, queued = await processor.retry_delivery(delivery)
+    await db.commit()
+    await queued.hand_off()
 
     logger.info(f"Retried delivery {log_safe(delivery_id)}")
 

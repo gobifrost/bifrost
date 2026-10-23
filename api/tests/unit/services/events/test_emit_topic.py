@@ -339,9 +339,9 @@ async def test_emit_topic_payload_under_event_key():
 
     with (
         patch(
-            "src.services.execution.async_executor.enqueue_system_workflow_execution",
+            "src.services.execution.async_executor.stage_system_workflow_execution",
             new_callable=AsyncMock,
-            return_value=str(uuid.uuid4()),
+            return_value=MagicMock(pending={"execution_id": str(uuid.uuid4())}),
         ) as mock_enqueue,
         # Who the run is for is covered in test_processor_delivery.py.
         patch("shared.run_lineage.unattended_lineage", new_callable=AsyncMock),

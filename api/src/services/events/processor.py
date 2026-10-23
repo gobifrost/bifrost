@@ -16,6 +16,8 @@ import base64
 import logging
 import re
 import uuid
+from collections.abc import Awaitable, Callable, Collection
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
@@ -197,6 +199,28 @@ def _process_input_mapping(
     return result
 
 
+@dataclass
+class QueuedDeliveries:
+    """Runs accepted in the caller's transaction, to hand off once it commits."""
+
+    hand_offs: list[Callable[[], Awaitable[object]]] = field(default_factory=list)
+    broadcast: Callable[[], Awaitable[None]] | None = None
+
+    @property
+    def count(self) -> int:
+        return len(self.hand_offs)
+
+    async def hand_off(self) -> None:
+        """After commit; best-effort, since the reconciler republishes a lost one."""
+        for hand_off in self.hand_offs:
+            try:
+                await hand_off()
+            except Exception:
+                logger.warning("Event delivery hand-off failed; the reconciler will retry", exc_info=True)
+        if self.broadcast is not None:
+            await self.broadcast()
+
+
 class EventProcessor:
     """
     Core event processor for webhook events.
@@ -281,22 +305,28 @@ class EventProcessor:
             filter_decision.matches,
         )
 
-    async def retry_delivery(self, delivery: EventDelivery) -> str:
-        """Reset and queue one failed delivery as a new timed attempt."""
+    async def retry_delivery(self, delivery: EventDelivery) -> tuple[str, QueuedDeliveries]:
+        """Reset and queue one failed delivery as a new timed attempt.
+
+        Only this delivery is queued. Commit, then hand off the result.
+        """
         delivery.status = EventDeliveryStatus.PENDING
         delivery.error_message = None
         delivery.execution_id = None
+        delivery.agent_run_id = None
         delivery.completed_at = None
         delivery.attempt_started_at = datetime.now(timezone.utc)
         await self.session.flush()
 
         try:
-            await self.queue_event_deliveries(delivery.event_id)
+            queued = await self.queue_event_deliveries(
+                delivery.event_id, delivery_ids={delivery.id}
+            )
             if delivery.status == EventDeliveryStatus.FAILED:
                 delivery.completed_at = datetime.now(timezone.utc)
                 await self.session.flush()
-                return f"Failed to queue retry: {delivery.error_message}"
-            return "Delivery queued for retry"
+                return f"Failed to queue retry: {delivery.error_message}", queued
+            return "Delivery queued for retry", queued
         except Exception as exc:
             error_message = format_exception_message(exc, context="queueing event delivery retry")
             logger.error("Failed to queue retry: %s", error_message, exc_info=True)
@@ -304,7 +334,7 @@ class EventProcessor:
             delivery.error_message = error_message
             delivery.completed_at = datetime.now(timezone.utc)
             await self.session.flush()
-            return f"Failed to queue retry: {error_message}"
+            return f"Failed to queue retry: {error_message}", QueuedDeliveries()
 
     async def process_webhook(
         self,
@@ -653,31 +683,37 @@ class EventProcessor:
             # Don't fail event processing if broadcast fails
             logger.warning(f"Failed to broadcast event update: {e}")
 
-    async def queue_event_deliveries(self, event_id: uuid.UUID) -> int:
+    async def queue_event_deliveries(
+        self,
+        event_id: uuid.UUID,
+        *,
+        delivery_ids: Collection[uuid.UUID] | None = None,
+    ) -> QueuedDeliveries:
+        """Accept the runs for an event's pending deliveries, in this session.
+
+        Each run is staged in the caller's transaction together with its
+        delivery's ``QUEUED`` status and run id, so a crash can never leave a
+        run without its delivery's record of it (or the reverse). One
+        delivery that cannot be queued is marked ``FAILED`` without undoing
+        the others. Commit, then call ``hand_off()`` on the result.
+
+        ``delivery_ids`` limits queueing to those deliveries (a retry or a
+        manual delivery), so other pending deliveries of the event are never
+        queued twice.
         """
-        Queue workflow executions for all pending deliveries of an event.
-
-        This should be called after the transaction commits to ensure
-        delivery records exist before queueing.
-
-        Args:
-            event_id: Event UUID
-
-        Returns:
-            Number of deliveries queued
-        """
-        # Get all pending deliveries for this event
+        batch = QueuedDeliveries()
         deliveries = await self._delivery_repo.get_by_event(event_id)
 
         # Get the event data (once, outside the loop)
         event_obj = await self._event_repo.get_by_id(event_id)
         if not event_obj:
             logger.error(f"Event not found when queueing deliveries: {log_safe(event_id)}")
-            return 0
+            return batch
 
-        queued = 0
         for delivery in deliveries:
             if delivery.status != EventDeliveryStatus.PENDING:
+                continue
+            if delivery_ids is not None and delivery.id not in delivery_ids:
                 continue
 
             subscription = delivery.subscription
@@ -697,12 +733,14 @@ class EventProcessor:
                 continue
 
             try:
-                if subscription and subscription.target_type == "agent":
-                    await self._queue_agent_run(delivery, event_obj)
-                else:
-                    await self._queue_workflow_execution(delivery, event_obj)
-                delivery.status = EventDeliveryStatus.QUEUED
-                queued += 1
+                async with self.session.begin_nested():
+                    if subscription and subscription.target_type == "agent":
+                        hand_off = await self._queue_agent_run(delivery, event_obj)
+                    else:
+                        hand_off = await self._queue_workflow_execution(delivery, event_obj)
+                    delivery.status = EventDeliveryStatus.QUEUED
+                    await self.session.flush()
+                batch.hand_offs.append(hand_off)
             except Exception as e:
                 error_message = format_exception_message(
                     e,
@@ -718,43 +756,40 @@ class EventProcessor:
         await self.session.flush()
         await self._delivery_repo.update_event_status(event_id)
 
-        # Broadcast update after queueing (use already-loaded deliveries)
-        success_count = sum(
-            1 for d in deliveries if d.status == EventDeliveryStatus.SUCCESS
-        )
-        failed_count = sum(
-            1 for d in deliveries if d.status == EventDeliveryStatus.FAILED
-        )
-        queued_count = sum(
-            1 for d in deliveries if d.status == EventDeliveryStatus.QUEUED
-        )
-        pending_count = sum(
-            1 for d in deliveries if d.status == EventDeliveryStatus.PENDING
-        )
-        skipped_count = sum(
-            1 for d in deliveries if d.status == EventDeliveryStatus.SKIPPED
-        )
+        counts = {
+            status: sum(1 for d in deliveries if d.status == status)
+            for status in (
+                EventDeliveryStatus.SUCCESS,
+                EventDeliveryStatus.FAILED,
+                EventDeliveryStatus.QUEUED,
+                EventDeliveryStatus.PENDING,
+                EventDeliveryStatus.SKIPPED,
+            )
+        }
+        event_source_id = event_obj.event_source_id
 
-        await self._broadcast_event_update(
-            event_source_id=event_obj.event_source_id,
-            event=event_obj,
-            update_type="deliveries_queued",
-            success_count=success_count,
-            failed_count=failed_count,
-            queued_count=queued_count,
-            pending_count=pending_count,
-            skipped_count=skipped_count,
-        )
+        async def broadcast() -> None:
+            await self._broadcast_event_update(
+                event_source_id=event_source_id,
+                event=event_obj,
+                update_type="deliveries_queued",
+                success_count=counts[EventDeliveryStatus.SUCCESS],
+                failed_count=counts[EventDeliveryStatus.FAILED],
+                queued_count=counts[EventDeliveryStatus.QUEUED],
+                pending_count=counts[EventDeliveryStatus.PENDING],
+                skipped_count=counts[EventDeliveryStatus.SKIPPED],
+            )
 
-        return queued
+        batch.broadcast = broadcast
+        return batch
 
     async def _queue_workflow_execution(
         self,
         delivery: EventDelivery,
         event: Event,
-    ) -> None:
+    ) -> Callable[[], Awaitable[object]]:
         """
-        Queue a workflow execution for an event delivery.
+        Stage a workflow run for an event delivery; return its hand-off.
 
         Uses the same execution infrastructure as the rest of the platform.
 
@@ -763,7 +798,8 @@ class EventProcessor:
         payload is used as parameters (legacy behavior).
         """
         from shared.run_lineage import unattended_lineage
-        from src.services.execution.async_executor import enqueue_system_workflow_execution
+        from src.services.execution.async_executor import stage_system_workflow_execution
+        from src.services.execution.workflow_dispatch import hand_off_workflow_run
 
         # Get workflow details
         workflow = delivery.workflow
@@ -833,14 +869,15 @@ class EventProcessor:
 
         # Use the centralized system execution helper
         # Use workflow's org_id so org-scoped workflows only access their org's data
-        execution_id = await enqueue_system_workflow_execution(
+        accepted = await stage_system_workflow_execution(
+            self.session,
             workflow_id=str(workflow.id),
             parameters=parameters,
-            source="Event System",
             org_id=str(workflow.organization_id) if workflow.organization_id else None,
             event=event_context,
             lineage=await unattended_lineage(self.session, workflow.id),
         )
+        execution_id = accepted.pending["execution_id"]
 
         # Store the execution ID on the delivery for tracking
         delivery.execution_id = uuid.UUID(execution_id)
@@ -854,17 +891,21 @@ class EventProcessor:
                 "event_id": str(event.id),
             },
         )
+        return lambda: hand_off_workflow_run(accepted)
 
     async def _queue_agent_run(
         self,
         delivery: EventDelivery,
         event: Event,
-    ) -> None:
-        """Queue an agent run for an event delivery targeting an agent."""
+    ) -> Callable[[], Awaitable[object]]:
+        """Stage an agent run for an event delivery; return its hand-off."""
         from shared.run_lineage import identity_lineage
         from src.services.authorization.agent_runtime import authorize_agent_execution
         from src.services.authorization.callers import load_human_caller
-        from src.services.execution.agent_run_service import enqueue_agent_run
+        from src.services.execution.agent_run_service import (
+            hand_off_staged_agent_run,
+            stage_agent_run_request,
+        )
 
         subscription = delivery.subscription
         agent = subscription.agent
@@ -904,7 +945,8 @@ class EventProcessor:
         caller = await load_human_caller(self.session, lineage.run_user_id)
         await authorize_agent_execution(self.session, caller, agent.id)
 
-        run_id = await enqueue_agent_run(
+        staged = await stage_agent_run_request(
+            self.session,
             agent_id=str(agent.id),
             trigger_type="event",
             trigger_source=f"event: {event.event_type or 'webhook'}",
@@ -914,6 +956,7 @@ class EventProcessor:
             lineage=lineage,
         )
 
+        run_id = staged.run_id
         delivery.agent_run_id = uuid.UUID(run_id)
 
         logger.info(
@@ -925,7 +968,7 @@ class EventProcessor:
                 "event_id": str(event.id),
             },
         )
-
+        return lambda: hand_off_staged_agent_run(staged)
 
 
 async def update_delivery_from_execution(

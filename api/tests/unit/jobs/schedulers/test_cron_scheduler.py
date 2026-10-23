@@ -57,6 +57,17 @@ class _CommitTrackingSession:
         await self._session.commit()
 
 
+def _queued(count: int, on_hand_off=None):  # type: ignore[no-untyped-def]
+    """A queued batch of ``count`` runs, as queue_event_deliveries returns."""
+    from src.services.events.processor import QueuedDeliveries
+
+    async def hand_off() -> None:
+        if on_hand_off is not None:
+            on_hand_off()
+
+    return QueuedDeliveries(hand_offs=[hand_off for _ in range(count)])
+
+
 def _make_source_and_subscription(
     *,
     cron: str = "* * * * *",
@@ -473,7 +484,7 @@ async def test_schedule_creates_delivery_for_agent_subscription(db_session):
     mock_sub_repo = AsyncMock()
     mock_sub_repo.get_active_for_event = AsyncMock(return_value=[sub])
     mock_processor = AsyncMock()
-    mock_processor.queue_event_deliveries = AsyncMock(return_value=1)
+    mock_processor.queue_event_deliveries = AsyncMock(return_value=_queued(1))
 
     from src.jobs.schedulers.cron_scheduler import process_schedule_sources
 
@@ -492,8 +503,8 @@ async def test_schedule_creates_delivery_for_agent_subscription(db_session):
 
 
 @pytest.mark.asyncio
-async def test_schedule_commits_agent_delivery_before_queueing(db_session):
-    """AgentRun uses a separate transaction, so its delivery FK must be durable first."""
+async def test_schedule_commits_runs_with_their_deliveries_then_hands_them_off(db_session):
+    """A source's event, deliveries and runs commit together, then go to workers."""
     from src.models.orm.agents import Agent
 
     agent = Agent(
@@ -511,14 +522,15 @@ async def test_schedule_commits_agent_delivery_before_queueing(db_session):
     mock_sub_repo = AsyncMock()
     mock_sub_repo.get_active_for_event = AsyncMock(return_value=[sub])
     mock_processor = AsyncMock()
+    commits_at: dict[str, int] = {}
 
-    async def assert_delivery_is_committed(_event_id):
-        assert tracking_session.commit_count >= 1
-        return 1
+    async def queue(_event_id):  # type: ignore[no-untyped-def]
+        commits_at["queue"] = tracking_session.commit_count
+        return _queued(
+            1, on_hand_off=lambda: commits_at.setdefault("hand_off", tracking_session.commit_count)
+        )
 
-    mock_processor.queue_event_deliveries = AsyncMock(
-        side_effect=assert_delivery_is_committed
-    )
+    mock_processor.queue_event_deliveries = AsyncMock(side_effect=queue)
 
     from src.jobs.schedulers.cron_scheduler import process_schedule_sources
 
@@ -533,6 +545,8 @@ async def test_schedule_commits_agent_delivery_before_queueing(db_session):
     mock_processor.queue_event_deliveries.assert_awaited_once()
     assert results["errors"] == []
     assert results["deliveries_queued"] == 1
+    # Queued before the source's commit; handed off only after it.
+    assert commits_at["hand_off"] == commits_at["queue"] + 1
 
 
 @pytest.mark.asyncio
@@ -557,7 +571,7 @@ async def test_schedule_creates_delivery_for_workflow_subscription(db_session):
     mock_sub_repo = AsyncMock()
     mock_sub_repo.get_active_for_event = AsyncMock(return_value=[sub])
     mock_processor = AsyncMock()
-    mock_processor.queue_event_deliveries = AsyncMock(return_value=1)
+    mock_processor.queue_event_deliveries = AsyncMock(return_value=_queued(1))
 
     from src.jobs.schedulers.cron_scheduler import process_schedule_sources
 

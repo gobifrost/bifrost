@@ -349,18 +349,27 @@ async def process_schedule_sources() -> dict[str, Any]:
                         f"Created {deliveries_for_event} deliveries for schedule event: {event.id}"
                     )
 
-                    # Agent runs are persisted by enqueue_agent_run in a separate
-                    # transaction and reference this delivery by foreign key.
-                    # Make the event and deliveries durable before queueing so
-                    # that transaction can see them.
-                    await db.commit()
-
-                    # Queue the deliveries using the event processor
-                    from src.services.events.processor import EventProcessor
+                    # Each delivery's run commits with this source's event and
+                    # the delivery's record of it, in one transaction per
+                    # source. If queueing fails outright, the event is still
+                    # recorded with pending deliveries before the error is
+                    # reported for this source.
+                    from src.services.events.processor import (
+                        EventProcessor,
+                        QueuedDeliveries,
+                    )
 
                     processor = EventProcessor(db)
-                    queued = await processor.queue_event_deliveries(event.id)
-                    results["deliveries_queued"] += queued
+                    queued = QueuedDeliveries()
+                    try:
+                        async with db.begin_nested():
+                            queued = await processor.queue_event_deliveries(event.id)
+                    except Exception:
+                        await db.commit()
+                        raise
+                    await db.commit()
+                    await queued.hand_off()
+                    results["deliveries_queued"] += queued.count
 
                 except Exception as source_error:
                     error_info = {
