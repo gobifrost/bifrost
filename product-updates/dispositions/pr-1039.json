@@ -1,0 +1,14 @@
+{
+  "key": "pr:1039",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "hardening",
+  "summary": "The scheduler and worker services now run the same executor, so either can be scaled or removed, and the API runs scheduling. On Kubernetes, extra workers start on demand when the API is allowed to manage Jobs. Existing Compose files and manifests keep working unchanged; roll back only to a release that includes the schema-gate fix from #1034.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1039",
+      "Claude drafted this summary on 2026-10-23 under Jack's standing authority for the #769 rollout (merge each stage once its gate passes). The full unified-runtime announcement is authored with stage 5c. No customer action is required for an unchanged install."
+    ]
+  }
+}
