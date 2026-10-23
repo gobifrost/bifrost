@@ -1,7 +1,7 @@
 """Drop the broker columns from work dispatches
 
 Revision ID: 20261023_drop_dispatch_broker
-Revises: 20261023_worker_memory_pressure
+Revises: 20261023_legacy_run_lineage
 Create Date: 2026-10-23
 
 RabbitMQ is retired (#769 stage 5b) and every dispatch is claimed from
@@ -18,7 +18,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "20261023_drop_dispatch_broker"
-down_revision: Union[str, None] = "20261023_worker_memory_pressure"
+down_revision: Union[str, None] = "20261023_legacy_run_lineage"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
