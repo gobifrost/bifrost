@@ -97,7 +97,7 @@ def db(async_session_factory: async_sessionmaker[AsyncSession], monkeypatch):
     monkeypatch.setattr("src.config.get_settings", lambda: SETTINGS)
     publish = AsyncMock()
     monkeypatch.setattr(work_dispatch, "publish_message", publish)
-    monkeypatch.setattr(workflow_dispatch, "get_redis_client", lambda: AsyncMock())
+    monkeypatch.setattr(workflow_dispatch, "get_redis_client", AsyncMock)
     monkeypatch.setattr("src.services.execution.queue_tracker.add_to_queue", AsyncMock())
     return SimpleNamespace(sessions=async_session_factory, publish=publish)
 

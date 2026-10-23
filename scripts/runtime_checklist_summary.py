@@ -1,5 +1,7 @@
 import json, sys
-text = open(sys.argv[1]).read()
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text()
 start = text.rindex("\n{\n") + 1 if "\n{\n" in text else text.index("{\n")
 r = json.loads(text[start:])
 print("ok", r["ok"])
