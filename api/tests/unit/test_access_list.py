@@ -2110,7 +2110,7 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "src.services.github_sync.GitHubSyncService.load_connect_preview": (1, "cutover"),
     "src.services.legacy_broker_drain._redis_json": (1, "cutover"),
     "src.services.legacy_broker_drain.recover_agent_run": (1, "cutover"),
-    "src.services.legacy_broker_drain.recover_workflow_run": (1, "cutover"),
+    "src.services.legacy_broker_drain.recover_workflow_run": (2, "cutover"),
     "src.services.mcp_server.auth.BifrostAuthProvider._callback": (1, "cutover"),
     "src.services.mcp_server.auth.BifrostAuthProvider._token": (1, "cutover"),
     "shared.runtime_io.service_control": (2, "internal_authorized_resource"),

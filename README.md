@@ -136,9 +136,11 @@ This starts:
 
 ### Upgrading
 
-Bifrost no longer uses RabbitMQ. If your `docker-compose.yml` predates this, its
-`rabbitmq` service and `BIFROST_RABBITMQ_URL` settings are unused and keep
-working until you remove them. To clean up, delete the `rabbitmq` service, its
+Bifrost no longer uses RabbitMQ. If your `docker-compose.yml` predates this,
+leave its `rabbitmq` service and `BIFROST_RABBITMQ_URL` settings in place for the
+first start after upgrading: the API moves any runs an earlier release left
+queued there into PostgreSQL, then disconnects. Once the API logs
+`Drained work queued by an earlier release`, clean up: delete the `rabbitmq` service, its
 `depends_on` entries, the `BIFROST_RABBITMQ_URL` lines and the `rabbitmq_data`
 volume from the compose file, remove `RABBITMQ_PASSWORD` from `.env`, then run:
 

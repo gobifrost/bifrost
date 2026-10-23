@@ -102,10 +102,26 @@ spec. Scale manually with `kubectl scale deployment bifrost-worker -n bifrost
 ## Removing RabbitMQ and KEDA after upgrading
 
 Bifrost no longer uses RabbitMQ or KEDA. The base manifests no longer ship the
-`rabbitmq` Deployment and Service or the RabbitMQ secret keys, and the app
-ignores a leftover `BIFROST_RABBITMQ_URL`. Applying the new manifests does not
-delete what an earlier release created; after every Bifrost pod runs this
-release, an operator may remove the leftovers.
+`rabbitmq` Deployment and Service or the RabbitMQ secret keys. Applying the new
+manifests does not delete what an earlier release created; after every Bifrost
+pod runs this release, an operator may remove the leftovers.
+
+Keep the broker and `BIFROST_RABBITMQ_URL` until the queues are empty. Each
+API pod, when it starts with `BIFROST_RABBITMQ_URL` set, tries the broker a few
+times, moves every run an earlier release left queued into PostgreSQL, logs
+`Drained work queued by an earlier release`, and disconnects; it does not poll
+again. During a rolling upgrade an older API pod can still queue work after the
+new pods have drained, so check the queues once the rollout finishes and, if
+any still hold messages, restart the API Deployment to drain them:
+
+```bash
+kubectl -n bifrost exec deploy/rabbitmq -- rabbitmqctl list_queues name messages
+kubectl -n bifrost rollout restart deployment bifrost-api
+```
+
+A recovered run runs for the user the earlier release recorded, as that
+release would have run it. A run whose context expired in Redis (after an
+hour) is marked failed.
 
 Remove any KEDA `ScaledObject` and `TriggerAuthentication` that target
 `bifrost-worker`. Left in place, a `ScaledObject` keeps owning the worker
@@ -123,10 +139,10 @@ replica count afterwards (the base manifest uses 2), because a Deployment
 managed by KEDA usually omits `spec.replicas`. If KEDA served nothing else in
 the cluster, uninstall it the way it was installed.
 
-RabbitMQ's queues are no longer read: `workflow-executions`, `agent-runs`,
-`agent-summarization`, `agent-summarization-backfill`, `agent-tuning-chat`,
-the `package-installations` exchange, and the `-poison` dead-letter queues
-(with their `-dlx` exchanges). Before deleting the broker, an operator who
+After that drain nothing reads RabbitMQ's queues: `workflow-executions`,
+`agent-runs`, `agent-summarization`, `agent-summarization-backfill`,
+`agent-tuning-chat`, the `package-installations` exchange, and the `-poison`
+dead-letter queues (with their `-dlx` exchanges). Before deleting the broker, an operator who
 cares about dead-lettered messages can inspect them with `rabbitmqadmin` or the
 management UI. There is nothing to replay automatically: a dead-lettered run
 was already recorded as failed, or it was never accepted durably. Earlier

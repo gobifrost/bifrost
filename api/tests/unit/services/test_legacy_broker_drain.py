@@ -79,27 +79,42 @@ async def _clean(async_session_factory: async_sessionmaker[AsyncSession]):
         await session.commit()
 
 
-def _pending(execution_id: str, **extra: Any) -> dict[str, Any]:
-    return {
-        **pending_execution_record(
-            execution_id=execution_id,
-            workflow_id=None,
-            script_name="queued_before_upgrade",
-            parameters={"n": 1},
-            org_id=None,
-            user_id="00000000-0000-0000-0000-000000000001",
+async def _person(world) -> tuple[UUID, UUID]:  # type: ignore[no-untyped-def]
+    """An organization and a person in it."""
+    from src.models.orm.organizations import Organization
+    from src.models.orm.users import User
+
+    async with world.sessions() as session:
+        org = Organization(name=f"drain-{uuid4().hex[:8]}", is_active=True, created_by="t")
+        session.add(org)
+        await session.flush()
+        user = User(email=f"drain-{uuid4().hex[:8]}@example.com", organization_id=org.id, name="Person")
+        session.add(user)
+        await session.commit()
+        return org.id, user.id
+
+
+def _pending(execution_id: str, user_id: UUID | str, org_id: UUID | None = None, **extra: Any) -> dict[str, Any]:
+    """A pending record as v1.4.1 wrote it: no lineage."""
+    record = pending_execution_record(
+        execution_id=execution_id,
+        workflow_id=None,
+        script_name="queued_before_upgrade",
+        parameters={"n": 1},
+        org_id=None if org_id is None else str(org_id),
+        user_id=str(user_id),
             user_name="Dev",
             user_email="dev@example.com",
             lineage=None,
-        ),
-        "cancelled": False,
-        **extra,
-    }
+    )
+    record.pop("lineage", None)
+    return {**record, "cancelled": False, **extra}
 
 
-async def test_a_queued_run_without_a_row_is_accepted_as_today(world) -> None:  # type: ignore[no-untyped-def]
+async def test_a_queued_run_without_a_row_is_accepted_for_its_recorded_user(world) -> None:  # type: ignore[no-untyped-def]
+    org_id, person = await _person(world)
     execution_id = str(uuid4())
-    world.put(drain._workflow_pending_key(execution_id), _pending(execution_id))
+    world.put(drain._workflow_pending_key(execution_id), _pending(execution_id, person, org_id))
 
     await drain.recover_workflow_run(
         {"execution_id": execution_id, "code": "eA==", "script_name": "queued_before_upgrade", "sync": False}
@@ -108,6 +123,9 @@ async def test_a_queued_run_without_a_row_is_accepted_as_today(world) -> None:  
     async with world.sessions() as session:
         execution = await session.get(Execution, UUID(execution_id))
     assert execution is not None and execution.status == ExecutionStatus.PENDING
+    assert (execution.run_user_id, execution.started_by_user_id, execution.root_execution_id) == (
+        person, person, UUID(execution_id),
+    )
     dispatch = await world.dispatch(UUID(execution_id))
     assert dispatch is not None and dispatch.payload["parameters"] == {"n": 1}
     assert dispatch.message["code"] == "eA=="
@@ -115,23 +133,64 @@ async def test_a_queued_run_without_a_row_is_accepted_as_today(world) -> None:  
     world.wakes.assert_awaited()
 
 
-async def test_a_promoted_scheduled_run_gets_its_dispatch(world) -> None:  # type: ignore[no-untyped-def]
+async def test_a_promoted_scheduled_run_gets_its_dispatch_and_lineage(world) -> None:  # type: ignore[no-untyped-def]
+    org_id, person = await _person(world)
     execution_id = uuid4()
     async with world.sessions() as session:
         session.add(
             Execution(
                 id=execution_id, workflow_name="scheduled", status=ExecutionStatus.PENDING,
-                parameters={}, executed_by_name="Dev",
+                parameters={}, executed_by=person, executed_by_name="Person", organization_id=org_id,
             )
         )
         await session.commit()
-    world.put(drain._workflow_pending_key(str(execution_id)), _pending(str(execution_id)))
+    world.put(drain._workflow_pending_key(str(execution_id)), _pending(str(execution_id), person, org_id))
 
     await drain.recover_workflow_run(
         {"execution_id": str(execution_id), "sync": False, "execution_record_exists": True}
     )
 
     assert await world.dispatch(execution_id) is not None
+    async with world.sessions() as session:
+        execution = await session.get(Execution, execution_id)
+    assert (execution.run_user_id, execution.root_execution_id) == (person, execution_id)
+
+
+async def test_an_unattended_queued_run_runs_as_its_organizations_identity(world) -> None:  # type: ignore[no-untyped-def]
+    from shared.identities import ensure_default_identity
+    from src.core.constants import SYSTEM_USER_UUID
+    from src.models.orm.organizations import Organization
+
+    org_id, _ = await _person(world)
+    async with world.sessions() as session:
+        identity = await ensure_default_identity(session, await session.get(Organization, org_id))
+        await session.commit()
+        identity_id = identity.id
+    execution_id = str(uuid4())
+    world.put(drain._workflow_pending_key(execution_id), _pending(execution_id, SYSTEM_USER_UUID, org_id))
+
+    await drain.recover_workflow_run({"execution_id": execution_id, "sync": False})
+
+    async with world.sessions() as session:
+        execution = await session.get(Execution, UUID(execution_id))
+    assert (execution.run_user_id, execution.started_by_user_id) == (identity_id, identity_id)
+
+
+async def test_a_run_cancelled_while_queued_is_recorded_as_cancelled(world) -> None:  # type: ignore[no-untyped-def]
+    org_id, person = await _person(world)
+    execution_id = str(uuid4())
+    world.put(
+        drain._workflow_pending_key(execution_id), _pending(execution_id, person, org_id, cancelled=True)
+    )
+
+    await drain.recover_workflow_run({"execution_id": execution_id, "sync": False})
+
+    async with world.sessions() as session:
+        execution = await session.get(Execution, UUID(execution_id))
+    assert execution is not None and execution.status == ExecutionStatus.CANCELLED
+    assert execution.error_message == drain.CANCELLED_BEFORE_START
+    assert await world.dispatch(UUID(execution_id)) is None
+    assert not world.has(drain._workflow_pending_key(execution_id))
 
 
 async def test_a_promoted_run_whose_context_expired_fails_visibly(world) -> None:  # type: ignore[no-untyped-def]
@@ -158,7 +217,7 @@ async def test_a_promoted_run_whose_context_expired_fails_visibly(world) -> None
 
 async def test_a_message_that_names_a_dispatch_is_only_acknowledged(world) -> None:  # type: ignore[no-untyped-def]
     execution_id = str(uuid4())
-    world.put(drain._workflow_pending_key(execution_id), _pending(execution_id))
+    world.put(drain._workflow_pending_key(execution_id), _pending(execution_id, uuid4()))
 
     await drain.recover_workflow_run({"execution_id": execution_id, "dispatch_id": str(uuid4())})
 
@@ -178,8 +237,9 @@ async def _queued_agent_run(world, **values: Any) -> UUID:  # type: ignore[no-un
     return run_id
 
 
-async def test_a_queued_agent_run_gets_its_dispatch(world) -> None:  # type: ignore[no-untyped-def]
-    run_id = await _queued_agent_run(world)
+async def test_a_queued_agent_run_gets_its_dispatch_and_runs_for_its_caller(world) -> None:  # type: ignore[no-untyped-def]
+    org_id, person = await _person(world)
+    run_id = await _queued_agent_run(world, org_id=org_id, caller_user_id=str(person))
     world.put(drain._agent_context_key(str(run_id)), {"run_id": str(run_id), "input": {"task": "t"}, "cancelled": False})
 
     await drain.recover_agent_run({"run_id": str(run_id), "agent_id": None, "trigger_type": "sdk", "sync": False})
@@ -187,6 +247,9 @@ async def test_a_queued_agent_run_gets_its_dispatch(world) -> None:  # type: ign
     dispatch = await world.dispatch(run_id)
     assert dispatch is not None and dispatch.payload["input"] == {"task": "t"}
     assert "cancelled" not in dispatch.payload
+    async with world.sessions() as session:
+        run = await session.get(AgentRun, run_id)
+    assert (run.run_user_id, run.acting_user_id) == (person, person)
 
 
 async def test_an_agent_run_whose_context_expired_fails_visibly(world) -> None:  # type: ignore[no-untyped-def]

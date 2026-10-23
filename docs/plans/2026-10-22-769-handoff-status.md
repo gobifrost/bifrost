@@ -192,36 +192,38 @@ Work in this order. The authority above still applies (merge through the
 queue once a gate passes; production through GitOps, which needs Jack's
 merge because the auto-mode classifier blocks GitOps merges).
 
-1. **Legacy broker drain** (branch `769-legacy-broker-drain`, work in
-   progress). Released installs (v1.4.1 and earlier) can have runs queued in
-   RabbitMQ at the moment they upgrade; nothing reads them after 5b.
-   - **Behaviour Jack chose:** on start, when `BIFROST_RABBITMQ_URL` is set,
-     try to connect a few times; if it connects, drain the old queues until
-     empty, disconnect, and stop. No recurring poll, no lasting connection.
-     If it never connects, stop.
-   - **Already written** (`api/src/services/legacy_broker_drain.py`, 10
-     passing tests): per-queue recovery for `workflow-executions` (rebuild
-     from the Redis pending record; promoted scheduled runs get their
-     dispatch; expired context fails a durable row visibly),
-     `agent-runs` (queued row + Redis context → dispatch; expired → failed),
-     `agent-summarization(-backfill)` (re-request; backfill membership kept);
-     a message carrying `dispatch_id` is only acknowledged; a failure nacks
-     with requeue and stops that queue's pass. `aio-pika>=9.6,<10` is back in
-     `pyproject.toml` / `requirements.lock` for this module only, and
-     `rabbitmq_url` is an optional setting again.
-   - **To change:** it is currently registered as a 5-minute scheduler
-     catalog task (`legacy_broker_drain` in `src/scheduler/registry.py`).
-     Replace that with a one-shot startup routine as above (handlers are safe
-     on several API replicas: each message goes to one consumer and dispatch
-     inserts are unique per subject). Then update the three tests that the
-     catalog entry broke (`test_control.py` catalog tests) and classify the
-     module's Redis reads in `test_access_list.py`
-     (`_REDIS_PLAIN_READS`/authority inventory).
-   - **Gate:** a Docker rehearsal from v1.4.1 with work left in RabbitMQ
-     (stop its scheduler and worker, submit async and scheduled runs, then
-     upgrade only the image): every queued run completes. Then the
-     release-notes line: the next release recovers work left queued by an
-     earlier release; remove the broker once the API has drained it.
+1. **Legacy broker drain** (branch `769-legacy-broker-drain`; gate passed
+   2026-10-23, PR to open).
+   - **Behaviour (Jack):** each API replica, when it starts with
+     `BIFROST_RABBITMQ_URL` set, waits for the schema, tries the broker 3
+     times, drains every old queue until empty, disconnects and stops
+     (`api/src/services/legacy_broker_drain.py`, started from the API
+     lifespan). No catalog task, no recurring poll.
+   - **Lineage (Jack, 2026-10-23: "run as recorded user"):** v1.4.1 recorded
+     only the user a run executes as, and the runtime refuses runs without
+     lineage (#996), so every recovered run, and every v1.4.1 run still
+     scheduled at upgrade, failed with an engine-token 401. Rule
+     (`shared.run_lineage.recorded_user_lineage`): a person is the run user
+     and starter; the system account runs as a schedule does (workflow
+     identity, else the org default; inline script: the org default); the run
+     is its own root. Agent runs: their caller, else the org default identity.
+     The drain applies it to messages; migration `20261023_legacy_run_lineage`
+     backfills waiting `Scheduled`/`Pending` rows.
+   - A run cancelled while queued is recorded as Cancelled ("Execution was
+     cancelled before it could start"), as v1.4.1 did.
+   - **Gate evidence:** Docker, v1.4.1 with its unchanged compose file, worker
+     stopped: 5 async runs, 1 inline script, 2 scheduled runs v1.4.1 promoted
+     into RabbitMQ, 1 still scheduled in the database, 1 cancelled while
+     queued, 2 agent runs; scheduler stopped; only the image tag upgraded.
+     All 9 workflow runs succeeded with lineage, the cancelled run is
+     Cancelled, both agent runs ran for their caller (and failed only on the
+     rehearsal's missing LLM profile), both queues 0, no broker connection
+     left. Rehearsal kit: `/tmp/769-drain-rehearsal` (`strand.py`).
+   - **Known limit:** during a Kubernetes rolling upgrade an older API pod can
+     queue work after the new pods drained. The runbook says to check the
+     queues after the rollout and restart the API to drain again.
+   - Earlier finding: `WorkflowExecutionRequest.code` is plain text, though
+     its field description says base64.
 2. **Drop the broker-era dispatch schema now** (no release ever wrote it;
    only dev builds #1032–#1039 did). Remove `queue`, `status`,
    `publish_count`, `last_published_at` and `placement` from

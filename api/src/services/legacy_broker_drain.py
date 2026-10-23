@@ -12,6 +12,10 @@ message to one consumer and a subject has at most one dispatch.
 
 - A message that already names a dispatch (``dispatch_id``) came from a
   release that also committed the dispatch; it is only acknowledged.
+- Those releases recorded only the user a run executes as; a recovered run
+  runs for that user (``shared.run_lineage.recorded_user_lineage``).
+- A run cancelled while queued is recorded as cancelled, as those releases
+  did.
 - A run whose Redis context expired (older releases kept it for an hour)
   cannot be rebuilt. A durable row is failed visibly; a run that never had
   a row is logged.
@@ -37,6 +41,7 @@ import aio_pika
 from aio_pika.abc import AbstractIncomingMessage
 from sqlalchemy import select, update
 
+from shared.run_lineage import lineage_columns, recorded_user_lineage
 from shared.schema_gate import wait_for_schema
 from src.config import get_settings
 from src.core.cache.redis_client import get_redis
@@ -46,12 +51,14 @@ from src.models.enums import ExecutionStatus
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.executions import Execution
 from src.models.orm.summary_backfill_job import SummaryBackfillJob
+from src.models.orm.workflows import Workflow
 
 logger = logging.getLogger(__name__)
 
 CONNECT_ATTEMPTS = 3
 CONNECT_TIMEOUT_SECONDS = 5.0
 CONNECT_RETRY_SECONDS = 5.0
+CANCELLED_BEFORE_START = "Execution was cancelled before it could start"
 LOST_IN_UPGRADE = "This run was queued by an earlier release and its context expired before it could be recovered."
 
 
@@ -72,6 +79,30 @@ async def _redis_json(key: str) -> dict[str, Any] | None:
 async def _forget(key: str) -> None:
     async with get_redis() as redis:
         await redis.delete(key)
+
+
+async def _record_cancelled_run(pending: dict[str, Any]) -> None:
+    """A run cancelled while queued, which never had a row: record it as that release did."""
+    workflow_id = UUID(pending["workflow_id"]) if pending.get("workflow_id") else None
+    async with get_dispatch_db_context() as db:
+        name = None if workflow_id is None else await db.scalar(
+            select(Workflow.name).where(Workflow.id == workflow_id)
+        )
+        db.add(
+            Execution(
+                id=UUID(pending["execution_id"]),
+                workflow_id=workflow_id,
+                workflow_name=name or pending.get("script_name") or "script",
+                status=ExecutionStatus.CANCELLED,
+                parameters=pending.get("parameters") or {},
+                organization_id=UUID(pending["org_id"]) if pending.get("org_id") else None,
+                executed_by=UUID(pending["user_id"]),
+                executed_by_name=pending.get("user_name") or "",
+                error_message=CANCELLED_BEFORE_START,
+                completed_at=datetime.now(timezone.utc),
+            )
+        )
+        await db.commit()
 
 
 async def recover_workflow_run(body: dict[str, Any]) -> None:
@@ -100,16 +131,19 @@ async def recover_workflow_run(body: dict[str, Any]) -> None:
                         status=ExecutionStatus.CANCELLED
                         if pending is not None
                         else ExecutionStatus.FAILED,
-                        error_message=None if pending is not None else LOST_IN_UPGRADE,
+                        error_message=CANCELLED_BEFORE_START if pending is not None else LOST_IN_UPGRADE,
                         completed_at=datetime.now(timezone.utc),
                     )
                 )
                 await db.commit()
+        elif pending is not None:
+            await _record_cancelled_run(pending)
         else:
             logger.warning(
                 "A queued run from an earlier release could not be recovered",
-                extra={"execution_id": log_safe(execution_id), "cancelled": pending is not None},
+                extra={"execution_id": log_safe(execution_id)},
             )
+        await _forget(_workflow_pending_key(execution_id))
         return
     message = {
         key: body[key]
@@ -117,14 +151,22 @@ async def recover_workflow_run(body: dict[str, Any]) -> None:
         if key in body
     }
     async with get_dispatch_db_context() as db:
+        execution: Execution | None = None
         if record_exists:
-            status = await db.scalar(
-                select(Execution.status)
-                .where(Execution.id == UUID(execution_id))
-                .with_for_update()
-            )
-            if status != ExecutionStatus.PENDING:
+            execution = await db.get(Execution, UUID(execution_id), with_for_update=True)
+            if execution is None or execution.status != ExecutionStatus.PENDING:
                 return
+        if pending.get("lineage") is None:
+            lineage = await recorded_user_lineage(
+                db,
+                pending["user_id"],
+                workflow_id=pending["workflow_id"],
+                organization_id=pending["org_id"],
+            )
+            pending["lineage"] = lineage.bound(execution_id)
+            if execution is not None and execution.run_user_id is None:
+                for column, value in lineage_columns(pending["lineage"]).items():
+                    setattr(execution, column, value)
         accepted = await stage_workflow_run(
             db,
             PendingExecution(**pending),  # type: ignore[typeddict-item]
@@ -154,6 +196,13 @@ async def recover_agent_run(body: dict[str, Any]) -> None:
             run.completed_at = datetime.now(timezone.utc)
             await db.commit()
             return
+        if run.run_user_id is None:
+            lineage = await recorded_user_lineage(
+                db, run.caller_user_id, workflow_id=None, organization_id=run.org_id
+            )
+            run.run_user_id = lineage.run_user_id
+            if run.acting_user_id is None:
+                run.acting_user_id = lineage.run_user_id
         context.pop("cancelled", None)
         stage_agent_run(db, run_id=UUID(run_id), context=context, message=body)
         await db.commit()
