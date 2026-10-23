@@ -82,7 +82,7 @@ async def test_concurrent_changes_commit_in_generation_order(sessions) -> None: 
         await asyncio.sleep(0.3)
         assert not second.done(), "the second change waited for the first to commit"
         await first.commit()
-    await second
+    await asyncio.wait_for(second, timeout=10)
 
     changes = await package_changes_after(start)
     assert [c.package for c in changes] == ["a", "b"]
