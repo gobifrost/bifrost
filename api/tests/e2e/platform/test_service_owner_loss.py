@@ -225,7 +225,7 @@ async def running_stack(slot_fillers):
     from src.services.execution.process_pool import ProcessPoolManager
 
     pool = ProcessPoolManager(
-        max_workers=2, max_service_workers=2, graceful_shutdown_seconds=2
+        max_service_workers=2, graceful_shutdown_seconds=2
     )
     await pool.start()
     loop = _make_loop(pool)
@@ -319,7 +319,7 @@ class TestServiceOwnerLoss:
         await pool.stop()
 
         second_pool = ProcessPoolManager(
-            max_workers=2, max_service_workers=2, graceful_shutdown_seconds=2
+            max_service_workers=2, graceful_shutdown_seconds=2
         )
         await second_pool.start()
         second_loop = _make_loop(second_pool)

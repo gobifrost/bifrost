@@ -15,15 +15,26 @@ import pytest
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from src.config import get_settings
+from src.core.cache.redis_client import get_redis
 from src.models.enums import ExecutionStatus
 from src.models.orm.execution_workers import ExecutionWorker
 from src.models.orm.executions import Execution
 from src.models.orm.work_dispatches import WorkDispatch
+from src.models.orm.workflows import Workflow
 from src.services import work_dispatch
 from src.services.execution import async_executor, workflow_dispatch
 from src.services.execution.async_executor import _publish_pending
+from src.services.memory_requests import (
+    DEFAULT_WORKFLOW_REQUEST_BYTES,
+    LAUNCHABLE_KEY,
+    MIB,
+    WORKFLOW_REQUEST_MARGIN_BYTES,
+)
 from src.services.worker_pool import claims, controller, maintenance
 from src.services.worker_pool.manifest import WorkerJobSpec, build_worker_job_manifest
+
+GIB = 1024 * MIB
 
 SETTINGS = SimpleNamespace(
     kubernetes_build_namespace="test",
@@ -35,12 +46,14 @@ SETTINGS = SimpleNamespace(
     pool_min_workers=0,
     pool_idle_seconds=300,
     pool_max_lifetime_seconds=21600,
-    pool_worker_slots=2,
     pool_start_timeout_seconds=300,
     pool_worker_memory_request_mib=512,
     pool_worker_memory_limit_mib=2048,
+    pool_worker_max_memory_mib=8192,
     pool_worker_cpu_request="250m",
     pool_worker_cpu_limit="2",
+    memory_pressure_threshold=0.85,
+    redis_url=get_settings().redis_url,
 )
 
 SPEC = WorkerJobSpec(
@@ -107,13 +120,24 @@ def db(async_session_factory: async_sessionmaker[AsyncSession], monkeypatch):
     return SimpleNamespace(sessions=async_session_factory, wake=wake)
 
 
-@pytest.fixture(autouse=True)
-async def _clean(async_session_factory):
-    yield
-    async with async_session_factory() as session:
+async def _clear_pool_state(sessions) -> None:  # type: ignore[no-untyped-def]
+    async with sessions() as session:
         await session.execute(delete(WorkDispatch))
         await session.execute(delete(ExecutionWorker))
         await session.commit()
+    # What a worker controller last published it can launch.
+    async with get_redis() as redis:
+        await redis.delete(LAUNCHABLE_KEY)
+
+
+@pytest.fixture(autouse=True)
+async def _clean(async_session_factory):
+    # Before too: the stack's executors register (with a measured budget)
+    # during the state reset and are stopped for unit runs; a row a killed
+    # one left "ready" would count as capacity.
+    await _clear_pool_state(async_session_factory)
+    yield
+    await _clear_pool_state(async_session_factory)
 
 
 async def _accept_pool_run() -> str:
@@ -125,6 +149,28 @@ async def _accept_pool_run() -> str:
         sync=False, is_platform_admin=True, file_path=None, lineage=None,
     )
     return execution_id
+
+
+async def _claim(worker_id: UUID, *, fits: int = GIB, budget: int = GIB) -> claims.PoolClaim | None:
+    return await claims.claim_next(worker_id, fits_bytes=fits, budget_bytes=budget)
+
+
+async def _set_request(sessions, execution_id: str, request: int, *, age: timedelta | None = None) -> None:  # type: ignore[no-untyped-def]
+    values: dict[str, Any] = {"memory_request_bytes": request}
+    if age is not None:
+        values["created_at"] = datetime.now(timezone.utc) - age
+    async with sessions() as session:
+        await session.execute(
+            update(WorkDispatch).where(WorkDispatch.subject_id == UUID(execution_id)).values(**values)
+        )
+        await session.commit()
+
+
+async def _report_budget(worker_id: UUID, budget: int, *, pressured: bool = False) -> None:
+    await claims.heartbeat_worker(
+        worker_id, active_runs=0, runs_handled=0, package_generation=0,
+        memory_pressured=pressured, memory_budget_bytes=budget, memory_reserved_bytes=0,
+    )
 
 
 async def _job_worker(sessions, *, state: str = "starting") -> ExecutionWorker:  # type: ignore[no-untyped-def]
@@ -178,7 +224,7 @@ async def test_a_ready_worker_claims_each_dispatch_once(db) -> None:
     second = await _job_worker(db.sessions, state="ready")
     execution_id = await _accept_pool_run()
 
-    claims_made = await asyncio.gather(claims.claim_next(first.id), claims.claim_next(second.id))
+    claims_made = await asyncio.gather(_claim(first.id), _claim(second.id))
 
     winners = [claim for claim in claims_made if claim is not None]
     assert len(winners) == 1
@@ -191,7 +237,7 @@ async def test_a_draining_worker_never_claims(db) -> None:
     assert await claims.begin_drain(worker.id, "idle")
     await _accept_pool_run()
 
-    assert await claims.claim_next(worker.id) is None
+    assert await _claim(worker.id) is None
     assert not await claims.begin_drain(worker.id, "idle")  # once only
 
 
@@ -202,7 +248,7 @@ async def test_unsupported_handler_versions_wait_for_a_compatible_worker(db) -> 
         await session.execute(update(WorkDispatch).values(handler_version=99))
         await session.commit()
 
-    assert await claims.claim_next(worker.id) is None
+    assert await _claim(worker.id) is None
     async with db.sessions() as session:
         dispatch = (
             await session.execute(
@@ -216,15 +262,65 @@ async def test_static_executors_register_ready_and_claim(db) -> None:
     worker_id = await claims.register_static_worker(slots=3, hostname="worker-1")
     await _accept_pool_run()
 
-    assert await claims.claim_next(worker_id) is not None
+    assert await _claim(worker_id) is not None
+
+
+# --- claiming by memory --------------------------------------------------------
+
+
+async def test_work_larger_than_the_free_budget_waits_while_smaller_work_is_claimed(db) -> None:
+    worker_id = await claims.register_static_worker(slots=1, hostname="static-1")
+    large = await _accept_pool_run()
+    await _set_request(db.sessions, large, 500 * MIB, age=timedelta(seconds=5))
+    small = await _accept_pool_run()
+
+    claim = await _claim(worker_id, fits=100 * MIB)
+
+    assert claim is not None and claim.message["execution_id"] == small
+
+
+async def test_long_waiting_work_an_executor_could_hold_blocks_newer_claims(db) -> None:
+    worker_id = await claims.register_static_worker(slots=1, hostname="static-1")
+    large = await _accept_pool_run()
+    await _set_request(
+        db.sessions, large, 500 * MIB, age=claims.HEAD_OF_LINE_WAIT + timedelta(seconds=5)
+    )
+    small = await _accept_pool_run()
+
+    assert await _claim(worker_id, fits=100 * MIB, budget=GIB) is None
+    # An executor whose whole budget could never hold it is not held up.
+    claim = await _claim(worker_id, fits=100 * MIB, budget=400 * MIB)
+    assert claim is not None and claim.message["execution_id"] == small
+
+
+async def test_a_worker_launched_for_a_dispatch_claims_it_first(db) -> None:
+    worker = await _job_worker(db.sessions, state="ready")
+    await _accept_pool_run()
+    reserved = await _accept_pool_run()
+    async with db.sessions() as session:
+        dispatch_id = await session.scalar(
+            select(WorkDispatch.id).where(WorkDispatch.subject_id == UUID(reserved))
+        )
+        await session.execute(
+            update(ExecutionWorker)
+            .where(ExecutionWorker.id == worker.id)
+            .values(reserved_for_dispatch_id=dispatch_id)
+        )
+        await session.commit()
+
+    claim = await _claim(worker.id)
+
+    assert claim is not None and claim.dispatch_id == dispatch_id
+    async with db.sessions() as session:
+        assert (await session.get(ExecutionWorker, worker.id)).reserved_for_dispatch_id is None
 
 
 # --- controller ---------------------------------------------------------------
 
 
 async def test_demand_launches_bounded_workers_and_binds_before_start(db) -> None:
-    for _ in range(9):  # 9 runs / 2 slots would want 5 workers; the ceiling is 2
-        await _accept_pool_run()
+    for _ in range(3):  # each needs a standard worker to itself; the ceiling is 2
+        await _set_request(db.sessions, await _accept_pool_run(), 600 * MIB)
     cluster = FakeCluster()
     replicas = [controller.WorkerPoolController(cluster, SETTINGS, SPEC) for _ in range(2)]  # type: ignore[arg-type]
 
@@ -241,8 +337,9 @@ async def test_demand_launches_bounded_workers_and_binds_before_start(db) -> Non
     assert manifest["spec"]["template"]["spec"]["automountServiceAccountToken"] is False
 
 
-async def test_ready_free_slots_satisfy_demand_without_launching(db) -> None:
-    await claims.register_static_worker(slots=4, hostname="static-1")
+async def test_a_free_reported_budget_satisfies_demand_without_launching(db) -> None:
+    static_id = await claims.register_static_worker(slots=4, hostname="static-1")
+    await _report_budget(static_id, GIB)
     await _accept_pool_run()
     cluster = FakeCluster()
 
@@ -253,11 +350,9 @@ async def test_ready_free_slots_satisfy_demand_without_launching(db) -> None:
 
 async def test_a_memory_pressured_executor_offers_no_capacity(db) -> None:
     """An executor over its memory threshold claims nothing, so its free
-    slots do not count and a worker Job is started for the waiting run."""
+    budget does not count and a worker Job is started for the waiting run."""
     static_id = await claims.register_static_worker(slots=4, hostname="static-1")
-    await claims.heartbeat_worker(
-        static_id, active_runs=0, runs_handled=0, package_generation=0, memory_pressured=True
-    )
+    await _report_budget(static_id, GIB, pressured=True)
     await _accept_pool_run()
     cluster = FakeCluster()
 
@@ -268,17 +363,21 @@ async def test_a_memory_pressured_executor_offers_no_capacity(db) -> None:
 
 async def test_a_run_handed_back_before_it_started_waits_for_another_executor(db) -> None:
     """A run whose fork was refused after its claim goes back to PENDING with
-    a fresh dispatch and without the first executor's claim record."""
+    a fresh dispatch carrying the same request, and without the first
+    executor's claim record."""
     from src.models.orm.execution_workers import ExecutionWorkerClaim
 
     first = await claims.register_static_worker(slots=1, hostname="first")
     execution_id = await _accept_pool_run()
-    claim = await claims.claim_next(first)
+    await _set_request(db.sessions, execution_id, 200 * MIB)
+    claim = await _claim(first)
     assert claim is not None and claim.claimed is not None
+    assert claim.memory_request_bytes == 200 * MIB
     db.wake.reset_mock()
 
     await workflow_dispatch.release_workflow_run(
-        worker_id=first, message=claim.message, payload=claim.claimed
+        worker_id=first, message=claim.message, payload=claim.claimed,
+        memory_request_bytes=claim.memory_request_bytes,
     )
 
     async with db.sessions() as session:
@@ -292,9 +391,10 @@ async def test_a_run_handed_back_before_it_started_waits_for_another_executor(db
     assert held == []
     db.wake.assert_awaited_once()
     second = await claims.register_static_worker(slots=1, hostname="second")
-    again = await claims.claim_next(second)
+    again = await _claim(second)
     assert again is not None and again.claimed is not None
     assert again.claimed["execution_id"] == execution_id
+    assert again.memory_request_bytes == 200 * MIB
 
 
 async def test_silent_worker_is_lost_and_its_unstarted_work_released(db, monkeypatch) -> None:
@@ -311,8 +411,8 @@ async def test_silent_worker_is_lost_and_its_unstarted_work_released(db, monkeyp
     await pool.reconcile_worker(worker_id)
     async with db.sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
-    assert await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod") == 2
-    claim = await claims.claim_next(worker_id)
+    assert await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod") is not None
+    claim = await _claim(worker_id)
     assert claim is not None and claim.handler == "agent.run"
 
     # The node dies: no heartbeat, the pod never claims the run.
@@ -383,7 +483,7 @@ async def test_ended_executors_are_pruned_and_silent_static_ones_ended(db) -> No
 
 
 def test_worker_job_is_suspended_tokenless_and_has_no_deadline() -> None:
-    manifest = build_worker_job_manifest(uuid4(), 3, SETTINGS, SPEC)
+    manifest = build_worker_job_manifest(uuid4(), SETTINGS, SPEC, memory_limit_bytes=None)
     spec = manifest["spec"]
     pod = spec["template"]["spec"]
     container = pod["containers"][0]
@@ -395,7 +495,8 @@ def test_worker_job_is_suspended_tokenless_and_has_no_deadline() -> None:
     assert pod["restartPolicy"] == "Never"
     assert pod["automountServiceAccountToken"] is False
     assert container["command"] == ["python", "-m", "src.worker.pool_main"]
-    assert env["BIFROST_MAX_CONCURRENCY"]["value"] == "3"
+    assert container["resources"]["requests"]["memory"] == "512Mi"
+    assert container["resources"]["limits"]["memory"] == "2048Mi"
     assert "controller-uid" in env["BIFROST_KUBERNETES_JOB_UID"]["valueFrom"]["fieldRef"]["fieldPath"]
 
 
@@ -427,7 +528,7 @@ async def test_runs_of_a_lost_worker_end_visibly_and_are_not_replayed(db) -> Non
     async with db.sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
     await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod")
-    claim = await claims.claim_next(worker_id)
+    claim = await _claim(worker_id)
     assert claim is not None
     async with db.sessions() as session:
         await claim_workflow_dispatch(
@@ -446,3 +547,165 @@ async def test_runs_of_a_lost_worker_end_visibly_and_are_not_replayed(db) -> Non
         execution = await session.get(Execution, UUID(running_id))
     assert execution.status == ExecutionStatus.FAILED
     assert execution.error_message == EXECUTOR_LOST
+
+
+# --- sizing by memory -----------------------------------------------------------
+
+
+def _plan(waiting: list[int], free: list[int]) -> controller.LaunchPlan:
+    return controller._plan_launches(
+        [(uuid4(), request) for request in waiting],
+        free,
+        standard_budget=1000,
+        largest_budget=4000,
+    )
+
+
+def test_waiting_work_that_fits_free_budgets_launches_nothing() -> None:
+    assert _plan([300, 300], [400, 300]) == controller.LaunchPlan(standard=0, sized=[])
+
+
+def test_overflow_is_packed_first_fit_into_new_standard_workers() -> None:
+    assert _plan([600, 600, 300, 100], []) == controller.LaunchPlan(standard=2, sized=[])
+
+
+def test_work_a_standard_worker_cannot_hold_gets_a_sized_worker() -> None:
+    large = uuid4()
+    plan = controller._plan_launches(
+        [(large, 1500)], [], standard_budget=1000, largest_budget=4000
+    )
+    assert plan == controller.LaunchPlan(standard=0, sized=[(large, 1500)])
+
+
+def test_work_larger_than_any_launchable_worker_is_left_out() -> None:
+    assert _plan([5000], []) == controller.LaunchPlan(standard=0, sized=[])
+
+
+async def test_a_sized_worker_is_launched_once_for_its_dispatch(db) -> None:
+    from src.services.memory_requests import job_budget_bytes, sized_job_limit_bytes
+
+    execution_id = await _accept_pool_run()
+    await _set_request(db.sessions, execution_id, 3 * GIB)
+    cluster = FakeCluster()
+    pool = controller.WorkerPoolController(cluster, SETTINGS, SPEC)  # type: ignore[arg-type]
+
+    [worker_id] = await pool.launch_for_demand()
+    assert await pool.launch_for_demand() == [], "its dispatch is already covered"
+
+    async with db.sessions() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        dispatch_id = await session.scalar(
+            select(WorkDispatch.id).where(WorkDispatch.subject_id == UUID(execution_id))
+        )
+    baseline = 768 * MIB  # no standard worker has reported its budget yet
+    assert worker.resource_class == "sized"
+    assert worker.reserved_for_dispatch_id == dispatch_id
+    assert worker.memory_limit_bytes == sized_job_limit_bytes(3 * GIB, 0.85, baseline)
+    async with get_redis() as redis:
+        launchable = int(await redis.get(LAUNCHABLE_KEY))
+    assert launchable == job_budget_bytes(8192 * MIB, 0.85, baseline)
+
+
+async def test_a_job_worker_counts_its_expected_budget_until_it_reports_one(db) -> None:
+    """Admitted but still starting its pool, a Job worker has not measured
+    its budget; its waiting work must not launch another worker."""
+    await _job_worker(db.sessions, state="ready")
+    await _accept_pool_run()
+    cluster = FakeCluster()
+
+    assert await controller.WorkerPoolController(cluster, SETTINGS, SPEC).launch_for_demand() == []  # type: ignore[arg-type]
+
+
+def test_a_sized_worker_job_requests_its_whole_limit() -> None:
+    manifest = build_worker_job_manifest(uuid4(), SETTINGS, SPEC, memory_limit_bytes=4 * GIB)
+    resources = manifest["spec"]["template"]["spec"]["containers"][0]["resources"]
+
+    assert resources["requests"]["memory"] == resources["limits"]["memory"] == "4096Mi"
+
+
+# --- work no executor can hold --------------------------------------------------
+
+
+async def _waiting_run_of(sessions, request: int) -> str:  # type: ignore[no-untyped-def]
+    execution_id = await _accept_pool_run()
+    await _set_request(
+        sessions, execution_id, request, age=work_dispatch.POOL_RECHECK_AFTER + timedelta(minutes=1)
+    )
+    return execution_id
+
+
+async def test_work_larger_than_the_largest_executor_fails_visibly(db) -> None:
+    static_id = await claims.register_static_worker(slots=1, hostname="static-1")
+    await _report_budget(static_id, 512 * MIB)
+    execution_id = await _waiting_run_of(db.sessions, GIB)
+
+    await work_dispatch.reconcile_work_dispatches()
+
+    async with db.sessions() as session:
+        execution = await session.get(Execution, UUID(execution_id))
+    assert execution.status == ExecutionStatus.FAILED
+    assert "needs 1024 MiB" in (execution.error_message or "")
+    assert "can hold 512 MiB" in (execution.error_message or "")
+
+
+async def test_large_work_waits_while_no_executor_has_reported_a_budget(db) -> None:
+    await claims.register_static_worker(slots=1, hostname="static-1")
+    execution_id = await _waiting_run_of(db.sessions, GIB)
+
+    await work_dispatch.reconcile_work_dispatches()
+
+    async with db.sessions() as session:
+        execution = await session.get(Execution, UUID(execution_id))
+        waiting = await session.scalar(
+            select(WorkDispatch.id).where(WorkDispatch.subject_id == UUID(execution_id))
+        )
+    assert execution.status == ExecutionStatus.PENDING
+    assert waiting is not None
+
+
+# --- requests at acceptance -----------------------------------------------------
+
+
+async def test_a_workflow_run_requests_its_learned_peak_or_the_default(db) -> None:
+    learned = Workflow(
+        id=uuid4(), name=f"learned-{uuid4().hex[:8]}", function_name="main",
+        path="workflows/learned.py", type="workflow", is_active=True,
+        learned_memory_bytes=200 * MIB,
+    )
+    new = Workflow(
+        id=uuid4(), name=f"new-{uuid4().hex[:8]}", function_name="main",
+        path="workflows/new.py", type="workflow", is_active=True,
+    )
+    async with db.sessions() as session:
+        session.add_all([learned, new])
+        await session.commit()
+
+    requests: dict[UUID, int] = {}
+    for workflow in (learned, new):
+        execution_id = str(uuid4())
+        await _publish_pending(
+            execution_id=execution_id, workflow_id=str(workflow.id), parameters={}, org_id=None,
+            user_id="00000000-0000-0000-0000-000000000001", user_name="Dev", user_email="",
+            form_id=None, startup=None, form_inputs={}, embed={}, api_key_id=None,
+            sync=False, is_platform_admin=True, file_path=None, lineage=None,
+        )
+        async with db.sessions() as session:
+            requests[workflow.id] = await session.scalar(
+                select(WorkDispatch.memory_request_bytes).where(
+                    WorkDispatch.subject_id == UUID(execution_id)
+                )
+            )
+
+    try:
+        assert requests == {
+            learned.id: 200 * MIB + WORKFLOW_REQUEST_MARGIN_BYTES,
+            new.id: DEFAULT_WORKFLOW_REQUEST_BYTES,
+        }
+    finally:
+        async with db.sessions() as session:
+            await session.execute(delete(WorkDispatch))
+            await session.execute(
+                delete(Execution).where(Execution.workflow_id.in_((learned.id, new.id)))
+            )
+            await session.execute(delete(Workflow).where(Workflow.id.in_((learned.id, new.id))))
+            await session.commit()

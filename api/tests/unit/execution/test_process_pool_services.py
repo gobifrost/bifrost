@@ -1,8 +1,8 @@
 """Unit tests for supervised service children in ProcessPoolManager.
 
 Service children fork from the same template but live under separate
-slot accounting (max_service_workers, never max_workers), never face the
-execution timeout kill, and report through on_service_result.
+slot accounting (max_service_workers), never face the execution timeout
+kill, and report through on_service_result.
 """
 
 from datetime import datetime, timezone
@@ -21,7 +21,6 @@ SERVICE_ID = "00000000-0000-4000-8000-000000000001"
 
 
 def _make_pool(**kwargs):
-    kwargs.setdefault("max_workers", 2)
     kwargs.setdefault("max_service_workers", 2)
     return ProcessPoolManager(**kwargs)
 
@@ -65,8 +64,8 @@ async def _route(pool, **kwargs):
     }
     args.update(kwargs)
     with patch.object(pool, "_register_result_reader"), patch(
-        "src.services.execution.process_pool.has_sufficient_memory_cgroup",
-        return_value=True,
+        "src.services.execution.process_pool.under_pressure",
+        return_value=False,
     ):
         await pool.route_service(**args)
 
@@ -106,8 +105,8 @@ class TestRouteService:
         pool._fork_process = lambda: _spawn(pool)
 
         with patch(
-            "src.services.execution.process_pool.has_sufficient_memory_cgroup",
-            return_value=False,
+            "src.services.execution.process_pool.under_pressure",
+            return_value=True,
         ):
             with pytest.raises(MemoryError, match="memory pressure"):
                 await pool.route_service(

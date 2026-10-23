@@ -134,33 +134,6 @@ def get_cgroup_memory() -> tuple[int, int]:
     return (current, limit)
 
 
-def has_sufficient_memory_cgroup(threshold: float = 0.85) -> bool:
-    """
-    Check if container has enough memory headroom to fork a new process.
-
-    Args:
-        threshold: Maximum memory usage ratio (0.0-1.0). Default 0.85 (85%).
-
-    Returns:
-        True if usage is at or below threshold, or if cgroup files unavailable.
-        False if memory pressure exceeds threshold.
-    """
-    current, limit = get_cgroup_memory()
-
-    if current < 0 or limit < 0 or limit == 0:
-        return True  # Permissive when unable to check or no limit set
-
-    ratio = current / limit
-    if ratio > threshold:
-        logger.warning(
-            f"Memory pressure: {ratio:.1%} usage ({current // (1024*1024)}MB / "
-            f"{limit // (1024*1024)}MB) exceeds {threshold:.0%} threshold"
-        )
-        return False
-
-    return True
-
-
 def has_sufficient_memory(threshold_mb: int = 300) -> bool:
     """
     Check if system has enough memory to start a new subprocess.

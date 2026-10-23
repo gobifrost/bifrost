@@ -8,7 +8,6 @@ from src.services.execution.memory_monitor import (
     get_available_memory_mb,
     get_cgroup_memory,
     has_sufficient_memory,
-    has_sufficient_memory_cgroup,
 )
 
 
@@ -179,47 +178,3 @@ class TestGetCgroupMemory:
                 current, limit = get_cgroup_memory()
                 assert current == -1
                 assert limit == -1
-
-
-class TestHasSufficientMemoryCgroup:
-    """Tests for cgroup-aware memory pressure check."""
-
-    def test_returns_true_when_below_threshold(self):
-        """Should allow fork when memory usage is below threshold."""
-        with patch(
-            "src.services.execution.memory_monitor.get_cgroup_memory",
-            return_value=(500_000_000, 1_000_000_000),  # 50% usage
-        ):
-            assert has_sufficient_memory_cgroup(threshold=0.85) is True
-
-    def test_returns_false_when_above_threshold(self):
-        """Should reject fork when memory usage exceeds threshold."""
-        with patch(
-            "src.services.execution.memory_monitor.get_cgroup_memory",
-            return_value=(900_000_000, 1_000_000_000),  # 90% usage
-        ):
-            assert has_sufficient_memory_cgroup(threshold=0.85) is False
-
-    def test_returns_true_when_cgroup_unavailable(self):
-        """Should be permissive when cgroup files can't be read."""
-        with patch(
-            "src.services.execution.memory_monitor.get_cgroup_memory",
-            return_value=(-1, -1),
-        ):
-            assert has_sufficient_memory_cgroup(threshold=0.85) is True
-
-    def test_returns_true_when_limit_unknown_but_current_known(self):
-        """Should be permissive when max is unset (current readable, limit=-1)."""
-        with patch(
-            "src.services.execution.memory_monitor.get_cgroup_memory",
-            return_value=(500_000_000, -1),
-        ):
-            assert has_sufficient_memory_cgroup(threshold=0.85) is True
-
-    def test_returns_true_at_exact_threshold(self):
-        """Should allow fork when exactly at threshold."""
-        with patch(
-            "src.services.execution.memory_monitor.get_cgroup_memory",
-            return_value=(850_000_000, 1_000_000_000),  # exactly 85%
-        ):
-            assert has_sufficient_memory_cgroup(threshold=0.85) is True

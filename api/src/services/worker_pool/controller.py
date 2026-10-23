@@ -172,10 +172,11 @@ class WorkerPoolController:
         """Reserve incarnations for waiting work, sized by memory, within ceilings.
 
         Waiting requests are placed oldest first into the free budget of
-        executors that can claim (a reserved or starting Job counts as its
-        expected budget). What does not fit goes into new standard Jobs, or a
-        Job sized for one request a standard Job cannot hold. The warm
-        minimum is kept, and Jobs never exceed ``pool_max_workers``.
+        executors that can claim (a Job that has not reported its budget
+        counts as the one expected). What does not fit goes into new
+        standard Jobs, or a Job sized for one request a standard Job cannot
+        hold. The warm minimum is kept, and Jobs never exceed
+        ``pool_max_workers``.
         """
         async with get_db_context() as db:
             locked = (
@@ -215,7 +216,11 @@ class WorkerPoolController:
                 if worker.reserved_for_dispatch_id in requests:
                     covered.add(worker.reserved_for_dispatch_id)
                     held = requests[worker.reserved_for_dispatch_id]
-                if worker.state in ("reserved", "starting"):
+                # A Job admitted but still starting its pool has not measured
+                # its budget yet; until it reports, count the one expected.
+                if worker.state in ("reserved", "starting") or (
+                    worker.form == "job" and worker.memory_budget_bytes is None
+                ):
                     limit = worker.memory_limit_bytes or standard_limit
                     budget = job_budget_bytes(limit, self.settings.memory_pressure_threshold, baseline)
                     free.append(max(0, budget - held))
