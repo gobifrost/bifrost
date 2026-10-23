@@ -21,6 +21,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.cache.redis_client import get_redis
+from src.core.log_safety import log_safe
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.work_dispatches import WorkDispatch
 from src.services.work_dispatch import publish_dispatch, stage_dispatch
@@ -67,7 +68,7 @@ async def cache_agent_context(run_id: str, context: dict[str, Any]) -> None:
     except Exception:
         logger.warning(
             "Could not cache agent run context for older workers",
-            extra={"run_id": run_id},
+            extra={"run_id": log_safe(run_id)},
             exc_info=True,
         )
 

@@ -160,7 +160,9 @@ async def enqueue_agent_run(
             await before_queue_publish(run_id)
         except Exception:
             logger.warning(
-                "Agent run pre-publish notice failed", extra={"run_id": run_id}, exc_info=True
+                "Agent run pre-publish notice failed",
+                extra={"run_id": log_safe(run_id)},
+                exc_info=True,
             )
     await hand_off_agent_run(dispatch)
 

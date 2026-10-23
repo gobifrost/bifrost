@@ -644,7 +644,8 @@ async def test_a_row_without_run_as_is_published_as_before(db_session):
     ]
     [accepted] = calls
     pending = dict(accepted.pending)
-    assert pending.pop("created_at")
+    created_at = pending.pop("created_at")
+    assert created_at
     assert pending == {
         "execution_id": str(plain.id),
         "workflow_id": None,
