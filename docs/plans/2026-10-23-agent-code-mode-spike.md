@@ -1,7 +1,8 @@
 # CodeMode on the consolidated executors
 
 Related work: [#1015](https://github.com/gobifrost/bifrost/issues/1015).
-Base: `origin/main` at `735063786` (PostgreSQL-only executor claims).
+Base: `origin/main` at `7b536a590` (PostgreSQL-only executor claims and
+per-worktree test images).
 
 ## Question and scope
 
@@ -14,6 +15,13 @@ probe, focused regression tests, and one real workflow dispatch. It does not
 enable CodeMode in production chat or autonomous configuration. Automatic mode
 alone retains the existing result cap. A follow-up frozen production-derived
 comparison measures actual provider usage; its limitations and results are below.
+
+**Interpretation corrected after auditing generated code:** the initial live-model
+comparison mostly measured an unfiltered tool wrapper. Generated snippets printed
+or implicitly returned complete responses and copied discovered IDs through later
+model turns. It did not establish the economics of the filtering/chaining pattern
+described by Anthropic and Cloudflare. The audit and implementation guidance below
+supersede the earlier broad interpretation of the flat token totals.
 
 ## Execution and ownership
 
@@ -262,9 +270,103 @@ PATH=/tmp/code-mode-grace-docker:$PATH BIFROST_SKIP_BUILD=1 ./test.sh quality ap
 
 The full backend/frontend suites and a production deployment were not run.
 
+## Dataflow audit and published implementation guidance
+
+An offline replay of twelve saved SharePoint/device runs reproduced their exact
+business-call names/arguments, final outputs and errors. Across six CodeMode runs,
+76,627 bytes of raw business results became 84,507 bytes of model-visible
+`run_code` content. Several snippets used `print(full_result)`; others ended with
+a bare tool call or full-response variable. A code execution boundary alone does
+not cause semantic filtering. These measurements count UTF-8 tool-return content,
+exclude application-only metadata, and are not provider token attribution.
+
+The published pattern has two separate benefits: discovering a small part of a
+large tool catalog and processing intermediate results without model round trips.
+Bifrost already defers tool discovery in Automatic mode. Cloudflare's advertised
+99.9% reduction compares the tool-definition footprint of its full API with a
+search/execute surface, rather than promising that reduction for every task.
+See [Cloudflare's example](https://blog.cloudflare.com/code-mode-mcp/).
+
+The implementation should follow these concrete source-backed practices:
+
+| Practice | Published guidance | Current spike and remaining gap |
+| --- | --- | --- |
+| Describe return structures and types | [Anthropic tool design](https://platform.claude.com/docs/en/agents-and-tools/tool-use/programmatic-tool-calling#best-practices) recommends documented JSON shapes and field types; [Cloudflare connectors](https://developers.cloudflare.com/agents/tools/codemode/mcp/) derive typed methods from schemas | Bifrost propagates input schemas but currently exposes `Any` returns, including JSON strings. Return-contract propagation remains unimplemented. |
+| Compose a complete related read phase | [Anthropic's example](https://www.anthropic.com/research/advanced-tool-use) chains lookups, loops and aggregation within one execution | The runtime supports dependent callbacks. Live snippets still frequently stop between reads and copy IDs through the model. |
+| Keep raw intermediate data in execution | [Anthropic's MCP pattern](https://www.anthropic.com/research/code-execution-with-mcp) returns selected rows/fields to the model | Complete nested results stay in code unless the program prints or returns them. The new instructions explain implicit returns and reject string clipping as semantic filtering. |
+| Discover detailed signatures only when needed | [Cloudflare search/describe](https://developers.cloudflare.com/agents/tools/codemode/) separates catalog search from detailed method documentation | Existing ToolSearch remains in use; there is no new eager catalog. |
+| Preserve authorization and approvals per effect | [Cloudflare's MCP connector](https://developers.cloudflare.com/agents/tools/codemode/mcp/) pauses approval-required operations before dispatch | Existing Bifrost binding/graph/schema checks and cancellation apply to every callback. No automatic replay of completed mutations. |
+| Evaluate workload shape and actual usage | [Anthropic's fit guidance](https://platform.claude.com/docs/en/agents-and-tools/tool-use/programmatic-tool-calling#when-to-use-programmatic-calling) identifies large results/fan-out as strong fits and calls requiring model reasoning between steps as weaker fits | Measure successful outcomes, whole-run input/output/cache usage, round trips, and cumulative returned-content rereads. Smaller individual returns alone do not establish savings. |
+
+These are integration requirements, not reasons to keep adding task-specific
+prompt instructions. The next implementation should carry supported return
+contracts through the shared tool catalog and adapter, document actual
+string/object envelopes, and supply a small generic worked example. It must not
+invent output schemas for unconstrained dynamic workflows. Tool definitions and
+the same authorization path should serve Automatic and CodeMode consumers.
+
+The opt-in capability now gives explicit generic guidance: discover the real
+signature, fetch/decode/filter/project in code, derive identifiers inside the
+snippet, and return compact evidence plus uncertainty. A new native regression
+verifies one search plus two dependent reads inside one code call, no raw sentinel
+content in model-visible tool returns, and full original results retained in the
+application audit. It tests runtime capability and instruction transport with a
+prescribed `FunctionModel` program, not live-model adoption of the guidance.
+
+Two additional three-repetition SharePoint arms tested generic guidance and then
+explicit output-boundary guidance against the frozen Automatic baselines. The
+first still often string-sliced JSON. The stronger guidance reduced the summed
+unique `run_code` content from 73,410 to 47,906 bytes (34.7%) relative to the
+earlier CodeMode arm, but cumulative reread content only fell from 258,496 to
+254,286 bytes (1.6%). Median model responses rose from 8 to 10, and median input
+was 312,689 versus Automatic's 248,440. Two stronger-guidance repetitions had
+mock coverage gaps; only one was fully covered. Including framework discovery
+returns, cumulative content grew from 405,602 to 449,320 bytes. These diagnostic
+arms show partial filtering without
+consistent chaining; they do not demonstrate net savings. They are retained,
+including their mock gaps, rather than selecting only the favorable runs.
+
+A separate **human-authored reference program**, executed through the same native
+boundary against frozen SharePoint data, completed six dependent business reads
+in one `run_code` call. It derived site/drive/item identifiers from earlier results
+and projected 15,484 raw business-result bytes to 3,758 returned bytes (75.7% less).
+The projection preserves relevant sharing roles, group identities, identity
+counts, inheritance and uncertainty about effective access. Two framework
+discovery returns add 6,322 bytes. This proves the mechanism works on the captured
+read phase; it is not a live-model result, a whole-ticket completion, or a token
+or dollar saving. The full private artifact records the program and its checks.
+
+The experiment now contains 42 provider-backed runs, with all business callbacks
+mocked. The reference and saved-transcript audits use no provider. The next live
+comparison should follow the return-contract work, freeze its instructions and
+semantic outcome rubric before execution, and verify that generated programs
+actually filter and chain before interpreting their cost. No further prompt
+search or production rollout is implied by these diagnostic results.
+
+Final focused verification passed nine native unit tests, the existing one-job
+workflow E2E, and API Pyright/Ruff. The E2E spent 4.40 seconds in setup, 2.08 seconds
+in its call and 0.20 seconds in teardown. A stale wording assertion initially
+failed after the guidance changed; it now checks transport of the actual complete
+instruction constant, while the behavioral dataflow assertions remain intact.
+The final commands used an external Compose image override pinned to the same
+Monty image above:
+
+```bash
+PATH=/tmp/bifrost-code-mode-filtering-checks:$PATH BIFROST_SKIP_BUILD=1 ./test.sh tests/unit/services/test_agent_code_mode.py -v
+PATH=/tmp/bifrost-code-mode-filtering-checks:$PATH BIFROST_SKIP_BUILD=1 ./test.sh tests/e2e/api/test_agent_code_mode_spike.py::test_code_mode_dispatches_one_bound_workflow_on_existing_executors -v --durations=0
+PATH=/tmp/bifrost-code-mode-filtering-checks:$PATH BIFROST_SKIP_BUILD=1 ./test.sh quality api
+```
+
+Full backend/frontend suites and a production deployment were not run.
+
 ## Primary references
 
 - [Pydantic AI Harness CodeMode](https://pydantic.dev/docs/ai/harness/code-mode/)
 - [Monty security model](https://pydantic.dev/docs/monty/concepts/security/)
 - [Monty language limits](https://pydantic.dev/docs/monty/limitations/)
 - [Bubblewrap](https://github.com/containers/bubblewrap)
+- [Anthropic programmatic tool calling: best practices and workload fit](https://platform.claude.com/docs/en/agents-and-tools/tool-use/programmatic-tool-calling)
+- [Anthropic code execution with MCP](https://www.anthropic.com/research/code-execution-with-mcp)
+- [Anthropic advanced tool use and worked examples](https://www.anthropic.com/research/advanced-tool-use)
+- [Cloudflare Code Mode: composition, types and discovery](https://developers.cloudflare.com/agents/tools/codemode/)
+- [Cloudflare MCP connectors: schema-derived methods and approvals](https://developers.cloudflare.com/agents/tools/codemode/mcp/)

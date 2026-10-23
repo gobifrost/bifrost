@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +22,10 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RunUsage, UsageLimits
 
-from src.services.agent_runtime.code_mode import build_code_mode_capabilities
+from src.services.agent_runtime.code_mode import (
+    CODE_MODE_INSTRUCTIONS,
+    build_code_mode_capabilities,
+)
 from src.services.agent_runtime.errors import AgentRunCancelled
 from src.services.agent_runtime.toolset import (
     BifrostToolset,
@@ -322,6 +326,123 @@ async def test_code_mode_keeps_large_nested_results_until_its_bounded_outer_retu
     [direct_result] = _tool_returns(seen[3], "status")
     assert isinstance(direct_result, str)
     assert "[tool result truncated:" in direct_result
+
+
+@pytest.mark.asyncio
+async def test_code_mode_guides_one_call_to_filter_and_chain_private_results() -> None:
+    """One code call can retain raw reads privately and return a compact projection."""
+    raw_sentinels = {"raw-search-a", "raw-search-b", "raw-detail-a", "raw-detail-b"}
+    callbacks: list[tuple[str, dict[str, Any]]] = []
+    events: list[ToolEvent] = []
+    seen: list[list[ModelMessage]] = []
+    instructions: list[str | None] = []
+
+    async def execute(name: str, arguments: dict[str, Any], tool_call_id: str) -> Any:
+        assert tool_call_id
+        callbacks.append((name, arguments))
+        if name == "search_records":
+            return json.dumps({
+                "rows": [
+                    {"id": "record-a", "kind": "target", "raw": "raw-search-a"},
+                    {"id": "record-ignore", "kind": "other", "raw": "raw-search-b"},
+                    {"id": "record-b", "kind": "target", "raw": "raw-detail-a"},
+                ],
+                "next_page": None,
+            })
+        assert name == "read_record"
+        return json.dumps({
+            "id": arguments["record_id"],
+            "verified": arguments["record_id"] == "record-a",
+            "raw": "raw-detail-b",
+        })
+
+    async def record(event: ToolEvent) -> None:
+        events.append(event)
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        instructions.append(info.instructions)
+        if len(seen) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart("search_tools", {"queries": ["search record", "read record"]})]
+            )
+        if len(seen) == 2:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "run_code",
+                        {
+                            "code": (
+                                "import json\n"
+                                "page = json.loads(search_records(page_size=100))\n"
+                                "targets = [row for row in page['rows'] if row['kind'] == 'target']\n"
+                                "details = [json.loads(read_record(record_id=row['id'])) for row in targets]\n"
+                                "{'count': len(details), 'target_ids': [detail['id'] for detail in details], "
+                                "'verification': [detail['verified'] for detail in details]}"
+                            )
+                        },
+                    )
+                ]
+            )
+        return ModelResponse(parts=[TextPart("complete")])
+
+    runtime = Agent(
+        FunctionModel(respond),
+        toolsets=[
+            BifrostToolset(
+                [
+                    ToolDefinition(
+                        name="search_records",
+                        description="Search structured records.",
+                        parameters={
+                            "type": "object",
+                            "properties": {"page_size": {"type": "integer"}},
+                            "required": ["page_size"],
+                        },
+                    ),
+                    ToolDefinition(
+                        name="read_record",
+                        description="Read one structured record.",
+                        parameters={
+                            "type": "object",
+                            "properties": {"record_id": {"type": "string"}},
+                            "required": ["record_id"],
+                        },
+                    ),
+                ],
+                execute,
+                event_handler=record,
+            ).defer_loading()
+        ],
+        capabilities=(
+            ToolSearch(strategy="keywords"),
+            *build_code_mode_capabilities(tools=["search_records", "read_record"]),
+        ),
+    )
+
+    result = await runtime.run("Find and verify target records.")
+
+    assert result.output == "complete"
+    assert callbacks == [
+        ("search_records", {"page_size": 100}),
+        ("read_record", {"record_id": "record-a"}),
+        ("read_record", {"record_id": "record-b"}),
+    ]
+    assert all(CODE_MODE_INSTRUCTIONS.strip() in (value or "") for value in instructions), instructions
+    assert _tool_returns(seen[2], "run_code") == [
+        {"count": 2, "target_ids": ["record-a", "record-b"], "verification": [True, False]}
+    ]
+    model_visible = [
+        part.content
+        for messages in seen
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert all(sentinel not in str(content) for sentinel in raw_sentinels for content in model_visible)
+    audit_results = [event.result for event in events if event.type == "tool_result"]
+    assert all(any(sentinel in str(result) for result in audit_results) for sentinel in raw_sentinels)
 
 
 @pytest.mark.asyncio

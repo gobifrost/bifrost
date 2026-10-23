@@ -36,9 +36,37 @@ DEFAULT_CODE_MODE_MAX_TOOL_CALLS = 16
 DEFAULT_CODE_MODE_MAX_RETRIES = 3
 """Native model-correction attempts after a failed ``run_code`` snippet."""
 
+CODE_MODE_INSTRUCTIONS = """Use run_code as an execution boundary: printed output AND the final expression are
+sent to the model. A bare tool call or a variable containing a full response as the last expression
+returns that whole response. Keep intermediate records inside code.
+
+After discovering exact callable names and input schemas, complete a related read phase in one
+snippet: fetch, decode, extract identifiers, perform dependent reads, then filter/project/aggregate.
+Derive subsequent IDs from earlier results in code instead of copying them through model turns.
+If a semantic decision is needed before another read, return only the candidate facts for that
+decision. Follow existing write approval and verification rules; do not replay completed mutations.
+
+Tool results can be JSON strings even when their return type is Any. Decode JSON text before field
+access. If the shape is unknown, inspect only top-level keys, collection counts and item field
+names, then compose the read phase. Do not print raw responses to learn their shape.
+
+End with a compact result containing the relevant records/fields, counts, target IDs, verification,
+errors and uncertainty. Select matching rows and fields explicitly. Do not print, implicitly return,
+or string-slice entire responses: character clipping is not semantic filtering and can lose facts.
+For example, after decoding a schema-confirmed result, project the needed fields from matching
+items rather than returning the item collection. Preserve evidence needed for the decision,
+including missing coverage and unknown effective permissions. Full original results and execution
+receipts remain in the application audit outside model context.
+"""
+"""Generic orchestration guidance for the native CodeMode capability."""
+
 
 class _CodeModeResultBoundary(AbstractCapability[object]):
     """Scope unbounded nested values and cap the sole model-visible result."""
+
+    def get_instructions(self) -> str:
+        """Give the model guidance for the one public CodeMode return boundary."""
+        return CODE_MODE_INSTRUCTIONS
 
     async def wrap_tool_execute(
         self,
