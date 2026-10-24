@@ -84,4 +84,6 @@ class ExecutionWorkerClaim(Base):
         DateTime(timezone=True), nullable=False, server_default=text("NOW()")
     )
 
-    __table_args__ = (Index("ix_execution_worker_claims_worker", "worker_id"),)
+    __table_args__ = (
+        Index("ix_execution_worker_claims_worker_subject", "worker_id", "subject_id"),
+    )

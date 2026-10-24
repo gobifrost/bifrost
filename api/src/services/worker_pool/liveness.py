@@ -19,7 +19,7 @@ import time
 from datetime import timedelta
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from src.core.database import get_db_context
 from src.models.orm.execution_workers import ExecutionWorker
@@ -31,7 +31,10 @@ HEARTBEAT_LOST_AFTER = timedelta(seconds=30)
 
 
 class Reachability:
-    """How long one control loop has reached the database without a break."""
+    """How long one control loop has reached the database without a break.
+
+    Only the database counts: a slow Kubernetes API or Redis must not keep a
+    loop from ever judging an executor lost."""
 
     def __init__(self, connected_since: float | None = None) -> None:
         self._since = connected_since
@@ -51,6 +54,17 @@ class Reachability:
             self._since is not None
             and time.monotonic() - self._since >= HEARTBEAT_LOST_AFTER.total_seconds()
         )
+
+    async def check(self) -> bool:
+        """Reach the database once (each pass); whether it answered."""
+        try:
+            async with get_db_context() as db:
+                await db.execute(text("SELECT 1"))
+        except Exception:
+            self.broken()
+            return False
+        self.connected()
+        return True
 
 
 def silent_executor():  # type: ignore[no-untyped-def]

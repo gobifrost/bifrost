@@ -9,7 +9,7 @@ from uuid import UUID
 
 from sqlalchemy import exists, func, select, text, tuple_, update
 
-from src.core.database import get_db_context
+from src.core.database import get_db_context, get_liveness_db_context
 from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
 from src.models.orm.work_dispatches import WorkDispatch
 
@@ -224,8 +224,11 @@ async def heartbeat_worker(
     memory_budget_bytes: int | None,
     memory_reserved_bytes: int,
 ) -> str | None:
-    """Renew liveness; return the state the controller sees (None if gone)."""
-    async with get_db_context() as db:
+    """Renew liveness; return the state the controller sees (None if gone).
+
+    On the executor's own heartbeat connection, so a heartbeat never waits
+    behind the runs' queries."""
+    async with get_liveness_db_context() as db:
         return await db.scalar(
             update(ExecutionWorker)
             .where(

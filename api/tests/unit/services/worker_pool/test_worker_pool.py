@@ -118,6 +118,7 @@ def db(async_session_factory: async_sessionmaker[AsyncSession], monkeypatch):
 
     for module in (claims, controller, liveness, maintenance, work_dispatch, workflow_dispatch):
         monkeypatch.setattr(module, "get_db_context", context)
+    monkeypatch.setattr(claims, "get_liveness_db_context", context)
     # These controllers have long reached the database (liveness.Reachability).
     monkeypatch.setattr(
         controller,
@@ -593,6 +594,63 @@ async def test_no_executor_is_lost_until_the_database_was_reachable_long_enough(
         assert (await session.get(ExecutionWorker, worker_id)).state == "ready"
 
 
+async def test_reachability_is_measured_by_reaching_the_database(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Only the database counts: Kubernetes or Redis trouble never resets it."""
+    from contextlib import asynccontextmanager
+
+    reachable = [True]
+
+    @asynccontextmanager
+    async def database():  # type: ignore[no-untyped-def]
+        if not reachable[0]:
+            raise ConnectionError("database restarting")
+        yield SimpleNamespace(execute=AsyncMock())
+
+    monkeypatch.setattr(liveness, "get_db_context", database)
+    reachability = liveness.Reachability(
+        connected_since=time.monotonic() - liveness.HEARTBEAT_LOST_AFTER.total_seconds()
+    )
+    assert await reachability.check() and reachability.steady()
+
+    reachable[0] = False
+    assert not await reachability.check()
+    assert not reachability.steady()
+
+
+async def test_one_worker_s_failure_does_not_stop_the_others(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    first = await _job_worker(db.sessions, state="ready")
+    second = await _job_worker(db.sessions, state="ready")
+    pool = controller.WorkerPoolController(FakeCluster(), SETTINGS, SPEC)  # type: ignore[arg-type]
+    reconciled: list[UUID] = []
+
+    async def reconcile_worker(worker_id: UUID) -> None:
+        reconciled.append(worker_id)
+        if worker_id == first.id:
+            raise RuntimeError("Worker Job UID does not match its incarnation")
+
+    monkeypatch.setattr(pool, "reconcile_worker", reconcile_worker)
+    await pool.reconcile()
+
+    assert set(reconciled) == {first.id, second.id}
+
+
+async def test_a_sync_caller_of_a_lost_run_hears_at_once(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from src.services.worker_pool import recovery
+
+    pushed = AsyncMock()
+    monkeypatch.setattr("src.core.pubsub.publish_execution_update", AsyncMock())
+    monkeypatch.setattr(
+        "src.core.redis_client.get_redis_client", lambda: SimpleNamespace(push_result=pushed)
+    )
+    run_id = uuid4()
+
+    await recovery.announce_ended_runs([run_id])
+
+    pushed.assert_awaited_once()
+    assert pushed.await_args.kwargs["execution_id"] == str(run_id)
+    assert pushed.await_args.kwargs["status"] == "Failed"
+
+
 def test_reachability_is_steady_only_after_an_unbroken_lost_window() -> None:
     reachability = liveness.Reachability()
     assert not reachability.steady()
@@ -928,14 +986,32 @@ async def test_work_no_executor_can_hold_fails_within_seconds(db) -> None:
         assert (await session.get(Execution, UUID(execution_id))).status == ExecutionStatus.FAILED
 
 
-async def test_a_draining_executor_s_budget_is_not_capacity(db) -> None:
-    draining = await claims.register_static_worker(slots=1, hostname="leaving", memory_budget_bytes=4 * GIB)
-    await claims.begin_drain(draining, "stopped")
+async def test_an_executor_restarting_or_draining_still_counts_as_capacity(db) -> None:
+    """Work is too large only if no executor live within RECENTLY_LIVE could
+    hold it: a big executor restarting must not fail its work meanwhile."""
     ready = await claims.register_static_worker(slots=1, hostname="staying", memory_budget_bytes=GIB)
     await _report_budget(ready, 512 * MIB)
+    draining = await claims.register_static_worker(slots=1, hostname="leaving", memory_budget_bytes=GIB)
+    await _report_budget(draining, 2 * GIB)
+    await claims.begin_drain(draining, "stopped")
+    restarting = await claims.register_static_worker(slots=1, hostname="restarting", memory_budget_bytes=GIB)
+    await _report_budget(restarting, 4 * GIB)
+    gone = await claims.register_static_worker(slots=1, hostname="gone", memory_budget_bytes=GIB)
+    await _report_budget(gone, 8 * GIB)
+    async with db.sessions() as session:
+        now = datetime.now(timezone.utc)
+        await session.execute(
+            update(ExecutionWorker).where(ExecutionWorker.id == restarting)
+            .values(state="lost", ended_at=now - timedelta(minutes=2))
+        )
+        await session.execute(
+            update(ExecutionWorker).where(ExecutionWorker.id == gone)
+            .values(state="lost", ended_at=now - work_dispatch.RECENTLY_LIVE - timedelta(minutes=1))
+        )
+        await session.commit()
 
     async with db.sessions() as session:
-        assert await work_dispatch.largest_budget(session) == 512 * MIB
+        assert await work_dispatch.largest_budget(session) == 4 * GIB
 
 
 async def test_a_platform_job_no_executor_can_hold_fails_visibly(db) -> None:

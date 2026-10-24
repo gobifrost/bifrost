@@ -2182,8 +2182,9 @@ class ProcessPoolManager:
         r = await self._get_redis()
         redis_key = f"bifrost:pool:{self.worker_id}"
 
-        # Get installed packages for API visibility
-        packages = _get_installed_packages()
+        # Get installed packages for API visibility. Off the event loop: pip
+        # can take seconds, and the executor's heartbeat must keep running.
+        packages = await asyncio.to_thread(_get_installed_packages)
 
         # Store pool metadata in Redis hash
         await r.hset(  # type: ignore[misc]
@@ -2221,7 +2222,7 @@ class ProcessPoolManager:
         try:
             r = await self._get_redis()
             redis_key = f"bifrost:pool:{self.worker_id}"
-            packages = _get_installed_packages()
+            packages = await asyncio.to_thread(_get_installed_packages)
             await r.hset(redis_key, "packages", json.dumps(packages))  # type: ignore[misc]
             logger.info(f"Updated packages in Redis: {len(packages)} packages")
         except Exception as e:

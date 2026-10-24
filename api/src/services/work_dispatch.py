@@ -34,6 +34,9 @@ RECONCILE_BATCH = 100
 # claimed them by the claim deadline.
 POOL_RECHECK_AFTER = timedelta(minutes=2)
 POOL_CLAIM_DEADLINE = timedelta(minutes=30)
+# An executor that ended this recently still counts as capacity for judging
+# work too large: it is most likely restarting or being replaced.
+RECENTLY_LIVE = timedelta(minutes=10)
 
 
 @dataclass(frozen=True)
@@ -215,16 +218,18 @@ async def _settle_pool_dispatch(
 
 async def largest_budget(db: AsyncSession) -> int | None:
     """The most memory any executor can hand to one piece of work: the
-    largest live budget, or what the worker controller can launch. None
-    while no executor has reported (an outage is not too-large work)."""
+    largest budget of an executor live now or within ``RECENTLY_LIVE`` (one
+    restarting or rolling over counts), or what the worker controller can
+    launch. None while no executor has reported (an outage is not too-large
+    work)."""
     from src.core.cache.redis_client import get_redis
     from src.models.orm.execution_workers import ExecutionWorker
     from src.services.memory_requests import LAUNCHABLE_KEY
 
-    # A draining executor will not claim again.
     live = await db.scalar(
         select(func.max(ExecutionWorker.memory_budget_bytes)).where(
-            ExecutionWorker.state == "ready"
+            ExecutionWorker.state.in_(("ready", "draining"))
+            | (ExecutionWorker.ended_at >= func.now() - RECENTLY_LIVE)
         )
     )
     async with get_redis() as redis:

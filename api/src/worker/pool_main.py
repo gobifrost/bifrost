@@ -314,51 +314,66 @@ class PoolWorker:
         started = time.monotonic()
         last_activity = time.monotonic()
         while not self._stop.is_set():
-            # Clear before looking, so a hint that lands during the claim
-            # attempt still wakes the wait below instead of being lost.
-            self._wake.clear()
-            assert self.admission is not None
-            claim = None
-            async with self.admission.claiming() as fits:
-                # Nothing while over the memory threshold: the work waits for
-                # an executor with room, and the controller starts one if
-                # none has it.
-                if fits is not None:
-                    claim = await claim_next(
-                        self.incarnation_id,
-                        self._claimable(),
-                        fits_bytes=fits,
-                        budget_bytes=self.admission.budget_bytes,
-                    )
-                    if claim is not None:
-                        self._start(claim)
-            if claim is not None:
-                last_activity = time.monotonic()
-                continue
-            if self.busy():
-                last_activity = time.monotonic()
-            elif (
-                not self.static
-                and time.monotonic() - last_activity >= self.settings.pool_idle_seconds
-            ):
-                if await begin_idle_drain(
-                    self.incarnation_id, keep_ready=self.settings.pool_min_workers
+            # A database error (a failover, a dropped connection) must not
+            # end the executor and its runs: back off and look again.
+            try:
+                # Clear before looking, so a hint that lands during the claim
+                # attempt still wakes the wait below instead of being lost.
+                self._wake.clear()
+                assert self.admission is not None
+                claim = None
+                async with self.admission.claiming() as fits:
+                    # Nothing while over the memory threshold: the work waits for
+                    # an executor with room, and the controller starts one if
+                    # none has it.
+                    if fits is not None:
+                        claim = await claim_next(
+                            self.incarnation_id,
+                            self._claimable(),
+                            fits_bytes=fits,
+                            budget_bytes=self.admission.budget_bytes,
+                        )
+                        if claim is not None:
+                            self._start(claim)
+                if claim is not None:
+                    last_activity = time.monotonic()
+                    continue
+                if self.busy():
+                    last_activity = time.monotonic()
+                elif (
+                    not self.static
+                    and time.monotonic() - last_activity >= self.settings.pool_idle_seconds
                 ):
+                    if await begin_idle_drain(
+                        self.incarnation_id, keep_ready=self.settings.pool_min_workers
+                    ):
+                        return
+                    # Part of the warm minimum: stay ready and look again later.
+                    last_activity = time.monotonic()
+                if (
+                    not self.static
+                    and time.monotonic() - started >= self.settings.pool_max_lifetime_seconds
+                ):
+                    await begin_drain(self.incarnation_id, "max_lifetime")
                     return
-                # Part of the warm minimum: stay ready and look again later.
-                last_activity = time.monotonic()
-            if (
-                not self.static
-                and time.monotonic() - started >= self.settings.pool_max_lifetime_seconds
-            ):
-                await begin_drain(self.incarnation_id, "max_lifetime")
-                return
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Pool worker claim failed; retrying")
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(self._stop.wait(), timeout=HEARTBEAT_SECONDS)
+                continue
             stop = asyncio.ensure_future(self._stop.wait())
             wake = asyncio.ensure_future(self._wake.wait())
             await asyncio.wait({stop, wake}, timeout=POLL_SECONDS, return_when=asyncio.FIRST_COMPLETED)
             stop.cancel()
             wake.cancel()
-        await begin_drain(self.incarnation_id, "stopped")
+        try:
+            await begin_drain(self.incarnation_id, "stopped")
+        except Exception:
+            # Unreachable now; the runs still drain, and the control plane
+            # sees the executor retire or fall silent.
+            logger.exception("Pool worker could not record its drain")
 
     @staticmethod
     def _nominal_slots(budget: MemoryBudget) -> int:
@@ -578,6 +593,12 @@ class PoolWorker:
             except Exception:
                 logger.exception("Pool worker service handover failed")
         self._platform_stop.set()
+        if self._lost:
+            # Their runs already ended; agent runs and summaries in progress
+            # would only spend tokens on results nobody records.
+            for tasks in self._tasks.values():
+                for task in tasks:
+                    task.cancel()
         deadline = time.monotonic() + (0.0 if self._lost else DRAIN_GRACE_SECONDS)
         while (
             any(self._tasks.values()) or self._platform_jobs

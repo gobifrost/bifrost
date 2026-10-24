@@ -104,12 +104,22 @@ async def end_runs_of_lost_worker(
 
 
 async def announce_ended_runs(execution_ids: list[UUID]) -> None:
-    """Best-effort live update for runs ended after their executor was lost."""
+    """Best-effort live update for runs ended after their executor was lost,
+    and the result a sync caller is waiting for (it expires unread for the
+    others), so no caller waits out its timeout."""
     from src.core.pubsub import publish_execution_update
+    from src.core.redis_client import get_redis_client
 
     for execution_id in execution_ids:
         try:
             await publish_execution_update(execution_id, "Failed", {"error": EXECUTOR_LOST})
+            await get_redis_client().push_result(
+                execution_id=str(execution_id),
+                status="Failed",
+                error=EXECUTOR_LOST,
+                error_type="ExecutorLost",
+                duration_ms=0,
+            )
         except Exception:
             logger.warning("Could not announce an ended run", exc_info=True)
 

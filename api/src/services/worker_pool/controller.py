@@ -102,9 +102,22 @@ class WorkerPoolController:
                 )
             ).all()
         for worker_id in ids:
-            await self.reconcile_worker(worker_id)
+            await self._reconcile_one(worker_id)
         for worker_id in await self.launch_for_demand():
+            await self._reconcile_one(worker_id)
+
+    async def _reconcile_one(self, worker_id: UUID) -> None:
+        """One worker's failure (a slow Kubernetes API, a replaced Job) must
+        not stop the others from being reconciled."""
+        try:
             await self.reconcile_worker(worker_id)
+        except Exception as exc:
+            logger.error(
+                "Reusable worker reconciliation failed (%s): %s",
+                type(exc).__name__,
+                exc,
+                extra={"worker_id": str(worker_id)},
+            )
 
     async def reconcile_worker(self, worker_id: UUID) -> None:
         async with get_db_context() as db:
@@ -426,12 +439,11 @@ async def worker_pool_loop(stop_event: asyncio.Event, settings: Any | None = Non
     try:
         while not stop_event.is_set():
             try:
-                await controller.reconcile()
-                controller.reachability.connected()
+                if await controller.reachability.check():
+                    await controller.reconcile()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                controller.reachability.broken()
                 logger.error(
                     "Reusable worker reconciliation failed (%s): %s",
                     type(exc).__name__,

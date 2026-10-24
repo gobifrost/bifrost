@@ -192,15 +192,14 @@ class ControlPlane:
         reachability = Reachability()
         while not self._stop_event.is_set():
             try:
-                if reachability.steady():
-                    await end_silent_static_executors()
-                await reconcile_work_dispatches()
-                await settle_work_that_never_fits()
-                reachability.connected()
+                if await reachability.check():
+                    if reachability.steady():
+                        await end_silent_static_executors()
+                    await reconcile_work_dispatches()
+                    await settle_work_that_never_fits()
             except asyncio.CancelledError:
                 raise
             except Exception:
-                reachability.broken()
                 logger.exception("Work dispatch reconciliation failed")
             await wait_or_stop(self._stop_event, DISPATCH_RECONCILE_SECONDS)
 
