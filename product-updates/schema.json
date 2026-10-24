@@ -71,28 +71,6 @@
       ],
       "additionalProperties": false
     },
-    "agentPrompt": {
-      "type": "object",
-      "required": [
-        "needs",
-        "prompt"
-      ],
-      "properties": {
-        "needs": {
-          "type": "string",
-          "minLength": 1
-        },
-        "prompt": {
-          "type": "string",
-          "minLength": 1
-        },
-        "title": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "additionalProperties": false
-    },
     "entry": {
       "type": "object",
       "required": [
@@ -285,7 +263,8 @@
           }
         },
         "agent_prompt": {
-          "$ref": "#/$defs/agentPrompt"
+          "type": "string",
+          "minLength": 1
         },
         "review": {
           "$ref": "#/$defs/review"
@@ -557,7 +536,8 @@
           }
         },
         "agent_prompt": {
-          "$ref": "#/$defs/agentPrompt"
+          "type": "string",
+          "minLength": 1
         },
         "additional_areas": {
           "type": "array",

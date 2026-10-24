@@ -794,58 +794,41 @@ class ProductUpdatesTests(unittest.TestCase):
 
         self.assertEqual([ENTRY_ID], [entry["id"] for entry in bundle["entries"]])
 
-    def agent_prompt(self, **overrides: str) -> dict:
-        return {
-            "needs": "your Bifrost docker-compose.yml and shell",
-            "prompt": (
-                "You are helping me with this Bifrost change: one worker service.\n"
-                "1. Inspect my setup and report what applies.\n"
-                "2. Propose the exact changes, and wait for my confirmation.\n"
-                "See https://docs.gobifrost.com/install and "
-                "https://github.com/gobifrost/bifrost/pull/10."
-            ),
-            **overrides,
-        }
+    PROMPT = (
+        "You are helping me with this Bifrost change: one worker service.\n"
+        "1. Inspect my setup and report what applies.\n"
+        "2. Propose the exact changes, and wait for my confirmation.\n"
+        "See https://docs.gobifrost.com/install and "
+        "https://github.com/gobifrost/bifrost/pull/10."
+    )
 
-    def test_agent_prompt_is_bundled_and_rendered_in_a_text_fence(self) -> None:
+    def test_agent_prompt_is_bundled_and_rendered_collapsed_in_a_text_fence(
+        self,
+    ) -> None:
         data = self.entry_data()
-        data["agent_prompt"] = self.agent_prompt()
+        data["agent_prompt"] = self.PROMPT
         self.write_entry(data, "Approved. [Open Settings](/settings)")
         bundle = product_updates.build_bundle(
             self.content, self.inventory, self.dispositions, TARGET, "/product-updates/"
         )
-        self.assertEqual(data["agent_prompt"], bundle["entries"][0]["agent_prompt"])
+        self.assertEqual(self.PROMPT, bundle["entries"][0]["agent_prompt"])
 
         rendered = product_updates.render_release(
             bundle, f"https://raw.githubusercontent.com/gobifrost/bifrost/{TARGET}/"
         )
 
         self.assertIn(
-            "#### Do It With an Agent\n\n"
-            "Copy this prompt into an agent that can reach your Bifrost "
-            "docker-compose.yml and shell.\n\n```text\n"
-            + data["agent_prompt"]["prompt"]
-            + "\n```\n\nSources:",
+            "#### Agent Prompt\n\n"
+            "Copy this prompt to have your coding agent help you with this change.\n\n"
+            "<details>\n<summary>Show Prompt</summary>\n\n```text\n"
+            + self.PROMPT
+            + "\n```\n\n</details>\n\nSources:",
             rendered,
         )
 
-    def test_agent_prompt_title_overrides_the_default_heading(self) -> None:
-        data = self.entry_data()
-        data["agent_prompt"] = self.agent_prompt(title="Upgrade With an Agent")
-        self.write_entry(data)
-        bundle = product_updates.build_bundle(
-            self.content, self.inventory, self.dispositions, TARGET, "/product-updates/"
-        )
-        rendered = product_updates.render_release(
-            bundle, f"https://raw.githubusercontent.com/gobifrost/bifrost/{TARGET}/"
-        )
-        self.assertIn("#### Upgrade With an Agent", rendered)
-        self.assertNotIn("Do It With an Agent", rendered)
-
     def test_agent_prompt_words_do_not_count_toward_the_entry_budget(self) -> None:
         data = self.entry_data()
-        data["agent_prompt"] = self.agent_prompt()
-        data["agent_prompt"]["prompt"] += " step" * 300
+        data["agent_prompt"] = self.PROMPT + " step" * 300
         self.write_entry(data, "word " * 60)
         self.assertEqual(
             [],
@@ -856,24 +839,24 @@ class ProductUpdatesTests(unittest.TestCase):
 
     def test_agent_prompt_rules(self) -> None:
         cases = {
-            "exceeds 400 words": {"prompt": "wait for my confirmation " + "x " * 400},
-            "must not contain raw HTML": {
-                "prompt": "Run <script>x</script>, then wait for my confirmation."
-            },
-            "must not contain backticks": {
-                "prompt": "Run `docker compose up`, then wait for my confirmation."
-            },
-            "links only to the Bifrost docs": {
-                "prompt": "Read https://example.com/x, then wait for my confirmation."
-            },
-            "must tell the agent to 'wait for my confirmation'": {
-                "prompt": "Apply the changes right away."
-            },
+            "exceeds 400 words": "wait for my confirmation " + "x " * 400,
+            "must not contain raw HTML": (
+                "Run <script>x</script>, then wait for my confirmation."
+            ),
+            "must not contain backticks": (
+                "Run `docker compose up`, then wait for my confirmation."
+            ),
+            "links only to the Bifrost docs": (
+                "Read https://example.com/x, then wait for my confirmation."
+            ),
+            "must tell the agent to 'wait for my confirmation'": (
+                "Apply the changes right away."
+            ),
         }
-        for message, overrides in cases.items():
+        for message, prompt in cases.items():
             with self.subTest(message):
                 data = self.entry_data()
-                data["agent_prompt"] = self.agent_prompt(**overrides)
+                data["agent_prompt"] = prompt
                 self.write_entry(data)
                 errors = product_updates.validate_content(
                     self.content, self.inventory, self.dispositions, TARGET
@@ -882,14 +865,8 @@ class ProductUpdatesTests(unittest.TestCase):
                     any(message in error for error in errors), (message, errors)
                 )
 
-    def test_agent_prompt_schema_requires_needs_and_rejects_unknown_fields(
-        self,
-    ) -> None:
-        for agent_prompt in (
-            {"prompt": "wait for my confirmation"},
-            {"needs": "", "prompt": "wait for my confirmation"},
-            {**self.agent_prompt(), "copy_label": "Copy"},
-        ):
+    def test_agent_prompt_schema_requires_non_empty_text(self) -> None:
+        for agent_prompt in ("", {"prompt": "wait for my confirmation"}):
             with self.subTest(agent_prompt):
                 data = self.entry_data()
                 data["agent_prompt"] = agent_prompt

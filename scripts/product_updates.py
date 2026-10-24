@@ -34,7 +34,9 @@ PROMPT_URL = re.compile(r"(?:https?://|www\.)[^\s)]+", re.I)
 BIFROST_DOCS_HOSTS = {"gobifrost.com", "www.gobifrost.com", "docs.gobifrost.com"}
 AGENT_PROMPT_WORD_LIMIT = 400
 AGENT_PROMPT_CONFIRMATION = "wait for my confirmation"
-AGENT_PROMPT_TITLE = "Do It With an Agent"
+AGENT_PROMPT_DESCRIPTION = (
+    "Copy this prompt to have your coding agent help you with this change."
+)
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 DISPOSITION_KEY = re.compile(r"^[A-Za-z0-9]+(?::[A-Za-z0-9]+)*$")
 DISPOSITION_FILE = re.compile(r"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*\.json$")
@@ -158,22 +160,18 @@ def unsafe_markdown(markdown: str) -> bool:
 
 
 def agent_prompt_errors(entry: dict[str, Any], label: str) -> list[str]:
-    """Check the copy-into-an-agent prompt; the schema already checks its shape."""
-    agent_prompt = entry.get("agent_prompt")
-    if not isinstance(agent_prompt, dict) or not isinstance(
-        agent_prompt.get("prompt"), str
-    ):
+    """Check the copy-into-an-agent prompt; the schema already checks its type."""
+    prompt = entry.get("agent_prompt")
+    if not isinstance(prompt, str):
         return []
-    prompt = agent_prompt["prompt"]
-    text = "\n".join(value for value in agent_prompt.values() if isinstance(value, str))
     errors: list[str] = []
     if len(prompt.split()) > AGENT_PROMPT_WORD_LIMIT:
         errors.append(f"{label}: agent_prompt exceeds {AGENT_PROMPT_WORD_LIMIT} words")
-    if RAW_HTML.search(text):
+    if RAW_HTML.search(prompt):
         errors.append(f"{label}: agent_prompt must not contain raw HTML")
-    if "`" in text:
+    if "`" in prompt:
         errors.append(f"{label}: agent_prompt must not contain backticks")
-    for url in PROMPT_URL.findall(text):
+    for url in PROMPT_URL.findall(prompt):
         parsed = urlparse(url if "://" in url else f"https://{url}")
         if parsed.netloc.lower() not in BIFROST_DOCS_HOSTS and not (
             parsed.netloc.lower() == "github.com"
@@ -932,18 +930,22 @@ def render_release(bundle: dict[str, Any], asset_base_url: str) -> str:
                 lines.extend([f"![{asset['alt']}]({url})", ""])
                 if asset.get("caption"):
                     lines.extend([asset["caption"], ""])
-            agent_prompt = entry.get("agent_prompt")
-            if agent_prompt:
-                # A fence keeps the prompt verbatim; GitHub adds its copy button.
+            if entry.get("agent_prompt"):
+                # Collapsed like the app's box; GitHub gives the fence a copy button.
                 lines.extend(
                     [
-                        f"#### {agent_prompt.get('title') or AGENT_PROMPT_TITLE}",
+                        "#### Agent Prompt",
                         "",
-                        f"Copy this prompt into an agent that can reach {agent_prompt['needs']}.",
+                        AGENT_PROMPT_DESCRIPTION,
+                        "",
+                        "<details>",
+                        "<summary>Show Prompt</summary>",
                         "",
                         "```text",
-                        agent_prompt["prompt"].strip("\n"),
+                        entry["agent_prompt"].strip("\n"),
                         "```",
+                        "",
+                        "</details>",
                         "",
                     ]
                 )

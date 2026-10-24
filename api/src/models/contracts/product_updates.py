@@ -34,16 +34,6 @@ class ProductUpdateAsset(BaseModel):
     caption: str | None = None
 
 
-class ProductUpdateAgentPrompt(BaseModel):
-    """A reviewed prompt an admin copies into an agent to apply the change."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    needs: str = Field(min_length=1)
-    prompt: str = Field(min_length=1)
-    title: str | None = Field(default=None, min_length=1)
-
-
 class ProductUpdateEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -66,7 +56,7 @@ class ProductUpdateEntry(BaseModel):
     sources: list[ProductUpdateSource]
     contributors: list[ProductUpdateContributor]
     assets: list[ProductUpdateAsset]
-    agent_prompt: ProductUpdateAgentPrompt | None = None
+    agent_prompt: str | None = Field(default=None, min_length=1)
     additional_areas: list[str] | None = None
     release: str | None = None
     in_app: bool | None = None

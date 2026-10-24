@@ -75,15 +75,10 @@ def test_load_product_updates_bundle_carries_the_agent_prompt(tmp_path) -> None:
     bundle = _bundle("fd0c7319-fcc0-5d28-b89b-09ca20a59262")
     entries = bundle["entries"]
     assert isinstance(entries, list)
-    entries[0]["agent_prompt"] = {
-        "needs": "your docker-compose.yml",
-        "prompt": "Inspect it, then wait for my confirmation.",
-    }
+    entries[0]["agent_prompt"] = "Inspect it, then wait for my confirmation."
     bundle_path = tmp_path / "product-updates.bundle.json"
     bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
 
-    agent_prompt = load_product_updates_bundle(bundle_path).entries[0].agent_prompt
+    entry = load_product_updates_bundle(bundle_path).entries[0]
 
-    assert agent_prompt is not None
-    assert agent_prompt.needs == "your docker-compose.yml"
-    assert agent_prompt.title is None
+    assert entry.agent_prompt == "Inspect it, then wait for my confirmation."

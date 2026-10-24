@@ -1,5 +1,11 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { Bot, ExternalLink, ImageOff } from "lucide-react";
+import { useEffect, useId, useState, type ReactNode } from "react";
+import {
+	Bot,
+	ChevronDown,
+	ChevronUp,
+	ExternalLink,
+	ImageOff,
+} from "lucide-react";
 import { MarkdownContent } from "@/components/common/MarkdownContent";
 import { DiscordIcon } from "@/components/icons/DiscordIcon";
 import { Github } from "@/components/icons/GithubIcon";
@@ -109,7 +115,7 @@ export function UpdateEntry({
 				}}
 			/>
 			{!compact && entry.agent_prompt && (
-				<AgentPrompt agentPrompt={entry.agent_prompt} />
+				<AgentPrompt prompt={entry.agent_prompt} />
 			)}
 			{!compact &&
 				(entry.sources.length > 0 || entry.contributors.length > 0) && (
@@ -298,15 +304,12 @@ function CorrectionLists({
 	);
 }
 
-function AgentPrompt({
-	agentPrompt,
-}: {
-	agentPrompt: NonNullable<ProductUpdateEntry["agent_prompt"]>;
-}) {
+function AgentPrompt({ prompt }: { prompt: string }) {
+	const [expanded, setExpanded] = useState(false);
 	const [copyStatus, setCopyStatus] = useState<
 		"idle" | "copying" | "copied" | "error"
 	>("idle");
-	const title = agentPrompt.title ?? "Do It With an Agent";
+	const promptId = useId();
 
 	useEffect(() => {
 		if (copyStatus !== "copied") return;
@@ -320,7 +323,7 @@ function AgentPrompt({
 		try {
 			if (!navigator.clipboard?.writeText)
 				throw new Error("Clipboard unavailable");
-			await navigator.clipboard.writeText(agentPrompt.prompt);
+			await navigator.clipboard.writeText(prompt);
 			setCopyStatus("copied");
 		} catch {
 			setCopyStatus("error");
@@ -329,8 +332,8 @@ function AgentPrompt({
 
 	return (
 		<section
-			aria-label={title}
-			className="mt-5 max-w-[75ch] space-y-3 rounded-[var(--bf-radius-surface)] border bg-muted/40 p-4"
+			aria-label="Agent Prompt"
+			className="mt-5 max-w-[75ch] rounded-[var(--bf-radius-surface)] border bg-muted/40 p-4"
 		>
 			<div className="flex flex-wrap items-start justify-between gap-3">
 				<div className="flex min-w-0 flex-1 basis-64 items-start gap-3">
@@ -339,31 +342,49 @@ function AgentPrompt({
 						className="mt-0.5 size-5 shrink-0 text-primary"
 					/>
 					<div className="min-w-0">
-						<h5 className="font-semibold">{title}</h5>
+						<h5 className="font-semibold">Agent Prompt</h5>
 						<p className="text-sm text-muted-foreground">
-							Copy this prompt into an agent that can reach{" "}
-							{agentPrompt.needs}.
+							Copy this prompt to have your coding agent help you
+							with this change.
 						</p>
 					</div>
 				</div>
-				<Button
-					type="button"
-					variant="outline"
-					size="sm"
-					className="min-h-11 sm:min-h-8"
-					onClick={handleCopy}
-					disabled={copyStatus === "copying"}
-				>
-					{copyStatus === "copying"
-						? "Copying…"
-						: copyStatus === "copied"
-							? "Copied!"
-							: "Copy Prompt"}
-				</Button>
+				<div className="flex flex-wrap items-center gap-1">
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						className="min-h-11 sm:min-h-8"
+						aria-expanded={expanded}
+						aria-controls={promptId}
+						onClick={() => setExpanded((value) => !value)}
+					>
+						{expanded ? (
+							<ChevronUp aria-hidden="true" className="size-4" />
+						) : (
+							<ChevronDown aria-hidden="true" className="size-4" />
+						)}
+						{expanded ? "Hide Prompt" : "Show Prompt"}
+					</Button>
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						className="min-h-11 sm:min-h-8"
+						onClick={handleCopy}
+						disabled={copyStatus === "copying"}
+					>
+						{copyStatus === "copying"
+							? "Copying…"
+							: copyStatus === "copied"
+								? "Copied!"
+								: "Copy Prompt"}
+					</Button>
+				</div>
 			</div>
 			{copyStatus === "error" && (
-				<p role="alert" className="text-sm text-destructive">
-					Could not copy. Select and copy the prompt text, or try
+				<p role="alert" className="mt-3 text-sm text-destructive">
+					Could not copy. Show the prompt and copy its text, or try
 					again.
 				</p>
 			)}
@@ -371,11 +392,13 @@ function AgentPrompt({
 				{copyStatus === "copied" ? "Prompt copied to clipboard." : ""}
 			</span>
 			<pre
-				aria-label={`${title} prompt`}
+				id={promptId}
+				hidden={!expanded}
+				aria-label="Agent prompt text"
 				tabIndex={0}
-				className="max-h-[16.5rem] overflow-auto whitespace-pre-wrap rounded-[var(--bf-radius-control)] border bg-background p-3 font-mono text-xs leading-5 [overflow-wrap:anywhere]"
+				className="mt-3 max-h-[16.5rem] overflow-auto whitespace-pre-wrap rounded-[var(--bf-radius-control)] border bg-background p-3 font-mono text-xs leading-5 [overflow-wrap:anywhere]"
 			>
-				{agentPrompt.prompt}
+				{prompt}
 			</pre>
 		</section>
 	);

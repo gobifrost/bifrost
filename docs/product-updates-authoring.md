@@ -47,35 +47,26 @@ access controls as an incident unless the evidence establishes an incident.
 
 ## Agent Prompts
 
-An entry can carry an `agent_prompt`: a reviewed prompt an admin copies into an
-agent that can reach their setup, so the agent does the work the note describes.
-Add one for breaking changes, recommended upgrade steps, and first-time setup of a
-new capability. Don't add one for ordinary features.
+An entry can carry an `agent_prompt`: a reviewed, plain-text prompt an admin
+copies into a coding agent that can reach their setup, so the agent does the work
+the note describes. Add one for breaking changes, recommended upgrade steps, and
+first-time setup of a new capability. Don't add one for ordinary features.
 
 ```json
-"agent_prompt": {
-  "needs": "your Bifrost docker-compose.yml and shell",
-  "prompt": "You are helping me with this Bifrost change: ...",
-  "title": "Upgrade With an Agent"
-}
+"agent_prompt": "You are helping me with this Bifrost change: ..."
 ```
-
-- `needs` says in plain words what the agent must be able to reach, such as
-  "kubectl access to your Bifrost namespace". It completes the sentence "Copy this
-  prompt into an agent that can reach {needs}."
-- `prompt` is plain text the admin copies verbatim.
-- `title` is optional and defaults to "Do It With an Agent".
 
 The prompt does not count toward the entry's word budget; it has its own limit of
 400 words and is reviewed with the entry. Validation rejects raw HTML, backticks,
 and links other than the Bifrost docs and `github.com/gobifrost`, and it requires
 the phrase "wait for my confirmation" so the agent shows its plan before changing
 anything. Never include secrets, installation-specific URLs, or instructions to
-disable safety checks. Start from this template:
+disable safety checks. State what the agent must be able to reach in the prompt
+itself. Start from this template:
 
 ```text
 You are helping me with this Bifrost change: <one sentence>.
-You can reach: <needs>.
+You can reach: <what the agent needs, such as my docker-compose.yml and a shell>.
 1. Inspect my current setup and report what applies to it.
 2. Propose the exact changes, and wait for my confirmation.
 3. Apply them, then verify with: <checks>.
@@ -83,10 +74,12 @@ Do not change anything unrelated, and stop if something does not match
 what you expect.
 ```
 
-What's New shows the prompt in a callout under the entry with a Copy Prompt button;
-compact Fixed and Security entries and `in_app: false` entries don't show it. The
-GitHub release renders it under a `####` heading in a `text` fence, which GitHub
-gives its own copy button. Posting a prompt to Discord is a manual step.
+What's New shows an Agent Prompt callout under the entry: "Copy this prompt to
+have your coding agent help you with this change.", a Copy Prompt button, and the
+prompt collapsed behind Show Prompt. Compact Fixed and Security entries and
+`in_app: false` entries don't show it. The GitHub release renders the same heading
+and sentence with the prompt in a collapsed `text` fence, which GitHub gives its
+own copy button. Posting a prompt to Discord is a manual step.
 
 ## Before and during a pull request
 
