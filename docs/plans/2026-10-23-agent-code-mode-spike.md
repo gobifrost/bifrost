@@ -374,7 +374,9 @@ Monty image above:
 ```bash
 PATH=/tmp/bifrost-code-mode-filtering-checks:$PATH BIFROST_SKIP_BUILD=1 ./test.sh tests/unit/services/test_agent_code_mode.py -v
 PATH=/tmp/bifrost-code-mode-filtering-checks:$PATH BIFROST_SKIP_BUILD=1 ./test.sh tests/e2e/api/test_agent_code_mode_spike.py::test_code_mode_dispatches_one_bound_workflow_on_existing_executors -v --durations=0
-PATH=/tmp/bifrost-code-mode-filtering-checks:$PATH BIFROST_SKIP_BUILD=1 ./test.sh quality api
+PATH=/tmp/bifrost-code-mode-filtering-checks:$PATH BIFROST_SKIP_BUILD=1 ./test.sh tests/unit/services/agent_runtime/test_context_breakdown.py \
+  tests/unit/services/test_chat_artifacts.py -v
+./test.sh quality api
 ```
 
 Full backend/frontend suites and a production deployment were not run.
@@ -1308,6 +1310,8 @@ The candidate is rebased on `origin/main` at `4b56634e0`. Focused verification:
   assertions. All 65 affected executor/composition tests passed after repair;
   the other 78 tests in that set already passed. No retries, skips, xfails or
   timeout increases were introduced.
+- Sixteen additional context-breakdown and chat-artifact tests passed, bringing
+  the distinct focused total to 289.
 - API Pyright reported zero errors/warnings and Ruff passed. A bounded independent
   review found no actionable authorization or public-contract regressions.
 - Existing MCP wire coverage verified the tool list and `async` argument,
@@ -1347,6 +1351,8 @@ Commands used the existing worktree image, with
   -v --durations=0
 ./test.sh tests/unit/services/test_autonomous_agent_executor.py \
   tests/e2e/api/test_agent_capability_composition.py -v --durations=0
+./test.sh tests/unit/services/agent_runtime/test_context_breakdown.py \
+  tests/unit/services/test_chat_artifacts.py -v
 ./test.sh quality api
 ```
 

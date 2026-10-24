@@ -1,0 +1,14 @@
+{
+  "key": "pr:1046",
+  "classification": "highlight",
+  "entry_ids": [
+    "dfd03584-ee26-42c0-b880-0e9de49b02be"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1046",
+      "Maintainer authorized shipping in session on 2026-10-23. Codex applied General Writing and Humanizer: short concrete title, two sentences describing Automatic behavior and access controls, verified /agents route, no unmeasured savings claim or customer action."
+    ]
+  }
+}
