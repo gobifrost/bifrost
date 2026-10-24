@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
@@ -297,6 +298,119 @@ async def test_a_consistent_change_of_both_fields_is_accepted(
         12,
         True,
     )
+
+
+def _memory_request(monkeypatch: pytest.MonkeyPatch, mib: int) -> None:
+    monkeypatch.setattr(
+        "src.config.get_settings",
+        lambda: SimpleNamespace(pool_worker_memory_request_mib=mib),
+    )
+
+
+async def test_worker_memory_below_the_deployments_request_is_rejected(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A worker Job whose limit is below its request could never be created."""
+    _memory_request(monkeypatch, 1024)
+    svc = kube.KubernetesExecutionService(db_session)
+
+    with pytest.raises(
+        ValueError,
+        match=r"Worker memory must be at least the worker memory request "
+        r"\(1024 MiB, BIFROST_POOL_WORKER_MEMORY_REQUEST_MIB\)",
+    ):
+        await svc.update_policy({"worker_memory_mib": 768}, updated_by="admin")
+    assert await kube.load_kubernetes_policy(db_session) == kube.KubernetesPolicy()
+
+    await svc.update_policy({"worker_memory_mib": 1024}, updated_by="admin")
+    assert (await kube.load_kubernetes_policy(db_session)).worker_memory_mib == 1024
+
+
+async def _admin_edits(
+    sessions: async_sessionmaker[AsyncSession], changes: dict[str, Any]
+) -> None:
+    async with sessions() as session:
+        await kube.KubernetesExecutionService(session).update_policy(
+            changes, updated_by="admin@example.com"
+        )
+        await session.commit()
+
+
+async def test_imported_worker_memory_above_the_largest_worker_raises_the_largest(
+    async_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The old controller sized its largest worker max(Worker memory, largest)."""
+    imported = await _import(
+        async_session_factory, {"BIFROST_POOL_WORKER_MEMORY_LIMIT_MIB": "16384"}
+    )
+
+    assert sorted(imported) == ["largest_worker_mib", "worker_memory_mib"]
+    policy = await _policy(async_session_factory)
+    assert (policy.worker_memory_mib, policy.largest_worker_mib) == (16384, 16384)
+    provenance = (await _stored(async_session_factory))["imported_from_env"]
+    assert provenance["largest_worker_mib"]["variable"] == (
+        "BIFROST_POOL_WORKER_MEMORY_LIMIT_MIB"
+    )
+    # Later edits are not rejected for a pair the import stored.
+    await _admin_edits(async_session_factory, {"idle_seconds": 60})
+
+
+async def test_imported_warm_workers_above_max_workers_are_capped(
+    async_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The old controller never launched more than max workers."""
+    imported = await _import(
+        async_session_factory,
+        {"BIFROST_POOL_MIN_WORKERS": "8", "BIFROST_POOL_MAX_WORKERS": "4"},
+    )
+
+    assert sorted(imported) == ["max_workers", "warm_workers"]
+    policy = await _policy(async_session_factory)
+    assert (policy.warm_workers, policy.max_workers) == (4, 4)
+    provenance = (await _stored(async_session_factory))["imported_from_env"]
+    assert provenance["warm_workers"]["variable"] == "BIFROST_POOL_MIN_WORKERS"
+    await _admin_edits(async_session_factory, {"idle_seconds": 60})
+
+
+async def test_an_import_conflicting_with_an_admin_value_is_skipped(
+    async_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _admin_edits(
+        async_session_factory, {"largest_worker_mib": 4096, "warm_workers": 5}
+    )
+
+    imported = await _import(
+        async_session_factory,
+        {
+            "BIFROST_POOL_WORKER_MEMORY_LIMIT_MIB": "16384",
+            "BIFROST_POOL_MAX_WORKERS": "3",
+            "BIFROST_POOL_IDLE_SECONDS": "45",
+        },
+    )
+
+    assert imported == ["idle_seconds"]
+    policy = await _policy(async_session_factory)
+    assert (
+        policy.worker_memory_mib,
+        policy.largest_worker_mib,
+        policy.warm_workers,
+        policy.max_workers,
+        policy.idle_seconds,
+    ) == (2048, 4096, 5, 6, 45)
+
+
+async def test_imported_worker_memory_below_the_request_is_skipped(
+    async_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _memory_request(monkeypatch, 1024)
+
+    imported = await _import(
+        async_session_factory, {"BIFROST_POOL_WORKER_MEMORY_LIMIT_MIB": "768"}
+    )
+
+    assert imported == []
+    assert (await _policy(async_session_factory)).worker_memory_mib == 2048
 
 
 async def test_execution_toggle_round_trip(db_session: AsyncSession) -> None:

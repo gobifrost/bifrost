@@ -735,7 +735,7 @@ def test_reachability_is_steady_only_after_an_unbroken_lost_window() -> None:
 
 def test_worker_job_is_suspended_tokenless_and_has_no_deadline() -> None:
     manifest = build_worker_job_manifest(
-        uuid4(), SETTINGS, SPEC, standard_limit_mib=3072, memory_limit_bytes=None
+        uuid4(), SETTINGS, SPEC, memory_limit_bytes=3072 * MIB, sized=False
     )
     spec = manifest["spec"]
     pod = spec["template"]["spec"]
@@ -1069,11 +1069,82 @@ async def test_a_job_worker_counts_its_expected_budget_until_it_reports_one(db) 
 
 def test_a_sized_worker_job_requests_its_whole_limit() -> None:
     manifest = build_worker_job_manifest(
-        uuid4(), SETTINGS, SPEC, standard_limit_mib=2048, memory_limit_bytes=4 * GIB
+        uuid4(), SETTINGS, SPEC, memory_limit_bytes=4 * GIB, sized=True
     )
     resources = manifest["spec"]["template"]["spec"]["containers"][0]["resources"]
 
     assert resources["requests"]["memory"] == resources["limits"]["memory"] == "4096Mi"
+
+
+def test_a_sized_worker_job_is_not_held_to_the_standard_memory_request() -> None:
+    """A sized Job requests its whole limit; only a standard Job requests
+    the deployment's memory request, which must fit its limit."""
+    from src.jobs.platform.kubernetes_client import KubernetesConfigurationError
+
+    large_request = SimpleNamespace(**{**vars(SETTINGS), "pool_worker_memory_request_mib": 4096})
+
+    manifest = build_worker_job_manifest(
+        uuid4(), large_request, SPEC, memory_limit_bytes=6 * GIB, sized=True
+    )
+    resources = manifest["spec"]["template"]["spec"]["containers"][0]["resources"]
+    assert resources["requests"]["memory"] == resources["limits"]["memory"] == "6144Mi"
+    with pytest.raises(KubernetesConfigurationError):
+        build_worker_job_manifest(
+            uuid4(), large_request, SPEC, memory_limit_bytes=2 * GIB, sized=False
+        )
+
+
+def _job_memory_limit(cluster: FakeCluster, name: str) -> str:
+    return cluster.jobs[name]["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]["memory"]
+
+
+async def test_a_standard_job_keeps_the_limit_it_was_reserved_with(db) -> None:
+    warm = replace(POLICY, warm_workers=1)
+    await _store_policy(db.sessions, warm)
+    cluster = FakeCluster()
+    pool = controller.WorkerPoolController(cluster, SETTINGS, SPEC)  # type: ignore[arg-type]
+
+    [worker_id] = await pool.launch_for_demand(warm)
+    async with db.sessions() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+    assert (worker.resource_class, worker.memory_limit_bytes) == ("standard", 2 * GIB)
+
+    # An admin raises Worker memory before the Job is created.
+    await pool.reconcile_worker(worker_id, replace(warm, worker_memory_mib=4096))
+    assert _job_memory_limit(cluster, worker.kubernetes_job_name) == "2048Mi"
+
+
+async def test_raising_worker_memory_does_not_shrink_what_can_be_launched(db) -> None:
+    """A running 2 GiB Job's baseline is measured against its own limit, not
+    the new Worker memory, or large work it could launch for fails as too large."""
+    from src.services.memory_requests import job_budget_bytes
+
+    warm = replace(POLICY, warm_workers=1)
+    await _store_policy(db.sessions, warm)
+    pool = controller.WorkerPoolController(FakeCluster(), SETTINGS, SPEC)  # type: ignore[arg-type]
+    [worker_id] = await pool.launch_for_demand(warm)
+    await pool.reconcile_worker(worker_id, warm)
+    await _admit(db.sessions, worker_id)  # reports a 1 GiB budget
+    baseline = int(2 * GIB * SETTINGS.memory_pressure_threshold) - GIB
+
+    await _store_policy(db.sessions, replace(warm, worker_memory_mib=4096))
+    await pool.reconcile()
+
+    async with get_redis() as redis:
+        launchable = int(await redis.get(LAUNCHABLE_KEY))
+    assert launchable == job_budget_bytes(8192 * MIB, SETTINGS.memory_pressure_threshold, baseline)
+
+
+async def test_a_standard_job_reserved_before_the_upgrade_takes_the_current_worker_memory(db) -> None:
+    """The previous release recorded no limit for a standard Job."""
+    worker = await _job_worker(db.sessions, state="reserved")
+    cluster = FakeCluster()
+
+    await controller.WorkerPoolController(cluster, SETTINGS, SPEC).reconcile_worker(  # type: ignore[arg-type]
+        worker.id, replace(POLICY, worker_memory_mib=3072)
+    )
+
+    assert _job_memory_limit(cluster, worker.kubernetes_job_name) == "3072Mi"
 
 
 # --- work no executor can hold --------------------------------------------------
@@ -1470,7 +1541,7 @@ async def test_worker_jobs_pull_like_the_controller() -> None:
 
     spec = await resolve_worker_job_spec(client, unset)  # type: ignore[arg-type]
     manifest = build_worker_job_manifest(
-        uuid4(), SETTINGS, spec, standard_limit_mib=2048, memory_limit_bytes=None
+        uuid4(), SETTINGS, spec, memory_limit_bytes=2 * GIB, sized=False
     )
 
     assert manifest["spec"]["template"]["spec"]["containers"][0]["imagePullPolicy"] == "Always"
@@ -1503,8 +1574,8 @@ async def test_an_adopted_job_keeps_no_launcher(db) -> None:
         worker = await session.get(ExecutionWorker, worker_id)
         await cluster.create_job(
             build_worker_job_manifest(
-                worker_id, SETTINGS, SPEC, standard_limit_mib=WARM.worker_memory_mib,
-                memory_limit_bytes=None,
+                worker_id, SETTINGS, SPEC, memory_limit_bytes=WARM.worker_memory_mib * MIB,
+                sized=False,
             )
         )
         name = worker.kubernetes_job_name

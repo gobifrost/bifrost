@@ -202,8 +202,10 @@ class WorkerPoolController:
                             worker.id,
                             self.settings,
                             self.spec,
-                            standard_limit_mib=policy.worker_memory_mib,
-                            memory_limit_bytes=worker.memory_limit_bytes,
+                            memory_limit_bytes=_launch_limit(
+                                worker, policy.worker_memory_mib * 2**20
+                            ),
+                            sized=worker.resource_class == "sized",
                         )
                     )
                     # Whoever creates the Job launches it, whichever replica
@@ -363,7 +365,7 @@ class WorkerPoolController:
                 if worker.form == "job" and (
                     worker.state in ("reserved", "starting") or worker.memory_budget_bytes is None
                 ):
-                    limit = worker.memory_limit_bytes or standard_limit
+                    limit = _launch_limit(worker, standard_limit)
                     budget = job_budget_bytes(limit, self.settings.memory_pressure_threshold, baseline)
                     free.append(max(0, budget - held))
                 elif worker.state == "ready" and worker.memory_budget_bytes is not None:
@@ -397,6 +399,7 @@ class WorkerPoolController:
                 launched.append(
                     self._reserve(
                         db,
+                        resource_class="sized",
                         memory_limit_bytes=sized_job_limit_bytes(
                             request,
                             self.settings.memory_pressure_threshold,
@@ -409,7 +412,14 @@ class WorkerPoolController:
             for _ in range(plan.standard + warm):
                 if len(launched) >= room:
                     break
-                launched.append(self._reserve(db, memory_limit_bytes=None, reserved_for=None))
+                launched.append(
+                    self._reserve(
+                        db,
+                        resource_class="standard",
+                        memory_limit_bytes=standard_limit,
+                        reserved_for=None,
+                    )
+                )
             await db.commit()
         if launched:
             logger.info(
@@ -483,15 +493,22 @@ class WorkerPoolController:
         return drained
 
     def _reserve(
-        self, db: Any, *, memory_limit_bytes: int | None, reserved_for: UUID | None
+        self,
+        db: Any,
+        *,
+        resource_class: str,
+        memory_limit_bytes: int,
+        reserved_for: UUID | None,
     ) -> UUID:
+        """A durable row for one Job, recording the limit it launches with:
+        a later Worker memory change applies to new Jobs only."""
         worker_id = uuid4()
         db.add(
             ExecutionWorker(
                 id=worker_id,
                 form="job",
                 state="reserved",
-                resource_class="standard" if memory_limit_bytes is None else "sized",
+                resource_class=resource_class,
                 slots=0,
                 memory_limit_bytes=memory_limit_bytes,
                 reserved_for_dispatch_id=reserved_for,
@@ -547,11 +564,18 @@ def _plan_launches(
     return LaunchPlan(standard=len(new_bins), sized=sized)
 
 
+def _launch_limit(worker: Any, standard_limit: int) -> int:
+    """The memory limit a Job worker launched (or will launch) with. A
+    standard Job reserved by the release before Settings -> Kubernetes
+    recorded none; it takes the current Worker memory."""
+    return worker.memory_limit_bytes or standard_limit
+
+
 def _job_baseline(workers: Any, standard_limit: int, threshold: float) -> int:
     """A Job worker's own memory, from the largest any Job reported (its
     limit at the threshold, less the budget it measured)."""
     reported = [
-        int((worker.memory_limit_bytes or standard_limit) * threshold)
+        int(_launch_limit(worker, standard_limit) * threshold)
         - worker.memory_budget_bytes
         for worker in workers
         if worker.form == "job" and worker.memory_budget_bytes is not None

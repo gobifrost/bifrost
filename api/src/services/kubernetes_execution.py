@@ -112,8 +112,7 @@ def _policy_from(payload: Mapping[str, Any]) -> KubernetesPolicy:
     return KubernetesPolicy(**values)
 
 
-def validate_policy(policy: KubernetesPolicy) -> None:
-    """Raise ``ValueError`` for a value out of range or an inconsistent pair."""
+def _validate_consistent(policy: KubernetesPolicy) -> None:
     for name, (low, high) in POLICY_BOUNDS.items():
         value = getattr(policy, name)
         if not low <= value <= high:
@@ -122,6 +121,25 @@ def validate_policy(policy: KubernetesPolicy) -> None:
         raise ValueError("Warm workers must not exceed max workers")
     if policy.worker_memory_mib > policy.largest_worker_mib:
         raise ValueError("Worker memory must not exceed the largest worker")
+
+
+def _memory_request_mib() -> int:
+    """The deployment's worker memory request; a worker's limit is never below it."""
+    from src.config import get_settings
+
+    return get_settings().pool_worker_memory_request_mib
+
+
+def validate_policy(policy: KubernetesPolicy, *, memory_request_mib: int) -> None:
+    """Raise ``ValueError`` for a value out of range, an inconsistent pair, or
+    Worker memory below the deployment's memory request (no worker Job or
+    isolated pod could be created)."""
+    _validate_consistent(policy)
+    if policy.worker_memory_mib < memory_request_mib:
+        raise ValueError(
+            "Worker memory must be at least the worker memory request "
+            f"({memory_request_mib} MiB, BIFROST_POOL_WORKER_MEMORY_REQUEST_MIB)"
+        )
 
 
 async def _stored_config(db: AsyncSession) -> SystemConfig | None:
@@ -215,35 +233,82 @@ async def import_kubernetes_policy_from_env(
 
     Runs under its own blocking advisory lock, so of several replicas
     starting at once one imports and the others find the values stored.
-    Records ``imported_from_env`` per field. An invalid value is skipped
-    with a warning and the default applies. Commits; returns the fields
-    imported.
+    Records ``imported_from_env`` per field. An invalid value, a Worker memory
+    below the deployment's memory request, or a value that conflicts with
+    one already stored is skipped with a warning.
+
+    The import keeps what the variables did before: the controller sized
+    its largest worker as the larger of the two memory variables, and never
+    launched more than max workers. So Worker memory above the largest
+    worker raises the largest worker to it, and warm workers above max
+    workers are lowered to max, unless that field is already stored. The
+    merged result is validated; nothing is stored that a later edit would
+    have to undo. Commits; returns the fields imported.
     """
     await db.execute(
         text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": IMPORT_LOCK}
     )
     present = set_variables(environ)
+    memory_request_mib = _memory_request_mib()
     imported: list[str] = []
     at = datetime.now(timezone.utc).isoformat()
 
+    def skip(variable: str, reason: str) -> None:
+        logger.warning("Ignoring %s: %s", variable, reason)
+
     def mutate(payload: dict[str, Any]) -> bool:
         provenance = dict(payload.get(PROVENANCE_KEY) or {})
+        values: dict[str, Any] = {}
         for name, variable in KUBERNETES_POLICY_VARIABLES.items():
             if name in payload or variable not in present:
                 continue
             value = _parse_imported(name, present[variable])
             if value is None:
-                logger.warning(
-                    "Ignoring %s: not a valid value for this setting; the default applies",
+                skip(variable, "not a valid value for this setting; the default applies")
+                continue
+            if name == "worker_memory_mib" and value < memory_request_mib:
+                skip(
                     variable,
+                    f"below the worker memory request ({memory_request_mib} MiB); "
+                    "the default applies",
                 )
                 continue
-            payload[name] = value
+            values[name] = value
             provenance[name] = {"variable": variable, "at": at}
-            imported.append(name)
-        if imported:
-            payload[PROVENANCE_KEY] = provenance
-        return bool(imported)
+
+        merged = _policy_from({**payload, **values})
+        if merged.worker_memory_mib > merged.largest_worker_mib:
+            if "largest_worker_mib" in payload:
+                skip(
+                    KUBERNETES_POLICY_VARIABLES["worker_memory_mib"],
+                    "above the largest worker stored in Settings",
+                )
+                del values["worker_memory_mib"]
+                provenance.pop("worker_memory_mib")
+            else:
+                values["largest_worker_mib"] = merged.worker_memory_mib
+                provenance["largest_worker_mib"] = {
+                    "variable": KUBERNETES_POLICY_VARIABLES["worker_memory_mib"],
+                    "at": at,
+                }
+        if merged.warm_workers > merged.max_workers:
+            if "warm_workers" in payload:
+                skip(
+                    KUBERNETES_POLICY_VARIABLES["max_workers"],
+                    "below the warm workers stored in Settings",
+                )
+                del values["max_workers"]
+                provenance.pop("max_workers")
+            else:
+                values["warm_workers"] = merged.max_workers
+
+        if not values:
+            return False
+        _validate_consistent(_policy_from({**payload, **values}))
+        payload.update(values)
+        payload[PROVENANCE_KEY] = provenance
+        imported.extend(values)
+        return True
 
     await _merge(db, mutate, updated_by="environment import")
     await db.commit()
@@ -328,10 +393,12 @@ class KubernetesExecutionService:
         if missing:
             raise ValueError(f"A value is required for: {', '.join(missing)}")
 
+        memory_request_mib = _memory_request_mib()
+
         def mutate(payload: dict[str, Any]) -> bool:
             for name, value in changes.items():
                 _edit(payload, name, value)
-            validate_policy(_policy_from(payload))
+            validate_policy(_policy_from(payload), memory_request_mib=memory_request_mib)
             return bool(changes)
 
         await _merge(self.session, mutate, updated_by=updated_by)

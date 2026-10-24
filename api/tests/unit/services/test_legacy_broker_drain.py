@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
 from unittest.mock import AsyncMock
@@ -512,3 +513,89 @@ async def test_an_unreachable_broker_is_not_recorded_as_drained(
     await drain.drain_legacy_broker()
 
     assert not await _drained(async_session_factory)
+
+
+async def _a_drain_waits_for_the_lock(sessions: async_sessionmaker[AsyncSession]) -> None:
+    from sqlalchemy import text
+
+    while True:
+        async with sessions() as session:
+            waiting = await session.scalar(
+                text(
+                    "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' "
+                    "AND NOT granted AND objid::bigint = (hashtext(:key)::bigint & 4294967295)"
+                ),
+                {"key": drain.DRAIN_LOCK},
+            )
+        if waiting:
+            return
+        await asyncio.sleep(0.02)
+
+
+def _blocking_first_drain(release: asyncio.Event, *, then_raise: bool):  # type: ignore[no-untyped-def]
+    """The first drain holds a message until released; later drains find nothing."""
+    holding = asyncio.Event()
+
+    async def drain_queue(_connection, _name):  # type: ignore[no-untyped-def]
+        if not holding.is_set():
+            holding.set()
+            await release.wait()
+            if then_raise:
+                raise RuntimeError("replica died while recovering")
+        return 0, True
+
+    return holding, drain_queue
+
+
+async def test_a_replica_waits_for_a_drain_in_progress_and_then_finds_it_recorded(
+    monkeypatch: pytest.MonkeyPatch, async_session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """A second replica must not record the drain while the first still holds a message."""
+    from types import SimpleNamespace
+
+    release = asyncio.Event()
+    holding, drain_queue = _blocking_first_drain(release, then_raise=False)
+    connect = AsyncMock(return_value=_OpenConnection())
+    monkeypatch.setattr(drain, "get_settings", lambda: SimpleNamespace(rabbitmq_url="amqp://broker/"))
+    monkeypatch.setattr(drain, "wait_for_schema", AsyncMock())
+    monkeypatch.setattr(drain.aio_pika, "connect", connect)
+    monkeypatch.setattr(drain, "QUIET_SECONDS", 0)
+    monkeypatch.setattr(drain, "_drain_queue", drain_queue)
+
+    first = asyncio.create_task(drain.drain_legacy_broker())
+    await asyncio.wait_for(holding.wait(), 10)
+    second = asyncio.create_task(drain.drain_legacy_broker())
+    await asyncio.wait_for(_a_drain_waits_for_the_lock(async_session_factory), 10)
+    assert not await _drained(async_session_factory)
+
+    release.set()
+    await asyncio.wait_for(asyncio.gather(first, second), 10)
+
+    assert connect.await_count == 1
+    assert await _drained(async_session_factory)
+
+
+async def test_a_replica_that_waited_behind_a_failed_drain_drains_itself(
+    monkeypatch: pytest.MonkeyPatch, async_session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    from types import SimpleNamespace
+
+    release = asyncio.Event()
+    holding, drain_queue = _blocking_first_drain(release, then_raise=True)
+    connect = AsyncMock(return_value=_OpenConnection())
+    monkeypatch.setattr(drain, "get_settings", lambda: SimpleNamespace(rabbitmq_url="amqp://broker/"))
+    monkeypatch.setattr(drain, "wait_for_schema", AsyncMock())
+    monkeypatch.setattr(drain.aio_pika, "connect", connect)
+    monkeypatch.setattr(drain, "QUIET_SECONDS", 0)
+    monkeypatch.setattr(drain, "_drain_queue", drain_queue)
+
+    first = asyncio.create_task(drain.drain_legacy_broker())
+    await asyncio.wait_for(holding.wait(), 10)
+    second = asyncio.create_task(drain.drain_legacy_broker())
+    await asyncio.wait_for(_a_drain_waits_for_the_lock(async_session_factory), 10)
+
+    release.set()
+    await asyncio.wait_for(asyncio.gather(first, second), 10)
+
+    assert connect.await_count == 2
+    assert await _drained(async_session_factory)

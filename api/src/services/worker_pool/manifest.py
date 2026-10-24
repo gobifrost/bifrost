@@ -81,15 +81,16 @@ def build_worker_job_manifest(
     settings: Any,
     spec: WorkerJobSpec,
     *,
-    standard_limit_mib: int,
-    memory_limit_bytes: int | None,
+    memory_limit_bytes: int,
+    sized: bool,
 ) -> dict[str, Any]:
     """Render the suspended Job for one reusable worker.
 
-    A standard worker has the configured memory request and the Worker
-    memory limit from Settings -> Kubernetes (``standard_limit_mib``). A worker
-    sized for one large request (``memory_limit_bytes``) requests its whole
-    limit, so it is only scheduled where that memory exists.
+    ``memory_limit_bytes`` is the limit its row recorded when it was
+    reserved. A standard worker requests the deployment's memory request,
+    which must fit that limit. A worker sized for one large request
+    requests its whole limit, so it is only scheduled where that memory
+    exists.
 
     The pod runs the ordinary worker runtime in pool mode, with the worker
     Deployment's credentials and no Kubernetes token. It has no deadline: a
@@ -99,15 +100,16 @@ def build_worker_job_manifest(
     namespace = spec.namespace
     image = spec.image
     service_account = spec.service_account
-    if settings.pool_worker_memory_request_mib > standard_limit_mib:
-        raise KubernetesConfigurationError(
-            "pool_worker_memory_request_mib must not exceed Worker memory"
-        )
-    if memory_limit_bytes is None:
-        memory_request = f"{settings.pool_worker_memory_request_mib}Mi"
-        memory_limit = f"{standard_limit_mib}Mi"
+    limit_mib = memory_limit_bytes // 2**20
+    if sized:
+        memory_request = memory_limit = f"{limit_mib}Mi"
     else:
-        memory_request = memory_limit = f"{memory_limit_bytes // 2**20}Mi"
+        if settings.pool_worker_memory_request_mib > limit_mib:
+            raise KubernetesConfigurationError(
+                "pool_worker_memory_request_mib must not exceed Worker memory"
+            )
+        memory_request = f"{settings.pool_worker_memory_request_mib}Mi"
+        memory_limit = f"{limit_mib}Mi"
     labels = {
         "app.kubernetes.io/name": WORKER_LABEL,
         INCARNATION_LABEL: str(incarnation_id),

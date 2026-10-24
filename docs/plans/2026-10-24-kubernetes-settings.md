@@ -54,7 +54,8 @@ The migration must be transparent and must break nothing.
 ### Where each setting lives
 
 **Settings → Kubernetes.** Runtime policy, read by the controllers every pass,
-so a change applies without a restart.
+so a change applies without a restart. A worker Job records the memory limit
+it was launched with, so a Worker memory change sizes new Jobs only.
 
 | Setting | Replaces | Default |
 | --- | --- | --- |
@@ -97,7 +98,16 @@ been stored takes the matching env value, if one is set, and records
   lock, in the control host's start before `start_kubernetes_loops` (and in
   the scheduler container's executor, which hosts the same loops under the
   builds overlay). "Never stored" is checked inside the lock, so no
-  controller runs a pass on defaults first.
+  controller runs a pass on defaults first. The API also runs it before it
+  serves requests, so a build enqueued right after an upgrade never reads
+  the defaults.
+- **Consistent pairs:** the import keeps what the variables did. Worker
+  memory above Largest worker raises Largest worker to it (the controller
+  used the larger of the two), and Warm workers above Max workers are
+  lowered to Max (it never launched more). A Worker memory below
+  `BIFROST_POOL_WORKER_MEMORY_REQUEST_MIB`, or a value that conflicts with
+  one an admin stored, is skipped with a warning. Settings likewise rejects
+  Worker memory below that request: no worker could be created.
 - **Rolling upgrade:** old replicas keep reading env, and new ones read the
   imported values, which are the same. Settings edits made during the
   rollout are not honoured by old replicas until they are replaced.
@@ -120,8 +130,10 @@ see the startup warning only, since the page is Kubernetes-only.
 `BIFROST_RABBITMQ_URL` is still read today: each API start uses it to move
 runs an earlier release left in RabbitMQ into PostgreSQL. The drain records
 when it finishes on this release; from then on it no longer connects, and
-the variable is unread like any other (Jack, 2026-10-24). A rollback to a
-release that queues to RabbitMQ again needs that record cleared.
+the variable is unread like any other (Jack, 2026-10-24). Replicas drain
+one at a time under an advisory lock, so none records the drain while
+another still holds a message. A rollback to a release that queues to
+RabbitMQ again needs that record cleared.
 
 ### Aliases
 

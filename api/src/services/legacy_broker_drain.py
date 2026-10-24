@@ -8,8 +8,12 @@ to reach the broker a few times once it starts, drains those queues until they
 have stayed empty for ``QUIET_SECONDS``, disconnects and stops; there is no
 recurring poll. Each message
 becomes the durable dispatch the current release would have accepted, then is
-acknowledged. Several replicas draining at once is safe: the broker gives each
-message to one consumer and a subject has at most one dispatch.
+acknowledged. Replicas drain one at a time, under an advisory lock held for
+the whole drain: a replica that saw empty queues while another still held an
+unacknowledged message must not record the drain, or that message, requeued
+if its holder dies, would never be recovered. A replica that waited finds the
+drain recorded and stops; one that waited behind a drain that ended early
+drains itself.
 
 - A message that already names a dispatch (``dispatch_id``) came from a
   release that also committed the dispatch; it is only acknowledged.
@@ -75,6 +79,7 @@ CANCELLED_BEFORE_START = "Execution was cancelled before it could start"
 LOST_IN_UPGRADE = "This run was queued by an earlier release and its context expired before it could be recovered."
 DRAINED_CATEGORY = "runtime"
 DRAINED_KEY = "legacy_broker_drained"
+DRAIN_LOCK = "bifrost:legacy-broker-drain"
 
 
 async def legacy_broker_drained(db: AsyncSession) -> bool:
@@ -93,23 +98,19 @@ async def legacy_broker_drained(db: AsyncSession) -> bool:
 
 
 async def _record_drained() -> None:
+    """Only the drain holding ``DRAIN_LOCK``, which found no record, writes it."""
     async with get_db_context() as db:
-        await db.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
-            {"key": f"{DRAINED_CATEGORY}/{DRAINED_KEY}"},
-        )
-        if not await legacy_broker_drained(db):
-            db.add(
-                SystemConfig(
-                    id=uuid4(),
-                    category=DRAINED_CATEGORY,
-                    key=DRAINED_KEY,
-                    value_json={"drained_at": datetime.now(timezone.utc).isoformat()},
-                    organization_id=None,
-                    created_by="system",
-                    updated_by="system",
-                )
+        db.add(
+            SystemConfig(
+                id=uuid4(),
+                category=DRAINED_CATEGORY,
+                key=DRAINED_KEY,
+                value_json={"drained_at": datetime.now(timezone.utc).isoformat()},
+                organization_id=None,
+                created_by="system",
+                updated_by="system",
             )
+        )
         await db.commit()
 
 
@@ -336,49 +337,62 @@ async def _connect(url: str) -> aio_pika.abc.AbstractConnection | None:
     return None
 
 
+async def _drain(url: str) -> None:
+    connection = await _connect(url)
+    if connection is None:
+        logger.info("The legacy broker is unreachable; nothing to recover")
+        return
+    async with connection:
+        counts = dict.fromkeys(HANDLERS, 0)
+        left_queued: set[str] = set()
+        quiet_since = time.monotonic()
+        while True:
+            for name in HANDLERS:
+                recovered, emptied = await _drain_queue(connection, name)
+                counts[name] += recovered
+                if emptied:
+                    left_queued.discard(name)
+                else:
+                    left_queued.add(name)
+                if recovered:
+                    quiet_since = time.monotonic()
+            if time.monotonic() - quiet_since >= QUIET_SECONDS:
+                break
+            await asyncio.sleep(PASS_INTERVAL_SECONDS)
+    if left_queued:
+        logger.warning(
+            "Drained work queued by an earlier release; some stays queued "
+            "and the next start tries again",
+            extra={"counts": counts, "queues": sorted(left_queued)},
+        )
+        return
+    await _record_drained()
+    logger.info(
+        "Drained work queued by an earlier release; BIFROST_RABBITMQ_URL "
+        "can now be removed",
+        extra={"counts": counts},
+    )
+
+
 async def drain_legacy_broker() -> None:
     """Run once per API start; see the module docstring."""
     url = get_settings().rabbitmq_url
     if not url:
         return
     try:
-        await wait_for_schema(get_engine())
-        async with get_db_context() as db:
-            if await legacy_broker_drained(db):
-                return
-        connection = await _connect(url)
-        if connection is None:
-            logger.info("The legacy broker is unreachable; nothing to recover")
-            return
-        async with connection:
-            counts = dict.fromkeys(HANDLERS, 0)
-            left_queued: set[str] = set()
-            quiet_since = time.monotonic()
-            while True:
-                for name in HANDLERS:
-                    recovered, emptied = await _drain_queue(connection, name)
-                    counts[name] += recovered
-                    if emptied:
-                        left_queued.discard(name)
-                    else:
-                        left_queued.add(name)
-                    if recovered:
-                        quiet_since = time.monotonic()
-                if time.monotonic() - quiet_since >= QUIET_SECONDS:
-                    break
-                await asyncio.sleep(PASS_INTERVAL_SECONDS)
-        if left_queued:
-            logger.warning(
-                "Drained work queued by an earlier release; some stays queued "
-                "and the next start tries again",
-                extra={"counts": counts, "queues": sorted(left_queued)},
+        engine = get_engine()
+        await wait_for_schema(engine)
+        # One drain at a time across replicas, held until this one ends. The
+        # lock is transaction-scoped because PgBouncer pools by transaction;
+        # the connection's open transaction holds it, and a replica that dies
+        # mid-drain releases it with its connection.
+        async with engine.connect() as lock_connection:
+            await lock_connection.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": DRAIN_LOCK}
             )
-            return
-        await _record_drained()
-        logger.info(
-            "Drained work queued by an earlier release; BIFROST_RABBITMQ_URL "
-            "can now be removed",
-            extra={"counts": counts},
-        )
+            async with get_db_context() as db:
+                if await legacy_broker_drained(db):
+                    return
+            await _drain(url)
     except Exception:
         logger.exception("Could not drain the legacy broker; the next start tries again")

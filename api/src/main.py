@@ -163,6 +163,18 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         logger.warning(f"Built-in policy rule seeding failed: {e}")
 
+    # Settings -> Kubernetes takes its deployment variables before this
+    # replica serves: platform control (which also imports) joins only in
+    # the background, and a build enqueued before then would read the
+    # defaults. Idempotent; never fails startup.
+    try:
+        from src.services.kubernetes_execution import import_kubernetes_policy_from_env
+
+        async with get_session_factory()() as db:
+            await import_kubernetes_policy_from_env(db, os.environ)
+    except Exception as e:
+        logger.warning(f"Kubernetes settings import failed: {e}")
+
     # Name deployment variables this release no longer reads, or reads under
     # a new name (API only: worker Jobs copy this pod's environment). Never
     # fails startup.
