@@ -1361,6 +1361,214 @@ requires regenerated types. Benchmark results for this candidate follow only
 after immutable source/harness freeze and the new three-arm provider cohort.
 The older experiments and their percentages remain historical evidence.
 
+## CI routing correction and corrected benchmark freeze
+
+The first broad CI unit run found four failures (9,961 passed, 53 deselected).
+One was a routing regression: an explicitly attached `search_knowledge` system
+tool with no configured namespaces entered the specialized knowledge handler.
+The shared catalog now requires a real namespace or explicit grant while keeping
+its existing `knowledge:search_knowledge` identity and MCP reference. Chat and
+background execution retain their original handler choice: specialized search
+with namespaces, the system handler for an explicit binding without namespaces.
+Three workflow-failure tests lacked the delegated-agent relationship now read by
+shared classification; their fixtures now include empty relationships and keep
+the execution-receipt and single-dispatch assertions.
+
+The correction passed 226 focused tests with no failures/errors/skips, plus a
+bounded independent review. After merging current `origin/main` (`cc5294490`,
+executor heartbeat startup), 15 worker/chat/composition/hosting checks passed.
+API Pyright again reported zero errors/warnings; Ruff passed. Commands used the
+same test-image environment recorded above:
+
+```bash
+./test.sh tests/unit/services/test_agent_run_as_tool_input.py \
+  tests/unit/services/test_agent_workflow_failure_receipts.py \
+  tests/unit/services/test_capability_catalog.py \
+  tests/unit/services/test_agent_knowledge_authorization.py \
+  tests/unit/services/test_agent_executor_tools.py \
+  tests/unit/services/test_agent_executor_mcp.py \
+  tests/unit/services/test_autonomous_executor_mcp.py \
+  tests/unit/services/mcp_server/test_gateway.py -v --durations=0
+./test.sh tests/unit/test_pool_main_hosting.py \
+  tests/e2e/api/test_agent_code_mode_spike.py \
+  tests/e2e/api/test_agent_code_mode_chat.py \
+  tests/e2e/api/test_agent_capability_composition.py -v --durations=0
+./test.sh quality api
+```
+
+An earlier candidate cohort was stopped after 16 captured attempts when the CI
+regression was identified. Its artifacts and response captures remain intact in
+the private `consolidation-benchmark` directory and are explicitly incomplete.
+One initial connection timeout there was retained, never replaced; absent usage
+is not proof of zero provider billing. The corrected candidate receives a fresh
+fixed 60-attempt cohort, without mixing results from the interrupted candidate.
+
+The corrected freeze at source commit `d49a3bfbc` uses:
+
+- Candidate source SHA-256: `bda274fdc54dc7826aaa2272b1fdd37a5dca17841b29dd26d7eb1fcf900f4e89`
+- Shared source SHA-256: `e966e5729d79ef50eb85c148282c59cc746aeb501b42f2ae4617e08e7d04f9a9`
+- Launch manifest SHA-256: `d55cf840f141381a702b90bb36001dfa6f272613d0d2012cc35129dd64dd1ff0`
+- Passing offline receipt SHA-256: `676577155de186651cc8422745f45a1d1cc614edfa9c44e998c885bfb798d45f`
+
+The private evidence directory is
+`/home/jack/workspace/code-mode-production-benchmark-2026-10-23/consolidation-corrected-benchmark/`.
+Nine actual Docker runtime jobs passed with networking disabled. Their receipt
+binds the immutable image, runtime trees, executable helpers, protocol, workloads,
+and exact artifacts/captures. The earlier partial offline diagnostic remains
+separate. All workloads, model settings, budgets, attempt counts and scoring rules
+are unchanged from the original locked three-arm plan. Paid launches require that
+receipt; the finalizer rejects anything except the exact 60 planned paid jobs.
+Final-prose review is recorded separately against artifact hashes.
+
+## Corrected three-arm benchmark: 60 attempts
+
+The corrected fixed matrix completed all 60 scheduled attempts on DeepSeek Flash
+HIGH. Execution helpers, workloads, model settings and scoring remained frozen.
+Four initial connection failures were retained (candidate complex r6, direct r7
+and r9, baseline r8); none was replaced. Each had no captured response or business
+call, but provider billing remains unknown. External connectivity diagnostics
+were recorded before continuing only the unattempted scheduled jobs. This is
+not a retry of failed attempts.
+
+Final reports and hash-bound manual reviews are retained beside the manifest:
+`cohort-final-locked-report.json`, `cohort-reviewed-report-v3.json`,
+`cohort-final-reviewed-wrapper.json` and
+`narrative-review-*.json`. They verify all planned IDs, source/image/helper and
+passing offline-receipt hashes, durable provider captures, and artifact hashes.
+The standalone wrapper binds the original locked report to the semantic-review
+and workload-exclusion disposition, including all unknown-billing jobs.
+Every business callback was a closed-world synthetic mock; actual executor calls
+were zero. No customer or production action was performed.
+
+For the complex inventory task, the all-attempt totals are:
+
+| Measure (10 attempts per arm) | Direct tools | Previous CodeMode | Consolidated CodeMode |
+| --- | ---: | ---: | ---: |
+| Structured/action successes | 8 | 9 | 8 |
+| Successes after final-prose review | 3 | 7 | 7 |
+| Inclusive input tokens | 6,185,716 | 2,656,135 | 2,530,773 |
+| Estimated captured-response cost | $0.292605240 | $0.051302538 | $0.051233100 |
+| Captured cost per reviewed success | $0.097535080 | $0.007328934 | $0.007319014 |
+| Median elapsed time, all attempts | 48.293 s | 40.007 s | 38.523 s |
+| Framework corrections | 0 | 15 | 11 |
+
+The consolidated candidate preserves the previous CodeMode result in this sample:
+7/10 reviewed successes and nearly identical captured cost. Against direct tools,
+its aggregate captured cost is 82.49% lower and inclusive input is 59.09% lower.
+Those totals include every attempt, including failed ones, and are lower bounds
+where connection-error billing is unknown. They are not success-matched savings
+or statistical evidence of quality equivalence. Only one repetition succeeded
+under all three arms after prose review; that sample is too small for a general
+matched-performance claim.
+
+Quality failures remain visible. Direct responses misstated anonymous or
+organization link counts on five otherwise structured passes. Previous CodeMode
+had two factual prose errors. The candidate had one wrong link count and one
+incomplete private report (required `effective_access_verified` and `changes_made`
+flags omitted, plus minor scope/type terminology). The latter remains a failure;
+it is not repaired by forcing a new return envelope on arbitrary user code.
+The candidate's structured score is 8/10 versus 9/10 for previous CodeMode, even
+though both reviewed scores are 7/10. More repetitions and broader tasks are
+needed before asserting equivalent quality.
+
+Ordinary chat completed all 15 attempts with no business, discovery or code
+calls. Semantic review passed 5/5 in every arm. The previous-CodeMode frozen
+oracle passed only 4/5 because it required the literal phrase `no live actions`;
+one equivalent response said that no specialist performed any live action and
+there were no side effects. The frozen verdict is retained and the separate
+semantic review records this lexical false negative. Candidate chat totals were
+41,230 input tokens / $0.000848460, versus direct 36,530 / $0.000719436 and previous
+CodeMode 41,350 / $0.000760260. Universal Automatic routing therefore has a small
+fixed overhead on chat: this sample shows 12.87% more input and 17.94% more
+captured cost than direct tools, with median latency 2.318 s versus 2.248 s.
+It does not establish an automatic net win on every request.
+
+The original 15 `simple_few_tool` attempts are retained as a scope-conflict stress
+test, excluded from genuine few-tool cost and quality claims. Their wrapper asked
+for one private note, but the required authoritative ticket context returned the
+complex SharePoint assignment. All three arms pursued that conflicting task or
+alternate reads, and all 15 failed the frozen strict oracle. This is a fixture
+confound, not evidence about ordinary two-call overhead. A separately frozen
+neutral-context supplement follows below; the original artifacts and verdicts
+are not rewritten or replaced.
+
+Costs use each captured response's timestamp and the published DeepSeek Flash
+cache-hit, cache-miss and output rates. Input includes cached tokens; reasoning
+is a subset of output and is charged once. Missing explicit cache-miss counts use
+inclusive input minus cache hits, fixed and tested before execution. No uncaptured
+failed request is assumed free. Latency includes complete attempted-run time;
+short connection failures lower all-attempt medians and are listed explicitly.
+
+The corrected source also passed the complete CI backend unit suite: 9,968 passed,
+53 deselected, no failures. Required CI lint/types, client units, E2E and CodeQL
+checks passed. Full local suites were not repeated; the focused Docker commands
+above and CI provide the verification for this candidate.
+
+## Neutral small-task supplement: 15 attempts
+
+A separate supplement completed the original five-repetition, three-arm small-task
+matrix with only the conflicting ticket context replaced by a neutral, complete
+fictional note request. All arms see the same overlay, including alternate ticket
+reads. The full 25-agent/237-tool catalog, task input, operating instructions,
+DeepSeek Flash HIGH settings, source trees, image and budgets are unchanged.
+This does not replace or repair any of the original 60 attempts.
+
+Private evidence resides in
+`/home/jack/workspace/code-mode-production-benchmark-2026-10-23/neutral-small-benchmark/`:
+
+- Manifest `neutral-small-launch-manifest-v4.json`, SHA-256 `899ed3b305471d2c7ce00212f41e99fa02547de8537d1dd3769d7747a51c3cba`.
+- Passing receipt `neutral-small-offline-selfcheck-v4/offline-self-check-receipt.json`, SHA-256 `9f432bd2bc6ead4a7f3b670d8e86231a1cc51412de04485e96bf8df9782a5745`.
+- `neutral-small-final-locked-report.json`, `neutral-small-reviewed-report.json`
+  and three `narrative-review-*.json` files bind all 15 actual artifacts/captures
+  and independently reviewed verdicts to their hashes.
+
+Three real Docker runtime checks passed offline with networking disabled before
+paid execution. Exact-matrix, neutral-router, wrong-ID recovery, pricing and
+continuation tests passed. The pre-launch continuation contract permits an
+explicitly acknowledged existing failed artifact to be skipped, never rerun;
+new errors stop further launches. Direct r2 then hit an initial 5.067-second
+connection timeout with no captured response or business calls. Its billing is
+unknown. After nonbillable DNS and unauthenticated host/pinned-container HTTPS
+checks passed, the failure was acknowledged in the durable ledger and only the
+remaining scheduled attempts ran. No failed attempt was replaced.
+
+| Measure (5 attempts per arm) | Direct tools | Previous CodeMode | Consolidated CodeMode |
+| --- | ---: | ---: | ---: |
+| Frozen strict two-call successes | 0 | 1 | 1 |
+| Independently reviewed semantic successes | 4 | 5 | 5 |
+| Inclusive input tokens | 174,520 | 312,351 | 323,294 |
+| Estimated captured-response cost | $0.002970048 | $0.005594850 | $0.006490236 |
+| Captured cost per semantic success | $0.000742512 | $0.001118970 | $0.001298047 |
+| Median elapsed time, all attempts | 6.140 s | 9.991 s | 10.607 s |
+| Framework corrections | 0 | 4 | 3 |
+
+The frozen strict oracle requires the specifically named `get_ticket_context`
+function. Twelve executed attempts instead used `get_ticket`, whose neutral mock
+returns the same complete context, then recorded the exact requested private
+note. Independent review accepts those as semantic completions while retaining
+every frozen strict failure. The other two executed attempts passed the strict
+oracle. All 14 executed attempts had correct ticket/requester/outcome, exact note
+strings, a successful terminal receipt, no customer message, no extra business
+action and no definite final-prose contradiction. The remaining attempt is the
+retained connection failure. These separate judgments are reported explicitly;
+the original oracle and artifacts were not changed after launch.
+
+On the four repetitions with semantic success under all three arms, candidate
+median within-pair input was 50.30% higher, captured cost 109.03% higher and latency
+64.84% higher than direct tools. Against previous CodeMode, the corresponding
+increases were 8.08%, 17.20% and 5.60%. This small sample establishes overhead on
+this two-business-call task, not a universal gain. Large-result composition
+preserves the complex-task savings; ordinary chat and small tasks still pay for
+the common Automatic execution surface. Universal Automatic routing is the
+requested product behavior, with this tradeoff disclosed. No task-specific
+routing fallback or model/provider change was added to hide it.
+
+The candidate and previous CodeMode have the same reviewed complex-success
+counts and neutral-task semantic-success counts in these cohorts. This supports
+consolidation in the sampled tasks, but does not prove statistical equivalence
+or lower cost on every request. The strict completion caveats, prose errors, retained
+transport failures and excluded fixture remain part of the shipping evidence.
+
 ## Primary references
 
 - [Pydantic AI Harness CodeMode](https://pydantic.dev/docs/ai/harness/code-mode/)
