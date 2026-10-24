@@ -157,6 +157,7 @@ async def test_the_process_pool_is_ready_before_any_work_is_claimed(monkeypatch)
         )
 
         async def start_pool(self) -> None:
+            await asyncio.sleep(0)  # starting the pool waits on I/O
             order.append("pool started")
 
         async def stop_pool(self) -> None:
@@ -184,12 +185,18 @@ async def test_the_process_pool_is_ready_before_any_work_is_claimed(monkeypatch)
     monkeypatch.setattr(package_install, "PackageInstallConsumer", object)
 
     worker = PoolWorker()
-    for loop in ("_heartbeat_loop", "_wake_listener", "_package_loop",
-                 "_start_service_claim_loop", "_drain"):
+    for loop in ("_wake_listener", "_package_loop", "_start_service_claim_loop", "_drain"):
         monkeypatch.setattr(worker, loop, AsyncMock())
 
+    async def heartbeat() -> None:
+        order.append("heartbeat")
+
+    monkeypatch.setattr(worker, "_heartbeat_loop", heartbeat)
+
     assert await worker.run() == 0
-    assert order == ["pool started", "claim", "pool stopped"]
+    # Heartbeats start at registration: starting the pool can take longer
+    # than a silent executor is given before it counts as lost.
+    assert order == ["heartbeat", "pool started", "claim", "pool stopped"]
 
 
 QUEUED_AT = datetime(2026, 10, 23, tzinfo=timezone.utc)
