@@ -2,9 +2,9 @@
   "schema_version": 1,
   "repository": "gobifrost/bifrost",
   "base_ref": "ade714a08b95c84daa285e859ebece55f45c6754",
-  "target_ref": "2d5c16d4fba720bc9954355bdc4627b6642a65fe",
-  "collected_at": "2026-10-24T17:19:32Z",
-  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...2d5c16d4fba720bc9954355bdc4627b6642a65fe",
+  "target_ref": "96298ab8539e89ffed8d85d08137db79070c68c1",
+  "collected_at": "2026-10-24T22:33:34Z",
+  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...96298ab8539e89ffed8d85d08137db79070c68c1",
   "commits": [
     {
       "sha": "2399fbb049e6b6c121ca07980ffa649844c0d477",
@@ -1586,6 +1586,34 @@
       "subject": "Recommend two 2 GB executors and retire static Kubernetes executors (#1055)",
       "prs": [
         1055
+      ]
+    },
+    {
+      "sha": "9a5da797c5abf5ee80966c93ad492ece7b73d987",
+      "subject": "Activate the unified worker upgrade note (#1059)",
+      "prs": [
+        1059
+      ]
+    },
+    {
+      "sha": "de5610accf8fe479be3e8b8ae9dd9c5b304fa5c4",
+      "subject": "Label API control replicas as Control in Scheduler Replicas (#1060)",
+      "prs": [
+        1060
+      ]
+    },
+    {
+      "sha": "b1574715c562fab5284780a3872daa2934f5cf1d",
+      "subject": "Keep the workspace shell while a page is still loading (#1062)",
+      "prs": [
+        1062
+      ]
+    },
+    {
+      "sha": "96298ab8539e89ffed8d85d08137db79070c68c1",
+      "subject": "Move Kubernetes scaling and isolation to Settings (#1061)",
+      "prs": [
+        1061
       ]
     }
   ],
@@ -4536,6 +4564,58 @@
       "merge_commit": "4cf3b0ff992c0237bb778de5f1146abb198dc5eb",
       "body": "## Product Updates\n\n- [x] Omit \u2014 release-content consolidation and activation only; no additional runtime behavior. The existing Automatic feature UUID is retained.\n\n## Summary\n\nPresent Automatic orchestration and CodeMode as one approved customer-facing feature in both What\u2019s New and GitHub releases. Include the reviewed testing results, Cloudflare background link, and the AI Behavior activation link; refresh the verified cumulative inventory through #1056.\n\nRetain the original Automatic UUID and historical CodeMode source file, redirect the source dispositions to the combined entry, and record the maintainer\u2019s explicit approval. Existing announcement receipts remain intact.\n\nFollow-up to #1015, #1024, #1046, and #1056.\n\n## Validation\n\n- `python3 scripts/product_updates.py validate` against the frozen inventory target, without draft mode.\n- `python3 scripts/product_updates.py coverage`: no unclassified sources, uncovered commits, or unrepresented highlights.\n- `python3 -m scripts.prepare_product_updates_image --target 0d04adf3a5db7f3dd2053a25a5814402d94e718f` and generated-bundle assertions: exactly one Automatic feature, in-app enabled, both links present.\n- GitHub release rendering verified; `git diff --check` passed.\n\nNo backend or frontend runtime code changed; broader runtime suites were not run locally. The merge queue remains the complete-suite gate.\n",
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1058"
+    },
+    {
+      "number": 1059,
+      "title": "Activate the unified worker upgrade note",
+      "url": "https://github.com/gobifrost/bifrost/pull/1059",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-24T17:50:12Z",
+      "merge_commit": "9a5da797c5abf5ee80966c93ad492ece7b73d987",
+      "body": "## Product Updates\n\n- [ ] Highlight\n- [ ] Other\n- [x] Omit \u2014 refreshes verified inventory only; activates the already-approved upgrade card.\n\n## Summary\n\nRefreshes `product-updates/inventory.json` through #1058 (target `2d5c16d4`) so the approved \"Recommended: Upgrade to the Unified Worker\" card from #1055, with its Agent Prompt, enters the image bundle. Production's bundle carries the other two runtime cards; this one waited because its eligibility requires #1055, which merged after the last inventory refresh.\n\n## Verification\n\n- `python3 scripts/product_updates.py validate ...`: passes.\n- `bundle` against the refreshed inventory: the upgrade card (with its prompt) leads, followed by \"Workers Scale on Demand in Kubernetes\" and \"Workflows Run by Memory, Not Slots\".\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1059"
+    },
+    {
+      "number": 1060,
+      "title": "Label API control replicas as Control in Scheduler Replicas",
+      "url": "https://github.com/gobifrost/bifrost/pull/1060",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-24T19:11:27Z",
+      "merge_commit": "de5610accf8fe479be3e8b8ae9dd9c5b304fa5c4",
+      "body": "## Product Updates\n\n- [ ] Highlight\n- [x] Other \u2014 Diagnostics labels API control replicas as Control rather than Job Runner.\n- [ ] Omit\n\n## Summary\n\nDiagnostics \u2192 Scheduler Replicas labelled every non-leader replica \"Job Runner\", so the API pod that isn't the trigger leader looked like it ran jobs (Jack spotted it in production). Every API control host runs the dispatch reconciler and the Kubernetes loops, and only the lease holder runs triggers; job runners are the executors (`runs_platform_jobs`). The role is now:\n\n- **Trigger Leader:** the lease holder.\n- **Job Runner:** replicas that run platform jobs.\n- **Control:** other API replicas.\n\n## Verification\n\n- `npx vitest run src/pages/diagnostics/components/SchedulerReplicaList.test.tsx src/pages/diagnostics/components/SchedulerTab.test.tsx`: passes (new test covers all three roles).\n- `npm run tsc`, eslint and prettier on the changed files.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1060"
+    },
+    {
+      "number": 1061,
+      "title": "Move Kubernetes scaling and isolation to Settings",
+      "url": "https://github.com/gobifrost/bifrost/pull/1061",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-24T22:13:39Z",
+      "merge_commit": "96298ab8539e89ffed8d85d08137db79070c68c1",
+      "body": "## Product Updates\n\n- [x] Highlight \u2014 new entry \"Scaling and Isolation Move to Settings\" with an Agent Prompt, plus revisions to \"Workers Scale on Demand in Kubernetes\" (32ba9da0) and the upgrade card's prompt (7eaa8252). Copy approved by Jack on 2026-10-24.\n- [ ] Other\n- [ ] Omit\n\n## Summary\n\nImplements the approved design `docs/plans/2026-10-24-kubernetes-settings.md` (plan: `docs/plans/2026-10-24-kubernetes-settings-implementation.md`). Settings \u2192 Kubernetes \u2192 Scaling & Isolation now owns worker scaling and build isolation, and isolated pods follow the worker sizing rule.\n\n- **Settings, not env.** Warm Workers, Max Workers, Worker Memory, Largest Worker, Idle Time, Isolate Build Jobs, Max Isolated Pods and the per-type toggles live in one Settings row, read by the controllers and workers every pass, so changes apply without a restart.\n- **One-time import.** On first start each never-stored field takes its old env value (`BIFROST_POOL_*`, `BIFROST_PLATFORM_BUILD_BACKEND`, `BIFROST_KUBERNETES_BUILD_JOB_TYPES`/`_MAX_JOBS`) under a blocking advisory lock, before the API serves and before the controllers start; the page shows where each value came from. The env allowlist is gone (the toggles are the one list).\n- **Leftovers stay visible.** A startup warning and a Settings notice list variables that are set but not read, including v1.4.1's `BIFROST_MAX_CONCURRENCY`, `BIFROST_MAX_WORKERS`, `BIFROST_MAX_SERVICE_WORKERS`, and `BIFROST_RABBITMQ_URL` once the broker drain is recorded (the drain is now serialized across replicas and records completion).\n- **Identity renamed.** `BIFROST_KUBERNETES_BUILD_*` identity/CPU/timeout variables become `BIFROST_KUBERNETES_JOB_*`; the old names are aliases with a warning, removed the release after next. Isolated pods copy the API pod like worker Jobs, so they are usually unset.\n- **Isolated pods sized by the worker rule** (`worker_pool/sizing.py`): standard pod = deployment request / Worker Memory; a larger requirement gets a sized pod (request = limit) up to Largest Worker; anything larger fails visibly. The request and limit are recorded at claim. Every isolated job type has a memory profile, and an OOM-killed pod learns at least its limit plus margin.\n- **Isolation off** stops admitting; running pods finish; queued unplaced rows move to workers. The build loop always runs where the API may manage Jobs (cached per process; `/status` uses it). The detection notice and the enqueue fallback are deleted.\n- **Shipped files** no longer set removed variables (builds overlay, Kind config, debug compose); runbooks and architecture docs updated, with rollback notes.\n\nMigrations: `20261024_k8s_detection_notice` (deletes the stored notice rows), `20261024_isolated_pod_request` (`platform_jobs.memory_request_bytes`; existing placed rows request their limit).\n\n## Verification\n\n- Reviews: Codex per task (all findings fixed with tests); Fable final review \u2014 ready after S1 (older-replica claims during the rollout) and the production-step fix, both done.\n- `./test.sh unit`: 10070+ passed; `./test.sh quality api`: clean. Related e2e files (`test_application_sdk_update.py`, `test_solution_export_jobs.py`, `test_applications.py`, `test_solution_git_connected_e2e.py`, `test_solution_install_from_repo.py`, `test_solution_deploy_async.py`): 57 passed.\n- Client: vitest for the service, page and Settings gate; `npm run tsc`; eslint. Types regenerated against this worktree's stack (no drift after merging main). Page driven headlessly against the real API (save, 422, provenance, notice) at 1440/390 px, dark and light.\n- Kind (`BIFROST_KIND_BUILD_JOBS=1`): fresh boot imports nothing and shows no notice; new drills `sized_isolated_build` (3584 Mi request = limit), `max_workers_setting` (2 \u2192 4 within 4.3 s, no restart), `isolation_off` (running pod finished, queued job ran on a worker); existing `kill`, `controller_restart`, `oom`, `unschedulable`, `upgrade`, and `build-experiment --restart-controller` all pass.\n- `./test.sh pr-preflight`: unit 10071 passed, changed e2e 13 passed, client 603 files passed; CodeQL flagged a global-variable pattern in the permission cache (fixed), then Python and JavaScript CodeQL on changed lines: 0 alerts.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1061"
+    },
+    {
+      "number": 1062,
+      "title": "Keep the workspace shell while a page is still loading",
+      "url": "https://github.com/gobifrost/bifrost/pull/1062",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-24T22:12:10Z",
+      "merge_commit": "b1574715c562fab5284780a3872daa2934f5cf1d",
+      "body": "## Product Updates\n\n- [ ] Highlight\n- [x] Other \u2014 The sidebar and header stay in place while a page loads.\n- [ ] Omit\n\n## Summary\n\nBlocking repair for #1061's merge-queue failure. `PageShell` rendered the routed page through `<Outlet />` with no Suspense boundary of its own; the nearest was the full-screen `<Suspense fallback={<PageLoader />}>` in `App.tsx`, above the shell. When a page (or a lazy child) suspended after the shell had rendered, React replaced the whole shell with \"Loading...\" and then remounted it.\n\nEvidence from the failed run (`CI` 40131714078, Critical Browser Smoke, `mobile navigation traps focus \u2026`): the drawer was visible, then the failure snapshot shows only `status \"Loading...\"` (the app-level fallback); the API log shows the header's `/api/profile` and `/api/mcp/run` requested twice (the remount) and the Workflows page data never requested. #1061 does not touch the shell; the race landed on its run. Users hit the same thing as a flash of a blank workspace.\n\nFix: a Suspense boundary inside `<main>` around the page, with a small \"Loading page\u2026\" loader, so the sidebar, header and an open mobile drawer stay.\n\n## Verification\n\n- `npx vitest run src/components/layout/PageShell.test.tsx`: 8 passed; the new test (a suspended page keeps the navigation and header and shows the page loader) failed before the fix.\n- `npm run tsc`, eslint and prettier on the changed files.\n- The merge-queue browser smoke runs the original spec.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1062"
     }
   ]
 }
