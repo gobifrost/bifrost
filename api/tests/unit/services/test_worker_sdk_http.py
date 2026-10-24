@@ -761,6 +761,38 @@ class TestRouteReuse:
 
 class TestSocketServerLifecycle:
     @pytest.mark.asyncio
+    async def test_building_the_app_does_not_block_the_event_loop(self, monkeypatch):
+        """Building the app imports every SDK router (~30 s on a cold,
+        CPU-limited pod); the executor's heartbeat must keep running."""
+        import time
+
+        from src.services.execution import worker_sdk_http
+
+        real_build = worker_sdk_http.build_worker_sdk_app
+
+        def slow_build():  # type: ignore[no-untyped-def]
+            time.sleep(0.3)
+            return real_build()
+
+        monkeypatch.setattr(worker_sdk_http, "build_worker_sdk_app", slow_build)
+        ticks = 0
+
+        async def tick() -> None:
+            nonlocal ticks
+            while True:
+                ticks += 1
+                await asyncio.sleep(0.01)
+
+        ticker = asyncio.create_task(tick())
+        server = WorkerSdkHttpServer()
+        try:
+            await server.start()
+        finally:
+            ticker.cancel()
+            await server.stop()
+        assert ticks >= 10, "the event loop kept running while the app was built"
+
+    @pytest.mark.asyncio
     async def test_start_binds_private_socket_and_stop_removes_it(self):
         server = WorkerSdkHttpServer()
         await server.start()

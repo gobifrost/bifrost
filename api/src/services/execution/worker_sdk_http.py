@@ -622,7 +622,10 @@ class WorkerSdkHttpServer:
 
         import uvicorn
 
-        app = build_worker_sdk_app()
+        # Off the event loop: building the app imports the SDK routers, which
+        # took ~30 s on a cold, CPU-limited pod, and the executor's heartbeat
+        # must keep running meanwhile.
+        app = await asyncio.to_thread(build_worker_sdk_app)
 
         socket_dir = self._socket_dir or tempfile.mkdtemp(
             prefix="bifrost-engine-sdk-"
