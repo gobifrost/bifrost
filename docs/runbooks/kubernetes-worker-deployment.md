@@ -105,13 +105,13 @@ longer receive messages:
 ```bash
 kubectl -n bifrost delete scaledobject bifrost-worker --ignore-not-found
 kubectl -n bifrost delete triggerauthentication bifrost-rabbitmq --ignore-not-found
-kubectl -n bifrost scale deployment bifrost-worker --replicas=2
 ```
 
-Deleting the `ScaledObject` also deletes the HPA it owns. Restore a fixed
-replica count afterwards (the base manifest uses 2), because a Deployment
-managed by KEDA usually omits `spec.replicas`. If KEDA served nothing else in
-the cluster, uninstall it the way it was installed.
+Deleting the `ScaledObject` also deletes the HPA it owns. The `bifrost-worker`
+Deployment itself is retired: the base sets it to zero replicas, and once its
+pods are gone you delete it with `bifrost-scheduler` (see the Kubernetes
+README's upgrade step). If KEDA served nothing else in the cluster, uninstall
+it the way it was installed.
 
 After that drain nothing reads RabbitMQ's queues: `workflow-executions`,
 `agent-runs`, `agent-summarization`, `agent-summarization-backfill`,
