@@ -168,8 +168,8 @@ class Settings(BaseSettings):
     # (src.services.kubernetes_execution). These stay deployment env: what a
     # Job runs as is not something a Settings page may choose. Each reads the
     # BIFROST_KUBERNETES_JOB_* name first, then the BIFROST_KUBERNETES_BUILD_*
-    # name it replaced (src.services.environment_report warns about the
-    # latter).
+    # name it replaced (src.services.deployment_environment warns about the
+    # latter; the old names are removed in the release after next).
     kubernetes_job_namespace: str | None = Field(
         default=None,
         validation_alias=AliasChoices(

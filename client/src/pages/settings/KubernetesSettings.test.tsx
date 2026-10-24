@@ -44,15 +44,15 @@ const settings = {
 	job_types: [
 		{
 			job_type: "application.deploy",
-			title: "App deploys",
-			description: "Compile apps in pods.",
+			title: "App Deploys",
+			description: "Compiles apps in an isolated pod.",
 			enabled: true,
 			default_enabled: true,
 		},
 		{
 			job_type: "application.sdk_update",
-			title: "App SDK rebuilds",
-			description: "Rebuild the SDK in pods.",
+			title: "App SDK Rebuilds",
+			description: "Rebuilds the SDK in an isolated pod.",
 			enabled: false,
 			default_enabled: true,
 		},
@@ -77,8 +77,8 @@ describe("KubernetesSettings", () => {
 		expect(screen.getByLabelText("Idle Time (Seconds)")).toHaveValue(300);
 		expect(screen.getByLabelText("Max Isolated Pods")).toHaveValue(2);
 		expect(screen.getByLabelText("Isolate Build Jobs")).not.toBeChecked();
-		expect(screen.getByText("App deploys")).toBeInTheDocument();
-		expect(screen.getByText("App SDK rebuilds")).toBeInTheDocument();
+		expect(screen.getByText("App Deploys")).toBeInTheDocument();
+		expect(screen.getByText("App SDK Rebuilds")).toBeInTheDocument();
 	});
 
 	it("saves only the changed scaling fields", async () => {
@@ -201,6 +201,10 @@ describe("KubernetesSettings", () => {
 		).closest("[role='status']");
 		expect(notice).toHaveTextContent("BIFROST_POOL_MAX_WORKERS");
 		expect(notice).toHaveTextContent("BIFROST_RABBITMQ_URL");
+		// Narrow screens wrap a name at its underscores, not mid-word.
+		const chip = notice?.querySelector("code");
+		expect(chip?.textContent).toBe("BIFROST_POOL_MAX_WORKERS");
+		expect(chip?.querySelectorAll("wbr")).toHaveLength(3);
 	});
 
 	it("hides the notice when every variable is read", async () => {
@@ -258,7 +262,7 @@ describe("KubernetesSettings", () => {
 		});
 		render(<KubernetesSettings />);
 
-		await user.click(await screen.findByLabelText("App deploys"));
+		await user.click(await screen.findByLabelText("App Deploys"));
 
 		await waitFor(() =>
 			expect(mocks.updateKubernetesExecution).toHaveBeenCalledWith(

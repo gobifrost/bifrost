@@ -139,7 +139,7 @@ class PlatformJobDefinition:
     handler: PlatformJobHandler
     policy: PlatformJobPolicy
     encrypt_payload: bool = False
-    # Product-surface copy for the Kubernetes Executions settings list.
+    # Product-surface copy for the Isolated Jobs list in Settings -> Kubernetes.
     # Only definitions with execution_class="build" are listed; others may
     # leave these unset.
     display_name: str | None = None

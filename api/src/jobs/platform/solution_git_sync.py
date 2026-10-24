@@ -105,6 +105,6 @@ SOLUTION_GIT_SYNC_DEFINITION = PlatformJobDefinition(
         allow_running_cancellation=True,
         execution_class="build",
     ),
-    display_name="Solution Git syncs",
-    description="Pulls and compiles connected Solution apps in an isolated job pod.",
+    display_name="Solution Git Syncs",
+    description="Pulls and compiles connected Solution apps in an isolated pod.",
 )

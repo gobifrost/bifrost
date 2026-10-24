@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle, Boxes, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -98,6 +98,26 @@ function ProvenanceNote({
 	);
 }
 
+/** A variable name with a break opportunity after each underscore, so a
+ * narrow screen wraps it between words rather than mid-word. */
+function VariableName({ name }: { name: string }) {
+	const parts = name.split("_");
+	return (
+		<>
+			{parts.map((part, index) => (
+				<span key={index}>
+					{part}
+					{index < parts.length - 1 && (
+						<>
+							_<wbr />
+						</>
+					)}
+				</span>
+			))}
+		</>
+	);
+}
+
 function UnreadVariablesNotice({ variables }: { variables: string[] }) {
 	if (variables.length === 0) return null;
 	return (
@@ -114,8 +134,8 @@ function UnreadVariablesNotice({ variables }: { variables: string[] }) {
 				<ul className="flex flex-wrap gap-2">
 					{variables.map((variable) => (
 						<li key={variable} className="min-w-0">
-							<code className="block rounded-[var(--bf-radius-control)] bg-background/70 px-2 py-0.5 font-mono text-xs [overflow-wrap:anywhere]">
-								{variable}
+							<code className="block rounded-[var(--bf-radius-control)] bg-background/70 px-2 py-0.5 font-mono text-xs [overflow-wrap:break-word]">
+								<VariableName name={variable} />
 							</code>
 						</li>
 					))}
@@ -569,7 +589,10 @@ export function KubernetesSettings() {
 
 			<Card>
 				<CardHeader>
-					<CardTitle>Isolated Jobs</CardTitle>
+					<div className="flex items-center gap-2">
+						<Boxes aria-hidden="true" className="h-5 w-5" />
+						<CardTitle>Isolated Jobs</CardTitle>
+					</div>
 					<CardDescription>
 						Run build jobs in their own pod. Without isolation, they
 						run on workers, and the pool scales up to make room.

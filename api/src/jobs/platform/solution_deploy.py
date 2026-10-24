@@ -165,6 +165,6 @@ SOLUTION_DEPLOY_DEFINITION = PlatformJobDefinition(
         execution_class="build",
     ),
     encrypt_payload=True,
-    display_name="Solution deploys",
-    description="Compiles Solution apps in an isolated job pod.",
+    display_name="Solution Deploys",
+    description="Compiles Solution apps in an isolated pod.",
 )

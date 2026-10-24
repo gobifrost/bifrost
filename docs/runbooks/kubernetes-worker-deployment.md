@@ -1,29 +1,39 @@
 # Kubernetes Worker Deployment
 
 Every Bifrost execution container is an **executor**
-(`api/src/worker/pool_main.py`): the `bifrost-worker` and `bifrost-scheduler`
-Deployments (static executors, through their unchanged entry points) and the
-on-demand worker Jobs that the API starts. An executor claims workflow runs,
-agent runs, summaries, supervised services and local platform jobs from
-PostgreSQL; either Deployment can be scaled or removed. Platform control
-(trigger leadership and dispatch reconciliation) runs in the API replicas.
+(`api/src/worker/pool_main.py`): the on-demand worker Jobs that the API
+starts and, where an install still runs them, the retired `bifrost-worker`
+and `bifrost-scheduler` Deployments (static executors, through their
+unchanged entry points). An executor claims workflow runs, agent runs,
+summaries, supervised services and local platform jobs from PostgreSQL.
+Platform control (trigger leadership and dispatch reconciliation) runs in the
+API replicas.
 
 ## Current Implementation
 
-- **Static executors.** `python -m src.worker.main` and
-  `python -m src.scheduler.main` both start the executor and keep their own
-  health files, so existing probes keep passing.
 - **On-demand worker Jobs.** The worker controller runs in every process whose
   service account may manage Jobs (the base manifests bind
   `bifrost-worker-controller` to the API in `k8s/api/rbac.yaml`). It keeps
-  `BIFROST_POOL_MIN_WORKERS` (default 1) worker Jobs warm and starts more, up
-  to `BIFROST_POOL_MAX_WORKERS` (default 6), when accepted work exceeds the
-  free capacity of every executor. Idle Job workers drain back to the minimum.
-  Without build settings, a worker Job copies the controller pod's namespace,
-  image and `envFrom`, and runs with the `default` service account and no
-  token.
-- Supervised services need an executor: the static executors or the warm Job
-  worker.
+  **Warm Workers** (default 1) worker Jobs warm and starts more, up to **Max
+  Workers** (default 6), when accepted work exceeds the free capacity of every
+  executor. Idle Job workers drain back to the warm minimum.
+- **Policy lives in Settings.** Warm Workers, Max Workers, Worker Memory,
+  Largest Worker and Idle Time are set in Settings → Kubernetes → Scaling &
+  Isolation. The controllers read them every pass and workers read Warm
+  Workers and Idle Time when they decide to drain, so a change applies without
+  a restart; a Worker Memory change sizes new Jobs only. An upgraded install
+  imports them once from the `BIFROST_POOL_*` variables earlier releases read,
+  then lists those variables as no longer used (see
+  [Upgrading From Environment
+  Variables](kubernetes-build-jobs.md#upgrading-from-environment-variables)).
+- **Job identity.** Without the optional `BIFROST_KUBERNETES_JOB_*` variables,
+  a worker Job copies the controller pod's namespace, image and `envFrom`, and
+  runs with the `default` service account and no token.
+- **Static executors (retired).** `python -m src.worker.main` and
+  `python -m src.scheduler.main` both still start the executor and keep their
+  own health files, so an install that keeps one keeps passing its probes.
+- Supervised services need an executor: the warm Job worker (or a static
+  executor an install kept).
 
 ### Upgrading and rolling back
 
@@ -153,23 +163,23 @@ variables.
 
 ## Scale-Down And Drain
 
-The `bifrost-worker` and `bifrost-scheduler` Deployments keep the replica
-counts you set. On-demand worker Jobs drain themselves after
-`BIFROST_POOL_IDLE_SECONDS` without work or `BIFROST_POOL_MAX_LIFETIME_SECONDS`
-of life, and the controller keeps at least `BIFROST_POOL_MIN_WORKERS` warm.
+On-demand worker Jobs drain themselves after **Idle Time** (Settings →
+Kubernetes) without work or `BIFROST_POOL_MAX_LIFETIME_SECONDS` of life, and
+the controller keeps at least **Warm Workers** warm. Lowering Warm Workers
+lets running idle workers drain too. A static executor an install kept keeps
+the replica count it was given.
 
 After an upgrade, the controller replaces worker Jobs running a build that no
 live controller runs, once every controller of that build has stopped: it
 launches current Jobs for the warm minimum, and when they can claim, the
 outdated Jobs drain (`end_reason = rotated`). They are never deleted. All
 outdated Jobs drain in the same pass, so under heavy load capacity dips until
-their runs finish, because draining Jobs still count toward
-`BIFROST_POOL_MAX_WORKERS`.
+their runs finish, because draining Jobs still count toward Max Workers.
 
 A drain the platform asks for (idle, rotated, maximum lifetime) stops claiming
 and lets runs and platform jobs finish, each within its own timeout; it has
 no deadline of its own. A run without a timeout keeps its drained Job (and its
-place under `BIFROST_POOL_MAX_WORKERS`) until it ends, and the API logs a
+place under Max Workers) until it ends, and the API logs a
 warning once such a drain passes the maximum lifetime.
 
 On SIGTERM an executor stops claiming, hands its supervised services over, and
@@ -218,26 +228,30 @@ spec:
 
 Only the API manages Kubernetes resources: `k8s/api/rbac.yaml` binds the
 namespace-scoped `bifrost-worker-controller` Role to the API ServiceAccount so
-it can create, start and remove worker Jobs and read their pods. Worker Jobs run
-with the `default` ServiceAccount and no token.
+it can create, start and remove worker Jobs and isolated build Jobs and read
+their pods. Those Jobs run with the `default` ServiceAccount (or
+`BIFROST_KUBERNETES_JOB_SERVICE_ACCOUNT`, which the `deploy/kubernetes/builds`
+overlay sets to the tokenless, RBAC-free `bifrost-build-runner`) and never
+mount a token.
 
 ## Resource Sizing
 
 Recommended defaults:
 
-- **Kubernetes:** worker Jobs with a 512Mi request and a 2Gi limit, one warm
-  (`BIFROST_POOL_MIN_WORKERS=1`) and up to six (`BIFROST_POOL_MAX_WORKERS=6`);
-  two API replicas (256Mi request, 1Gi limit) and two client replicas.
+- **Kubernetes:** worker Jobs with a 512Mi request and a 2Gi limit (Worker
+  Memory 2048), one warm (Warm Workers 1) and up to six (Max Workers 6); two
+  API replicas (256Mi request, 1Gi limit) and two client replicas.
 - **Docker Compose:** the `worker` service with two replicas and a 2 GB
   limit each, one API and one client; give the host 8 GB.
 
 Production on 2026-10-24, with this layout, measured about 430 MiB per API
 pod, 5–7 MiB per client pod and about 620 MiB for the warm worker Job.
 Customer workflow code, installed packages, provider SDKs, large payloads
-and concurrent runs add to a worker's memory; raise
-`BIFROST_POOL_WORKER_MEMORY_LIMIT_MIB` (or the Compose limits) for workflows
-that need more. A workflow that no standard worker can hold gets a worker
-Job sized for it, up to `BIFROST_POOL_WORKER_MAX_MEMORY_MIB`.
+and concurrent runs add to a worker's memory; raise Worker Memory in Settings
+(or the Compose limits) for workflows that need more. A workflow that no
+standard worker can hold gets a worker Job sized for it, up to Largest
+Worker. Isolated build Jobs follow the same sizing rule
+(`docs/runbooks/kubernetes-build-jobs.md`).
 
 ### How executors use their memory
 
@@ -305,42 +319,37 @@ in-cluster equivalents:
 
 ## Draining Operations
 
-For manual drain:
+For a manual drain:
 
-1. Reduce replicas gradually.
+1. Lower Warm Workers (and, to stop growth, Max Workers) in Settings →
+   Kubernetes; workers above them drain once idle.
 2. Watch worker logs for graceful drain completion.
 3. Verify durable workflow or agent terminal state rather than only pod exit.
 
 Useful checks:
 
 ```bash
-kubectl get pods -n bifrost -l app.kubernetes.io/name=bifrost-worker
-kubectl logs -n bifrost -l app.kubernetes.io/name=bifrost-worker --tail=200
 kubectl get jobs -n bifrost -l app.kubernetes.io/name=bifrost-pool-worker
+kubectl get pods -n bifrost -l app.kubernetes.io/name=bifrost-pool-worker
+kubectl logs -n bifrost -l app.kubernetes.io/name=bifrost-pool-worker --tail=200
 ```
 
 Graceful SIGTERM and deadline behavior were proven in local Kind. Abrupt node
 loss, SIGKILL after a missed deadline, database outage during result
 persistence, and OOM termination still need durable attempt reconciliation.
 
-## Missing Production Blockers
+## Remaining Gaps
 
-The current implementation is not the user's complete dynamic high-memory build
-solution. The concrete blockers are:
+The worker Jobs are the production executors: the warm worker (Warm Workers
+1 or more) is the always-on capacity for interactive runs and supervised
+services, and no static executor is needed alongside it. Large work is
+covered: a workflow no standard worker can hold gets a sized worker Job, and
+build-class platform jobs can run in isolated pods sized the same way, both
+learning from OOM kills. What remains operator-owned or unbuilt:
 
-- dynamic high-memory build pods are not implemented;
-- PlatformJob execution still runs under scheduler ownership rather than a
-  remote Kubernetes Job attempt protocol;
-- there is no settings surface for runtime policy or generation transitions;
-- there is no one-shot `run-one` worker path with a fixed high-memory queue and
-  pod template;
-- OOM/pending-capacity attribution is not wired into durable job results;
 - dependency hydration is not yet immutable or artifact-fingerprinted for
   zero-replica pools;
 - local fixture services are not production storage, cache or ingress
   designs;
 - node autoscaling, node selectors, tolerations and priority classes remain
   operator-owned and unproven for this runtime.
-
-Until those are built, keep fixed warm scheduler/worker capacity for production
-work alongside the on-demand worker Jobs.

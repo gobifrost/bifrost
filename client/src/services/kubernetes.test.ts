@@ -30,8 +30,8 @@ describe("kubernetes service", () => {
 						job_types: [
 							{
 								job_type: "application.deploy",
-								title: "App deploys",
-								description: "Compile apps in pods.",
+								title: "App Deploys",
+								description: "Compiles apps in an isolated pod.",
 								enabled: true,
 								default_enabled: true,
 							},

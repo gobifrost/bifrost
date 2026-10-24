@@ -1,276 +1,226 @@
-# Kubernetes App Build Jobs
+# Kubernetes Isolated Build Jobs
 
-This guide covers the opt-in Kubernetes execution path for isolated App build
-Jobs. The normal production manifests keep local execution by default, there is
-no Settings UI for this yet, and the broader Elastic Runtime is still not
-implemented.
+Build-class platform jobs can each run in their own Kubernetes pod instead of
+on a worker: App deploys (`application.deploy`), App SDK rebuilds
+(`application.sdk_update`), Solution deploys (`solution.deploy`), Solution
+backup exports (`solution.export`) and Solution Git syncs
+(`solution.git_sync`). Isolation is off by default. Without it, these jobs run
+on workers, admitted by memory like any platform job, and the worker pool
+scales up more often to make room.
 
-The implemented scope is narrow. The warm scheduler remains online for ordinary
-PlatformJob work, using its existing local capacity. Build-class PlatformJobs
-for independent App deploys and App SDK rebuilds (`application.deploy` and
-`application.sdk_update`) are assigned to separate Kubernetes Jobs when the
-operator enables the Kubernetes build backend. Those Jobs use the same
-compatible Bifrost API image, but run with their own memory and CPU settings.
+## Turning Isolation On And Off
 
-## What The Overlay Installs
+A platform admin turns isolation on in **Settings → Kubernetes → Scaling &
+Isolation**, in the **Isolated Jobs** card:
 
-Apply the opt-in overlay only for an application version that contains the
-Kubernetes build backend:
+- **Isolate Build Jobs** turns isolation on or off.
+- **Max Isolated Pods** (default 2) bounds the isolated pods running at once,
+  independently of the worker pool.
+- One toggle per job type chooses which types are isolated (all five by
+  default), and each type's **max parallel runs** override replaces its code
+  default concurrency, for isolated and worker runs alike.
+
+The page appears wherever the API may manage Jobs (the base manifests'
+`k8s/api/rbac.yaml`). Nothing needs a restart: a job is placed in a pod or on
+a worker when it is enqueued, from the settings at that moment, and the build
+controller reads Max Isolated Pods and the on/off switch on every pass,
+within seconds.
+
+Turning isolation off stops admitting new pods only. Pods already running
+finish and are reconciled until they end; queued isolated jobs not yet placed
+in a pod move to the local backend and run on a worker. Keep the API's Job
+Role while placed pods exist: the controller needs it to observe and clean
+them up.
+
+There is no silent fallback while isolation is on: if the controller cannot
+create or observe a Job, the work stays owned by the isolated path and fails
+visibly (for example `capacity_unavailable` after the pending timeout) rather
+than running on a worker.
+
+## Where The Controller Runs
+
+The build-Job controller runs in every process whose service account may
+manage Jobs, checked once at start. The base manifests bind the
+`bifrost-worker-controller` Role to the API, so every API replica reconciles
+isolated Jobs, and reconciliation is safe under any number of replicas. The
+loop always runs there; the Settings toggle decides only whether it admits new
+work. A single API replica is a single point of control: run at least two.
+
+## What An Isolated Pod Runs As
+
+An isolated pod runs exactly as a worker Job does
+(`worker_pool.manifest.resolve_worker_job_spec`): it copies the API pod's
+namespace, image, image pull policy and `envFrom`, and runs as the
+namespace's `default` service account with no token mounted. No image tag or
+ConfigMap needs to be configured.
+
+Optional deployment variables override that identity for both worker Jobs and
+isolated pods:
+
+| Variable | Default |
+| --- | --- |
+| `BIFROST_KUBERNETES_JOB_NAMESPACE` | The API pod's namespace |
+| `BIFROST_KUBERNETES_JOB_IMAGE` | The API pod's image |
+| `BIFROST_KUBERNETES_JOB_CONFIGMAP` and `BIFROST_KUBERNETES_JOB_SECRET` (both) | The API pod's `envFrom` |
+| `BIFROST_KUBERNETES_JOB_SERVICE_ACCOUNT` | `default` |
+| `BIFROST_KUBERNETES_JOB_CPU_REQUEST` / `_CPU_LIMIT` | `250m` / `1` (isolated pods) |
+| `BIFROST_KUBERNETES_JOB_PENDING_TIMEOUT_SECONDS` | `300`: an isolated pod not started by then fails as `capacity_unavailable` |
+
+These replaced the `BIFROST_KUBERNETES_BUILD_*` names. The old names still
+work as aliases, and the API logs a startup warning naming each one in use
+with its new name; the aliases are removed in the release after next.
+
+Isolated pods never mount a service-account token. Job names and labels carry
+only a fingerprint of the attempt's lease token; the token itself travels in
+the pod's startup command, which the runner needs to report progress and
+completion. Payloads, source archives and credentials never go in Job
+manifests: the pod reads its inputs through Bifrost's storage with the
+copied environment.
+
+## Pod Memory: The Worker Sizing Rule
+
+Isolated pods are sized by the same code as worker Jobs
+(`api/src/services/worker_pool/sizing.py`), from Settings → Kubernetes:
+
+- **Standard pod:** a memory request of `BIFROST_POOL_WORKER_MEMORY_REQUEST_MIB`
+  (512 by default) and a limit of **Worker Memory** (2048 MiB by default), so
+  it is Burstable.
+- **Sized pod:** when a job's memory requirement exceeds a standard pod's
+  budget (its limit at the 85% memory threshold, less the process baseline),
+  the pod gets the smallest limit whose budget holds the requirement, up to
+  **Largest Worker**, and requests that whole limit, so it is scheduled only
+  where the memory exists.
+- **Too large:** a requirement no pod up to Largest Worker can hold fails
+  visibly instead of waiting.
+
+Every isolated type learns its memory requirement: App deploys and SDK
+rebuilds per App, Solution deploys by their content, and Solution exports
+and Git syncs per Solution. A pod Kubernetes stops at its memory limit
+(OOMKilled) fails with `memory_pressure`, and its profile learns at least the
+pod's limit plus a 128 MiB margin, so the next run gets a larger pod.
+
+## Upgrading From Environment Variables
+
+Earlier releases configured isolation in deployment env. On its first start,
+this release imports each Settings value that was never stored from the
+matching variable, records where it came from (the page shows "Imported from
+… on …"), and stops reading the variable:
+
+| Variable | Becomes |
+| --- | --- |
+| `BIFROST_PLATFORM_BUILD_BACKEND` | Isolate Build Jobs (`kubernetes` = on, `local` = off) |
+| `BIFROST_KUBERNETES_BUILD_JOB_TYPES` | The per-type toggles: the five defaults, narrowed to this list |
+| `BIFROST_KUBERNETES_BUILD_MAX_JOBS` | Max Isolated Pods |
+| `BIFROST_KUBERNETES_BUILD_MEMORY_REQUEST_MIB` / `_LIMIT_MIB` | Removed: pods use the worker sizing rule |
+
+The worker pool's `BIFROST_POOL_MIN_WORKERS`, `BIFROST_POOL_MAX_WORKERS`,
+`BIFROST_POOL_WORKER_MEMORY_LIMIT_MIB`, `BIFROST_POOL_WORKER_MAX_MEMORY_MIB`
+and `BIFROST_POOL_IDLE_SECONDS` are imported the same way. Each API start
+logs one warning naming every variable that is set but no longer read, and
+the Kubernetes Settings page shows the same list ("No longer used; remove
+from your environment"). The list disappears once the variables are gone.
+
+After an upgrade:
+
+1. Confirm the imported values on the Settings page and in the startup log.
+2. After the rollback window, remove the imported and removed variables from
+   the deployment (`bifrost-config`, `bifrost-build-jobs-config`). Rename the
+   identity variables you keep to `BIFROST_KUBERNETES_JOB_*`, or delete them
+   so Jobs copy the API pod. Until then, a rollback to the previous image
+   still finds its env.
+3. Confirm the notice is empty.
+
+## The Builds Overlay
+
+The optional overlay at `deploy/kubernetes/builds` is not part of the base
+`k8s/kustomization.yml`. It does not turn isolation on; that is the Settings
+toggle. It installs:
+
+- `bifrost-build-runner`, a ServiceAccount with token automount disabled and
+  no RBAC, which every Job the API starts (worker Jobs and isolated pods) runs
+  as, through `BIFROST_KUBERNETES_JOB_SERVICE_ACCOUNT`. Unlike the namespace's
+  `default` account, it carries nothing an operator or cloud integration
+  attached to `default`;
+- `bifrost-build-jobs-config`, with that service account and the isolated
+  pods' CPU and pending timeout;
+- a patch that gives the API that ConfigMap;
+- `bifrost-build-controller`, a ServiceAccount with a namespace-scoped Role
+  (`batch/jobs`: `get`, `list`, `create`, `patch`, `delete`; `pods`: `get`,
+  `list`), and a scheduler patch that runs the scheduler executor as it, so a
+  scheduler scaled back up reconciles Jobs too. The base retires the
+  scheduler (zero replicas); drop `scheduler-controller-patch.yaml` to keep
+  the controllers in the API only.
 
 ```bash
 kubectl apply -k deploy/kubernetes/builds
 ```
 
-The overlay adds:
+Do not use `kubectl delete -k deploy/kubernetes/builds` to undo it: the
+overlay includes the base Deployments as resources, so deleting the
+kustomization deletes the application. Turn isolation off in Settings, let
+running pods finish, then remove only the overlay objects you no longer need.
 
-- `bifrost-build-controller` ServiceAccount for the scheduler;
-- a namespace-scoped Role and RoleBinding that can manage `batch/jobs` and read
-  pods;
-- `bifrost-build-runner` ServiceAccount for build Job pods with token automount
-  disabled;
-- `bifrost-build-jobs-config` with backend, image, namespace, resource and
-  concurrency settings;
-- patches that give the API and scheduler the build backend settings;
-- a scheduler patch that mounts the controller token.
+Isolated pods record their namespace. Drain them before changing the
+namespace, cluster or controller credentials: a pod placed in another
+namespace stops reconciliation until it is accounted for.
 
-The base `k8s/kustomization.yml` does not include this overlay. Applying the
-normal manifests keeps local scheduler execution.
+## Limits
 
-## Configuration
+- Each type's policy decides retries and cancellation. App deploys and SDK
+  rebuilds run once (`max_attempts=1`) and cannot be canceled while running;
+  Solution deploys, exports and Git syncs may run a second attempt, and a
+  running Git sync can be canceled. Cancel works for any job still queued.
+- A lost pod fails visibly with a structured code (`capacity_unavailable`,
+  `runner_lost`, `runner_exited`, `memory_pressure`, `timeout`); it never
+  falls back to a worker.
+- If a Job is deleted out of band while its pods still run, the controller
+  waits for those pods to stop before it releases the attempt. Its Role can
+  only read pods, so remove orphan pods manually.
 
-Replace the image placeholder with the exact Bifrost API image tag compatible
-with the deployed API and scheduler:
+## Local Kind
 
-```yaml
-BIFROST_KUBERNETES_BUILD_IMAGE: "ghcr.io/gobifrost/bifrost-api:<compatible-tag>"
-```
-
-Initial settings:
-
-```yaml
-BIFROST_PLATFORM_BUILD_BACKEND: "kubernetes"
-BIFROST_KUBERNETES_BUILD_NAMESPACE: "bifrost"
-BIFROST_KUBERNETES_BUILD_CONFIGMAP: "bifrost-config"
-BIFROST_KUBERNETES_BUILD_SECRET: "bifrost-secrets"
-BIFROST_KUBERNETES_BUILD_SERVICE_ACCOUNT: "bifrost-build-runner"
-BIFROST_KUBERNETES_BUILD_JOB_TYPES: "application.deploy,application.sdk_update"
-BIFROST_KUBERNETES_BUILD_MEMORY_REQUEST_MIB: "512"
-BIFROST_KUBERNETES_BUILD_MEMORY_LIMIT_MIB: "2048"
-BIFROST_KUBERNETES_BUILD_MAX_JOBS: "2"
-BIFROST_KUBERNETES_BUILD_PENDING_TIMEOUT_SECONDS: "300"
-BIFROST_KUBERNETES_BUILD_CPU_REQUEST: "250m"
-BIFROST_KUBERNETES_BUILD_CPU_LIMIT: "1"
-```
-
-The API receives these settings so enqueue placement can be persisted
-consistently. `BIFROST_KUBERNETES_BUILD_JOB_TYPES` is the operator ceiling:
-only those job types are eligible for remote placement when the backend is
-enabled.
-
-## Product Opt-In (Settings UI)
-
-Once the deployment is configured, platform admins get a **Kubernetes**
-section in Settings with an **Executions** list: one toggle per eligible
-build-class job type, defaulting to the measured high-memory jobs (App
-deploys and SDK rebuilds). A job launches a pod only when the toggle is on
-**and** the deployment allowlist names it. Each row also carries a **max
-parallel runs** input (1–32, empty resets to the code default) that replaces
-the job policy's concurrency in the shared claim path — local and remote
-runs alike. Changes apply to newly enqueued jobs; running jobs keep their
-placement. The tab is hidden on deployments without the backend configured,
-so there is nothing to explain away on local installs.
-
-## Enable/Disable Notice
-
-When the deployment's configured state flips in either direction, the API
-emits one platform-admin notification at startup ("Kubernetes execution
-enabled/disabled") with a **Learn more** button opening the short version
-of this story plus a direct link to the Executions tab. Dismissing parks it;
-it fires again only on the next flip — never more than once per change.
-Fresh installs that never configured the backend stay silent.
-
-The scheduler receives these settings and the controller ServiceAccount so
-it can create, bind, start, observe and clean up Jobs. API and worker pods do
-not need Kubernetes credentials.
-
-Memory is split into a request and a limit, mirroring the existing CPU
-request/limit pair. The request (512 MiB) is the guaranteed reservation the
-Kubernetes scheduler uses for node packing; the pod may burst up to the
-limit (2 GiB) when the node has headroom, and is OOM-killed past it. That
-split makes build pods Burstable instead of Guaranteed: the tradeoff for
-denser packing is that Burstable pods are evicted before Guaranteed ones
-when a node comes under memory pressure. The earlier single-value evidence
-(614 MiB peak in a 1 GiB pod) sits comfortably under the 2 GiB ceiling with
-room for larger apps. The controller refuses to start when the request
-exceeds the limit.
-
-## RBAC And Runner Isolation
-
-The scheduler controller Role is intentionally small:
-
-- `batch/jobs`: `get`, `list`, `create`, `patch`, `delete`;
-- core `pods`: `get`, `list`.
-
-The runner ServiceAccount has token automount disabled. Build pods should use
-the configured Bifrost ConfigMap and Secret through `envFrom`, with only job and
-attempt identifiers passed as Job-specific environment. Do not put payloads,
-source archives, credentials or tokens in Job manifests.
-
-## Build Job Capacity
-
-The build controller creates bounded Jobs directly from persisted build
-placement. `BIFROST_KUBERNETES_BUILD_MAX_JOBS` limits concurrent remote build
-attempts independently of ordinary executor slots. This is separate from the
-on-demand worker Jobs, which run workflows and agent runs, not isolated App
-builds.
-
-## Local Kind Opt-In
-
-The local harness preserves its default behavior. To exercise the local build
-Job manifests, set the explicit flag before `up`:
+Isolation in local Kind is turned on in Settings, as anywhere. To also apply
+the overlay's Job settings (Jobs run as `bifrost-build-runner`), boot with:
 
 ```bash
 BIFROST_KIND_BUILD_JOBS=1 ./test.sh kubernetes up
 ```
 
-The local path applies `k8s/local/build-jobs.yaml`, renders
-`BIFROST_KUBERNETES_BUILD_IMAGE` from `BIFROST_K8S_IMAGE`, and injects the
-build settings into the API Deployment. The API's service account already
-manages Jobs, so every API replica runs the build controller; the scheduler
-and worker executors mount no service-account token.
-
-To prove a build survives losing a controller host, run the experiment with
-`--restart-controller`. It deletes one API pod while builds run (the workload
-runs in the other):
+The build experiment turns isolation on for its run and restores it.
+`--restart-controller` deletes one API pod while builds run (the workload runs
+in the other):
 
 ```bash
 ./test.sh kubernetes build-experiment --output /tmp/bifrost-build-jobs --restart-controller
 ```
 
-## Live Local Evidence
+The pool drills cover sizing and the Settings toggles:
 
-A corrected local Kind run validated the implemented App build path with this
-command:
+```bash
+./test.sh kubernetes pool-drills --only sized_isolated_build max_workers_setting isolation_off
+```
+
+- `sized_isolated_build`: an App deploy whose learned requirement (2.5 GiB)
+  exceeds a standard pod's budget gets a pod whose memory request equals its
+  limit, above 2 GiB, and succeeds.
+- `max_workers_setting`: a Max Workers change in Settings applies to the pool
+  without an API restart.
+- `isolation_off`: turning isolation off lets the running isolated build
+  finish in its pod and moves the queued one to a worker.
+
+## Earlier Local Evidence
+
+Before isolation moved to Settings, a local Kind run validated the App build
+path:
 
 ```bash
 ./test.sh kubernetes build-experiment --output /tmp/bifrost-769-build-live-corrected --restart-scheduler
 ```
 
-Artifacts were written to
-`/tmp/bifrost-769-build-live-corrected/{result.json,memory.json,run.json}`. The
-run used image
-`bifrost-elastic-spike:769-build-jobs-v3@sha256:f0ace6fa14dd4c9c190cc771be646971d5721a5a55f3f0b3199e0fce5cfff72b`; the host
-harness piped the corrected fixture source into the API pod with `kubectl`
-standard input.
-
-The run passed two real App deploys in 1 GiB Kubernetes build pods. While both
-builds were running, a lightweight `artifact.retention_cleanup` PlatformJob ran
-and completed locally, and the scheduler pod was replaced. After the replacement,
-the remote builds finished, the SDK rebuild published a new active deployment,
-and readable build artifacts were confirmed. (This run predates the
-`max_concurrency=1` default on App deploys; the live experiment script now
-lifts the cap through the Settings override for the duration of the run and
-restores it afterwards.)
-
-Observed peak kernel cgroup memory during this run was 614.25 MiB for a build
-pod and 408.14 MiB for the scheduler pod. These measurements include kernel
-cache and use the current production image. They are capacity evidence for this
-local fixture, not a latency benchmark; the fixture includes a synthetic
-30-second build delay to make overlap deterministic.
-
-Focused verification reached 89 passing tests. Review then corrected cross-backend
-concurrency and resource locking; all 23 scheduler tests passed with that fix.
-API lint/type checks passed before that final two-predicate correction.
-Full `./test.sh pre-pr` has not run; this is local evidence, not release completion.
-
-Exact focused commands:
-
-```bash
-./test.sh tests/unit/test_kubernetes_build_controller.py tests/unit/test_platform_job_kubernetes_client.py tests/unit/test_kubernetes_build_manifests.py tests/unit/test_kubernetes_spike_manifests.py tests/unit/jobs/platform/test_kubernetes_runner.py tests/unit/jobs/schedulers/test_platform_jobs.py tests/unit/services/test_platform_jobs.py tests/unit/test_contract_version.py tests/e2e/platform/test_application_sdk_update.py -q
-./test.sh quality api
-./test.sh tests/unit/jobs/schedulers/test_platform_jobs.py -q
-```
-
-## Where The Controllers Run
-
-The build-Job controller runs wherever a process may manage Jobs, checked at
-start. The base manifests bind the `bifrost-worker-controller` Role to the
-API (`k8s/api/rbac.yaml`), so every API replica reconciles build Jobs. This
-overlay additionally binds `bifrost-build-controller` to the scheduler
-container, whose executor then reconciles them too; reconciliation is safe
-under any mix of reconcilers. To keep the controllers in the API only, drop
-`scheduler-controller-patch.yaml`. Diagnostics → Scheduler lists API control
-replicas with zero job slots and marks the trigger leader. A single API
-replica is a single point of control: run at least two.
-
-Evidence (local Kind, two API replicas):
-
-```bash
-BIFROST_KIND_BUILD_JOBS=1 ./test.sh kubernetes up
-./test.sh kubernetes control-experiment
-```
-
-## Disabling Remote Builds
-
-Disable gracefully. Do not remove the scheduler controller credentials while
-persisted remote build attempts still exist.
-
-1. Switch the API configuration to `BIFROST_PLATFORM_BUILD_BACKEND=local` first
-   so new App deploy and SDK rebuild jobs are persisted with local placement.
-2. Keep the scheduler running with the Kubernetes build controller and RBAC so
-   it can observe, finish and clean up existing remote attempts.
-3. Confirm all persisted remote build jobs are terminal or have been safely
-   canceled through Bifrost's durable job contract.
-4. Confirm Kubernetes Jobs owned by those attempts have completed cleanup.
-5. Only then switch the scheduler to local build configuration and remove the
-   scheduler controller RoleBinding if it is no longer needed.
-
-Do not use `kubectl delete -k deploy/kubernetes/builds` as a shutdown step: the
-opt-in overlay includes the base Deployments as resources, so deleting the
-kustomization can delete the application workloads. Disable through
-configuration changes, drain the remote work, then remove only the now-unused
-controller RBAC or build-specific objects intentionally.
-
-There must be no silent local fallback. If Kubernetes build placement is enabled
-and the scheduler cannot create or observe Jobs, the affected build work should
-remain durably owned by the remote placement path and surface an actionable
-capacity/controller error rather than running inside the warm scheduler.
-
-Remote attempts persist their target namespace. Treat namespace, cluster and
-controller credentials as part of the remote ownership boundary: drain and clean
-up existing remote attempts before changing any of them. A mid-flight namespace
-or credential change must fail closed until the existing remote work is
-accounted for.
-
-## Current Limits
-
-The current remote build scope is independent App deploy and App SDK rebuild:
-`application.deploy` and `application.sdk_update`. Those jobs use durable
-backend placement, scheduler-owned Kubernetes Job creation, UID-bound runner
-admission, lease-token heartbeats and completion, bounded remote concurrency,
-pending timeout handling and Kubernetes Job cleanup.
-
-Build policies use single attempts (`max_attempts=1`) with no retry on runner
-loss: a lost remote attempt fails visibly with a structured error code
-(`capacity_unavailable`, `runner_lost`, `runner_exited`, `memory_pressure`,
-`timeout`) rather than silently retrying or falling back to local execution.
-
-Running builds are not cancellable: both build policies leave
-`allow_running_cancellation` disabled, so cancel requests for a running
-remote build are refused and the attempt runs to a terminal result. Cancel
-while the job is still queued (before the controller claims it) works
-normally through the shared cancel endpoint.
-
-Kubernetes object metadata never carries the lease token: Job names and
-labels carry only a SHA-256 fingerprint of the attempt token. The full token
-travels inside the pod's startup command, which the runner needs to
-authenticate progress and completion calls.
-
-Known limit: if a Kubernetes Job is deleted out of band while its pods are
-still running, the controller waits for those pods to stop before clearing
-the durable attempt name. The controller Role grants pods only `get`/`list`,
-so it cannot force-delete orphan pods; remove them manually (or re-apply the
-overlay Job) to let the attempt finish cleanup.
-
-Solution build execution is not implemented for Kubernetes build Jobs yet and
-still needs an explicit product decision before being advertised.
+It passed two real App deploys in 1 GiB Kubernetes build pods while a
+lightweight `artifact.retention_cleanup` job ran locally and the scheduler pod
+was replaced; the SDK rebuild then published a new active deployment.
+Observed peak kernel cgroup memory was 614.25 MiB for a build pod and
+408.14 MiB for the scheduler pod (kernel cache included; the fixture adds a
+synthetic 30-second build delay to make overlap deterministic). This is
+capacity evidence for that fixture, not a latency benchmark.

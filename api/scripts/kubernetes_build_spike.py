@@ -1,9 +1,14 @@
 """End-to-end local Kubernetes build-Job spike fixture.
 
 Run only inside the API pod for the disposable Kubernetes spike environment.
-The script seeds independent standalone_v2 Apps, enqueues real build-class
-PlatformJobs, and verifies that the warm scheduler can complete a lightweight
-maintenance job while remote App builds are running.
+
+- ``--mode build`` seeds independent standalone_v2 Apps, enqueues real
+  build-class PlatformJobs in isolated pods, and verifies that a worker
+  completes a lightweight maintenance job while the builds run.
+- ``--mode enqueue-deploy`` seeds one App, enqueues its deploy and prints the
+  job id, for the host-side drills (``scripts/kubernetes/pool_drills.py``).
+  ``--required-mib`` first records that much as the App's learned memory
+  requirement, as an earlier run that needed it would have.
 """
 
 from __future__ import annotations
@@ -39,8 +44,11 @@ from src.jobs.platform.system_maintenance import (
     EmptyMaintenancePayload,
 )
 from src.models.orm.applications import Application
+from src.models.orm.platform_job_memory_profiles import PlatformJobMemoryProfile
 from src.models.orm.platform_jobs import PlatformJob
 from src.services.application_deploy_storage import ApplicationDeployStorage
+from src.services.memory_requests import MIB
+from src.services.platform_job_memory_profiles import build_resource_memory_profile_key
 from src.services.platform_jobs import enqueue_platform_job, publish_platform_job_update
 from src.services.solutions.app_build import SolutionAppBuilder
 
@@ -261,6 +269,9 @@ async def _enqueue_deploy_job(app: Application, source_zip: Path) -> PlatformJob
             title=f"Deploy spike App {app.slug}",
             action_url=None,
             job_id=job_id,
+            memory_profile_key=build_resource_memory_profile_key(
+                APPLICATION_DEPLOY_DEFINITION.job_type, app.id
+            ),
         )
         if reused:
             raise RuntimeError(f"Unexpected reused deploy job for {app.id}")
@@ -322,6 +333,9 @@ async def _enqueue_sdk_update_job(app: Application) -> PlatformJob:
             resource_id=str(fresh.id),
             title=f"SDK update spike App {fresh.slug}",
             action_url=None,
+            memory_profile_key=build_resource_memory_profile_key(
+                APPLICATION_SDK_UPDATE_DEFINITION.job_type, fresh.id
+            ),
         )
         if reused:
             raise RuntimeError(f"Unexpected reused SDK update job for {fresh.id}")
@@ -359,6 +373,60 @@ async def _verify_application_deployment(app_id: UUID) -> dict[str, Any]:
         "index_html_bytes": len(index_html),
         **sdk,
     }
+
+
+def _pod_limit_follows_policy(job: PlatformJob, policy: Any) -> bool:
+    """A standard pod has Worker memory as its limit; a sized one (its
+    requirement exceeds a standard pod's budget) holds the requirement, up
+    to Largest worker."""
+    standard = policy.worker_memory_mib * MIB
+    largest = max(standard, policy.largest_worker_mib * MIB)
+    limit = job.memory_limit_bytes
+    if limit == standard:
+        return True
+    return limit is not None and standard < limit <= largest and limit >= (
+        job.memory_required_bytes or 0
+    )
+
+
+async def _record_learned_requirement(app: Application, required_bytes: int) -> None:
+    key = build_resource_memory_profile_key(APPLICATION_DEPLOY_DEFINITION.job_type, app.id)
+    async with get_db_context() as db:
+        profile = await db.get(PlatformJobMemoryProfile, key)
+        if profile is None:
+            db.add(
+                PlatformJobMemoryProfile(
+                    profile_key=key,
+                    memory_required_bytes=required_bytes,
+                    observed_high_water_bytes=required_bytes,
+                    sample_count=1,
+                )
+            )
+        else:
+            profile.memory_required_bytes = required_bytes
+        await db.commit()
+
+
+async def run_enqueue_deploy_mode(args: argparse.Namespace) -> dict[str, Any]:
+    prefix = f"k8s-drill-{uuid4().hex[:10]}"
+    _guard_environment()
+    await init_db()
+    configure_mappers()
+    try:
+        app = await _seed_application(prefix, 1)
+        if args.required_mib:
+            await _record_learned_requirement(app, args.required_mib * MIB)
+        with tempfile.TemporaryDirectory(prefix="bifrost-k8s-drill-") as tmp:
+            source_zip = Path(tmp) / f"{app.slug}.zip"
+            _write_vite_source_zip(source_zip, marker=prefix, hold_seconds=args.hold_seconds)
+            job = await _enqueue_deploy_job(app, source_zip)
+        return {
+            "job_id": str(job.id),
+            "application_id": str(app.id),
+            "memory_required_bytes": job.memory_required_bytes,
+        }
+    finally:
+        await close_db()
 
 
 async def run_build_mode(args: argparse.Namespace) -> dict[str, Any]:
@@ -426,9 +494,9 @@ async def run_build_mode(args: argparse.Namespace) -> dict[str, Any]:
                     "Deploy jobs were not assigned to the Kubernetes backend: "
                     + json.dumps(_diagnostics(running), default=_json_default)
                 )
-            if any(job.memory_limit_bytes != policy.worker_memory_mib * 1024 * 1024 for job in running):
+            if not all(_pod_limit_follows_policy(job, policy) for job in running):
                 raise RuntimeError(
-                    "Deploy jobs did not use the configured pod memory limit: "
+                    "Deploy jobs did not get a pod sized by Settings -> Kubernetes: "
                     + json.dumps(_diagnostics(running), default=_json_default)
                 )
             print(
@@ -549,7 +617,13 @@ async def run_build_mode(args: argparse.Namespace) -> dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=["build"], default="build")
+    parser.add_argument("--mode", choices=["build", "enqueue-deploy"], default="build")
+    parser.add_argument(
+        "--required-mib",
+        type=int,
+        default=None,
+        help="enqueue-deploy: the App's learned memory requirement, in MiB.",
+    )
     parser.add_argument(
         "--artifact-output",
         help="Optional path for the final JSON result. Fixture rows/artifacts are preserved.",
@@ -566,11 +640,16 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.hold_seconds < 1:
         parser.error("--hold-seconds must be at least 1")
+    if args.required_mib is not None and (args.mode != "enqueue-deploy" or args.required_mib < 1):
+        parser.error("--required-mib is a positive size for --mode enqueue-deploy")
     return args
 
 
 async def main() -> None:
     args = parse_args()
+    if args.mode == "enqueue-deploy":
+        print(json.dumps(await run_enqueue_deploy_mode(args)), flush=True)
+        return
     result = await run_build_mode(args)
     print(json.dumps(result, indent=2, default=_json_default), flush=True)
 

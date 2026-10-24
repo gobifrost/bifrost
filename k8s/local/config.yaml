@@ -22,9 +22,9 @@ data:
   BIFROST_WEBAUTHN_ORIGIN: http://localhost:8000
   BIFROST_DATABASE_POOL_SIZE: "5"
   BIFROST_DATABASE_MAX_OVERFLOW: "10"
-  # On-demand worker Jobs sized for a single-node Kind cluster: small pods
-  # that idle out quickly, so drills scale both ways in minutes.
-  BIFROST_POOL_IDLE_SECONDS: "45"
+  # On-demand worker Jobs request little memory on a single-node Kind
+  # cluster. Their idle time is a Settings -> Kubernetes value: the drills
+  # shorten it for their run (scripts/kubernetes/pool_spike.py set_policy).
   BIFROST_POOL_WORKER_MEMORY_REQUEST_MIB: "256"
 ---
 apiVersion: v1

@@ -472,8 +472,8 @@ async def test_the_page_shows_values_provenance_job_types_and_unread_variables(
     assert page.unread_variables == ["BIFROST_MAX_CONCURRENCY", "BIFROST_POOL_MAX_WORKERS"]
     by_type = {item.job_type: item for item in page.job_types}
     assert set(by_type) == set(kube.DEFAULT_REMOTE_JOB_TYPES)
-    assert by_type["application.deploy"].title == "App deploys"
-    assert by_type["solution.export"].title == "Solution backup exports"
+    assert by_type["application.deploy"].title == "App Deploys"
+    assert by_type["solution.export"].title == "Solution Backup Exports"
     assert all(item.enabled and item.default_enabled for item in page.job_types)
 
 
