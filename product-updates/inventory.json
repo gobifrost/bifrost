@@ -2,9 +2,9 @@
   "schema_version": 1,
   "repository": "gobifrost/bifrost",
   "base_ref": "ade714a08b95c84daa285e859ebece55f45c6754",
-  "target_ref": "0d04adf3a5db7f3dd2053a25a5814402d94e718f",
-  "collected_at": "2026-10-24T14:51:02Z",
-  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...0d04adf3a5db7f3dd2053a25a5814402d94e718f",
+  "target_ref": "2d5c16d4fba720bc9954355bdc4627b6642a65fe",
+  "collected_at": "2026-10-24T17:19:32Z",
+  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...2d5c16d4fba720bc9954355bdc4627b6642a65fe",
   "commits": [
     {
       "sha": "2399fbb049e6b6c121ca07980ffa649844c0d477",
@@ -1565,6 +1565,27 @@
       "subject": "Use native CodeMode for Automatic agents (#1056)",
       "prs": [
         1056
+      ]
+    },
+    {
+      "sha": "4cf3b0ff992c0237bb778de5f1146abb198dc5eb",
+      "subject": "Publish the combined Automatic agent announcement (#1058)",
+      "prs": [
+        1058
+      ]
+    },
+    {
+      "sha": "95d27dacc521d9067986d574b9d40514354379a9",
+      "subject": "Add a copy-into-an-agent prompt to Product Updates entries (#1057)",
+      "prs": [
+        1057
+      ]
+    },
+    {
+      "sha": "2d5c16d4fba720bc9954355bdc4627b6642a65fe",
+      "subject": "Recommend two 2 GB executors and retire static Kubernetes executors (#1055)",
+      "prs": [
+        1055
       ]
     }
   ],
@@ -4465,6 +4486,19 @@
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1054"
     },
     {
+      "number": 1055,
+      "title": "Recommend two 2 GB executors and retire static Kubernetes executors",
+      "url": "https://github.com/gobifrost/bifrost/pull/1055",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-24T16:51:02Z",
+      "merge_commit": "2d5c16d4fba720bc9954355bdc4627b6642a65fe",
+      "body": "## Product Updates\n\n- [x] Highlight \u2014 three entries, approved by Jack on 2026-10-24: `7eaa8252\u2026` Recommended: Upgrade to the Unified Worker (#1039, #1040, #1041, #1055); `32ba9da0\u2026` Workers Scale on Demand in Kubernetes (#1033, #1039, #1054); `56853509\u2026` Workflows Run by Memory, Not Slots (#1044, with a screenshot). Those PRs move from Other/Omit to these highlights.\n- [ ] Other\n- [ ] Omit\n\n## Summary\n\nRecommended defaults for the new runtime (#769), with a highlighted release note. **Merge after #1054**: the README says outdated worker Jobs are replaced after an upgrade.\n\n- **Docker Compose:** one `worker` service with two replicas and a 2 GB limit each; the `scheduler` service is gone from the template. An older compose file keeps working, because its `scheduler` runs the same executor. With the new file, `docker compose up -d --remove-orphans` retires it. Until now the scheduler was capped at 1 GB and the worker not at all, so it took 85% of the host as its budget. Recommended host: 8 GB.\n- **Kubernetes base:** the `bifrost-worker` and `bifrost-scheduler` Deployments are set to `replicas: 0` for one release. The API starts worker Jobs (512Mi request / 2Gi limit, minimum 1, maximum 6, as production runs). With zero replicas, `kubectl apply -k` without pruning stops old-image static executors instead of leaving them running; a later release removes the files.\n- **Docs:** `k8s/README.md` covers the upgrade step, the pool settings and running two API replicas. In `docs/runbooks/kubernetes-worker-deployment.md`:\n  - the retired Deployments;\n  - sizing, with production measurements from 2026-10-24: about 430 MiB per API pod, 5\u20137 MiB per client pod, about 620 MiB for the warm worker Job;\n  - the Docker memory limits.\n\nRecommended counts: Kubernetes, 2 API and 2 client replicas; Docker, 1 each.\n\n- **Agent Prompt** on the upgrade card (the first use of #1057): it has the admin's agent inspect the deployment, check the API logged the RabbitMQ drain, propose the Compose or Kubernetes changes and wait for confirmation, remove the retired variables (`BIFROST_RABBITMQ_URL`, `BIFROST_MAX_CONCURRENCY`, `BIFROST_MAX_WORKERS`, `BIFROST_MAX_SERVICE_WORKERS`), then verify `/health/ready` and a test run.\n- **Runbook fix:** after removing KEDA, delete the retired `bifrost-worker` Deployment rather than scaling it back to 2.\n\n## Verification\n\n- `docker compose -f docker-compose.yml config --quiet` with the required variables set: valid.\n- `kubectl kustomize k8s/` and `kubectl kustomize deploy/kubernetes/builds`: render; the overlay leaves the scheduler at 0 replicas.\n- `python3 scripts/product_updates.py validate ...`: passes after rebasing on #1057.\n- Release preview (inventory through this branch, base v1.4.1): the three cards lead What's New, the upgrade card carries the collapsed Agent Prompt, and no runtime PR appears in Other changes. A bundle/render against a fresh inventory shows the three cards first in What's New and none of the runtime PRs in Other changes.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1055"
+    },
+    {
       "number": 1056,
       "title": "Use native CodeMode for Automatic agents",
       "url": "https://github.com/gobifrost/bifrost/pull/1056",
@@ -4476,6 +4510,32 @@
       "merge_commit": "0d04adf3a5db7f3dd2053a25a5814402d94e718f",
       "body": "## Product Updates\n\n- [x] Other \u2014 Improve Automatic agent efficiency while preserving workflow and MCP results.\n\n## Summary\n\nAutomatic chat and background runs now share Pydantic's native CodeMode and ToolSearch. Remove the private sandbox SDK, callable renderer, discovery protocol, and dispatcher. Native discovery adapts Bifrost's existing capability ranking; business execution keeps the existing authorization, workflow/MCP dispatch, cancellation, and audit paths.\n\nThe remaining adapter handles stored JSON tool definitions, bounded Python names, JSON-or-text nested values, and the model-result boundary. Full nested values are available to code; the outer model result retains its cap. Native child delegation stays outside business code. Public MCP search/execute formats and arbitrary workflow return values remain unchanged. Existing workers run the pinned Monty interpreter without Bubblewrap or a new service.\n\nAlign the declared Harness version with the already-locked AI 2.55 / Harness 0.55 / Monty 1.3 runtime. No runtime dependency upgrade.\n\n## Evidence\n\nThe complete frozen DeepSeek Flash comparison contains 207 attempts: 23 synthetic cases \u00d7 three arms \u00d7 three repetitions, with no repeats or replacement attempts.\n\n| Metric, 69 attempts per arm | Current Automatic | Native Automatic | Direct Tools |\n|---|---:|---:|---:|\n| Requested data and required receipts correct | 66 | 68 | 67 |\n| Captured input tokens | 1,653,574 | 981,051 | 3,186,945 |\n| Cost from captured usage | $0.068495274 | $0.040527084 | $0.151541778 |\n| Unsupported prose findings | 3 | 0 | 0 |\n\nNative captured cost is 40.8% lower than current and 73.3% lower than direct; captured input is 40.7% and 69.2% lower. Model-visible tool-return bytes are 91.0% lower than direct, with 85.7% less cumulative rereading. Independent final review resummed every captured provider response and checked the frozen inputs, artifacts, adjudication, and source integrity.\n\nThese are synthetic, workload-weighted results. Large reports drive most savings; several small workloads cost more than direct tools. Two provider timeouts, one in each CodeMode arm, remain counted failures with unknown billing; cost percentages describe captured usage, not a proven complete invoice. Strict JSON-only formatting remains weaker than direct tools: candidate 6/33 whole-message JSON outputs, current 0/33, direct 16/33; explicitly JSON-only MCP/workflow attempts are 2/6, 0/6, and 5/6. Fenced correct data are not claimed to satisfy JSON-only consumers.\n\n[Implementation, workload breakdown, risks, and exact verification commands](https://github.com/gobifrost/bifrost/blob/a8fb70576/docs/plans/2026-10-24-native-automatic-code-mode.md) \u00b7 [All-attempt machine-readable receipt](https://github.com/gobifrost/bifrost/blob/a8fb70576/docs/benchmarks/2026-10-24-native-automatic.json)\n\n## Validation\n\n- 57 focused unit/live checks passed after rebasing onto current main: chat replay, workflow ownership, child delegation, revocation, cancellation, MCP/arbitrary payloads, alias collisions, and mocked Anthropic native-search wire serialization.\n- 108 additional runtime, authorization, discovery, and MCP gateway consumer tests passed.\n- `./test.sh quality api`: pyright and ruff passed after rebase.\n- 81 network-disabled benchmark probes passed before paid calls; five offline report-integrity tests passed.\n- Feature runtime files exactly match the benchmark snapshot; the latest main worker-version integration was checked through live tests.\n\nFull backend/client suites were not run locally. PR CI and the merge queue supply the complete-suite gate. No UI or public DTO changes.\n\nRefs #1015.\n",
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1056"
+    },
+    {
+      "number": 1057,
+      "title": "Add a copy-into-an-agent prompt to Product Updates entries",
+      "url": "https://github.com/gobifrost/bifrost/pull/1057",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-24T16:13:53Z",
+      "merge_commit": "95d27dacc521d9067986d574b9d40514354379a9",
+      "body": "## Product Updates\n\n- [ ] Highlight\n- [ ] Other\n- [x] Omit \u2014 release-note authoring tooling. Admins first see it through the agent prompt on #1055's \"Recommended: Upgrade to the Unified Worker\" entry, which carries the announcement.\n\n## Summary\n\nAn \"Agent Prompt\" block for breaking or recommended changes, per the approved design `docs/plans/2026-10-24-release-note-agent-prompt.md` (on branch `kubernetes-settings`), with Jack's later simplification: a fixed heading, one description and a collapsed prompt. A Product Updates entry can carry an optional plain-text `agent_prompt`, which states in its own words what the agent must be able to reach.\n\n- **Schema and bundle:** `agent_prompt` (non-empty string) on the source entry and the bundle entry in `product-updates/schema.json`; `build_bundle` carries it through, and the API contract serves it.\n- **Validator:**\n  - at most 400 words, not counted toward the entry's word budget;\n  - no raw HTML and no backticks;\n  - no links except the Bifrost docs and `github.com/gobifrost`;\n  - must contain \"wait for my confirmation\", so the agent shows its plan before changing anything.\n- **GitHub release:** `#### Agent Prompt`, \"Copy this prompt to have your coding agent help you with this change.\", and the prompt in a `text` fence inside a collapsed `<details>` (\"Show Prompt\"); GitHub gives the fence a copy button. It sits after the entry's images and before its sources.\n- **What's New:** a callout under full entries (not compact Fixed/Security items): a Lucide `Bot` icon in the primary colour, the heading, the same sentence, and two icon buttons with tooltips. A chevron expands the prompt (`aria-expanded`; Show Prompt / Hide Prompt), and a copy icon copies it and turns into a check (Copy Prompt / Copied). Expanded, the box is content-sized up to 12 lines, then scrolls. Copy works while collapsed, shows an error with a manual fallback, and announces success through an `sr-only` status.\n- **Authoring:** an Agent Prompts section in `docs/product-updates-authoring.md` (when to use one, the rules, a template), plus a checklist item in the `bifrost-release` skill (Claude and Codex mirror).\n\n## Verification\n\n- `python3 -m pytest scripts/test_product_updates.py`: 44 passed (new: bundle and collapsed fence, word budget, each validator rule, schema shape). `bash scripts/test_prepare_release_body.sh`: passes.\n- `./test.sh tests/unit/services/test_product_updates.py`: the API bundle carries the prompt.\n- `npx vitest run src/components/layout/ProductUpdateContent.test.tsx`: 9 passed (copy while collapsed and announce, expand and collapse, clipboard failure, compact entries leave it out).\n- `npm run tsc`, eslint on the changed files, `scripts/product_updates.py validate` on the repository content.\n- Types regenerated against this worktree's debug stack (additive only).\n- Rendered previews: GitHub body from a bundle carrying the #1055 draft prompt; the What's New page and the shell dialog in a port-mode debug stack at 1440 px and 390 px, dark and light. Collapsed and expanded. Copy in a real browser put the full 1,571-character prompt on the clipboard; no horizontal overflow.\n- `./test.sh pr-preflight`: see the comment below.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1057"
+    },
+    {
+      "number": 1058,
+      "title": "Publish the combined Automatic agent announcement",
+      "url": "https://github.com/gobifrost/bifrost/pull/1058",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-24T15:31:57Z",
+      "merge_commit": "4cf3b0ff992c0237bb778de5f1146abb198dc5eb",
+      "body": "## Product Updates\n\n- [x] Omit \u2014 release-content consolidation and activation only; no additional runtime behavior. The existing Automatic feature UUID is retained.\n\n## Summary\n\nPresent Automatic orchestration and CodeMode as one approved customer-facing feature in both What\u2019s New and GitHub releases. Include the reviewed testing results, Cloudflare background link, and the AI Behavior activation link; refresh the verified cumulative inventory through #1056.\n\nRetain the original Automatic UUID and historical CodeMode source file, redirect the source dispositions to the combined entry, and record the maintainer\u2019s explicit approval. Existing announcement receipts remain intact.\n\nFollow-up to #1015, #1024, #1046, and #1056.\n\n## Validation\n\n- `python3 scripts/product_updates.py validate` against the frozen inventory target, without draft mode.\n- `python3 scripts/product_updates.py coverage`: no unclassified sources, uncovered commits, or unrepresented highlights.\n- `python3 -m scripts.prepare_product_updates_image --target 0d04adf3a5db7f3dd2053a25a5814402d94e718f` and generated-bundle assertions: exactly one Automatic feature, in-app enabled, both links present.\n- GitHub release rendering verified; `git diff --check` passed.\n\nNo backend or frontend runtime code changed; broader runtime suites were not run locally. The merge queue remains the complete-suite gate.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1058"
     }
   ]
 }
