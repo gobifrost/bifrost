@@ -187,7 +187,7 @@ describe("shared product update content", () => {
 			);
 			expect(writeText).toHaveBeenCalledWith(prompt);
 			expect(
-				within(callout).getByRole("button", { name: "Copied!" }),
+				within(callout).getByRole("button", { name: "Copied" }),
 			).toBeVisible();
 		});
 

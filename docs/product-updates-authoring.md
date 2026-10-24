@@ -75,8 +75,8 @@ what you expect.
 ```
 
 What's New shows an Agent Prompt callout under the entry: "Copy this prompt to
-have your coding agent help you with this change.", a Copy Prompt button, and the
-prompt collapsed behind Show Prompt. Compact Fixed and Security entries and
+have your coding agent help you with this change.", a copy button, and a chevron
+that expands the prompt. Compact Fixed and Security entries and
 `in_app: false` entries don't show it. The GitHub release renders the same heading
 and sentence with the prompt in a collapsed `text` fence, which GitHub gives its
 own copy button. Posting a prompt to Discord is a manual step.

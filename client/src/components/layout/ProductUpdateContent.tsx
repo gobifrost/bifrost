@@ -1,8 +1,16 @@
-import { useEffect, useId, useState, type ReactNode } from "react";
+import {
+	useEffect,
+	useId,
+	useState,
+	type ComponentProps,
+	type ReactNode,
+} from "react";
 import {
 	Bot,
+	Check,
 	ChevronDown,
 	ChevronUp,
+	Copy,
 	ExternalLink,
 	ImageOff,
 } from "lucide-react";
@@ -11,6 +19,12 @@ import { DiscordIcon } from "@/components/icons/DiscordIcon";
 import { Github } from "@/components/icons/GithubIcon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipProvider,
+	TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type {
 	ProductUpdateAsset,
 	ProductUpdateEntry,
@@ -335,8 +349,8 @@ function AgentPrompt({ prompt }: { prompt: string }) {
 			aria-label="Agent Prompt"
 			className="mt-5 max-w-[75ch] rounded-[var(--bf-radius-surface)] border bg-muted/40 p-4"
 		>
-			<div className="flex flex-wrap items-start justify-between gap-3">
-				<div className="flex min-w-0 flex-1 basis-64 items-start gap-3">
+			<div className="flex items-start justify-between gap-3">
+				<div className="flex min-w-0 flex-1 items-start gap-3">
 					<Bot
 						aria-hidden="true"
 						className="mt-0.5 size-5 shrink-0 text-primary"
@@ -349,38 +363,33 @@ function AgentPrompt({ prompt }: { prompt: string }) {
 						</p>
 					</div>
 				</div>
-				<div className="flex flex-wrap items-center gap-1">
-					<Button
-						type="button"
-						variant="ghost"
-						size="sm"
-						className="min-h-11 sm:min-h-8"
-						aria-expanded={expanded}
-						aria-controls={promptId}
-						onClick={() => setExpanded((value) => !value)}
-					>
-						{expanded ? (
-							<ChevronUp aria-hidden="true" className="size-4" />
-						) : (
-							<ChevronDown aria-hidden="true" className="size-4" />
-						)}
-						{expanded ? "Hide Prompt" : "Show Prompt"}
-					</Button>
-					<Button
-						type="button"
-						variant="outline"
-						size="sm"
-						className="min-h-11 sm:min-h-8"
-						onClick={handleCopy}
-						disabled={copyStatus === "copying"}
-					>
-						{copyStatus === "copying"
-							? "Copying…"
-							: copyStatus === "copied"
-								? "Copied!"
-								: "Copy Prompt"}
-					</Button>
-				</div>
+				<TooltipProvider>
+					<div className="flex shrink-0 items-center gap-1">
+						<IconAction
+							label={expanded ? "Hide Prompt" : "Show Prompt"}
+							aria-expanded={expanded}
+							aria-controls={promptId}
+							onClick={() => setExpanded((value) => !value)}
+						>
+							{expanded ? <ChevronUp /> : <ChevronDown />}
+						</IconAction>
+						<IconAction
+							label={
+								copyStatus === "copied"
+									? "Copied"
+									: "Copy Prompt"
+							}
+							onClick={handleCopy}
+							disabled={copyStatus === "copying"}
+						>
+							{copyStatus === "copied" ? (
+								<Check className="text-[var(--bf-success)]" />
+							) : (
+								<Copy />
+							)}
+						</IconAction>
+					</div>
+				</TooltipProvider>
 			</div>
 			{copyStatus === "error" && (
 				<p role="alert" className="mt-3 text-sm text-destructive">
@@ -404,11 +413,31 @@ function AgentPrompt({ prompt }: { prompt: string }) {
 	);
 }
 
-function UpdateImage({
-	asset,
-}: {
-	asset: ProductUpdateAsset;
-}) {
+function IconAction({
+	label,
+	children,
+	...props
+}: ComponentProps<typeof Button> & { label: string }) {
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon-sm"
+					aria-label={label}
+					className="size-11 sm:size-8 [&_svg]:size-4"
+					{...props}
+				>
+					{children}
+				</Button>
+			</TooltipTrigger>
+			<TooltipContent>{label}</TooltipContent>
+		</Tooltip>
+	);
+}
+
+function UpdateImage({ asset }: { asset: ProductUpdateAsset }) {
 	const [failedToLoad, setFailedToLoad] = useState(false);
 	const missing = failedToLoad;
 	if (missing)
