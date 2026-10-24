@@ -1,0 +1,13 @@
+{
+  "key": "pr:1057",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Release-note authoring tooling. Admins first see an agent prompt on the #1055 upgrade entry, which carries the announcement.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1057",
+      "Implements the agent prompt design Jack approved on 2026-10-24 (docs/plans/2026-10-24-release-note-agent-prompt.md)."
+    ]
+  }
+}
