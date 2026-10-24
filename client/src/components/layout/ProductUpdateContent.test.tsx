@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, renderWithProviders, screen, within } from "@/test-utils";
+import {
+	fireEvent,
+	renderWithProviders,
+	screen,
+	waitFor,
+	within,
+} from "@/test-utils";
 import type { ProductUpdateEntry } from "@/services/productUpdates";
 import {
 	CommunityFooter,
@@ -140,6 +146,91 @@ describe("shared product update content", () => {
 		fireEvent.error(screen.getByRole("img", { name: "Roles" }));
 		expect(screen.getByText("Screenshot unavailable: Roles")).toBeVisible();
 	});
+	describe("agent prompt", () => {
+		const prompted: ProductUpdateEntry = {
+			...entry,
+			type: "Improved",
+			agent_prompt: {
+				needs: "your docker-compose.yml and shell",
+				prompt: "Inspect my setup, then wait for my confirmation.",
+			},
+		};
+
+		// renderWithProviders installs userEvent's clipboard, so stub after rendering.
+		function stubClipboard(writeText: (text: string) => Promise<void>) {
+			Object.defineProperty(navigator, "clipboard", {
+				value: { writeText },
+				configurable: true,
+			});
+		}
+
+		it("copies the prompt verbatim and announces it", async () => {
+			renderWithProviders(<UpdateEntry entry={prompted} />);
+			const writeText = vi.fn().mockResolvedValue(undefined);
+			stubClipboard(writeText);
+			const callout = screen.getByRole("region", {
+				name: "Do It With an Agent",
+			});
+			expect(
+				within(callout).getByText(
+					"Copy this prompt into an agent that can reach your docker-compose.yml and shell.",
+				),
+			).toBeVisible();
+			expect(
+				within(callout).getByLabelText("Do It With an Agent prompt"),
+			).toHaveTextContent(
+				"Inspect my setup, then wait for my confirmation.",
+			);
+
+			fireEvent.click(
+				within(callout).getByRole("button", { name: "Copy Prompt" }),
+			);
+
+			await waitFor(() =>
+				expect(screen.getByRole("status")).toHaveTextContent(
+					"Prompt copied to clipboard.",
+				),
+			);
+			expect(writeText).toHaveBeenCalledWith(
+				"Inspect my setup, then wait for my confirmation.",
+			);
+			expect(
+				within(callout).getByRole("button", { name: "Copied!" }),
+			).toBeVisible();
+		});
+
+		it("tells the admin to copy by hand when the clipboard fails", async () => {
+			renderWithProviders(
+				<UpdateEntry
+					entry={{
+						...prompted,
+						agent_prompt: {
+							...prompted.agent_prompt!,
+							title: "Upgrade With an Agent",
+						},
+					}}
+				/>,
+			);
+			stubClipboard(vi.fn().mockRejectedValue(new Error("denied")));
+
+			fireEvent.click(screen.getByRole("button", { name: "Copy Prompt" }));
+
+			expect(await screen.findByRole("alert")).toHaveTextContent(
+				"Could not copy. Select and copy the prompt text, or try again.",
+			);
+			expect(
+				screen.getByRole("region", { name: "Upgrade With an Agent" }),
+			).toBeVisible();
+		});
+
+		it("is left out of compact correction entries", () => {
+			renderWithProviders(<UpdateEntry entry={prompted} compact />);
+			expect(
+				screen.queryByRole("button", { name: "Copy Prompt" }),
+			).not.toBeInTheDocument();
+		});
+	});
+
 	it("keeps the three branded community destinations in the same order", () => {
 		renderWithProviders(<CommunityFooter />);
 		const links = screen.getAllByRole("link");

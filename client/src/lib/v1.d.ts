@@ -24541,6 +24541,18 @@ export interface components {
              */
             is_alive: boolean;
         };
+        /**
+         * ProductUpdateAgentPrompt
+         * @description A reviewed prompt an admin copies into an agent to apply the change.
+         */
+        ProductUpdateAgentPrompt: {
+            /** Needs */
+            needs: string;
+            /** Prompt */
+            prompt: string;
+            /** Title */
+            title?: string | null;
+        };
         /** ProductUpdateAsset */
         ProductUpdateAsset: {
             /** Path */
@@ -24596,6 +24608,7 @@ export interface components {
             contributors: components["schemas"]["ProductUpdateContributor"][];
             /** Assets */
             assets: components["schemas"]["ProductUpdateAsset"][];
+            agent_prompt?: components["schemas"]["ProductUpdateAgentPrompt"] | null;
             /** Additional Areas */
             additional_areas?: string[] | null;
             /** Release */

@@ -31,6 +31,13 @@ release, aggregate the eligible approved entries since the previous final and
 freeze the complete body. Publishing consumes that prepared body without a new
 writing pass. Draft or staged entries never activate production announcements.
 
+For every action-required or recommended-upgrade entry, ask whether it should
+carry an `agent_prompt` (a copy-into-an-agent prompt that applies the change) and
+list each one without a prompt in the review summary. Breaking changes,
+recommended upgrade steps, and first-time setup of a new capability normally get
+one; ordinary features don't. Follow the authoring guide's Agent Prompts section
+and its template; the prompt is reviewed with the entry.
+
 After a source PR lands, refresh the cumulative verified inventory and commit the
 metadata in a content follow-up PR before considering its announcement delivered.
 Keep its reviewed UUID and prose; cite the actual landed PR/commit. Validate the

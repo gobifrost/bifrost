@@ -30,6 +30,11 @@ TYPES = {"New", "Improved", "Fixed", "Security"}
 SHA = re.compile(r"^[0-9a-f]{40}$")
 RAW_HTML = re.compile(r"<[A-Za-z][^>]*>")
 REMOTE_IMAGE = re.compile(r"!\[[^]]*\]\(https?://", re.I)
+PROMPT_URL = re.compile(r"(?:https?://|www\.)[^\s)]+", re.I)
+BIFROST_DOCS_HOSTS = {"gobifrost.com", "www.gobifrost.com", "docs.gobifrost.com"}
+AGENT_PROMPT_WORD_LIMIT = 400
+AGENT_PROMPT_CONFIRMATION = "wait for my confirmation"
+AGENT_PROMPT_TITLE = "Do It With an Agent"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 DISPOSITION_KEY = re.compile(r"^[A-Za-z0-9]+(?::[A-Za-z0-9]+)*$")
 DISPOSITION_FILE = re.compile(r"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*\.json$")
@@ -150,6 +155,38 @@ def _url(value: Any) -> bool:
 def unsafe_markdown(markdown: str) -> bool:
     prose = re.sub(r"`[^`]*`", "", markdown)
     return bool(RAW_HTML.search(prose) or REMOTE_IMAGE.search(prose))
+
+
+def agent_prompt_errors(entry: dict[str, Any], label: str) -> list[str]:
+    """Check the copy-into-an-agent prompt; the schema already checks its shape."""
+    agent_prompt = entry.get("agent_prompt")
+    if not isinstance(agent_prompt, dict) or not isinstance(
+        agent_prompt.get("prompt"), str
+    ):
+        return []
+    prompt = agent_prompt["prompt"]
+    text = "\n".join(value for value in agent_prompt.values() if isinstance(value, str))
+    errors: list[str] = []
+    if len(prompt.split()) > AGENT_PROMPT_WORD_LIMIT:
+        errors.append(f"{label}: agent_prompt exceeds {AGENT_PROMPT_WORD_LIMIT} words")
+    if RAW_HTML.search(text):
+        errors.append(f"{label}: agent_prompt must not contain raw HTML")
+    if "`" in text:
+        errors.append(f"{label}: agent_prompt must not contain backticks")
+    for url in PROMPT_URL.findall(text):
+        parsed = urlparse(url if "://" in url else f"https://{url}")
+        if parsed.netloc.lower() not in BIFROST_DOCS_HOSTS and not (
+            parsed.netloc.lower() == "github.com"
+            and parsed.path.lower().startswith("/gobifrost/")
+        ):
+            errors.append(
+                f"{label}: agent_prompt links only to the Bifrost docs or github.com/gobifrost, not {url}"
+            )
+    if AGENT_PROMPT_CONFIRMATION not in " ".join(prompt.lower().split()):
+        errors.append(
+            f"{label}: agent_prompt must tell the agent to {AGENT_PROMPT_CONFIRMATION!r} before changing anything"
+        )
+    return errors
 
 
 def markdown_asset_errors(entry: dict[str, Any], label: str) -> list[str]:
@@ -426,6 +463,7 @@ def validate_entry(
         errors.append(f"{label}: update title exceeds 10 words")
     if unsafe_markdown(entry["markdown"]):
         errors.append(f"{label}: raw HTML or executable embeds are not allowed")
+    errors.extend(agent_prompt_errors(entry, label))
     assets = entry["assets"]
     if not isinstance(assets, list):
         errors.append(f"{label}: assets must be a list")
@@ -894,6 +932,21 @@ def render_release(bundle: dict[str, Any], asset_base_url: str) -> str:
                 lines.extend([f"![{asset['alt']}]({url})", ""])
                 if asset.get("caption"):
                     lines.extend([asset["caption"], ""])
+            agent_prompt = entry.get("agent_prompt")
+            if agent_prompt:
+                # A fence keeps the prompt verbatim; GitHub adds its copy button.
+                lines.extend(
+                    [
+                        f"#### {agent_prompt.get('title') or AGENT_PROMPT_TITLE}",
+                        "",
+                        f"Copy this prompt into an agent that can reach {agent_prompt['needs']}.",
+                        "",
+                        "```text",
+                        agent_prompt["prompt"].strip("\n"),
+                        "```",
+                        "",
+                    ]
+                )
             source_links = [
                 f"[#{source['pr']}](https://github.com/gobifrost/bifrost/pull/{source['pr']})"
                 if "pr" in source
@@ -1393,6 +1446,7 @@ def main() -> int:
                         f"{entry['_path']}: raw HTML or executable embeds are not allowed"
                     )
                 errors.extend(markdown_asset_errors(entry, str(entry["_path"])))
+                errors.extend(agent_prompt_errors(entry, str(entry["_path"])))
                 for asset in entry.get("assets", []):
                     error = (
                         _asset_error(args.content_dir, asset)

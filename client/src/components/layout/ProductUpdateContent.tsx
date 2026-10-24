@@ -1,9 +1,10 @@
-import { useState, type ReactNode } from "react";
-import { ExternalLink, ImageOff } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Bot, ExternalLink, ImageOff } from "lucide-react";
 import { MarkdownContent } from "@/components/common/MarkdownContent";
 import { DiscordIcon } from "@/components/icons/DiscordIcon";
 import { Github } from "@/components/icons/GithubIcon";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import type {
 	ProductUpdateAsset,
 	ProductUpdateEntry,
@@ -107,6 +108,9 @@ export function UpdateEntry({
 					},
 				}}
 			/>
+			{!compact && entry.agent_prompt && (
+				<AgentPrompt agentPrompt={entry.agent_prompt} />
+			)}
 			{!compact &&
 				(entry.sources.length > 0 || entry.contributors.length > 0) && (
 					<details className="mt-4 text-sm text-muted-foreground">
@@ -291,6 +295,89 @@ function CorrectionLists({
 				);
 			})}
 		</>
+	);
+}
+
+function AgentPrompt({
+	agentPrompt,
+}: {
+	agentPrompt: NonNullable<ProductUpdateEntry["agent_prompt"]>;
+}) {
+	const [copyStatus, setCopyStatus] = useState<
+		"idle" | "copying" | "copied" | "error"
+	>("idle");
+	const title = agentPrompt.title ?? "Do It With an Agent";
+
+	useEffect(() => {
+		if (copyStatus !== "copied") return;
+		const timer = setTimeout(() => setCopyStatus("idle"), 1500);
+		return () => clearTimeout(timer);
+	}, [copyStatus]);
+
+	async function handleCopy() {
+		if (copyStatus === "copying") return;
+		setCopyStatus("copying");
+		try {
+			if (!navigator.clipboard?.writeText)
+				throw new Error("Clipboard unavailable");
+			await navigator.clipboard.writeText(agentPrompt.prompt);
+			setCopyStatus("copied");
+		} catch {
+			setCopyStatus("error");
+		}
+	}
+
+	return (
+		<section
+			aria-label={title}
+			className="mt-5 max-w-[75ch] space-y-3 rounded-[var(--bf-radius-surface)] border bg-muted/40 p-4"
+		>
+			<div className="flex flex-wrap items-start justify-between gap-3">
+				<div className="flex min-w-0 flex-1 basis-64 items-start gap-3">
+					<Bot
+						aria-hidden="true"
+						className="mt-0.5 size-5 shrink-0 text-primary"
+					/>
+					<div className="min-w-0">
+						<h5 className="font-semibold">{title}</h5>
+						<p className="text-sm text-muted-foreground">
+							Copy this prompt into an agent that can reach{" "}
+							{agentPrompt.needs}.
+						</p>
+					</div>
+				</div>
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					className="min-h-11 sm:min-h-8"
+					onClick={handleCopy}
+					disabled={copyStatus === "copying"}
+				>
+					{copyStatus === "copying"
+						? "Copying…"
+						: copyStatus === "copied"
+							? "Copied!"
+							: "Copy Prompt"}
+				</Button>
+			</div>
+			{copyStatus === "error" && (
+				<p role="alert" className="text-sm text-destructive">
+					Could not copy. Select and copy the prompt text, or try
+					again.
+				</p>
+			)}
+			<span role="status" className="sr-only">
+				{copyStatus === "copied" ? "Prompt copied to clipboard." : ""}
+			</span>
+			<pre
+				aria-label={`${title} prompt`}
+				tabIndex={0}
+				className="max-h-[16.5rem] overflow-auto whitespace-pre-wrap rounded-[var(--bf-radius-control)] border bg-background p-3 font-mono text-xs leading-5 [overflow-wrap:anywhere]"
+			>
+				{agentPrompt.prompt}
+			</pre>
+		</section>
 	);
 }
 

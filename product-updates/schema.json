@@ -71,6 +71,28 @@
       ],
       "additionalProperties": false
     },
+    "agentPrompt": {
+      "type": "object",
+      "required": [
+        "needs",
+        "prompt"
+      ],
+      "properties": {
+        "needs": {
+          "type": "string",
+          "minLength": 1
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
     "entry": {
       "type": "object",
       "required": [
@@ -261,6 +283,9 @@
             },
             "additionalProperties": false
           }
+        },
+        "agent_prompt": {
+          "$ref": "#/$defs/agentPrompt"
         },
         "review": {
           "$ref": "#/$defs/review"
@@ -530,6 +555,9 @@
           "items": {
             "$ref": "#/$defs/bundleAsset"
           }
+        },
+        "agent_prompt": {
+          "$ref": "#/$defs/agentPrompt"
         },
         "additional_areas": {
           "type": "array",
