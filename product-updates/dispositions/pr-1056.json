@@ -1,14 +1,14 @@
 {
   "key": "pr:1056",
-  "classification": "other",
-  "entry_ids": [],
-  "summary": "Automatic agents batch tool work more efficiently in chat and background runs without changing workflow or MCP result formats.",
-  "category": "fix",
+  "classification": "highlight",
+  "entry_ids": [
+    "250a294a-6072-4b82-a2c7-0027b3b5af65"
+  ],
   "review": {
-    "status": "approved",
+    "status": "draft",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1056",
-      "Maintainer authorized completing the native Automatic integration on 2026-10-24. Concise corrective summary; no percentage savings, universal quality claim, new capability headline, or customer upgrade action. The draft PR remains gated on the complete frozen benchmark and review."
+      "Groups Automatic orchestration, CodeMode, and native runtime improvements in the existing Automatic feature UUID at maintainer request on 2026-10-24. Revised canonical copy and measured claims await maintainer approval."
     ]
   }
 }
