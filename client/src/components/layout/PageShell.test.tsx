@@ -11,9 +11,16 @@ const auth = {
 	endImpersonation: vi.fn(),
 };
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => auth }));
+const page = { suspended: false };
+const neverLoads = new Promise<never>(() => {});
+function RoutedPage() {
+	// A lazy page or lazy child that has not loaded yet.
+	if (page.suspended) throw neverLoads;
+	return <p>Page content</p>;
+}
 vi.mock("react-router-dom", async (original) => ({
 	...(await original<typeof import("react-router-dom")>()),
-	Outlet: () => <p>Page content</p>,
+	Outlet: () => <RoutedPage />,
 }));
 vi.mock("./Header", () => ({
 	Header: () => <header>Workspace header</header>,
@@ -24,6 +31,7 @@ vi.mock("./Sidebar", () => ({
 vi.mock("@/components/NoAccess", () => ({ NoAccess: () => <p>No access</p> }));
 import { PageShell } from "./PageShell";
 beforeEach(() => {
+	page.suspended = false;
 	auth.isAuthenticated = true;
 	auth.isLoading = false;
 	auth.isPlatformAdmin = true;
@@ -46,6 +54,13 @@ describe("PageShell access contract", () => {
 		renderWithProviders(<PageShell />);
 		expect(screen.getByText("Page content")).toBeVisible();
 		expect(screen.getByRole("navigation")).toBeVisible();
+	});
+	it("keeps the navigation and header while a page is still loading", () => {
+		page.suspended = true;
+		renderWithProviders(<PageShell />);
+		expect(screen.getByRole("navigation")).toBeVisible();
+		expect(screen.getByRole("banner")).toBeVisible();
+		expect(screen.getByRole("status")).toHaveTextContent("Loading page");
 	});
 	it("keeps embed content free of the workspace chrome", () => {
 		auth.isPlatformAdmin = false;
