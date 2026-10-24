@@ -142,7 +142,10 @@ from src.services.application_sdk_status import (
     load_current_sdk_metadata,
     sdk_source_available,
 )
-from src.services.platform_job_memory_profiles import build_solution_memory_profile_key
+from src.services.platform_job_memory_profiles import (
+    build_resource_memory_profile_key,
+    build_solution_memory_profile_key,
+)
 from src.services.solutions.deploy_job_storage import SolutionDeployJobStorage
 from shared.solution_deploy_status import project_solution_deploy_job_status
 from src.services.solutions.deploy import (
@@ -634,7 +637,7 @@ async def _enqueue_solution_deploy_job(
     requested_by_name: str,
     input_path: Path | None = None,
     input_bytes: bytes | None = None,
-    memory_profile_key: str | None = None,
+    memory_profile_key: str,
 ) -> SolutionDeployJob:
     """Stage one validated input and atomically expose its central job row."""
     if (input_path is None) == (input_bytes is None):
@@ -1472,6 +1475,9 @@ async def create_solution_export_job(
         resource_id=str(row.id),
         title=f"Exporting {sol.name}",
         action_url=f"/solutions/{solution_id}",
+        memory_profile_key=build_resource_memory_profile_key(
+            SOLUTION_EXPORT_DEFINITION.job_type, solution_id
+        ),
     )
     await ctx.db.commit()
     await ctx.db.refresh(row)
@@ -3034,6 +3040,9 @@ async def sync_solution(
         resource_id=str(solution_id),
         title=f"Update {solution.name} from Git",
         action_url=f"/solutions/{solution_id}",
+        memory_profile_key=build_resource_memory_profile_key(
+            SOLUTION_GIT_SYNC_DEFINITION.job_type, solution_id
+        ),
     )
     if job.notification_id is None:
         await ensure_platform_job_notification(ctx.db, job)

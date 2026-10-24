@@ -1,4 +1,16 @@
-"""Reconcile resource-isolated PlatformJob attempts without occupying local slots."""
+"""Reconcile resource-isolated PlatformJob attempts without occupying local slots.
+
+Each pass reads Settings -> Kubernetes. With isolated jobs on, a queued
+isolated job is claimed for a pod sized by the worker sizing rule
+(``worker_pool.sizing``) while fewer than Max isolated pods run. With them
+off, nothing new is placed in Kubernetes: pods already running are
+reconciled until they end, and queued isolated jobs not yet placed move to
+the local backend, where a worker runs them, admitted by memory like any
+local platform job.
+
+Isolated pods run as worker Jobs do (``resolve_worker_job_spec``): the Job
+identity settings when set, else a copy of this controller's pod.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -13,17 +25,25 @@ from sqlalchemy import select
 from src.config import Settings, get_settings
 from src.core.database import get_db_context
 from src.jobs.platform.kubernetes_client import (
+    KubernetesApiError,
     KubernetesConfigurationError,
     KubernetesJobClient,
     build_job_manifest,
     oom_killed,
-    validate_build_settings,
 )
 from src.jobs.platform.registry import get_platform_job_definition
-from src.jobs.schedulers.platform_jobs import ClaimedPlatformJob, _handle_runner_loss, claim_platform_job
+from src.jobs.schedulers.platform_jobs import (
+    ClaimedPlatformJob,
+    IsolatedPods,
+    _handle_runner_loss,
+    claim_platform_job,
+)
 from src.models.orm.platform_jobs import PlatformJob
 from src.services.kubernetes_execution import load_kubernetes_policy
+from src.services.memory_requests import MIB
 from src.services.platform_jobs import publish_platform_job_update
+from src.services.worker_pool.manifest import WorkerJobSpec, resolve_worker_job_spec
+from src.services.worker_pool.sizing import load_job_sizing
 
 logger = logging.getLogger(__name__)
 _ACTIVE = ("running", "cancel_requested")
@@ -39,6 +59,7 @@ def _pods_stopped(pods: list[dict[str, Any]]) -> bool:
 
 def _failure(job: dict[str, Any], pods: list[dict[str, Any]]) -> tuple[str, str]:
     if oom_killed(pods):
+        # The runner's own memory guard reports the same code.
         return "memory_pressure", "The build pod exceeded its memory limit."
     for condition in job.get("status", {}).get("conditions", []):
         if condition.get("status") == "True" and condition.get("reason") == "DeadlineExceeded":
@@ -58,33 +79,76 @@ def _pending_phase(pods: list[dict[str, Any]]) -> str:
     return "Waiting for Kubernetes build pod"
 
 
+async def _return_unplaced_to_local(db: Any) -> list[PlatformJob]:
+    """Queued isolated jobs not yet placed in Kubernetes move to the local
+    backend (isolated jobs are off)."""
+    jobs = (
+        await db.scalars(
+            select(PlatformJob)
+            .where(
+                PlatformJob.status == "queued",
+                PlatformJob.execution_backend == "kubernetes",
+                PlatformJob.kubernetes_job_name.is_(None),
+            )
+            .with_for_update(skip_locked=True)
+        )
+    ).all()
+    for job in jobs:
+        job.execution_backend = "local"
+        if job.phase is not None and job.phase.startswith("Waiting for Kubernetes"):
+            job.phase = "Queued"
+        job.revision += 1
+    return list(jobs)
+
+
 class KubernetesBuildController:
-    def __init__(self, client: KubernetesJobClient, settings: Settings) -> None:
+    def __init__(
+        self, client: KubernetesJobClient, settings: Settings, spec: WorkerJobSpec
+    ) -> None:
         self.client = client
         self.settings = settings
+        self.spec = spec
 
     async def reconcile(self) -> None:
         # Existing ownership is reconciled before admitting more remote work.
+        returned: list[PlatformJob] = []
         async with get_db_context() as db:
             # Settings -> Kubernetes, read every pass.
             policy = await load_kubernetes_policy(db)
+            if not policy.isolated_jobs_enabled:
+                returned = await _return_unplaced_to_local(db)
+                await db.commit()
             ids = (await db.scalars(select(PlatformJob.id).where(
                 PlatformJob.execution_backend == "kubernetes",
                 PlatformJob.kubernetes_job_name.is_not(None),
             ))).all()
+        for job in returned:
+            await publish_platform_job_update(job)
+        standard_limit = policy.worker_memory_mib * MIB
         for job_id in ids:
-            await self.reconcile_job(job_id)
+            await self.reconcile_job(job_id, standard_limit)
+        if not policy.isolated_jobs_enabled:
+            return
+        async with get_db_context() as db:
+            sizing = await load_job_sizing(db, policy, self.settings.memory_pressure_threshold)
         claim = await claim_platform_job(
             backend="kubernetes",
-            remote_limit=policy.max_isolated_pods,
-            remote_memory_bytes=policy.worker_memory_mib * 1024 * 1024,
+            isolated=IsolatedPods(
+                namespace=self.client.namespace,
+                max_pods=policy.max_isolated_pods,
+                sizing=sizing,
+            ),
         )
         if claim is not None:
-            await self.reconcile_job(claim.id)
+            await self.reconcile_job(claim.id, standard_limit)
 
-    async def reconcile_job(self, job_id: UUID) -> None:
+    async def reconcile_job(self, job_id: UUID, standard_limit_bytes: int) -> None:
+        """``standard_limit_bytes`` is Worker memory: a pod claimed with
+        another limit is sized and requests its whole limit."""
         changed: PlatformJob | None = None
         loss: tuple[UUID, str, str] | None = None
+        # Kubernetes stopped the pod at its memory limit.
+        out_of_memory = False
         # The row lock serializes controllers. API calls are bounded by the
         # client's request timeout; remote admission cannot precede UID commit.
         async with get_db_context() as db:
@@ -127,7 +191,11 @@ class KubernetesBuildController:
             if row.memory_limit_bytes is None:
                 raise RuntimeError("Active Kubernetes build has no memory limit")
             manifest = build_job_manifest(
-                claim, self.settings, memory_limit_bytes=row.memory_limit_bytes
+                claim,
+                self.settings,
+                self.spec,
+                memory_limit_bytes=row.memory_limit_bytes,
+                sized=row.memory_limit_bytes != standard_limit_bytes,
             )
             if remote is not None:
                 expected = manifest["metadata"]["labels"]
@@ -176,6 +244,7 @@ class KubernetesBuildController:
                 )):
                     code, message = _failure(remote, pods)
                     loss = (token, code, message)
+                    out_of_memory = oom_killed(pods)
                 elif row.runner_started_at is None:
                     phase = _pending_phase(pods)
                     if row.phase != phase:
@@ -187,22 +256,34 @@ class KubernetesBuildController:
             await publish_platform_job_update(changed)
         if loss is not None:
             token, code, message = loss
-            await _handle_runner_loss(job_id, token, error_code=code, error_message=message)
+            await _handle_runner_loss(
+                job_id,
+                token,
+                error_code=code,
+                error_message=message,
+                out_of_memory=out_of_memory,
+            )
 
 
 async def kubernetes_build_loop(shutdown_event: asyncio.Event) -> None:
     settings = get_settings()
     try:
-        client = KubernetesJobClient(settings, namespace=validate_build_settings(settings))
+        client = KubernetesJobClient(settings)
     except KubernetesConfigurationError as exc:
-        # A deployment that enables the backend without cluster credentials
-        # (wrong environment, missing token mount) must not take down the
-        # scheduler: remote builds wait visibly while local work continues.
-        # Fixing this needs a restart, so idle until shutdown.
+        # Not in a cluster (wrong environment, missing token mount): the
+        # host process must not go down. Fixing this needs a restart.
         logger.error("Kubernetes build controller disabled: %s", exc)
         await shutdown_event.wait()
         return
-    controller = KubernetesBuildController(client, settings)
+    try:
+        spec = await resolve_worker_job_spec(client, settings)
+    except (KubernetesConfigurationError, KubernetesApiError) as exc:
+        # Isolated jobs wait visibly while local work continues.
+        logger.error("Kubernetes build controller disabled: %s", exc)
+        await client.close()
+        await shutdown_event.wait()
+        return
+    controller = KubernetesBuildController(client, settings, spec)
     try:
         while not shutdown_event.is_set():
             try:

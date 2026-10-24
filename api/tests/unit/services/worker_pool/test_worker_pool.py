@@ -42,7 +42,7 @@ from src.services.memory_requests import (
     MIB,
     WORKFLOW_REQUEST_MARGIN_BYTES,
 )
-from src.services.worker_pool import claims, controller, liveness, maintenance, recovery
+from src.services.worker_pool import claims, controller, liveness, maintenance, recovery, sizing
 from src.services.worker_pool.manifest import WorkerJobSpec, build_worker_job_manifest
 
 GIB = 1024 * MIB
@@ -163,7 +163,7 @@ async def db(async_session_factory: async_sessionmaker[AsyncSession], monkeypatc
     monkeypatch.setattr("src.services.execution.queue_tracker.add_to_queue", AsyncMock())
     await _delete_policy(async_session_factory)
     await _store_policy(async_session_factory, POLICY)
-    yield SimpleNamespace(sessions=async_session_factory, wake=wake)
+    yield SimpleNamespace(sessions=async_session_factory, wake=wake, context=context)
     await _delete_policy(async_session_factory)
 
 
@@ -429,7 +429,7 @@ def test_the_job_baseline_learns_from_sized_jobs_too() -> None:
         form="job", memory_limit_bytes=4 * GIB, memory_budget_bytes=2 * GIB
     )
     expected = int(4 * GIB * SETTINGS.memory_pressure_threshold) - 2 * GIB
-    assert controller._job_baseline([sized], 2 * GIB, SETTINGS.memory_pressure_threshold) == expected
+    assert sizing.job_baseline([sized], 2 * GIB, SETTINGS.memory_pressure_threshold) == expected
 
 
 async def test_a_sized_job_drains_when_idle_and_is_never_the_warm_minimum(db) -> None:
@@ -1227,7 +1227,9 @@ async def test_a_platform_job_no_executor_can_hold_fails_visibly(db) -> None:
     async with db.sessions() as session:
         session.add_all([large, small])
         await session.commit()
-        failed = await unfit.fail_platform_jobs_that_never_fit(session, 512 * MIB)
+        failed = await unfit.fail_platform_jobs_that_never_fit(
+            session, 512 * MIB, largest_pod=8 * GIB
+        )
         await session.commit()
         statuses = {
             row.id: (row.status, row.error_code)
@@ -1242,6 +1244,94 @@ async def test_a_platform_job_no_executor_can_hold_fails_visibly(db) -> None:
 
     assert [row.id for row in failed] == [large.id]
     assert statuses == {large.id: ("failed", "too_large"), small.id: ("queued", None)}
+
+
+async def test_an_isolated_job_no_pod_can_hold_fails_visibly(db) -> None:
+    """Compared with a pod at Largest worker, even before any executor has
+    reported; one already placed in Kubernetes is left to its pod."""
+    from src.models.orm.platform_jobs import PlatformJob
+    from src.services.worker_pool import unfit
+
+    def job(required: int, **values: Any) -> PlatformJob:
+        return PlatformJob(
+            job_type="application.deploy", payload={}, requested_by_user_id=str(uuid4()),
+            requested_by_email="person@contoso.example", requested_by_name="Contoso User",
+            title="Contoso Deploy", memory_required_bytes=required,
+            execution_backend="kubernetes", **values,
+        )
+
+    largest_pod = 6 * GIB
+    large, small = job(7 * GIB), job(GIB)
+    placed = job(7 * GIB, status="running", kubernetes_job_name="bifrost-job-placed")
+    async with db.sessions() as session:
+        session.add_all([large, small, placed])
+        await session.commit()
+        ids = [large.id, small.id, placed.id]
+        failed = await unfit.fail_platform_jobs_that_never_fit(
+            session, None, largest_pod=largest_pod
+        )
+        await session.commit()
+        rows = {
+            row.id: (row.status, row.error_code, row.error_message)
+            for row in (
+                await session.scalars(select(PlatformJob).where(PlatformJob.id.in_(ids)))
+            ).all()
+        }
+        await session.execute(delete(PlatformJob).where(PlatformJob.id.in_(ids)))
+        await session.commit()
+
+    assert [row.id for row in failed] == [large.id]
+    assert rows[large.id] == (
+        "failed",
+        "too_large",
+        "This work needs 7168 MiB of memory; the largest executor can hold 6144 MiB.",
+    )
+    assert rows[small.id][:2] == ("queued", None)
+    assert rows[placed.id][:2] == ("running", None)
+
+
+async def test_the_sweep_fails_isolated_jobs_by_the_settings_largest_pod(db, monkeypatch) -> None:
+    """The largest pod is Settings -> Kubernetes Largest worker at the
+    threshold and the Job baseline, whatever the executors report."""
+    from src.models.orm.platform_jobs import PlatformJob
+    from src.services.memory_requests import JOB_BASELINE_ESTIMATE_BYTES
+    from src.services.worker_pool import unfit
+
+    await _clear_pool_state(db.sessions)
+    monkeypatch.setattr(unfit, "get_db_context", db.context)
+    policy = replace(POLICY, largest_worker_mib=4096)
+    await _store_policy(db.sessions, policy)
+    budget = sizing.JobSizing.of(
+        policy, SETTINGS.memory_pressure_threshold, JOB_BASELINE_ESTIMATE_BYTES
+    ).largest_budget_bytes
+    over, fits = (
+        PlatformJob(
+            job_type="application.deploy", payload={}, requested_by_user_id=str(uuid4()),
+            requested_by_email="person@contoso.example", requested_by_name="Contoso User",
+            title="Contoso Deploy", memory_required_bytes=required,
+            execution_backend="kubernetes",
+        )
+        for required in (budget + 1, budget)
+    )
+    async with db.sessions() as session:
+        session.add_all([over, fits])
+        await session.commit()
+    try:
+        await unfit.settle_work_that_never_fits()
+        async with db.sessions() as session:
+            statuses = {
+                row.id: row.status
+                for row in (
+                    await session.scalars(
+                        select(PlatformJob).where(PlatformJob.id.in_([over.id, fits.id]))
+                    )
+                ).all()
+            }
+        assert statuses == {over.id: "failed", fits.id: "queued"}
+    finally:
+        async with db.sessions() as session:
+            await session.execute(delete(PlatformJob).where(PlatformJob.id.in_([over.id, fits.id])))
+            await session.commit()
 
 
 async def test_a_platform_job_waiting_for_memory_launches_a_worker(db) -> None:

@@ -6,7 +6,7 @@ import hashlib
 import os
 import ssl
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 from uuid import UUID
 
@@ -14,6 +14,9 @@ import httpx
 
 from src.config import get_settings
 from src.jobs.schedulers.platform_jobs import ClaimedPlatformJob
+
+if TYPE_CHECKING:
+    from src.services.worker_pool.manifest import WorkerJobSpec
 
 SERVICE_ACCOUNT_ROOT = Path("/var/run/secrets/kubernetes.io/serviceaccount")
 SERVICE_ACCOUNT_TOKEN_PATH = SERVICE_ACCOUNT_ROOT / "token"
@@ -40,13 +43,6 @@ class KubernetesApiError(RuntimeError):
         self.status_code = status_code
 
 
-def _required_setting(settings: Any, name: str) -> Any:
-    value = getattr(settings, name, None)
-    if value is None or value == "":
-        raise KubernetesConfigurationError(f"Missing required setting: {name}")
-    return value
-
-
 def in_cluster_namespace() -> str | None:
     """The namespace of this pod's service account, when running in a cluster."""
     try:
@@ -55,18 +51,20 @@ def in_cluster_namespace() -> str | None:
         return None
 
 
-def validate_build_settings(settings: Any) -> str:
-    """The settings remote platform-job builds require; returns the namespace."""
-    return _validate_required_settings(settings)
-
-
-def _validate_required_settings(settings: Any) -> str:
-    namespace = str(_required_setting(settings, "kubernetes_job_namespace"))
-    _required_setting(settings, "kubernetes_job_image")
-    _required_setting(settings, "kubernetes_job_configmap")
-    _required_setting(settings, "kubernetes_job_secret")
-    _required_setting(settings, "kubernetes_job_service_account")
-    return namespace
+def memory_resources(
+    limit_bytes: int, *, sized: bool, standard_request_mib: int
+) -> tuple[str, str]:
+    """A Job container's memory request and limit (one rule for worker Jobs
+    and isolated pods, ``worker_pool.sizing``). A sized Job requests its
+    whole limit; a standard one the deployment's request, which must fit."""
+    limit_mib = limit_bytes // 2**20
+    if sized:
+        return f"{limit_mib}Mi", f"{limit_mib}Mi"
+    if standard_request_mib > limit_mib:
+        raise KubernetesConfigurationError(
+            "pool_worker_memory_request_mib must not exceed Worker memory"
+        )
+    return f"{standard_request_mib}Mi", f"{limit_mib}Mi"
 
 
 def oom_killed(pods: list[dict[str, Any]]) -> bool:
@@ -120,34 +118,30 @@ def _service_host_url(host: str, port: str) -> str:
 
 def build_job_manifest(
     claim: ClaimedPlatformJob,
-    settings: Any | None = None,
+    settings: Any,
+    spec: WorkerJobSpec,
     *,
     memory_limit_bytes: int,
+    sized: bool,
 ) -> dict[str, Any]:
     """Render the suspended Kubernetes Job for one claimed platform build.
 
-    The pod requests a standard worker's memory request and is limited to
-    ``memory_limit_bytes``, the limit its claim recorded.
+    The pod runs as ``spec`` says, the identity worker Jobs use: the Job
+    identity settings when set, else a copy of the controller's own pod.
+    ``memory_limit_bytes`` is the limit its claim recorded. A standard pod
+    requests the worker memory request; a sized pod requests its whole
+    limit (``worker_pool.sizing``).
     """
 
-    settings = settings or get_settings()
-    namespace = _required_setting(settings, "kubernetes_job_namespace")
-    image = _required_setting(settings, "kubernetes_job_image")
-    configmap = _required_setting(settings, "kubernetes_job_configmap")
-    secret = _required_setting(settings, "kubernetes_job_secret")
-    service_account = _required_setting(settings, "kubernetes_job_service_account")
-    memory_request_mib = int(settings.pool_worker_memory_request_mib)
-    memory_limit_mib = memory_limit_bytes // (1024 * 1024)
-    if memory_request_mib > memory_limit_mib:
-        raise KubernetesConfigurationError(
-            "pool_worker_memory_request_mib must not exceed the pod's memory limit"
-        )
+    memory_request, memory_limit = memory_resources(
+        memory_limit_bytes,
+        sized=sized,
+        standard_request_mib=int(settings.pool_worker_memory_request_mib),
+    )
     cpu_request = str(settings.kubernetes_job_cpu_request)
     cpu_limit = str(settings.kubernetes_job_cpu_limit)
     pending_timeout = int(settings.kubernetes_job_pending_timeout_seconds)
 
-    memory_request = f"{memory_request_mib}Mi"
-    memory_limit = f"{memory_limit_mib}Mi"
     name = _job_name(claim)
     labels = {
         "app.kubernetes.io/name": "bifrost-platform-job",
@@ -162,7 +156,7 @@ def build_job_manifest(
         "kind": "Job",
         "metadata": {
             "name": name,
-            "namespace": namespace,
+            "namespace": spec.namespace,
             "labels": labels,
         },
         "spec": {
@@ -178,7 +172,7 @@ def build_job_manifest(
                 "metadata": {"labels": labels},
                 "spec": {
                     "restartPolicy": "Never",
-                    "serviceAccountName": service_account,
+                    "serviceAccountName": spec.service_account,
                     "automountServiceAccountToken": False,
                     "securityContext": {
                         "runAsNonRoot": True,
@@ -189,8 +183,8 @@ def build_job_manifest(
                     "containers": [
                         {
                             "name": "runner",
-                            "image": image,
-                            "imagePullPolicy": "IfNotPresent",
+                            "image": spec.image,
+                            "imagePullPolicy": spec.image_pull_policy,
                             "command": [
                                 "python",
                                 "-m",
@@ -198,10 +192,7 @@ def build_job_manifest(
                                 str(claim.id),
                                 str(claim.lease_token),
                             ],
-                            "envFrom": [
-                                {"configMapRef": {"name": configmap}},
-                                {"secretRef": {"name": secret}},
-                            ],
+                            "envFrom": [dict(source) for source in spec.env_from],
                             "env": [
                                 {
                                     "name": "BIFROST_KUBERNETES_JOB_UID",

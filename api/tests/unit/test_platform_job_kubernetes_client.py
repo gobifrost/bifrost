@@ -13,9 +13,9 @@ from src.jobs.platform.kubernetes_client import (
     KubernetesJobClient,
     _lease_token_fingerprint,
     build_job_manifest,
-    validate_build_settings,
 )
 from src.jobs.schedulers.platform_jobs import ClaimedPlatformJob
+from src.services.worker_pool.manifest import WorkerJobSpec, resolve_worker_job_spec
 
 
 @dataclass
@@ -33,6 +33,32 @@ class KubernetesSettings:
 
 LIMIT = 2048 * 2**20
 
+SPEC = WorkerJobSpec(
+    namespace="builds",
+    image="registry.example.com/bifrost/api:sha-abc123",
+    env_from=(
+        {"configMapRef": {"name": "bifrost-build-config"}},
+        {"secretRef": {"name": "bifrost-build-secret"}},
+    ),
+    service_account="bifrost-build-runner",
+)
+
+
+def _manifest(
+    settings: KubernetesSettings | None = None,
+    *,
+    spec: WorkerJobSpec = SPEC,
+    memory_limit_bytes: int = LIMIT,
+    sized: bool = False,
+) -> dict:
+    return build_job_manifest(
+        _claim(),
+        settings or KubernetesSettings(),
+        spec,
+        memory_limit_bytes=memory_limit_bytes,
+        sized=sized,
+    )
+
 
 def _claim() -> ClaimedPlatformJob:
     return ClaimedPlatformJob(
@@ -46,7 +72,7 @@ def _claim() -> ClaimedPlatformJob:
 
 def test_build_job_manifest_renders_suspended_locked_down_job() -> None:
     claim = _claim()
-    manifest = build_job_manifest(claim, KubernetesSettings(), memory_limit_bytes=LIMIT)
+    manifest = _manifest()
 
     assert manifest["metadata"]["name"] == (
         f"bifrost-job-11111111222233334444555555555555-"
@@ -81,6 +107,7 @@ def test_build_job_manifest_renders_suspended_locked_down_job() -> None:
 
     container = pod_spec["containers"][0]
     assert container["image"] == "registry.example.com/bifrost/api:sha-abc123"
+    assert container["imagePullPolicy"] == "IfNotPresent"
     assert container["command"] == [
         "python",
         "-m",
@@ -118,18 +145,64 @@ def test_build_job_manifest_renders_suspended_locked_down_job() -> None:
     }
 
 
-def test_build_job_manifest_requires_explicit_image() -> None:
-    settings = KubernetesSettings(kubernetes_job_image="")
+def test_a_sized_isolated_pod_requests_its_whole_limit() -> None:
+    """Like a sized worker Job: scheduled only where its memory exists."""
+    sized = 3328 * 2**20
+    container = _manifest(memory_limit_bytes=sized, sized=True)["spec"]["template"]["spec"][
+        "containers"
+    ][0]
 
-    with pytest.raises(KubernetesConfigurationError, match="kubernetes_job_image"):
-        build_job_manifest(_claim(), settings, memory_limit_bytes=LIMIT)
+    assert container["resources"]["requests"]["memory"] == "3328Mi"
+    assert container["resources"]["limits"]["memory"] == "3328Mi"
 
 
 def test_build_job_manifest_rejects_request_above_limit() -> None:
     settings = KubernetesSettings(pool_worker_memory_request_mib=4096)
 
     with pytest.raises(KubernetesConfigurationError, match="request_mib"):
-        build_job_manifest(_claim(), settings, memory_limit_bytes=LIMIT)
+        _manifest(settings)
+
+
+class _ApiPod:
+    """The controller's own pod, as the Kubernetes API returns it."""
+
+    namespace = "bifrost"
+
+    async def own_container(self) -> dict:
+        return {
+            "image": "ghcr.io/gobifrost/bifrost-api:latest",
+            "imagePullPolicy": "Always",
+            "envFrom": [
+                {"configMapRef": {"name": "bifrost-config"}},
+                {"secretRef": {"name": "bifrost-secrets"}},
+            ],
+        }
+
+
+@pytest.mark.asyncio
+async def test_an_isolated_job_without_identity_settings_copies_the_api_pod() -> None:
+    settings = KubernetesSettings(
+        kubernetes_job_namespace=None,  # type: ignore[arg-type]
+        kubernetes_job_image=None,  # type: ignore[arg-type]
+        kubernetes_job_configmap=None,  # type: ignore[arg-type]
+        kubernetes_job_secret=None,  # type: ignore[arg-type]
+        kubernetes_job_service_account=None,  # type: ignore[arg-type]
+    )
+    spec = await resolve_worker_job_spec(_ApiPod(), settings)  # type: ignore[arg-type]
+
+    manifest = _manifest(settings, spec=spec)
+    pod = manifest["spec"]["template"]["spec"]
+    container = pod["containers"][0]
+
+    assert manifest["metadata"]["namespace"] == "bifrost"
+    assert pod["serviceAccountName"] == "default"
+    assert pod["automountServiceAccountToken"] is False
+    assert container["image"] == "ghcr.io/gobifrost/bifrost-api:latest"
+    assert container["imagePullPolicy"] == "Always"
+    assert container["envFrom"] == [
+        {"configMapRef": {"name": "bifrost-config"}},
+        {"secretRef": {"name": "bifrost-secrets"}},
+    ]
 
 
 @pytest.mark.asyncio
@@ -176,7 +249,7 @@ async def test_create_job_adopts_existing_job_on_conflict(
 ) -> None:
     token_path = tmp_path / "token"
     token_path.write_text("token")
-    manifest = build_job_manifest(_claim(), KubernetesSettings(), memory_limit_bytes=LIMIT)
+    manifest = _manifest()
     calls: list[tuple[str, str]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -226,7 +299,7 @@ async def test_create_job_rejects_conflicting_existing_job_labels(
 ) -> None:
     token_path = tmp_path / "token"
     token_path.write_text("token")
-    manifest = build_job_manifest(_claim(), KubernetesSettings(), memory_limit_bytes=LIMIT)
+    manifest = _manifest()
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":
@@ -406,23 +479,6 @@ def test_client_creation_requires_in_cluster_endpoint(
 
     with pytest.raises(KubernetesConfigurationError, match="KUBERNETES_SERVICE_HOST"):
         KubernetesJobClient(settings=KubernetesSettings())
-
-
-@pytest.mark.parametrize(
-    "field_name",
-    [
-        "kubernetes_job_image",
-        "kubernetes_job_configmap",
-        "kubernetes_job_secret",
-        "kubernetes_job_service_account",
-    ],
-)
-def test_remote_builds_require_their_settings(field_name: str) -> None:
-    settings = KubernetesSettings()
-    setattr(settings, field_name, "")
-
-    with pytest.raises(KubernetesConfigurationError, match=field_name):
-        validate_build_settings(settings)
 
 
 def _cluster(handler, *, settings=None):  # type: ignore[no-untyped-def]

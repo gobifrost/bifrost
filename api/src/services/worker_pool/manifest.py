@@ -9,6 +9,7 @@ from uuid import UUID
 from src.jobs.platform.kubernetes_client import (
     KubernetesConfigurationError,
     KubernetesJobClient,
+    memory_resources,
 )
 
 WORKER_LABEL = "bifrost-pool-worker"
@@ -23,7 +24,7 @@ def worker_job_name(incarnation_id: UUID) -> str:
 
 @dataclass(frozen=True)
 class WorkerJobSpec:
-    """Where and as what a worker Job runs."""
+    """Where and as what a Job runs: worker Jobs and isolated pods alike."""
 
     namespace: str
     image: str
@@ -39,10 +40,11 @@ class WorkerJobSpec:
 async def resolve_worker_job_spec(client: KubernetesJobClient, settings: Any) -> WorkerJobSpec:
     """The Job identity settings when set; otherwise a copy of this controller's pod.
 
-    An install with no build settings runs workers in the controller's own
-    namespace, image (and pull policy) and environment sources (the
-    configmap and secret its API pod reads), with the namespace's
-    ``default`` service account (the pod mounts no token).
+    Worker Jobs and isolated pods both run as this. An install with no Job
+    identity settings runs them in the controller's own namespace, image
+    (and pull policy) and environment sources (the configmap and secret its
+    API pod reads), with the namespace's ``default`` service account (the
+    pod mounts no token).
     """
     own: dict[str, Any] = {}
     if not (
@@ -53,7 +55,7 @@ async def resolve_worker_job_spec(client: KubernetesJobClient, settings: Any) ->
         own = await client.own_container() or {}
     image = settings.kubernetes_job_image or own.get("image")
     if not image:
-        raise KubernetesConfigurationError("No image is known for worker Jobs")
+        raise KubernetesConfigurationError("No image is known for Jobs")
     if settings.kubernetes_job_configmap and settings.kubernetes_job_secret:
         env_from: tuple[dict[str, Any], ...] = (
             {"configMapRef": {"name": settings.kubernetes_job_configmap}},
@@ -62,7 +64,7 @@ async def resolve_worker_job_spec(client: KubernetesJobClient, settings: Any) ->
     else:
         env_from = tuple(own.get("envFrom") or ())
     if not env_from:
-        raise KubernetesConfigurationError("No environment is known for worker Jobs")
+        raise KubernetesConfigurationError("No environment is known for Jobs")
     return WorkerJobSpec(
         namespace=client.namespace,
         image=image,
@@ -100,16 +102,11 @@ def build_worker_job_manifest(
     namespace = spec.namespace
     image = spec.image
     service_account = spec.service_account
-    limit_mib = memory_limit_bytes // 2**20
-    if sized:
-        memory_request = memory_limit = f"{limit_mib}Mi"
-    else:
-        if settings.pool_worker_memory_request_mib > limit_mib:
-            raise KubernetesConfigurationError(
-                "pool_worker_memory_request_mib must not exceed Worker memory"
-            )
-        memory_request = f"{settings.pool_worker_memory_request_mib}Mi"
-        memory_limit = f"{limit_mib}Mi"
+    memory_request, memory_limit = memory_resources(
+        memory_limit_bytes,
+        sized=sized,
+        standard_request_mib=settings.pool_worker_memory_request_mib,
+    )
     labels = {
         "app.kubernetes.io/name": WORKER_LABEL,
         INCARNATION_LABEL: str(incarnation_id),

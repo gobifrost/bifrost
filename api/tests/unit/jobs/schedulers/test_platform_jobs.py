@@ -4,7 +4,6 @@ import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -25,15 +24,30 @@ from src.jobs.platform.application_publish import (
 from src.jobs.platform.kubernetes_client import _lease_token_fingerprint
 from src.jobs.platform import registry
 from src.jobs.schedulers import platform_jobs as scheduler
+from src.models.orm.platform_job_memory_profiles import PlatformJobMemoryProfile
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solution_export_jobs import SolutionExportJob
 from src.models.orm.solutions import Solution
+from src.services.memory_requests import MIB, sized_job_limit_bytes
+from src.services.platform_job_memory_profiles import MEMORY_PROFILE_SAFETY_MARGIN_BYTES
 from src.services.platform_jobs import enqueue_platform_job
+from src.services.worker_pool.sizing import JobSizing
 
 
 
 # A free budget every test job fits.
 AMPLE = 2**40
+# Settings -> Kubernetes defaults: Worker memory 2 GiB, Largest worker 8 GiB.
+SIZING = JobSizing(
+    standard_limit_bytes=2048 * MIB,
+    largest_limit_bytes=8192 * MIB,
+    threshold=0.85,
+    baseline_bytes=768 * MIB,
+)
+
+
+def _pods(max_pods: int = 2) -> scheduler.IsolatedPods:
+    return scheduler.IsolatedPods(namespace="test", max_pods=max_pods, sizing=SIZING)
 
 async def _queued_job(db_session: AsyncSession) -> PlatformJob:
     await db_session.execute(delete(PlatformJob))
@@ -171,11 +185,6 @@ def patch_context(
         AsyncMock(),
     )
     monkeypatch.setattr(scheduler, "get_cgroup_memory", lambda: (-1, -1))
-    monkeypatch.setattr(
-        scheduler,
-        "get_settings",
-        lambda: SimpleNamespace(kubernetes_job_namespace="test"),
-    )
 
 
 @pytest.mark.asyncio
@@ -203,11 +212,7 @@ async def test_remote_claim_sets_kubernetes_launch_metadata(
         lambda: (900 * 1024 * 1024, 1024 * 1024 * 1024),
     )
 
-    claim = await scheduler.claim_platform_job(
-        backend="kubernetes",
-        remote_limit=2,
-        remote_memory_bytes=1024 * 1024 * 1024,
-    )
+    claim = await scheduler.claim_platform_job(backend="kubernetes", isolated=_pods())
 
     assert claim is not None
     assert claim.id == job.id
@@ -224,7 +229,8 @@ async def test_remote_claim_sets_kubernetes_launch_metadata(
     assert job.kubernetes_job_uid is None
     assert job.kubernetes_pod_uid is None
     assert job.runner_started_at is None
-    assert job.memory_limit_bytes == 1024 * 1024 * 1024
+    # A standard pod: Worker memory.
+    assert job.memory_limit_bytes == SIZING.standard_limit_bytes
 
 
 @pytest.mark.asyncio
@@ -234,16 +240,8 @@ async def test_remote_claim_respects_global_remote_limit(
     first = await _queued_remote_build_job(db_session)
     second = await _queued_remote_build_job(db_session, clear_existing=False)
 
-    first_claim = await scheduler.claim_platform_job(
-        backend="kubernetes",
-        remote_limit=1,
-        remote_memory_bytes=1024 * 1024 * 1024,
-    )
-    second_claim = await scheduler.claim_platform_job(
-        backend="kubernetes",
-        remote_limit=1,
-        remote_memory_bytes=1024 * 1024 * 1024,
-    )
+    first_claim = await scheduler.claim_platform_job(backend="kubernetes", isolated=_pods(1))
+    second_claim = await scheduler.claim_platform_job(backend="kubernetes", isolated=_pods(1))
 
     assert first_claim is not None
     assert first_claim.id in {first.id, second.id}
@@ -303,29 +301,80 @@ async def test_resource_lock_counts_opposite_backend_jobs(
 
 
 @pytest.mark.asyncio
-async def test_remote_claim_waits_when_job_exceeds_pod_memory_budget(
+async def test_a_job_a_standard_pod_cannot_hold_gets_a_sized_pod(
     db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The worker sizing rule: the smallest limit whose budget holds it."""
     job = await _queued_remote_build_job(db_session)
-    job.memory_required_bytes = 2 * 1024 * 1024 * 1024
-    monkeypatch.setattr(
-        scheduler,
-        "get_cgroup_memory",
-        lambda: (1, 1),
-    )
+    job.memory_required_bytes = 1536 * MIB
 
-    claim = await scheduler.claim_platform_job(
-        backend="kubernetes",
-        remote_limit=2,
-        remote_memory_bytes=1024 * 1024 * 1024,
-    )
+    claim = await scheduler.claim_platform_job(backend="kubernetes", isolated=_pods())
 
-    assert claim is None
+    assert claim is not None
     await db_session.refresh(job)
-    assert job.status == "queued"
-    assert job.phase == "Waiting for Kubernetes capacity"
-    assert job.lease_token is None
+    limit = sized_job_limit_bytes(
+        1536 * MIB, SIZING.threshold, SIZING.baseline_bytes, SIZING.largest_limit_bytes
+    )
+    assert job.memory_limit_bytes == limit
+    assert limit > SIZING.standard_limit_bytes
+    assert SIZING.budget_bytes(limit) >= 1536 * MIB
+
+
+@pytest.mark.asyncio
+async def test_a_job_no_pod_can_hold_is_never_launched(
+    db_session: AsyncSession,
+) -> None:
+    """It stays queued, unchanged, for the unfit sweep to fail visibly."""
+    job = await _queued_remote_build_job(db_session)
+    job.memory_required_bytes = SIZING.largest_budget_bytes + 1
+
+    assert await scheduler.claim_platform_job(backend="kubernetes", isolated=_pods()) is None
+    await db_session.refresh(job)
+    assert (job.status, job.phase, job.lease_token) == ("queued", "Queued", None)
+
+
+@pytest.mark.asyncio
+async def test_an_isolated_claim_and_only_one_needs_its_pods() -> None:
+    with pytest.raises(ValueError):
+        await scheduler.claim_platform_job(backend="kubernetes")
+    with pytest.raises(ValueError):
+        await scheduler.claim_platform_job(fits_bytes=AMPLE, isolated=_pods())
+
+
+@pytest.mark.asyncio
+async def test_an_oom_killed_pod_teaches_its_job_a_larger_pod(
+    db_session: AsyncSession,
+) -> None:
+    """The retry and the workload's profile ask for at least the pod's limit
+    plus the margin, so the next pod is sized larger."""
+    profile_key = f"application.deploy.memory.v1:{uuid4()}"
+    job = await _queued_remote_build_job(db_session)
+    job.memory_profile_key = profile_key
+    # Retried after losing its runner, as Solution jobs are.
+    job.retry_on_runner_loss = True
+    job.max_attempts = 2
+    claim = await scheduler.claim_platform_job(backend="kubernetes", isolated=_pods())
+    assert claim is not None
+    await db_session.refresh(job)
+    limit = SIZING.standard_limit_bytes
+    assert job.memory_limit_bytes == limit
+
+    retried = await scheduler._handle_runner_loss(
+        claim.id,
+        claim.lease_token,
+        error_code="memory_pressure",
+        error_message="The build pod exceeded its memory limit.",
+        out_of_memory=True,
+    )
+
+    assert retried is True
+    await db_session.refresh(job)
+    profile = await db_session.get(PlatformJobMemoryProfile, profile_key)
+    assert job.memory_required_bytes >= limit + MEMORY_PROFILE_SAFETY_MARGIN_BYTES
+    assert profile is not None
+    assert profile.memory_required_bytes >= limit + MEMORY_PROFILE_SAFETY_MARGIN_BYTES
+    pod = SIZING.pod_limit_bytes(job.memory_required_bytes)
+    assert pod is not None and pod > limit
 
 
 @pytest.mark.asyncio
@@ -335,7 +384,7 @@ async def test_remote_claim_does_not_reclaim_pending_kubernetes_job(
     job = await _queued_remote_build_job(db_session)
     job.kubernetes_job_name = "bifrost-job-existing"
 
-    assert await scheduler.claim_platform_job(backend="kubernetes") is None
+    assert await scheduler.claim_platform_job(backend="kubernetes", isolated=_pods()) is None
     await db_session.refresh(job)
     assert job.status == "queued"
     assert job.lease_token is None

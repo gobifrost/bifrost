@@ -49,12 +49,7 @@ from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.work_dispatches import WorkDispatch
 from src.services.kubernetes_execution import KubernetesPolicy, load_kubernetes_policy
 from src.services.platform_jobs import WAITING_FOR_MEMORY
-from src.services.memory_requests import (
-    JOB_BASELINE_ESTIMATE_BYTES,
-    LAUNCHABLE_KEY,
-    job_budget_bytes,
-    sized_job_limit_bytes,
-)
+from src.services.memory_requests import LAUNCHABLE_KEY
 from src.services.worker_pool.claims import CAPACITY_LOCK
 from src.services.worker_pool.manifest import (
     WorkerJobSpec,
@@ -68,10 +63,10 @@ from src.services.worker_pool.liveness import (
     silent_executor,
 )
 from src.services.worker_pool.recovery import announce_ended_runs, end_runs_of_lost_worker
+from src.services.worker_pool.sizing import LIVE_STATES, JobSizing, job_baseline, launch_limit
 
 logger = logging.getLogger(__name__)
 
-LIVE_STATES = ("reserved", "starting", "ready", "draining")
 # How long a lost worker's Job is kept under watch for deletion.
 LOST_JOB_CLEANUP = timedelta(hours=1)
 RECONCILE_SECONDS = 2.0
@@ -133,10 +128,7 @@ class WorkerPoolController:
                 )
             ).scalars().all()
             policy = await load_kubernetes_policy(db)
-            baseline = _job_baseline(
-                workers, policy.worker_memory_mib * 2**20, self.settings.memory_pressure_threshold
-            )
-            await _publish_launchable(self._limits(policy, baseline)[2])
+            await _publish_launchable(self._sizing(policy, workers).largest_budget_bytes)
         self.live = await _publish_live(self.id, self.version)
         async with get_db_context() as db:
             ids = (
@@ -202,7 +194,7 @@ class WorkerPoolController:
                             worker.id,
                             self.settings,
                             self.spec,
-                            memory_limit_bytes=_launch_limit(
+                            memory_limit_bytes=launch_limit(
                                 worker, policy.worker_memory_mib * 2**20
                             ),
                             sized=worker.resource_class == "sized",
@@ -282,15 +274,11 @@ class WorkerPoolController:
         worker.end_reason = reason
         worker.ended_at = now
 
-    def _limits(self, policy: KubernetesPolicy, baseline_bytes: int) -> tuple[int, int, int]:
-        """Standard Job limit, its budget, and the largest budget launchable."""
+    def _sizing(self, policy: KubernetesPolicy, workers: Any) -> JobSizing:
+        """Settings -> Kubernetes sizes at the baseline live Jobs report."""
         threshold = self.settings.memory_pressure_threshold
-        standard_limit = policy.worker_memory_mib * 2**20
-        largest_limit = max(standard_limit, policy.largest_worker_mib * 2**20)
-        return (
-            standard_limit,
-            job_budget_bytes(standard_limit, threshold, baseline_bytes),
-            job_budget_bytes(largest_limit, threshold, baseline_bytes),
+        return JobSizing.of(
+            policy, threshold, job_baseline(workers, policy.worker_memory_mib * 2**20, threshold)
         )
 
     async def launch_for_demand(self, policy: KubernetesPolicy) -> list[UUID]:
@@ -343,10 +331,7 @@ class WorkerPoolController:
                     select(ExecutionWorker).where(ExecutionWorker.state.in_(LIVE_STATES))
                 )
             ).scalars().all()
-            baseline = _job_baseline(
-                workers, policy.worker_memory_mib * 2**20, self.settings.memory_pressure_threshold
-            )
-            standard_limit, standard_budget, largest_budget = self._limits(policy, baseline)
+            sizing = self._sizing(policy, workers)
 
             requests = {row.id: row.memory_request_bytes for row in waiting}
             free: list[int] = []
@@ -365,8 +350,7 @@ class WorkerPoolController:
                 if worker.form == "job" and (
                     worker.state in ("reserved", "starting") or worker.memory_budget_bytes is None
                 ):
-                    limit = _launch_limit(worker, standard_limit)
-                    budget = job_budget_bytes(limit, self.settings.memory_pressure_threshold, baseline)
+                    budget = sizing.budget_bytes(launch_limit(worker, sizing.standard_limit_bytes))
                     free.append(max(0, budget - held))
                 elif worker.state == "ready" and worker.memory_budget_bytes is not None:
                     free.append(
@@ -375,8 +359,8 @@ class WorkerPoolController:
             plan = _plan_launches(
                 [(row.id, row.memory_request_bytes) for row in waiting if row.id not in covered],
                 free,
-                standard_budget=standard_budget,
-                largest_budget=largest_budget,
+                standard_budget=sizing.standard_budget_bytes,
+                largest_budget=sizing.largest_budget_bytes,
             )
             jobs = sum(1 for worker in workers if worker.form == "job")
             # Only standard Jobs make up the warm minimum; a sized Job exists
@@ -400,12 +384,7 @@ class WorkerPoolController:
                     self._reserve(
                         db,
                         resource_class="sized",
-                        memory_limit_bytes=sized_job_limit_bytes(
-                            request,
-                            self.settings.memory_pressure_threshold,
-                            baseline,
-                            max(standard_limit, policy.largest_worker_mib * 2**20),
-                        ),
+                        memory_limit_bytes=sizing.sized_limit_bytes(request),
                         reserved_for=dispatch_id if dispatch_id in dispatch_ids else None,
                     )
                 )
@@ -416,7 +395,7 @@ class WorkerPoolController:
                     self._reserve(
                         db,
                         resource_class="standard",
-                        memory_limit_bytes=standard_limit,
+                        memory_limit_bytes=sizing.standard_limit_bytes,
                         reserved_for=None,
                     )
                 )
@@ -562,25 +541,6 @@ def _plan_launches(
         if not placed:
             new_bins.append(standard_budget - request)
     return LaunchPlan(standard=len(new_bins), sized=sized)
-
-
-def _launch_limit(worker: Any, standard_limit: int) -> int:
-    """The memory limit a Job worker launched (or will launch) with. A
-    standard Job reserved by the release before Settings -> Kubernetes
-    recorded none; it takes the current Worker memory."""
-    return worker.memory_limit_bytes or standard_limit
-
-
-def _job_baseline(workers: Any, standard_limit: int, threshold: float) -> int:
-    """A Job worker's own memory, from the largest any Job reported (its
-    limit at the threshold, less the budget it measured)."""
-    reported = [
-        int(_launch_limit(worker, standard_limit) * threshold)
-        - worker.memory_budget_bytes
-        for worker in workers
-        if worker.form == "job" and worker.memory_budget_bytes is not None
-    ]
-    return max(reported, default=JOB_BASELINE_ESTIMATE_BYTES)
 
 
 async def _publish_launchable(largest_budget: int) -> None:
