@@ -141,6 +141,31 @@ After an upgrade:
    still finds its env.
 3. Confirm the notice is empty.
 
+`GET /api/admin/kubernetes/status` must report `configured: true` from an API
+pod: the page and the build controller follow the API's own Job permissions.
+If the API cannot manage Jobs, the import still copies
+`BIFROST_PLATFORM_BUILD_BACKEND`, and nothing claims isolated jobs, so check
+the status after upgrading. Raising `BIFROST_POOL_WORKER_MEMORY_REQUEST_MIB`
+above a stored Worker Memory stops Job creation with an error logged on every
+pass; Settings rejects the opposite change.
+
+### Rolling Back
+
+Keep the imported variables in the deployment until you no longer need to roll
+back: the previous image reads them from env. On the previous image:
+
+- a standard worker Job still `reserved` when the rollback lands starts with
+  its whole limit requested (the previous release reads a recorded limit as a
+  sized Job);
+- the "Kubernetes execution enabled" notice is announced once more;
+- saving a job-type toggle rewrites the Settings row without the scaling
+  fields; the next upgrade imports them again while the variables are still
+  set.
+
+`BIFROST_RABBITMQ_URL` is listed as unused only after a drain reached the
+broker and recorded it. Before deleting RabbitMQ, confirm the record exists:
+`SELECT value_json FROM system_configs WHERE category = 'runtime' AND key = 'legacy_broker_drained';`
+
 ## The Builds Overlay
 
 The optional overlay at `deploy/kubernetes/builds` is not part of the base

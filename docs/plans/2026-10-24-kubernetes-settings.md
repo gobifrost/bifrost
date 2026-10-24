@@ -209,8 +209,17 @@ from the worker Job manifest.
 ## Production migration
 
 1. Deploy. The import copies min 1, max 6, worker memory 2048, isolated jobs
-   on, the five types, max isolated pods 2 and pod memory 2048.
-2. Confirm on the Settings page and in the startup log.
+   on, the five types and max isolated pods 2. A build an older replica
+   claims during the rollout has no recorded memory request; the controller
+   treats its request as its limit, as the migration does.
+2. Confirm on the Settings page and in the startup log: one "Imported
+   Kubernetes settings from the environment" line (from whichever replica won
+   the lock), the unread-variables warning (`BIFROST_POOL_*`,
+   `BIFROST_PLATFORM_BUILD_BACKEND`, `BIFROST_KUBERNETES_BUILD_JOB_TYPES`,
+   `_MAX_JOBS`, `_MEMORY_*`) and the renamed-variables warning for the
+   `BUILD_*` identity names. `GET /api/admin/kubernetes/status` from an API
+   pod reports `configured: true`. Confirm the RabbitMQ drain record exists
+   before RabbitMQ is deleted.
 3. Run prod_smoke.
 4. After a soak (the rollback window), remove the imported variables from
    GitOps (`bifrost-config`, `bifrost-build-jobs-config`). Rename the

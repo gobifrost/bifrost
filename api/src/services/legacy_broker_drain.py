@@ -340,7 +340,11 @@ async def _connect(url: str) -> aio_pika.abc.AbstractConnection | None:
 async def _drain(url: str) -> None:
     connection = await _connect(url)
     if connection is None:
-        logger.info("The legacy broker is unreachable; nothing to recover")
+        logger.info(
+            "The legacy broker is unreachable; nothing to recover. Remove "
+            "BIFROST_RABBITMQ_URL once its queues are known to be empty; it is "
+            "reported as unused only after a drain reaches the broker"
+        )
         return
     async with connection:
         counts = dict.fromkeys(HANDLERS, 0)
@@ -385,7 +389,8 @@ async def drain_legacy_broker() -> None:
         # One drain at a time across replicas, held until this one ends. The
         # lock is transaction-scoped because PgBouncer pools by transaction;
         # the connection's open transaction holds it, and a replica that dies
-        # mid-drain releases it with its connection.
+        # mid-drain releases it with its connection. A PgBouncer
+        # idle_transaction_timeout shorter than the drain would release it early.
         async with engine.connect() as lock_connection:
             await lock_connection.execute(
                 text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": DRAIN_LOCK}

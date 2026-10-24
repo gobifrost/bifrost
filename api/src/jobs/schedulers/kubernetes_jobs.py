@@ -193,13 +193,15 @@ class KubernetesBuildController:
                 memory_required_bytes=row.memory_required_bytes,
                 job_type=row.job_type,
             )
-            if row.memory_limit_bytes is None or row.memory_request_bytes is None:
-                raise RuntimeError("Active Kubernetes build has no memory request and limit")
+            if row.memory_limit_bytes is None:
+                raise RuntimeError("Active Kubernetes build has no memory limit")
             manifest = build_job_manifest(
                 claim,
                 self.settings,
                 self.spec,
-                memory_request_bytes=row.memory_request_bytes,
+                # An older release claimed without recording the request; the
+                # migration's rule for such rows applies: the request is the limit.
+                memory_request_bytes=row.memory_request_bytes or row.memory_limit_bytes,
                 memory_limit_bytes=row.memory_limit_bytes,
             )
             if remote is not None:

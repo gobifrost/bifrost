@@ -483,3 +483,17 @@ async def test_with_isolation_off_a_pass_reconciles_placed_pods_and_admits_nothi
     returned.assert_awaited_once()
     reconciled.assert_awaited_once_with(placed)
     claim.assert_not_awaited()
+
+
+async def test_a_build_an_older_release_claimed_is_still_supervised(fixture):
+    """During a rolling upgrade an older replica claims without recording the
+    memory request; its failed pod must still be handled, like the migration
+    treats such rows (the request is the limit)."""
+    f = fixture
+    f.row.memory_request_bytes = None
+    f.row.kubernetes_job_uid = "job-uid"
+    f.remote["spec"]["suspend"] = False
+    f.client.get_job.return_value = f.remote
+    f.client.list_pods.return_value = [{"status": {"phase": "Failed"}}]
+    await f.reconcile_job(f.row.id)
+    assert f.loss.call_args.kwargs["error_code"] == "runner_exited"
