@@ -8,10 +8,12 @@ metadata:
     app.kubernetes.io/component: scheduler
     app.kubernetes.io/part-of: bifrost
 spec:
-  # An executor, the same as bifrost-worker: workflows, agent runs, services
-  # and local platform jobs. Platform control runs in the API. Safe to scale
-  # or to remove.
-  replicas: 1
+  # Retired: an executor, the same as bifrost-worker. The API now starts
+  # worker Jobs on demand (BIFROST_POOL_MIN_WORKERS=1, BIFROST_POOL_MAX_WORKERS=6,
+  # 2Gi each), so this stays at zero for one release, letting
+  # `kubectl apply -k` stop pods an earlier release left running. Delete the
+  # Deployment after upgrading; a later release removes this file.
+  replicas: 0
   strategy:
     type: RollingUpdate
     rollingUpdate:

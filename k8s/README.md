@@ -24,9 +24,9 @@ k8s/
 │   ├── deployment.yaml # React frontend (nginx)
 │   └── service.yaml    # ClusterIP service (port 80)
 ├── worker/
-│   └── deployment.yaml # Background job workers
+│   └── deployment.yaml # Retired static executor (replicas: 0; see Upgrading)
 ├── scheduler/
-│   └── deployment.yaml # Scalable jobs + elected Cron trigger leader
+│   └── deployment.yaml # Retired static executor (replicas: 0; see Upgrading)
 └── coding-agent/
     └── deployment.yaml # Claude Agent SDK container
 ```
@@ -108,8 +108,22 @@ kubectl get svc -n bifrost
 # View API logs
 kubectl logs -n bifrost -l app.kubernetes.io/name=bifrost-api -f
 
-# View worker logs
-kubectl logs -n bifrost -l app.kubernetes.io/name=bifrost-worker -f
+# View worker logs (the worker Jobs the API starts)
+kubectl logs -n bifrost -l app.kubernetes.io/name=bifrost-pool-worker -f
+```
+
+### Upgrading to API-Started Workers
+
+Work runs in worker Jobs that the API starts on demand: one stays warm
+(`BIFROST_POOL_MIN_WORKERS=1`) and up to six run under load
+(`BIFROST_POOL_MAX_WORKERS=6`), each with a 512Mi request and a 2Gi limit.
+The API needs the Job Role in `api/rbac.yaml`, which `kubectl apply -k k8s/`
+applies. The `bifrost-worker` and `bifrost-scheduler` Deployments are retired:
+the base sets them to zero replicas, so applying it stops their pods. Delete
+them once they are gone:
+
+```bash
+kubectl -n bifrost delete deployment bifrost-worker bifrost-scheduler
 ```
 
 ### Upgrading From a Release That Used RabbitMQ
@@ -211,30 +225,22 @@ kubectl scale deployment bifrost-api -n bifrost --replicas=3
 
 ### Workers
 
-```bash
-kubectl scale deployment bifrost-worker -n bifrost --replicas=5
-```
+The API starts worker Jobs as work arrives and drains idle ones back to the
+warm minimum. Set the range in `configmap.yaml`:
 
-### Scheduler
+| Name | Default | Description |
+|------|---------|-------------|
+| `BIFROST_POOL_MIN_WORKERS` | `1` | Worker Jobs kept warm for interactive runs |
+| `BIFROST_POOL_MAX_WORKERS` | `6` | Most worker Jobs at once |
+| `BIFROST_POOL_WORKER_MEMORY_LIMIT_MIB` | `2048` | Memory limit of a standard worker Job |
 
-Every scheduler replica executes up to two durable platform jobs at a time. The
-two internal slots are a safety ceiling rather than a deployment setting. A
-fenced PostgreSQL lease elects exactly one replica to run Cron triggers and the
-legacy scheduler pub/sub listener.
+After an upgrade, the API replaces worker Jobs running the previous build once
+a replacement is ready; their runs finish first. See
+`docs/runbooks/kubernetes-worker-deployment.md` for sizing and draining.
 
-```bash
-kubectl scale deployment bifrost-scheduler -n bifrost --replicas=3
-```
-
-Deploy the lease-aware scheduler version before scaling an existing installation.
-The manifest retains the `Recreate` rollout strategy so an older singleton pod
-cannot overlap the first lease-aware rollout; `Recreate` does not restrict the
-steady-state replica count. Scale back to one before rolling back to a release
-that predates scheduler leader election.
-
-Long-running platform work runs through the shared durable queue on every
-replica; the elected leader retains only short trigger and housekeeping work.
-Scale gradually and monitor memory-pressure deferrals and queue wait time.
+Run at least two API replicas: the API also runs scheduling and the worker
+controller, and a second replica takes over within about 25 seconds when one
+is lost.
 
 ## Configuration Reference
 
@@ -292,6 +298,6 @@ kubectl logs -n bifrost <api-pod-name> -c migrate
 
 ### Workers not processing jobs
 
-1. Verify worker and scheduler logs for errors
+1. Verify the API and worker Job logs for errors
 2. Check the database connection: executors claim work from PostgreSQL
 3. See `docs/runbooks/kubernetes-worker-deployment.md` for the executor model

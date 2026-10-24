@@ -211,6 +211,9 @@ services:
   # Scheduler Service: an executor, the same as the worker service (workflows,
   # agent runs, services and local platform jobs). Platform control (the
   # trigger leader) runs in the API. Either service can be removed.
+  # Recommended: two executors (this one and worker) with 2 GB each. An
+  # executor takes work that fits 85% of its memory limit; without a limit,
+  # each believes it has 85% of the host.
   scheduler:
     # build:
     #   context: .
@@ -262,8 +265,8 @@ services:
           cpus: "0.05"
           memory: 256M
         limits:
-          cpus: "1.0"
-          memory: 1G
+          cpus: "2.0"
+          memory: 2G
     command: >
       python -m src.scheduler.main
 
@@ -329,6 +332,13 @@ services:
         condition: service_healthy
     deploy:
       replicas: ${WORKER_REPLICAS:-1}
+      resources:
+        reservations:
+          cpus: "0.05"
+          memory: 256M
+        limits:
+          cpus: "2.0"
+          memory: 2G
     command: python -m src.worker.main
 
 volumes:
