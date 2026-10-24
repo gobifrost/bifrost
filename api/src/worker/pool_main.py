@@ -205,6 +205,8 @@ class PoolWorker:
             self.incarnation_id = await register_static_worker(
                 slots=slots, hostname=socket.gethostname(), memory_budget_bytes=early.budget_bytes
             )
+            # Reported until the budget is measured with the pool up.
+            self.budget = early
         else:
             assert self.job_uid is not None and self.pod_uid is not None
             slots = await admit_worker(
@@ -217,46 +219,17 @@ class PoolWorker:
             )
             return 1
 
-        from src.jobs.consumers.agent_run import AgentRunConsumer
-        from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
-
-        # Read the package generation before the pool installs requirements:
-        # a change committed in between is then applied again (installs are
-        # idempotent) instead of being missed.
-        self.package_generation = await current_package_generation()
-        self._workflow_consumer = WorkflowExecutionConsumer()
-        self._workflow_consumer.owner_worker_id = self.incarnation_id
-        await self._workflow_consumer.start_pool()
-        self._agent_consumer = AgentRunConsumer()
-        # Applies recorded package changes; it never consumes the broadcast.
-        from src.jobs.consumers.package_install import PackageInstallConsumer
-
-        self._package_consumer = PackageInstallConsumer()
-        # Measured once the parent and fork template are up, before any
-        # service claims: what remains is what work may use.
-        self.budget = measure_budget(self.settings.memory_pressure_threshold)
-        pool = self._workflow_consumer._pool
-        pool.memory_kill_growth_bytes = max(
-            0, self.budget.budget_bytes - WORKFLOW_REQUEST_MARGIN_BYTES
-        )
-        threshold = self.settings.memory_pressure_threshold
-        self.admission = Admission(
-            budget_bytes=self.budget.budget_bytes,
-            under_pressure=lambda: under_pressure(threshold),
-            running_workflow_ids=pool.active_execution_ids,
-            workflow_growth=pool.workflow_growth,
-        )
-        await self._start_service_claim_loop()
-        logger.info(
-            "Pool worker ready",
-            extra={
-                "incarnation_id": str(self.incarnation_id),
-                "budget_mib": self.budget.budget_bytes // 2**20,
-                "limit_mib": self.budget.limit_bytes // 2**20,
-            },
-        )
+        # Heartbeat from registration on: starting the pool (and installing
+        # its requirements) can take minutes, longer than a silent executor
+        # is given before it counts as lost.
+        heartbeat = asyncio.create_task(self._heartbeat_loop(), name="pool-heartbeat")
+        try:
+            await self._start_executor()
+        except BaseException:
+            heartbeat.cancel()
+            raise
         background = [
-            asyncio.create_task(self._heartbeat_loop(), name="pool-heartbeat"),
+            heartbeat,
             asyncio.create_task(self._wake_listener(), name="pool-wake"),
             asyncio.create_task(self._package_loop(), name="pool-packages"),
             asyncio.create_task(
@@ -295,6 +268,47 @@ class PoolWorker:
             extra={"incarnation_id": str(self.incarnation_id), "runs": self.runs_handled},
         )
         return 0
+
+    async def _start_executor(self) -> None:
+        """Start the pool, consumers, memory gate and service supervision."""
+        from src.jobs.consumers.agent_run import AgentRunConsumer
+        from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
+
+        # Read the package generation before the pool installs requirements:
+        # a change committed in between is then applied again (installs are
+        # idempotent) instead of being missed.
+        self.package_generation = await current_package_generation()
+        self._workflow_consumer = WorkflowExecutionConsumer()
+        self._workflow_consumer.owner_worker_id = self.incarnation_id
+        await self._workflow_consumer.start_pool()
+        self._agent_consumer = AgentRunConsumer()
+        # Applies recorded package changes; it never consumes the broadcast.
+        from src.jobs.consumers.package_install import PackageInstallConsumer
+
+        self._package_consumer = PackageInstallConsumer()
+        # Measured once the parent and fork template are up, before any
+        # service claims: what remains is what work may use.
+        self.budget = measure_budget(self.settings.memory_pressure_threshold)
+        pool = self._workflow_consumer._pool
+        pool.memory_kill_growth_bytes = max(
+            0, self.budget.budget_bytes - WORKFLOW_REQUEST_MARGIN_BYTES
+        )
+        threshold = self.settings.memory_pressure_threshold
+        self.admission = Admission(
+            budget_bytes=self.budget.budget_bytes,
+            under_pressure=lambda: under_pressure(threshold),
+            running_workflow_ids=pool.active_execution_ids,
+            workflow_growth=pool.workflow_growth,
+        )
+        await self._start_service_claim_loop()
+        logger.info(
+            "Pool worker ready",
+            extra={
+                "incarnation_id": str(self.incarnation_id),
+                "budget_mib": self.budget.budget_bytes // 2**20,
+                "limit_mib": self.budget.limit_bytes // 2**20,
+            },
+        )
 
     async def _claim_loop(self) -> None:
         started = time.monotonic()
