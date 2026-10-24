@@ -30,15 +30,19 @@ class WorkerJobSpec:
     # The container's environment sources (configmap and secret references).
     env_from: tuple[dict[str, Any], ...]
     service_account: str
+    # The controller container's own policy when Jobs run its image, so a
+    # moving tag (``:latest``) is pulled again instead of read from a node's
+    # cache.
+    image_pull_policy: str = "IfNotPresent"
 
 
 async def resolve_worker_job_spec(client: KubernetesJobClient, settings: Any) -> WorkerJobSpec:
     """The build settings when set; otherwise a copy of this controller's pod.
 
     An install with no build settings runs workers in the controller's own
-    namespace, image and environment sources (the configmap and secret its
-    API pod reads), with the namespace's ``default`` service account (the
-    pod mounts no token).
+    namespace, image (and pull policy) and environment sources (the
+    configmap and secret its API pod reads), with the namespace's
+    ``default`` service account (the pod mounts no token).
     """
     own: dict[str, Any] = {}
     if not (
@@ -64,6 +68,11 @@ async def resolve_worker_job_spec(client: KubernetesJobClient, settings: Any) ->
         image=image,
         env_from=env_from,
         service_account=settings.kubernetes_build_service_account or "default",
+        image_pull_policy=(
+            "IfNotPresent"
+            if settings.kubernetes_build_image
+            else own.get("imagePullPolicy") or "IfNotPresent"
+        ),
     )
 
 
@@ -133,7 +142,7 @@ def build_worker_job_manifest(
                         {
                             "name": "worker",
                             "image": image,
-                            "imagePullPolicy": "IfNotPresent",
+                            "imagePullPolicy": spec.image_pull_policy,
                             "command": ["python", "-m", "src.worker.pool_main"],
                             "envFrom": [dict(source) for source in spec.env_from],
                             "env": [

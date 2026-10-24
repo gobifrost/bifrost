@@ -134,10 +134,18 @@ BIFROST_KIND_BUILD_JOBS=1 ./test.sh kubernetes up
 ```
 
 The local path applies `k8s/local/build-jobs.yaml`, renders
-`BIFROST_KUBERNETES_BUILD_IMAGE` from `BIFROST_K8S_IMAGE`, injects the build
-settings into API and scheduler Deployments, and patches only the scheduler to
-use `bifrost-build-controller` with token automount enabled. API and worker
-pods keep token automount disabled.
+`BIFROST_KUBERNETES_BUILD_IMAGE` from `BIFROST_K8S_IMAGE`, and injects the
+build settings into the API Deployment. The API's service account already
+manages Jobs, so every API replica runs the build controller; the scheduler
+and worker executors mount no service-account token.
+
+To prove a build survives losing a controller host, run the experiment with
+`--restart-controller`. It deletes one API pod while builds run (the workload
+runs in the other):
+
+```bash
+./test.sh kubernetes build-experiment --output /tmp/bifrost-build-jobs --restart-controller
+```
 
 ## Live Local Evidence
 

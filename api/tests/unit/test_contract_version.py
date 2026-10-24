@@ -395,7 +395,7 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     #
     # File move request/response DTOs for `bifrost files move` (2026-10-20).
     # ADDITIVE: new CLI command and routes; existing DTOs are unchanged.
-    "5f13b6d3cd2faa544abb59fb2980f140b1bd01705b5f49565f8de054e0957247"
+    "8ec6c3f1511f2f6c6ceb61841acd09ce0ee43df406afd784667d4e38ab78ceb3"
 )
 
 

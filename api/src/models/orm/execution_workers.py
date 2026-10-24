@@ -52,6 +52,11 @@ class ExecutionWorker(Base):
     # A worker launched for one large dispatch claims it before anything else.
     reserved_for_dispatch_id: Mapped[UUID | None] = mapped_column(nullable=True)
     runs_handled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # The build this executor runs (BIFROST_VERSION), reported when it starts.
+    version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # The worker controller instance that created this Job; with ``version``
+    # it decides when an upgrade replaces the Job (worker_pool.controller).
+    launched_by: Mapped[UUID | None] = mapped_column(nullable=True)
     # The package generation this executor has applied (see PackageChange).
     package_generation: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

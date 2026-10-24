@@ -85,7 +85,7 @@ async def end_silent_static_executors() -> list[UUID]:
                 select(ExecutionWorker)
                 .where(
                     ExecutionWorker.form == "static",
-                    ExecutionWorker.state.in_(("ready", "draining")),
+                    ExecutionWorker.state.in_(("starting", "ready", "draining")),
                     silent_executor(),
                 )
                 .with_for_update(skip_locked=True)

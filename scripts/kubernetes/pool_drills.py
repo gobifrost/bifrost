@@ -18,6 +18,10 @@ afterwards; the API keeps the warm minimum of Jobs.
 - unschedulable: workers that cannot be scheduled (the warm minimum
   included) are marked lost at their start deadline and replaced within the
   ceiling; queued work waits visibly.
+- upgrade: roll the API to a new image while the warm worker runs a run
+  longer than the shutdown grace (#1052). One replacement on the new image
+  becomes ready before the old worker drains as ``rotated``; the run
+  succeeds, the old worker retires, and nothing is lost.
 """
 from __future__ import annotations
 
@@ -195,7 +199,72 @@ DRILLS = (
     ("controller_restart", controller_restart_drill),
     ("oom", oom_drill),
     ("unschedulable", unschedulable_drill),
+    ("upgrade", upgrade_drill),
 )
+
+
+def api_image() -> str:
+    return kubectl(
+        "get", "deployment/bifrost-api", "-o",
+        "jsonpath={.spec.template.spec.containers[?(@.name=='api')].image}",
+    ).strip()
+
+
+def tag_on_nodes(image: str, tag: str) -> None:
+    """A new image name for the same content, on every node (as a push would be)."""
+    for node in kubectl("get", "nodes", "-o", "jsonpath={.items[*].metadata.name}").split():
+        subprocess.run(
+            ["docker", "exec", node, "ctr", "-n", "k8s.io", "images", "tag", "--force",
+             f"docker.io/library/{image}", f"docker.io/library/{tag}"],
+            check=True, capture_output=True,
+        )
+
+
+def upgrade_drill() -> dict:
+    wait_floor(300)
+    [old] = live_workers()
+    started_at = sql("SELECT now()")[0][0]
+    [long_run] = enqueue(1, 400)  # past the 300 s grace a shutdown gets
+    wait_status([long_run], {"Running"}, 120)
+    image = api_image()
+    upgraded = f"{image}-upgraded"
+    tag_on_nodes(image, upgraded)
+    kubectl("set", "image", "deployment/bifrost-api", f"api={upgraded}")
+    kubectl("rollout", "status", "deployment/bifrost-api", "--timeout=600s")
+
+    # The old worker drains only once a replacement on the new image is ready.
+    replaced_when = None
+    deadline = time.monotonic() + 300
+    while replaced_when is None:
+        assert time.monotonic() < deadline, live_workers()
+        state = sql(f"SELECT state, coalesce(end_reason,'') FROM execution_workers WHERE id='{old['id']}'")[0]
+        ready_current = int(sql(
+            "SELECT count(*) FROM execution_workers WHERE form='job' AND state='ready' "
+            f"AND image='{upgraded}'"
+        )[0][0])
+        if state[0] != "ready":
+            assert state == ["draining", "rotated"], state
+            assert ready_current >= 1, "drained before its replacement was ready"
+            replaced_when = time.monotonic()
+        time.sleep(1)
+    run_seconds = wait_done([long_run], 900)
+    deadline = time.monotonic() + 120
+    while sql(f"SELECT state FROM execution_workers WHERE id='{old['id']}'")[0][0] != "retired":
+        assert time.monotonic() < deadline, "the drained worker did not retire"
+        time.sleep(2)
+    launched = sql(
+        "SELECT coalesce(image,''), state FROM execution_workers "
+        f"WHERE form='job' AND created_at >= '{started_at}'"
+    )
+    lost = sql(f"SELECT id, end_reason FROM execution_workers WHERE state='lost' AND ended_at >= '{started_at}'")
+    assert lost == [], lost
+    assert [row[0] for row in launched] == [upgraded], f"one replacement, no churn: {launched}"
+    return {
+        "image": upgraded,
+        "run_done_after_drain_seconds": round(run_seconds, 1),
+        "launched": launched,
+        "lost": lost,
+    }
 
 
 STATIC = ("deployment/bifrost-scheduler", "deployment/bifrost-worker")

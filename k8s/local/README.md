@@ -49,8 +49,10 @@ service-account token.
 After booting with the flag, run the build-Job experiment through the harness:
 
 ```bash
-./test.sh kubernetes build-experiment --output /tmp/bifrost-build-jobs --restart-scheduler
+./test.sh kubernetes build-experiment --output /tmp/bifrost-build-jobs --restart-controller
 ```
+
+`--restart-controller` deletes one API pod while builds run (the workload runs in the other), so the remaining build controller must carry the builds to completion.
 
 The scheduler and worker Deployments have fixed replica counts. Additional capacity comes from on-demand worker Jobs (`app.kubernetes.io/name=bifrost-pool-worker`) that the API's worker controller starts when accepted work exceeds free executor capacity; idle Job workers drain themselves. `config.yaml` sizes those Jobs for a single-node cluster.
 

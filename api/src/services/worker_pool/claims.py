@@ -9,6 +9,7 @@ from uuid import UUID
 
 from sqlalchemy import exists, func, select, text, tuple_, update
 
+from shared.version import get_version
 from src.core.database import get_db_context, get_liveness_db_context
 from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
 from src.models.orm.work_dispatches import WorkDispatch
@@ -52,7 +53,8 @@ async def admit_worker(incarnation_id: UUID, *, job_uid: str, pod_uid: str) -> i
     """Bind this pod to its incarnation once; return its slots, or None.
 
     Only the first pod of the UID-bound Job can admit: a second start of the
-    same Job, or a pod of another Job, is refused.
+    same Job, or a pod of another Job, is refused. The pod reports the build
+    it runs, which decides when an upgrade replaces it.
     """
     now = _now()
     async with get_db_context() as db:
@@ -67,6 +69,7 @@ async def admit_worker(incarnation_id: UUID, *, job_uid: str, pod_uid: str) -> i
             .values(
                 state="ready",
                 kubernetes_pod_uid=pod_uid,
+                version=get_version(),
                 ready_at=now,
                 heartbeat_at=func.now(),
                 last_claim_at=now,
@@ -75,31 +78,45 @@ async def admit_worker(incarnation_id: UUID, *, job_uid: str, pod_uid: str) -> i
         )
 
 
-async def register_static_worker(
-    *, slots: int, hostname: str, memory_budget_bytes: int
-) -> UUID:
-    """A long-running executor joins the pool directly as ``ready``.
+async def register_static_worker(*, hostname: str) -> UUID:
+    """A long-running executor joins the pool as ``starting``.
 
-    ``memory_budget_bytes`` is measured before its pool starts; the first
-    heartbeat replaces it with the budget measured once ready.
+    Its pool can take a minute or more to start, so it offers no capacity
+    (and claims nothing) until ``mark_static_ready`` reports its measured
+    budget.
     """
-    now = _now()
     worker = ExecutionWorker(
         form="static",
-        state="ready",
+        state="starting",
         resource_class="standard",
-        slots=slots,
-        memory_budget_bytes=memory_budget_bytes,
+        slots=0,
         hostname=hostname,
-        ready_at=now,
+        version=get_version(),
         heartbeat_at=func.now(),
-        last_claim_at=now,
     )
     async with get_db_context() as db:
         db.add(worker)
         await db.flush()
         worker_id = worker.id
     return worker_id
+
+
+async def mark_static_ready(incarnation_id: UUID, *, memory_budget_bytes: int) -> bool:
+    """``starting → ready`` with the budget measured once the pool is up."""
+    now = _now()
+    async with get_db_context() as db:
+        ready = await db.scalar(
+            update(ExecutionWorker)
+            .where(ExecutionWorker.id == incarnation_id, ExecutionWorker.state == "starting")
+            .values(
+                state="ready",
+                memory_budget_bytes=memory_budget_bytes,
+                ready_at=now,
+                last_claim_at=now,
+            )
+            .returning(ExecutionWorker.id)
+        )
+    return ready is not None
 
 
 async def claim_next(
@@ -226,14 +243,16 @@ async def heartbeat_worker(
 ) -> str | None:
     """Renew liveness; return the state the controller sees (None if gone).
 
-    On the executor's own heartbeat connection, so a heartbeat never waits
-    behind the runs' queries."""
+    A static executor heartbeats while ``starting`` too: its pool start can
+    outlast the window after which a silent executor is lost. On the
+    executor's own heartbeat connection, so a heartbeat never waits behind
+    the runs' queries."""
     async with get_liveness_db_context() as db:
         return await db.scalar(
             update(ExecutionWorker)
             .where(
                 ExecutionWorker.id == incarnation_id,
-                ExecutionWorker.state.in_(("ready", "draining")),
+                ExecutionWorker.state.in_(("starting", "ready", "draining")),
             )
             .values(
                 # The database's clock: liveness is judged against it.
@@ -320,6 +339,7 @@ __all__ = [
     "SUPPORTED_HANDLERS",
     "admit_worker",
     "register_static_worker",
+    "mark_static_ready",
     "begin_drain",
     "begin_idle_drain",
     "claim_next",

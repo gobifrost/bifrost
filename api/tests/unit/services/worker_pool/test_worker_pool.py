@@ -144,9 +144,10 @@ async def _clear_pool_state(sessions) -> None:  # type: ignore[no-untyped-def]
         # enqueues some (model catalog, Solution updates) during the reset.
         await session.execute(delete(PlatformJob).where(PlatformJob.status == "queued"))
         await session.commit()
-    # What a worker controller last published it can launch.
+    # What a worker controller last published it can launch, and which
+    # controllers are live.
     async with get_redis() as redis:
-        await redis.delete(LAUNCHABLE_KEY)
+        await redis.delete(LAUNCHABLE_KEY, controller.CONTROLLERS_KEY)
 
 
 @pytest.fixture(autouse=True)
@@ -185,11 +186,18 @@ async def _set_request(sessions, execution_id: str, request: int, *, age: timede
         await session.commit()
 
 
-async def _report_budget(worker_id: UUID, budget: int, *, pressured: bool = False) -> None:
-    await claims.heartbeat_worker(
+async def _report_budget(worker_id: UUID, budget: int, *, pressured: bool = False) -> str | None:
+    return await claims.heartbeat_worker(
         worker_id, active_runs=0, runs_handled=0, package_generation=0,
         memory_pressured=pressured, memory_budget_bytes=budget, memory_reserved_bytes=0,
     )
+
+
+async def _static_executor(hostname: str) -> UUID:
+    """A static executor whose pool is up, with a measured 1 GiB budget."""
+    worker_id = await claims.register_static_worker(hostname=hostname)
+    assert await claims.mark_static_ready(worker_id, memory_budget_bytes=GIB)
+    return worker_id
 
 
 async def _job_worker(sessions, *, state: str = "starting") -> ExecutionWorker:  # type: ignore[no-untyped-def]
@@ -277,18 +285,45 @@ async def test_unsupported_handler_versions_wait_for_a_compatible_worker(db) -> 
     assert dispatch.assigned_worker_id is None
 
 
-async def test_static_executors_register_ready_and_claim(db) -> None:
-    worker_id = await claims.register_static_worker(slots=3, hostname="worker-1", memory_budget_bytes=GIB)
+async def test_a_static_executor_offers_nothing_until_its_pool_is_up(db) -> None:
+    """While its pool starts (a minute or more), a static executor heartbeats
+    but claims nothing and counts as no capacity, so work it cannot take yet
+    gets a worker Job."""
+    worker_id = await claims.register_static_worker(hostname="worker-1")
     await _accept_pool_run()
+    assert await _report_budget(worker_id, GIB) == "starting"
+    cluster = FakeCluster()
 
+    assert await _claim(worker_id) is None
+    await controller.WorkerPoolController(cluster, SETTINGS, SPEC).reconcile()  # type: ignore[arg-type]
+    assert len(cluster.created) == 1
+
+    assert await claims.mark_static_ready(worker_id, memory_budget_bytes=GIB)
     assert await _claim(worker_id) is not None
+    assert not await claims.mark_static_ready(worker_id, memory_budget_bytes=GIB)  # once only
+
+
+async def test_a_static_executor_that_dies_while_starting_is_lost(db) -> None:
+    worker_id = await claims.register_static_worker(hostname="gone")
+    async with db.sessions() as session:
+        await session.execute(
+            update(ExecutionWorker)
+            .where(ExecutionWorker.id == worker_id)
+            .values(heartbeat_at=datetime.now(timezone.utc) - timedelta(seconds=45))
+        )
+        await session.commit()
+
+    await liveness.end_silent_static_executors()
+
+    async with db.sessions() as session:
+        assert (await session.get(ExecutionWorker, worker_id)).state == "lost"
 
 
 # --- claiming by memory --------------------------------------------------------
 
 
 async def test_work_larger_than_the_free_budget_waits_while_smaller_work_is_claimed(db) -> None:
-    worker_id = await claims.register_static_worker(slots=1, hostname="static-1", memory_budget_bytes=GIB)
+    worker_id = await _static_executor("static-1")
     large = await _accept_pool_run()
     await _set_request(db.sessions, large, 500 * MIB, age=timedelta(seconds=5))
     small = await _accept_pool_run()
@@ -299,7 +334,7 @@ async def test_work_larger_than_the_free_budget_waits_while_smaller_work_is_clai
 
 
 async def test_long_waiting_work_an_executor_could_hold_blocks_newer_claims(db) -> None:
-    worker_id = await claims.register_static_worker(slots=1, hostname="static-1", memory_budget_bytes=GIB)
+    worker_id = await _static_executor("static-1")
     large = await _accept_pool_run()
     await _set_request(
         db.sessions, large, 500 * MIB, age=claims.HEAD_OF_LINE_WAIT + timedelta(seconds=5)
@@ -403,7 +438,7 @@ async def test_demand_launches_bounded_workers_and_binds_before_start(db) -> Non
 
 
 async def test_a_free_reported_budget_satisfies_demand_without_launching(db) -> None:
-    static_id = await claims.register_static_worker(slots=4, hostname="static-1", memory_budget_bytes=GIB)
+    static_id = await _static_executor("static-1")
     await _report_budget(static_id, GIB)
     await _accept_pool_run()
     cluster = FakeCluster()
@@ -416,7 +451,7 @@ async def test_a_free_reported_budget_satisfies_demand_without_launching(db) -> 
 async def test_a_memory_pressured_executor_offers_no_capacity(db) -> None:
     """An executor over its memory threshold claims nothing, so its free
     budget does not count and a worker Job is started for the waiting run."""
-    static_id = await claims.register_static_worker(slots=4, hostname="static-1", memory_budget_bytes=GIB)
+    static_id = await _static_executor("static-1")
     await _report_budget(static_id, GIB, pressured=True)
     await _accept_pool_run()
     cluster = FakeCluster()
@@ -432,7 +467,7 @@ async def test_a_run_handed_back_before_it_started_waits_for_another_executor(db
     without the first executor's claim record."""
     from src.models.orm.execution_workers import ExecutionWorkerClaim
 
-    first = await claims.register_static_worker(slots=1, hostname="first", memory_budget_bytes=GIB)
+    first = await _static_executor("first")
     execution_id = await _accept_pool_run()
     await _set_request(db.sessions, execution_id, 200 * MIB)
     claim = await _claim(first)
@@ -455,7 +490,7 @@ async def test_a_run_handed_back_before_it_started_waits_for_another_executor(db
     assert (execution.status, execution.started_at) == (ExecutionStatus.PENDING, None)
     assert held == []
     db.wake.assert_awaited_once()
-    second = await claims.register_static_worker(slots=1, hostname="second", memory_budget_bytes=GIB)
+    second = await _static_executor("second")
     again = await _claim(second)
     assert again is not None and again.claimed is not None
     assert again.claimed["execution_id"] == execution_id
@@ -545,8 +580,8 @@ async def test_a_silent_static_executor_is_lost_and_its_runs_end(db) -> None:
     from src.services.execution.workflow_dispatch import claim_workflow_dispatch
     from src.services.worker_pool.recovery import EXECUTOR_LOST
 
-    silent = await claims.register_static_worker(slots=1, hostname="gone", memory_budget_bytes=GIB)
-    alive = await claims.register_static_worker(slots=1, hostname="here", memory_budget_bytes=GIB)
+    silent = await _static_executor("gone")
+    alive = await _static_executor("here")
     execution_id = await _accept_pool_run()
     claim = await _claim(silent)
     assert claim is not None
@@ -748,8 +783,8 @@ async def test_the_executor_holding_a_run_writes_its_result(db) -> None:
     from src.repositories.executions import update_execution
     from src.services.execution.workflow_dispatch import claim_workflow_dispatch
 
-    worker_id = await claims.register_static_worker(slots=1, hostname="here", memory_budget_bytes=GIB)
-    other = await claims.register_static_worker(slots=1, hostname="other", memory_budget_bytes=GIB)
+    worker_id = await _static_executor("here")
+    other = await _static_executor("other")
     execution_id = await _accept_pool_run()
     claim = await _claim(worker_id)
     assert claim is not None
@@ -882,7 +917,7 @@ async def test_a_claim_whose_reply_was_lost_is_released(db, monkeypatch) -> None
 
     monkeypatch.setattr(agent_run_service, "get_dispatch_db_context", claims.get_db_context)
     monkeypatch.setattr(recovery, "announce_ended_runs", AsyncMock())
-    worker = await claims.register_static_worker(slots=1, hostname="here", memory_budget_bytes=GIB)
+    worker = await _static_executor("here")
     lost_run = await _accept_pool_run()
     started_run = await _accept_pool_run()
     lost_claim = await _claim(worker)
@@ -994,7 +1029,7 @@ async def _waiting_run_of(sessions, request: int) -> str:  # type: ignore[no-unt
 
 
 async def test_work_larger_than_the_largest_executor_fails_visibly(db) -> None:
-    static_id = await claims.register_static_worker(slots=1, hostname="static-1", memory_budget_bytes=GIB)
+    static_id = await _static_executor("static-1")
     await _report_budget(static_id, 512 * MIB)
     execution_id = await _waiting_run_of(db.sessions, GIB)
 
@@ -1008,7 +1043,7 @@ async def test_work_larger_than_the_largest_executor_fails_visibly(db) -> None:
 
 
 async def test_work_no_executor_can_hold_fails_within_seconds(db) -> None:
-    static_id = await claims.register_static_worker(slots=1, hostname="static-1", memory_budget_bytes=GIB)
+    static_id = await _static_executor("static-1")
     await _report_budget(static_id, 512 * MIB)
     execution_id = await _accept_pool_run()
     await _set_request(db.sessions, execution_id, GIB)
@@ -1022,14 +1057,14 @@ async def test_work_no_executor_can_hold_fails_within_seconds(db) -> None:
 async def test_an_executor_restarting_or_draining_still_counts_as_capacity(db) -> None:
     """Work is too large only if no executor live within RECENTLY_LIVE could
     hold it: a big executor restarting must not fail its work meanwhile."""
-    ready = await claims.register_static_worker(slots=1, hostname="staying", memory_budget_bytes=GIB)
+    ready = await _static_executor("staying")
     await _report_budget(ready, 512 * MIB)
-    draining = await claims.register_static_worker(slots=1, hostname="leaving", memory_budget_bytes=GIB)
+    draining = await _static_executor("leaving")
     await _report_budget(draining, 2 * GIB)
     await claims.begin_drain(draining, "stopped")
-    restarting = await claims.register_static_worker(slots=1, hostname="restarting", memory_budget_bytes=GIB)
+    restarting = await _static_executor("restarting")
     await _report_budget(restarting, 4 * GIB)
-    gone = await claims.register_static_worker(slots=1, hostname="gone", memory_budget_bytes=GIB)
+    gone = await _static_executor("gone")
     await _report_budget(gone, 8 * GIB)
     async with db.sessions() as session:
         now = datetime.now(timezone.utc)
@@ -1104,7 +1139,7 @@ async def test_a_platform_job_waiting_for_memory_launches_a_worker(db) -> None:
 
 
 async def test_large_work_waits_while_no_executor_has_reported_a_budget(db) -> None:
-    await claims.register_static_worker(slots=1, hostname="static-1", memory_budget_bytes=GIB)
+    await _static_executor("static-1")
     execution_id = await _waiting_run_of(db.sessions, GIB)
 
     await work_dispatch.reconcile_work_dispatches()
@@ -1164,3 +1199,212 @@ async def test_a_workflow_run_requests_its_learned_peak_or_the_default(db) -> No
             )
             await session.execute(delete(Workflow).where(Workflow.id.in_((learned.id, new.id))))
             await session.commit()
+
+
+# --- replacing Jobs after an upgrade (#1052) ----------------------------------
+
+WARM = SimpleNamespace(**{**vars(SETTINGS), "pool_min_workers": 1, "pool_max_workers": 4})
+
+
+async def _admitted_job(  # type: ignore[no-untyped-def]
+    sessions, *, version: str | None, launched_by: UUID | None, reserved_for: UUID | None = None
+) -> UUID:
+    worker = await _job_worker(sessions, state="ready")
+    async with sessions() as session:
+        await session.execute(
+            update(ExecutionWorker)
+            .where(ExecutionWorker.id == worker.id)
+            .values(version=version, launched_by=launched_by, reserved_for_dispatch_id=reserved_for)
+        )
+        await session.commit()
+    return worker.id
+
+
+def _controller(cluster: FakeCluster, version: str, settings=WARM) -> controller.WorkerPoolController:  # type: ignore[no-untyped-def]
+    pool = controller.WorkerPoolController(cluster, settings, SPEC)  # type: ignore[arg-type]
+    pool.version = version
+    return pool
+
+
+async def _pass(pool: controller.WorkerPoolController) -> list[UUID]:
+    """One reconcile pass without the per-Job reconciliation: publish, launch
+    (creating the launched Jobs), replace. Returns the Jobs launched."""
+    pool.live = await controller._publish_live(pool.id, pool.version)
+    launched = await pool.launch_for_demand()
+    for worker_id in launched:
+        await pool.reconcile_worker(worker_id)
+    await pool.replace_outdated()
+    return launched
+
+
+async def _admit(sessions, worker_id: UUID) -> None:  # type: ignore[no-untyped-def]
+    async with sessions() as session:
+        job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
+    assert await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid=f"pod-{worker_id}") is not None
+
+
+async def _state(sessions, worker_id: UUID) -> tuple[str, str | None]:  # type: ignore[no-untyped-def]
+    async with sessions() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+    return worker.state, worker.end_reason
+
+
+def test_a_job_is_outdated_only_when_its_build_and_its_launcher_are_gone() -> None:
+    live_id = uuid4()
+    live = controller.LiveControllers(ids=frozenset({live_id}), versions=frozenset({"2.0"}))
+
+    def job(**values):  # type: ignore[no-untyped-def]
+        return SimpleNamespace(**{"form": "job", "state": "ready", "version": "1.0", "launched_by": uuid4(), **values})
+
+    assert live.outdated(job())
+    assert live.outdated(job(version=None, launched_by=None)), "launched before this rule"
+    assert not live.outdated(job(version="2.0")), "a live controller runs its build"
+    assert not live.outdated(job(launched_by=live_id)), "its launcher is live: never a loop"
+    assert not live.outdated(job(state="starting")), "its build is unknown until admitted"
+    assert not live.outdated(job(form="static")), "static executors roll with their Deployment"
+
+
+async def test_live_controllers_expire_and_withdraw(db) -> None:  # type: ignore[no-untyped-def]
+    old, new = uuid4(), uuid4()
+    await controller._publish_live(old, "1.0")
+    async with get_redis() as redis:
+        await redis.hset(controller.CONTROLLERS_KEY, str(uuid4()), '{"version": "0.9", "at": 0}')  # type: ignore[misc]
+
+    live = await controller._publish_live(new, "2.0")
+    assert (live.ids, live.versions) == (frozenset({old, new}), frozenset({"1.0", "2.0"}))
+
+    await controller._withdraw_live(old)
+    live = await controller._publish_live(new, "2.0")
+    assert (live.ids, live.versions) == (frozenset({new}), frozenset({"2.0"}))
+
+
+async def test_an_upgrade_replaces_the_warm_job_once_its_controllers_are_gone(db) -> None:
+    from shared.version import get_version
+
+    cluster = FakeCluster()
+    old = _controller(cluster, "old-build")
+    new = _controller(cluster, get_version())
+    old.live = await controller._publish_live(old.id, old.version)
+    warm = await _admitted_job(db.sessions, version="old-build", launched_by=old.id)
+
+    # Rolling upgrade: the old replica is still live, so nothing moves.
+    assert await _pass(new) == []
+    assert await _state(db.sessions, warm) == ("ready", None)
+
+    # The last old replica stops: a replacement is launched first...
+    await controller._withdraw_live(old.id)
+    [replacement] = await _pass(new)
+    assert await _state(db.sessions, warm) == ("ready", None), "serves until the replacement is ready"
+    async with db.sessions() as session:
+        assert (await session.get(ExecutionWorker, replacement)).launched_by == new.id
+
+    # ...and the old Job drains (never deleted) once the replacement is ready.
+    await _admit(db.sessions, replacement)
+    assert await _pass(new) == []
+    assert await _state(db.sessions, warm) == ("draining", "rotated")
+    assert await _pass(new) == [], "no further launches"
+    assert cluster.deleted == []
+    async with db.sessions() as session:
+        assert (await session.get(ExecutionWorker, replacement)).version == get_version()
+
+
+async def test_a_restart_on_the_same_build_replaces_nothing(db) -> None:
+    pool = _controller(FakeCluster(), "1.0")
+    warm = await _admitted_job(db.sessions, version="1.0", launched_by=uuid4())
+
+    assert await _pass(pool) == []
+    assert await _state(db.sessions, warm) == ("ready", None)
+
+
+async def test_a_replacement_on_another_build_is_never_replaced_while_its_launcher_lives(db) -> None:
+    """An explicit build image can run another build than the controller;
+    the Jobs it launches must not be replaced in a loop."""
+    cluster = FakeCluster()
+    pool = _controller(cluster, "controller-build")
+    warm = await _admitted_job(db.sessions, version="build-image", launched_by=pool.id)
+
+    assert await _pass(pool) == []
+    assert await _state(db.sessions, warm) == ("ready", None)
+    assert cluster.created == []
+
+
+async def test_a_job_launched_for_a_dispatch_drains_only_after_claiming_it(db) -> None:
+    pool = _controller(FakeCluster(), "2.0")
+    current = await _admitted_job(db.sessions, version="2.0", launched_by=pool.id)
+    holding = await _admitted_job(db.sessions, version="1.0", launched_by=None, reserved_for=uuid4())
+
+    assert await _pass(pool) == []
+    assert await _state(db.sessions, holding) == ("ready", None)
+    assert await _state(db.sessions, current) == ("ready", None)
+
+
+async def test_without_a_warm_minimum_outdated_jobs_drain_at_once(db) -> None:
+    cold = SimpleNamespace(**{**vars(WARM), "pool_min_workers": 0})
+    pool = _controller(FakeCluster(), "2.0", cold)
+    outdated = await _admitted_job(db.sessions, version="1.0", launched_by=None)
+
+    assert await _pass(pool) == []
+    assert await _state(db.sessions, outdated) == ("draining", "rotated")
+
+
+async def test_a_current_job_that_idles_out_first_is_relaunched(db) -> None:
+    """Both API pods restarting can let the current Job reach its idle drain
+    before the outdated one is replaced; the warm minimum converges."""
+    pool = _controller(FakeCluster(), "2.0")
+    outdated = await _admitted_job(db.sessions, version="1.0", launched_by=None)
+    current = await _admitted_job(db.sessions, version="2.0", launched_by=pool.id)
+    assert await claims.begin_idle_drain(current, keep_ready=1)
+
+    [relaunched] = await _pass(pool)
+    assert await _state(db.sessions, outdated) == ("ready", None)
+    await _admit(db.sessions, relaunched)
+    await _pass(pool)
+    assert await _state(db.sessions, outdated) == ("draining", "rotated")
+
+
+async def test_the_creating_controller_is_the_launcher(db) -> None:
+    """Any replica may create the Job for a row another reserved; the row
+    names the one whose image the Job runs."""
+    cluster = FakeCluster()
+    reserving, creating = _controller(cluster, "2.0"), _controller(cluster, "2.0")
+    [worker_id] = await reserving.launch_for_demand()
+
+    await creating.reconcile_worker(worker_id)
+
+    async with db.sessions() as session:
+        assert (await session.get(ExecutionWorker, worker_id)).launched_by == creating.id
+
+
+async def test_a_long_drain_is_reported_once(db, caplog) -> None:  # type: ignore[no-untyped-def]
+    pool = _controller(FakeCluster(), "2.0", SimpleNamespace(**{**vars(WARM), "pool_max_lifetime_seconds": 0}))
+    worker = SimpleNamespace(id=uuid4(), state="draining", active_runs=1, end_reason="rotated")
+
+    pool._watch_drain(worker)  # type: ignore[arg-type]
+    pool._watch_drain(worker)  # type: ignore[arg-type]
+
+    assert [r.message for r in caplog.records].count(
+        "A draining worker still has runs after its maximum lifetime"
+    ) == 1
+
+
+async def test_worker_jobs_pull_like_the_controller() -> None:
+    from src.services.worker_pool.manifest import resolve_worker_job_spec
+
+    client = SimpleNamespace(
+        namespace="test",
+        own_container=AsyncMock(return_value={
+            "image": "ghcr.io/gobifrost/bifrost-api:latest",
+            "imagePullPolicy": "Always",
+            "envFrom": [{"configMapRef": {"name": "config"}}],
+        }),
+    )
+    unset = SimpleNamespace(**{
+        **vars(SETTINGS), "kubernetes_build_image": None, "kubernetes_build_configmap": None,
+        "kubernetes_build_secret": None, "kubernetes_build_service_account": None,
+    })
+
+    spec = await resolve_worker_job_spec(client, unset)  # type: ignore[arg-type]
+    manifest = build_worker_job_manifest(uuid4(), SETTINGS, spec, memory_limit_bytes=None)
+
+    assert manifest["spec"]["template"]["spec"]["containers"][0]["imagePullPolicy"] == "Always"
+    assert (await resolve_worker_job_spec(client, SETTINGS)).image_pull_policy == "IfNotPresent"  # type: ignore[arg-type]

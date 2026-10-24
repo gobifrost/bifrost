@@ -119,6 +119,52 @@ async def test_draining_hands_workflow_children_the_rest_of_the_grace(monkeypatc
     assert 0 < grace <= 30.0
 
 
+async def test_a_drain_the_control_plane_asked_for_lets_runs_outlast_the_grace(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A rotated or idle drain has no deadline of its own: a run longer than
+    the shutdown grace finishes instead of being recorded as interrupted."""
+    monkeypatch.setattr(pool_main, "DRAIN_GRACE_SECONDS", 0.1)
+    running = {"long-run"}
+    worker = _worker_with_pool(running=running)
+    pool = worker._workflow_consumer._pool  # type: ignore[union-attr]
+
+    drain = asyncio.create_task(worker._drain())
+    await asyncio.sleep(0.6)
+    assert not drain.done(), "still waiting for the run, well past the grace"
+    pool.drain_active_executions.assert_not_awaited()
+
+    running.clear()
+    await asyncio.wait_for(drain, timeout=2)
+    pool.drain_active_executions.assert_awaited_once()
+
+
+async def test_sigterm_during_a_drain_starts_the_grace(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The pod is being killed: its runs get the grace from then on."""
+    monkeypatch.setattr(pool_main, "DRAIN_GRACE_SECONDS", 30.0)
+    worker = _worker_with_pool(running={"long-run"})
+    pool = worker._workflow_consumer._pool  # type: ignore[union-attr]
+
+    drain = asyncio.create_task(worker._drain())
+    await asyncio.sleep(0.3)
+    assert not drain.done()
+    worker.request_stop()
+
+    await asyncio.wait_for(drain, timeout=2)
+    (grace,) = pool.drain_active_executions.await_args.args
+    assert 29.0 < grace <= 30.0
+
+
+async def test_an_executor_lost_during_a_drain_stops_waiting(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    worker = _worker_with_pool(running={"long-run"})
+    pool = worker._workflow_consumer._pool  # type: ignore[union-attr]
+
+    drain = asyncio.create_task(worker._drain())
+    await asyncio.sleep(0.3)
+    worker._lost = True
+
+    await asyncio.wait_for(drain, timeout=2)
+    pool.drain_active_executions.assert_awaited_once_with(0.0)
+
+
 async def test_an_incarnation_makes_a_job_worker_and_none_a_static_one(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     from src.worker import pool_main
 
@@ -173,12 +219,18 @@ async def test_the_process_pool_is_ready_before_any_work_is_claimed(monkeypatch)
         monkeypatch.setattr(pool_main, name, AsyncMock())
     monkeypatch.setattr(pool_main, "get_engine", lambda *args: None)
     monkeypatch.setattr(pool_main, "register_static_worker", AsyncMock(return_value=uuid4()))
+
+    async def mark_static_ready(incarnation_id, *, memory_budget_bytes):  # type: ignore[no-untyped-def]
+        order.append(f"ready with {memory_budget_bytes // GIB} GiB")
+        return True
+
+    monkeypatch.setattr(pool_main, "mark_static_ready", mark_static_ready)
     monkeypatch.setattr(pool_main, "current_package_generation", AsyncMock(return_value=0))
     monkeypatch.setattr(pool_main, "start_kubernetes_loops", AsyncMock(return_value=[]))
     monkeypatch.setattr(pool_main, "claim_next", claim_next)
     monkeypatch.setattr(
         pool_main, "measure_budget",
-        lambda threshold: MemoryBudget(limit_bytes=GIB, baseline_bytes=0, threshold=threshold),
+        lambda threshold: MemoryBudget(limit_bytes=4 * GIB, baseline_bytes=0, threshold=0.5),
     )
     monkeypatch.setattr(workflow_execution, "WorkflowExecutionConsumer", _Workflows)
     monkeypatch.setattr(agent_run, "AgentRunConsumer", object)
@@ -195,8 +247,9 @@ async def test_the_process_pool_is_ready_before_any_work_is_claimed(monkeypatch)
 
     assert await worker.run() == 0
     # Heartbeats start at registration: starting the pool can take longer
-    # than a silent executor is given before it counts as lost.
-    assert order == ["heartbeat", "pool started", "claim", "pool stopped"]
+    # than a silent executor is given before it counts as lost. A static
+    # executor offers capacity only once its pool is up and measured.
+    assert order == ["heartbeat", "pool started", "ready with 2 GiB", "claim", "pool stopped"]
 
 
 QUEUED_AT = datetime(2026, 10, 23, tzinfo=timezone.utc)

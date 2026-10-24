@@ -10,20 +10,28 @@ Workers drain themselves when idle. The controller only marks a worker
 ``lost`` when it misses its start deadline or its heartbeat, or its Job
 disappears; work it held is released by the dispatch reconciler, and runs it
 had started follow their domain's terminal sweeps (never replayed).
+
+After an upgrade the controller replaces Jobs running a build no live
+controller runs, launched by a controller that is gone (``LiveControllers``):
+the warm minimum launches current Jobs, and once they are ready the outdated
+ones drain (never deleted), so their runs finish.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import time
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, literal, select, text
+from sqlalchemy import func, literal, select, text, update
 
+from shared.version import get_version
 from src.config import Settings, get_settings
 from src.core.database import get_db_context
 from src.jobs.platform.kubernetes_client import (
@@ -49,7 +57,11 @@ from src.services.worker_pool.manifest import (
     resolve_worker_job_spec,
     worker_job_name,
 )
-from src.services.worker_pool.liveness import Reachability, silent_executor
+from src.services.worker_pool.liveness import (
+    HEARTBEAT_LOST_AFTER,
+    Reachability,
+    silent_executor,
+)
 from src.services.worker_pool.recovery import announce_ended_runs, end_runs_of_lost_worker
 
 logger = logging.getLogger(__name__)
@@ -61,10 +73,32 @@ RECONCILE_SECONDS = 2.0
 # The reconciler treats a missing value as "no controller"; it outlives a
 # few failed reconciles.
 LAUNCHABLE_TTL_SECONDS = 300
+# Every controller instance's build, by instance id, with when it last wrote.
+CONTROLLERS_KEY = "bifrost:worker-pool:controllers"
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+@dataclass(frozen=True)
+class LiveControllers:
+    """Controller instances that wrote within ``HEARTBEAT_LOST_AFTER``."""
+
+    ids: frozenset[UUID]
+    versions: frozenset[str]
+
+    def outdated(self, worker: ExecutionWorker) -> bool:
+        """An admitted Job whose build no live controller runs and whose
+        launcher is gone. A Job launched by a live controller is never
+        outdated, so a replacement can never be replaced in turn; a Job not
+        yet admitted has not reported its build."""
+        return (
+            worker.form == "job"
+            and worker.state in ("ready", "draining")
+            and worker.version not in self.versions
+            and worker.launched_by not in self.ids
+        )
 
 
 class WorkerPoolController:
@@ -76,6 +110,13 @@ class WorkerPoolController:
         self.spec = spec
         # Lost needs a steadily reachable database (worker_pool.liveness).
         self.reachability = Reachability()
+        # This instance, as the launcher recorded on the Jobs it creates.
+        self.id = uuid4()
+        self.version = get_version()
+        self.live = LiveControllers(ids=frozenset({self.id}), versions=frozenset({self.version}))
+        # Draining workers with active runs, by when this instance first saw them.
+        self._draining_since: dict[UUID, float] = {}
+        self._warned_long_drains: set[UUID] = set()
 
     async def reconcile(self) -> None:
         # Before anything that can fail on the Kubernetes API, so the
@@ -87,6 +128,7 @@ class WorkerPoolController:
                 )
             ).scalars().all()
             await _publish_launchable(self._limits(_job_baseline(workers, self.settings))[2])
+        self.live = await _publish_live(self.id, self.version)
         async with get_db_context() as db:
             ids = (
                 await db.scalars(
@@ -105,6 +147,7 @@ class WorkerPoolController:
             await self._reconcile_one(worker_id)
         for worker_id in await self.launch_for_demand():
             await self._reconcile_one(worker_id)
+        await self.replace_outdated()
 
     async def _reconcile_one(self, worker_id: UUID) -> None:
         """One worker's failure (a slow Kubernetes API, a replaced Job) must
@@ -152,6 +195,9 @@ class WorkerPoolController:
                         )
                     )
                 worker.kubernetes_job_uid = remote["metadata"]["uid"]
+                # Whoever creates the Job launches it, whichever replica
+                # reserved the row.
+                worker.launched_by = self.id
                 worker.state = "starting"
                 await db.commit()
                 # The binding is durable; only now may the pod start.
@@ -174,6 +220,7 @@ class WorkerPoolController:
                 .where(ExecutionWorker.id == worker.id, silent_executor())
             ):
                 reason = "heartbeat_lost"
+            self._watch_drain(worker)
             ended: list[UUID] = []
             if reason is not None:
                 # Its runs teach their workflows a larger request only when
@@ -187,6 +234,27 @@ class WorkerPoolController:
                 ended = await end_runs_of_lost_worker(db, worker.id, out_of_memory=out_of_memory)
             await db.commit()
         await announce_ended_runs(ended)
+
+    def _watch_drain(self, worker: ExecutionWorker) -> None:
+        """Warn once when a draining worker's runs outlast the maximum
+        lifetime: it still counts toward ``pool_max_workers``."""
+        if worker.state != "draining" or worker.active_runs == 0:
+            self._draining_since.pop(worker.id, None)
+            return
+        since = self._draining_since.setdefault(worker.id, time.monotonic())
+        if (
+            time.monotonic() - since >= self.settings.pool_max_lifetime_seconds
+            and worker.id not in self._warned_long_drains
+        ):
+            self._warned_long_drains.add(worker.id)
+            logger.warning(
+                "A draining worker still has runs after its maximum lifetime",
+                extra={
+                    "worker_id": str(worker.id),
+                    "active_runs": worker.active_runs,
+                    "end_reason": worker.end_reason,
+                },
+            )
 
     @staticmethod
     def _lose(worker: ExecutionWorker, reason: str, now: datetime) -> None:
@@ -275,13 +343,14 @@ class WorkerPoolController:
                     held = requests[worker.reserved_for_dispatch_id]
                 # A Job admitted but still starting its pool has not measured
                 # its budget yet; until it reports, count the one expected.
-                if worker.state in ("reserved", "starting") or (
-                    worker.form == "job" and worker.memory_budget_bytes is None
+                # A static executor counts only once ready and measured.
+                if worker.form == "job" and (
+                    worker.state in ("reserved", "starting") or worker.memory_budget_bytes is None
                 ):
                     limit = worker.memory_limit_bytes or standard_limit
                     budget = job_budget_bytes(limit, self.settings.memory_pressure_threshold, baseline)
                     free.append(max(0, budget - held))
-                elif worker.memory_budget_bytes is not None:
+                elif worker.state == "ready" and worker.memory_budget_bytes is not None:
                     free.append(
                         max(0, worker.memory_budget_bytes - worker.memory_reserved_bytes - held)
                     )
@@ -293,13 +362,15 @@ class WorkerPoolController:
             )
             jobs = sum(1 for worker in workers if worker.form == "job")
             # Only standard Jobs make up the warm minimum; a sized Job exists
-            # for its large work and drains once idle.
+            # for its large work and drains once idle. An outdated Job still
+            # claims until it drains, but its replacement is launched now.
             undrained = sum(
                 1
                 for worker in workers
                 if worker.form == "job"
                 and worker.resource_class == "standard"
                 and worker.state != "draining"
+                and not self.live.outdated(worker)
             )
             warm = max(
                 0, self.settings.pool_min_workers - undrained - plan.standard - len(plan.sized)
@@ -337,6 +408,61 @@ class WorkerPoolController:
                 },
             )
         return launched
+
+    async def replace_outdated(self) -> list[UUID]:
+        """Drain outdated Jobs once current ones hold the warm minimum.
+
+        Their replacements were launched as part of the warm minimum
+        (``launch_for_demand``), so interactive work always finds a ready
+        executor. A drained Job finishes its runs and retires; it is never
+        deleted. One still holding a dispatch it was launched for drains
+        after claiming it.
+        """
+        async with get_db_context() as db:
+            locked = (
+                await db.execute(
+                    text("SELECT pg_try_advisory_xact_lock(hashtext(:key))"),
+                    {"key": CAPACITY_LOCK},
+                )
+            ).scalar_one()
+            if not locked:
+                return []
+            ready = (
+                await db.execute(
+                    select(ExecutionWorker).where(
+                        ExecutionWorker.form == "job", ExecutionWorker.state == "ready"
+                    )
+                )
+            ).scalars().all()
+            outdated = [
+                worker.id
+                for worker in ready
+                if self.live.outdated(worker) and worker.reserved_for_dispatch_id is None
+            ]
+            current = sum(
+                1
+                for worker in ready
+                if worker.resource_class == "standard" and not self.live.outdated(worker)
+            )
+            if not outdated or current < self.settings.pool_min_workers:
+                return []
+            drained = list(
+                (
+                    await db.scalars(
+                        update(ExecutionWorker)
+                        .where(ExecutionWorker.id.in_(outdated), ExecutionWorker.state == "ready")
+                        .values(state="draining", end_reason="rotated")
+                        .returning(ExecutionWorker.id)
+                    )
+                ).all()
+            )
+            await db.commit()
+        if drained:
+            logger.info(
+                "Replacing workers running an older build",
+                extra={"workers": [str(worker_id) for worker_id in drained], "version": self.version},
+            )
+        return drained
 
     def _reserve(
         self, db: Any, *, memory_limit_bytes: int | None, reserved_for: UUID | None
@@ -424,6 +550,39 @@ async def _publish_launchable(largest_budget: int) -> None:
         await redis.set(LAUNCHABLE_KEY, str(largest_budget), ex=LAUNCHABLE_TTL_SECONDS)
 
 
+async def _publish_live(controller_id: UUID, version: str) -> LiveControllers:
+    """Record this instance as live and read every instance that is."""
+    from src.core.cache.redis_client import get_redis
+
+    now = time.time()
+    async with get_redis() as redis:
+        await redis.hset(  # type: ignore[misc]
+            CONTROLLERS_KEY, str(controller_id), json.dumps({"version": version, "at": now})
+        )
+        entries = await redis.hgetall(CONTROLLERS_KEY)  # type: ignore[misc]
+        ids: set[UUID] = set()
+        versions: set[str] = set()
+        expired: list[str] = []
+        for key, value in entries.items():
+            entry = json.loads(value)
+            if now - entry["at"] > HEARTBEAT_LOST_AFTER.total_seconds():
+                expired.append(key)
+                continue
+            ids.add(UUID(key))
+            versions.add(entry["version"])
+        if expired:
+            await redis.hdel(CONTROLLERS_KEY, *expired)  # type: ignore[misc]
+    return LiveControllers(ids=frozenset(ids), versions=frozenset(versions))
+
+
+async def _withdraw_live(controller_id: UUID) -> None:
+    """A stopping controller is gone at once, not after the lost window."""
+    from src.core.cache.redis_client import get_redis
+
+    async with get_redis() as redis:
+        await redis.hdel(CONTROLLERS_KEY, str(controller_id))  # type: ignore[misc]
+
+
 async def worker_pool_loop(stop_event: asyncio.Event, settings: Any | None = None) -> None:
     settings = settings or get_settings()
     try:
@@ -452,7 +611,11 @@ async def worker_pool_loop(stop_event: asyncio.Event, settings: Any | None = Non
             with suppress(TimeoutError):
                 await asyncio.wait_for(stop_event.wait(), timeout=RECONCILE_SECONDS)
     finally:
+        try:
+            await _withdraw_live(controller.id)
+        except Exception:
+            logger.warning("Could not withdraw the worker controller", exc_info=True)
         await client.close()
 
 
-__all__ = ["WorkerPoolController", "worker_pool_loop"]
+__all__ = ["LiveControllers", "WorkerPoolController", "worker_pool_loop"]

@@ -30137,7 +30137,7 @@ export interface components {
             sync?: boolean | null;
             /**
              * Code
-             * @description Optional: Python code to execute as script (base64 encoded). If provided, executes code instead of looking up workflow by ID.
+             * @description Optional: Python code to execute as a script, as plain text. If provided, executes code instead of looking up workflow by ID.
              */
             code?: string | null;
             /**

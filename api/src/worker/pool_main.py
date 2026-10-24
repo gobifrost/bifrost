@@ -13,7 +13,9 @@ claims pool dispatches from PostgreSQL and hands each to the ordinary
 consumer code, which runs it in a fresh child of the process pool. With no
 work for ``pool_idle_seconds`` (or past ``pool_max_lifetime_seconds``) it
 moves itself to ``draining`` (after which it can never claim), lets active
-runs finish, retires and exits 0. SIGTERM drains the same way.
+runs finish, retires and exits 0. The controller drains it the same way
+(after an upgrade). SIGTERM drains too, but its runs get only
+``DRAIN_GRACE_SECONDS`` before the pod is killed.
 """
 
 from __future__ import annotations
@@ -43,7 +45,6 @@ from src.services.kubernetes_control import start_kubernetes_loops
 from src.services.scheduler_diagnostics import remove_scheduler_replica
 from src.jobs.summarize_worker import handle_summarize_message
 from src.services.memory_requests import (
-    DEFAULT_WORKFLOW_REQUEST_BYTES,
     WORKFLOW_REQUEST_MARGIN_BYTES,
     MemoryBudget,
     measure_budget,
@@ -62,6 +63,7 @@ from src.services.worker_pool.claims import (
     begin_idle_drain,
     claim_next,
     heartbeat_worker,
+    mark_static_ready,
     register_static_worker,
     retire_worker,
 )
@@ -118,6 +120,8 @@ class PoolWorker:
         self._on_ready = on_ready
         self.runs_handled = 0
         self._stop = asyncio.Event()
+        # SIGTERM: the pod is being killed, so a drain's runs get a grace.
+        self._terminating = asyncio.Event()
         self._wake = asyncio.Event()
         # In-flight consumer calls by handler. A workflow call returns once its
         # run is routed to a child (then the pool counts it); agent runs and
@@ -151,6 +155,8 @@ class PoolWorker:
         self._lost = False
 
     def request_stop(self) -> None:
+        """SIGTERM or SIGINT: stop claiming and drain within the grace."""
+        self._terminating.set()
         self._stop.set()
 
     def _workflow_runs(self) -> int:
@@ -204,24 +210,17 @@ class PoolWorker:
 
         configure_mappers()
         if self.static:
-            early = measure_budget(self.settings.memory_pressure_threshold)
-            slots: int | None = self._nominal_slots(early)
-            self.incarnation_id = await register_static_worker(
-                slots=slots, hostname=socket.gethostname(), memory_budget_bytes=early.budget_bytes
-            )
-            # Reported until the budget is measured with the pool up.
-            self.budget = early
+            self.incarnation_id = await register_static_worker(hostname=socket.gethostname())
         else:
             assert self.job_uid is not None and self.pod_uid is not None
-            slots = await admit_worker(
+            if await admit_worker(
                 self.incarnation_id, job_uid=self.job_uid, pod_uid=self.pod_uid
-            )
-        if slots is None:
-            logger.error(
-                "Pool worker was not admitted (not this Job's first pod)",
-                extra={"incarnation_id": str(self.incarnation_id)},
-            )
-            return 1
+            ) is None:
+                logger.error(
+                    "Pool worker was not admitted (not this Job's first pod)",
+                    extra={"incarnation_id": str(self.incarnation_id)},
+                )
+                return 1
 
         # Heartbeat from registration on: starting the pool (and installing
         # its requirements) can take minutes, longer than a silent executor
@@ -232,6 +231,13 @@ class PoolWorker:
         except BaseException:
             heartbeat.cancel()
             raise
+        if self.static:
+            assert self.budget is not None
+            # Not ready if it was declared lost while starting: the claim
+            # loop then claims nothing and the heartbeat stops it.
+            await mark_static_ready(
+                self.incarnation_id, memory_budget_bytes=self.budget.budget_bytes
+            )
         background = [
             heartbeat,
             asyncio.create_task(self._wake_listener(), name="pool-wake"),
@@ -397,12 +403,6 @@ class PoolWorker:
         except Exception:
             # Still unreachable; the next failed claim tries again.
             logger.warning("Could not release unstarted claims", exc_info=True)
-
-    @staticmethod
-    def _nominal_slots(budget: MemoryBudget) -> int:
-        """Typical runs the budget fits. Only an older worker controller
-        reads slots (during a rolling upgrade); capacity is the budget."""
-        return max(1, budget.budget_bytes // DEFAULT_WORKFLOW_REQUEST_BYTES)
 
     def _start(self, claim: PoolClaim) -> None:
         assert self.admission is not None
@@ -577,7 +577,7 @@ class PoolWorker:
                         extra={"incarnation_id": str(self.incarnation_id)},
                     )
                     self._lost = True
-                if state != "ready":
+                if state not in ("starting", "ready"):
                     # The controller drained or lost this worker: stop claiming.
                     self._stop.set()
             except asyncio.CancelledError:
@@ -609,9 +609,12 @@ class PoolWorker:
         """Hand services over, stop claiming platform jobs, let work finish.
 
         Services go first: they restart elsewhere through their lease.
-        Running runs and platform jobs finish within the grace; a workflow
-        child still running at its end is recorded as interrupted by shutdown.
-        An executor declared lost has no grace: its runs already ended.
+        Runs and platform jobs then finish, each within its own timeout; a
+        drain the control plane asked for (idle, rotated, max lifetime) has
+        no deadline of its own. Once SIGTERM arrives (before or during the
+        drain) they get ``DRAIN_GRACE_SECONDS``, and a workflow child still
+        running at its end is recorded as interrupted by shutdown. An
+        executor declared lost has no grace: its runs already ended.
         """
         if self._service_claim_loop is not None:
             try:
@@ -619,6 +622,11 @@ class PoolWorker:
             except Exception:
                 logger.exception("Pool worker service handover failed")
         self._platform_stop.set()
+        # The heartbeat keeps running, so the control plane can still
+        # declare this executor lost while it waits.
+        while self._has_work() and not (self._terminating.is_set() or self._lost):
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._terminating.wait(), timeout=0.5)
         if self._lost:
             # Their runs already ended; agent runs and summaries in progress
             # would only spend tokens on results nobody records.
@@ -638,6 +646,18 @@ class PoolWorker:
             await self._workflow_consumer._pool.drain_active_executions(
                 max(0.0, deadline - time.monotonic())
             )
+
+    def _has_work(self) -> bool:
+        """Claims being routed, agent runs, summaries, workflow children or
+        platform jobs still running."""
+        return (
+            any(self._tasks.values())
+            or bool(self._platform_jobs)
+            or (
+                self._workflow_consumer is not None
+                and self._workflow_consumer._pool.active_execution_count() > 0
+            )
+        )
 
 
 async def run_executor(*, on_ready: Callable[[], None] | None = None) -> int:
