@@ -34,7 +34,9 @@ function relativeTime(value: string | null | undefined) {
 }
 
 function replicaRole(replica: SchedulerReplica) {
-	return replica.is_leader ? "Trigger Leader" : "Job Runner";
+	// Every API control replica reconciles work; only the leader runs triggers.
+	if (replica.is_leader) return "Trigger Leader";
+	return replica.runs_platform_jobs ? "Job Runner" : "Control";
 }
 
 function replicaWorkload(replica: SchedulerReplica) {
