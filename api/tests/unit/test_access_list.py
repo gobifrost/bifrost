@@ -2202,6 +2202,9 @@ _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
     "src.services.service_log_flush.flush_attempt_logs": (2, "Moves a service attempt's log lines into the database."),
     "src.services.service_memory.read_service_memory": (1, "Service memory report."),
     "src.services.work_dispatch.largest_budget": (1, "Largest executor budget the worker controller can launch."),
+    "src.services.worker_pool.controller._publish_live": (
+        1, "Which worker controllers are live and the builds they run (replacing outdated Jobs).",
+    ),
 }
 
 # Package-tool subprocesses that pass no ``env=`` (blind spot B12), mapped

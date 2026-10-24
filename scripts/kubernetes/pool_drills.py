@@ -8,8 +8,8 @@ worker Deployments) are scaled to zero for their duration and restored
 afterwards; the API keeps the warm minimum of Jobs.
 
 - kill: SIGKILL a worker's process mid-run on its node. The worker is marked
-  lost after missing heartbeats and its Job deleted; queued work moves to a
-  new worker; the interrupted run is not replayed.
+  lost after missing heartbeats and its Job deleted; work accepted while it
+  is dead goes to a new worker; the interrupted run is not replayed.
 - controller_restart: delete every API pod during a burst. The restarted
   controllers adopt existing Jobs (one Job per executor, none duplicated)
   and the burst completes.
@@ -79,9 +79,12 @@ def kill_drill() -> dict:
     victim_runs = enqueue(2, 90)
     wait_status(victim_runs, {"Running"}, 120)
     [pod] = [p for p in pool_pods() if p["status"].get("phase") == "Running"]
-    queued = enqueue(3, 1)  # accepted while the worker dies
     killed_at = time.monotonic()
     node_kill(pod)
+    # Accepted after the worker died but before it is marked lost. (Accepted
+    # before the kill, the worker would claim them at once: it admits work by
+    # memory, and two sleeping runs leave it room.)
+    queued = enqueue(3, 1)
     deadline = time.monotonic() + 120
     lost = None
     while time.monotonic() < deadline and lost is None:
