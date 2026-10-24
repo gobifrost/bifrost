@@ -116,7 +116,7 @@ continue directly to 5c and the production rollout.
 | #1039 (5a) | **Merged** 2026-10-23. Gates: 2320 e2e; Docker upgrade from v1.4.1 with its unchanged compose file and seeded data, checklist green; Docker rollback to stage 4; Kind upgrade from stage-4 defaults (found and fixed: worker Jobs must copy the controller pod's `envFrom`) and rollback. Rollback targets must contain #1034. |
 | #1040 (5b) | **Merged** 2026-10-23. RabbitMQ, KEDA and the Redis bridges retired; memory gating restored; executor drain fixed; init skips migrations on a newer database. Includes the 5c proof (below). |
 | 5c proof | Kind with the base manifests' defaults: a 40-run burst scaled worker Jobs 1 → 6 → 1 (never past 6); kill, controller-restart, OOM and unschedulable drills pass. Docker v1.4.1 → 5b with its unchanged compose file passes on two executors. |
-| Production | **Stage 6 live (2026-10-24 ~01:20 UTC)** on `1.4.2-dev.1792800756` (#1044 + hotfix #1045): prod_smoke 0 fail / 0 warn, RabbitMQ drained (work queues 0, `-poison` queues kept by design), Flux synced. The first stage-6 rollout (`1792797532`) crash-looped static executors: they heartbeated only after a ~97 s pool start, past the 30 s lost rule; #1045 heartbeats from registration. gocovi/kubernetes#30 closed. Next: the second-review fixes, then the 1+x model (gocovi/kubernetes#31, draft), then RabbitMQ removal. |
+| Production | **Done (2026-10-24 ~04:45 UTC).** Prod runs the target model on `1.4.2-dev.1792813871`: two API pods host platform control and the worker and build controllers (ServiceAccount `bifrost-api`); one warm worker Job (`BIFROST_POOL_MIN_WORKERS=1`, `MAX=6`); no scheduler, no static workers, no RabbitMQ (gocovi/kubernetes#31, #32; PVC, PV and volume deleted). Rollout bugs found and fixed on the way: #1045 (heartbeat from registration), #1048 (second-review hardening), #1049 (SDK app built off the event loop). prod_smoke 0 fail / 0 warn. |
 
 ## Evidence so far
 
@@ -285,19 +285,13 @@ instant, costs at most one learning kill per new or changed workflow
 
 ### Production
 
-Stage 6 is live on `1.4.2-dev.1792800756` (see the status table). Promotion:
-Jack authorized production changes on 2026-10-23; run the
+Done on 2026-10-24 (see the status table). To promote a new image: run the
 `bifrost-image-promotion` CronJob as a Job (`kubectl -n flux-system create
 job --from=cronjob/bifrost-image-promotion <name>`) once the image is
-published, then `prod_smoke`. Each GitOps step below is a gocovi/kubernetes
-PR, then `prod_smoke`.
-
-1. Done 2026-10-24: rollout, `prod_smoke`, RabbitMQ drained, #30 closed.
-2. The 1+x model: give the API the worker-controller and build Roles; remove
-   the scheduler Deployment; worker Deployment to 1 replica as the warm
-   floor, `BIFROST_POOL_MIN_WORKERS=0`, `MAX=6` (Jack to confirm static floor
-   vs a warm Job).
-3. Remove RabbitMQ (Deployment, PVC, secret keys).
+published, then `prod_smoke`. To replace a warm worker Job running an older
+image, drain it (`claims.begin_drain(incarnation_id, "rotated")` from an API
+pod); never delete the Job, which the controller treats as lost and fails
+its runs.
 
 ### Leftovers
 
