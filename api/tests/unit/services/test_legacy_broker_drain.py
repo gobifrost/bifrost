@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from src.core.redis_client import pending_execution_record
 from src.models.enums import ExecutionStatus
 from src.models.orm.agent_runs import AgentRun
+from src.models.orm.config import SystemConfig
 from src.models.orm.executions import Execution
 from src.models.orm.work_dispatches import WorkDispatch
 from src.services import legacy_broker_drain as drain
@@ -71,12 +72,25 @@ def world(async_session_factory: async_sessionmaker[AsyncSession], monkeypatch: 
     yield World()
 
 
+async def _forget_drain(sessions: async_sessionmaker[AsyncSession]) -> None:
+    async with sessions() as session:
+        await session.execute(
+            delete(SystemConfig).where(
+                SystemConfig.category == drain.DRAINED_CATEGORY,
+                SystemConfig.key == drain.DRAINED_KEY,
+            )
+        )
+        await session.commit()
+
+
 @pytest.fixture(autouse=True)
 async def _clean(async_session_factory: async_sessionmaker[AsyncSession]):
+    await _forget_drain(async_session_factory)
     yield
     async with async_session_factory() as session:
         await session.execute(delete(WorkDispatch))
         await session.commit()
+    await _forget_drain(async_session_factory)
 
 
 async def _person(world) -> tuple[UUID, UUID]:  # type: ignore[no-untyped-def]
@@ -326,7 +340,7 @@ async def test_a_reachable_broker_is_drained_once_and_disconnected(monkeypatch) 
     monkeypatch.setattr(drain.aio_pika, "connect", AsyncMock(side_effect=[ConnectionError, connection]))
     monkeypatch.setattr(drain, "CONNECT_RETRY_SECONDS", 0)
     monkeypatch.setattr(drain, "QUIET_SECONDS", 0)
-    drained = AsyncMock(return_value=0)
+    drained = AsyncMock(return_value=(0, True))
     monkeypatch.setattr(drain, "_drain_queue", drained)
 
     await drain.drain_legacy_broker()
@@ -351,8 +365,8 @@ async def test_work_queued_after_the_first_pass_is_drained_before_disconnecting(
     async def drain_queue(_connection, name):  # type: ignore[no-untyped-def]
         if name == "workflow-executions":
             queued_later["pass"] += 1
-            return 1 if queued_later["pass"] == 2 else 0
-        return 0
+            return (1 if queued_later["pass"] == 2 else 0), True
+        return 0, True
 
     monkeypatch.setattr(drain, "get_settings", lambda: SimpleNamespace(rabbitmq_url="amqp://broker/"))
     monkeypatch.setattr(drain, "wait_for_schema", AsyncMock())
@@ -405,7 +419,7 @@ async def test_a_failed_recovery_leaves_its_message_queued(monkeypatch) -> None:
 
     monkeypatch.setitem(drain.HANDLERS, "workflow-executions", handler)
 
-    assert await drain._drain_queue(_Connection(), "workflow-executions") == 1  # type: ignore[arg-type]
+    assert await drain._drain_queue(_Connection(), "workflow-executions") == (1, False)  # type: ignore[arg-type]
     assert (good.acked, bad.nacked, later.acked) == (True, True, False)
 
 
@@ -430,5 +444,71 @@ async def test_a_queue_drains_until_empty(monkeypatch) -> None:  # type: ignore[
 
     monkeypatch.setitem(drain.HANDLERS, "agent-runs", AsyncMock())
 
-    assert await drain._drain_queue(_Connection(), "agent-runs") == 500  # type: ignore[arg-type]
+    assert await drain._drain_queue(_Connection(), "agent-runs") == (500, True)  # type: ignore[arg-type]
     assert all(m.acked for m in messages)
+
+
+class _OpenConnection:
+    async def __aenter__(self):  # type: ignore[no-untyped-def]
+        return self
+
+    async def __aexit__(self, *_exc: object) -> None:
+        return None
+
+
+async def _drained(sessions: async_sessionmaker[AsyncSession]) -> bool:
+    async with sessions() as session:
+        return await drain.legacy_broker_drained(session)
+
+
+async def test_a_finished_drain_is_recorded_and_later_starts_never_connect(
+    monkeypatch: pytest.MonkeyPatch, async_session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(drain, "get_settings", lambda: SimpleNamespace(rabbitmq_url="amqp://broker/"))
+    monkeypatch.setattr(drain, "wait_for_schema", AsyncMock())
+    connect = AsyncMock(return_value=_OpenConnection())
+    monkeypatch.setattr(drain.aio_pika, "connect", connect)
+    monkeypatch.setattr(drain, "QUIET_SECONDS", 0)
+    monkeypatch.setattr(drain, "_drain_queue", AsyncMock(return_value=(0, True)))
+
+    await drain.drain_legacy_broker()
+    assert await _drained(async_session_factory)
+
+    await drain.drain_legacy_broker()
+    assert connect.await_count == 1
+
+
+async def test_a_drain_that_leaves_a_message_queued_is_not_recorded(
+    monkeypatch: pytest.MonkeyPatch, async_session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    from types import SimpleNamespace
+
+    async def drain_queue(_connection, name):  # type: ignore[no-untyped-def]
+        return 0, name != "agent-runs"
+
+    monkeypatch.setattr(drain, "get_settings", lambda: SimpleNamespace(rabbitmq_url="amqp://broker/"))
+    monkeypatch.setattr(drain, "wait_for_schema", AsyncMock())
+    monkeypatch.setattr(drain.aio_pika, "connect", AsyncMock(return_value=_OpenConnection()))
+    monkeypatch.setattr(drain, "QUIET_SECONDS", 0)
+    monkeypatch.setattr(drain, "_drain_queue", drain_queue)
+
+    await drain.drain_legacy_broker()
+
+    assert not await _drained(async_session_factory)
+
+
+async def test_an_unreachable_broker_is_not_recorded_as_drained(
+    monkeypatch: pytest.MonkeyPatch, async_session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(drain, "get_settings", lambda: SimpleNamespace(rabbitmq_url="amqp://broker/"))
+    monkeypatch.setattr(drain, "wait_for_schema", AsyncMock())
+    monkeypatch.setattr(drain, "CONNECT_RETRY_SECONDS", 0)
+    monkeypatch.setattr(drain.aio_pika, "connect", AsyncMock(side_effect=ConnectionError))
+
+    await drain.drain_legacy_broker()
+
+    assert not await _drained(async_session_factory)

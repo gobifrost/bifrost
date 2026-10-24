@@ -226,6 +226,7 @@ async def test_the_process_pool_is_ready_before_any_work_is_claimed(monkeypatch)
 
     monkeypatch.setattr(pool_main, "mark_static_ready", mark_static_ready)
     monkeypatch.setattr(pool_main, "current_package_generation", AsyncMock(return_value=0))
+    monkeypatch.setattr(pool_main, "import_kubernetes_policy_from_env", AsyncMock())
     monkeypatch.setattr(pool_main, "start_kubernetes_loops", AsyncMock(return_value=[]))
     monkeypatch.setattr(pool_main, "claim_next", claim_next)
     monkeypatch.setattr(

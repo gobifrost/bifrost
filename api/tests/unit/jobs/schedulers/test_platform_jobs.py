@@ -174,7 +174,7 @@ def patch_context(
     monkeypatch.setattr(
         scheduler,
         "get_settings",
-        lambda: SimpleNamespace(kubernetes_build_namespace="test"),
+        lambda: SimpleNamespace(kubernetes_job_namespace="test"),
     )
 
 

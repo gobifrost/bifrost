@@ -61,11 +61,11 @@ def validate_build_settings(settings: Any) -> str:
 
 
 def _validate_required_settings(settings: Any) -> str:
-    namespace = str(_required_setting(settings, "kubernetes_build_namespace"))
-    _required_setting(settings, "kubernetes_build_image")
-    _required_setting(settings, "kubernetes_build_configmap")
-    _required_setting(settings, "kubernetes_build_secret")
-    _required_setting(settings, "kubernetes_build_service_account")
+    namespace = str(_required_setting(settings, "kubernetes_job_namespace"))
+    _required_setting(settings, "kubernetes_job_image")
+    _required_setting(settings, "kubernetes_job_configmap")
+    _required_setting(settings, "kubernetes_job_secret")
+    _required_setting(settings, "kubernetes_job_service_account")
     return namespace
 
 
@@ -121,25 +121,30 @@ def _service_host_url(host: str, port: str) -> str:
 def build_job_manifest(
     claim: ClaimedPlatformJob,
     settings: Any | None = None,
+    *,
+    memory_limit_bytes: int,
 ) -> dict[str, Any]:
-    """Render the suspended Kubernetes Job for one claimed platform build."""
+    """Render the suspended Kubernetes Job for one claimed platform build.
+
+    The pod requests a standard worker's memory request and is limited to
+    ``memory_limit_bytes``, the limit its claim recorded.
+    """
 
     settings = settings or get_settings()
-    namespace = _required_setting(settings, "kubernetes_build_namespace")
-    image = _required_setting(settings, "kubernetes_build_image")
-    configmap = _required_setting(settings, "kubernetes_build_configmap")
-    secret = _required_setting(settings, "kubernetes_build_secret")
-    service_account = _required_setting(settings, "kubernetes_build_service_account")
-    memory_request_mib = int(settings.kubernetes_build_memory_request_mib)
-    memory_limit_mib = int(settings.kubernetes_build_memory_limit_mib)
+    namespace = _required_setting(settings, "kubernetes_job_namespace")
+    image = _required_setting(settings, "kubernetes_job_image")
+    configmap = _required_setting(settings, "kubernetes_job_configmap")
+    secret = _required_setting(settings, "kubernetes_job_secret")
+    service_account = _required_setting(settings, "kubernetes_job_service_account")
+    memory_request_mib = int(settings.pool_worker_memory_request_mib)
+    memory_limit_mib = memory_limit_bytes // (1024 * 1024)
     if memory_request_mib > memory_limit_mib:
         raise KubernetesConfigurationError(
-            "kubernetes_build_memory_request_mib must not exceed "
-            "kubernetes_build_memory_limit_mib"
+            "pool_worker_memory_request_mib must not exceed the pod's memory limit"
         )
-    cpu_request = str(settings.kubernetes_build_cpu_request)
-    cpu_limit = str(settings.kubernetes_build_cpu_limit)
-    pending_timeout = int(settings.kubernetes_build_pending_timeout_seconds)
+    cpu_request = str(settings.kubernetes_job_cpu_request)
+    cpu_limit = str(settings.kubernetes_job_cpu_limit)
+    pending_timeout = int(settings.kubernetes_job_pending_timeout_seconds)
 
     memory_request = f"{memory_request_mib}Mi"
     memory_limit = f"{memory_limit_mib}Mi"
@@ -245,11 +250,11 @@ class KubernetesJobClient:
         *,
         namespace: str | None = None,
     ) -> None:
-        """``namespace`` defaults to the build namespace setting, then this pod's."""
+        """``namespace`` defaults to the Job namespace setting, then this pod's."""
         self.settings = settings or get_settings()
         resolved = (
             namespace
-            or getattr(self.settings, "kubernetes_build_namespace", None)
+            or getattr(self.settings, "kubernetes_job_namespace", None)
             or in_cluster_namespace()
         )
         if not resolved:

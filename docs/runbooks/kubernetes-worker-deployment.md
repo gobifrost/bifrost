@@ -111,14 +111,25 @@ API pod, when it starts with `BIFROST_RABBITMQ_URL` set, tries the broker a few
 times, moves every run an earlier release left queued into PostgreSQL until the
 queues have stayed empty for two minutes (covering work an older pod queues
 during the rolling upgrade), logs `Drained work queued by an earlier release`,
-and disconnects; it does not poll again. Check the queues once the rollout
-finishes; if any still hold messages (a rollout that took longer), restart the
-API Deployment to drain them:
+and disconnects; it does not poll again.
+
+A drain that left nothing queued is recorded in the database
+(`system_configs`, category `runtime`, key `legacy_broker_drained`). From then
+on no API start connects to the broker, and each start lists
+`BIFROST_RABBITMQ_URL` among the environment variables no longer used: once
+the API has logged the drain, the variable can be removed. Check the queues
+once the rollout finishes; if any still hold messages (a rollout that took
+longer), delete the record and restart the API Deployment to drain them:
 
 ```bash
 kubectl -n bifrost exec deploy/rabbitmq -- rabbitmqctl list_queues name messages
+# In PostgreSQL:
+#   DELETE FROM system_configs WHERE category = 'runtime' AND key = 'legacy_broker_drained';
 kubectl -n bifrost rollout restart deployment bifrost-api
 ```
+
+A rollback to a release that queues to RabbitMQ needs that record deleted as
+well, so the next upgrade drains what the rolled-back release queued.
 
 A recovered run runs for the user the earlier release recorded, as that
 release would have run it. A run whose context expired in Redis (after an

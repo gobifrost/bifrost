@@ -25,17 +25,17 @@ def fixture(monkeypatch):
         kubernetes_job_uid=None, kubernetes_pod_uid=None, runner_started_at=None,
         kubernetes_launch_started_at=now, lease_expires_at=now + timedelta(seconds=30),
         phase="Starting", revision=1, error_code=None, error_message=None,
+        memory_limit_bytes=2048 * 2**20,
     )
     row.kubernetes_job_name = (
         f"bifrost-job-{row.id.hex}-{_lease_token_fingerprint(row.lease_token)[:12]}"
     )
     settings = SimpleNamespace(
-        kubernetes_build_namespace="test", kubernetes_build_image="api:test",
-        kubernetes_build_configmap="config", kubernetes_build_secret="secret",
-        kubernetes_build_service_account="runner", kubernetes_build_memory_request_mib=512,
-        kubernetes_build_memory_limit_mib=2048,
-        kubernetes_build_cpu_request="250m", kubernetes_build_cpu_limit="1",
-        kubernetes_build_pending_timeout_seconds=300, kubernetes_build_max_jobs=2,
+        kubernetes_job_namespace="test", kubernetes_job_image="api:test",
+        kubernetes_job_configmap="config", kubernetes_job_secret="secret",
+        kubernetes_job_service_account="runner", pool_worker_memory_request_mib=512,
+        kubernetes_job_cpu_request="250m", kubernetes_job_cpu_limit="1",
+        kubernetes_job_pending_timeout_seconds=300,
     )
     db = AsyncMock()
     result = MagicMock()
@@ -55,7 +55,7 @@ def fixture(monkeypatch):
     client.get_job.return_value = None
     client.list_pods.return_value = []
     claim = ClaimedPlatformJob(row.id, row.lease_token, 120, 0.95, row.memory_required_bytes)
-    manifest = build_job_manifest(claim, settings)
+    manifest = build_job_manifest(claim, settings, memory_limit_bytes=row.memory_limit_bytes)
     remote = {**manifest, "metadata": {**manifest["metadata"], "uid": "job-uid"}}
     client.create_job.return_value = remote
     controller = module.KubernetesBuildController(client, settings)
@@ -212,17 +212,15 @@ async def test_build_loop_idles_without_cluster_credentials(monkeypatch):
     import asyncio
 
     settings = SimpleNamespace(
-        kubernetes_build_namespace="test",
-        kubernetes_build_image="",
-        kubernetes_build_configmap="config",
-        kubernetes_build_secret="secret",
-        kubernetes_build_service_account="runner",
-        kubernetes_build_memory_request_mib=512,
-        kubernetes_build_memory_limit_mib=2048,
-        kubernetes_build_cpu_request="250m",
-        kubernetes_build_cpu_limit="1",
-        kubernetes_build_pending_timeout_seconds=300,
-        kubernetes_build_max_jobs=2,
+        kubernetes_job_namespace="test",
+        kubernetes_job_image="",
+        kubernetes_job_configmap="config",
+        kubernetes_job_secret="secret",
+        kubernetes_job_service_account="runner",
+        pool_worker_memory_request_mib=512,
+        kubernetes_job_cpu_request="250m",
+        kubernetes_job_cpu_limit="1",
+        kubernetes_job_pending_timeout_seconds=300,
     )
     monkeypatch.setattr(module, "get_settings", lambda: settings)
     shutdown = asyncio.Event()
@@ -230,4 +228,31 @@ async def test_build_loop_idles_without_cluster_credentials(monkeypatch):
 
     await asyncio.wait_for(
         module.kubernetes_build_loop(shutdown), timeout=10
+    )
+
+
+async def test_each_pass_admits_within_the_settings_limits(monkeypatch):
+    """Max isolated pods and the pod memory come from Settings -> Kubernetes."""
+    from src.services.kubernetes_execution import KubernetesPolicy
+
+    db = MagicMock()
+    db.scalars = AsyncMock(return_value=MagicMock(all=lambda: []))
+
+    @asynccontextmanager
+    async def context():
+        yield db
+
+    monkeypatch.setattr(module, "get_db_context", context)
+    monkeypatch.setattr(
+        module,
+        "load_kubernetes_policy",
+        AsyncMock(return_value=KubernetesPolicy(max_isolated_pods=5, worker_memory_mib=3072)),
+    )
+    claim = AsyncMock(return_value=None)
+    monkeypatch.setattr(module, "claim_platform_job", claim)
+
+    await module.KubernetesBuildController(AsyncMock(), SimpleNamespace()).reconcile()
+
+    claim.assert_awaited_once_with(
+        backend="kubernetes", remote_limit=5, remote_memory_bytes=3072 * 2**20
     )

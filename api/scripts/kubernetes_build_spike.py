@@ -84,10 +84,6 @@ def _guard_environment() -> None:
         raise RuntimeError(
             f"Refusing to run outside testing environment: {settings.environment!r}"
         )
-    if settings.platform_build_backend != "kubernetes":
-        raise RuntimeError(
-            "BIFROST_PLATFORM_BUILD_BACKEND=kubernetes is required for this spike"
-        )
 
 
 def _safe_job_snapshot(job: PlatformJob) -> JobSnapshot:
@@ -370,6 +366,12 @@ async def run_build_mode(args: argparse.Namespace) -> dict[str, Any]:
     _guard_environment()
     await init_db()
     configure_mappers()
+    from src.services.kubernetes_execution import load_kubernetes_policy
+
+    async with get_db_context() as policy_db:
+        policy = await load_kubernetes_policy(policy_db)
+    if not policy.isolated_jobs_enabled:
+        raise RuntimeError("Isolated jobs must be on in Settings -> Kubernetes for this spike")
 
     # Deploys serialize by default (max_concurrency=1); the overlap
     # experiment needs two concurrent builds, so lift it for the run
@@ -424,7 +426,7 @@ async def run_build_mode(args: argparse.Namespace) -> dict[str, Any]:
                     "Deploy jobs were not assigned to the Kubernetes backend: "
                     + json.dumps(_diagnostics(running), default=_json_default)
                 )
-            if any(job.memory_limit_bytes != get_settings().kubernetes_build_memory_limit_mib * 1024 * 1024 for job in running):
+            if any(job.memory_limit_bytes != policy.worker_memory_mib * 1024 * 1024 for job in running):
                 raise RuntimeError(
                     "Deploy jobs did not use the configured pod memory limit: "
                     + json.dumps(_diagnostics(running), default=_json_default)

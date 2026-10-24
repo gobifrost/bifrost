@@ -38,11 +38,11 @@ from src.services.worker_pool.manifest import WorkerJobSpec, build_worker_job_ma
 GIB = 1024 * MIB
 
 SETTINGS = SimpleNamespace(
-    kubernetes_build_namespace="test",
-    kubernetes_build_image="api:test",
-    kubernetes_build_configmap="config",
-    kubernetes_build_secret="secret",
-    kubernetes_build_service_account="runner",
+    kubernetes_job_namespace="test",
+    kubernetes_job_image="api:test",
+    kubernetes_job_configmap="config",
+    kubernetes_job_secret="secret",
+    kubernetes_job_service_account="runner",
     pool_max_workers=2,
     pool_min_workers=0,
     pool_idle_seconds=300,
@@ -1405,8 +1405,8 @@ async def test_worker_jobs_pull_like_the_controller() -> None:
         }),
     )
     unset = SimpleNamespace(**{
-        **vars(SETTINGS), "kubernetes_build_image": None, "kubernetes_build_configmap": None,
-        "kubernetes_build_secret": None, "kubernetes_build_service_account": None,
+        **vars(SETTINGS), "kubernetes_job_image": None, "kubernetes_job_configmap": None,
+        "kubernetes_job_secret": None, "kubernetes_job_service_account": None,
     })
 
     spec = await resolve_worker_job_spec(client, unset)  # type: ignore[arg-type]

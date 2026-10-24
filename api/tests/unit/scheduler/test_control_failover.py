@@ -108,7 +108,7 @@ def _replica(owner: str, lease_name: str) -> ControlPlane:
             name=lease_name,
             lease_duration=LEASE,
         ),
-        settings=SimpleNamespace(platform_build_backend="local"),  # type: ignore[arg-type]
+        settings=SimpleNamespace(),  # type: ignore[arg-type]
         catalog=(PROBE,),
         renew_seconds=RENEW_SECONDS,
         retry_seconds=RETRY_SECONDS,

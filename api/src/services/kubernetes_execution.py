@@ -1,40 +1,55 @@
-"""Product opt-in state for Kubernetes remote execution.
+"""Settings -> Kubernetes: worker scaling and isolated-job policy.
 
-Bifrost owns job classification (execution_class in code); operators own the
-deployment ceiling (backend flag + job-type allowlist in config); product
-users own this per-type opt-in through Settings. A job launches a pod only
-when all three agree.
+One ``SystemConfig`` row (``kubernetes`` / ``remote_execution``) holds every
+setting: the scaling of worker Jobs, whether build-class platform jobs run
+isolated in their own pod, which types do, and per-type concurrency. A field
+never stored takes its default. Every write merges into the stored payload
+under a transaction advisory lock, so editing one field never erases another.
+
+On start, before the Kubernetes loops run, each field never stored takes the
+deployment variable it replaces, once (``import_kubernetes_policy_from_env``),
+and records where it came from until an admin edits it.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.config import get_settings
 from src.jobs.platform.base import PlatformJobDefinition
 from src.jobs.platform.registry import list_platform_job_definitions
 from src.models.contracts.kubernetes import (
+    POLICY_BOUNDS,
     KubernetesExecutionJobType,
     KubernetesExecutionSettings,
+    KubernetesPolicyProvenance,
+    KubernetesPolicyValues,
     KubernetesStatus,
 )
 from src.models.orm.config import SystemConfig
+from src.services.deployment_environment import (
+    KUBERNETES_POLICY_VARIABLES,
+    set_variables,
+    unread_environment_variables,
+)
 
 logger = logging.getLogger(__name__)
 
 KUBERNETES_CONFIG_CATEGORY = "kubernetes"
 KUBERNETES_CONFIG_KEY = "remote_execution"
-KUBERNETES_NOTICE_KEY = "detection_notice"
+IMPORT_LOCK = "bifrost:kubernetes-settings:import"
+PROVENANCE_KEY = "imported_from_env"
 
-#: Job types remotely enabled before anyone touches Settings. These are the
-#: measured high-memory compilers; anything classified later defaults off
-#: until explicitly enabled here.
+#: Job types isolated before anyone touches Settings. These are the measured
+#: high-memory compilers; anything classified later defaults off until
+#: explicitly enabled here.
 DEFAULT_REMOTE_JOB_TYPES = frozenset(
     {
         "application.deploy",
@@ -46,20 +61,198 @@ DEFAULT_REMOTE_JOB_TYPES = frozenset(
 )
 
 
-def is_kubernetes_configured(settings: Any) -> bool:
-    """Whether the deployment configured the remote-build backend.
+@dataclass(frozen=True)
+class KubernetesPolicy:
+    """The settings in effect: stored values, else defaults."""
 
-    This is the gate for the Settings UI: the tab appears only when the
-    operator opted the deployment in with a complete backend setup.
-    """
-    return (
-        getattr(settings, "platform_build_backend", "local") == "kubernetes"
-        and bool(getattr(settings, "kubernetes_build_namespace", None))
-        and bool(getattr(settings, "kubernetes_build_image", None))
-        and bool(getattr(settings, "kubernetes_build_configmap", None))
-        and bool(getattr(settings, "kubernetes_build_secret", None))
-        and bool(getattr(settings, "kubernetes_build_service_account", None))
+    warm_workers: int = 1
+    max_workers: int = 6
+    worker_memory_mib: int = 2048
+    largest_worker_mib: int = 8192
+    idle_seconds: int = 300
+    isolated_jobs_enabled: bool = False
+    max_isolated_pods: int = 2
+    enabled_job_types: frozenset[str] = DEFAULT_REMOTE_JOB_TYPES
+    max_concurrency: Mapping[str, int] = field(default_factory=dict)
+
+
+#: The scalar settings an admin edits on the page (and the import fills).
+POLICY_FIELDS = tuple(
+    item.name
+    for item in fields(KubernetesPolicy)
+    if item.name not in ("enabled_job_types", "max_concurrency")
+)
+
+
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _policy_from(payload: Mapping[str, Any]) -> KubernetesPolicy:
+    values: dict[str, Any] = {}
+    for name in POLICY_FIELDS:
+        value = payload.get(name)
+        if name == "isolated_jobs_enabled":
+            if isinstance(value, bool):
+                values[name] = value
+        elif _is_int(value):
+            values[name] = value
+    types = payload.get("enabled_job_types")
+    if isinstance(types, list):
+        values["enabled_job_types"] = frozenset(
+            job_type for job_type in types if isinstance(job_type, str)
+        )
+    concurrency = payload.get("max_concurrency")
+    if isinstance(concurrency, dict):
+        values["max_concurrency"] = {
+            job_type: value
+            for job_type, value in concurrency.items()
+            if isinstance(job_type, str) and _is_int(value) and 1 <= value <= 32
+        }
+    return KubernetesPolicy(**values)
+
+
+def validate_policy(policy: KubernetesPolicy) -> None:
+    """Raise ``ValueError`` for a value out of range or an inconsistent pair."""
+    for name, (low, high) in POLICY_BOUNDS.items():
+        value = getattr(policy, name)
+        if not low <= value <= high:
+            raise ValueError(f"{name} must be between {low} and {high}")
+    if policy.warm_workers > policy.max_workers:
+        raise ValueError("Warm workers must not exceed max workers")
+    if policy.worker_memory_mib > policy.largest_worker_mib:
+        raise ValueError("Worker memory must not exceed the largest worker")
+
+
+async def _stored_config(db: AsyncSession) -> SystemConfig | None:
+    result = await db.execute(
+        select(SystemConfig).where(
+            SystemConfig.category == KUBERNETES_CONFIG_CATEGORY,
+            SystemConfig.key == KUBERNETES_CONFIG_KEY,
+            SystemConfig.organization_id.is_(None),
+        )
     )
+    return result.scalars().first()
+
+
+async def _stored_payload(db: AsyncSession) -> dict[str, Any]:
+    config = await _stored_config(db)
+    return dict(config.value_json or {}) if config is not None else {}
+
+
+async def load_kubernetes_policy(db: AsyncSession) -> KubernetesPolicy:
+    """The settings in effect. Controllers read this every pass."""
+    return _policy_from(await _stored_payload(db))
+
+
+async def _merge(
+    db: AsyncSession,
+    mutate: Callable[[dict[str, Any]], bool],
+    *,
+    updated_by: str,
+) -> None:
+    """Read, change and write the stored payload under its advisory lock.
+
+    ``mutate`` changes the payload in place and returns whether it changed
+    anything; nothing is written when it did not. The lock is held until the
+    caller's transaction ends.
+    """
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+        {"key": f"{KUBERNETES_CONFIG_CATEGORY}/{KUBERNETES_CONFIG_KEY}"},
+    )
+    config = await _stored_config(db)
+    payload = dict(config.value_json or {}) if config is not None else {}
+    if not mutate(payload):
+        return
+    if config is None:
+        db.add(
+            SystemConfig(
+                id=uuid4(),
+                category=KUBERNETES_CONFIG_CATEGORY,
+                key=KUBERNETES_CONFIG_KEY,
+                value_json=payload,
+                organization_id=None,
+                created_by=updated_by,
+                updated_by=updated_by,
+            )
+        )
+    else:
+        config.value_json = payload
+        config.updated_at = datetime.now(timezone.utc)
+        config.updated_by = updated_by
+    await db.flush()
+
+
+def _edit(payload: dict[str, Any], name: str, value: Any) -> None:
+    """An admin edit: store the value and forget where it was imported from."""
+    payload[name] = value
+    provenance = dict(payload.get(PROVENANCE_KEY) or {})
+    if provenance.pop(name, None) is not None:
+        payload[PROVENANCE_KEY] = provenance
+
+
+def _parse_imported(name: str, raw: str) -> Any:
+    """The setting's value for a deployment variable, or None when invalid."""
+    value = raw.strip()
+    if name == "isolated_jobs_enabled":
+        return {"kubernetes": True, "local": False}.get(value.lower())
+    if name == "enabled_job_types":
+        listed = {part.strip() for part in value.split(",") if part.strip()}
+        return sorted(DEFAULT_REMOTE_JOB_TYPES & listed) if listed else None
+    try:
+        number = int(value)
+    except ValueError:
+        return None
+    low, high = POLICY_BOUNDS[name]
+    return number if low <= number <= high else None
+
+
+async def import_kubernetes_policy_from_env(
+    db: AsyncSession, environ: Mapping[str, str]
+) -> list[str]:
+    """Give each setting never stored the deployment variable it replaces.
+
+    Runs under its own blocking advisory lock, so of several replicas
+    starting at once one imports and the others find the values stored.
+    Records ``imported_from_env`` per field. An invalid value is skipped
+    with a warning and the default applies. Commits; returns the fields
+    imported.
+    """
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": IMPORT_LOCK}
+    )
+    present = set_variables(environ)
+    imported: list[str] = []
+    at = datetime.now(timezone.utc).isoformat()
+
+    def mutate(payload: dict[str, Any]) -> bool:
+        provenance = dict(payload.get(PROVENANCE_KEY) or {})
+        for name, variable in KUBERNETES_POLICY_VARIABLES.items():
+            if name in payload or variable not in present:
+                continue
+            value = _parse_imported(name, present[variable])
+            if value is None:
+                logger.warning(
+                    "Ignoring %s: not a valid value for this setting; the default applies",
+                    variable,
+                )
+                continue
+            payload[name] = value
+            provenance[name] = {"variable": variable, "at": at}
+            imported.append(name)
+        if imported:
+            payload[PROVENANCE_KEY] = provenance
+        return bool(imported)
+
+    await _merge(db, mutate, updated_by="environment import")
+    await db.commit()
+    if imported:
+        logger.info(
+            "Imported Kubernetes settings from the environment",
+            extra={"fields": imported},
+        )
+    return imported
 
 
 class KubernetesExecutionService:
@@ -77,329 +270,146 @@ class KubernetesExecutionService:
         ):
             raise KeyError(f"Not a remotely-eligible job type: {job_type}")
         return definition
-    async def _stored_types(self) -> frozenset[str] | None:
-        config = await self._stored_config()
-        if config is None or not config.value_json:
-            return None
-        stored = config.value_json.get("enabled_job_types")
-        if not isinstance(stored, list):
-            return None
-        return frozenset(
-            job_type for job_type in stored if isinstance(job_type, str)
-        )
-
-    async def _stored_config(self) -> SystemConfig | None:
-        result = await self.session.execute(
-            select(SystemConfig).where(
-                SystemConfig.category == KUBERNETES_CONFIG_CATEGORY,
-                SystemConfig.key == KUBERNETES_CONFIG_KEY,
-                SystemConfig.organization_id.is_(None),
-            )
-        )
-        return result.scalars().first()
-
-    async def _save_state(
-        self,
-        *,
-        enabled: frozenset[str],
-        concurrency: dict[str, int],
-        updated_by: str,
-    ) -> None:
-        now = datetime.now(timezone.utc)
-        payload = {
-            "enabled_job_types": sorted(enabled),
-            "max_concurrency": dict(sorted(concurrency.items())),
-        }
-        config = await self._stored_config()
-        if config is None:
-            self.session.add(
-                SystemConfig(
-                    id=uuid4(),
-                    category=KUBERNETES_CONFIG_CATEGORY,
-                    key=KUBERNETES_CONFIG_KEY,
-                    value_json=payload,
-                    organization_id=None,
-                    created_by=updated_by,
-                    updated_by=updated_by,
-                )
-            )
-        else:
-            config.value_json = payload
-            config.updated_at = now
-            config.updated_by = updated_by
-        await self.session.flush()
-
-    async def _stored_concurrency(self) -> dict[str, int]:
-        config = await self._stored_config()
-        if config is None or not config.value_json:
-            return {}
-        stored = config.value_json.get("max_concurrency")
-        if not isinstance(stored, dict):
-            return {}
-        return {
-            job_type: value
-            for job_type, value in stored.items()
-            if isinstance(job_type, str)
-            and isinstance(value, int)
-            and 1 <= value <= 32
-        }
 
     async def enabled_job_types(self) -> frozenset[str]:
-        stored = await self._stored_types()
-        return stored if stored is not None else DEFAULT_REMOTE_JOB_TYPES
+        return (await load_kubernetes_policy(self.session)).enabled_job_types
 
     async def is_remote_enabled(self, job_type: str) -> bool:
         return job_type in await self.enabled_job_types()
 
     async def set_job_type_enabled(
         self, job_type: str, enabled: bool, *, updated_by: str
-    ) -> frozenset[str]:
-        """Toggle one build-class job type. Returns the resulting set."""
+    ) -> None:
+        """Toggle one build-class job type."""
         self._require_build_class(job_type)
-        current = set(await self.enabled_job_types())
-        if enabled:
-            current.add(job_type)
-        else:
-            current.discard(job_type)
-        await self._save_state(
-            enabled=frozenset(current),
-            concurrency=await self._stored_concurrency(),
-            updated_by=updated_by,
-        )
-        return frozenset(current)
+
+        def mutate(payload: dict[str, Any]) -> bool:
+            current = set(_policy_from(payload).enabled_job_types)
+            if enabled:
+                current.add(job_type)
+            else:
+                current.discard(job_type)
+            _edit(payload, "enabled_job_types", sorted(current))
+            return True
+
+        await _merge(self.session, mutate, updated_by=updated_by)
 
     async def set_job_type_concurrency(
         self, job_type: str, value: int | None, *, updated_by: str
-    ) -> dict[str, int]:
+    ) -> None:
         """Override one build-class job type's concurrency (None clears it)."""
         self._require_build_class(job_type)
         if value is not None and not 1 <= value <= 32:
             raise ValueError("max_concurrency must be between 1 and 32")
-        current = await self._stored_concurrency()
-        if value is None:
-            current.pop(job_type, None)
-        else:
-            current[job_type] = value
-        await self._save_state(
-            enabled=await self.enabled_job_types(),
-            concurrency=current,
-            updated_by=updated_by,
-        )
-        return current
+
+        def mutate(payload: dict[str, Any]) -> bool:
+            current = dict(_policy_from(payload).max_concurrency)
+            if value is None:
+                current.pop(job_type, None)
+            else:
+                current[job_type] = value
+            payload["max_concurrency"] = dict(sorted(current.items()))
+            return True
+
+        await _merge(self.session, mutate, updated_by=updated_by)
+
+    async def update_policy(
+        self, changes: Mapping[str, Any], *, updated_by: str
+    ) -> None:
+        """Change some scaling and isolation settings.
+
+        The resulting settings are validated as a whole; ``ValueError``
+        leaves everything as it was.
+        """
+        unknown = set(changes) - set(POLICY_FIELDS)
+        if unknown:
+            raise ValueError(f"Unknown settings: {', '.join(sorted(unknown))}")
+        missing = sorted(name for name, value in changes.items() if value is None)
+        if missing:
+            raise ValueError(f"A value is required for: {', '.join(missing)}")
+
+        def mutate(payload: dict[str, Any]) -> bool:
+            for name, value in changes.items():
+                _edit(payload, name, value)
+            validate_policy(_policy_from(payload))
+            return bool(changes)
+
+        await _merge(self.session, mutate, updated_by=updated_by)
 
     async def effective_max_concurrency(
         self, definition: PlatformJobDefinition
     ) -> int | None:
         """UI override wins when set, otherwise the code policy default."""
-        overrides = await self._stored_concurrency()
+        overrides = (await load_kubernetes_policy(self.session)).max_concurrency
         if definition.job_type in overrides:
             return overrides[definition.job_type]
         return definition.policy.max_concurrency
 
-    async def list_job_types(self, settings: Any) -> KubernetesExecutionSettings:
-        """All build-class job types with product + deployment state."""
-        from src.services.platform_jobs import kubernetes_remote_job_types
+    async def describe(self, environ: Mapping[str, str]) -> KubernetesExecutionSettings:
+        """Everything Settings -> Kubernetes shows."""
+        from src.services.legacy_broker_drain import legacy_broker_drained
 
-        enabled = await self.enabled_job_types()
-        allowed = kubernetes_remote_job_types(settings)
-        overrides = await self._stored_concurrency()
-        items = []
-        for definition in sorted(
-            (
-                definition
-                for definition in list_platform_job_definitions()
-                if definition.policy.execution_class == "build"
-            ),
-            key=lambda definition: definition.job_type,
-        ):
-            items.append(
-                KubernetesExecutionJobType(
-                    job_type=definition.job_type,
-                    title=definition.display_name or definition.job_type,
-                    description=definition.description or "",
-                    enabled=definition.job_type in enabled,
-                    default_enabled=(
-                        definition.job_type in DEFAULT_REMOTE_JOB_TYPES
-                    ),
-                    allowed_by_deployment=definition.job_type in allowed,
-                    max_concurrency=overrides.get(definition.job_type),
-                    default_max_concurrency=(
-                        definition.policy.max_concurrency
-                    ),
-                )
+        payload = await _stored_payload(self.session)
+        policy = _policy_from(payload)
+        provenance: dict[str, KubernetesPolicyProvenance] = {}
+        stored_provenance = payload.get(PROVENANCE_KEY)
+        if isinstance(stored_provenance, dict):
+            for name, entry in stored_provenance.items():
+                if isinstance(entry, dict):
+                    provenance[name] = KubernetesPolicyProvenance(
+                        variable=entry.get("variable"),
+                        imported_at=entry.get("at"),
+                    )
+        items = [
+            KubernetesExecutionJobType(
+                job_type=definition.job_type,
+                title=definition.display_name or definition.job_type,
+                description=definition.description or "",
+                enabled=definition.job_type in policy.enabled_job_types,
+                default_enabled=definition.job_type in DEFAULT_REMOTE_JOB_TYPES,
+                max_concurrency=policy.max_concurrency.get(definition.job_type),
+                default_max_concurrency=definition.policy.max_concurrency,
             )
-        return KubernetesExecutionSettings(job_types=items)
-
-    @staticmethod
-    async def status(settings: Any) -> KubernetesStatus:
-        return KubernetesStatus(
-            configured=is_kubernetes_configured(settings),
-            backend=str(
-                getattr(settings, "platform_build_backend", "local")
+            for definition in sorted(
+                (
+                    definition
+                    for definition in list_platform_job_definitions()
+                    if definition.policy.execution_class == "build"
+                ),
+                key=lambda definition: definition.job_type,
+            )
+        ]
+        return KubernetesExecutionSettings(
+            policy=KubernetesPolicyValues(
+                **{name: getattr(policy, name) for name in POLICY_FIELDS}
+            ),
+            imported_from_env=provenance,
+            job_types=items,
+            unread_variables=unread_environment_variables(
+                environ, broker_drained=await legacy_broker_drained(self.session)
             ),
         )
+
+    @staticmethod
+    async def status() -> KubernetesStatus:
+        from src.config import get_settings
+        from src.services.kubernetes_control import may_manage_jobs
+
+        return KubernetesStatus(configured=await may_manage_jobs(get_settings()))
 
 
 async def decide_execution_backend(
-    db: AsyncSession,
-    settings: Any,
-    definition: PlatformJobDefinition,
+    db: AsyncSession, definition: PlatformJobDefinition
 ) -> str:
-    """Decide local vs kubernetes placement for one enqueue.
-    Three gates must agree: Bifrost classification (build class), operator
-    ceiling (backend flag + deployment allowlist), and product opt-in
-    (Settings UI, defaulting to the measured high-memory jobs). Imported
-    lazily by callers: this module pulls the job registry, which pulls
-    platform_jobs at load time.
-    """
-    from src.services.platform_jobs import kubernetes_remote_job_types
+    """Local or isolated placement for one enqueue.
 
+    A build-class job runs isolated when isolated jobs are on and its type
+    is enabled in Settings -> Kubernetes. Imported lazily by callers: this
+    module pulls the job registry, which pulls platform_jobs at load time.
+    """
     if definition.policy.execution_class != "build":
         return "local"
-    if getattr(settings, "platform_build_backend", "local") != "kubernetes":
-        return "local"
-    if definition.job_type not in kubernetes_remote_job_types(settings):
-        return "local"
-    try:
-        service = KubernetesExecutionService(db)
-        if await service.is_remote_enabled(definition.job_type):
-            return "kubernetes"
-        return "local"
-    except Exception:
-        # Never fail an enqueue on a settings-table outage: fall back to
-        # the measured defaults so build work keeps its prior placement.
-        logger.warning(
-            "Falling back to default remote-execution opt-in for %s",
-            definition.job_type,
-            exc_info=True,
-        )
-        return (
-            "kubernetes"
-            if definition.job_type in DEFAULT_REMOTE_JOB_TYPES
-            else "local"
-        )
-
-
-def _detection_snapshot(settings: Any) -> dict[str, Any]:
-    return {
-        "configured": is_kubernetes_configured(settings),
-        "backend": str(getattr(settings, "platform_build_backend", "local")),
-    }
-
-
-def _detection_details(configured: bool) -> dict[str, Any]:
-    if configured:
-        return {
-            "title": "Kubernetes execution is on",
-            "paragraphs": [
-                "App deploys and SDK rebuilds now launch temporary pods with "
-                "their own memory instead of competing with the scheduler, "
-                "which stays warm for lightweight work.",
-                "If the cluster has no room, work visibly waits and then "
-                "fails with a capacity error — it never falls back silently "
-                "into the scheduler.",
-                "You control which job types go remote and how many may "
-                "overlap. Nothing else moves.",
-            ],
-            "primary_label": "Open execution settings",
-            "primary_url": "/settings/kubernetes-executions",
-        }
-    return {
-        "title": "Kubernetes execution is off",
-        "paragraphs": [
-            "The deployment no longer advertises the remote-build backend, "
-            "so builds run in the scheduler again.",
-            "Your per-type toggles are preserved and take effect again if "
-            "the backend is re-enabled.",
-        ],
-        "primary_label": "Open execution settings",
-        "primary_url": "/settings/kubernetes-executions",
-    }
-
-
-async def announce_detection_if_transitioned(db: AsyncSession) -> str | None:
-    """Emit one admin notice per configured/unconfigured transition.
-
-    Compares the live deployment snapshot against the last announced one
-    (durable in system_configs, row-locked so concurrent replicas agree).
-    Fresh installs that never configured the backend stay silent; every
-    flip in either direction notifies exactly once — dismissing parks it
-    until the next flip. Returns "enabled", "disabled", or None.
-    """
-    settings = get_settings()
-    current = _detection_snapshot(settings)
-    row = (
-        await db.execute(
-            select(SystemConfig)
-            .where(
-                SystemConfig.category == KUBERNETES_CONFIG_CATEGORY,
-                SystemConfig.key == KUBERNETES_NOTICE_KEY,
-                SystemConfig.organization_id.is_(None),
-            )
-            .with_for_update()
-        )
-    ).scalar_one_or_none()
-    announced = (
-        row.value_json if row is not None and row.value_json else None
-    )
-    if announced == current:
-        return None
-
-    now = datetime.now(timezone.utc)
-    if row is None:
-        db.add(
-            SystemConfig(
-                id=uuid4(),
-                category=KUBERNETES_CONFIG_CATEGORY,
-                key=KUBERNETES_NOTICE_KEY,
-                value_json=current,
-                organization_id=None,
-            )
-        )
-    else:
-        row.value_json = current
-        row.updated_at = now
-    await db.flush()
-
-    if announced is None and not current["configured"]:
-        # Never configured: nothing to announce.
-        return None
-
-    outcome = "enabled" if current["configured"] else "disabled"
-    from src.models.contracts.notifications import (
-        NotificationCategory,
-        NotificationCreate,
-        NotificationStatus,
-    )
-    from src.services.notification_service import get_notification_service
-
-    service = get_notification_service()
-    title = (
-        "Kubernetes execution enabled"
-        if current["configured"]
-        else "Kubernetes execution disabled"
-    )
-    existing = await service.find_admin_notification_by_title(
-        title=title, category=NotificationCategory.SYSTEM
-    )
-    if existing is None:
-        await service.create_notification(
-            user_id="system",
-            request=NotificationCreate(
-                category=NotificationCategory.SYSTEM,
-                title=title,
-                description=(
-                    "Heavy builds now run in Kubernetes pods."
-                    if current["configured"]
-                    else "Builds run in the scheduler again."
-                ),
-                metadata={
-                    "action_url": "/settings/kubernetes-executions",
-                    "details": _detection_details(current["configured"]),
-                },
-            ),
-            for_admins=True,
-            initial_status=NotificationStatus.AWAITING_ACTION,
-        )
-    logger.info("Announced Kubernetes execution transition: %s", outcome)
-    return outcome
+    policy = await load_kubernetes_policy(db)
+    if policy.isolated_jobs_enabled and definition.job_type in policy.enabled_job_types:
+        return "kubernetes"
+    return "local"

@@ -20,17 +20,18 @@ from src.jobs.schedulers.platform_jobs import ClaimedPlatformJob
 
 @dataclass
 class KubernetesSettings:
-    kubernetes_build_namespace: str = "builds"
-    kubernetes_build_image: str = "registry.example.com/bifrost/api:sha-abc123"
-    kubernetes_build_configmap: str = "bifrost-build-config"
-    kubernetes_build_secret: str = "bifrost-build-secret"
-    kubernetes_build_service_account: str = "bifrost-build-runner"
-    kubernetes_build_memory_request_mib: int = 512
-    kubernetes_build_memory_limit_mib: int = 2048
-    kubernetes_build_cpu_request: str = "250m"
-    kubernetes_build_cpu_limit: str = "1"
-    kubernetes_build_max_jobs: int = 2
-    kubernetes_build_pending_timeout_seconds: int = 300
+    kubernetes_job_namespace: str = "builds"
+    kubernetes_job_image: str = "registry.example.com/bifrost/api:sha-abc123"
+    kubernetes_job_configmap: str = "bifrost-build-config"
+    kubernetes_job_secret: str = "bifrost-build-secret"
+    kubernetes_job_service_account: str = "bifrost-build-runner"
+    pool_worker_memory_request_mib: int = 512
+    kubernetes_job_cpu_request: str = "250m"
+    kubernetes_job_cpu_limit: str = "1"
+    kubernetes_job_pending_timeout_seconds: int = 300
+
+
+LIMIT = 2048 * 2**20
 
 
 def _claim() -> ClaimedPlatformJob:
@@ -45,7 +46,7 @@ def _claim() -> ClaimedPlatformJob:
 
 def test_build_job_manifest_renders_suspended_locked_down_job() -> None:
     claim = _claim()
-    manifest = build_job_manifest(claim, KubernetesSettings())
+    manifest = build_job_manifest(claim, KubernetesSettings(), memory_limit_bytes=LIMIT)
 
     assert manifest["metadata"]["name"] == (
         f"bifrost-job-11111111222233334444555555555555-"
@@ -118,20 +119,17 @@ def test_build_job_manifest_renders_suspended_locked_down_job() -> None:
 
 
 def test_build_job_manifest_requires_explicit_image() -> None:
-    settings = KubernetesSettings(kubernetes_build_image="")
+    settings = KubernetesSettings(kubernetes_job_image="")
 
-    with pytest.raises(KubernetesConfigurationError, match="kubernetes_build_image"):
-        build_job_manifest(_claim(), settings)
+    with pytest.raises(KubernetesConfigurationError, match="kubernetes_job_image"):
+        build_job_manifest(_claim(), settings, memory_limit_bytes=LIMIT)
 
 
 def test_build_job_manifest_rejects_request_above_limit() -> None:
-    settings = KubernetesSettings(
-        kubernetes_build_memory_request_mib=4096,
-        kubernetes_build_memory_limit_mib=2048,
-    )
+    settings = KubernetesSettings(pool_worker_memory_request_mib=4096)
 
     with pytest.raises(KubernetesConfigurationError, match="request_mib"):
-        build_job_manifest(_claim(), settings)
+        build_job_manifest(_claim(), settings, memory_limit_bytes=LIMIT)
 
 
 @pytest.mark.asyncio
@@ -178,7 +176,7 @@ async def test_create_job_adopts_existing_job_on_conflict(
 ) -> None:
     token_path = tmp_path / "token"
     token_path.write_text("token")
-    manifest = build_job_manifest(_claim(), KubernetesSettings())
+    manifest = build_job_manifest(_claim(), KubernetesSettings(), memory_limit_bytes=LIMIT)
     calls: list[tuple[str, str]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -228,7 +226,7 @@ async def test_create_job_rejects_conflicting_existing_job_labels(
 ) -> None:
     token_path = tmp_path / "token"
     token_path.write_text("token")
-    manifest = build_job_manifest(_claim(), KubernetesSettings())
+    manifest = build_job_manifest(_claim(), KubernetesSettings(), memory_limit_bytes=LIMIT)
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":
@@ -413,10 +411,10 @@ def test_client_creation_requires_in_cluster_endpoint(
 @pytest.mark.parametrize(
     "field_name",
     [
-        "kubernetes_build_image",
-        "kubernetes_build_configmap",
-        "kubernetes_build_secret",
-        "kubernetes_build_service_account",
+        "kubernetes_job_image",
+        "kubernetes_job_configmap",
+        "kubernetes_job_secret",
+        "kubernetes_job_service_account",
     ],
 )
 def test_remote_builds_require_their_settings(field_name: str) -> None:
@@ -446,7 +444,7 @@ def test_client_namespace_defaults_to_this_pods_service_account(
         "src.jobs.platform.kubernetes_client.SERVICE_ACCOUNT_NAMESPACE_PATH", namespace_file
     )
     settings = KubernetesSettings()
-    settings.kubernetes_build_namespace = None  # type: ignore[assignment]
+    settings.kubernetes_job_namespace = None  # type: ignore[assignment]
 
     client = _cluster(lambda request: httpx.Response(200), settings=settings)
 
@@ -458,7 +456,7 @@ def test_client_needs_a_namespace(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
         "src.jobs.platform.kubernetes_client.SERVICE_ACCOUNT_NAMESPACE_PATH", tmp_path / "absent"
     )
     settings = KubernetesSettings()
-    settings.kubernetes_build_namespace = None  # type: ignore[assignment]
+    settings.kubernetes_job_namespace = None  # type: ignore[assignment]
 
     with pytest.raises(KubernetesConfigurationError, match="namespace"):
         KubernetesJobClient(settings=settings)

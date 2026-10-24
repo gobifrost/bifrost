@@ -279,10 +279,10 @@ async def claim_platform_job(
                 if resource_busy:
                     continue
             if backend == "kubernetes":
-                kubernetes_namespace = get_settings().kubernetes_build_namespace
+                kubernetes_namespace = get_settings().kubernetes_job_namespace
                 if not kubernetes_namespace:
                     raise RuntimeError(
-                        "BIFROST_KUBERNETES_BUILD_NAMESPACE is required "
+                        "BIFROST_KUBERNETES_JOB_NAMESPACE is required "
                         "to claim Kubernetes platform jobs."
                     )
                 backend_lock = (

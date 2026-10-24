@@ -40,13 +40,23 @@ class _Client:
         self.closed = True
 
 
-def _with_client(monkeypatch: pytest.MonkeyPatch, client: _Client | None) -> None:
+@pytest.fixture(autouse=True)
+def _unanswered(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each test starts in a process that has not asked yet."""
+    monkeypatch.setattr(kubernetes_control, "_job_access", None)
+
+
+def _with_client(monkeypatch: pytest.MonkeyPatch, client: _Client | None) -> list[object]:
+    made: list[object] = []
+
     def make(_settings: object) -> _Client:
+        made.append(_settings)
         if client is None:
             raise KubernetesConfigurationError("not in a cluster")
         return client
 
     monkeypatch.setattr(kubernetes_control, "KubernetesJobClient", make)
+    return made
 
 
 async def test_outside_a_cluster_the_loops_are_off(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -56,11 +66,13 @@ async def test_outside_a_cluster_the_loops_are_off(monkeypatch: pytest.MonkeyPat
 
 async def test_every_required_verb_must_be_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
     for missing in REQUIRED_ACCESS:
+        monkeypatch.setattr(kubernetes_control, "_job_access", None)
         client = _Client(denied={missing})
         _with_client(monkeypatch, client)
         assert await may_manage_jobs(SimpleNamespace()) is False, missing
         assert client.closed
 
+    monkeypatch.setattr(kubernetes_control, "_job_access", None)
     allowed = _Client()
     _with_client(monkeypatch, allowed)
     assert await may_manage_jobs(SimpleNamespace()) is True
@@ -73,12 +85,27 @@ async def test_a_review_the_cluster_rejects_keeps_the_loops_off(monkeypatch: pyt
     assert client.closed
 
 
+async def test_the_answer_is_asked_once_per_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Five access reviews per call; the Settings page asks on every load."""
+    made = _with_client(monkeypatch, _Client())
+    assert await may_manage_jobs(SimpleNamespace()) is True
+    assert await may_manage_jobs(SimpleNamespace()) is True
+    assert len(made) == 1
+
+
+async def test_an_unanswered_review_is_asked_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    _with_client(monkeypatch, _Client(error=True))
+    assert await may_manage_jobs(SimpleNamespace()) is False
+    _with_client(monkeypatch, _Client())
+    assert await may_manage_jobs(SimpleNamespace()) is True
+
+
 def _settings(**overrides: object) -> SimpleNamespace:
     values = {
-        "kubernetes_build_image": None,
-        "kubernetes_build_configmap": None,
-        "kubernetes_build_secret": None,
-        "kubernetes_build_service_account": None,
+        "kubernetes_job_image": None,
+        "kubernetes_job_configmap": None,
+        "kubernetes_job_secret": None,
+        "kubernetes_job_service_account": None,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -99,14 +126,14 @@ async def test_worker_jobs_copy_the_controllers_pod_by_default() -> None:
     )
 
 
-async def test_build_settings_override_the_worker_job_defaults() -> None:
+async def test_job_identity_settings_override_the_worker_job_defaults() -> None:
     spec = await resolve_worker_job_spec(
         _Client(),  # type: ignore[arg-type]
         _settings(
-            kubernetes_build_image="registry/api:pinned",
-            kubernetes_build_configmap="bifrost-config",
-            kubernetes_build_secret="bifrost-secrets",
-            kubernetes_build_service_account="bifrost-build-runner",
+            kubernetes_job_image="registry/api:pinned",
+            kubernetes_job_configmap="bifrost-config",
+            kubernetes_job_secret="bifrost-secrets",
+            kubernetes_job_service_account="bifrost-build-runner",
         ),
     )
 

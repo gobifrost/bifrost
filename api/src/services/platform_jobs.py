@@ -11,7 +11,6 @@ from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.config import get_settings
 from src.core.database import get_db_context
 from src.core.pubsub import manager as pubsub_manager
 from src.jobs.platform.base import PlatformJobDefinition
@@ -40,34 +39,6 @@ ACTIVE_PLATFORM_JOB_STATUSES = ("queued", "running", "waiting", "cancel_requeste
 TERMINAL_PLATFORM_JOB_STATUSES = ("succeeded", "failed", "cancelled", "requires_action")
 # A queued local job whose memory requirement no executor's free budget holds yet.
 WAITING_FOR_MEMORY = "Waiting for executor memory"
-
-#: Job types eligible for Kubernetes placement when the build backend is
-#: enabled. Mirrors the config default so partial settings doubles in tests
-#: behave like production. (The product opt-in default lives separately in
-#: kubernetes_execution.DEFAULT_REMOTE_JOB_TYPES; both are pinned by tests.)
-DEFAULT_KUBERNETES_JOB_TYPES = frozenset(
-    {
-        "application.deploy",
-        "application.sdk_update",
-        "solution.deploy",
-        "solution.export",
-        "solution.git_sync",
-    }
-)
-
-
-def kubernetes_remote_job_types(settings: Any) -> frozenset[str]:
-    """Parse the operator allowlist of remotely-eligible job types."""
-    raw = getattr(
-        settings,
-        "kubernetes_build_job_types",
-        ",".join(sorted(DEFAULT_KUBERNETES_JOB_TYPES)),
-    )
-    types = frozenset(
-        part.strip() for part in str(raw).split(",") if part.strip()
-    )
-    return types or DEFAULT_KUBERNETES_JOB_TYPES
-
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -270,17 +241,12 @@ async def enqueue_platform_job(
         memory_profile_key=memory_profile_key,
     )
 
-    settings = get_settings()
-    # Three gates must agree: Bifrost classification (build class),
-    # operator ceiling (backend flag + deployment allowlist), and product
-    # opt-in (Settings UI, defaulting to the measured high-memory jobs).
-    # Resolved through the kubernetes_execution service (imported lazily:
-    # it pulls the job registry, which pulls this module at load time).
+    # Isolated when the job is build class and Settings -> Kubernetes
+    # isolates its type (imported lazily: kubernetes_execution pulls the job
+    # registry, which pulls this module at load time).
     from src.services.kubernetes_execution import decide_execution_backend
 
-    execution_backend = await decide_execution_backend(
-        db, settings, definition
-    )
+    execution_backend = await decide_execution_backend(db, definition)
 
     impersonation = current_durable_impersonation()
     job = PlatformJob(

@@ -33,7 +33,7 @@ from uuid import UUID
 
 from shared.schema_gate import wait_for_schema
 from src.config import Settings, get_settings
-from src.core.database import close_db, get_engine, init_db
+from src.core.database import close_db, get_db_context, get_engine, init_db
 from src.core.redis_client import PendingExecution
 from src.jobs.schedulers.platform_jobs import (
     claim_platform_job,
@@ -42,6 +42,7 @@ from src.jobs.schedulers.platform_jobs import (
 )
 from src.scheduler.control import replica_heartbeat_loop
 from src.services.kubernetes_control import start_kubernetes_loops
+from src.services.kubernetes_execution import import_kubernetes_policy_from_env
 from src.services.scheduler_diagnostics import remove_scheduler_replica
 from src.jobs.summarize_worker import handle_summarize_message
 from src.services.memory_requests import (
@@ -256,6 +257,8 @@ class PoolWorker:
             # On an install whose executor container may manage Jobs (the
             # builds runbook binds that Role to the scheduler), it runs the
             # Kubernetes loops; elsewhere this starts nothing.
+            async with get_db_context() as db:
+                await import_kubernetes_policy_from_env(db, os.environ)
             background.extend(await start_kubernetes_loops(self._platform_stop, self.settings))
         if self._on_ready is not None:
             self._on_ready()

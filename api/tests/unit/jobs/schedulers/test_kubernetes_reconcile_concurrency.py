@@ -29,21 +29,20 @@ from src.jobs.schedulers import kubernetes_jobs, platform_jobs
 from src.models.orm.platform_jobs import PlatformJob
 from src.services.platform_jobs import enqueue_platform_job
 
+# Max isolated pods: the Settings -> Kubernetes default (no row is stored).
 MAX_JOBS = 2
 QUEUED = 5
 
 SETTINGS = SimpleNamespace(
-    kubernetes_build_namespace="test",
-    kubernetes_build_image="api:test",
-    kubernetes_build_configmap="config",
-    kubernetes_build_secret="secret",
-    kubernetes_build_service_account="runner",
-    kubernetes_build_memory_request_mib=512,
-    kubernetes_build_memory_limit_mib=2048,
-    kubernetes_build_cpu_request="250m",
-    kubernetes_build_cpu_limit="1",
-    kubernetes_build_pending_timeout_seconds=300,
-    kubernetes_build_max_jobs=MAX_JOBS,
+    kubernetes_job_namespace="test",
+    kubernetes_job_image="api:test",
+    kubernetes_job_configmap="config",
+    kubernetes_job_secret="secret",
+    kubernetes_job_service_account="runner",
+    pool_worker_memory_request_mib=512,
+    kubernetes_job_cpu_request="250m",
+    kubernetes_job_cpu_limit="1",
+    kubernetes_job_pending_timeout_seconds=300,
 )
 
 

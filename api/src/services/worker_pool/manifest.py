@@ -37,7 +37,7 @@ class WorkerJobSpec:
 
 
 async def resolve_worker_job_spec(client: KubernetesJobClient, settings: Any) -> WorkerJobSpec:
-    """The build settings when set; otherwise a copy of this controller's pod.
+    """The Job identity settings when set; otherwise a copy of this controller's pod.
 
     An install with no build settings runs workers in the controller's own
     namespace, image (and pull policy) and environment sources (the
@@ -46,18 +46,18 @@ async def resolve_worker_job_spec(client: KubernetesJobClient, settings: Any) ->
     """
     own: dict[str, Any] = {}
     if not (
-        settings.kubernetes_build_image
-        and settings.kubernetes_build_configmap
-        and settings.kubernetes_build_secret
+        settings.kubernetes_job_image
+        and settings.kubernetes_job_configmap
+        and settings.kubernetes_job_secret
     ):
         own = await client.own_container() or {}
-    image = settings.kubernetes_build_image or own.get("image")
+    image = settings.kubernetes_job_image or own.get("image")
     if not image:
         raise KubernetesConfigurationError("No image is known for worker Jobs")
-    if settings.kubernetes_build_configmap and settings.kubernetes_build_secret:
+    if settings.kubernetes_job_configmap and settings.kubernetes_job_secret:
         env_from: tuple[dict[str, Any], ...] = (
-            {"configMapRef": {"name": settings.kubernetes_build_configmap}},
-            {"secretRef": {"name": settings.kubernetes_build_secret}},
+            {"configMapRef": {"name": settings.kubernetes_job_configmap}},
+            {"secretRef": {"name": settings.kubernetes_job_secret}},
         )
     else:
         env_from = tuple(own.get("envFrom") or ())
@@ -67,10 +67,10 @@ async def resolve_worker_job_spec(client: KubernetesJobClient, settings: Any) ->
         namespace=client.namespace,
         image=image,
         env_from=env_from,
-        service_account=settings.kubernetes_build_service_account or "default",
+        service_account=settings.kubernetes_job_service_account or "default",
         image_pull_policy=(
             "IfNotPresent"
-            if settings.kubernetes_build_image
+            if settings.kubernetes_job_image
             else own.get("imagePullPolicy") or "IfNotPresent"
         ),
     )

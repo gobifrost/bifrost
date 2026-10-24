@@ -22,6 +22,7 @@ from src.jobs.platform.kubernetes_client import (
 from src.jobs.platform.registry import get_platform_job_definition
 from src.jobs.schedulers.platform_jobs import ClaimedPlatformJob, _handle_runner_loss, claim_platform_job
 from src.models.orm.platform_jobs import PlatformJob
+from src.services.kubernetes_execution import load_kubernetes_policy
 from src.services.platform_jobs import publish_platform_job_update
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,8 @@ class KubernetesBuildController:
     async def reconcile(self) -> None:
         # Existing ownership is reconciled before admitting more remote work.
         async with get_db_context() as db:
+            # Settings -> Kubernetes, read every pass.
+            policy = await load_kubernetes_policy(db)
             ids = (await db.scalars(select(PlatformJob.id).where(
                 PlatformJob.execution_backend == "kubernetes",
                 PlatformJob.kubernetes_job_name.is_not(None),
@@ -73,10 +76,8 @@ class KubernetesBuildController:
             await self.reconcile_job(job_id)
         claim = await claim_platform_job(
             backend="kubernetes",
-            remote_limit=self.settings.kubernetes_build_max_jobs,
-            remote_memory_bytes=(
-                self.settings.kubernetes_build_memory_limit_mib * 1024 * 1024
-            ),
+            remote_limit=policy.max_isolated_pods,
+            remote_memory_bytes=policy.worker_memory_mib * 1024 * 1024,
         )
         if claim is not None:
             await self.reconcile_job(claim.id)
@@ -123,7 +124,11 @@ class KubernetesBuildController:
                 memory_required_bytes=row.memory_required_bytes,
                 job_type=row.job_type,
             )
-            manifest = build_job_manifest(claim, self.settings)
+            if row.memory_limit_bytes is None:
+                raise RuntimeError("Active Kubernetes build has no memory limit")
+            manifest = build_job_manifest(
+                claim, self.settings, memory_limit_bytes=row.memory_limit_bytes
+            )
             if remote is not None:
                 expected = manifest["metadata"]["labels"]
                 actual = remote["metadata"].get("labels", {})
@@ -134,7 +139,7 @@ class KubernetesBuildController:
                 raise RuntimeError("Kubernetes build has no launch timestamp")
             pending_expired = row.runner_started_at is None and (
                 _now() - launch
-            ).total_seconds() >= self.settings.kubernetes_build_pending_timeout_seconds
+            ).total_seconds() >= self.settings.kubernetes_job_pending_timeout_seconds
             if remote is None and row.kubernetes_job_uid is None:
                 if pending_expired or row.status == "cancel_requested":
                     loss = (token, "capacity_unavailable", "A build pod could not start before the capacity deadline.")

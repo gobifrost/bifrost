@@ -28,6 +28,7 @@
 | POST | `/api/admin/ai/profiles/{profile_id}/verify` |
 | GET | `/api/admin/kubernetes/execution` |
 | PUT | `/api/admin/kubernetes/execution` |
+| PUT | `/api/admin/kubernetes/policy` |
 | GET | `/api/admin/kubernetes/status` |
 | DELETE | `/api/admin/llm/embedding-config` |
 | GET | `/api/admin/llm/embedding-config` |

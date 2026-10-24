@@ -6,6 +6,7 @@ Main entry point for the FastAPI application.
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -162,24 +163,18 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         logger.warning(f"Built-in policy rule seeding failed: {e}")
 
-    # Announce Kubernetes execution transitions (enabled/disabled) once per
-    # change. Never fails startup; the snapshot comparison is idempotent
-    # across replicas.
+    # Name deployment variables this release no longer reads, or reads under
+    # a new name (API only: worker Jobs copy this pod's environment). Never
+    # fails startup.
     try:
-        from src.services.kubernetes_execution import (
-            announce_detection_if_transitioned,
-        )
+        from src.services.deployment_environment import warn_about_environment
+        from src.services.legacy_broker_drain import legacy_broker_drained
 
-        session_factory = get_session_factory()
-        async with session_factory() as db:
-            outcome = await announce_detection_if_transitioned(db)
-            await db.commit()
-            if outcome is not None:
-                logger.info(
-                    "Kubernetes execution transition announced: %s", outcome
-                )
+        async with get_session_factory()() as db:
+            broker_drained = await legacy_broker_drained(db)
+        warn_about_environment(os.environ, broker_drained=broker_drained)
     except Exception as e:
-        logger.warning(f"Kubernetes detection announcement failed: {e}")
+        logger.warning(f"Environment variable check failed: {e}")
 
     from src.scheduler.api_host import ApiControlHost
 
