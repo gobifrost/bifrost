@@ -116,7 +116,7 @@ continue directly to 5c and the production rollout.
 | #1039 (5a) | **Merged** 2026-10-23. Gates: 2320 e2e; Docker upgrade from v1.4.1 with its unchanged compose file and seeded data, checklist green; Docker rollback to stage 4; Kind upgrade from stage-4 defaults (found and fixed: worker Jobs must copy the controller pod's `envFrom`) and rollback. Rollback targets must contain #1034. |
 | #1040 (5b) | **Merged** 2026-10-23. RabbitMQ, KEDA and the Redis bridges retired; memory gating restored; executor drain fixed; init skips migrations on a newer database. Includes the 5c proof (below). |
 | 5c proof | Kind with the base manifests' defaults: a 40-run burst scaled worker Jobs 1 → 6 → 1 (never past 6); kill, controller-restart, OOM and unschedulable drills pass. Docker v1.4.1 → 5b with its unchanged compose file passes on two executors. |
-| Production | **Not rolled out.** Still on `1.4.2-dev.1792699618` (before #1031). gocovi/kubernetes#30 (stage-4 pin) is open and superseded by the drain below; close it once the drain ships. The nightly promotion (`bifrost-image-promotion`, midnight America/New_York) promotes the newest main build; Jack decides whether to suspend it until the drain is merged. |
+| Production | **Stage 6 live (2026-10-24 ~01:20 UTC)** on `1.4.2-dev.1792800756` (#1044 + hotfix #1045): prod_smoke 0 fail / 0 warn, RabbitMQ drained (work queues 0, `-poison` queues kept by design), Flux synced. The first stage-6 rollout (`1792797532`) crash-looped static executors: they heartbeated only after a ~97 s pool start, past the 30 s lost rule; #1045 heartbeats from registration. gocovi/kubernetes#30 closed. Next: the second-review fixes, then the 1+x model (gocovi/kubernetes#31, draft), then RabbitMQ removal. |
 
 ## Evidence so far
 
@@ -285,16 +285,14 @@ instant, costs at most one learning kill per new or changed workflow
 
 ### Production
 
-The 2026-10-23 04:00 UTC promotion moved prod to `1.4.2-dev.1792699618`
-(pre-#1031; #1031 merged at 04:05) and rolled out cleanly (prod_smoke 0
-fail). The 2026-10-24 04:00 UTC promotion takes `1.4.2-dev.1792777611`
-(#1043) with the drain. Each step below is a GitOps PR Jack merges, then
-`prod_smoke`; on the first rollout also check DigitalOcean node autoscaling,
-the GHCR pull and the Flux sync.
+Stage 6 is live on `1.4.2-dev.1792800756` (see the status table). Promotion:
+Jack authorized production changes on 2026-10-23; run the
+`bifrost-image-promotion` CronJob as a Job (`kubectl -n flux-system create
+job --from=cronjob/bifrost-image-promotion <name>`) once the image is
+published, then `prod_smoke`. Each GitOps step below is a gocovi/kubernetes
+PR, then `prod_smoke`.
 
-1. After the #1043 rollout: `prod_smoke`, RabbitMQ `workflow-executions`
-   and `agent-runs` empty (restart the API Deployment if not; the `-poison`
-   queues stay by design), close gocovi/kubernetes#30.
+1. Done 2026-10-24: rollout, `prod_smoke`, RabbitMQ drained, #30 closed.
 2. The 1+x model: give the API the worker-controller and build Roles; remove
    the scheduler Deployment; worker Deployment to 1 replica as the warm
    floor, `BIFROST_POOL_MIN_WORKERS=0`, `MAX=6` (Jack to confirm static floor
@@ -302,6 +300,12 @@ the GHCR pull and the Flux sync.
 3. Remove RabbitMQ (Deployment, PVC, secret keys).
 
 ### Leftovers
+
+- From the second review (m2): a static executor registers `ready` and
+  reports its early budget during its whole pool start, so the controller
+  counts it as free capacity before it can claim. Register it `starting` and
+  flip to `ready` after `_start_executor`; planners count only measured,
+  ready executors.
 
 - The Kind build experiment's `--restart-scheduler` restarts the wrong
   process now that the API runs the build controller.
