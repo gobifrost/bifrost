@@ -18,6 +18,7 @@ from src.services.worker_pool.manifest import WorkerJobSpec
 from src.services.worker_pool.sizing import JobSizing
 
 STANDARD = 2048 * 2**20
+REQUEST = 512 * 2**20
 SPEC = WorkerJobSpec(
     namespace="test",
     image="api:test",
@@ -43,7 +44,7 @@ def fixture(monkeypatch):
         kubernetes_job_uid=None, kubernetes_pod_uid=None, runner_started_at=None,
         kubernetes_launch_started_at=now, lease_expires_at=now + timedelta(seconds=30),
         phase="Starting", revision=1, error_code=None, error_message=None,
-        memory_limit_bytes=STANDARD,
+        memory_limit_bytes=STANDARD, memory_request_bytes=REQUEST,
     )
     row.kubernetes_job_name = (
         f"bifrost-job-{row.id.hex}-{_lease_token_fingerprint(row.lease_token)[:12]}"
@@ -67,14 +68,16 @@ def fixture(monkeypatch):
     client.list_pods.return_value = []
     claim = ClaimedPlatformJob(row.id, row.lease_token, 120, 0.95, row.memory_required_bytes)
     manifest = build_job_manifest(
-        claim, SETTINGS, SPEC, memory_limit_bytes=row.memory_limit_bytes, sized=False
+        claim, SETTINGS, SPEC,
+        memory_request_bytes=row.memory_request_bytes,
+        memory_limit_bytes=row.memory_limit_bytes,
     )
     remote = {**manifest, "metadata": {**manifest["metadata"], "uid": "job-uid"}}
     client.create_job.return_value = remote
     controller = module.KubernetesBuildController(client, SETTINGS, SPEC)  # type: ignore[arg-type]
 
     async def reconcile_job(job_id):  # type: ignore[no-untyped-def]
-        await controller.reconcile_job(job_id, STANDARD)
+        await controller.reconcile_job(job_id)
 
     return SimpleNamespace(
         row=row, client=client, db=db, controller=controller, remote=remote, loss=loss,
@@ -180,6 +183,41 @@ async def test_oom_maps_to_shared_memory_pressure_error(fixture):
     assert f.loss.call_args.kwargs["out_of_memory"] is True
 
 
+OOM_KILLED = [{"status": {
+    "phase": "Failed", "containerStatuses": [{"state": {
+        "terminated": {"reason": "OOMKilled"},
+    }}],
+}}]
+
+
+async def test_an_oom_seen_after_the_lease_expired_is_learned(fixture):
+    """A runner killed at its limit stops renewing its lease; resuming after
+    the lease expired must still learn the OOM, not report a lost runner."""
+    f = fixture
+    f.row.kubernetes_job_uid = "job-uid"
+    f.row.runner_started_at = datetime.now(timezone.utc)
+    f.row.lease_expires_at -= timedelta(minutes=1)
+    f.remote["spec"]["suspend"] = False
+    f.client.get_job.return_value = f.remote
+    f.client.list_pods.return_value = OOM_KILLED
+    await f.reconcile_job(f.row.id)
+    assert f.loss.call_args.kwargs["error_code"] == "memory_pressure"
+    assert f.loss.call_args.kwargs["out_of_memory"] is True
+
+
+async def test_an_oom_seen_after_the_job_was_removed_is_learned(fixture):
+    f = fixture
+    f.row.kubernetes_job_uid = "job-uid"
+    f.row.runner_started_at = datetime.now(timezone.utc)
+    f.row.error_code = "runner_lost"
+    f.row.error_message = "The build runner stopped renewing its execution lease."
+    f.client.get_job.return_value = None
+    f.client.list_pods.return_value = OOM_KILLED
+    await f.reconcile_job(f.row.id)
+    assert f.loss.call_args.kwargs["error_code"] == "memory_pressure"
+    assert f.loss.call_args.kwargs["out_of_memory"] is True
+
+
 async def test_a_pod_that_stopped_otherwise_teaches_no_memory(fixture):
     f = fixture
     f.row.kubernetes_job_uid = "job-uid"
@@ -193,7 +231,7 @@ async def test_a_pod_that_stopped_otherwise_teaches_no_memory(fixture):
 
 async def test_a_sized_pod_is_created_requesting_its_whole_limit(fixture):
     f = fixture
-    f.row.memory_limit_bytes = 3328 * 2**20
+    f.row.memory_limit_bytes = f.row.memory_request_bytes = 3328 * 2**20
     await f.reconcile_job(f.row.id)
     resources = f.client.create_job.call_args.args[0]["spec"]["template"]["spec"][
         "containers"
@@ -209,6 +247,19 @@ async def test_a_standard_pod_is_created_burstable(fixture):
     ][0]["resources"]
     assert resources["requests"]["memory"] == "512Mi"
     assert resources["limits"]["memory"] == "2048Mi"
+
+
+async def test_a_standard_claim_stays_standard_when_worker_memory_changes(fixture):
+    """The claim recorded the pod's request and limit: whatever Worker
+    memory is when the Job is created, a standard claim stays Burstable."""
+    f = fixture
+    f.row.memory_limit_bytes = 3072 * 2**20
+    await f.reconcile_job(f.row.id)
+    resources = f.client.create_job.call_args.args[0]["spec"]["template"]["spec"][
+        "containers"
+    ][0]["resources"]
+    assert resources["requests"]["memory"] == "512Mi"
+    assert resources["limits"]["memory"] == "3072Mi"
 
 
 async def test_missing_job_does_not_release_an_orphan_still_running(fixture):
@@ -282,7 +333,10 @@ async def test_the_build_loop_runs_isolated_pods_as_the_api_pod(monkeypatch):
     client.namespace = "bifrost"
     monkeypatch.setattr(module, "get_settings", lambda: SETTINGS)
     monkeypatch.setattr(module, "KubernetesJobClient", lambda settings: client)
-    monkeypatch.setattr(module, "resolve_worker_job_spec", AsyncMock(return_value=SPEC))
+    from src.services.worker_pool import manifest
+
+    resolve = AsyncMock(return_value=SPEC)
+    monkeypatch.setattr(manifest, "resolve_worker_job_spec", resolve)
     seen = []
 
     class Controller:
@@ -295,9 +349,83 @@ async def test_the_build_loop_runs_isolated_pods_as_the_api_pod(monkeypatch):
 
     await module.kubernetes_build_loop(shutdown)
 
-    module.resolve_worker_job_spec.assert_awaited_once_with(client, SETTINGS)
+    resolve.assert_awaited_once_with(client, SETTINGS)
     assert seen == [SPEC]
     client.close.assert_awaited_once()
+
+
+async def test_the_build_loop_retries_a_kubernetes_api_error_reading_its_pod(monkeypatch):
+    """A transient API error at loop start does not disable the controller:
+    resolution is retried with backoff, then kept for the loop's life."""
+    import asyncio
+
+    from src.jobs.platform.kubernetes_client import KubernetesApiError
+    from src.services.worker_pool import manifest
+
+    client = AsyncMock()
+    client.namespace = "bifrost"
+    monkeypatch.setattr(module, "get_settings", lambda: SETTINGS)
+    monkeypatch.setattr(module, "KubernetesJobClient", lambda settings: client)
+    monkeypatch.setattr(manifest, "SPEC_RETRY_INITIAL_SECONDS", 0.01)
+    resolve = AsyncMock(side_effect=[KubernetesApiError("GET", "/pods", 503), SPEC])
+    monkeypatch.setattr(manifest, "resolve_worker_job_spec", resolve)
+    shutdown = asyncio.Event()
+    passes = []
+
+    class Controller:
+        def __init__(self, client, settings, spec):  # type: ignore[no-untyped-def]
+            self.spec = spec
+
+        async def reconcile(self):  # type: ignore[no-untyped-def]
+            passes.append(self.spec)
+            shutdown.set()
+
+    monkeypatch.setattr(module, "KubernetesBuildController", Controller)
+
+    await asyncio.wait_for(module.kubernetes_build_loop(shutdown), timeout=10)
+
+    assert resolve.await_count == 2
+    assert passes == [SPEC]
+    client.close.assert_awaited_once()
+
+
+async def test_the_build_loop_idles_when_its_pod_gives_no_job_identity(monkeypatch):
+    import asyncio
+
+    from src.jobs.platform.kubernetes_client import KubernetesConfigurationError
+    from src.services.worker_pool import manifest
+
+    client = AsyncMock()
+    monkeypatch.setattr(module, "get_settings", lambda: SETTINGS)
+    monkeypatch.setattr(module, "KubernetesJobClient", lambda settings: client)
+    resolve = AsyncMock(side_effect=KubernetesConfigurationError("No image is known for Jobs"))
+    monkeypatch.setattr(manifest, "resolve_worker_job_spec", resolve)
+    shutdown = asyncio.Event()
+    loop = asyncio.create_task(module.kubernetes_build_loop(shutdown))
+    await asyncio.sleep(0.05)
+    assert not loop.done()
+    shutdown.set()
+    await asyncio.wait_for(loop, timeout=10)
+
+    resolve.assert_awaited_once()
+    client.close.assert_awaited_once()
+
+
+async def test_a_pass_with_a_request_above_worker_memory_claims_nothing(monkeypatch):
+    from src.jobs.platform.kubernetes_client import KubernetesConfigurationError
+
+    _pass_db(monkeypatch, placed=[])
+    policy = KubernetesPolicy(isolated_jobs_enabled=True, worker_memory_mib=256)
+    monkeypatch.setattr(module, "load_kubernetes_policy", AsyncMock(return_value=policy))
+    monkeypatch.setattr(
+        module, "load_job_sizing", AsyncMock(return_value=JobSizing.of(policy, 0.85, 0))
+    )
+    claim = AsyncMock(return_value=None)
+    monkeypatch.setattr(module, "claim_platform_job", claim)
+
+    with pytest.raises(KubernetesConfigurationError, match="request_mib"):
+        await module.KubernetesBuildController(AsyncMock(), SETTINGS, SPEC).reconcile()  # type: ignore[arg-type]
+    claim.assert_not_awaited()
 
 
 def _pass_db(monkeypatch, *, placed):  # type: ignore[no-untyped-def]
@@ -330,7 +458,9 @@ async def test_each_pass_admits_within_the_settings_limits(monkeypatch):
 
     claim.assert_awaited_once_with(
         backend="kubernetes",
-        isolated=IsolatedPods(namespace="bifrost", max_pods=5, sizing=sizing),
+        isolated=IsolatedPods(
+            namespace="bifrost", max_pods=5, sizing=sizing, standard_request_bytes=REQUEST
+        ),
     )
 
 
@@ -351,5 +481,5 @@ async def test_with_isolation_off_a_pass_reconciles_placed_pods_and_admits_nothi
     await controller.reconcile()
 
     returned.assert_awaited_once()
-    reconciled.assert_awaited_once_with(placed, STANDARD)
+    reconciled.assert_awaited_once_with(placed)
     claim.assert_not_awaited()

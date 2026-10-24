@@ -44,10 +44,14 @@ SIZING = JobSizing(
     threshold=0.85,
     baseline_bytes=768 * MIB,
 )
+# The deployment's worker memory request, which a standard pod requests.
+REQUEST = 512 * MIB
 
 
 def _pods(max_pods: int = 2) -> scheduler.IsolatedPods:
-    return scheduler.IsolatedPods(namespace="test", max_pods=max_pods, sizing=SIZING)
+    return scheduler.IsolatedPods(
+        namespace="test", max_pods=max_pods, sizing=SIZING, standard_request_bytes=REQUEST
+    )
 
 async def _queued_job(db_session: AsyncSession) -> PlatformJob:
     await db_session.execute(delete(PlatformJob))
@@ -229,8 +233,9 @@ async def test_remote_claim_sets_kubernetes_launch_metadata(
     assert job.kubernetes_job_uid is None
     assert job.kubernetes_pod_uid is None
     assert job.runner_started_at is None
-    # A standard pod: Worker memory.
+    # A standard pod: Worker memory, requesting the deployment's request.
     assert job.memory_limit_bytes == SIZING.standard_limit_bytes
+    assert job.memory_request_bytes == REQUEST
 
 
 @pytest.mark.asyncio
@@ -316,6 +321,8 @@ async def test_a_job_a_standard_pod_cannot_hold_gets_a_sized_pod(
         1536 * MIB, SIZING.threshold, SIZING.baseline_bytes, SIZING.largest_limit_bytes
     )
     assert job.memory_limit_bytes == limit
+    # It requests its whole limit, decided now, not when the Job is created.
+    assert job.memory_request_bytes == limit
     assert limit > SIZING.standard_limit_bytes
     assert SIZING.budget_bytes(limit) >= 1536 * MIB
 

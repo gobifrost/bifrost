@@ -25,7 +25,6 @@ class KubernetesSettings:
     kubernetes_job_configmap: str = "bifrost-build-config"
     kubernetes_job_secret: str = "bifrost-build-secret"
     kubernetes_job_service_account: str = "bifrost-build-runner"
-    pool_worker_memory_request_mib: int = 512
     kubernetes_job_cpu_request: str = "250m"
     kubernetes_job_cpu_limit: str = "1"
     kubernetes_job_pending_timeout_seconds: int = 300
@@ -48,15 +47,15 @@ def _manifest(
     settings: KubernetesSettings | None = None,
     *,
     spec: WorkerJobSpec = SPEC,
+    memory_request_bytes: int = 512 * 2**20,
     memory_limit_bytes: int = LIMIT,
-    sized: bool = False,
 ) -> dict:
     return build_job_manifest(
         _claim(),
         settings or KubernetesSettings(),
         spec,
+        memory_request_bytes=memory_request_bytes,
         memory_limit_bytes=memory_limit_bytes,
-        sized=sized,
     )
 
 
@@ -148,19 +147,12 @@ def test_build_job_manifest_renders_suspended_locked_down_job() -> None:
 def test_a_sized_isolated_pod_requests_its_whole_limit() -> None:
     """Like a sized worker Job: scheduled only where its memory exists."""
     sized = 3328 * 2**20
-    container = _manifest(memory_limit_bytes=sized, sized=True)["spec"]["template"]["spec"][
+    container = _manifest(memory_request_bytes=sized, memory_limit_bytes=sized)["spec"]["template"]["spec"][
         "containers"
     ][0]
 
     assert container["resources"]["requests"]["memory"] == "3328Mi"
     assert container["resources"]["limits"]["memory"] == "3328Mi"
-
-
-def test_build_job_manifest_rejects_request_above_limit() -> None:
-    settings = KubernetesSettings(pool_worker_memory_request_mib=4096)
-
-    with pytest.raises(KubernetesConfigurationError, match="request_mib"):
-        _manifest(settings)
 
 
 class _ApiPod:

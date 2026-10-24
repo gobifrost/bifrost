@@ -2,20 +2,32 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+import httpx
+
 from src.jobs.platform.kubernetes_client import (
+    KubernetesApiError,
     KubernetesConfigurationError,
     KubernetesJobClient,
     memory_resources,
 )
 
+logger = logging.getLogger(__name__)
+
 WORKER_LABEL = "bifrost-pool-worker"
 INCARNATION_LABEL = "bifrost.gobifrost.com/worker-incarnation"
 # Finished worker Jobs are history only; the incarnation row keeps the record.
 WORKER_JOB_TTL_SECONDS = 600
+# Backoff between attempts to read the Job identity when the Kubernetes API
+# fails: it doubles from the first wait up to the longest.
+SPEC_RETRY_INITIAL_SECONDS = 2.0
+SPEC_RETRY_MAX_SECONDS = 60.0
 
 
 def worker_job_name(incarnation_id: UUID) -> str:
@@ -76,6 +88,40 @@ async def resolve_worker_job_spec(client: KubernetesJobClient, settings: Any) ->
             else own.get("imagePullPolicy") or "IfNotPresent"
         ),
     )
+
+
+async def resolve_job_spec_when_ready(
+    client: KubernetesJobClient, settings: Any, stop_event: asyncio.Event, controller: str
+) -> WorkerJobSpec | None:
+    """The Job identity for a controller loop, resolved once and kept.
+
+    A Kubernetes API failure (an error status, or no answer) is retried
+    with backoff, so a transient outage at start does not disable the
+    controller until a restart. An identity no Job could run with (no image
+    or environment) needs a configuration change and a restart: the loop
+    idles. None when the loop stops first.
+    """
+    delay = SPEC_RETRY_INITIAL_SECONDS
+    while True:
+        try:
+            return await resolve_worker_job_spec(client, settings)
+        except KubernetesConfigurationError as exc:
+            logger.error("%s disabled: %s", controller, exc)
+            await stop_event.wait()
+            return None
+        except (KubernetesApiError, httpx.HTTPError) as exc:
+            logger.warning(
+                "%s could not read its Job identity (%s: %s); retrying in %.0f seconds",
+                controller,
+                type(exc).__name__,
+                exc,
+                delay,
+            )
+        with suppress(TimeoutError):
+            await asyncio.wait_for(stop_event.wait(), timeout=delay)
+        if stop_event.is_set():
+            return None
+        delay = min(delay * 2, SPEC_RETRY_MAX_SECONDS)
 
 
 def build_worker_job_manifest(

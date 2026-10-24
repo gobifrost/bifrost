@@ -27,6 +27,7 @@ from src.models.contracts.platform_jobs import (
     PlatformJobStatus,
 )
 from src.models.orm.platform_jobs import PlatformJob
+from src.models.orm.solution_export_jobs import SolutionExportJob
 from src.services.durable_impersonation import current_durable_impersonation
 from src.services.platform_job_memory_profiles import (
     resolve_platform_job_memory_required_bytes,
@@ -39,9 +40,50 @@ ACTIVE_PLATFORM_JOB_STATUSES = ("queued", "running", "waiting", "cancel_requeste
 TERMINAL_PLATFORM_JOB_STATUSES = ("succeeded", "failed", "cancelled", "requires_action")
 # A queued local job whose memory requirement no executor's free budget holds yet.
 WAITING_FOR_MEMORY = "Waiting for executor memory"
+# What a Solution export reports when its platform job fails outside its
+# own worker (``fail_linked_solution_export``).
+EXPORT_RUNNER_LOST = "Backup export runner stopped before completion"
+EXPORT_TOO_LARGE = "Backup export needs more memory than any executor can hold"
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+async def fail_linked_solution_export(
+    db: AsyncSession,
+    platform_job: PlatformJob,
+    *,
+    completed_at: datetime,
+    failure_message: str,
+) -> None:
+    """Fail an active export projection when its platform job fails outside
+    the export worker (its runner lost, or the job too large to run).
+
+    Export rows carry encrypted options until their worker reaches a terminal
+    state. Such a failure bypasses the export worker's own cleanup, so the
+    platform-job terminal transition must also make that projection safe
+    and observable. The platform job's curated error is deliberately not
+    copied: its detail is for operators, while the export API stays generic.
+    """
+    if platform_job.job_type != "solution.export" or not platform_job.resource_id:
+        return
+    try:
+        export_id = UUID(platform_job.resource_id)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Solution export platform job has an invalid resource identifier",
+            extra={"platform_job_id": str(platform_job.id)},
+        )
+        return
+    export = await db.get(SolutionExportJob, export_id, with_for_update=True)
+    if export is None or export.status not in {"pending", "running"}:
+        return
+    export.status = "failed"
+    export.progress_percent = 100
+    export.message = "Backup failed"
+    export.failure_message = failure_message
+    export.encrypted_options = None
+    export.completed_at = completed_at
 
 
 def platform_job_to_public(job: PlatformJob) -> PlatformJobPublic:

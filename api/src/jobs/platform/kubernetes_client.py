@@ -54,9 +54,9 @@ def in_cluster_namespace() -> str | None:
 def memory_resources(
     limit_bytes: int, *, sized: bool, standard_request_mib: int
 ) -> tuple[str, str]:
-    """A Job container's memory request and limit (one rule for worker Jobs
-    and isolated pods, ``worker_pool.sizing``). A sized Job requests its
-    whole limit; a standard one the deployment's request, which must fit."""
+    """A worker Job container's memory request and limit
+    (``worker_pool.sizing``). A sized Job requests its whole limit; a
+    standard one the deployment's request, which must fit."""
     limit_mib = limit_bytes // 2**20
     if sized:
         return f"{limit_mib}Mi", f"{limit_mib}Mi"
@@ -121,23 +121,20 @@ def build_job_manifest(
     settings: Any,
     spec: WorkerJobSpec,
     *,
+    memory_request_bytes: int,
     memory_limit_bytes: int,
-    sized: bool,
 ) -> dict[str, Any]:
     """Render the suspended Kubernetes Job for one claimed platform build.
 
     The pod runs as ``spec`` says, the identity worker Jobs use: the Job
     identity settings when set, else a copy of the controller's own pod.
-    ``memory_limit_bytes`` is the limit its claim recorded. A standard pod
-    requests the worker memory request; a sized pod requests its whole
-    limit (``worker_pool.sizing``).
+    Its memory request and limit are what its claim recorded: a standard
+    pod requests the worker memory request, a sized pod its whole limit
+    (``worker_pool.sizing``).
     """
 
-    memory_request, memory_limit = memory_resources(
-        memory_limit_bytes,
-        sized=sized,
-        standard_request_mib=int(settings.pool_worker_memory_request_mib),
-    )
+    memory_request = f"{memory_request_bytes // 2**20}Mi"
+    memory_limit = f"{memory_limit_bytes // 2**20}Mi"
     cpu_request = str(settings.kubernetes_job_cpu_request)
     cpu_limit = str(settings.kubernetes_job_cpu_limit)
     pending_timeout = int(settings.kubernetes_job_pending_timeout_seconds)

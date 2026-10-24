@@ -1299,7 +1299,7 @@ async def test_the_sweep_fails_isolated_jobs_by_the_settings_largest_pod(db, mon
 
     await _clear_pool_state(db.sessions)
     monkeypatch.setattr(unfit, "get_db_context", db.context)
-    policy = replace(POLICY, largest_worker_mib=4096)
+    policy = replace(POLICY, largest_worker_mib=4096, isolated_jobs_enabled=True)
     await _store_policy(db.sessions, policy)
     budget = sizing.JobSizing.of(
         policy, SETTINGS.memory_pressure_threshold, JOB_BASELINE_ESTIMATE_BYTES
@@ -1331,6 +1331,94 @@ async def test_the_sweep_fails_isolated_jobs_by_the_settings_largest_pod(db, mon
     finally:
         async with db.sessions() as session:
             await session.execute(delete(PlatformJob).where(PlatformJob.id.in_([over.id, fits.id])))
+            await session.commit()
+
+
+async def test_with_isolation_off_the_sweep_leaves_isolated_jobs_to_move_to_workers(
+    db, monkeypatch
+) -> None:
+    """A queued isolated job is not measured against a pod while isolation
+    is off: the build loop moves it to the local backend, where a larger
+    executor may hold it."""
+    from src.models.orm.platform_jobs import PlatformJob
+    from src.services.worker_pool import unfit
+
+    await _clear_pool_state(db.sessions)
+    monkeypatch.setattr(unfit, "get_db_context", db.context)
+    await _store_policy(db.sessions, replace(POLICY, largest_worker_mib=4096))
+    queued = PlatformJob(
+        job_type="application.deploy", payload={}, requested_by_user_id=str(uuid4()),
+        requested_by_email="person@contoso.example", requested_by_name="Contoso User",
+        title="Contoso Deploy", memory_required_bytes=6 * GIB,
+        execution_backend="kubernetes",
+    )
+    async with db.sessions() as session:
+        session.add(queued)
+        await session.commit()
+    try:
+        await unfit.settle_work_that_never_fits()
+        async with db.sessions() as session:
+            row = await session.get(PlatformJob, queued.id)
+            assert row is not None
+            assert (row.status, row.error_code) == ("queued", None)
+    finally:
+        async with db.sessions() as session:
+            await session.execute(delete(PlatformJob).where(PlatformJob.id == queued.id))
+            await session.commit()
+
+
+@pytest.mark.parametrize("backend", ["local", "kubernetes"])
+async def test_a_too_large_export_fails_its_backup_and_clears_its_options(
+    db, backend: str
+) -> None:
+    """The export's projection takes the same terminal transition a lost
+    runner gives it: failed, with its encrypted options cleared."""
+    from src.models.orm.platform_jobs import PlatformJob
+    from src.models.orm.solution_export_jobs import SolutionExportJob
+    from src.models.orm.solutions import Solution
+    from src.services.worker_pool import unfit
+
+    solution = Solution(
+        id=uuid4(), slug=f"export-unfit-{uuid4().hex[:8]}", name="Contoso Export",
+        version="1.0.0", organization_id=None,
+    )
+    export = SolutionExportJob(
+        id=uuid4(), solution_id=solution.id, status="pending", progress_percent=0,
+        message="Queued", encrypted_options="opaque-encrypted-options",
+    )
+    job = PlatformJob(
+        job_type="solution.export", payload={}, requested_by_user_id=str(uuid4()),
+        requested_by_email="person@contoso.example", requested_by_name="Contoso User",
+        title="Contoso Export", memory_required_bytes=8 * GIB,
+        resource_type="solution_export", resource_id=str(export.id),
+        execution_backend=backend,
+    )
+    async with db.sessions() as session:
+        session.add_all([solution, export])
+        await session.flush()
+        session.add(job)
+        await session.commit()
+    try:
+        async with db.sessions() as session:
+            await unfit.fail_platform_jobs_that_never_fit(session, GIB, largest_pod=GIB)
+            await session.commit()
+        async with db.sessions() as session:
+            platform = await session.get(PlatformJob, job.id)
+            backup = await session.get(SolutionExportJob, export.id)
+            assert platform is not None and backup is not None
+            assert (platform.status, platform.error_code) == ("failed", "too_large")
+            assert backup.status == "failed"
+            assert backup.message == "Backup failed"
+            assert backup.failure_message == (
+                "Backup export needs more memory than any executor can hold"
+            )
+            assert backup.encrypted_options is None
+            assert backup.completed_at is not None
+    finally:
+        async with db.sessions() as session:
+            await session.execute(delete(PlatformJob).where(PlatformJob.id == job.id))
+            await session.execute(delete(SolutionExportJob).where(SolutionExportJob.id == export.id))
+            await session.execute(delete(Solution).where(Solution.id == solution.id))
             await session.commit()
 
 
@@ -1709,3 +1797,60 @@ async def test_a_full_reconcile_launches_before_it_drains(db) -> None:
 
     assert await _state(db.sessions, warm_id) == ("draining", "rotated")
     assert len(cluster.created) == 2 and cluster.deleted == []
+
+
+async def test_the_worker_controller_retries_a_kubernetes_api_error_reading_its_pod(
+    monkeypatch,
+) -> None:
+    """Like the build loop: a transient API error at loop start is retried
+    with backoff instead of disabling reusable workers until a restart."""
+    from src.jobs.platform.kubernetes_client import KubernetesApiError
+    from src.services.worker_pool import manifest
+
+    client = AsyncMock()
+    monkeypatch.setattr(controller, "KubernetesJobClient", lambda settings: client)
+    monkeypatch.setattr(manifest, "SPEC_RETRY_INITIAL_SECONDS", 0.01)
+    resolve = AsyncMock(side_effect=[KubernetesApiError("GET", "/pods", 503), SPEC])
+    monkeypatch.setattr(manifest, "resolve_worker_job_spec", resolve)
+    monkeypatch.setattr(controller, "_withdraw_live", AsyncMock())
+    stop = asyncio.Event()
+    passes = []
+
+    class Pool:
+        def __init__(self, client, settings, spec):  # type: ignore[no-untyped-def]
+            self.id = uuid4()
+            self.spec = spec
+            self.reachability = SimpleNamespace(check=AsyncMock(return_value=True))
+
+        async def reconcile(self) -> None:
+            passes.append(self.spec)
+            stop.set()
+
+    monkeypatch.setattr(controller, "WorkerPoolController", Pool)
+
+    await asyncio.wait_for(controller.worker_pool_loop(stop, SETTINGS), timeout=10)
+
+    assert resolve.await_count == 2
+    assert passes == [SPEC]
+    client.close.assert_awaited_once()
+
+
+async def test_the_worker_controller_idles_when_its_pod_gives_no_job_identity(
+    monkeypatch,
+) -> None:
+    from src.jobs.platform.kubernetes_client import KubernetesConfigurationError
+    from src.services.worker_pool import manifest
+
+    client = AsyncMock()
+    monkeypatch.setattr(controller, "KubernetesJobClient", lambda settings: client)
+    resolve = AsyncMock(side_effect=KubernetesConfigurationError("No image is known for Jobs"))
+    monkeypatch.setattr(manifest, "resolve_worker_job_spec", resolve)
+    stop = asyncio.Event()
+    loop = asyncio.create_task(controller.worker_pool_loop(stop, SETTINGS))
+    await asyncio.sleep(0.05)
+    assert not loop.done()
+    stop.set()
+    await asyncio.wait_for(loop, timeout=10)
+
+    resolve.assert_awaited_once()
+    client.close.assert_awaited_once()

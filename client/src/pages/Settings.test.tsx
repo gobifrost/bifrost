@@ -222,6 +222,35 @@ describe("Settings", () => {
 		).toBeVisible();
 	});
 
+	it("waits for the status check before opening a Kubernetes link", async () => {
+		let answer: (status: { configured: boolean }) => void = () => {};
+		kubernetesStatusMock.mockReturnValue(
+			new Promise((resolve) => {
+				answer = resolve;
+			}),
+		);
+		renderWithProviders(<Settings />, {
+			initialEntries: ["/settings/kubernetes-executions"],
+		});
+
+		const pending = await screen.findByRole("status");
+		expect(pending).toHaveTextContent(/checking kubernetes/i);
+		expect(pending).toBeVisible();
+		expect(
+			screen.queryByRole("heading", { name: /kubernetes panel/i }),
+		).not.toBeInTheDocument();
+
+		answer({ configured: false });
+
+		expect(
+			await screen.findByRole("heading", { name: /models panel/i }),
+		).toBeVisible();
+		expect(
+			screen.queryByRole("heading", { name: /kubernetes panel/i }),
+		).not.toBeInTheDocument();
+		expect(screen.queryByText(/checking kubernetes/i)).not.toBeInTheDocument();
+	});
+
 	it("leaves a Kubernetes link on deployments without it", async () => {
 		kubernetesStatusMock.mockResolvedValue({ configured: false });
 		renderWithProviders(<Settings />, {

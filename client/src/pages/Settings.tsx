@@ -35,6 +35,7 @@ import {
 	DollarSign,
 	Key,
 	Layers3,
+	Loader2,
 	MessageSquareText,
 	Palette,
 	Plug,
@@ -201,8 +202,9 @@ export function Settings() {
 	// Parse the current tab from the URL path
 	const requestedTab = location.pathname.split("/settings/")[1];
 
-	// A link straight to a Kubernetes tab keeps it open while the status
-	// check is in flight, instead of redirecting before the answer.
+	// A link straight to a Kubernetes tab waits on its tab while the status
+	// check is in flight, instead of redirecting before the answer; the
+	// page itself mounts only once the deployment is known to configure it.
 	const showKubernetes =
 		kubernetesAvailable ??
 		kubernetesSection.items.some((item) => item.value === requestedTab);
@@ -411,7 +413,21 @@ export function Settings() {
 										key={item.value}
 										hidden={item.value !== currentTab}
 									>
-										{createElement(item.content)}
+										{kubernetesSection.items.includes(item) &&
+										kubernetesAvailable !== true ? (
+											<p
+												role="status"
+												className="flex items-center gap-2 text-sm text-muted-foreground"
+											>
+												<Loader2
+													aria-hidden="true"
+													className="size-4 animate-spin motion-reduce:animate-none"
+												/>
+												Checking Kubernetes…
+											</p>
+										) : (
+											createElement(item.content)
+										)}
 									</div>
 								))}
 						</div>

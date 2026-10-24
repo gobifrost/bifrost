@@ -64,6 +64,9 @@ const SCALING_FIELDS: { name: ScalingField; label: string; help: string }[] = [
 
 type ScalingDraft = Record<ScalingField, string>;
 
+/** A policy number the admin edits before saving it. */
+type DraftField = ScalingField | "max_isolated_pods";
+
 function scalingDraft(policy: KubernetesPolicyValues): ScalingDraft {
 	return {
 		warm_workers: String(policy.warm_workers),
@@ -309,6 +312,11 @@ export function KubernetesSettings() {
 	>({});
 	const [scalingError, setScalingError] = useState<string | null>(null);
 	const [podsError, setPodsError] = useState<string | null>(null);
+	// Fields the admin changed and has not saved. Every other draft follows
+	// the server, so a save never sends a value another admin replaced.
+	const [edited, setEdited] = useState<ReadonlySet<DraftField>>(
+		() => new Set(),
+	);
 
 	useEffect(() => {
 		let active = true;
@@ -330,6 +338,39 @@ export function KubernetesSettings() {
 	const loading = settings === null && !loadError;
 	const busy = loading || saving !== null || loadError;
 
+	const edit = (field: DraftField) => {
+		setEdited((fields) =>
+			fields.has(field) ? fields : new Set([...fields, field]),
+		);
+	};
+
+	/**
+	 * Show settings the server returned: drafts the admin has not edited
+	 * take its values; ``saved`` fields are no longer pending edits.
+	 */
+	const applySettings = (
+		next: KubernetesExecutionSettings,
+		saved: readonly DraftField[],
+	) => {
+		const pending = new Set(
+			[...edited].filter((field) => !saved.includes(field)),
+		);
+		const fromServer = scalingDraft(next.policy);
+		setSettings(next);
+		setEdited(pending);
+		setDraft((current) => {
+			if (!current) return fromServer;
+			const merged = { ...fromServer };
+			for (const { name } of SCALING_FIELDS) {
+				if (pending.has(name)) merged[name] = current[name];
+			}
+			return merged;
+		});
+		if (!pending.has("max_isolated_pods")) {
+			setPodsDraft(String(next.policy.max_isolated_pods));
+		}
+	};
+
 	/**
 	 * Save policy changes. Returns the saved settings, or the validation
 	 * error the API refused the change with; other failures toast.
@@ -337,12 +378,13 @@ export function KubernetesSettings() {
 	const savePolicy = async (
 		scope: string,
 		changes: KubernetesPolicyUpdate,
+		saved: readonly DraftField[],
 		successMessage: string,
 	): Promise<KubernetesExecutionSettings | KubernetesRequestError | null> => {
 		setSaving(scope);
 		try {
 			const next = await updateKubernetesPolicy(changes);
-			setSettings(next);
+			applySettings(next, saved);
 			toast.success(successMessage);
 			return next;
 		} catch (error) {
@@ -392,6 +434,7 @@ export function KubernetesSettings() {
 		const result = await savePolicy(
 			"scaling",
 			changes,
+			SCALING_FIELDS.map(({ name }) => name),
 			"Scaling settings saved",
 		);
 		if (result instanceof KubernetesRequestError) {
@@ -400,8 +443,6 @@ export function KubernetesSettings() {
 			);
 			if (field) setScalingErrors({ [field.name]: result.message });
 			else setScalingError(result.message);
-		} else if (result) {
-			setDraft(scalingDraft(result.policy));
 		}
 	};
 
@@ -420,12 +461,11 @@ export function KubernetesSettings() {
 		const result = await savePolicy(
 			"max_isolated_pods",
 			{ max_isolated_pods: value },
+			["max_isolated_pods"],
 			`Up to ${value} isolated pod${value === 1 ? "" : "s"} can run at once`,
 		);
 		if (result instanceof KubernetesRequestError) {
 			setPodsError(result.message);
-		} else if (result) {
-			setPodsDraft(String(result.policy.max_isolated_pods));
 		}
 	};
 
@@ -434,6 +474,7 @@ export function KubernetesSettings() {
 		const result = await savePolicy(
 			"isolation",
 			{ isolated_jobs_enabled: enabled },
+			[],
 			enabled
 				? "Build jobs will run in isolated pods"
 				: "Build jobs will run on workers",
@@ -451,7 +492,10 @@ export function KubernetesSettings() {
 		if (busy) return;
 		setSaving(job.job_type);
 		try {
-			setSettings(await updateKubernetesExecution(job.job_type, update));
+			applySettings(
+				await updateKubernetesExecution(job.job_type, update),
+				[],
+			);
 			toast.success(successMessage);
 		} catch (error) {
 			toast.error(
@@ -554,6 +598,7 @@ export function KubernetesSettings() {
 												...draft,
 												[name]: value,
 											});
+											edit(name);
 											setScalingErrors({});
 											setScalingError(null);
 										}}
@@ -633,6 +678,7 @@ export function KubernetesSettings() {
 							field="max_isolated_pods"
 							onChange={(value) => {
 								setPodsDraft(value);
+								edit("max_isolated_pods");
 								setPodsError(null);
 							}}
 							onEnter={() => void saveMaxPods()}

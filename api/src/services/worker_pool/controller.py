@@ -39,7 +39,6 @@ from shared.version import get_version
 from src.config import Settings, get_settings
 from src.core.database import get_db_context
 from src.jobs.platform.kubernetes_client import (
-    KubernetesApiError,
     KubernetesConfigurationError,
     KubernetesJobClient,
     oom_killed,
@@ -54,7 +53,7 @@ from src.services.worker_pool.claims import CAPACITY_LOCK
 from src.services.worker_pool.manifest import (
     WorkerJobSpec,
     build_worker_job_manifest,
-    resolve_worker_job_spec,
+    resolve_job_spec_when_ready,
     worker_job_name,
 )
 from src.services.worker_pool.liveness import (
@@ -588,36 +587,42 @@ async def _withdraw_live(controller_id: UUID) -> None:
 
 async def worker_pool_loop(stop_event: asyncio.Event, settings: Any | None = None) -> None:
     settings = settings or get_settings()
+    # Pool work waits visibly (and fails at its claim deadline) instead of
+    # taking down the process that hosts this loop.
     try:
         client = KubernetesJobClient(settings)
-        spec = await resolve_worker_job_spec(client, settings)
-    except (KubernetesConfigurationError, KubernetesApiError) as exc:
-        # Pool work waits visibly (and fails at its claim deadline) instead of
-        # taking down the process that hosts this loop.
+    except KubernetesConfigurationError as exc:
         logger.error("Reusable worker controller disabled: %s", exc)
         await stop_event.wait()
         return
-    controller = WorkerPoolController(client, settings, spec)
     try:
-        while not stop_event.is_set():
-            try:
-                if await controller.reachability.check():
-                    await controller.reconcile()
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                logger.error(
-                    "Reusable worker reconciliation failed (%s): %s",
-                    type(exc).__name__,
-                    exc,
-                )
-            with suppress(TimeoutError):
-                await asyncio.wait_for(stop_event.wait(), timeout=RECONCILE_SECONDS)
-    finally:
+        spec = await resolve_job_spec_when_ready(
+            client, settings, stop_event, "Reusable worker controller"
+        )
+        if spec is None:
+            return
+        controller = WorkerPoolController(client, settings, spec)
         try:
-            await _withdraw_live(controller.id)
-        except Exception:
-            logger.warning("Could not withdraw the worker controller", exc_info=True)
+            while not stop_event.is_set():
+                try:
+                    if await controller.reachability.check():
+                        await controller.reconcile()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.error(
+                        "Reusable worker reconciliation failed (%s): %s",
+                        type(exc).__name__,
+                        exc,
+                    )
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(stop_event.wait(), timeout=RECONCILE_SECONDS)
+        finally:
+            try:
+                await _withdraw_live(controller.id)
+            except Exception:
+                logger.warning("Could not withdraw the worker controller", exc_info=True)
+    finally:
         await client.close()
 
 

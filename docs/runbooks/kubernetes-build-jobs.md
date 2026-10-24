@@ -46,6 +46,11 @@ isolated Jobs, and reconciliation is safe under any number of replicas. The
 loop always runs there; the Settings toggle decides only whether it admits new
 work. A single API replica is a single point of control: run at least two.
 
+At start the controller reads the identity its pods run as (below). A
+Kubernetes API failure there is retried with backoff (2 seconds, doubling to
+a minute); only an identity no pod could run with (no image or environment
+known) disables the controller until a restart.
+
 ## What An Isolated Pod Runs As
 
 An isolated pod runs exactly as a worker Job does
@@ -90,14 +95,20 @@ Isolated pods are sized by the same code as worker Jobs
   the pod gets the smallest limit whose budget holds the requirement, up to
   **Largest Worker**, and requests that whole limit, so it is scheduled only
   where the memory exists.
-- **Too large:** a requirement no pod up to Largest Worker can hold fails
-  visibly instead of waiting.
+- **Too large:** while isolation is on, a requirement no pod up to Largest
+  Worker can hold fails visibly instead of waiting. While it is off, the job
+  moves to a worker and is measured against the executors instead.
+
+The claim records the pod's memory request and limit, and the pod is created
+with them even if Worker Memory changes before its Job exists.
 
 Every isolated type learns its memory requirement: App deploys and SDK
 rebuilds per App, Solution deploys by their content, and Solution exports
 and Git syncs per Solution. A pod Kubernetes stops at its memory limit
 (OOMKilled) fails with `memory_pressure`, and its profile learns at least the
-pod's limit plus a 128 MiB margin, so the next run gets a larger pod.
+pod's limit plus a 128 MiB margin, so the next run gets a larger pod. This
+holds even when the controller first sees the stopped pod after the runner's
+lease expired.
 
 ## Upgrading From Environment Variables
 

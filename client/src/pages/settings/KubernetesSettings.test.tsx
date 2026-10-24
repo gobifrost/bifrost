@@ -251,6 +251,73 @@ describe("KubernetesSettings", () => {
 		);
 	});
 
+	it("refreshes untouched fields from every save and keeps pending edits", async () => {
+		const user = userEvent.setup();
+		// Another admin changed Worker memory and Max isolated pods meanwhile.
+		const changedElsewhere = {
+			...policy,
+			worker_memory_mib: 4096,
+			max_isolated_pods: 5,
+		};
+		mocks.updateKubernetesPolicy
+			.mockResolvedValueOnce({
+				...settings,
+				policy: { ...changedElsewhere, isolated_jobs_enabled: true },
+			})
+			.mockResolvedValueOnce({
+				...settings,
+				policy: {
+					...changedElsewhere,
+					isolated_jobs_enabled: true,
+					max_workers: 10,
+				},
+			});
+		render(<KubernetesSettings />);
+
+		const maxWorkers = await screen.findByLabelText("Max Workers");
+		await user.clear(maxWorkers);
+		await user.type(maxWorkers, "10");
+		await user.click(screen.getByLabelText("Isolate Build Jobs"));
+
+		await waitFor(() =>
+			expect(screen.getByLabelText("Worker Memory (MiB)")).toHaveValue(
+				4096,
+			),
+		);
+		expect(screen.getByLabelText("Max Isolated Pods")).toHaveValue(5);
+		expect(screen.getByLabelText("Max Workers")).toHaveValue(10);
+
+		await user.click(screen.getByRole("button", { name: "Save Scaling" }));
+
+		await waitFor(() =>
+			expect(mocks.updateKubernetesPolicy).toHaveBeenLastCalledWith({
+				max_workers: 10,
+			}),
+		);
+	});
+
+	it("refreshes the scaling fields when max isolated pods is saved", async () => {
+		const user = userEvent.setup();
+		mocks.updateKubernetesPolicy.mockResolvedValue({
+			...settings,
+			policy: { ...policy, max_isolated_pods: 4, idle_seconds: 600 },
+		});
+		render(<KubernetesSettings />);
+
+		const pods = await screen.findByLabelText("Max Isolated Pods");
+		await user.clear(pods);
+		await user.type(pods, "4{Enter}");
+
+		await waitFor(() =>
+			expect(screen.getByLabelText("Idle Time (Seconds)")).toHaveValue(
+				600,
+			),
+		);
+		expect(
+			screen.getByRole("button", { name: "Save Scaling" }),
+		).toBeDisabled();
+	});
+
 	it("toggles a job type through the execution endpoint", async () => {
 		const user = userEvent.setup();
 		mocks.updateKubernetesExecution.mockResolvedValue({

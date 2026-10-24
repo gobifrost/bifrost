@@ -9,7 +9,8 @@ the local backend, where a worker runs them, admitted by memory like any
 local platform job.
 
 Isolated pods run as worker Jobs do (``resolve_worker_job_spec``): the Job
-identity settings when set, else a copy of this controller's pod.
+identity settings when set, else a copy of this controller's pod. Each pod
+is created with the memory request and limit its claim recorded.
 """
 from __future__ import annotations
 
@@ -25,7 +26,6 @@ from sqlalchemy import select
 from src.config import Settings, get_settings
 from src.core.database import get_db_context
 from src.jobs.platform.kubernetes_client import (
-    KubernetesApiError,
     KubernetesConfigurationError,
     KubernetesJobClient,
     build_job_manifest,
@@ -42,7 +42,7 @@ from src.models.orm.platform_jobs import PlatformJob
 from src.services.kubernetes_execution import load_kubernetes_policy
 from src.services.memory_requests import MIB
 from src.services.platform_jobs import publish_platform_job_update
-from src.services.worker_pool.manifest import WorkerJobSpec, resolve_worker_job_spec
+from src.services.worker_pool.manifest import WorkerJobSpec, resolve_job_spec_when_ready
 from src.services.worker_pool.sizing import load_job_sizing
 
 logger = logging.getLogger(__name__)
@@ -57,10 +57,11 @@ def _pods_stopped(pods: list[dict[str, Any]]) -> bool:
     return all(p.get("status", {}).get("phase") in ("Succeeded", "Failed") for p in pods)
 
 
+# The runner's own memory guard reports the same code.
+_OUT_OF_MEMORY = ("memory_pressure", "The build pod exceeded its memory limit.")
+
+
 def _failure(job: dict[str, Any], pods: list[dict[str, Any]]) -> tuple[str, str]:
-    if oom_killed(pods):
-        # The runner's own memory guard reports the same code.
-        return "memory_pressure", "The build pod exceeded its memory limit."
     for condition in job.get("status", {}).get("conditions", []):
         if condition.get("status") == "True" and condition.get("reason") == "DeadlineExceeded":
             return "timeout", "The Kubernetes build pod exceeded its deadline."
@@ -124,27 +125,31 @@ class KubernetesBuildController:
             ))).all()
         for job in returned:
             await publish_platform_job_update(job)
-        standard_limit = policy.worker_memory_mib * MIB
         for job_id in ids:
-            await self.reconcile_job(job_id, standard_limit)
+            await self.reconcile_job(job_id)
         if not policy.isolated_jobs_enabled:
             return
         async with get_db_context() as db:
             sizing = await load_job_sizing(db, policy, self.settings.memory_pressure_threshold)
+        standard_request = int(self.settings.pool_worker_memory_request_mib) * MIB
+        if standard_request > sizing.standard_limit_bytes:
+            # Nothing is claimed with a request no standard pod can make.
+            raise KubernetesConfigurationError(
+                "pool_worker_memory_request_mib must not exceed Worker memory"
+            )
         claim = await claim_platform_job(
             backend="kubernetes",
             isolated=IsolatedPods(
                 namespace=self.client.namespace,
                 max_pods=policy.max_isolated_pods,
                 sizing=sizing,
+                standard_request_bytes=standard_request,
             ),
         )
         if claim is not None:
-            await self.reconcile_job(claim.id, standard_limit)
+            await self.reconcile_job(claim.id)
 
-    async def reconcile_job(self, job_id: UUID, standard_limit_bytes: int) -> None:
-        """``standard_limit_bytes`` is Worker memory: a pod claimed with
-        another limit is sized and requests its whole limit."""
+    async def reconcile_job(self, job_id: UUID) -> None:
         changed: PlatformJob | None = None
         loss: tuple[UUID, str, str] | None = None
         # Kubernetes stopped the pod at its memory limit.
@@ -188,14 +193,14 @@ class KubernetesBuildController:
                 memory_required_bytes=row.memory_required_bytes,
                 job_type=row.job_type,
             )
-            if row.memory_limit_bytes is None:
-                raise RuntimeError("Active Kubernetes build has no memory limit")
+            if row.memory_limit_bytes is None or row.memory_request_bytes is None:
+                raise RuntimeError("Active Kubernetes build has no memory request and limit")
             manifest = build_job_manifest(
                 claim,
                 self.settings,
                 self.spec,
+                memory_request_bytes=row.memory_request_bytes,
                 memory_limit_bytes=row.memory_limit_bytes,
-                sized=row.memory_limit_bytes != standard_limit_bytes,
             )
             if remote is not None:
                 expected = manifest["metadata"]["labels"]
@@ -222,7 +227,13 @@ class KubernetesBuildController:
             uid = row.kubernetes_job_uid
             if uid:
                 pods = await self.client.list_pods(uid)
-                if remote is None:
+                # Kubernetes stopped the pod at its memory limit. That is
+                # learned whatever else the attempt saw (an expired lease, a
+                # removed Job): its runner stopped renewing because it died.
+                out_of_memory = _pods_stopped(pods) and oom_killed(pods)
+                if out_of_memory:
+                    loss = (token, *_OUT_OF_MEMORY)
+                elif remote is None:
                     if _pods_stopped(pods):
                         loss = (token, row.error_code or "runner_lost", row.error_message or "The Kubernetes build Job was removed before recording a result.")
                 elif row.status == "cancel_requested" or pending_expired:
@@ -242,9 +253,7 @@ class KubernetesBuildController:
                     c.get("status") == "True" and c.get("type") in ("Complete", "Failed")
                     for c in remote.get("status", {}).get("conditions", [])
                 )):
-                    code, message = _failure(remote, pods)
-                    loss = (token, code, message)
-                    out_of_memory = oom_killed(pods)
+                    loss = (token, *_failure(remote, pods))
                 elif row.runner_started_at is None:
                     phase = _pending_phase(pods)
                     if row.phase != phase:
@@ -276,15 +285,13 @@ async def kubernetes_build_loop(shutdown_event: asyncio.Event) -> None:
         await shutdown_event.wait()
         return
     try:
-        spec = await resolve_worker_job_spec(client, settings)
-    except (KubernetesConfigurationError, KubernetesApiError) as exc:
         # Isolated jobs wait visibly while local work continues.
-        logger.error("Kubernetes build controller disabled: %s", exc)
-        await client.close()
-        await shutdown_event.wait()
-        return
-    controller = KubernetesBuildController(client, settings, spec)
-    try:
+        spec = await resolve_job_spec_when_ready(
+            client, settings, shutdown_event, "Kubernetes build controller"
+        )
+        if spec is None:
+            return
+        controller = KubernetesBuildController(client, settings, spec)
         while not shutdown_event.is_set():
             try:
                 await controller.reconcile()

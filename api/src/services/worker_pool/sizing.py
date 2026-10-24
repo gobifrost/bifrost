@@ -9,13 +9,17 @@ platform job each) are sized by the same code:
   limit whose budget does (``sized_job_limit_bytes``), up to *Largest
   worker*, and requests that whole limit, so it is scheduled only where the
   memory exists.
-
-The manifests render both through ``kubernetes_client.memory_resources``.
 - **Too large:** work no Job up to *Largest worker* can hold is failed
   visibly (``unfit``), never launched.
 
 A Job's budget is its limit at the memory threshold less its own process
 baseline, which Job workers report once ready.
+
+A worker Job's row records its class and limit when it is reserved
+(``kubernetes_client.memory_resources`` renders them); an isolated pod's
+row records its request and limit when it is claimed
+(``platform_jobs.IsolatedPods``). Either is created as recorded, whatever
+the settings are by then.
 """
 
 from __future__ import annotations

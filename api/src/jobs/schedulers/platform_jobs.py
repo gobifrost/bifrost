@@ -17,13 +17,14 @@ from sqlalchemy import func, or_, select, text
 
 from src.core.database import get_db_context
 from src.models.orm.platform_jobs import PlatformJob
-from src.models.orm.solution_export_jobs import SolutionExportJob
 from src.services.execution.memory_monitor import get_cgroup_memory
 from src.services.platform_job_memory_profiles import (
     record_platform_job_memory_profile,
 )
 from src.services.platform_jobs import (
+    EXPORT_RUNNER_LOST,
     WAITING_FOR_MEMORY,
+    fail_linked_solution_export,
     publish_platform_job_update,
 )
 from src.services.worker_pool.sizing import JobSizing
@@ -49,41 +50,6 @@ def _clear_lease(job: PlatformJob) -> None:
     job.lease_token = None
     job.heartbeat_at = None
     job.lease_expires_at = None
-
-
-async def _fail_linked_solution_export(
-    db,
-    platform_job: PlatformJob,
-    *,
-    completed_at: datetime,
-) -> None:
-    """Fail an active export projection when its final runner attempt is lost.
-
-    Export rows carry encrypted options until their worker reaches a terminal
-    state. A child-process loss bypasses the export worker's own cleanup, so
-    the platform-job terminal transition must also make that projection safe
-    and observable. The platform job's curated error is deliberately not
-    copied: its detail is for operators, while the export API stays generic.
-    """
-    if platform_job.job_type != "solution.export" or not platform_job.resource_id:
-        return
-    try:
-        export_id = UUID(platform_job.resource_id)
-    except (TypeError, ValueError):
-        logger.warning(
-            "Solution export platform job has an invalid resource identifier",
-            extra={"platform_job_id": str(platform_job.id)},
-        )
-        return
-    export = await db.get(SolutionExportJob, export_id, with_for_update=True)
-    if export is None or export.status not in {"pending", "running"}:
-        return
-    export.status = "failed"
-    export.progress_percent = 100
-    export.message = "Backup failed"
-    export.failure_message = "Backup export runner stopped before completion"
-    export.encrypted_options = None
-    export.completed_at = completed_at
 
 
 def _memory_exceeds_hard_limit(hard_ratio: float) -> bool:
@@ -134,7 +100,9 @@ async def recover_expired_platform_jobs() -> tuple[int, int]:
                 )
                 job.error_retryable = False
                 job.completed_at = now
-                await _fail_linked_solution_export(db, job, completed_at=now)
+                await fail_linked_solution_export(
+                    db, job, completed_at=now, failure_message=EXPORT_RUNNER_LOST
+                )
                 failed += 1
             await record_platform_job_memory_profile(db, job)
             _clear_lease(job)
@@ -174,6 +142,19 @@ class IsolatedPods:
     namespace: str
     max_pods: int
     sizing: JobSizing
+    # The deployment's worker memory request, which a standard pod requests.
+    standard_request_bytes: int
+
+    def pod_memory(self, required_bytes: int) -> tuple[int, int] | None:
+        """The memory request and limit of the pod that holds
+        ``required_bytes``: a standard pod requests the deployment's
+        request, a sized one its whole limit; None when no pod can."""
+        limit = self.sizing.pod_limit_bytes(required_bytes)
+        if limit is None:
+            return None
+        if limit == self.sizing.standard_limit_bytes:
+            return self.standard_request_bytes, limit
+        return limit, limit
 
 
 async def claim_platform_job(
@@ -190,8 +171,8 @@ async def claim_platform_job(
 
     An isolated job (``backend="kubernetes"``) is claimed for a pod in the
     ``isolated`` namespace while fewer than its maximum run, and records the
-    pod's memory limit. One no pod can hold is left queued for the unfit
-    sweep to fail visibly.
+    pod's memory request and limit. One no pod can hold is left queued for
+    the unfit sweep to fail visibly.
     """
     if backend == "local" and fits_bytes is None:
         raise ValueError("A local platform-job claim needs the executor's free budget")
@@ -244,11 +225,11 @@ async def claim_platform_job(
                 job.revision += 1
                 updated.append(job)
                 continue
-            # An isolated pod's memory limit, by the worker sizing rule.
-            pod_limit: int | None = None
+            # An isolated pod's memory, by the worker sizing rule.
+            pod_memory: tuple[int, int] | None = None
             if isolated is not None:
-                pod_limit = isolated.sizing.pod_limit_bytes(job.memory_required_bytes)
-                if pod_limit is None:
+                pod_memory = isolated.pod_memory(job.memory_required_bytes)
+                if pod_memory is None:
                     continue  # No pod can hold it: the unfit sweep fails it.
             # Product concurrency overrides (Settings UI) replace the code
             # policy default when set. Read per claim so changes apply
@@ -343,7 +324,7 @@ async def claim_platform_job(
             job.error_code = None
             job.error_message = None
             job.error_retryable = None
-            if isolated is not None:
+            if isolated is not None and pod_memory is not None:
                 job.kubernetes_job_name = _remote_job_name(job.id, token)
                 job.kubernetes_namespace = isolated.namespace
                 job.kubernetes_job_uid = None
@@ -352,7 +333,7 @@ async def claim_platform_job(
                 job.runner_started_at = None
                 job.memory_start_bytes = None
                 job.memory_peak_bytes = None
-                job.memory_limit_bytes = pod_limit
+                job.memory_request_bytes, job.memory_limit_bytes = pod_memory
             else:
                 current_memory, memory_limit = get_cgroup_memory()
                 job.memory_start_bytes = current_memory if current_memory >= 0 else None
@@ -476,7 +457,9 @@ async def _handle_runner_loss(
             job.error_message = error_message
             job.error_retryable = False
             job.completed_at = now
-            await _fail_linked_solution_export(db, job, completed_at=now)
+            await fail_linked_solution_export(
+                db, job, completed_at=now, failure_message=EXPORT_RUNNER_LOST
+            )
         await record_platform_job_memory_profile(db, job, out_of_memory=out_of_memory)
         _clear_lease(job)
         job.revision += 1
