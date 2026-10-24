@@ -1,6 +1,11 @@
 # Kubernetes settings: scaling and isolation in Settings, one sizing rule
 
-Design, 2026-10-24. Agreed with Jack in the #1052 session.
+Design, 2026-10-24. Approved by Jack in the #1052 session after Fable's
+review:
+- queued isolated jobs move to a worker when isolation is turned off;
+- there is no separate isolated-pod memory setting (pods use the worker
+  sizing rule);
+- build order is the agent prompt block first, then this.
 
 ## Why
 
@@ -157,9 +162,9 @@ both kinds of Job.
 Jobs, not only when the env flag is set. Each pass reads *Isolated jobs*:
 - **When off:** no new job is placed in Kubernetes, but rows already placed
   there keep being reconciled until they end.
-- **Queued rows not yet started when isolation is turned off:** **decision
-  for Jack.** Either they run on a worker, or they wait for isolation to come
-  back. This design does not pick one silently.
+- **Queued rows not yet started when isolation is turned off** move to the
+  local backend and run on a worker, admitted by memory like any local
+  platform job (Jack, 2026-10-24).
 
 The enqueue fallback that guesses the default types on a database error
 (`decide_execution_backend`) is removed: an enqueue already needs the
