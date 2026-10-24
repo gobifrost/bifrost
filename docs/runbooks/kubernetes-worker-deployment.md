@@ -27,10 +27,11 @@ PostgreSQL; either Deployment can be scaled or removed. Platform control
 
 ### Upgrading and rolling back
 
-Upgrading from an earlier release needs no manifest change: the existing
-Deployments keep their commands and probes. Apply the new base manifests to
-let the API start on-demand worker Jobs (`k8s/api/rbac.yaml`); without them,
-work runs on the static executors only. Then remove what earlier releases
+Upgrading from an earlier release works without a manifest change: the
+existing Deployments keep their commands and probes, and work runs on them.
+Applying the new base manifests is recommended: it lets the API start
+on-demand worker Jobs (`k8s/api/rbac.yaml`) and retires the static executors
+(below). Then remove what earlier releases
 left behind (see [Removing RabbitMQ and KEDA after
 upgrading](#removing-rabbitmq-and-keda-after-upgrading)).
 
@@ -57,47 +58,19 @@ worker Jobs it leaves (they also drain themselves within
 kubectl -n bifrost delete jobs -l app.kubernetes.io/name=bifrost-pool-worker
 ```
 
-The production-oriented manifest at `k8s/worker/deployment.yaml` uses fixed
-replica ownership:
+The base manifests retire the static executors: `k8s/worker/deployment.yaml`
+and `k8s/scheduler/deployment.yaml` set `replicas: 0`, so applying them stops
+pods an earlier release left running, and the warm worker Job takes over.
+Delete both Deployments after upgrading:
 
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: bifrost-worker
-  namespace: bifrost
-spec:
-  replicas: 2
-  template:
-    spec:
-      automountServiceAccountToken: false
-      terminationGracePeriodSeconds: 360
-      containers:
-        - name: worker
-          image: ghcr.io/gobifrost/bifrost-api:latest
-          command: ["python", "-m", "src.worker.main"]
-          env:
-            - name: PIP_NO_CACHE_DIR
-              value: "1"
-            - name: HOME
-              value: /home/bifrost
-          envFrom:
-            - configMapRef:
-                name: bifrost-config
-            - secretRef:
-                name: bifrost-secrets
-          resources:
-            requests:
-              cpu: "100m"
-              memory: "256Mi"
-            limits:
-              cpu: "2000m"
-              memory: "2Gi"
+```bash
+kubectl -n bifrost delete deployment bifrost-worker bifrost-scheduler
 ```
 
-In this mode, Kubernetes owns the fixed replica count through the Deployment
-spec. Scale manually with `kubectl scale deployment bifrost-worker -n bifrost
---replicas=<count>`.
+To keep a fixed executor anyway (for example, an install whose API may not
+manage Jobs), scale one back up; it claims work like any worker Job, but a
+whole-container OOM kill restarts it without teaching the workflow a larger
+request (see [How executors use their memory](#how-executors-use-their-memory)).
 
 ## Removing RabbitMQ and KEDA after upgrading
 
@@ -143,13 +116,13 @@ longer receive messages:
 ```bash
 kubectl -n bifrost delete scaledobject bifrost-worker --ignore-not-found
 kubectl -n bifrost delete triggerauthentication bifrost-rabbitmq --ignore-not-found
-kubectl -n bifrost scale deployment bifrost-worker --replicas=2
 ```
 
-Deleting the `ScaledObject` also deletes the HPA it owns. Restore a fixed
-replica count afterwards (the base manifest uses 2), because a Deployment
-managed by KEDA usually omits `spec.replicas`. If KEDA served nothing else in
-the cluster, uninstall it the way it was installed.
+Deleting the `ScaledObject` also deletes the HPA it owns. The `bifrost-worker`
+Deployment itself is retired: the base sets it to zero replicas, and once its
+pods are gone you delete it with `bifrost-scheduler` (see the Kubernetes
+README's upgrade step). If KEDA served nothing else in the cluster, uninstall
+it the way it was installed.
 
 After that drain nothing reads RabbitMQ's queues: `workflow-executions`,
 `agent-runs`, `agent-summarization`, `agent-summarization-backfill`,
@@ -250,36 +223,21 @@ with the `default` ServiceAccount and no token.
 
 ## Resource Sizing
 
-Do not set production limits from idle measurements.
+Recommended defaults:
 
-The latest local memory pass measured the complete worker container at
-approximately 155.0 MiB settled idle after simple and SDK workloads. That value
-includes the worker supervisor and warm execution template after the import and
-launcher cleanup. It is an idle observation, not a recommended request or
-limit.
+- **Kubernetes:** worker Jobs with a 512Mi request and a 2Gi limit, one warm
+  (`BIFROST_POOL_MIN_WORKERS=1`) and up to six (`BIFROST_POOL_MAX_WORKERS=6`);
+  two API replicas (256Mi request, 1Gi limit) and two client replicas.
+- **Docker Compose:** the `worker` service with two replicas and a 2 GB
+  limit each, one API and one client; give the host 8 GB.
 
-The final local load check completed 96 concurrent four-second executions across
-four worker pods. Per-container historical peaks ranged from 233.9 MiB to
-276.8 MiB during that run. Earlier local load samples peaked higher. Customer
-workflow code, installed Python packages, provider SDKs, larger payloads and
-concurrent child executions add memory beyond these fixtures.
-
-The existing production-oriented worker manifest keeps:
-
-```yaml
-resources:
-  requests:
-    cpu: "100m"
-    memory: "256Mi"
-  limits:
-    cpu: "2000m"
-    memory: "2Gi"
-```
-
-Treat those as conservative placeholders until production workload measurements
-exist. A high-memory build path should use a separate fixed-template pod or Job
-with its own request and limit. That path is not implemented by this worker
-deployment.
+Production on 2026-10-24, with this layout, measured about 430 MiB per API
+pod, 5–7 MiB per client pod and about 620 MiB for the warm worker Job.
+Customer workflow code, installed packages, provider SDKs, large payloads
+and concurrent runs add to a worker's memory; raise
+`BIFROST_POOL_WORKER_MEMORY_LIMIT_MIB` (or the Compose limits) for workflows
+that need more. A workflow that no standard worker can hold gets a worker
+Job sized for it, up to `BIFROST_POOL_WORKER_MAX_MEMORY_MIB`.
 
 ### How executors use their memory
 
@@ -302,11 +260,15 @@ kubelet's `singleProcessOOMKill: true` to kill one process instead; Bifrost
 does not rely on it. Size the worker limit with headroom for the largest
 workflow you run.
 
-**Docker.** A static executor has no container limit by default, so its
-budget is 85% of the host's memory. Two executors on one host (the
-`scheduler` and `worker` services) each believe they have that budget; the
-real-memory check, measured against the host, is what keeps them within it.
-Set a memory limit on each service to give them separate budgets.
+**Docker.** The Compose template runs two `worker` replicas limited to 2 GB
+each, which gives them separate budgets. A container without a limit takes
+85% of the host's memory as its budget, so two of them on one host each
+believe they have it; only the real-memory check, measured against the host,
+keeps them within it. Compose files from earlier releases also have a
+`scheduler` service (limited to 1 GB) and an unlimited `worker`. The
+`scheduler` runs the same executor, so an unchanged file keeps working; set a
+2 GB limit on both, or switch to the new file and run
+`docker compose up -d --remove-orphans` to retire the `scheduler` container.
 
 ## Dependency Hydration
 

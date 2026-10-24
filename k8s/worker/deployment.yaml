@@ -8,7 +8,12 @@ metadata:
     app.kubernetes.io/component: worker
     app.kubernetes.io/part-of: bifrost
 spec:
-  replicas: 2
+  # Retired: the API now starts worker Jobs on demand
+  # (BIFROST_POOL_MIN_WORKERS=1, BIFROST_POOL_MAX_WORKERS=6, 2Gi each), so this
+  # stays at zero for one release, letting `kubectl apply -k` stop pods an
+  # earlier release left running. Delete the Deployment after upgrading; a
+  # later release removes this file.
+  replicas: 0
   strategy:
     type: RollingUpdate
     rollingUpdate:

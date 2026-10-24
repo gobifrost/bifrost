@@ -24669,6 +24669,8 @@ export interface components {
             contributors: components["schemas"]["ProductUpdateContributor"][];
             /** Assets */
             assets: components["schemas"]["ProductUpdateAsset"][];
+            /** Agent Prompt */
+            agent_prompt?: string | null;
             /** Additional Areas */
             additional_areas?: string[] | null;
             /** Release */

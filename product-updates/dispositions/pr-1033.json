@@ -1,12 +1,14 @@
 {
   "key": "pr:1033",
-  "classification": "omit",
-  "entry_ids": [],
-  "reason": "Opt-in runtime infrastructure (pool placement and on-demand Kubernetes workers); default installations are unchanged apart from one more maintenance task listed in Diagnostics.",
+  "classification": "highlight",
+  "entry_ids": [
+    "32ba9da0-028a-4008-8f9f-df1c8eb8354e"
+  ],
   "review": {
     "status": "approved",
     "evidence": [
-      "https://github.com/gobifrost/bifrost/pull/1033"
+      "https://github.com/gobifrost/bifrost/pull/1033",
+      "Reclassified as a highlight of the runtime release notes; Jack approved on 2026-10-24."
     ]
   }
 }
