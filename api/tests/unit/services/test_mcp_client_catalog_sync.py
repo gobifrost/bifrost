@@ -81,6 +81,7 @@ async def test_sync_catalog_preserves_advertised_output_schema() -> None:
     }
     tool = SimpleNamespace(
         name="search_records",
+        description="Search approved records.",
         inputSchema={"type": "object", "properties": {"query": {"type": "string"}}},
         outputSchema=output_schema,
     )
@@ -88,8 +89,11 @@ async def test_sync_catalog_preserves_advertised_output_schema() -> None:
     catalog_row = await _sync_tool(tool)
 
     assert catalog_row.tool_schema == {
-        "type": "object",
-        "properties": {"query": {"type": "string"}},
+        "inputSchema": {
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+        },
+        "description": "Search approved records.",
         "outputSchema": output_schema,
     }
 
@@ -98,6 +102,7 @@ async def test_sync_catalog_preserves_advertised_output_schema() -> None:
 async def test_sync_catalog_does_not_invent_an_absent_output_schema() -> None:
     tool = SimpleNamespace(
         name="search_records",
+        description=None,
         inputSchema={"type": "object", "properties": {"query": {"type": "string"}}},
         outputSchema=None,
     )
@@ -105,6 +110,8 @@ async def test_sync_catalog_does_not_invent_an_absent_output_schema() -> None:
     catalog_row = await _sync_tool(tool)
 
     assert catalog_row.tool_schema == {
-        "type": "object",
-        "properties": {"query": {"type": "string"}},
+        "inputSchema": {
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+        },
     }

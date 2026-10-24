@@ -3,15 +3,15 @@
 import json
 from pathlib import Path
 
-from src.services.agent_runtime.sandbox_search import (
+from src.services.capabilities.search import (
     SEARCH_RESULT_LIMIT,
-    SandboxSearchItem,
-    search_sandbox_catalog,
+    CapabilitySearchItem,
+    search_capabilities,
 )
 
 
 _CLOUDFLARE_FIXTURE = (
-    Path(__file__).parents[3] / "fixtures" / "agent_runtime" / "cloudflare_search.json"
+    Path(__file__).parents[2] / "fixtures" / "agent_runtime" / "cloudflare_search.json"
 )
 
 
@@ -22,7 +22,7 @@ def test_search_matches_upstream_cloudflare_golden_cases() -> None:
         "15ef317d630b3df60e6cc48bb879d835d2a4e968214f0b4096265504364981e0"
     )
     items = [
-        SandboxSearchItem(
+        CapabilitySearchItem(
             path=f"{description['name']}.{method}",
             connector=description["name"],
             method=method,
@@ -33,26 +33,26 @@ def test_search_matches_upstream_cloudflare_golden_cases() -> None:
     ]
 
     for case in fixture["cases"]:
-        assert search_sandbox_catalog(case["query"], items) == case["expected"]
+        assert search_capabilities(case["query"], items) == case["expected"]
 
 
 def test_search_matches_cloudflare_field_weights_and_token_coverage() -> None:
-    result = search_sandbox_catalog(
+    result = search_capabilities(
         "github issues",
         [
-            SandboxSearchItem(
+            CapabilitySearchItem(
                 path="github_list_issues",
                 connector="github",
                 method="listIssues",
                 description="List open repository issues",
             ),
-            SandboxSearchItem(
+            CapabilitySearchItem(
                 path="github_create_issue",
                 connector="github",
                 method="createIssue",
                 description="Create a new repository issue",
             ),
-            SandboxSearchItem(
+            CapabilitySearchItem(
                 path="linear_search_issues",
                 connector="linear",
                 method="searchIssues",
@@ -86,10 +86,10 @@ def test_search_matches_cloudflare_field_weights_and_token_coverage() -> None:
 
 
 def test_search_limits_ranked_results_to_cloudflare_limit() -> None:
-    result = search_sandbox_catalog(
+    result = search_capabilities(
         "record",
         [
-            SandboxSearchItem(
+            CapabilitySearchItem(
                 path=f"read_record_{index:02d}",
                 connector="records",
                 method=f"readRecord{index:02d}",

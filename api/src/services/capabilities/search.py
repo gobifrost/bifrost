@@ -1,4 +1,4 @@
-"""Cloudflare-compatible ranking for the catalog-private sandbox SDK.
+"""Shared Cloudflare-derived ranking over already-authorized capabilities.
 
 Adapted from Cloudflare Agents ``connectors/search.ts`` at commit
 ``321814b6c13f72cff82161e7eb20312574ac9b7a`` under its MIT license. See
@@ -27,7 +27,7 @@ _TOKEN_SEPARATOR = re.compile(r"[^a-z0-9]+")
 
 
 @dataclass(frozen=True)
-class SandboxSearchItem:
+class CapabilitySearchItem:
     """One currently callable sandbox function in Cloudflare search terms."""
 
     path: str
@@ -42,11 +42,11 @@ class _PreparedField:
     tokens: tuple[str, ...]
 
 
-def search_sandbox_catalog(
-    query: str, items: Iterable[SandboxSearchItem]
-) -> dict[str, Any]:
-    """Return Cloudflare-shaped ranked methods from the currently live catalog."""
-    ranked = sorted(
+def rank_capabilities(
+    query: str, items: Iterable[CapabilitySearchItem]
+) -> list[dict[str, Any]]:
+    """Rank the caller-provided authorized view without imposing a transport cap."""
+    return sorted(
         (
             result
             for item in items
@@ -54,6 +54,13 @@ def search_sandbox_catalog(
         ),
         key=lambda result: (-result["score"], result["path"]),
     )
+
+
+def search_capabilities(
+    query: str, items: Iterable[CapabilitySearchItem]
+) -> dict[str, Any]:
+    """Return the bounded discovery projection used inside CodeMode."""
+    ranked = rank_capabilities(query, items)
     total = len(ranked)
     return {
         "results": ranked[:SEARCH_RESULT_LIMIT],
@@ -62,7 +69,7 @@ def search_sandbox_catalog(
     }
 
 
-def _score_match(item: SandboxSearchItem, query: str) -> dict[str, Any] | None:
+def _score_match(item: CapabilitySearchItem, query: str) -> dict[str, Any] | None:
     normalized_query = _normalize_search_text(query)
     query_tokens = _tokenize(query)
     if not normalized_query or not query_tokens:

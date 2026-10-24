@@ -43,7 +43,12 @@ from src.services.authorization.agent_runtime import (
 from src.services.authorization.enforce import Caller
 from src.services.execution.agent_helpers import agent_delegation_slug, resolve_agent_tools
 from src.services.llm import ToolDefinition
-from src.services.tool_schema import validate_arguments_against_schema
+from src.services.capabilities.catalog import (
+    CapabilityArgumentError,
+    capability_ref,
+    require_valid_capability_arguments,
+    resolve_capability_route,
+)
 
 MAX_COMPOSITION_DEPTH = 5
 
@@ -87,6 +92,7 @@ class ToolBinding:
     parameters: dict[str, Any]
     bound_id: UUID | None = None
     delegated_target_path: tuple[UUID, ...] | None = None
+    tool_ref: str | None = None
 
     @property
     def provenance(self) -> dict[str, Any]:
@@ -405,10 +411,22 @@ class AgentComposition:
         """Carry callable identity separately from human-authored descriptions."""
         original_counts = Counter(binding.original_name for binding in self._bindings.values())
         owner_names = {deferred.agent.id: deferred.agent.name for deferred in self._deferred}
+        descriptions = {
+            (self.root_id, definition.name): definition.description
+            for definition in self.entry_definitions
+        }
+        descriptions.update({
+            (deferred.agent.id, definition.name): definition.description
+            for deferred in self._deferred
+            for definition in deferred.definitions
+        })
         return {
             name: {
                 "bifrost_original_name": binding.original_name,
+                "bifrost_search_path": f"{_capability_id(binding.owner_id)}.{binding.original_name}",
+                "bifrost_tool_description": descriptions.get((binding.owner_id, binding.original_name), ""),
                 "bifrost_owner_id": str(binding.owner_id),
+                **({"bifrost_tool_ref": binding.tool_ref} if binding.tool_ref is not None else {}),
                 "bifrost_connector": _capability_id(binding.owner_id),
                 "bifrost_connector_description": owner_names.get(binding.owner_id, "Entry agent"),
                 "bifrost_python_name": (
@@ -482,15 +500,20 @@ class AgentComposition:
             raise AgentCompositionError("Tool schema changed since this run was planned")
         if workflow_ids.get(binding.original_name) != binding.bound_id:
             raise AgentCompositionError("Tool binding changed since this run was planned")
-        issues, schema_error = validate_arguments_against_schema(definition.parameters, arguments)
-        if schema_error:
+        try:
+            require_valid_capability_arguments(definition.parameters, arguments)
+        except CapabilityArgumentError as exc:
+            if exc.schema_error:
+                raise AgentCompositionError(
+                    f"The live tool schema is invalid and cannot be executed: {exc.schema_error}"
+                ) from exc
             raise AgentCompositionError(
-                f"The live tool schema is invalid and cannot be executed: {schema_error}"
-            )
-        if issues:
-            raise AgentCompositionError(
-                f"Arguments do not match the live tool schema. Issues: {issues}"
-            )
+                f"Arguments do not match the live tool schema. Issues: {exc.issues}"
+            ) from exc
+        if binding.tool_ref is not None:
+            route = resolve_capability_route(owner, definition.name, workflow_ids)
+            if route is None or capability_ref(owner.id, route) != binding.tool_ref:
+                raise AgentCompositionError("Tool identity changed since this run was planned")
         return ResolvedToolCall(
             owner=owner,
             original_name=binding.original_name,
@@ -528,6 +551,7 @@ class AgentComposition:
                         ),
                         parameters=definition.parameters,
                         return_schema=deepcopy(definition.return_schema),
+                        structured_output_schema=deepcopy(definition.structured_output_schema),
                     )
                 )
                 owner_capability_by_tool_name[qualified_name] = deferred.capability_id
@@ -606,6 +630,12 @@ class AgentComposition:
         return capabilities
 
 
+def _tool_reference(agent: Agent, name: str, id_map: dict[str, UUID]) -> str | None:
+    """Link resolved agent tools to the shared ref; chat-only tools have no MCP ref."""
+    route = resolve_capability_route(agent, name, id_map)
+    return capability_ref(agent.id, route) if route is not None else None
+
+
 async def build_agent_composition(
     root: Agent,
     caller: Caller,
@@ -624,6 +654,7 @@ async def build_agent_composition(
             capability_id=None,
             parameters=deepcopy(definition.parameters),
             bound_id=entry_workflow_ids.get(definition.name),
+            tool_ref=_tool_reference(root, definition.name, entry_workflow_ids),
         )
         for definition in entry_definitions
     }
@@ -682,6 +713,7 @@ async def build_agent_composition(
                                 description=definition.description,
                                 parameters=deepcopy(definition.parameters),
                                 return_schema=deepcopy(definition.return_schema),
+                                structured_output_schema=deepcopy(definition.structured_output_schema),
                             )
                             for definition in definitions
                         ),
@@ -700,6 +732,7 @@ async def build_agent_composition(
                         capability_id=capability_id,
                         parameters=deepcopy(definition.parameters),
                         bound_id=workflow_ids.get(definition.name),
+                        tool_ref=_tool_reference(child, definition.name, workflow_ids),
                     )
                 legacy_name = agent_delegation_slug(child.name)
                 legacy_definition = next(

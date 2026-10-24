@@ -2437,6 +2437,9 @@ class TestRunAsActingUser:
         caller = _canonical_caller(caller_data)
         run_user_id = caller.principal.user_id
         run_as = _contoso_portal_user(contoso) if with_run_as else None
+        mock_agent.delegated_agents = [SimpleNamespace(
+            id=uuid4(), name="Contoso Specialist", is_active=True,
+        )]
         mock_resolve_tools.return_value = ([_tool("delegate_to_contoso_specialist")], {})
         mock_create_model.return_value = _calls_one_tool("delegate_to_contoso_specialist")
         run_id = str(uuid4())

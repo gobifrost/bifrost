@@ -215,6 +215,8 @@ async def test_loaded_skill_searches_and_reveals_only_relevant_individual_tools(
             discovered_definition = next(tool for tool in info.function_tools if tool.name == qualified)
             assert discovered_definition.metadata == {
                 "bifrost_original_name": case_search.name,
+                "bifrost_search_path": f"{capability_id}.{case_search.name}",
+                "bifrost_tool_description": case_search.description,
                 "bifrost_owner_id": str(child_id),
                 "bifrost_python_name": case_search.name,
                 "bifrost_connector": capability_id,

@@ -124,3 +124,17 @@ def test_invalid_schema_raises_before_a_dispatcher_can_run():
 
     assert exc_info.value.schema_error
     assert exc_info.value.issues == []
+
+
+def test_capability_ref_preserves_existing_mcp_reference_contract():
+    from uuid import UUID
+    from src.services.capabilities.catalog import CapabilityRoute, capability_ref
+
+    route = CapabilityRoute(
+        source="workflow",
+        source_identity="workflow:22222222-2222-2222-2222-222222222222",
+        source_id=UUID("22222222-2222-2222-2222-222222222222"),
+    )
+    assert capability_ref(UUID("11111111-1111-1111-1111-111111111111"), route) == (
+        "b4829af7-78c5-5df4-b869-ee26db4992a3"
+    )

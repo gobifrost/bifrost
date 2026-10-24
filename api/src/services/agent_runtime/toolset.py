@@ -139,6 +139,11 @@ class BifrostToolset(AbstractToolset[object]):
                     metadata={
                         **self._tool_metadata.get(definition.name, {}),
                         "bifrost_result_transport": "json_or_text",
+                        **(
+                            {"bifrost_structured_output_schema": definition.structured_output_schema}
+                            if definition.structured_output_schema is not None
+                            else {}
+                        ),
                     },
                 ),
                 max_retries=0,

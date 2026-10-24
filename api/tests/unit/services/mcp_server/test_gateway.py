@@ -363,6 +363,22 @@ def test_exact_tool_hydration_includes_only_the_selected_live_schema():
     assert found_tool["default_async"] is False
 
 
+def test_exact_hydration_preserves_optional_output_schema_without_wrapping_payload():
+    schema = {"type": "object", "properties": {"ticket_id": {"type": "integer"}}}
+    tool = _resolved_tool()
+    tool = replace(tool, definition=replace(tool.definition, structured_output_schema=schema))
+    snapshot = AgentToolSnapshot(agent=_agent(), tools=[tool])
+    service = MCPAgentGatewayService(_context())
+
+    result = service._search_agent_snapshot(snapshot, query=None, tool_ref=tool.tool_ref, limit=10)
+    exact = result["agents"][0]["matching_tools"][0]
+    assert exact["output_schema"] == schema
+    assert exact["input_schema"] == tool.definition.parameters
+    compact = service._compact_tool(tool)
+    assert "output_schema" not in compact
+
+
+
 def test_delegation_capability_declares_async_default():
     tool = replace(_resolved_tool(), source="delegation")
 

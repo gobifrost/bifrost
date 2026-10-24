@@ -1260,6 +1260,101 @@ guarantee or a small cohort as proof of statistical equivalence. A candidate wit
 unrun benchmarks remains explicitly unbenchmarked. No new provider calls were
 made while recording this contract and verification requirement.
 
+## Shared capability implementation
+
+The implementation now shares capability routing, identity and schema validation
+in `services/capabilities/catalog.py`, and Cloudflare-derived tool ranking in
+`services/capabilities/search.py`. The existing `resolve_agent_tools` remains the
+single database resolver. MCP renders grouped agent/tool responses; the sandbox
+renders generated Python declarations and callable aliases from its currently
+loaded view. Trusted metadata gives those views the same owner/tool search
+inputs and stable source reference. Existing UUID5 references remain unchanged.
+Agent-level discovery still uses MCP caller reach; the sandbox cannot use it to
+expand its approved composition graph.
+
+Chat and autonomous executors use the same source-route selection as the MCP
+catalog. Their existing lifecycle handlers retain original-caller checks,
+acting-user behavior, native delegation, knowledge budgets, workflow worker
+execution, receipts and audit events. Composition additionally rechecks its
+planned source reference after live path/binding/schema checks. Python aliases
+remain presentation, never authorization grants.
+
+External MCP output schemas now survive vendor catalog sync, stored tool
+resolution, composition copies and toolset metadata. Exact MCP hydration exposes
+optional `output_schema`; synchronous execution still returns the selected
+payload directly. Sandbox declarations document the schema of successful
+`result['structured_content']` separately, while keeping the surrounding
+adapter result unknown. No payload fields are inferred, no customer return
+annotation becomes mandatory, and no new output validator changes user results.
+
+The forward migration `20261023_mcp_tool_descriptors` normalizes known historical
+bare input schemas and `input_schema` descriptors to canonical `inputSchema`
+descriptors. It preserves existing canonical/unknown descriptors, null-valued
+schema defaults, and available output/description metadata. Fresh sync writes
+the canonical descriptor directly. This also repairs a pre-existing mismatch
+where sync wrote a bare input schema but resolution looked for `inputSchema`.
+
+The candidate is rebased on `origin/main` at `4b56634e0`. Focused verification:
+
+- The capability/MCP/SDK/catalog-sync set passed 130 tests, including shared
+  reference/ranking equivalence, the existing reference UUID contract, exact
+  hydration, output-type target, live gates, sync-to-resolver persistence and
+  migration SQL against PostgreSQL.
+- The broader existing executor/chat/worker/MCP-wire set selected 143 tests.
+  Three failures exposed obsolete fixtures: two delegated without attaching the
+  target agent, and an Automatic composition model still expected model-side
+  `search_tools`. The fixtures now carry the actual grant and use sandbox
+  discovery/direct bindings while retaining caller, workflow and provenance
+  assertions. All 65 affected executor/composition tests passed after repair;
+  the other 78 tests in that set already passed. No retries, skips, xfails or
+  timeout increases were introduced.
+- API Pyright reported zero errors/warnings and Ruff passed. A bounded independent
+  review found no actionable authorization or public-contract regressions.
+- Existing MCP wire coverage verified the tool list and `async` argument,
+  grouped progressive discovery, exact input schema, direct synchronous list
+  payload, asynchronous receipt/status and revocation. Existing worker dispatch
+  and Automatic chat tests passed. No new background job or test worker was added.
+
+Commands used the existing worktree image, with
+`BIFROST_TEST_IMAGE_TAG=code-mode-proof-1015 BIFROST_SKIP_BUILD=1`:
+
+```bash
+./test.sh tests/unit/services/test_capability_catalog.py \
+  tests/unit/services/test_capability_search.py \
+  tests/unit/services/test_capability_integration.py \
+  tests/unit/services/agent_runtime/test_sandbox_sdk.py \
+  tests/unit/services/agent_runtime/test_composition.py \
+  tests/unit/services/mcp_server/test_gateway.py \
+  tests/unit/services/test_agent_executor_mcp.py \
+  tests/unit/services/test_autonomous_executor_mcp.py \
+  tests/unit/services/test_mcp_client_catalog_sync.py \
+  tests/unit/services/execution/test_agent_helpers_mcp.py -v
+./test.sh tests/unit/services/agent_runtime/test_tool_policy.py \
+  tests/unit/services/test_agent_code_mode_runtime_policy.py \
+  tests/unit/services/test_agent_code_mode.py \
+  tests/unit/services/test_agent_composition_stream.py \
+  tests/unit/services/test_autonomous_agent_executor.py \
+  tests/unit/services/test_agent_executor_tools.py \
+  tests/unit/services/test_agent_tool_return_contract.py \
+  tests/unit/services/agent_runtime/test_composition_discovery_wire.py \
+  tests/unit/services/agent_runtime/test_composition_history.py \
+  tests/unit/services/test_agent_runtime_authorization.py \
+  tests/e2e/api/test_agent_capability_composition.py \
+  tests/e2e/api/test_agent_code_mode_spike.py \
+  tests/e2e/api/test_agent_code_mode_chat.py \
+  tests/e2e/api-integration/test_mcp_gateway.py::TestMCPAgentGateway::test_default_and_agent_scoped_surfaces_are_distinct \
+  tests/e2e/api-integration/test_mcp_gateway.py::TestMCPAgentGateway::test_live_discovery_schema_execution_and_revocation \
+  -v --durations=0
+./test.sh tests/unit/services/test_autonomous_agent_executor.py \
+  tests/e2e/api/test_agent_capability_composition.py -v --durations=0
+./test.sh quality api
+```
+
+Full backend/frontend suites were not run. No API DTO field or frontend change
+requires regenerated types. Benchmark results for this candidate follow only
+after immutable source/harness freeze and the new three-arm provider cohort.
+The older experiments and their percentages remain historical evidence.
+
 ## Primary references
 
 - [Pydantic AI Harness CodeMode](https://pydantic.dev/docs/ai/harness/code-mode/)

@@ -29,12 +29,15 @@ from pydantic_core import SchemaValidator, core_schema
 from pydantic_ai_harness.code_mode import CodeMode
 
 from src.services.agent_runtime.errors import AgentRunCancelled
-from src.services.agent_runtime.sandbox_search import (
-    SandboxSearchItem,
-    search_sandbox_catalog,
+from src.services.capabilities.search import (
+    CapabilitySearchItem,
+    search_capabilities,
 )
 from src.services.agent_runtime.toolset import get_code_mode_tool_result_scope
-from src.services.tool_schema import validate_arguments_against_schema
+from src.services.capabilities.catalog import (
+    CapabilityArgumentError,
+    require_valid_capability_arguments,
+)
 
 SANDBOX_SDK_TOOL_NAMES = frozenset({"bifrost_search", "bifrost_describe"})
 """Fixed helpers available inside every catalog-private CodeMode sandbox."""
@@ -191,18 +194,23 @@ class _BifrostSandboxSDKToolset(WrapperToolset[object]):
         query = tool_args.get("query")
         if not isinstance(query, str):
             raise ValueError("bifrost_search requires a string query.")
-        return search_sandbox_catalog(
+        bindings = await self._bound_tools(ctx)
+        by_path = {_search_path(binding): binding for binding in bindings.values()}
+        result = search_capabilities(
             query,
             (
-                SandboxSearchItem(
-                    path=binding.alias,
+                CapabilitySearchItem(
+                    path=path,
                     connector=_connector_name(binding),
                     method=_method_name(binding),
-                    description=binding.tool.tool_def.description,
+                    description=_source_description(binding),
                 )
-                for binding in (await self._bound_tools(ctx)).values()
+                for path, binding in by_path.items()
             ),
         )
+        for item in result["results"]:
+            item["path"] = by_path[item["path"]].alias
+        return result
 
     async def _describe(
         self, ctx: RunContext[object], tool_args: dict[str, Any]
@@ -225,13 +233,18 @@ class _BifrostSandboxSDKToolset(WrapperToolset[object]):
         arguments: dict[str, Any],
         ctx: RunContext[object],
     ) -> Any:
-        issues, schema_error = validate_arguments_against_schema(
-            binding.tool.tool_def.parameters_json_schema, arguments
-        )
-        if schema_error:
-            raise RuntimeError(f"The live tool schema is invalid and cannot be executed: {schema_error}")
-        if issues:
-            raise ValueError(f"Arguments do not match the live tool schema. Issues: {issues}")
+        try:
+            require_valid_capability_arguments(
+                binding.tool.tool_def.parameters_json_schema, arguments
+            )
+        except CapabilityArgumentError as exc:
+            if exc.schema_error:
+                raise RuntimeError(
+                    f"The live tool schema is invalid and cannot be executed: {exc.schema_error}"
+                ) from exc
+            raise ValueError(
+                f"Arguments do not match the live tool schema. Issues: {exc.issues}"
+            ) from exc
 
         scope = get_code_mode_tool_result_scope()
         if scope is None:
@@ -453,6 +466,18 @@ def _method_name(binding: _BoundTool) -> str:
     return original_name if isinstance(original_name, str) and original_name else binding.alias
 
 
+def _search_path(binding: _BoundTool) -> str:
+    metadata = binding.tool.tool_def.metadata or {}
+    path = metadata.get("bifrost_search_path")
+    return path if isinstance(path, str) and path else binding.alias
+
+
+def _source_description(binding: _BoundTool) -> str | None:
+    metadata = binding.tool.tool_def.metadata or {}
+    description = metadata.get("bifrost_tool_description")
+    return description if isinstance(description, str) else binding.tool.tool_def.description
+
+
 def _result_transport(binding: _BoundTool) -> str | None:
     metadata = binding.tool.tool_def.metadata or {}
     transport = metadata.get("bifrost_result_transport")
@@ -462,9 +487,13 @@ def _result_transport(binding: _BoundTool) -> str | None:
 def _describe_method(
     binding: _BoundTool, bindings: dict[str, _BoundTool]
 ) -> dict[str, Any]:
-    signatures, conflicts = _signatures_for(bindings.values())
+    signatures, payloads, conflicts = _signatures_for(bindings.values())
     signature = signatures[binding.alias]
-    blocks = FunctionSignature.render_type_definitions([signature], conflicts)
+    selected = [signature]
+    if payload := payloads.get(binding.alias):
+        selected.append(payload)
+    blocks = _payload_notes([binding], payloads)
+    blocks.extend(FunctionSignature.render_type_definitions(selected, conflicts))
     blocks.append(
         signature.render(
             "...",
@@ -488,10 +517,12 @@ def _describe_connector(
     group: Sequence[_BoundTool],
     bindings: dict[str, _BoundTool],
 ) -> dict[str, Any]:
-    signatures, conflicts = _signatures_for(bindings.values())
+    signatures, payloads, conflicts = _signatures_for(bindings.values())
     group = sorted(group, key=lambda binding: binding.alias)
     group_signatures = [signatures[binding.alias] for binding in group]
-    blocks = FunctionSignature.render_type_definitions(group_signatures, conflicts)
+    selected = group_signatures + [payloads[binding.alias] for binding in group if binding.alias in payloads]
+    blocks = _payload_notes(group, payloads)
+    blocks.extend(FunctionSignature.render_type_definitions(selected, conflicts))
     blocks.extend(
         signature.render(
             "...",
@@ -513,14 +544,33 @@ def _describe_connector(
 
 def _signatures_for(
     bindings: Iterable[_BoundTool],
-) -> tuple[dict[str, FunctionSignature], frozenset[str]]:
-    signatures = {
-        binding.alias: _direct_definition(binding).function_signature
+) -> tuple[dict[str, FunctionSignature], dict[str, FunctionSignature], frozenset[str]]:
+    signatures: dict[str, FunctionSignature] = {}
+    payloads: dict[str, FunctionSignature] = {}
+    for binding in bindings:
+        signatures[binding.alias] = _direct_definition(binding).function_signature
+        metadata = binding.tool.tool_def.metadata or {}
+        schema = metadata.get("bifrost_structured_output_schema")
+        if isinstance(schema, dict):
+            payloads[binding.alias] = PydanticToolDefinition(
+                name=f"{binding.alias}_structured_content",
+                parameters_json_schema={"type": "object", "properties": {}},
+                return_schema=schema,
+            ).function_signature
+    all_signatures = [*signatures.values(), *payloads.values()]
+    return signatures, payloads, FunctionSignature.get_conflicting_type_names(all_signatures)
+
+
+def _payload_notes(
+    bindings: Sequence[_BoundTool], payloads: dict[str, FunctionSignature]
+) -> list[str]:
+    return [
+        f"# {binding.alias}: the following payload type describes successful "
+        "result['structured_content']; it does not describe the surrounding result "
+        "or an execution failure."
         for binding in bindings
-    }
-    signature_values = list(signatures.values())
-    conflicts = FunctionSignature.get_conflicting_type_names(signature_values)
-    return signatures, conflicts
+        if binding.alias in payloads
+    ]
 
 
 def _decode_business_result(value: Any, result_transport: str | None) -> Any:

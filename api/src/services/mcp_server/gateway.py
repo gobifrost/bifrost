@@ -7,7 +7,7 @@ import re
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
-from uuid import UUID, uuid5
+from uuid import UUID
 
 import pydantic_core
 from sqlalchemy import select
@@ -19,8 +19,6 @@ from src.models.orm.agent_runs import AgentRun
 from src.models.orm.executions import Execution
 from src.models.orm.external_mcp import MCPConnection, MCPServer
 from src.services.execution.agent_helpers import (
-    find_delegated_agent,
-    parse_mcp_tool_name,
     resolve_agent_tools,
 )
 from src.services.execution.agent_workflow_tools import (
@@ -35,25 +33,24 @@ from src.services.mcp_client.errors import (
 )
 from src.services.mcp_server.config_service import MCPConfig, MCPConfigService
 from src.services.run_retention.settings import run_not_found_suffix
-from src.services.tool_schema import validate_arguments_against_schema
+from src.services.capabilities.catalog import (
+    CapabilityArgumentError,
+    CapabilityTool as ResolvedGatewayTool,
+    find_capability_by_ref,
+    require_valid_capability_arguments,
+    resolve_capability_tools,
+)
+from src.services.capabilities.search import CapabilitySearchItem, rank_capabilities
 
 if TYPE_CHECKING:
     from src.services.mcp_server.server import MCPContext
 
 logger = logging.getLogger(__name__)
 
-GATEWAY_TOOL_NAMESPACE = UUID("bcf3f4d7-b95e-53cc-9b7f-35e7081d0d84")
 MAX_CAPABILITY_RESULTS = 20
 MAX_CAPABILITY_RESPONSE_BYTES = 24_000
 MAX_EXECUTION_RESULT_BYTES = 24_000
 
-GatewayToolSource = Literal[
-    "system",
-    "knowledge",
-    "workflow",
-    "delegation",
-    "external_mcp",
-]
 DiscoveryScope = Literal["accessible", "all"]
 
 
@@ -80,28 +77,6 @@ class GatewayError(Exception):
             "message": self.message,
             "retryable": self.retryable,
             **self.details,
-        }
-
-
-@dataclass(frozen=True)
-class ResolvedGatewayTool:
-    """One live tool resolved within an agent capability boundary."""
-
-    tool_ref: str
-    definition: ToolDefinition
-    source: GatewayToolSource
-    source_identity: str
-    source_id: UUID | None = None
-    remote_tool_name: str | None = None
-
-    def compact(self) -> dict[str, Any]:
-        return {
-            "tool_ref": self.tool_ref,
-            "name": self.definition.name,
-            "description": self.definition.description,
-            "source": self.source,
-            "supports_async": self.source in {"workflow", "delegation"},
-            "default_async": self.source == "delegation",
         }
 
 
@@ -157,42 +132,18 @@ def _agent_search_score(agent: Agent, query: str) -> int:
     return score
 
 
-def _tool_search_score(tool: ResolvedGatewayTool, query: str) -> int:
-    normalized_query = " ".join(_search_tokens(query))
-    if not normalized_query:
-        return 1
-
-    name = " ".join(_search_tokens(tool.definition.name))
-    description = " ".join(_search_tokens(tool.definition.description or ""))
-    schema = " ".join(
-        _search_tokens(
-            str(
-                pydantic_core.to_jsonable_python(
-                    tool.definition.parameters,
-                    fallback=str,
-                )
-            )
-        )
+def _tool_search_score(tool: ResolvedGatewayTool, query: str, agent_id: UUID) -> int:
+    connector = f"bifrost_agent_{agent_id.hex}"
+    ranked = rank_capabilities(
+        query,
+        [CapabilitySearchItem(
+            path=f"{connector}.{tool.definition.name}",
+            connector=connector,
+            method=tool.definition.name,
+            description=tool.definition.description,
+        )],
     )
-    score = 0
-    if normalized_query == name:
-        score += 240
-    elif normalized_query in name:
-        score += 120
-    if normalized_query in description:
-        score += 50
-    if normalized_query in schema:
-        score += 15
-    for token in set(normalized_query.split()):
-        if token in name.split():
-            score += 25
-        elif token in name:
-            score += 15
-        if token in description:
-            score += 6
-        if token in schema:
-            score += 2
-    return score
+    return ranked[0]["score"] if ranked else 0
 
 
 def _compact_description(value: str | None, limit: int = 800) -> str | None:
@@ -320,7 +271,7 @@ class MCPAgentGatewayService:
 
             matching_tools = 0
             for tool in snapshot.tools:
-                score = _tool_search_score(tool, normalized_query)
+                score = _tool_search_score(tool, normalized_query, snapshot.agent.id)
                 if score > 0:
                     matching_tools += 1
                     candidates.append((score, "tool", snapshot, tool))
@@ -414,13 +365,15 @@ class MCPAgentGatewayService:
                     "schema_included": True,
                 }
             )
+            if tool.definition.structured_output_schema is not None:
+                tool_result["output_schema"] = tool.definition.structured_output_schema
             tools = [tool_result]
             total_matches = 1
             returned_matches = 1
             total_matching_tools = 1
         elif query and query.strip():
             scored = [
-                (_tool_search_score(tool, query), tool)
+                (_tool_search_score(tool, query, snapshot.agent.id), tool)
                 for tool in snapshot.tools
             ]
             scored = [item for item in scored if item[0] > 0]
@@ -565,6 +518,7 @@ class MCPAgentGatewayService:
                 agent_query_in_reach(caller).options(
                     selectinload(Agent.roles), selectinload(Agent.tools),
                     selectinload(Agent.delegated_agents),
+                    selectinload(Agent.mcp_connections),
                 ).where(Agent.id == parsed_agent_id)
             )
             agent = result.scalars().unique().first()
@@ -896,71 +850,15 @@ class MCPAgentGatewayService:
         config: MCPConfig,
     ) -> list[ResolvedGatewayTool]:
         resolved: list[ResolvedGatewayTool] = []
-
-        for definition in definitions:
-            source: GatewayToolSource
-            source_id: UUID | None = None
-            remote_tool_name: str | None = None
-
-            mcp_route = parse_mcp_tool_name(definition.name)
-            if mcp_route is not None:
-                source = "external_mcp"
-                source_id, remote_tool_name = mcp_route
-                source_identity = f"external_mcp:{source_id}:{remote_tool_name}"
-            elif definition.name == "search_knowledge":
-                source = "knowledge"
-                source_identity = f"knowledge:{definition.name}"
-            elif definition.name in (agent.system_tools or []):
-                source = "system"
-                source_identity = f"system:{definition.name}"
-            else:
-                delegated = find_delegated_agent(agent, definition.name)
-                if delegated is not None:
-                    source = "delegation"
-                    source_id = delegated.id
-                    source_identity = f"delegation:{delegated.id}"
-                else:
-                    workflow_id = id_map.get(definition.name)
-                    if workflow_id is None:
-                        logger.warning(
-                            "Gateway could not classify resolved tool %s for agent %s",
-                            definition.name,
-                            agent.id,
-                        )
-                        continue
-                    source = "workflow"
-                    source_id = workflow_id
-                    source_identity = f"workflow:{workflow_id}"
-
-            filter_ids = {definition.name}
-            if source_id is not None:
-                filter_ids.add(str(source_id))
-            if config.allowed_tool_ids and not (
-                filter_ids & set(config.allowed_tool_ids)
-            ):
+        for tool in resolve_capability_tools(agent, definitions, id_map):
+            filter_ids = {tool.definition.name}
+            if tool.source_id is not None:
+                filter_ids.add(str(tool.source_id))
+            if config.allowed_tool_ids and not (filter_ids & set(config.allowed_tool_ids)):
                 continue
-            if config.blocked_tool_ids and (
-                filter_ids & set(config.blocked_tool_ids)
-            ):
+            if config.blocked_tool_ids and (filter_ids & set(config.blocked_tool_ids)):
                 continue
-
-            tool_ref = str(
-                uuid5(
-                    GATEWAY_TOOL_NAMESPACE,
-                    f"{agent.id}:{source_identity}",
-                )
-            )
-            resolved.append(
-                ResolvedGatewayTool(
-                    tool_ref=tool_ref,
-                    definition=definition,
-                    source=source,
-                    source_identity=source_identity,
-                    source_id=source_id,
-                    remote_tool_name=remote_tool_name,
-                )
-            )
-
+            resolved.append(tool)
         return resolved
 
     @staticmethod
@@ -968,9 +866,9 @@ class MCPAgentGatewayService:
         snapshot: AgentToolSnapshot,
         tool_ref: str,
     ) -> ResolvedGatewayTool:
-        for tool in snapshot.tools:
-            if tool.tool_ref == tool_ref:
-                return tool
+        tool = find_capability_by_ref(snapshot.tools, tool_ref)
+        if tool is not None:
+            return tool
         raise GatewayError(
             "TOOL_NOT_FOUND_OR_FORBIDDEN",
             "Tool not found, no longer granted, or you do not have access.",
@@ -987,31 +885,30 @@ class MCPAgentGatewayService:
             "type": "object",
             "properties": {},
         }
-        issues, schema_error = validate_arguments_against_schema(schema, arguments)
-        if schema_error:
+        try:
+            require_valid_capability_arguments(schema, arguments)
+        except CapabilityArgumentError as exc:
+            if exc.schema_error:
+                raise GatewayError(
+                    "TOOL_SCHEMA_INVALID",
+                    "The live tool schema is invalid and cannot be executed.",
+                    details={
+                        "tool_ref": tool.tool_ref,
+                        "tool_name": tool.definition.name,
+                        "schema_error": exc.schema_error,
+                    },
+                ) from exc
             raise GatewayError(
-                "TOOL_SCHEMA_INVALID",
-                "The live tool schema is invalid and cannot be executed.",
+                "INVALID_ARGUMENTS",
+                "Arguments do not match the live tool schema.",
+                retryable=True,
                 details={
                     "tool_ref": tool.tool_ref,
                     "tool_name": tool.definition.name,
-                    "schema_error": schema_error,
+                    "issues": exc.issues,
+                    "input_schema": schema,
                 },
-            )
-
-        if not issues:
-            return
-        raise GatewayError(
-            "INVALID_ARGUMENTS",
-            "Arguments do not match the live tool schema.",
-            retryable=True,
-            details={
-                "tool_ref": tool.tool_ref,
-                "tool_name": tool.definition.name,
-                "issues": issues,
-                "input_schema": schema,
-            },
-        )
+            ) from exc
 
     async def execute_tool(
         self,
