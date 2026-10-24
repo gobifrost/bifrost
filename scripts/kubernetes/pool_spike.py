@@ -4,8 +4,9 @@
 Usage: ./test.sh kubernetes up
        ./test.sh kubernetes pool-experiment [--out DIR]
 
-Phases (recorded in report.json), against the base manifests' defaults
-(BIFROST_POOL_MIN_WORKERS=1, BIFROST_POOL_MAX_WORKERS=6):
+Phases (recorded in report.json), against the Settings -> Kubernetes
+defaults (Warm workers 1, Max workers 6), with Idle time shortened to 45 s
+for the run and restored afterwards:
 
 - floor: the static executors (scheduler and worker) are ready and exactly
   the warm minimum of worker Jobs is ready, with no waiting work.
@@ -53,6 +54,23 @@ asyncio.run(main(int(sys.argv[1]), float(sys.argv[2])))
 """
 
 
+#: The run's Idle time (Settings -> Kubernetes), so pools scale down in minutes.
+DRILL_IDLE_SECONDS = 45
+POLICY = """import asyncio, json, sys
+from src.core.database import get_db_context, init_db
+from src.services.kubernetes_execution import KubernetesExecutionService, load_kubernetes_policy
+
+async def main(changes):
+    await init_db()
+    async with get_db_context() as db:
+        before = await load_kubernetes_policy(db)
+        await KubernetesExecutionService(db).update_policy(changes, updated_by="kind-drill")
+        await db.commit()
+    print(json.dumps({name: getattr(before, name) for name in changes}))
+asyncio.run(main(json.loads(sys.argv[1])))
+"""
+
+
 def sql(query: str) -> list[list[str]]:
     output = kubectl(
         "exec", "statefulset/postgres", "--",
@@ -91,6 +109,16 @@ def ready_api_pod(timeout: float = 300) -> str:
         if time.monotonic() >= deadline:
             raise RuntimeError("no Ready API pod")
         time.sleep(2)
+
+
+def set_policy(**changes: int | bool) -> dict:
+    """Change Settings -> Kubernetes and return the values replaced, for
+    ``set_policy(**previous)`` to restore. The drills have no API client, so
+    this runs the service ``PUT /api/admin/kubernetes/policy`` calls (same
+    validation, same merge) in an API pod; controllers and workers read it
+    on their next pass, without a restart."""
+    api = ready_api_pod()
+    return json.loads(kubectl("exec", api, "--", "python", "-c", POLICY, json.dumps(changes)))
 
 
 def enqueue(count: int, seconds: float) -> list[str]:
@@ -133,6 +161,14 @@ def wait_floor(timeout: float) -> float:
 
 def run(out: Path) -> dict:
     out.mkdir(parents=True, exist_ok=False)
+    previous = set_policy(idle_seconds=DRILL_IDLE_SECONDS)
+    try:
+        return phases(out)
+    finally:
+        set_policy(**previous)
+
+
+def phases(out: Path) -> dict:
     report: dict = {"started_at": datetime.now(timezone.utc).isoformat()}
 
     static = [w for w in live_workers("static") if w["state"] == "ready"]

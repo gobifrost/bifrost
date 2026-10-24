@@ -107,7 +107,9 @@ controller) run wherever a process may manage Jobs
 (`api/src/services/kubernetes_control.py`, checked with a
 `SelfSubjectAccessReview` at start): the API with the base manifests' Role,
 and the scheduler container's executor on an install that bound the builds
-runbook's controller Role to it. Both loops are safe on several replicas.
+overlay's controller Role to it. Both loops are safe on several replicas.
+They always run there; Settings → Kubernetes decides what they do (worker
+range and size, whether build jobs are isolated), read on every pass.
 
 All replicas use the same `scheduler-triggers` lease that older schedulers
 used, so during a rolling upgrade an old scheduler and a new API replica
@@ -133,29 +135,40 @@ durable child work. The child tracker completes the parent row later. Summary
 backfills and Solution app builds use this path so summary fan-out or an
 isolated build process does not occupy scheduler capacity.
 
-### Opt-in Kubernetes build execution
+### Isolated build execution (Kubernetes)
 
-Platform jobs run locally by default. When
-`BIFROST_PLATFORM_BUILD_BACKEND=kubernetes` is configured, build-class jobs for
-independent App deploys and App SDK updates (`application.deploy` and
-`application.sdk_update`), Solution deploys and Git syncs (`solution.deploy`
-and `solution.git_sync`), and Solution backup exports (`solution.export`) are
-durably placed on the Kubernetes backend at enqueue time. The row stores that
-placement in `execution_backend` so scheduler replicas do not disagree after
-restart or configuration changes.
+Platform jobs run on executors by default. When a platform admin turns on
+Isolate Build Jobs in Settings → Kubernetes → Scaling & Isolation,
+build-class jobs whose type is enabled there — independent App deploys and
+App SDK updates (`application.deploy` and `application.sdk_update`), Solution
+deploys and Git syncs (`solution.deploy` and `solution.git_sync`), and
+Solution backup exports (`solution.export`) — are durably placed on the
+Kubernetes backend at enqueue time. The row stores that placement in
+`execution_backend` so replicas do not disagree after restart or a Settings
+change. Turning isolation off stops placing new pods; pods already running
+finish, and queued isolated jobs that never got a pod move to the local
+backend and run on an executor.
 
-The control host (the scheduler by default, or the API; see "Control host")
-owns the control loop. A Kubernetes build controller task watches `execution_backend='kubernetes'` rows and creates one
-deterministic `batch/v1` Job for each claimed attempt. Local platform-job claim
-loops filter to `execution_backend='local'`, so remote App builds do not occupy
-the warm scheduler's ordinary child-runner slots. The scheduler remains warm for
-maintenance jobs, non-build PlatformJobs and trigger leadership while the build
-pod runs in its own cgroup.
+The build controller (see "Control host") watches
+`execution_backend='kubernetes'` rows and creates one deterministic
+`batch/v1` Job for each claimed attempt, at most Max Isolated Pods at once.
+Local platform-job claim loops filter to `execution_backend='local'`, so
+isolated builds do not occupy executor capacity; executors keep serving
+maintenance jobs and non-build PlatformJobs while the build pod runs in its
+own cgroup.
+
+An isolated pod runs as a worker Job does: it copies the API pod's namespace,
+image and `envFrom` (or the optional `BIFROST_KUBERNETES_JOB_*` identity) and
+mounts no service-account token. It is sized by the worker rule
+(`api/src/services/worker_pool/sizing.py`): a standard pod requests the
+worker memory request with a limit of Worker Memory; a job whose learned
+requirement exceeds that pod's budget gets a sized pod (request = limit, up
+to Largest Worker); a larger requirement fails visibly.
 
 Remote launch is fenced by durable Kubernetes identity:
 
-1. the scheduler claims the row with the same lease-token mechanism used by
-   local jobs;
+1. the controller claims the row with the same lease-token mechanism used by
+   local jobs, recording the pod's memory limit;
 2. it persists the target namespace and deterministic Job name before launch;
 3. it creates the Job suspended, records the returned Job UID, then unsuspends
    only that UID-bound Job;
@@ -194,11 +207,16 @@ duration, include operational margin, and exercise low-memory deferral and
 timeout behavior in tests. These measurements inform policy and deployment
 guidance; they are not per-job CPU or memory reservations.
 
-Solution deploy jobs also persist an explainable `memory_required_bytes` plus a
-stable workload fingerprint. The fingerprint keys an environment-local learned
-profile record, so future deploys of the same source or prebuilt workload can
-reuse the observed requirement. Unknown solution workloads floor at 512 MiB;
-generic jobs keep using their static policy floor.
+Every isolated (build-class) job type also persists an explainable
+`memory_required_bytes` from a learned memory profile: Solution deploys keyed
+by a stable fingerprint of their source or prebuilt workload, App deploys and
+SDK updates by their App, and Solution exports and Git syncs by their
+Solution (`api/src/services/platform_job_memory_profiles.py`). Future runs of
+the same workload reuse the observed requirement, and an isolated pod
+Kubernetes stopped at its memory limit teaches the profile at least that
+limit plus the safety margin, so the next run gets a larger pod. Unknown
+workloads floor at 512 MiB; other jobs keep using their static policy
+floor.
 
 The kernel persists the cgroup working set at job start, the peak observed while
 the attempt runs, and the cgroup limit. The difference between start and peak is
@@ -214,11 +232,11 @@ the hard ratio. Do not add Kubernetes-style resource classes until observed
 workloads show that one common scheduler size cannot safely serve the registered
 job types.
 
-Opt-in Kubernetes App build Jobs have their own resource envelope, configured
-by the operator through the build-job deployment settings. The initial local
-spike uses a 1 GiB memory setting and a separate maximum remote build count.
-Those values bound remote build concurrency independently from the scheduler's
-local slots; they are not a general resource-class system for every PlatformJob.
+Isolated build pods are sized per job by the worker rule above and bounded
+by Max Isolated Pods (Settings → Kubernetes), independently of executor
+capacity; their CPU request and limit are deployment env
+(`BIFROST_KUBERNETES_JOB_CPU_REQUEST` / `_CPU_LIMIT`). They are not a general
+resource-class system for every PlatformJob.
 
 `GET /api/platform/scheduler` and the Diagnostics → Scheduler tab expose leader
 health, online replicas and active claims, queue age, memory-admission waits,

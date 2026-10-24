@@ -180,3 +180,41 @@ async def test_lifespan_always_hosts_control(
         host.start.assert_awaited_once()
         host.stop.assert_not_awaited()
     host.stop.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_lifespan_imports_kubernetes_settings_before_serving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A build enqueued right after an upgrade must not read the defaults."""
+    import os
+    from contextlib import asynccontextmanager
+
+    from fastapi import FastAPI
+
+    from src import main as api_main
+    from src.services import kubernetes_execution
+
+    session = object()
+
+    @asynccontextmanager
+    async def open_session():  # type: ignore[no-untyped-def]
+        yield session
+
+    settings = MagicMock(
+        default_user_email=None,
+        default_user_password=None,
+        environment="testing",
+    )
+    imported = AsyncMock()
+    monkeypatch.setattr(kubernetes_execution, "import_kubernetes_policy_from_env", imported)
+    monkeypatch.setattr(api_main, "get_settings", lambda: settings)
+    monkeypatch.setattr(api_main, "init_db", AsyncMock())
+    monkeypatch.setattr(api_main, "close_db", AsyncMock())
+    monkeypatch.setattr(api_main, "register_dynamic_workflow_endpoints", AsyncMock())
+    monkeypatch.setattr(api_main, "get_session_factory", lambda: open_session)
+    monkeypatch.setattr(api_main.pubsub_manager, "close", AsyncMock())
+    monkeypatch.setattr(api_main, "close_health_check_clients", AsyncMock())
+    monkeypatch.setattr(api_host, "ApiControlHost", lambda: MagicMock(start=AsyncMock(), stop=AsyncMock()))
+
+    async with api_main.app_lifespan(FastAPI()):
+        imported.assert_awaited_once_with(session, os.environ)

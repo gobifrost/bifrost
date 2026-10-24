@@ -11,8 +11,8 @@ A job worker admits itself
 to its incarnation (Job UID bound before start, pod UID bound once), then
 claims pool dispatches from PostgreSQL and hands each to the ordinary
 consumer code, which runs it in a fresh child of the process pool. With no
-work for ``pool_idle_seconds`` (or past ``pool_max_lifetime_seconds``) it
-moves itself to ``draining`` (after which it can never claim), lets active
+work for its Idle time (Settings -> Kubernetes), or past
+``pool_max_lifetime_seconds``, it moves itself to ``draining`` (after which it can never claim), lets active
 runs finish, retires and exits 0. The controller drains it the same way
 (after an upgrade). SIGTERM drains too, but its runs get only
 ``DRAIN_GRACE_SECONDS`` before the pod is killed.
@@ -33,7 +33,7 @@ from uuid import UUID
 
 from shared.schema_gate import wait_for_schema
 from src.config import Settings, get_settings
-from src.core.database import close_db, get_engine, init_db
+from src.core.database import close_db, get_db_context, get_engine, init_db
 from src.core.redis_client import PendingExecution
 from src.jobs.schedulers.platform_jobs import (
     claim_platform_job,
@@ -42,6 +42,10 @@ from src.jobs.schedulers.platform_jobs import (
 )
 from src.scheduler.control import replica_heartbeat_loop
 from src.services.kubernetes_control import start_kubernetes_loops
+from src.services.kubernetes_execution import (
+    import_kubernetes_policy_from_env,
+    load_kubernetes_policy,
+)
 from src.services.scheduler_diagnostics import remove_scheduler_replica
 from src.jobs.summarize_worker import handle_summarize_message
 from src.services.memory_requests import (
@@ -77,6 +81,8 @@ logger = logging.getLogger(__name__)
 
 POLL_SECONDS = 1.0
 HEARTBEAT_SECONDS = 5.0
+# How long a job worker uses the Idle time it read from Settings -> Kubernetes.
+POLICY_REFRESH_SECONDS = 10.0
 DRAIN_GRACE_SECONDS = 300.0
 # How long the platform-job loop waits when nothing fits or is queued.
 PLATFORM_JOB_IDLE_SECONDS = 2.0
@@ -153,11 +159,26 @@ class PoolWorker:
         # The control plane declared this executor lost and ended its runs:
         # stop them instead of letting them finish (their results are refused).
         self._lost = False
+        # Idle time from Settings -> Kubernetes, with when it was read.
+        self._idle_seconds_value = 0
+        self._idle_seconds_read_at: float | None = None
 
     def request_stop(self) -> None:
         """SIGTERM or SIGINT: stop claiming and drain within the grace."""
         self._terminating.set()
         self._stop.set()
+
+    async def _idle_seconds(self) -> int:
+        """Idle time, read again at most every ``POLICY_REFRESH_SECONDS``."""
+        now = time.monotonic()
+        if (
+            self._idle_seconds_read_at is None
+            or now - self._idle_seconds_read_at >= POLICY_REFRESH_SECONDS
+        ):
+            async with get_db_context() as db:
+                self._idle_seconds_value = (await load_kubernetes_policy(db)).idle_seconds
+            self._idle_seconds_read_at = now
+        return self._idle_seconds_value
 
     def _workflow_runs(self) -> int:
         """Runs with a child, plus claimed runs still being routed to one."""
@@ -256,6 +277,8 @@ class PoolWorker:
             # On an install whose executor container may manage Jobs (the
             # builds runbook binds that Role to the scheduler), it runs the
             # Kubernetes loops; elsewhere this starts nothing.
+            async with get_db_context() as db:
+                await import_kubernetes_policy_from_env(db, os.environ)
             background.extend(await start_kubernetes_loops(self._platform_stop, self.settings))
         if self._on_ready is not None:
             self._on_ready()
@@ -352,11 +375,9 @@ class PoolWorker:
                     last_activity = time.monotonic()
                 elif (
                     not self.static
-                    and time.monotonic() - last_activity >= self.settings.pool_idle_seconds
+                    and time.monotonic() - last_activity >= await self._idle_seconds()
                 ):
-                    if await begin_idle_drain(
-                        self.incarnation_id, keep_ready=self.settings.pool_min_workers
-                    ):
+                    if await begin_idle_drain(self.incarnation_id):
                         return
                     # Part of the warm minimum: stay ready and look again later.
                     last_activity = time.monotonic()

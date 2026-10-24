@@ -5,6 +5,14 @@ local platform job whose memory requirement exceeds the largest executor
 fails, and a service whose request exceeds it is blocked ``too_large`` (and
 unblocked once an executor large enough exists). "Largest" includes what the
 worker controller can launch.
+
+While isolated jobs are on, a queued isolated job not yet placed fails
+when no pod up to *Largest worker* can hold it (``worker_pool.sizing``).
+That is Settings, not a report, so it is settled whether or not any
+executor has reported. While they are off, the build loop moves it to the
+local backend, where it is measured against the executors instead.
+
+A failed Solution export's backup fails with it (``fail_linked_solution_export``).
 """
 
 from __future__ import annotations
@@ -34,45 +42,85 @@ def too_large_message(request_bytes: int, largest_bytes: int) -> str:
 
 
 async def settle_work_that_never_fits() -> None:
+    from src.config import get_settings
+    from src.services.kubernetes_execution import load_kubernetes_policy
     from src.services.platform_jobs import publish_platform_job_update
     from src.services.work_dispatch import largest_budget
+    from src.services.worker_pool.sizing import load_job_sizing
 
     async with get_db_context() as db:
         largest = await largest_budget(db)
-        if largest is None:
-            return  # No executor has reported: an outage is not too-large work.
-        failed = await fail_platform_jobs_that_never_fit(db, largest)
-        await block_services_that_never_fit(db, largest)
+        policy = await load_kubernetes_policy(db)
+        largest_pod = None
+        if policy.isolated_jobs_enabled:
+            sizing = await load_job_sizing(
+                db, policy, get_settings().memory_pressure_threshold
+            )
+            largest_pod = sizing.largest_budget_bytes
+        failed = await fail_platform_jobs_that_never_fit(db, largest, largest_pod=largest_pod)
+        # No executor has reported: an outage is not too-large work.
+        if largest is not None:
+            await block_services_that_never_fit(db, largest)
         await db.commit()
     for job in failed:
         await publish_platform_job_update(job)
 
 
 async def fail_platform_jobs_that_never_fit(
-    db: AsyncSession, largest: int
+    db: AsyncSession, largest: int | None, *, largest_pod: int | None
 ) -> list[PlatformJob]:
-    """Fail queued local platform jobs larger than ``largest``."""
-    jobs = (
-        await db.scalars(
-            select(PlatformJob)
-            .where(
-                PlatformJob.status == "queued",
-                PlatformJob.execution_backend == "local",
-                PlatformJob.memory_required_bytes > largest,
-            )
-            .with_for_update(skip_locked=True)
-        )
-    ).all()
-    for job in jobs:
+    """Fail queued local platform jobs larger than ``largest`` (when an
+    executor has reported), and queued isolated jobs not yet placed that
+    are larger than ``largest_pod``, the budget of a pod at Largest worker
+    (when isolated jobs are on)."""
+    from src.services.platform_jobs import EXPORT_TOO_LARGE, fail_linked_solution_export
+
+    unfit: list[tuple[PlatformJob, int]] = []
+    if largest is not None:
+        unfit += [
+            (job, largest)
+            for job in (
+                await db.scalars(
+                    select(PlatformJob)
+                    .where(
+                        PlatformJob.status == "queued",
+                        PlatformJob.execution_backend == "local",
+                        PlatformJob.memory_required_bytes > largest,
+                    )
+                    .with_for_update(skip_locked=True)
+                )
+            ).all()
+        ]
+    if largest_pod is not None:
+        unfit += [
+            (job, largest_pod)
+            for job in (
+                await db.scalars(
+                    select(PlatformJob)
+                    .where(
+                        PlatformJob.status == "queued",
+                        PlatformJob.execution_backend == "kubernetes",
+                        PlatformJob.kubernetes_job_name.is_(None),
+                        PlatformJob.memory_required_bytes > largest_pod,
+                    )
+                    .with_for_update(skip_locked=True)
+                )
+            ).all()
+        ]
+    for job, capacity in unfit:
         logger.warning("Platform job failed: no executor can hold it", extra={"job_id": str(job.id)})
+        now = datetime.now(timezone.utc)
         job.status = "failed"
         job.phase = "Failed"
         job.error_code = TOO_LARGE
-        job.error_message = too_large_message(job.memory_required_bytes, largest)
+        job.error_message = too_large_message(job.memory_required_bytes, capacity)
         job.error_retryable = False
-        job.completed_at = datetime.now(timezone.utc)
+        job.completed_at = now
         job.revision += 1
-    return list(jobs)
+        await fail_linked_solution_export(
+            db, job, completed_at=now, failure_message=EXPORT_TOO_LARGE
+        )
+    return [job for job, _ in unfit]
 
 
 async def block_services_that_never_fit(db: AsyncSession, largest: int) -> None:

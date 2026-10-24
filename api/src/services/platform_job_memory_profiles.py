@@ -1,4 +1,10 @@
-"""Helpers for learned memory requirements on platform jobs."""
+"""Helpers for learned memory requirements on platform jobs.
+
+A job enqueued with a memory profile key asks for what earlier attempts of
+the same workload needed. Every isolated (build-class) job type has one: a
+Solution deploy is keyed by its content, App deploys and SDK updates by
+their App, Solution exports and git syncs by their Solution.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +12,7 @@ import hashlib
 import json
 from collections.abc import Mapping
 from typing import Any, TYPE_CHECKING
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,9 +23,15 @@ if TYPE_CHECKING:
     from src.models.orm.platform_jobs import PlatformJob
 
 MIB = 1024 * 1024
-UNKNOWN_SOLUTION_WORKLOAD_FLOOR_BYTES = 512 * MIB
+UNKNOWN_WORKLOAD_FLOOR_BYTES = 512 * MIB
 MEMORY_PROFILE_SAFETY_MARGIN_BYTES = 128 * MIB
-PROFILE_KEY_PREFIX = "solution.deploy.memory.v1"
+# Bumped when what a key's workload measures changes, so old learning is
+# not applied to it.
+PROFILE_KEY_VERSION = "v1"
+
+
+def _profile_key(job_type: str, workload: str) -> str:
+    return f"{job_type}.memory.{PROFILE_KEY_VERSION}:{workload}"
 
 
 def _canonical_json(value: Any) -> str:
@@ -84,7 +97,15 @@ def build_solution_memory_profile_key(preview: Any) -> str:
             key=_canonical_json,
         ),
     }
-    return f"{PROFILE_KEY_PREFIX}:{_sha256(payload)}"
+    return _profile_key("solution.deploy", _sha256(payload))
+
+
+def build_resource_memory_profile_key(job_type: str, resource_id: UUID) -> str:
+    """The workload key of a job type that learns per resource (the App an
+    App deploy or SDK update builds, the Solution an export or git sync
+    reads)."""
+
+    return _profile_key(job_type, str(resource_id))
 
 
 async def resolve_platform_job_memory_required_bytes(
@@ -103,9 +124,9 @@ async def resolve_platform_job_memory_required_bytes(
     learned_floor = (
         profile.memory_required_bytes
         if profile is not None
-        else UNKNOWN_SOLUTION_WORKLOAD_FLOOR_BYTES
+        else UNKNOWN_WORKLOAD_FLOOR_BYTES
     )
-    return max(policy_floor, UNKNOWN_SOLUTION_WORKLOAD_FLOOR_BYTES, learned_floor)
+    return max(policy_floor, UNKNOWN_WORKLOAD_FLOOR_BYTES, learned_floor)
 
 
 def observed_working_set_delta_bytes(job: "PlatformJob") -> int | None:
@@ -119,19 +140,33 @@ def observed_working_set_delta_bytes(job: "PlatformJob") -> int | None:
 async def record_platform_job_memory_profile(
     db: AsyncSession,
     job: "PlatformJob",
+    *,
+    out_of_memory: bool = False,
 ) -> None:
-    """Learn from a terminal attempt using the conservative working-set delta."""
+    """Learn from a terminal attempt using the conservative working-set delta.
 
+    An attempt Kubernetes stopped at its pod's memory limit
+    (``out_of_memory``) needed more than that limit: the job's requirement
+    rises to at least the limit plus the margin, so a retry is sized larger,
+    and its profile learns it.
+    """
+
+    if out_of_memory and job.memory_limit_bytes:
+        job.memory_required_bytes = max(
+            job.memory_required_bytes or 0,
+            job.memory_limit_bytes + MEMORY_PROFILE_SAFETY_MARGIN_BYTES,
+        )
     if not job.memory_profile_key:
         return
     observed = observed_working_set_delta_bytes(job)
-    if observed is None or observed <= 0:
+    if not out_of_memory and (observed is None or observed <= 0):
         return
+    observed = observed or 0
 
     required = max(
         job.memory_required_bytes or 0,
         observed + MEMORY_PROFILE_SAFETY_MARGIN_BYTES,
-        UNKNOWN_SOLUTION_WORKLOAD_FLOOR_BYTES,
+        UNKNOWN_WORKLOAD_FLOOR_BYTES,
     )
     profile = await db.get(PlatformJobMemoryProfile, job.memory_profile_key)
     if profile is None:

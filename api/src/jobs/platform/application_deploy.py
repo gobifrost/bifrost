@@ -89,9 +89,9 @@ APPLICATION_DEPLOY_DEFINITION = PlatformJobDefinition(
         min_memory_headroom_mb=512,
         execution_class="build",
     ),
-    display_name="App deploys",
+    display_name="App Deploys",
     description=(
-        "Compile and publish independent apps (npm install + vite build) "
-        "in isolated pods instead of the scheduler."
+        "Compiles and publishes independent apps (npm install and vite build) "
+        "in an isolated pod."
     ),
 )

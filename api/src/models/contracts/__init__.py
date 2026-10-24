@@ -442,6 +442,9 @@ if TYPE_CHECKING:
         KubernetesExecutionJobType,
         KubernetesExecutionSettings,
         KubernetesExecutionUpdate,
+        KubernetesPolicyProvenance,
+        KubernetesPolicyUpdate,
+        KubernetesPolicyValues,
         KubernetesStatus,
     )
     from src.models.contracts.notifications import (  # noqa: F401

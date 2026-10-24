@@ -15,18 +15,19 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import func, or_, select, text
 
-from src.config import get_settings
 from src.core.database import get_db_context
 from src.models.orm.platform_jobs import PlatformJob
-from src.models.orm.solution_export_jobs import SolutionExportJob
 from src.services.execution.memory_monitor import get_cgroup_memory
 from src.services.platform_job_memory_profiles import (
     record_platform_job_memory_profile,
 )
 from src.services.platform_jobs import (
+    EXPORT_RUNNER_LOST,
     WAITING_FOR_MEMORY,
+    fail_linked_solution_export,
     publish_platform_job_update,
 )
+from src.services.worker_pool.sizing import JobSizing
 
 LEASE_DURATION = timedelta(seconds=30)
 HEARTBEAT_INTERVAL_SECONDS = 5
@@ -49,41 +50,6 @@ def _clear_lease(job: PlatformJob) -> None:
     job.lease_token = None
     job.heartbeat_at = None
     job.lease_expires_at = None
-
-
-async def _fail_linked_solution_export(
-    db,
-    platform_job: PlatformJob,
-    *,
-    completed_at: datetime,
-) -> None:
-    """Fail an active export projection when its final runner attempt is lost.
-
-    Export rows carry encrypted options until their worker reaches a terminal
-    state. A child-process loss bypasses the export worker's own cleanup, so
-    the platform-job terminal transition must also make that projection safe
-    and observable. The platform job's curated error is deliberately not
-    copied: its detail is for operators, while the export API stays generic.
-    """
-    if platform_job.job_type != "solution.export" or not platform_job.resource_id:
-        return
-    try:
-        export_id = UUID(platform_job.resource_id)
-    except (TypeError, ValueError):
-        logger.warning(
-            "Solution export platform job has an invalid resource identifier",
-            extra={"platform_job_id": str(platform_job.id)},
-        )
-        return
-    export = await db.get(SolutionExportJob, export_id, with_for_update=True)
-    if export is None or export.status not in {"pending", "running"}:
-        return
-    export.status = "failed"
-    export.progress_percent = 100
-    export.message = "Backup failed"
-    export.failure_message = "Backup export runner stopped before completion"
-    export.encrypted_options = None
-    export.completed_at = completed_at
 
 
 def _memory_exceeds_hard_limit(hard_ratio: float) -> bool:
@@ -134,7 +100,9 @@ async def recover_expired_platform_jobs() -> tuple[int, int]:
                 )
                 job.error_retryable = False
                 job.completed_at = now
-                await _fail_linked_solution_export(db, job, completed_at=now)
+                await fail_linked_solution_export(
+                    db, job, completed_at=now, failure_message=EXPORT_RUNNER_LOST
+                )
                 failed += 1
             await record_platform_job_memory_profile(db, job)
             _clear_lease(job)
@@ -166,21 +134,50 @@ def _remote_job_name(job_id: UUID, lease_token: UUID) -> str:
     return f"bifrost-job-{job_id.hex}-{_lease_token_fingerprint(lease_token)[:12]}"
 
 
+@dataclass(frozen=True)
+class IsolatedPods:
+    """Where isolated pods run, how many may (Max isolated pods), and their
+    sizes (the worker sizing rule)."""
+
+    namespace: str
+    max_pods: int
+    sizing: JobSizing
+    # The deployment's worker memory request, which a standard pod requests.
+    standard_request_bytes: int
+
+    def pod_memory(self, required_bytes: int) -> tuple[int, int] | None:
+        """The memory request and limit of the pod that holds
+        ``required_bytes``: a standard pod requests the deployment's
+        request, a sized one its whole limit; None when no pod can."""
+        limit = self.sizing.pod_limit_bytes(required_bytes)
+        if limit is None:
+            return None
+        if limit == self.sizing.standard_limit_bytes:
+            return self.standard_request_bytes, limit
+        return limit, limit
+
+
 async def claim_platform_job(
     *,
     backend: str = "local",
     fits_bytes: int | None = None,
-    remote_limit: int = 2,
-    remote_memory_bytes: int = 1024 * 1024 * 1024,
+    isolated: IsolatedPods | None = None,
 ) -> ClaimedPlatformJob | None:
     """Claim one admissible queued job using row locking and a fenced lease.
 
     A local job is claimed only when its memory requirement fits
     ``fits_bytes``, the claiming executor's free budget
     (src.services.memory_requests); it waits otherwise.
+
+    An isolated job (``backend="kubernetes"``) is claimed for a pod in the
+    ``isolated`` namespace while fewer than its maximum run, and records the
+    pod's memory request and limit. One no pod can hold is left queued for
+    the unfit sweep to fail visibly.
     """
     if backend == "local" and fits_bytes is None:
         raise ValueError("A local platform-job claim needs the executor's free budget")
+    if (backend == "kubernetes") != (isolated is not None):
+        raise ValueError("An isolated platform-job claim, and only one, needs its pods")
     updated: list[PlatformJob] = []
     async with get_db_context() as db:
         candidate_ids = (
@@ -228,6 +225,12 @@ async def claim_platform_job(
                 job.revision += 1
                 updated.append(job)
                 continue
+            # An isolated pod's memory, by the worker sizing rule.
+            pod_memory: tuple[int, int] | None = None
+            if isolated is not None:
+                pod_memory = isolated.pod_memory(job.memory_required_bytes)
+                if pod_memory is None:
+                    continue  # No pod can hold it: the unfit sweep fails it.
             # Product concurrency overrides (Settings UI) replace the code
             # policy default when set. Read per claim so changes apply
             # without restarts; the row is a single indexed lookup.
@@ -278,13 +281,7 @@ async def claim_platform_job(
                 ).scalar_one()
                 if resource_busy:
                     continue
-            if backend == "kubernetes":
-                kubernetes_namespace = get_settings().kubernetes_build_namespace
-                if not kubernetes_namespace:
-                    raise RuntimeError(
-                        "BIFROST_KUBERNETES_BUILD_NAMESPACE is required "
-                        "to claim Kubernetes platform jobs."
-                    )
+            if isolated is not None:
                 backend_lock = (
                     await db.execute(
                         text("SELECT pg_try_advisory_xact_lock(hashtext(:key))"),
@@ -301,13 +298,7 @@ async def claim_platform_job(
                         )
                     )
                 ).scalar_one()
-                if remote_running_count >= remote_limit:
-                    continue
-                if job.memory_required_bytes > remote_memory_bytes:
-                    if job.phase != "Waiting for Kubernetes capacity":
-                        job.phase = "Waiting for Kubernetes capacity"
-                        job.revision += 1
-                        updated.append(job)
+                if remote_running_count >= isolated.max_pods:
                     continue
             elif fits_bytes is not None and job.memory_required_bytes > fits_bytes:
                 if job.phase != WAITING_FOR_MEMORY:
@@ -333,16 +324,16 @@ async def claim_platform_job(
             job.error_code = None
             job.error_message = None
             job.error_retryable = None
-            if backend == "kubernetes":
+            if isolated is not None and pod_memory is not None:
                 job.kubernetes_job_name = _remote_job_name(job.id, token)
-                job.kubernetes_namespace = kubernetes_namespace
+                job.kubernetes_namespace = isolated.namespace
                 job.kubernetes_job_uid = None
                 job.kubernetes_pod_uid = None
                 job.kubernetes_launch_started_at = now
                 job.runner_started_at = None
                 job.memory_start_bytes = None
                 job.memory_peak_bytes = None
-                job.memory_limit_bytes = remote_memory_bytes
+                job.memory_request_bytes, job.memory_limit_bytes = pod_memory
             else:
                 current_memory, memory_limit = get_cgroup_memory()
                 job.memory_start_bytes = current_memory if current_memory >= 0 else None
@@ -426,8 +417,13 @@ async def _handle_runner_loss(
     *,
     error_code: str,
     error_message: str,
+    out_of_memory: bool = False,
 ) -> bool:
-    """Retry or fail an attempt, fenced against a newer scheduler owner."""
+    """Retry or fail an attempt, fenced against a newer scheduler owner.
+
+    ``out_of_memory``: Kubernetes stopped the attempt's pod at its memory
+    limit, so the job learns it needs more (a retry asks for it).
+    """
     async with get_db_context() as db:
         job = (
             await db.execute(
@@ -461,8 +457,10 @@ async def _handle_runner_loss(
             job.error_message = error_message
             job.error_retryable = False
             job.completed_at = now
-            await _fail_linked_solution_export(db, job, completed_at=now)
-        await record_platform_job_memory_profile(db, job)
+            await fail_linked_solution_export(
+                db, job, completed_at=now, failure_message=EXPORT_RUNNER_LOST
+            )
+        await record_platform_job_memory_profile(db, job, out_of_memory=out_of_memory)
         _clear_lease(job)
         job.revision += 1
         await db.commit()

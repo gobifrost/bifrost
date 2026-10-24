@@ -8,8 +8,12 @@ to reach the broker a few times once it starts, drains those queues until they
 have stayed empty for ``QUIET_SECONDS``, disconnects and stops; there is no
 recurring poll. Each message
 becomes the durable dispatch the current release would have accepted, then is
-acknowledged. Several replicas draining at once is safe: the broker gives each
-message to one consumer and a subject has at most one dispatch.
+acknowledged. Replicas drain one at a time, under an advisory lock held for
+the whole drain: a replica that saw empty queues while another still held an
+unacknowledged message must not record the drain, or that message, requeued
+if its holder dies, would never be recovered. A replica that waited finds the
+drain recorded and stops; one that waited behind a drain that ended early
+drains itself.
 
 - A message that already names a dispatch (``dispatch_id``) came from a
   release that also committed the dispatch; it is only acknowledged.
@@ -25,6 +29,11 @@ message to one consumer and a subject has at most one dispatch.
 - A message that cannot be recovered stays queued; that queue's drain stops
   and the next start tries again.
 
+A drain that reached the broker and left nothing queued is recorded
+(``SystemConfig`` ``runtime`` / ``legacy_broker_drained``). From then on no
+start connects, and ``BIFROST_RABBITMQ_URL`` is reported as unread. A rollback
+to a release that queues to RabbitMQ again needs that row deleted.
+
 Without a configured or reachable broker this does nothing.
 """
 
@@ -37,20 +46,22 @@ import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import aio_pika
 from aio_pika.abc import AbstractIncomingMessage
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.run_lineage import lineage_columns, recorded_user_lineage
 from shared.schema_gate import wait_for_schema
 from src.config import get_settings
 from src.core.cache.redis_client import get_redis
-from src.core.database import get_dispatch_db_context, get_engine
+from src.core.database import get_db_context, get_dispatch_db_context, get_engine
 from src.core.log_safety import log_safe
 from src.models.enums import ExecutionStatus
 from src.models.orm.agent_runs import AgentRun
+from src.models.orm.config import SystemConfig
 from src.models.orm.executions import Execution
 from src.models.orm.summary_backfill_job import SummaryBackfillJob
 from src.models.orm.workflows import Workflow
@@ -66,6 +77,41 @@ QUIET_SECONDS = 120.0
 PASS_INTERVAL_SECONDS = 10.0
 CANCELLED_BEFORE_START = "Execution was cancelled before it could start"
 LOST_IN_UPGRADE = "This run was queued by an earlier release and its context expired before it could be recovered."
+DRAINED_CATEGORY = "runtime"
+DRAINED_KEY = "legacy_broker_drained"
+DRAIN_LOCK = "bifrost:legacy-broker-drain"
+
+
+async def legacy_broker_drained(db: AsyncSession) -> bool:
+    """Whether a drain on this release finished (see the module docstring)."""
+    return (
+        await db.scalar(
+            select(SystemConfig.id)
+            .where(
+                SystemConfig.category == DRAINED_CATEGORY,
+                SystemConfig.key == DRAINED_KEY,
+                SystemConfig.organization_id.is_(None),
+            )
+            .limit(1)
+        )
+    ) is not None
+
+
+async def _record_drained() -> None:
+    """Only the drain holding ``DRAIN_LOCK``, which found no record, writes it."""
+    async with get_db_context() as db:
+        db.add(
+            SystemConfig(
+                id=uuid4(),
+                category=DRAINED_CATEGORY,
+                key=DRAINED_KEY,
+                value_json={"drained_at": datetime.now(timezone.utc).isoformat()},
+                organization_id=None,
+                created_by="system",
+                updated_by="system",
+            )
+        )
+        await db.commit()
 
 
 def _workflow_pending_key(execution_id: str) -> str:
@@ -253,30 +299,32 @@ HANDLERS: dict[str, Callable[[dict[str, Any]], Awaitable[None]]] = {
 }
 
 
-async def _drain_queue(connection: aio_pika.abc.AbstractConnection, name: str) -> int:
-    """Recover messages until the queue is empty; a failure leaves its message queued."""
+async def _drain_queue(
+    connection: aio_pika.abc.AbstractConnection, name: str
+) -> tuple[int, bool]:
+    """Recover messages until the queue is empty; a failure leaves its message
+    queued. Returns how many were recovered and whether the queue emptied."""
     channel = await connection.channel()
     try:
         queue = await channel.declare_queue(name, passive=True)
     except aio_pika.exceptions.ChannelNotFoundEntity:
-        return 0  # This install never had the queue.
+        return 0, True  # This install never had the queue.
     recovered = 0
     try:
         while True:
             message: AbstractIncomingMessage | None = await queue.get(no_ack=False, fail=False)
             if message is None:
-                break
+                return recovered, True
             try:
                 await HANDLERS[name](json.loads(message.body))
             except Exception:
                 logger.exception("Could not recover a queued message", extra={"queue": name})
                 await message.nack(requeue=True)
-                break
+                return recovered, False
             await message.ack()
             recovered += 1
     finally:
         await channel.close()
-    return recovered
 
 
 async def _connect(url: str) -> aio_pika.abc.AbstractConnection | None:
@@ -289,29 +337,67 @@ async def _connect(url: str) -> aio_pika.abc.AbstractConnection | None:
     return None
 
 
+async def _drain(url: str) -> None:
+    connection = await _connect(url)
+    if connection is None:
+        logger.info(
+            "The legacy broker is unreachable; nothing to recover. Remove "
+            "BIFROST_RABBITMQ_URL once its queues are known to be empty; it is "
+            "reported as unused only after a drain reaches the broker"
+        )
+        return
+    async with connection:
+        counts = dict.fromkeys(HANDLERS, 0)
+        left_queued: set[str] = set()
+        quiet_since = time.monotonic()
+        while True:
+            for name in HANDLERS:
+                recovered, emptied = await _drain_queue(connection, name)
+                counts[name] += recovered
+                if emptied:
+                    left_queued.discard(name)
+                else:
+                    left_queued.add(name)
+                if recovered:
+                    quiet_since = time.monotonic()
+            if time.monotonic() - quiet_since >= QUIET_SECONDS:
+                break
+            await asyncio.sleep(PASS_INTERVAL_SECONDS)
+    if left_queued:
+        logger.warning(
+            "Drained work queued by an earlier release; some stays queued "
+            "and the next start tries again",
+            extra={"counts": counts, "queues": sorted(left_queued)},
+        )
+        return
+    await _record_drained()
+    logger.info(
+        "Drained work queued by an earlier release; BIFROST_RABBITMQ_URL "
+        "can now be removed",
+        extra={"counts": counts},
+    )
+
+
 async def drain_legacy_broker() -> None:
     """Run once per API start; see the module docstring."""
     url = get_settings().rabbitmq_url
     if not url:
         return
     try:
-        await wait_for_schema(get_engine())
-        connection = await _connect(url)
-        if connection is None:
-            logger.info("The legacy broker is unreachable; nothing to recover")
-            return
-        async with connection:
-            counts = dict.fromkeys(HANDLERS, 0)
-            quiet_since = time.monotonic()
-            while True:
-                for name in HANDLERS:
-                    recovered = await _drain_queue(connection, name)
-                    counts[name] += recovered
-                    if recovered:
-                        quiet_since = time.monotonic()
-                if time.monotonic() - quiet_since >= QUIET_SECONDS:
-                    break
-                await asyncio.sleep(PASS_INTERVAL_SECONDS)
-        logger.info("Drained work queued by an earlier release", extra={"counts": counts})
+        engine = get_engine()
+        await wait_for_schema(engine)
+        # One drain at a time across replicas, held until this one ends. The
+        # lock is transaction-scoped because PgBouncer pools by transaction;
+        # the connection's open transaction holds it, and a replica that dies
+        # mid-drain releases it with its connection. A PgBouncer
+        # idle_transaction_timeout shorter than the drain would release it early.
+        async with engine.connect() as lock_connection:
+            await lock_connection.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": DRAIN_LOCK}
+            )
+            async with get_db_context() as db:
+                if await legacy_broker_drained(db):
+                    return
+            await _drain(url)
     except Exception:
         logger.exception("Could not drain the legacy broker; the next start tries again")

@@ -114,11 +114,10 @@ kubectl logs -n bifrost -l app.kubernetes.io/name=bifrost-pool-worker -f
 
 ### Upgrading to API-Started Workers
 
-Work runs in worker Jobs that the API starts on demand: one stays warm
-(`BIFROST_POOL_MIN_WORKERS=1`) and up to six run under load
-(`BIFROST_POOL_MAX_WORKERS=6`), each with a 512Mi request and a 2Gi limit.
-The API needs the Job Role in `api/rbac.yaml`, which `kubectl apply -k k8s/`
-applies. The `bifrost-worker` and `bifrost-scheduler` Deployments are retired:
+Work runs in worker Jobs that the API starts on demand: by default one
+stays warm and up to six run under load, each with a 512Mi request and a 2Gi
+limit (Settings → Kubernetes → Scaling & Isolation). The API needs the Job
+Role in `api/rbac.yaml`, which `kubectl apply -k k8s/` applies. The `bifrost-worker` and `bifrost-scheduler` Deployments are retired:
 the base sets them to zero replicas, so applying it stops their pods. Delete
 them once they are gone:
 
@@ -206,16 +205,22 @@ kubectl port-forward -n bifrost svc/api 8000:8000
 
 ## Scaling
 
-### Isolated App Build Jobs
+### Isolated Jobs
 
-The optional Kubernetes App build Jobs overlay lives outside this base at
-`deploy/kubernetes/builds`. It is not enabled by `kubectl apply -k k8s/`.
+App deploys, App SDK rebuilds and Solution deploys, backup exports and Git
+syncs can each run in their own pod instead of on a worker. A platform admin
+turns this on in Settings → Kubernetes → Scaling & Isolation; the base
+manifests already let the API start those pods, and they copy the API pod.
+
+The optional overlay at `deploy/kubernetes/builds` (not applied by
+`kubectl apply -k k8s/`) runs every Job the API starts as a dedicated
+service account with no token:
 
 ```bash
 kubectl apply -k deploy/kubernetes/builds
 ```
 
-See `docs/runbooks/kubernetes-build-jobs.md` before enabling or disabling it.
+See `docs/runbooks/kubernetes-build-jobs.md`.
 
 ### API
 
@@ -226,13 +231,24 @@ kubectl scale deployment bifrost-api -n bifrost --replicas=3
 ### Workers
 
 The API starts worker Jobs as work arrives and drains idle ones back to the
-warm minimum. Set the range in `configmap.yaml`:
+warm minimum. A platform admin sets the range in Settings → Kubernetes →
+Scaling & Isolation; a change applies on the controllers' next pass, without
+a restart:
 
-| Name | Default | Description |
-|------|---------|-------------|
-| `BIFROST_POOL_MIN_WORKERS` | `1` | Worker Jobs kept warm for interactive runs |
-| `BIFROST_POOL_MAX_WORKERS` | `6` | Most worker Jobs at once |
-| `BIFROST_POOL_WORKER_MEMORY_LIMIT_MIB` | `2048` | Memory limit of a standard worker Job |
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Warm Workers | `1` | Worker Jobs kept warm for interactive runs |
+| Max Workers | `6` | Most worker Jobs at once |
+| Worker Memory (MiB) | `2048` | Memory limit of a standard worker Job |
+| Largest Worker (MiB) | `8192` | Largest worker Job sized for one large run |
+| Idle Time (Seconds) | `300` | How long a worker above the warm minimum waits for work |
+
+An install upgraded from a release that set these as `BIFROST_POOL_*`
+variables imports them once on first start (the page shows where each value
+came from); the API then logs those variables, and the page lists them, as
+no longer used until they are removed. The memory request and CPU stay
+deployment env (`BIFROST_POOL_WORKER_MEMORY_REQUEST_MIB`,
+`BIFROST_POOL_WORKER_CPU_REQUEST`, `BIFROST_POOL_WORKER_CPU_LIMIT`).
 
 After an upgrade, the API replaces worker Jobs running the previous build once
 a replacement is ready; their runs finish first. See

@@ -44,6 +44,7 @@ async def test_deploy_job_is_staged_as_encrypted_central_job(
         requested_by_email="admin@example.com",
         requested_by_name="Admin",
         input_path=path,
+        memory_profile_key="solution.deploy.memory.v1:test",
     )
     central = await db_session.get(PlatformJob, projection.id)
     assert central is not None

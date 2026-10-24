@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Exercise real App builds in local Kind, optionally replacing a build-controller host.
 
-The API runs the build controller, on every replica. With
-``--restart-controller`` the experiment deletes an API pod while builds run;
-the workload itself runs in another API pod, so it survives.
+The API runs the build controller, on every replica. The experiment turns
+isolated jobs on in Settings -> Kubernetes for its run and restores the
+setting afterwards. With ``--restart-controller`` it deletes an API pod while
+builds run; the workload itself runs in another API pod, so it survives.
 """
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ from pathlib import Path
 import subprocess
 import time
 
+from pool_spike import set_policy
 from spike import LOCAL, NS, ROOT, kubectl
 
 MEMORY = """import json
@@ -35,6 +37,14 @@ def _ready_api_pods() -> list[str]:
 
 def run(out: Path, restart_controller: bool) -> None:
     out.mkdir(parents=True, exist_ok=False)
+    previous = set_policy(isolated_jobs_enabled=True)
+    try:
+        builds(out, restart_controller)
+    finally:
+        set_policy(**previous)
+
+
+def builds(out: Path, restart_controller: bool) -> None:
     samples = []
     replaced = None
     api_pods = _ready_api_pods()

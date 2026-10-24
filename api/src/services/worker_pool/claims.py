@@ -13,6 +13,7 @@ from shared.version import get_version
 from src.core.database import get_db_context, get_liveness_db_context
 from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
 from src.models.orm.work_dispatches import WorkDispatch
+from src.services.kubernetes_execution import load_kubernetes_policy
 
 # Shared with the capacity controller: launches and idle drains serialize.
 CAPACITY_LOCK = "bifrost:worker-pool:capacity"
@@ -280,17 +281,19 @@ async def begin_drain(incarnation_id: UUID, reason: str) -> bool:
     return drained is not None
 
 
-async def begin_idle_drain(incarnation_id: UUID, *, keep_ready: int) -> bool:
+async def begin_idle_drain(incarnation_id: UUID) -> bool:
     """Drain an idle job worker unless it is needed for the warm minimum.
 
     Serialized with launches by the capacity lock, so idle workers never
-    collectively drop below ``keep_ready``.
+    collectively drop below Warm workers, read from Settings -> Kubernetes
+    under the lock (lowering it lets running idle workers drain).
     """
     async with get_db_context() as db:
         await db.execute(
             text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
             {"key": CAPACITY_LOCK},
         )
+        keep_ready = (await load_kubernetes_policy(db)).warm_workers
         # A sized Job always drains once idle: only standard Jobs make up the
         # warm minimum.
         sized = await db.scalar(

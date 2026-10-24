@@ -15,6 +15,10 @@ After an upgrade the controller replaces Jobs running a build no live
 controller runs, launched by a controller that is gone (``LiveControllers``):
 the warm minimum launches current Jobs, and once they are ready the outdated
 ones drain (never deleted), so their runs finish.
+
+Scaling (Warm workers, Max workers, Worker memory, Largest worker) is read
+from Settings -> Kubernetes at the start of every pass, so a change applies
+without a restart.
 """
 
 from __future__ import annotations
@@ -35,7 +39,6 @@ from shared.version import get_version
 from src.config import Settings, get_settings
 from src.core.database import get_db_context
 from src.jobs.platform.kubernetes_client import (
-    KubernetesApiError,
     KubernetesConfigurationError,
     KubernetesJobClient,
     oom_killed,
@@ -43,18 +46,14 @@ from src.jobs.platform.kubernetes_client import (
 from src.models.orm.execution_workers import ExecutionWorker
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.work_dispatches import WorkDispatch
+from src.services.kubernetes_execution import KubernetesPolicy, load_kubernetes_policy
 from src.services.platform_jobs import WAITING_FOR_MEMORY
-from src.services.memory_requests import (
-    JOB_BASELINE_ESTIMATE_BYTES,
-    LAUNCHABLE_KEY,
-    job_budget_bytes,
-    sized_job_limit_bytes,
-)
+from src.services.memory_requests import LAUNCHABLE_KEY
 from src.services.worker_pool.claims import CAPACITY_LOCK
 from src.services.worker_pool.manifest import (
     WorkerJobSpec,
     build_worker_job_manifest,
-    resolve_worker_job_spec,
+    resolve_job_spec_when_ready,
     worker_job_name,
 )
 from src.services.worker_pool.liveness import (
@@ -63,10 +62,10 @@ from src.services.worker_pool.liveness import (
     silent_executor,
 )
 from src.services.worker_pool.recovery import announce_ended_runs, end_runs_of_lost_worker
+from src.services.worker_pool.sizing import LIVE_STATES, JobSizing, job_baseline, launch_limit
 
 logger = logging.getLogger(__name__)
 
-LIVE_STATES = ("reserved", "starting", "ready", "draining")
 # How long a lost worker's Job is kept under watch for deletion.
 LOST_JOB_CLEANUP = timedelta(hours=1)
 RECONCILE_SECONDS = 2.0
@@ -127,7 +126,8 @@ class WorkerPoolController:
                     select(ExecutionWorker).where(ExecutionWorker.state.in_(LIVE_STATES))
                 )
             ).scalars().all()
-            await _publish_launchable(self._limits(_job_baseline(workers, self.settings))[2])
+            policy = await load_kubernetes_policy(db)
+            await _publish_launchable(self._sizing(policy, workers).largest_budget_bytes)
         self.live = await _publish_live(self.id, self.version)
         async with get_db_context() as db:
             ids = (
@@ -146,16 +146,16 @@ class WorkerPoolController:
         for worker_id in set(self._draining_since) - set(ids):
             del self._draining_since[worker_id]
         for worker_id in ids:
-            await self._reconcile_one(worker_id)
-        for worker_id in await self.launch_for_demand():
-            await self._reconcile_one(worker_id)
-        await self.replace_outdated()
+            await self._reconcile_one(worker_id, policy)
+        for worker_id in await self.launch_for_demand(policy):
+            await self._reconcile_one(worker_id, policy)
+        await self.replace_outdated(policy)
 
-    async def _reconcile_one(self, worker_id: UUID) -> None:
+    async def _reconcile_one(self, worker_id: UUID, policy: KubernetesPolicy) -> None:
         """One worker's failure (a slow Kubernetes API, a replaced Job) must
         not stop the others from being reconciled."""
         try:
-            await self.reconcile_worker(worker_id)
+            await self.reconcile_worker(worker_id, policy)
         except Exception as exc:
             logger.error(
                 "Reusable worker reconciliation failed (%s): %s",
@@ -164,7 +164,7 @@ class WorkerPoolController:
                 extra={"worker_id": str(worker_id)},
             )
 
-    async def reconcile_worker(self, worker_id: UUID) -> None:
+    async def reconcile_worker(self, worker_id: UUID, policy: KubernetesPolicy) -> None:
         async with get_db_context() as db:
             worker = await db.scalar(
                 select(ExecutionWorker)
@@ -193,7 +193,10 @@ class WorkerPoolController:
                             worker.id,
                             self.settings,
                             self.spec,
-                            memory_limit_bytes=worker.memory_limit_bytes,
+                            memory_limit_bytes=launch_limit(
+                                worker, policy.worker_memory_mib * 2**20
+                            ),
+                            sized=worker.resource_class == "sized",
                         )
                     )
                     # Whoever creates the Job launches it, whichever replica
@@ -241,7 +244,7 @@ class WorkerPoolController:
 
     def _watch_drain(self, worker: ExecutionWorker) -> None:
         """Warn once when a draining worker's runs outlast the maximum
-        lifetime: it still counts toward ``pool_max_workers``."""
+        lifetime: it still counts toward Max workers."""
         if worker.state != "draining" or worker.active_runs == 0:
             self._draining_since.pop(worker.id, None)
             return
@@ -270,18 +273,14 @@ class WorkerPoolController:
         worker.end_reason = reason
         worker.ended_at = now
 
-    def _limits(self, baseline_bytes: int) -> tuple[int, int, int]:
-        """Standard Job limit, its budget, and the largest budget launchable."""
+    def _sizing(self, policy: KubernetesPolicy, workers: Any) -> JobSizing:
+        """Settings -> Kubernetes sizes at the baseline live Jobs report."""
         threshold = self.settings.memory_pressure_threshold
-        standard_limit = self.settings.pool_worker_memory_limit_mib * 2**20
-        largest_limit = max(standard_limit, self.settings.pool_worker_max_memory_mib * 2**20)
-        return (
-            standard_limit,
-            job_budget_bytes(standard_limit, threshold, baseline_bytes),
-            job_budget_bytes(largest_limit, threshold, baseline_bytes),
+        return JobSizing.of(
+            policy, threshold, job_baseline(workers, policy.worker_memory_mib * 2**20, threshold)
         )
 
-    async def launch_for_demand(self) -> list[UUID]:
+    async def launch_for_demand(self, policy: KubernetesPolicy) -> list[UUID]:
         """Reserve incarnations for waiting work, sized by memory, within ceilings.
 
         Waiting requests (dispatches, and local platform jobs waiting for
@@ -290,7 +289,7 @@ class WorkerPoolController:
         counts as the one expected). What does not fit goes into new
         standard Jobs, or a Job sized for one request a standard Job cannot
         hold (reserved for it when it is a dispatch). The warm minimum is
-        kept, and Jobs never exceed ``pool_max_workers``.
+        kept, and Jobs never exceed Max workers.
         """
         async with get_db_context() as db:
             locked = (
@@ -331,8 +330,7 @@ class WorkerPoolController:
                     select(ExecutionWorker).where(ExecutionWorker.state.in_(LIVE_STATES))
                 )
             ).scalars().all()
-            baseline = _job_baseline(workers, self.settings)
-            standard_limit, standard_budget, largest_budget = self._limits(baseline)
+            sizing = self._sizing(policy, workers)
 
             requests = {row.id: row.memory_request_bytes for row in waiting}
             free: list[int] = []
@@ -351,8 +349,7 @@ class WorkerPoolController:
                 if worker.form == "job" and (
                     worker.state in ("reserved", "starting") or worker.memory_budget_bytes is None
                 ):
-                    limit = worker.memory_limit_bytes or standard_limit
-                    budget = job_budget_bytes(limit, self.settings.memory_pressure_threshold, baseline)
+                    budget = sizing.budget_bytes(launch_limit(worker, sizing.standard_limit_bytes))
                     free.append(max(0, budget - held))
                 elif worker.state == "ready" and worker.memory_budget_bytes is not None:
                     free.append(
@@ -361,8 +358,8 @@ class WorkerPoolController:
             plan = _plan_launches(
                 [(row.id, row.memory_request_bytes) for row in waiting if row.id not in covered],
                 free,
-                standard_budget=standard_budget,
-                largest_budget=largest_budget,
+                standard_budget=sizing.standard_budget_bytes,
+                largest_budget=sizing.largest_budget_bytes,
             )
             jobs = sum(1 for worker in workers if worker.form == "job")
             # Only standard Jobs make up the warm minimum; a sized Job exists
@@ -376,10 +373,8 @@ class WorkerPoolController:
                 and worker.state != "draining"
                 and not self.live.outdated(worker)
             )
-            warm = max(
-                0, self.settings.pool_min_workers - undrained - plan.standard - len(plan.sized)
-            )
-            room = max(0, self.settings.pool_max_workers - jobs)
+            warm = max(0, policy.warm_workers - undrained - plan.standard - len(plan.sized))
+            room = max(0, policy.max_workers - jobs)
             launched: list[UUID] = []
             for dispatch_id, request in plan.sized:
                 if len(launched) >= room:
@@ -387,19 +382,22 @@ class WorkerPoolController:
                 launched.append(
                     self._reserve(
                         db,
-                        memory_limit_bytes=sized_job_limit_bytes(
-                            request,
-                            self.settings.memory_pressure_threshold,
-                            baseline,
-                            max(standard_limit, self.settings.pool_worker_max_memory_mib * 2**20),
-                        ),
+                        resource_class="sized",
+                        memory_limit_bytes=sizing.sized_limit_bytes(request),
                         reserved_for=dispatch_id if dispatch_id in dispatch_ids else None,
                     )
                 )
             for _ in range(plan.standard + warm):
                 if len(launched) >= room:
                     break
-                launched.append(self._reserve(db, memory_limit_bytes=None, reserved_for=None))
+                launched.append(
+                    self._reserve(
+                        db,
+                        resource_class="standard",
+                        memory_limit_bytes=sizing.standard_limit_bytes,
+                        reserved_for=None,
+                    )
+                )
             await db.commit()
         if launched:
             logger.info(
@@ -413,7 +411,7 @@ class WorkerPoolController:
             )
         return launched
 
-    async def replace_outdated(self) -> list[UUID]:
+    async def replace_outdated(self, policy: KubernetesPolicy) -> list[UUID]:
         """Drain outdated Jobs once current ones hold the warm minimum.
 
         Their replacements were launched as part of the warm minimum
@@ -452,7 +450,7 @@ class WorkerPoolController:
                 and worker.memory_budget_bytes is not None
                 and not self.live.outdated(worker)
             )
-            if not outdated or current < self.settings.pool_min_workers:
+            if not outdated or current < policy.warm_workers:
                 return []
             drained = list(
                 (
@@ -473,15 +471,22 @@ class WorkerPoolController:
         return drained
 
     def _reserve(
-        self, db: Any, *, memory_limit_bytes: int | None, reserved_for: UUID | None
+        self,
+        db: Any,
+        *,
+        resource_class: str,
+        memory_limit_bytes: int,
+        reserved_for: UUID | None,
     ) -> UUID:
+        """A durable row for one Job, recording the limit it launches with:
+        a later Worker memory change applies to new Jobs only."""
         worker_id = uuid4()
         db.add(
             ExecutionWorker(
                 id=worker_id,
                 form="job",
                 state="reserved",
-                resource_class="standard" if memory_limit_bytes is None else "sized",
+                resource_class=resource_class,
                 slots=0,
                 memory_limit_bytes=memory_limit_bytes,
                 reserved_for_dispatch_id=reserved_for,
@@ -537,19 +542,6 @@ def _plan_launches(
     return LaunchPlan(standard=len(new_bins), sized=sized)
 
 
-def _job_baseline(workers: Any, settings: Settings) -> int:
-    """A Job worker's own memory, from the largest any Job reported (its
-    limit at the threshold, less the budget it measured)."""
-    standard_limit = settings.pool_worker_memory_limit_mib * 2**20
-    reported = [
-        int((worker.memory_limit_bytes or standard_limit) * settings.memory_pressure_threshold)
-        - worker.memory_budget_bytes
-        for worker in workers
-        if worker.form == "job" and worker.memory_budget_bytes is not None
-    ]
-    return max(reported, default=JOB_BASELINE_ESTIMATE_BYTES)
-
-
 async def _publish_launchable(largest_budget: int) -> None:
     """Tell the dispatch reconciler the largest budget this controller can launch."""
     from src.core.cache.redis_client import get_redis
@@ -595,36 +587,42 @@ async def _withdraw_live(controller_id: UUID) -> None:
 
 async def worker_pool_loop(stop_event: asyncio.Event, settings: Any | None = None) -> None:
     settings = settings or get_settings()
+    # Pool work waits visibly (and fails at its claim deadline) instead of
+    # taking down the process that hosts this loop.
     try:
         client = KubernetesJobClient(settings)
-        spec = await resolve_worker_job_spec(client, settings)
-    except (KubernetesConfigurationError, KubernetesApiError) as exc:
-        # Pool work waits visibly (and fails at its claim deadline) instead of
-        # taking down the process that hosts this loop.
+    except KubernetesConfigurationError as exc:
         logger.error("Reusable worker controller disabled: %s", exc)
         await stop_event.wait()
         return
-    controller = WorkerPoolController(client, settings, spec)
     try:
-        while not stop_event.is_set():
-            try:
-                if await controller.reachability.check():
-                    await controller.reconcile()
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                logger.error(
-                    "Reusable worker reconciliation failed (%s): %s",
-                    type(exc).__name__,
-                    exc,
-                )
-            with suppress(TimeoutError):
-                await asyncio.wait_for(stop_event.wait(), timeout=RECONCILE_SECONDS)
-    finally:
+        spec = await resolve_job_spec_when_ready(
+            client, settings, stop_event, "Reusable worker controller"
+        )
+        if spec is None:
+            return
+        controller = WorkerPoolController(client, settings, spec)
         try:
-            await _withdraw_live(controller.id)
-        except Exception:
-            logger.warning("Could not withdraw the worker controller", exc_info=True)
+            while not stop_event.is_set():
+                try:
+                    if await controller.reachability.check():
+                        await controller.reconcile()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.error(
+                        "Reusable worker reconciliation failed (%s): %s",
+                        type(exc).__name__,
+                        exc,
+                    )
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(stop_event.wait(), timeout=RECONCILE_SECONDS)
+        finally:
+            try:
+                await _withdraw_live(controller.id)
+            except Exception:
+                logger.warning("Could not withdraw the worker controller", exc_info=True)
+    finally:
         await client.close()
 
 

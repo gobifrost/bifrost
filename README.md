@@ -149,6 +149,12 @@ docker compose up -d --remove-orphans
 docker volume rm bifrost_rabbitmq_data
 ```
 
+The API records the drain once nothing is left queued, and later starts no
+longer connect (each start warns that `BIFROST_RABBITMQ_URL` is no longer used
+until it is removed). A rollback to a release that queues to RabbitMQ needs
+that record deleted, so the next upgrade drains again:
+`DELETE FROM system_configs WHERE category = 'runtime' AND key = 'legacy_broker_drained';`
+
 ---
 
 ## Local Development

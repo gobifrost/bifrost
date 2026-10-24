@@ -5,7 +5,9 @@ Usage: ./test.sh kubernetes pool-drills [--out DIR] [--only NAME ...]
 
 The drills exercise worker Jobs, so the static executors (the scheduler and
 worker Deployments) are scaled to zero for their duration and restored
-afterwards; the API keeps the warm minimum of Jobs.
+afterwards; the API keeps the warm minimum of Jobs. Idle time
+(Settings -> Kubernetes) is shortened to 45 s for the run, and every drill
+that changes Settings restores what it changed.
 
 - kill: SIGKILL a worker's process mid-run on its node. The worker is marked
   lost after missing heartbeats and its Job deleted; work accepted while it
@@ -17,13 +19,22 @@ afterwards; the API keeps the warm minimum of Jobs.
   keeps serving other runs.
 - unschedulable: workers that cannot be scheduled (the warm minimum
   included) are marked lost at their start deadline and replaced within the
-  ceiling; queued work waits visibly.
+  ceiling; queued work waits visibly. Worker memory is set in Settings; the
+  memory request and start timeout are deployment env (an API restart).
 - upgrade: move the API image's tag to a new build (as a new ``:latest``
   does) while the warm worker runs a run longer than the shutdown grace
   (#1052). One replacement on the new build becomes ready before the old
   worker drains as ``rotated``; a new run is served at once, the long run
   succeeds, the old worker retires, and nothing is lost. Then roll back the
   same way.
+- sized_isolated_build: with isolated jobs on, an App deploy whose learned
+  memory requirement (2.5 GiB) exceeds a standard pod's budget gets a sized
+  pod: memory request equal to its limit, above the 2 GiB standard, and the
+  build succeeds.
+- max_workers_setting: with Max workers 2 in Settings a backlog holds the
+  pool at 2; raising it to 4 lets the pool grow past 2 with no API restart.
+- isolation_off: turning isolated jobs off lets the running isolated build
+  finish in its pod, and moves the queued one (never placed) to a worker.
 """
 from __future__ import annotations
 
@@ -35,18 +46,26 @@ import subprocess
 import time
 
 from pool_spike import (
+    API,
     CEILING,
+    DRILL_IDLE_SECONDS,
     POOL,
     enqueue,
     live_workers,
     pool_pods,
     ready_api_pod,
+    set_policy,
     sql,
     statuses,
     wait_done,
     wait_floor,
 )
-from spike import kubectl
+from spike import ROOT, kubectl
+
+MIB = 2**20
+STANDARD_POD_MIB = 2048
+BUILD_FIXTURE = ROOT / "api/scripts/kubernetes_build_spike.py"
+PLATFORM_DONE = ("succeeded", "failed", "canceled")
 
 
 def node_kill(pod: dict) -> None:
@@ -161,42 +180,48 @@ asyncio.run(main())
 
 
 def unschedulable_drill() -> dict:
-    kubectl(
-        "set", "env", "deployment/bifrost-api",
-        "BIFROST_POOL_WORKER_MEMORY_REQUEST_MIB=1048576",
-        "BIFROST_POOL_WORKER_MEMORY_LIMIT_MIB=1048576",
-        "BIFROST_POOL_START_TIMEOUT_SECONDS=60",
-    )
-    kubectl("rollout", "status", "deployment/bifrost-api", "--timeout=300s")
+    unschedulable_mib = 1048576
+    # Settings first: Worker memory may not be below the memory request.
+    previous = set_policy(worker_memory_mib=unschedulable_mib, largest_worker_mib=unschedulable_mib)
     try:
-        # Replace every worker, the warm minimum included, with ones that
-        # cannot be scheduled; nothing else can serve the run.
-        started = datetime.now(timezone.utc).isoformat()
-        kubectl("delete", "jobs", "-l", POOL, "--wait=true")
-        waiting = enqueue(1, 0)
-        time.sleep(150)
-        lost = int(sql(
-            "SELECT count(*) FROM execution_workers "
-            f"WHERE end_reason='start_timeout' AND created_at >= '{started}'"
-        )[0][0])
-        live = live_workers()
-        run_status = statuses(waiting)
-        assert lost >= 1, "no worker reached its start deadline"
-        assert all(s == "Pending" for s in run_status.values()), run_status
-        return {
-            "run_status": run_status,
-            "workers_lost_at_start_deadline": lost,
-            "live_workers": len(live),
-            "within_ceiling": len(live) <= CEILING,
-        }
-    finally:
         kubectl(
             "set", "env", "deployment/bifrost-api",
-            "BIFROST_POOL_WORKER_MEMORY_REQUEST_MIB-",
-            "BIFROST_POOL_WORKER_MEMORY_LIMIT_MIB-",
-            "BIFROST_POOL_START_TIMEOUT_SECONDS-",
+            f"BIFROST_POOL_WORKER_MEMORY_REQUEST_MIB={unschedulable_mib}",
+            "BIFROST_POOL_START_TIMEOUT_SECONDS=60",
         )
         kubectl("rollout", "status", "deployment/bifrost-api", "--timeout=300s")
+        try:
+            # Replace every worker, the warm minimum included, with ones that
+            # cannot be scheduled; nothing else can serve the run.
+            started = datetime.now(timezone.utc).isoformat()
+            kubectl("delete", "jobs", "-l", POOL, "--wait=true")
+            waiting = enqueue(1, 0)
+            time.sleep(150)
+            lost = int(sql(
+                "SELECT count(*) FROM execution_workers "
+                f"WHERE end_reason='start_timeout' AND created_at >= '{started}'"
+            )[0][0])
+            live = live_workers()
+            run_status = statuses(waiting)
+            assert lost >= 1, "no worker reached its start deadline"
+            assert all(s == "Pending" for s in run_status.values()), run_status
+            return {
+                "run_status": run_status,
+                "workers_lost_at_start_deadline": lost,
+                "live_workers": len(live),
+                "within_ceiling": len(live) <= CEILING,
+            }
+        finally:
+            kubectl(
+                "set", "env", "deployment/bifrost-api",
+                "BIFROST_POOL_WORKER_MEMORY_REQUEST_MIB-",
+                "BIFROST_POOL_START_TIMEOUT_SECONDS-",
+            )
+            kubectl("rollout", "status", "deployment/bifrost-api", "--timeout=300s")
+    finally:
+        set_policy(**previous)
+        # Workers started between the two restores carry the drill's limit.
+        kubectl("delete", "jobs", "-l", POOL, "--wait=true")
 
 
 def api_image() -> str:
@@ -310,12 +335,168 @@ def upgrade_drill() -> dict:
     return report
 
 
+def enqueue_deploy(hold_seconds: int, required_mib: int | None = None) -> str:
+    """Seed an App and enqueue its deploy in an API pod; the job id."""
+    args = ["exec", "-i", ready_api_pod(), "--", "python", "-", "--mode", "enqueue-deploy",
+            "--hold-seconds", str(hold_seconds)]
+    if required_mib is not None:
+        args += ["--required-mib", str(required_mib)]
+    output = kubectl(*args, data=BUILD_FIXTURE.read_text())
+    return json.loads(output.strip().splitlines()[-1])["job_id"]
+
+
+def platform_job(job_id: str) -> dict:
+    [row] = sql(
+        "SELECT status, execution_backend, coalesce(kubernetes_job_name,''), "
+        "coalesce(kubernetes_job_uid,''), coalesce(kubernetes_pod_uid,''), "
+        "coalesce(memory_required_bytes,0), coalesce(memory_limit_bytes,0), "
+        f"coalesce(error_code,'') FROM platform_jobs WHERE id = '{job_id}'"
+    )
+    return {
+        "status": row[0], "backend": row[1], "job_name": row[2], "job_uid": row[3],
+        "pod_uid": row[4], "required_bytes": int(row[5]), "limit_bytes": int(row[6]),
+        "error_code": row[7],
+    }
+
+
+def wait_platform_job(job_id: str, done, timeout: float) -> dict:  # type: ignore[no-untyped-def]
+    deadline = time.monotonic() + timeout
+    while True:
+        job = platform_job(job_id)
+        if done(job):
+            return job
+        assert job["status"] not in PLATFORM_DONE, job
+        assert time.monotonic() < deadline, job
+        time.sleep(2)
+
+
+def wait_platform_succeeded(job_id: str, timeout: float) -> dict:
+    deadline = time.monotonic() + timeout
+    while (job := platform_job(job_id))["status"] not in PLATFORM_DONE:
+        assert time.monotonic() < deadline, job
+        time.sleep(2)
+    assert job["status"] == "succeeded", job
+    return job
+
+
+def running_in_pod(job: dict) -> bool:
+    return job["status"] == "running" and bool(job["pod_uid"])
+
+
+def quantity_mib(quantity: str) -> int:
+    for suffix, factor in (("Gi", 1024), ("Mi", 1), ("Ki", 1 / 1024)):
+        if quantity.endswith(suffix):
+            return int(float(quantity[: -len(suffix)]) * factor)
+    return int(quantity) // MIB
+
+
+def build_pod_memory(job_name: str) -> dict:
+    [pod] = json.loads(kubectl("get", "pods", "-l", f"job-name={job_name}", "-o", "json"))["items"]
+    resources = pod["spec"]["containers"][0]["resources"]
+    return {
+        "request_mib": quantity_mib(resources["requests"]["memory"]),
+        "limit_mib": quantity_mib(resources["limits"]["memory"]),
+    }
+
+
+def sized_isolated_build_drill() -> dict:
+    wait_floor(300)
+    previous = set_policy(isolated_jobs_enabled=True)
+    try:
+        job_id = enqueue_deploy(30, required_mib=2560)
+        job = wait_platform_job(job_id, running_in_pod, 600)
+        memory = build_pod_memory(job["job_name"])
+        assert job["backend"] == "kubernetes", job
+        assert job["required_bytes"] >= 2560 * MIB, job
+        # Sized: the pod requests its whole limit, larger than a standard pod.
+        assert memory["request_mib"] == memory["limit_mib"], memory
+        assert memory["limit_mib"] > STANDARD_POD_MIB, memory
+        assert memory["limit_mib"] * MIB == job["limit_bytes"], (memory, job)
+        done = wait_platform_succeeded(job_id, 900)
+        return {"job": done, "pod_memory": memory}
+    finally:
+        set_policy(**previous)
+
+
+def api_pod_restarts() -> dict[str, int]:
+    pods = json.loads(kubectl("get", "pods", "-l", API, "-o", "json"))["items"]
+    return {
+        pod["metadata"]["name"]: sum(c["restartCount"] for c in pod["status"].get("containerStatuses", []))
+        for pod in pods
+        if not pod["metadata"].get("deletionTimestamp")
+    }
+
+
+def max_workers_setting_drill() -> dict:
+    wait_floor(300)
+    [floor_worker] = live_workers()
+    per_worker = floor_worker["budget"] // (64 * MIB)
+    previous = set_policy(max_workers=2)
+    try:
+        # More than four workers' worth of runs, long enough to outlast both limits.
+        burst = enqueue(4 * per_worker + 4, 120)
+        deadline = time.monotonic() + 180
+        while len(live_workers()) < 2:
+            assert time.monotonic() < deadline, live_workers()
+            time.sleep(2)
+        held_until = time.monotonic() + 30
+        while time.monotonic() < held_until:
+            assert len(live_workers()) <= 2, live_workers()
+            time.sleep(2)
+        api_before = api_pod_restarts()
+        set_policy(max_workers=4)
+        changed_at = time.monotonic()
+        peak = 2
+        while peak <= 2:
+            assert time.monotonic() - changed_at < 180, "the pool did not follow Max workers 4"
+            peak = max(peak, len(live_workers()))
+            time.sleep(2)
+        followed_seconds = round(time.monotonic() - changed_at, 1)
+
+        def sample() -> None:
+            nonlocal peak
+            peak = max(peak, len(live_workers()))
+
+        burst_seconds = wait_done(burst, 900, sample)
+        assert peak <= 4, peak
+        assert api_pod_restarts() == api_before, "the API restarted"
+        return {"followed_seconds": followed_seconds, "peak_workers": peak, "burst_seconds": burst_seconds}
+    finally:
+        set_policy(**previous)
+
+
+def isolation_off_drill() -> dict:
+    wait_floor(300)
+    previous = set_policy(isolated_jobs_enabled=True, max_isolated_pods=1)
+    try:
+        running_id = enqueue_deploy(90)
+        wait_platform_job(running_id, running_in_pod, 600)
+        queued_id = enqueue_deploy(1)
+        time.sleep(10)
+        queued = platform_job(queued_id)
+        # Max isolated pods 1: it waits for the running build's pod.
+        assert queued["status"] == "queued" and not queued["job_name"], queued
+        set_policy(isolated_jobs_enabled=False)
+        moved = wait_platform_job(queued_id, lambda job: job["backend"] == "local", 60)
+        assert running_in_pod(platform_job(running_id)), "the running build stopped"
+        finished = wait_platform_succeeded(running_id, 900)
+        on_worker = wait_platform_succeeded(queued_id, 900)
+        assert finished["backend"] == "kubernetes", finished
+        assert on_worker["backend"] == "local" and not on_worker["job_uid"], on_worker
+        return {"moved": moved, "isolated": finished, "on_worker": on_worker}
+    finally:
+        set_policy(**previous)
+
+
 DRILLS = (
     ("kill", kill_drill),
     ("controller_restart", controller_restart_drill),
     ("oom", oom_drill),
     ("unschedulable", unschedulable_drill),
     ("upgrade", upgrade_drill),
+    ("sized_isolated_build", sized_isolated_build_drill),
+    ("max_workers_setting", max_workers_setting_drill),
+    ("isolation_off", isolation_off_drill),
 )
 
 
@@ -332,6 +513,7 @@ def scale_static(replicas: int) -> None:
 def run(out: Path, only: list[str]) -> dict:
     out.mkdir(parents=True, exist_ok=False)
     report: dict = {"started_at": datetime.now(timezone.utc).isoformat()}
+    previous = set_policy(idle_seconds=DRILL_IDLE_SECONDS)
     scale_static(0)
     try:
         report["jobs_only_floor_seconds"] = wait_floor(300)
@@ -342,6 +524,7 @@ def run(out: Path, only: list[str]) -> dict:
             (out / "report.json").write_text(json.dumps(report, indent=2))
     finally:
         scale_static(1)
+        set_policy(**previous)
     report["finally_floor_seconds"] = wait_floor(900)
     report["finished_at"] = datetime.now(timezone.utc).isoformat()
     (out / "report.json").write_text(json.dumps(report, indent=2))

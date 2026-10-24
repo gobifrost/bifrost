@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -46,8 +47,8 @@ class FakeLease:
         self.is_leader = False
 
 
-def _settings(backend: str = "local") -> SimpleNamespace:
-    return SimpleNamespace(platform_build_backend=backend)
+def _settings() -> SimpleNamespace:
+    return SimpleNamespace()
 
 
 def _control(lease: FakeLease, **kwargs) -> ControlPlane:
@@ -293,24 +294,49 @@ async def test_kubernetes_loops_follow_the_job_permission_not_a_flag(
     monkeypatch.setattr(controller, "worker_pool_loop", idle)
 
     always = {"control-leadership", "work-dispatch-reconciler"}
-    workers = always | {"worker-pool-controller"}
-    for permitted, backend, expected in (
-        (False, "kubernetes", always),
-        (True, "local", workers),
-        (True, "kubernetes", workers | {"kubernetes-build-controller"}),
-    ):
+    loops = always | {"worker-pool-controller", "kubernetes-build-controller"}
+    for permitted, expected in ((False, always), (True, loops)):
         monkeypatch.setattr(
             kubernetes_control, "may_manage_jobs", AsyncMock(return_value=permitted)
         )
         control = ControlPlane(
             leadership_lease=FakeLease(),  # type: ignore[arg-type]
-            settings=_settings(backend),  # type: ignore[arg-type]
+            settings=_settings(),  # type: ignore[arg-type]
         )
         control._leadership_loop = AsyncMock()  # type: ignore[method-assign]
         control._dispatch_reconcile_loop = AsyncMock()  # type: ignore[method-assign]
         await control.start()
         assert {task.get_name() for task in control.tasks} == expected
         await control.stop()
+
+
+@pytest.mark.asyncio
+async def test_settings_are_imported_before_the_kubernetes_loops_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No controller may run a pass on defaults an install never chose."""
+    from src.services import kubernetes_control, kubernetes_execution
+
+    order: list[str] = []
+
+    async def imported(_db: object, environ: object) -> list[str]:
+        assert environ is os.environ
+        order.append("import")
+        return []
+
+    async def loops(*_args: object) -> list[asyncio.Task[None]]:
+        order.append("loops")
+        return []
+
+    monkeypatch.setattr(kubernetes_execution, "import_kubernetes_policy_from_env", imported)
+    monkeypatch.setattr(kubernetes_control, "start_kubernetes_loops", loops)
+    control = _control(FakeLease())
+    control._leadership_loop = AsyncMock()  # type: ignore[method-assign]
+    control._dispatch_reconcile_loop = AsyncMock()  # type: ignore[method-assign]
+    await control.start()
+    await control.stop()
+
+    assert order == ["import", "loops"]
 
 
 def test_catalog_definitions_are_hashable_values() -> None:

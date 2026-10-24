@@ -152,8 +152,14 @@ class ControlPlane:
                 self._dispatch_reconcile_loop(), name="work-dispatch-reconciler"
             ),
         ]
+        from src.core.database import get_db_context
         from src.services.kubernetes_control import start_kubernetes_loops
+        from src.services.kubernetes_execution import import_kubernetes_policy_from_env
 
+        # Settings never stored take their deployment variables before any
+        # controller runs a pass on defaults.
+        async with get_db_context() as db:
+            await import_kubernetes_policy_from_env(db, os.environ)
         self._tasks.extend(await start_kubernetes_loops(self._stop_event, self.settings))
         for task in self._tasks:
             task.add_done_callback(self._task_done)

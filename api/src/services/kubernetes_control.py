@@ -31,16 +31,29 @@ REQUIRED_ACCESS: tuple[tuple[str, str, str], ...] = (
 )
 
 
+# This process's answer, once a cluster gave one (``may_manage_jobs``).
+_job_access: dict[str, bool] = {}
+
+
 async def may_manage_jobs(settings: Any) -> bool:
-    """Whether this process's service account may run the Kubernetes loops."""
+    """Whether this process's service account may run the Kubernetes loops.
+
+    Answered once per process (it makes five access reviews); a review the
+    cluster could not answer is asked again by the next caller.
+    """
+    if "answer" in _job_access:
+        return _job_access["answer"]
     try:
         client = KubernetesJobClient(settings)
     except KubernetesConfigurationError:
-        return False  # Not running in a cluster.
+        _job_access["answer"] = False  # Not running in a cluster.
+        return False
     try:
         for verb, resource, group in REQUIRED_ACCESS:
             if not await client.allows(verb, resource, group):
+                _job_access["answer"] = False
                 return False
+        _job_access["answer"] = True
         return True
     except KubernetesApiError:
         logger.warning("Could not review Kubernetes Job permissions", exc_info=True)
@@ -55,21 +68,17 @@ async def start_kubernetes_loops(
     """Start the loops this process may run; none outside a permitted cluster."""
     if not await may_manage_jobs(settings):
         return []
+    from src.jobs.schedulers.kubernetes_jobs import kubernetes_build_loop
     from src.services.worker_pool.controller import worker_pool_loop
 
     tasks = [
         asyncio.create_task(
             worker_pool_loop(stop_event, settings), name="worker-pool-controller"
-        )
+        ),
+        asyncio.create_task(
+            kubernetes_build_loop(stop_event), name="kubernetes-build-controller"
+        ),
     ]
-    if settings.platform_build_backend == "kubernetes":
-        from src.jobs.schedulers.kubernetes_jobs import kubernetes_build_loop
-
-        tasks.append(
-            asyncio.create_task(
-                kubernetes_build_loop(stop_event), name="kubernetes-build-controller"
-            )
-        )
     logger.info(
         "Kubernetes control loops started",
         extra={"loops": [task.get_name() for task in tasks]},

@@ -1,0 +1,17 @@
+{
+  "key": "pr:1061",
+  "classification": "highlight",
+  "entry_ids": [
+    "6a27f774-175e-4889-b51b-e034e2c8bfad"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1061",
+      "Jack approved this copy, its Agent Prompt and the edits to 32ba9da0 and 7eaa8252 on 2026-10-24 (Claude session finishing the runtime release)."
+    ]
+  },
+  "security_review": {
+    "status": "not_required"
+  }
+}

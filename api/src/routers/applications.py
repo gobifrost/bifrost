@@ -68,6 +68,7 @@ from src.services.platform_jobs import (
     ensure_platform_job_notification,
     publish_platform_job_update,
 )
+from src.services.platform_job_memory_profiles import build_resource_memory_profile_key
 from src.services.application_deploy_storage import ApplicationDeployStorage
 from src.services.application_sdk_status import (
     CurrentApplicationSdkMetadata,
@@ -287,6 +288,9 @@ async def _enqueue_sdk_update_for_application(
         resource_id=str(application.id),
         title=f"Updating SDK for {application.name}",
         action_url=f"/apps/{application.slug}",
+        memory_profile_key=build_resource_memory_profile_key(
+            APPLICATION_SDK_UPDATE_DEFINITION.job_type, application.id
+        ),
     )
     if reused and job.requested_by_user_id != str(user.user_id):
         raise HTTPException(
@@ -956,6 +960,9 @@ async def deploy_application(
             resource_id=str(application.id),
             title=f"Deploying {application.name}",
             action_url=f"/apps/{application.slug}",
+            memory_profile_key=build_resource_memory_profile_key(
+                APPLICATION_DEPLOY_DEFINITION.job_type, application.id
+            ),
         )
         if reused:
             await storage.delete()

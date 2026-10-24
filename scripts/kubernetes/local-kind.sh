@@ -25,7 +25,8 @@ Environment overrides:
   BIFROST_K8S_IMAGE          API image tag to deploy (default: bifrost-api:kind-<worktree-hash>)
   BIFROST_KIND_SKIP_BUILD    Set to 1 to skip docker build and load BIFROST_K8S_IMAGE
   BIFROST_KIND_VERSION       Kind version (default: v0.24.0)
-  BIFROST_KIND_BUILD_JOBS    Set to 1 to opt into Kubernetes App build Jobs
+  BIFROST_KIND_BUILD_JOBS    Set to 1 to apply the builds overlay's Job settings (Jobs run as
+                             bifrost-build-runner); isolation is turned on in Settings
 USAGE
 }
 
@@ -128,7 +129,7 @@ render_runtime_manifest() {
       deployment=$2
     }
     { print }
-    # The API runs the build controller (its Role covers build Jobs too).
+    # The API starts every Job, so it reads the Job settings.
     build_jobs == "1" && deployment == "bifrost-api" && $0 == "                name: bifrost-local-secrets" {
       print "            - configMapRef:"
       print "                name: bifrost-build-jobs-config"
@@ -153,7 +154,7 @@ apply_build_jobs_manifest() {
     return
   fi
 
-  apply_local_manifest "${ROOT_DIR}/k8s/local/build-jobs.yaml"
+  kubectl_local apply -f "${ROOT_DIR}/k8s/local/build-jobs.yaml"
 }
 
 build_and_load_image() {

@@ -104,6 +104,8 @@ class PlatformJob(Base):
     memory_start_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     memory_peak_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     memory_limit_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # An isolated pod's memory request, decided with its limit at claim time.
+    memory_request_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     available_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
