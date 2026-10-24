@@ -65,7 +65,7 @@ The pool experiment and drills change Settings → Kubernetes as an admin would 
 ./test.sh kubernetes pool-drills --only sized_isolated_build max_workers_setting isolation_off
 ```
 
-The `sized_isolated_build` drill requests a pod of about 4 GiB (its 2.5 GiB requirement plus the worker baseline, at the 85% memory threshold), so the Kind node needs that much free memory.
+The `sized_isolated_build` drill requests a pod of about 3.5 GiB (its 2.5 GiB requirement plus the worker baseline, at the 85% memory threshold), so the Kind node needs that much free memory.
 
 To test HTTP access without fixed host ports:
 
