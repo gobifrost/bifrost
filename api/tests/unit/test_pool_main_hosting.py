@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
+from src.services.kubernetes_execution import KubernetesPolicy
 from src.services.memory_requests import MIB, MemoryBudget
 from src.worker import pool_main
 from src.worker.admission import Admission
@@ -17,10 +19,14 @@ GIB = 1024 * MIB
 
 
 def _worker_with_pool(
-    services: int = 0, running: set[str] | None = None, budget: int = GIB
+    services: int = 0,
+    running: set[str] | None = None,
+    budget: int = GIB,
+    incarnation_id: UUID | None = None,
 ) -> PoolWorker:
-    """``running``: execution ids whose children are still alive."""
-    worker = PoolWorker()
+    """``running``: execution ids whose children are still alive;
+    ``incarnation_id``: a job worker's (otherwise a static executor)."""
+    worker = PoolWorker(incarnation_id=incarnation_id)
     children = running if running is not None else set()
     pool = SimpleNamespace(
         service_processes={f"svc-{i}": object() for i in range(services)},
@@ -79,6 +85,43 @@ async def test_a_platform_job_holds_its_memory_only_while_it_runs(monkeypatch) -
     assert seen == [(True, 300 * 2**20)]
     assert worker._platform_jobs == set()
     assert worker.admission.held_bytes() == 0
+
+
+async def test_a_job_worker_idles_out_on_the_idle_time_in_settings(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Idle time is read from Settings -> Kubernetes (at most every
+    ``POLICY_REFRESH_SECONDS``), so a change reaches running workers; Warm
+    workers is ``begin_idle_drain``'s to read."""
+    policy = [KubernetesPolicy(idle_seconds=3600)]
+    reads: list[object] = []
+
+    @asynccontextmanager
+    async def database():  # type: ignore[no-untyped-def]
+        yield "session"
+
+    async def load_kubernetes_policy(db):  # type: ignore[no-untyped-def]
+        reads.append(db)
+        return policy[0]
+
+    drain = AsyncMock(return_value=True)
+    monkeypatch.setattr(pool_main, "get_db_context", database)
+    monkeypatch.setattr(pool_main, "load_kubernetes_policy", load_kubernetes_policy)
+    monkeypatch.setattr(pool_main, "claim_next", AsyncMock(return_value=None))
+    monkeypatch.setattr(pool_main, "begin_idle_drain", drain)
+    monkeypatch.setattr(pool_main, "POLL_SECONDS", 0.01)
+    worker = _worker_with_pool(incarnation_id=uuid4())
+
+    loop = asyncio.create_task(worker._claim_loop())
+    await asyncio.sleep(0.2)
+    assert not loop.done() and drain.await_count == 0
+    assert reads == ["session"], "read once, not on every pass"
+
+    # An admin shortens Idle time; the worker sees it at its next read.
+    policy[0] = KubernetesPolicy(idle_seconds=1)
+    worker._idle_seconds_read_at -= pool_main.POLICY_REFRESH_SECONDS  # type: ignore[operator]
+    await asyncio.wait_for(loop, timeout=3)
+
+    assert len(reads) == 2
+    drain.assert_awaited_once_with(worker.incarnation_id)
 
 
 async def test_draining_hands_services_over_first_and_waits_for_platform_jobs(monkeypatch) -> None:  # type: ignore[no-untyped-def]

@@ -6,6 +6,7 @@ import asyncio
 import copy
 import time
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, AsyncGenerator
@@ -13,12 +14,14 @@ from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.config import get_settings
 from src.core.cache.redis_client import get_redis
 from src.models.enums import ExecutionStatus
+from src.models.orm.config import SystemConfig
 from src.models.orm.execution_workers import ExecutionWorker
 from src.models.orm.executions import Execution
 from src.models.orm.work_dispatches import WorkDispatch
@@ -26,6 +29,13 @@ from src.models.orm.workflows import Workflow
 from src.services import work_dispatch
 from src.services.execution import async_executor, workflow_dispatch
 from src.services.execution.async_executor import _publish_pending
+from src.services.kubernetes_execution import (
+    KUBERNETES_CONFIG_CATEGORY,
+    KUBERNETES_CONFIG_KEY,
+    POLICY_FIELDS,
+    KubernetesExecutionService,
+    KubernetesPolicy,
+)
 from src.services.memory_requests import (
     DEFAULT_WORKFLOW_REQUEST_BYTES,
     LAUNCHABLE_KEY,
@@ -43,18 +53,18 @@ SETTINGS = SimpleNamespace(
     kubernetes_job_configmap="config",
     kubernetes_job_secret="secret",
     kubernetes_job_service_account="runner",
-    pool_max_workers=2,
-    pool_min_workers=0,
-    pool_idle_seconds=300,
     pool_max_lifetime_seconds=21600,
     pool_start_timeout_seconds=300,
     pool_worker_memory_request_mib=512,
-    pool_worker_memory_limit_mib=2048,
-    pool_worker_max_memory_mib=8192,
     pool_worker_cpu_request="250m",
     pool_worker_cpu_limit="2",
     memory_pressure_threshold=0.85,
     redis_url=get_settings().redis_url,
+)
+
+# Settings -> Kubernetes, stored for every test that uses the database.
+POLICY = KubernetesPolicy(
+    warm_workers=0, max_workers=2, worker_memory_mib=2048, largest_worker_mib=8192, idle_seconds=300
 )
 
 SPEC = WorkerJobSpec(
@@ -108,8 +118,28 @@ class FakeCluster:
         self.deleted.append(name)
 
 
-@pytest.fixture
-def db(async_session_factory: async_sessionmaker[AsyncSession], monkeypatch):
+async def _delete_policy(sessions: async_sessionmaker[AsyncSession]) -> None:
+    async with sessions() as session:
+        await session.execute(
+            delete(SystemConfig).where(
+                SystemConfig.category == KUBERNETES_CONFIG_CATEGORY,
+                SystemConfig.key == KUBERNETES_CONFIG_KEY,
+            )
+        )
+        await session.commit()
+
+
+async def _store_policy(sessions: async_sessionmaker[AsyncSession], policy: KubernetesPolicy) -> None:
+    """What an admin saves in Settings -> Kubernetes."""
+    async with sessions() as session:
+        await KubernetesExecutionService(session).update_policy(
+            {name: getattr(policy, name) for name in POLICY_FIELDS}, updated_by="test"
+        )
+        await session.commit()
+
+
+@pytest_asyncio.fixture
+async def db(async_session_factory: async_sessionmaker[AsyncSession], monkeypatch):
     @asynccontextmanager
     async def context() -> AsyncGenerator[AsyncSession, None]:
         async with async_session_factory() as session:
@@ -131,7 +161,10 @@ def db(async_session_factory: async_sessionmaker[AsyncSession], monkeypatch):
     monkeypatch.setattr(work_dispatch, "wake_pool_workers", wake)
     monkeypatch.setattr(workflow_dispatch, "get_redis_client", AsyncMock)
     monkeypatch.setattr("src.services.execution.queue_tracker.add_to_queue", AsyncMock())
-    return SimpleNamespace(sessions=async_session_factory, wake=wake)
+    await _delete_policy(async_session_factory)
+    await _store_policy(async_session_factory, POLICY)
+    yield SimpleNamespace(sessions=async_session_factory, wake=wake)
+    await _delete_policy(async_session_factory)
 
 
 async def _clear_pool_state(sessions) -> None:  # type: ignore[no-untyped-def]
@@ -396,7 +429,7 @@ def test_the_job_baseline_learns_from_sized_jobs_too() -> None:
         form="job", memory_limit_bytes=4 * GIB, memory_budget_bytes=2 * GIB
     )
     expected = int(4 * GIB * SETTINGS.memory_pressure_threshold) - 2 * GIB
-    assert controller._job_baseline([sized], SETTINGS) == expected  # type: ignore[arg-type]
+    assert controller._job_baseline([sized], 2 * GIB, SETTINGS.memory_pressure_threshold) == expected
 
 
 async def test_a_sized_job_drains_when_idle_and_is_never_the_warm_minimum(db) -> None:
@@ -409,10 +442,11 @@ async def test_a_sized_job_drains_when_idle_and_is_never_the_warm_minimum(db) ->
         )
         await session.commit()
 
-    warm = SimpleNamespace(**{**vars(SETTINGS), "pool_min_workers": 1})
-    launched = await controller.WorkerPoolController(FakeCluster(), warm, SPEC).launch_for_demand()  # type: ignore[arg-type]
+    warm = replace(POLICY, warm_workers=1)
+    await _store_policy(db.sessions, warm)
+    launched = await controller.WorkerPoolController(FakeCluster(), SETTINGS, SPEC).launch_for_demand(warm)  # type: ignore[arg-type]
     assert len(launched) == 1, "the warm minimum is a standard Job"
-    assert await claims.begin_idle_drain(sized.id, keep_ready=1)
+    assert await claims.begin_idle_drain(sized.id)
 
 
 # --- controller ---------------------------------------------------------------
@@ -429,7 +463,7 @@ async def test_demand_launches_bounded_workers_and_binds_before_start(db) -> Non
 
     async with db.sessions() as session:
         workers = (await session.execute(select(ExecutionWorker))).scalars().all()
-    assert len(workers) == SETTINGS.pool_max_workers
+    assert len(workers) == POLICY.max_workers
     assert all(w.state == "starting" and w.kubernetes_job_uid for w in workers)
     assert sorted(cluster.created) == sorted(w.kubernetes_job_name for w in workers)
     assert set(cluster.started) == set(cluster.created)
@@ -508,8 +542,8 @@ async def test_silent_worker_is_lost_and_its_unstarted_work_released(db, monkeyp
     cluster = FakeCluster()
     pool = controller.WorkerPoolController(cluster, SETTINGS, SPEC)  # type: ignore[arg-type]
     run_id = await enqueue_agent_run(agent_id=None, trigger_type="sdk", lineage=None)
-    [worker_id] = await pool.launch_for_demand()
-    await pool.reconcile_worker(worker_id)
+    [worker_id] = await pool.launch_for_demand(POLICY)
+    await pool.reconcile_worker(worker_id, POLICY)
     async with db.sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
     assert await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod") is not None
@@ -525,7 +559,7 @@ async def test_silent_worker_is_lost_and_its_unstarted_work_released(db, monkeyp
             update(WorkDispatch).values(created_at=datetime.now(timezone.utc) - timedelta(minutes=5))
         )
         await session.commit()
-    await pool.reconcile_worker(worker_id)
+    await pool.reconcile_worker(worker_id, POLICY)
     await work_dispatch.reconcile_work_dispatches()
 
     async with db.sessions() as session:
@@ -538,7 +572,7 @@ async def test_silent_worker_is_lost_and_its_unstarted_work_released(db, monkeyp
     assert (worker.state, worker.end_reason) == ("lost", "heartbeat_lost")
     assert dispatch.assigned_worker_id is None
     assert cluster.deleted == []  # deleted on the next pass, as a lost worker
-    await pool.reconcile_worker(worker_id)
+    await pool.reconcile_worker(worker_id, POLICY)
     assert cluster.deleted == [worker.kubernetes_job_name]
 
 
@@ -611,8 +645,8 @@ async def test_no_executor_is_lost_until_the_database_was_reachable_long_enough(
     pool = controller.WorkerPoolController(FakeCluster(), SETTINGS, SPEC)  # type: ignore[arg-type]
     pool.reachability = liveness.Reachability()
     await _accept_pool_run()
-    [worker_id] = await pool.launch_for_demand()
-    await pool.reconcile_worker(worker_id)
+    [worker_id] = await pool.launch_for_demand(POLICY)
+    await pool.reconcile_worker(worker_id, POLICY)
     async with db.sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
     await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod")
@@ -623,7 +657,7 @@ async def test_no_executor_is_lost_until_the_database_was_reachable_long_enough(
         await session.commit()
 
     pool.reachability.connected()
-    await pool.reconcile_worker(worker_id)
+    await pool.reconcile_worker(worker_id, POLICY)
 
     async with db.sessions() as session:
         assert (await session.get(ExecutionWorker, worker_id)).state == "ready"
@@ -658,7 +692,7 @@ async def test_one_worker_s_failure_does_not_stop_the_others(db, monkeypatch) ->
     pool = controller.WorkerPoolController(FakeCluster(), SETTINGS, SPEC)  # type: ignore[arg-type]
     reconciled: list[UUID] = []
 
-    async def reconcile_worker(worker_id: UUID) -> None:
+    async def reconcile_worker(worker_id: UUID, policy: KubernetesPolicy) -> None:
         reconciled.append(worker_id)
         if worker_id == first.id:
             raise RuntimeError("Worker Job UID does not match its incarnation")
@@ -700,7 +734,9 @@ def test_reachability_is_steady_only_after_an_unbroken_lost_window() -> None:
 
 
 def test_worker_job_is_suspended_tokenless_and_has_no_deadline() -> None:
-    manifest = build_worker_job_manifest(uuid4(), SETTINGS, SPEC, memory_limit_bytes=None)
+    manifest = build_worker_job_manifest(
+        uuid4(), SETTINGS, SPEC, standard_limit_mib=3072, memory_limit_bytes=None
+    )
     spec = manifest["spec"]
     pod = spec["template"]["spec"]
     container = pod["containers"][0]
@@ -713,24 +749,45 @@ def test_worker_job_is_suspended_tokenless_and_has_no_deadline() -> None:
     assert pod["automountServiceAccountToken"] is False
     assert container["command"] == ["python", "-m", "src.worker.pool_main"]
     assert container["resources"]["requests"]["memory"] == "512Mi"
-    assert container["resources"]["limits"]["memory"] == "2048Mi"
+    assert container["resources"]["limits"]["memory"] == "3072Mi", "Worker memory from Settings"
     assert "controller-uid" in env["BIFROST_KUBERNETES_JOB_UID"]["valueFrom"]["fieldRef"]["fieldPath"]
+    # Warm workers and Idle time are read from Settings, not injected.
+    assert {name for name in env if name.startswith("BIFROST_POOL_")} == {
+        "BIFROST_POOL_MAX_LIFETIME_SECONDS"
+    }
 
 
-async def test_warm_minimum_is_kept_ready_and_never_idles_out(db) -> None:
-    warm = SimpleNamespace(**{**vars(SETTINGS), "pool_min_workers": 1})
+async def test_warm_minimum_is_kept_ready_until_settings_lower_it(db) -> None:
+    warm = replace(POLICY, warm_workers=1)
+    await _store_policy(db.sessions, warm)
     cluster = FakeCluster()
-    pool = controller.WorkerPoolController(cluster, warm, SPEC)  # type: ignore[arg-type]
+    pool = controller.WorkerPoolController(cluster, SETTINGS, SPEC)  # type: ignore[arg-type]
 
-    [worker_id] = await pool.launch_for_demand()  # no demand at all
-    assert await pool.launch_for_demand() == []  # already at the minimum
-    await pool.reconcile_worker(worker_id)
+    [worker_id] = await pool.launch_for_demand(warm)  # no demand at all
+    assert await pool.launch_for_demand(warm) == []  # already at the minimum
+    await pool.reconcile_worker(worker_id, warm)
     async with db.sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
     await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod")
 
-    assert not await claims.begin_idle_drain(worker_id, keep_ready=1)
-    assert await claims.begin_idle_drain(worker_id, keep_ready=0)
+    assert not await claims.begin_idle_drain(worker_id)
+    # An admin lowers Warm workers: the running idle worker drains.
+    await _store_policy(db.sessions, POLICY)
+    assert await claims.begin_idle_drain(worker_id)
+
+
+async def test_a_max_workers_change_in_settings_applies_on_the_next_pass(db) -> None:
+    for _ in range(3):  # each needs a standard worker to itself
+        await _set_request(db.sessions, await _accept_pool_run(), 600 * MIB)
+    cluster = FakeCluster()
+    pool = controller.WorkerPoolController(cluster, SETTINGS, SPEC)  # type: ignore[arg-type]
+
+    await pool.reconcile()
+    assert len(cluster.created) == POLICY.max_workers
+
+    await _store_policy(db.sessions, replace(POLICY, max_workers=3))
+    await pool.reconcile()
+    assert len(cluster.created) == 3, "the same controller, no restart"
 
 
 async def test_runs_of_a_lost_worker_end_visibly_and_are_not_replayed(db) -> None:
@@ -740,8 +797,8 @@ async def test_runs_of_a_lost_worker_end_visibly_and_are_not_replayed(db) -> Non
     cluster = FakeCluster()
     pool = controller.WorkerPoolController(cluster, SETTINGS, SPEC)  # type: ignore[arg-type]
     running_id = await _accept_pool_run()
-    [worker_id] = await pool.launch_for_demand()
-    await pool.reconcile_worker(worker_id)
+    [worker_id] = await pool.launch_for_demand(POLICY)
+    await pool.reconcile_worker(worker_id, POLICY)
     async with db.sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
     await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod")
@@ -758,7 +815,7 @@ async def test_runs_of_a_lost_worker_end_visibly_and_are_not_replayed(db) -> Non
             update(ExecutionWorker).values(heartbeat_at=datetime.now(timezone.utc) - timedelta(minutes=5))
         )
         await session.commit()
-    await pool.reconcile_worker(worker_id)
+    await pool.reconcile_worker(worker_id, POLICY)
 
     async with db.sessions() as session:
         execution = await session.get(Execution, UUID(running_id))
@@ -831,8 +888,8 @@ async def _lose_running_job_worker(db, *, oom: bool) -> tuple[UUID, UUID]:  # ty
     )
     cluster = FakeCluster()
     pool = controller.WorkerPoolController(cluster, SETTINGS, SPEC)  # type: ignore[arg-type]
-    [worker_id] = await pool.launch_for_demand()
-    await pool.reconcile_worker(worker_id)
+    [worker_id] = await pool.launch_for_demand(POLICY)
+    await pool.reconcile_worker(worker_id, POLICY)
     async with db.sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
     await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod")
@@ -851,7 +908,7 @@ async def _lose_running_job_worker(db, *, oom: bool) -> tuple[UUID, UUID]:  # ty
     cluster.pods[job_uid] = [
         {"status": {"containerStatuses": [{"state": {"terminated": {"reason": reason}}}]}}
     ]
-    await pool.reconcile_worker(worker_id)
+    await pool.reconcile_worker(worker_id, POLICY)
     return workflow.id, worker_id
 
 
@@ -981,8 +1038,8 @@ async def test_a_sized_worker_is_launched_once_for_its_dispatch(db) -> None:
     cluster = FakeCluster()
     pool = controller.WorkerPoolController(cluster, SETTINGS, SPEC)  # type: ignore[arg-type]
 
-    [worker_id] = await pool.launch_for_demand()
-    assert await pool.launch_for_demand() == [], "its dispatch is already covered"
+    [worker_id] = await pool.launch_for_demand(POLICY)
+    assert await pool.launch_for_demand(POLICY) == [], "its dispatch is already covered"
 
     async with db.sessions() as session:
         worker = await session.get(ExecutionWorker, worker_id)
@@ -1007,11 +1064,13 @@ async def test_a_job_worker_counts_its_expected_budget_until_it_reports_one(db) 
     await _accept_pool_run()
     cluster = FakeCluster()
 
-    assert await controller.WorkerPoolController(cluster, SETTINGS, SPEC).launch_for_demand() == []  # type: ignore[arg-type]
+    assert await controller.WorkerPoolController(cluster, SETTINGS, SPEC).launch_for_demand(POLICY) == []  # type: ignore[arg-type]
 
 
 def test_a_sized_worker_job_requests_its_whole_limit() -> None:
-    manifest = build_worker_job_manifest(uuid4(), SETTINGS, SPEC, memory_limit_bytes=4 * GIB)
+    manifest = build_worker_job_manifest(
+        uuid4(), SETTINGS, SPEC, standard_limit_mib=2048, memory_limit_bytes=4 * GIB
+    )
     resources = manifest["spec"]["template"]["spec"]["containers"][0]["resources"]
 
     assert resources["requests"]["memory"] == resources["limits"]["memory"] == "4096Mi"
@@ -1127,7 +1186,7 @@ async def test_a_platform_job_waiting_for_memory_launches_a_worker(db) -> None:
         session.add(waiting)
         await session.commit()
     try:
-        launched = await controller.WorkerPoolController(FakeCluster(), SETTINGS, SPEC).launch_for_demand()  # type: ignore[arg-type]
+        launched = await controller.WorkerPoolController(FakeCluster(), SETTINGS, SPEC).launch_for_demand(POLICY)  # type: ignore[arg-type]
         assert len(launched) == 1
         async with db.sessions() as session:
             worker = await session.get(ExecutionWorker, launched[0])
@@ -1203,7 +1262,7 @@ async def test_a_workflow_run_requests_its_learned_peak_or_the_default(db) -> No
 
 # --- replacing Jobs after an upgrade (#1052) ----------------------------------
 
-WARM = SimpleNamespace(**{**vars(SETTINGS), "pool_min_workers": 1, "pool_max_workers": 4})
+WARM = replace(POLICY, warm_workers=1, max_workers=4)
 
 
 async def _admitted_job(  # type: ignore[no-untyped-def]
@@ -1223,20 +1282,20 @@ async def _admitted_job(  # type: ignore[no-untyped-def]
     return worker.id
 
 
-def _controller(cluster: FakeCluster, version: str, settings=WARM) -> controller.WorkerPoolController:  # type: ignore[no-untyped-def]
+def _controller(cluster: FakeCluster, version: str, settings=SETTINGS) -> controller.WorkerPoolController:  # type: ignore[no-untyped-def]
     pool = controller.WorkerPoolController(cluster, settings, SPEC)  # type: ignore[arg-type]
     pool.version = version
     return pool
 
 
-async def _pass(pool: controller.WorkerPoolController) -> list[UUID]:
+async def _pass(pool: controller.WorkerPoolController, policy: KubernetesPolicy = WARM) -> list[UUID]:
     """One reconcile pass without the per-Job reconciliation: publish, launch
     (creating the launched Jobs), replace. Returns the Jobs launched."""
     pool.live = await controller._publish_live(pool.id, pool.version)
-    launched = await pool.launch_for_demand()
+    launched = await pool.launch_for_demand(policy)
     for worker_id in launched:
-        await pool.reconcile_worker(worker_id)
-    await pool.replace_outdated()
+        await pool.reconcile_worker(worker_id, policy)
+    await pool.replace_outdated(policy)
     return launched
 
 
@@ -1345,11 +1404,10 @@ async def test_a_job_launched_for_a_dispatch_drains_only_after_claiming_it(db) -
 
 
 async def test_without_a_warm_minimum_outdated_jobs_drain_at_once(db) -> None:
-    cold = SimpleNamespace(**{**vars(WARM), "pool_min_workers": 0})
-    pool = _controller(FakeCluster(), "2.0", cold)
+    pool = _controller(FakeCluster(), "2.0")
     outdated = await _admitted_job(db.sessions, version="1.0", launched_by=None)
 
-    assert await _pass(pool) == []
+    assert await _pass(pool, replace(WARM, warm_workers=0)) == []
     assert await _state(db.sessions, outdated) == ("draining", "rotated")
 
 
@@ -1359,7 +1417,8 @@ async def test_a_current_job_that_idles_out_first_is_relaunched(db) -> None:
     pool = _controller(FakeCluster(), "2.0")
     outdated = await _admitted_job(db.sessions, version="1.0", launched_by=None)
     current = await _admitted_job(db.sessions, version="2.0", launched_by=pool.id)
-    assert await claims.begin_idle_drain(current, keep_ready=1)
+    await _store_policy(db.sessions, WARM)
+    assert await claims.begin_idle_drain(current)
 
     [relaunched] = await _pass(pool)
     assert await _state(db.sessions, outdated) == ("ready", None)
@@ -1373,16 +1432,16 @@ async def test_the_creating_controller_is_the_launcher(db) -> None:
     names the one whose image the Job runs."""
     cluster = FakeCluster()
     reserving, creating = _controller(cluster, "2.0"), _controller(cluster, "2.0")
-    [worker_id] = await reserving.launch_for_demand()
+    [worker_id] = await reserving.launch_for_demand(WARM)
 
-    await creating.reconcile_worker(worker_id)
+    await creating.reconcile_worker(worker_id, WARM)
 
     async with db.sessions() as session:
         assert (await session.get(ExecutionWorker, worker_id)).launched_by == creating.id
 
 
 async def test_a_long_drain_is_reported_once(db, caplog) -> None:  # type: ignore[no-untyped-def]
-    pool = _controller(FakeCluster(), "2.0", SimpleNamespace(**{**vars(WARM), "pool_max_lifetime_seconds": 0}))
+    pool = _controller(FakeCluster(), "2.0", SimpleNamespace(**{**vars(SETTINGS), "pool_max_lifetime_seconds": 0}))
     worker = SimpleNamespace(id=uuid4(), state="draining", active_runs=1, end_reason="rotated")
 
     pool._watch_drain(worker)  # type: ignore[arg-type]
@@ -1410,7 +1469,9 @@ async def test_worker_jobs_pull_like_the_controller() -> None:
     })
 
     spec = await resolve_worker_job_spec(client, unset)  # type: ignore[arg-type]
-    manifest = build_worker_job_manifest(uuid4(), SETTINGS, spec, memory_limit_bytes=None)
+    manifest = build_worker_job_manifest(
+        uuid4(), SETTINGS, spec, standard_limit_mib=2048, memory_limit_bytes=None
+    )
 
     assert manifest["spec"]["template"]["spec"]["containers"][0]["imagePullPolicy"] == "Always"
     assert (await resolve_worker_job_spec(client, SETTINGS)).image_pull_policy == "IfNotPresent"  # type: ignore[arg-type]
@@ -1437,13 +1498,18 @@ async def test_an_adopted_job_keeps_no_launcher(db) -> None:
     instance's image: the adopting controller does not vouch for it."""
     cluster = FakeCluster()
     dead, adopting = _controller(cluster, "1.0"), _controller(cluster, "2.0")
-    [worker_id] = await dead.launch_for_demand()
+    [worker_id] = await dead.launch_for_demand(WARM)
     async with db.sessions() as session:
         worker = await session.get(ExecutionWorker, worker_id)
-        await cluster.create_job(build_worker_job_manifest(worker_id, WARM, SPEC, memory_limit_bytes=None))
+        await cluster.create_job(
+            build_worker_job_manifest(
+                worker_id, SETTINGS, SPEC, standard_limit_mib=WARM.worker_memory_mib,
+                memory_limit_bytes=None,
+            )
+        )
         name = worker.kubernetes_job_name
 
-    await adopting.reconcile_worker(worker_id)
+    await adopting.reconcile_worker(worker_id, WARM)
 
     async with db.sessions() as session:
         worker = await session.get(ExecutionWorker, worker_id)
@@ -1454,6 +1520,7 @@ async def test_an_adopted_job_keeps_no_launcher(db) -> None:
 async def test_a_full_reconcile_launches_before_it_drains(db) -> None:
     from shared.version import get_version
 
+    await _store_policy(db.sessions, WARM)
     cluster = FakeCluster()
     old = _controller(cluster, "old-build")
     await old.reconcile()

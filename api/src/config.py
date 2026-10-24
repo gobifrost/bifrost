@@ -145,23 +145,8 @@ class Settings(BaseSettings):
     # ==========================================================================
     # Executors and on-demand Kubernetes workers (#769)
     # ==========================================================================
-    pool_max_workers: int = Field(
-        default=6, ge=1, description="Maximum concurrent on-demand worker Jobs"
-    )
-    pool_min_workers: int = Field(
-        default=1,
-        ge=0,
-        description=(
-            "Job workers kept ready even with no work (the warm minimum). A "
-            "worker cold start takes seconds, so interactive runs need warm "
-            "capacity: this minimum or static executors."
-        ),
-    )
-    pool_idle_seconds: int = Field(
-        default=300,
-        ge=1,
-        description="Seconds a reusable worker stays up with no work before draining",
-    )
+    # Warm workers, Max workers, Worker memory, Largest worker and Idle time
+    # live in Settings -> Kubernetes (src.services.kubernetes_execution).
     pool_max_lifetime_seconds: int = Field(
         default=6 * 3600,
         ge=60,
@@ -173,17 +158,6 @@ class Settings(BaseSettings):
         description="Seconds a launched worker may take to become ready",
     )
     pool_worker_memory_request_mib: int = Field(default=512, ge=1)
-    pool_worker_memory_limit_mib: int = Field(
-        default=2048, ge=1, description="Memory limit of a standard worker Job"
-    )
-    pool_worker_max_memory_mib: int = Field(
-        default=8192,
-        ge=1,
-        description=(
-            "Largest worker Job the controller launches for work a standard "
-            "worker cannot fit; work needing more fails visibly"
-        ),
-    )
     pool_worker_cpu_request: str = Field(default="250m")
     pool_worker_cpu_limit: str = Field(default="2")
 

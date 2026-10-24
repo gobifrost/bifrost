@@ -15,6 +15,10 @@ After an upgrade the controller replaces Jobs running a build no live
 controller runs, launched by a controller that is gone (``LiveControllers``):
 the warm minimum launches current Jobs, and once they are ready the outdated
 ones drain (never deleted), so their runs finish.
+
+Scaling (Warm workers, Max workers, Worker memory, Largest worker) is read
+from Settings -> Kubernetes at the start of every pass, so a change applies
+without a restart.
 """
 
 from __future__ import annotations
@@ -43,6 +47,7 @@ from src.jobs.platform.kubernetes_client import (
 from src.models.orm.execution_workers import ExecutionWorker
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.work_dispatches import WorkDispatch
+from src.services.kubernetes_execution import KubernetesPolicy, load_kubernetes_policy
 from src.services.platform_jobs import WAITING_FOR_MEMORY
 from src.services.memory_requests import (
     JOB_BASELINE_ESTIMATE_BYTES,
@@ -127,7 +132,11 @@ class WorkerPoolController:
                     select(ExecutionWorker).where(ExecutionWorker.state.in_(LIVE_STATES))
                 )
             ).scalars().all()
-            await _publish_launchable(self._limits(_job_baseline(workers, self.settings))[2])
+            policy = await load_kubernetes_policy(db)
+            baseline = _job_baseline(
+                workers, policy.worker_memory_mib * 2**20, self.settings.memory_pressure_threshold
+            )
+            await _publish_launchable(self._limits(policy, baseline)[2])
         self.live = await _publish_live(self.id, self.version)
         async with get_db_context() as db:
             ids = (
@@ -146,16 +155,16 @@ class WorkerPoolController:
         for worker_id in set(self._draining_since) - set(ids):
             del self._draining_since[worker_id]
         for worker_id in ids:
-            await self._reconcile_one(worker_id)
-        for worker_id in await self.launch_for_demand():
-            await self._reconcile_one(worker_id)
-        await self.replace_outdated()
+            await self._reconcile_one(worker_id, policy)
+        for worker_id in await self.launch_for_demand(policy):
+            await self._reconcile_one(worker_id, policy)
+        await self.replace_outdated(policy)
 
-    async def _reconcile_one(self, worker_id: UUID) -> None:
+    async def _reconcile_one(self, worker_id: UUID, policy: KubernetesPolicy) -> None:
         """One worker's failure (a slow Kubernetes API, a replaced Job) must
         not stop the others from being reconciled."""
         try:
-            await self.reconcile_worker(worker_id)
+            await self.reconcile_worker(worker_id, policy)
         except Exception as exc:
             logger.error(
                 "Reusable worker reconciliation failed (%s): %s",
@@ -164,7 +173,7 @@ class WorkerPoolController:
                 extra={"worker_id": str(worker_id)},
             )
 
-    async def reconcile_worker(self, worker_id: UUID) -> None:
+    async def reconcile_worker(self, worker_id: UUID, policy: KubernetesPolicy) -> None:
         async with get_db_context() as db:
             worker = await db.scalar(
                 select(ExecutionWorker)
@@ -193,6 +202,7 @@ class WorkerPoolController:
                             worker.id,
                             self.settings,
                             self.spec,
+                            standard_limit_mib=policy.worker_memory_mib,
                             memory_limit_bytes=worker.memory_limit_bytes,
                         )
                     )
@@ -241,7 +251,7 @@ class WorkerPoolController:
 
     def _watch_drain(self, worker: ExecutionWorker) -> None:
         """Warn once when a draining worker's runs outlast the maximum
-        lifetime: it still counts toward ``pool_max_workers``."""
+        lifetime: it still counts toward Max workers."""
         if worker.state != "draining" or worker.active_runs == 0:
             self._draining_since.pop(worker.id, None)
             return
@@ -270,18 +280,18 @@ class WorkerPoolController:
         worker.end_reason = reason
         worker.ended_at = now
 
-    def _limits(self, baseline_bytes: int) -> tuple[int, int, int]:
+    def _limits(self, policy: KubernetesPolicy, baseline_bytes: int) -> tuple[int, int, int]:
         """Standard Job limit, its budget, and the largest budget launchable."""
         threshold = self.settings.memory_pressure_threshold
-        standard_limit = self.settings.pool_worker_memory_limit_mib * 2**20
-        largest_limit = max(standard_limit, self.settings.pool_worker_max_memory_mib * 2**20)
+        standard_limit = policy.worker_memory_mib * 2**20
+        largest_limit = max(standard_limit, policy.largest_worker_mib * 2**20)
         return (
             standard_limit,
             job_budget_bytes(standard_limit, threshold, baseline_bytes),
             job_budget_bytes(largest_limit, threshold, baseline_bytes),
         )
 
-    async def launch_for_demand(self) -> list[UUID]:
+    async def launch_for_demand(self, policy: KubernetesPolicy) -> list[UUID]:
         """Reserve incarnations for waiting work, sized by memory, within ceilings.
 
         Waiting requests (dispatches, and local platform jobs waiting for
@@ -290,7 +300,7 @@ class WorkerPoolController:
         counts as the one expected). What does not fit goes into new
         standard Jobs, or a Job sized for one request a standard Job cannot
         hold (reserved for it when it is a dispatch). The warm minimum is
-        kept, and Jobs never exceed ``pool_max_workers``.
+        kept, and Jobs never exceed Max workers.
         """
         async with get_db_context() as db:
             locked = (
@@ -331,8 +341,10 @@ class WorkerPoolController:
                     select(ExecutionWorker).where(ExecutionWorker.state.in_(LIVE_STATES))
                 )
             ).scalars().all()
-            baseline = _job_baseline(workers, self.settings)
-            standard_limit, standard_budget, largest_budget = self._limits(baseline)
+            baseline = _job_baseline(
+                workers, policy.worker_memory_mib * 2**20, self.settings.memory_pressure_threshold
+            )
+            standard_limit, standard_budget, largest_budget = self._limits(policy, baseline)
 
             requests = {row.id: row.memory_request_bytes for row in waiting}
             free: list[int] = []
@@ -376,10 +388,8 @@ class WorkerPoolController:
                 and worker.state != "draining"
                 and not self.live.outdated(worker)
             )
-            warm = max(
-                0, self.settings.pool_min_workers - undrained - plan.standard - len(plan.sized)
-            )
-            room = max(0, self.settings.pool_max_workers - jobs)
+            warm = max(0, policy.warm_workers - undrained - plan.standard - len(plan.sized))
+            room = max(0, policy.max_workers - jobs)
             launched: list[UUID] = []
             for dispatch_id, request in plan.sized:
                 if len(launched) >= room:
@@ -391,7 +401,7 @@ class WorkerPoolController:
                             request,
                             self.settings.memory_pressure_threshold,
                             baseline,
-                            max(standard_limit, self.settings.pool_worker_max_memory_mib * 2**20),
+                            max(standard_limit, policy.largest_worker_mib * 2**20),
                         ),
                         reserved_for=dispatch_id if dispatch_id in dispatch_ids else None,
                     )
@@ -413,7 +423,7 @@ class WorkerPoolController:
             )
         return launched
 
-    async def replace_outdated(self) -> list[UUID]:
+    async def replace_outdated(self, policy: KubernetesPolicy) -> list[UUID]:
         """Drain outdated Jobs once current ones hold the warm minimum.
 
         Their replacements were launched as part of the warm minimum
@@ -452,7 +462,7 @@ class WorkerPoolController:
                 and worker.memory_budget_bytes is not None
                 and not self.live.outdated(worker)
             )
-            if not outdated or current < self.settings.pool_min_workers:
+            if not outdated or current < policy.warm_workers:
                 return []
             drained = list(
                 (
@@ -537,12 +547,11 @@ def _plan_launches(
     return LaunchPlan(standard=len(new_bins), sized=sized)
 
 
-def _job_baseline(workers: Any, settings: Settings) -> int:
+def _job_baseline(workers: Any, standard_limit: int, threshold: float) -> int:
     """A Job worker's own memory, from the largest any Job reported (its
     limit at the threshold, less the budget it measured)."""
-    standard_limit = settings.pool_worker_memory_limit_mib * 2**20
     reported = [
-        int((worker.memory_limit_bytes or standard_limit) * settings.memory_pressure_threshold)
+        int((worker.memory_limit_bytes or standard_limit) * threshold)
         - worker.memory_budget_bytes
         for worker in workers
         if worker.form == "job" and worker.memory_budget_bytes is not None

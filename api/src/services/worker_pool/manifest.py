@@ -81,11 +81,13 @@ def build_worker_job_manifest(
     settings: Any,
     spec: WorkerJobSpec,
     *,
+    standard_limit_mib: int,
     memory_limit_bytes: int | None,
 ) -> dict[str, Any]:
     """Render the suspended Job for one reusable worker.
 
-    A standard worker has the configured memory request and limit. A worker
+    A standard worker has the configured memory request and the Worker
+    memory limit from Settings -> Kubernetes (``standard_limit_mib``). A worker
     sized for one large request (``memory_limit_bytes``) requests its whole
     limit, so it is only scheduled where that memory exists.
 
@@ -97,13 +99,13 @@ def build_worker_job_manifest(
     namespace = spec.namespace
     image = spec.image
     service_account = spec.service_account
-    if settings.pool_worker_memory_request_mib > settings.pool_worker_memory_limit_mib:
+    if settings.pool_worker_memory_request_mib > standard_limit_mib:
         raise KubernetesConfigurationError(
-            "pool_worker_memory_request_mib must not exceed pool_worker_memory_limit_mib"
+            "pool_worker_memory_request_mib must not exceed Worker memory"
         )
     if memory_limit_bytes is None:
         memory_request = f"{settings.pool_worker_memory_request_mib}Mi"
-        memory_limit = f"{settings.pool_worker_memory_limit_mib}Mi"
+        memory_limit = f"{standard_limit_mib}Mi"
     else:
         memory_request = memory_limit = f"{memory_limit_bytes // 2**20}Mi"
     labels = {
@@ -147,19 +149,14 @@ def build_worker_job_manifest(
                             "envFrom": [dict(source) for source in spec.env_from],
                             "env": [
                                 {"name": "BIFROST_WORKER_INCARNATION_ID", "value": str(incarnation_id)},
-                                # The controller's pool policy, so a worker never
+                                # The controller's lifetime, so a worker never
                                 # disagrees with the controller that launched it.
-                                {
-                                    "name": "BIFROST_POOL_IDLE_SECONDS",
-                                    "value": str(settings.pool_idle_seconds),
-                                },
+                                # Warm workers and Idle time it reads from
+                                # Settings -> Kubernetes, so a change applies
+                                # to running workers too.
                                 {
                                     "name": "BIFROST_POOL_MAX_LIFETIME_SECONDS",
                                     "value": str(settings.pool_max_lifetime_seconds),
-                                },
-                                {
-                                    "name": "BIFROST_POOL_MIN_WORKERS",
-                                    "value": str(settings.pool_min_workers),
                                 },
                                 {"name": "BIFROST_DATABASE_POOL_SIZE", "value": "1"},
                                 {"name": "BIFROST_DATABASE_MAX_OVERFLOW", "value": "2"},
