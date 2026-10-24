@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.database import get_db_context
 from src.models.enums import ExecutionStatus
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
@@ -22,6 +23,13 @@ logger = logging.getLogger(__name__)
 EXECUTOR_LOST = (
     "The worker running this stopped before it finished. It was not retried, "
     "because it may already have taken effect."
+)
+# How far back an executor remembers what it started, and so how far back a
+# claim it never started is looked for.
+UNSTARTED_CLAIM_WINDOW = timedelta(minutes=10)
+CLAIM_NOT_STARTED = (
+    "The worker that took this lost its database connection before starting "
+    "it. It was not run."
 )
 
 
@@ -103,7 +111,94 @@ async def end_runs_of_lost_worker(
     return ended
 
 
-async def announce_ended_runs(execution_ids: list[UUID]) -> None:
+async def release_unstarted_claims(worker_id: UUID, started: set[str]) -> list[UUID]:
+    """End this executor's recent claims on work it never started; return
+    the workflow runs ended.
+
+    For an executor whose claim committed but whose connection failed before
+    it heard back. ``started`` holds the run ids and dispatch ids it started
+    within ``UNSTARTED_CLAIM_WINDOW``; only claims that recent are examined.
+    A workflow run's dispatch went with its claim, so the run is failed
+    visibly; an agent run or summary is still queued and goes back to
+    waiting.
+    """
+    from sqlalchemy import func
+
+    from src.models.orm.work_dispatches import WorkDispatch
+
+    now = datetime.now(timezone.utc)
+    recent = ExecutionWorkerClaim.claimed_at >= func.now() - UNSTARTED_CLAIM_WINDOW
+    async with get_db_context() as db:
+        orphaned = [
+            subject
+            for subject in (
+                await db.scalars(
+                    select(ExecutionWorkerClaim.subject_id)
+                    .join(Execution, Execution.id == ExecutionWorkerClaim.subject_id)
+                    .where(
+                        ExecutionWorkerClaim.worker_id == worker_id,
+                        ExecutionWorkerClaim.family == "workflow_execution",
+                        recent,
+                        Execution.status == ExecutionStatus.RUNNING,
+                    )
+                )
+            ).all()
+            if str(subject) not in started
+        ]
+        ended: list[UUID] = []
+        if orphaned:
+            ended = list(
+                (
+                    await db.scalars(
+                        update(Execution)
+                        .where(
+                            Execution.id.in_(orphaned),
+                            Execution.status == ExecutionStatus.RUNNING,
+                        )
+                        .values(
+                            status=ExecutionStatus.FAILED,
+                            error_message=CLAIM_NOT_STARTED,
+                            completed_at=now,
+                        )
+                        .returning(Execution.id)
+                    )
+                ).all()
+            )
+        unstarted = [
+            (dispatch_id, subject)
+            for dispatch_id, subject in (
+                await db.execute(
+                    select(WorkDispatch.id, WorkDispatch.subject_id).where(
+                        WorkDispatch.assigned_worker_id == worker_id
+                    )
+                )
+            ).all()
+            if str(dispatch_id) not in started
+        ]
+        if unstarted:
+            await db.execute(
+                update(WorkDispatch)
+                .where(WorkDispatch.id.in_([dispatch_id for dispatch_id, _ in unstarted]))
+                .values(assigned_worker_id=None)
+            )
+        released = orphaned + [subject for _, subject in unstarted]
+        if released:
+            await db.execute(
+                delete(ExecutionWorkerClaim).where(
+                    ExecutionWorkerClaim.worker_id == worker_id,
+                    ExecutionWorkerClaim.subject_id.in_(released),
+                )
+            )
+            logger.warning(
+                "Released work this executor claimed but never started",
+                extra={"worker_id": str(worker_id), "ended": len(ended), "requeued": len(unstarted)},
+            )
+        await db.commit()
+    await announce_ended_runs(ended, CLAIM_NOT_STARTED)
+    return ended
+
+
+async def announce_ended_runs(execution_ids: list[UUID], error: str = EXECUTOR_LOST) -> None:
     """Best-effort live update for runs ended after their executor was lost,
     and the result a sync caller is waiting for (it expires unread for the
     others), so no caller waits out its timeout."""
@@ -112,11 +207,11 @@ async def announce_ended_runs(execution_ids: list[UUID]) -> None:
 
     for execution_id in execution_ids:
         try:
-            await publish_execution_update(execution_id, "Failed", {"error": EXECUTOR_LOST})
+            await publish_execution_update(execution_id, "Failed", {"error": error})
             await get_redis_client().push_result(
                 execution_id=str(execution_id),
                 status="Failed",
-                error=EXECUTOR_LOST,
+                error=error,
                 error_type="ExecutorLost",
                 duration_ms=0,
             )
@@ -124,4 +219,10 @@ async def announce_ended_runs(execution_ids: list[UUID]) -> None:
             logger.warning("Could not announce an ended run", exc_info=True)
 
 
-__all__ = ["EXECUTOR_LOST", "announce_ended_runs", "end_runs_of_lost_worker"]
+__all__ = [
+    "CLAIM_NOT_STARTED",
+    "EXECUTOR_LOST",
+    "announce_ended_runs",
+    "end_runs_of_lost_worker",
+    "release_unstarted_claims",
+]

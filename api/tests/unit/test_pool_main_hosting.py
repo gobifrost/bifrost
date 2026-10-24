@@ -288,10 +288,32 @@ async def test_a_database_error_while_claiming_does_not_end_the_executor(monkeyp
     monkeypatch.setattr(pool_main, "HEARTBEAT_SECONDS", 0.01)
     monkeypatch.setattr(pool_main, "begin_drain", AsyncMock())
 
+    release = AsyncMock()
+    monkeypatch.setattr(pool_main, "release_unstarted_claims", release)
+
     await asyncio.wait_for(worker._claim_loop(), timeout=5)
 
     assert calls == ["claim", "claim"]
     pool_main.begin_drain.assert_awaited_once()
+    # Its claim may have committed though the reply was lost.
+    release.assert_awaited_once()
+
+
+async def test_a_hung_heartbeat_does_not_stop_the_next_one(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    worker = _worker_with_pool()
+    attempts: list[int] = []
+
+    async def heartbeat_worker(*args, **kwargs):  # type: ignore[no-untyped-def]
+        attempts.append(1)
+        await asyncio.sleep(60)  # a connection hung on a dead network
+
+    monkeypatch.setattr(pool_main, "heartbeat_worker", heartbeat_worker)
+    monkeypatch.setattr(pool_main, "HEARTBEAT_SECONDS", 0.05)
+    beating = asyncio.create_task(worker._heartbeat_loop())
+    await asyncio.sleep(0.4)
+    beating.cancel()
+
+    assert len(attempts) >= 3
 
 
 async def test_a_lost_executor_cancels_its_agent_work() -> None:

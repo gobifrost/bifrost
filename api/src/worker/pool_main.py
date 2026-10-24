@@ -65,6 +65,7 @@ from src.services.worker_pool.claims import (
     register_static_worker,
     retire_worker,
 )
+from src.services.worker_pool.recovery import UNSTARTED_CLAIM_WINDOW, release_unstarted_claims
 
 logging.basicConfig(
     level=logging.INFO,
@@ -142,6 +143,9 @@ class PoolWorker:
         self._platform_jobs: set[UUID] = set()
         # Set to stop claiming platform jobs; running ones finish.
         self._platform_stop = asyncio.Event()
+        # Run and dispatch ids this executor started recently (by start time),
+        # to tell them from a claim whose reply it lost.
+        self._started: dict[str, float] = {}
         # The control plane declared this executor lost and ended its runs:
         # stop them instead of letting them finish (their results are refused).
         self._lost = False
@@ -362,6 +366,7 @@ class PoolWorker:
                 logger.exception("Pool worker claim failed; retrying")
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(self._stop.wait(), timeout=HEARTBEAT_SECONDS)
+                await self._release_unstarted_claims()
                 continue
             stop = asyncio.ensure_future(self._stop.wait())
             wake = asyncio.ensure_future(self._wake.wait())
@@ -375,6 +380,24 @@ class PoolWorker:
             # sees the executor retire or fall silent.
             logger.exception("Pool worker could not record its drain")
 
+    def _remember_started(self, *keys: str) -> None:
+        now = time.monotonic()
+        window = UNSTARTED_CLAIM_WINDOW.total_seconds()
+        for key, at in list(self._started.items()):
+            if now - at > window:
+                del self._started[key]
+        for key in keys:
+            self._started[key] = now
+
+    async def _release_unstarted_claims(self) -> None:
+        """A claim can commit while its reply is lost: give back what this
+        executor claimed but never started (see recovery.release_unstarted_claims)."""
+        try:
+            await release_unstarted_claims(self.incarnation_id, set(self._started))
+        except Exception:
+            # Still unreachable; the next failed claim tries again.
+            logger.warning("Could not release unstarted claims", exc_info=True)
+
     @staticmethod
     def _nominal_slots(budget: MemoryBudget) -> int:
         """Typical runs the budget fits. Only an older worker controller
@@ -383,6 +406,7 @@ class PoolWorker:
 
     def _start(self, claim: PoolClaim) -> None:
         assert self.admission is not None
+        self._remember_started(str(claim.subject_id), str(claim.dispatch_id))
         if claim.handler == "workflow.execute":
             self.admission.hold(str(claim.subject_id), claim.memory_request_bytes, workflow=True)
         else:
@@ -532,7 +556,9 @@ class PoolWorker:
     async def _heartbeat_loop(self) -> None:
         while True:
             try:
-                state = await heartbeat_worker(
+                # Bounded: a connection hung on a dead network must not keep
+                # the next heartbeat from trying a fresh one.
+                state = await asyncio.wait_for(heartbeat_worker(
                     self.incarnation_id,
                     active_runs=self.active_runs(),
                     runs_handled=self.runs_handled,
@@ -544,7 +570,7 @@ class PoolWorker:
                     memory_reserved_bytes=(
                         0 if self.admission is None else self.admission.held_bytes()
                     ),
-                )
+                ), timeout=HEARTBEAT_SECONDS)
                 if state is None and not self._lost:
                     logger.error(
                         "This executor was declared lost; stopping its runs",
@@ -596,9 +622,13 @@ class PoolWorker:
         if self._lost:
             # Their runs already ended; agent runs and summaries in progress
             # would only spend tokens on results nobody records.
-            for tasks in self._tasks.values():
-                for task in tasks:
-                    task.cancel()
+            cancelled = [task for tasks in self._tasks.values() for task in tasks]
+            for task in cancelled:
+                task.cancel()
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(
+                    asyncio.gather(*cancelled, return_exceptions=True), timeout=5
+                )
         deadline = time.monotonic() + (0.0 if self._lost else DRAIN_GRACE_SECONDS)
         while (
             any(self._tasks.values()) or self._platform_jobs

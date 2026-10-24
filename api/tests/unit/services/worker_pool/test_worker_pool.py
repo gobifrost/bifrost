@@ -32,7 +32,7 @@ from src.services.memory_requests import (
     MIB,
     WORKFLOW_REQUEST_MARGIN_BYTES,
 )
-from src.services.worker_pool import claims, controller, liveness, maintenance
+from src.services.worker_pool import claims, controller, liveness, maintenance, recovery
 from src.services.worker_pool.manifest import WorkerJobSpec, build_worker_job_manifest
 
 GIB = 1024 * MIB
@@ -116,7 +116,7 @@ def db(async_session_factory: async_sessionmaker[AsyncSession], monkeypatch):
             yield session
             await session.commit()
 
-    for module in (claims, controller, liveness, maintenance, work_dispatch, workflow_dispatch):
+    for module in (claims, controller, liveness, maintenance, recovery, work_dispatch, workflow_dispatch):
         monkeypatch.setattr(module, "get_db_context", context)
     monkeypatch.setattr(claims, "get_liveness_db_context", context)
     # These controllers have long reached the database (liveness.Reachability).
@@ -871,6 +871,39 @@ async def test_a_run_waiting_for_capacity_is_not_failed_as_stuck(db, monkeypatch
     async with db.sessions() as session:
         assert (await session.get(Execution, UUID(waiting))).status == ExecutionStatus.PENDING
         assert (await session.get(Execution, UUID(orphan))).status == ExecutionStatus.TIMEOUT
+
+
+async def test_a_claim_whose_reply_was_lost_is_released(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A claim can commit while the executor never hears back: the workflow
+    run (its dispatch gone with the claim) fails visibly, an agent run goes
+    back to waiting, and work the executor started is left alone."""
+    from src.services.execution import agent_run_service
+    from src.services.execution.agent_run_service import enqueue_agent_run
+
+    monkeypatch.setattr(agent_run_service, "get_dispatch_db_context", claims.get_db_context)
+    monkeypatch.setattr(recovery, "announce_ended_runs", AsyncMock())
+    worker = await claims.register_static_worker(slots=1, hostname="here", memory_budget_bytes=GIB)
+    lost_run = await _accept_pool_run()
+    started_run = await _accept_pool_run()
+    lost_claim = await _claim(worker)
+    started_claim = await _claim(worker)
+    await enqueue_agent_run(agent_id=None, trigger_type="sdk", lineage=None)
+    agent_claim = await _claim(worker)
+    assert lost_claim and started_claim and agent_claim
+    assert agent_claim.handler == "agent.run"
+
+    ended = await recovery.release_unstarted_claims(
+        worker, {str(started_claim.subject_id), str(started_claim.dispatch_id)}
+    )
+
+    assert ended == [lost_claim.subject_id]
+    async with db.sessions() as session:
+        lost = await session.get(Execution, UUID(lost_run))
+        started = await session.get(Execution, UUID(started_run))
+        agent_dispatch = await session.get(WorkDispatch, agent_claim.dispatch_id)
+    assert (lost.status, lost.error_message) == (ExecutionStatus.FAILED, recovery.CLAIM_NOT_STARTED)
+    assert started.status == ExecutionStatus.RUNNING
+    assert agent_dispatch.assigned_worker_id is None
 
 
 # --- sizing by memory -----------------------------------------------------------
