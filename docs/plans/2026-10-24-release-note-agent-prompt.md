@@ -4,6 +4,17 @@ Design, 2026-10-24. Jack asked for a standard way to give admins an easy
 button for breaking or recommended changes: explain the change, then offer a
 prompt to copy into an agent that has access to their setup.
 
+## Revision (Jack, 2026-10-24, during implementation)
+
+Call it **Agent Prompt**. The callout shows the Copy Prompt button and one
+description, "Copy this prompt to have your coding agent help you with this
+change."; the prompt box stays collapsed and expands on request. With a fixed
+heading and description, `agent_prompt` is plain text: `needs` and `title`
+are dropped, and the prompt itself says what the agent must reach. The GitHub
+release keeps the same heading and sentence and collapses the fence in a
+`<details>` block. This supersedes the field table and the rendering text
+below.
+
 ## Shape
 
 A Product Updates entry gets an optional `agent_prompt` with three fields:
