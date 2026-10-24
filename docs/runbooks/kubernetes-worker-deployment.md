@@ -217,8 +217,8 @@ Recommended defaults:
 - **Kubernetes:** worker Jobs with a 512Mi request and a 2Gi limit, one warm
   (`BIFROST_POOL_MIN_WORKERS=1`) and up to six (`BIFROST_POOL_MAX_WORKERS=6`);
   two API replicas (256Mi request, 1Gi limit) and two client replicas.
-- **Docker Compose:** two executors (the `scheduler` and `worker` services)
-  with a 2 GB limit each, one API and one client; give the host 8 GB.
+- **Docker Compose:** the `worker` service with two replicas and a 2 GB
+  limit each, one API and one client; give the host 8 GB.
 
 Production on 2026-10-24, with this layout, measured about 430 MiB per API
 pod, 5–7 MiB per client pod and about 620 MiB for the warm worker Job.
@@ -249,12 +249,15 @@ kubelet's `singleProcessOOMKill: true` to kill one process instead; Bifrost
 does not rely on it. Size the worker limit with headroom for the largest
 workflow you run.
 
-**Docker.** The Compose template limits the `scheduler` and `worker`
-services to 2 GB each, which gives them separate budgets. A service without
-a limit takes 85% of the host's memory as its budget, so two of them on one
-host each believe they have it; only the real-memory check, measured against
-the host, keeps them within it. Compose files from earlier releases limited
-only the `scheduler` (to 1 GB); add the same limits to both services.
+**Docker.** The Compose template runs two `worker` replicas limited to 2 GB
+each, which gives them separate budgets. A container without a limit takes
+85% of the host's memory as its budget, so two of them on one host each
+believe they have it; only the real-memory check, measured against the host,
+keeps them within it. Compose files from earlier releases also have a
+`scheduler` service (limited to 1 GB) and an unlimited `worker`. The
+`scheduler` runs the same executor, so an unchanged file keeps working; set a
+2 GB limit on both, or switch to the new file and run
+`docker compose up -d --remove-orphans` to retire the `scheduler` container.
 
 ## Dependency Hydration
 

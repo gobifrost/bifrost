@@ -208,71 +208,12 @@ services:
       api:
         condition: service_healthy
 
-  # Scheduler Service: an executor, the same as the worker service (workflows,
-  # agent runs, services and local platform jobs). Platform control (the
-  # trigger leader) runs in the API. Either service can be removed.
-  # Recommended: two executors (this one and worker) with 2 GB each. An
-  # executor takes work that fits 85% of its memory limit; without a limit,
-  # each believes it has 85% of the host.
-  scheduler:
-    # build:
-    #   context: .
-    #   dockerfile: api/Dockerfile
-    image: ghcr.io/gobifrost/bifrost-api:latest
-    environment:
-      # Core (must match API)
-      BIFROST_ENVIRONMENT: ${BIFROST_ENVIRONMENT:-production}
-      BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:?BIFROST_SECRET_KEY is required (32+ chars)}
-      # Database (via PgBouncer for connection pooling)
-      BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD}@pgbouncer:5432/bifrost
-      BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:${POSTGRES_PASSWORD}@pgbouncer:5432/bifrost
-      # Cache
-      BIFROST_REDIS_URL: redis://redis:6379/0
-      # API URL (for SDK client injection in workflows)
-      BIFROST_API_URL: http://api:8000
-      # S3 Storage (for scheduled jobs that need file access)
-      BIFROST_S3_BUCKET: ${BIFROST_S3_BUCKET:-bifrost-local}
-      BIFROST_S3_ENDPOINT_URL: ${BIFROST_S3_ENDPOINT_URL:-http://seaweedfs:8333}
-      BIFROST_S3_ACCESS_KEY: ${BIFROST_S3_ACCESS_KEY:-${SEAWEEDFS_ACCESS_KEY:-bifrost}}
-      BIFROST_S3_SECRET_KEY: ${BIFROST_S3_SECRET_KEY:-${SEAWEEDFS_SECRET_KEY}}
-      BIFROST_S3_REGION: ${BIFROST_S3_REGION:-us-east-1}
-      # Runs the same executor as the worker service (workflows included).
-      PIP_NO_CACHE_DIR: "1"
-      HOME: /home/bifrost
-    # The worker's posture: it runs user workflow code too.
-    user: "1000:1000"
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: ["ALL"]
-    depends_on:
-      init:
-        condition: service_completed_successfully
-      pgbouncer:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      api:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python", "-m", "src.scheduler.health", "--ready"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    deploy:
-      replicas: ${SCHEDULER_REPLICAS:-1}
-      resources:
-        reservations:
-          cpus: "0.05"
-          memory: 256M
-        limits:
-          cpus: "2.0"
-          memory: 2G
-    command: >
-      python -m src.scheduler.main
-
-  # Worker Service: an executor, the same as the scheduler service.
-  # Scale either with replicas; executors claim work from PostgreSQL.
-  # Workers load Python modules from Redis cache (no filesystem sync needed)
+  # Worker Service: executors that run every kind of work (workflows, agent
+  # runs, services and local platform jobs); the API runs scheduling. Two
+  # workers with 2 GB each are recommended: an executor takes work that fits
+  # 85% of its memory limit. Upgrading from a compose file that also has a
+  # `scheduler` service? That service runs the same executor and keeps working;
+  # with this file, run `docker compose up -d --remove-orphans` to retire it.
   worker:
     # build:
     #   context: .
@@ -331,7 +272,7 @@ services:
       api:
         condition: service_healthy
     deploy:
-      replicas: ${WORKER_REPLICAS:-1}
+      replicas: ${WORKER_REPLICAS:-2}
       resources:
         reservations:
           cpus: "0.05"

@@ -41,8 +41,9 @@ PostgreSQL is the source of truth. Each `platform_jobs` row stores the typed
 payload version, requester and resource scope, progress, result or structured
 error, retry policy, timestamps, and lease state.
 
-Every executor is a platform-job host: the `scheduler` and `worker`
-containers and on-demand Kubernetes worker Jobs all run the same executor
+Every executor is a platform-job host: the Compose `worker` containers (and
+the `scheduler` container older Compose files still run) and on-demand
+Kubernetes worker Jobs all run the same executor
 (`api/src/worker/pool_main.py`). There is no separate platform-job container.
 Each executor runs two claim loops as an internal safety ceiling, not a
 deployment setting. Each loop:
