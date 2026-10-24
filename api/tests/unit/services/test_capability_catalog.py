@@ -113,6 +113,52 @@ def test_route_does_not_guess_an_unhydrated_mcp_tool():
     assert resolve_capability_route(agent, name, {}) is None
 
 
+@pytest.mark.parametrize(
+    ("knowledge_sources", "system_tools"),
+    [
+        (["operations"], []),
+        ([], ["search_knowledge"]),
+    ],
+)
+def test_knowledge_route_requires_a_real_grant_and_keeps_its_identity(
+    knowledge_sources, system_tools
+):
+    from src.services.capabilities.catalog import (
+        capability_ref,
+        resolve_capability_route,
+    )
+
+    agent = _agent(
+        knowledge_sources=knowledge_sources,
+        system_tools=system_tools,
+    )
+
+    route = resolve_capability_route(agent, "search_knowledge", {})
+
+    assert route is not None
+    assert route.source == "knowledge"
+    assert route.source_identity == "knowledge:search_knowledge"
+    alternate = resolve_capability_route(
+        _agent(
+            id=agent.id,
+            knowledge_sources=["operations"],
+            system_tools=[],
+        ),
+        "search_knowledge",
+        {},
+    )
+    assert alternate is not None
+    assert capability_ref(agent.id, route) == capability_ref(agent.id, alternate)
+
+
+def test_knowledge_route_does_not_accept_an_ungranted_name():
+    from src.services.capabilities.catalog import resolve_capability_route
+
+    assert resolve_capability_route(
+        _agent(knowledge_sources=[], system_tools=[]), "search_knowledge", {}
+    ) is None
+
+
 def test_invalid_schema_raises_before_a_dispatcher_can_run():
     from src.services.capabilities.catalog import (
         CapabilityArgumentError,

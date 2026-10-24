@@ -106,13 +106,16 @@ def resolve_capability_route(
             remote_tool_name=remote_tool_name,
         )
 
-    if name == "search_knowledge":
+    system_tools = getattr(agent, "system_tools", None) or []
+    if name == "search_knowledge" and (
+        getattr(agent, "knowledge_sources", None) or name in system_tools
+    ):
         return CapabilityRoute(
             source="knowledge",
             source_identity=f"knowledge:{name}",
         )
 
-    if name in (getattr(agent, "system_tools", None) or []):
+    if name in system_tools:
         return CapabilityRoute(
             source="system",
             source_identity=f"system:{name}",

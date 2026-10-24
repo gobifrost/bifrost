@@ -939,7 +939,7 @@ class AutonomousAgentExecutor:
         route = resolve_capability_route(agent, tool_call.name, active_workflow_ids)
 
         # Knowledge search
-        if route is not None and route.source == "knowledge":
+        if route is not None and route.source == "knowledge" and agent.knowledge_sources:
             return await self._execute_knowledge_search(tool_call, agent)
 
         # Delegation
@@ -947,7 +947,13 @@ class AutonomousAgentExecutor:
             return await self._execute_delegation(tool_call, agent)
 
         # System tools
-        if route is not None and route.source == "system":
+        if route is not None and (
+            route.source == "system"
+            or (
+                route.source == "knowledge"
+                and tool_call.name in (agent.system_tools or [])
+            )
+        ):
             return await self._execute_system_tool(tool_call, agent)
 
         # External MCP tools — namespaced ``mcp__<connection_id>__<tool>``.

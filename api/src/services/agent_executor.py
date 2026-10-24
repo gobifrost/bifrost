@@ -1664,7 +1664,11 @@ class AgentExecutor:
         )
 
         # Check if this is a knowledge search tool call
-        if route is not None and route.source == "knowledge":
+        if (
+            route is not None
+            and route.source == "knowledge"
+            and agent.knowledge_sources
+        ):
             return await self._execute_knowledge_search(tool_call, agent)
 
         # Check if this is a delegation tool call
@@ -1677,7 +1681,13 @@ class AgentExecutor:
             )
 
         # Check if this is a system tool call
-        if route is not None and route.source == "system":
+        if route is not None and (
+            route.source == "system"
+            or (
+                route.source == "knowledge"
+                and tool_call.name in (agent.system_tools or [])
+            )
+        ):
             return await self._execute_system_tool(tool_call, caller)
 
         # External MCP tools — namespaced ``mcp__<connection_id>__<tool>``.
