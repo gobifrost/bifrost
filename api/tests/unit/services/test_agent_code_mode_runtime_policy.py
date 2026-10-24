@@ -28,7 +28,6 @@ from src.services.agent_runtime.tool_policy import (
     CODE_MODE_NESTED_TOOL_CALL_IDS_KEY,
     build_automatic_code_mode_capabilities,
 )
-from src.services.agent_runtime.sandbox_sdk import SANDBOX_SDK_TOOL_NAMES
 from src.services.agent_runtime.model_factory import create_agent_model
 from src.services.agent_runtime.toolset import BifrostToolset, MAX_MODEL_TOOL_RESULT_CHARS
 from src.services.llm import LLMMessage, ToolDefinition
@@ -73,16 +72,14 @@ async def test_automatic_policy_uses_code_mode_for_a_non_delegated_toolset() -> 
         if len(requests) == 1:
             names = {tool.name for tool in info.function_tools}
             assert names == {"run_code"}
+            assert info.instructions is not None
+            assert "def read_chunk(*, index: int)" in info.instructions
             return ModelResponse(
                 parts=[
                     ToolCallPart(
                         "run_code",
                         {
                             "code": (
-                                "catalog = bifrost_search(query='read chunk')\n"
-                                "path = catalog['results'][0]['path']\n"
-                                "contract = bifrost_describe(target=path)\n"
-                                "assert contract['types']\n"
                                 "chunks = [read_chunk(index=index) for index in range(3)]\n"
                                 "combined = ''.join(chunk['payload'] for chunk in chunks)\n"
                                 "{'combined_length': len(combined)}"
@@ -124,8 +121,8 @@ async def test_automatic_policy_uses_code_mode_for_a_non_delegated_toolset() -> 
 
 
 @pytest.mark.asyncio
-async def test_automatic_sdk_deepseek_wire_exposes_only_run_code() -> None:
-    """The OpenRouter DeepSeek wire never receives SDK or raw business schemas."""
+async def test_automatic_deepseek_wire_exposes_native_discovery_and_code_controls() -> None:
+    """The provider sees native discovery plus CodeMode, never a raw business schema."""
     bodies: list[dict[str, Any]] = []
 
     async def execute(name: str, arguments: dict[str, Any], tool_call_id: str) -> str:
@@ -152,10 +149,6 @@ async def test_automatic_sdk_deepseek_wire_exposes_only_run_code() -> None:
                             "arguments": json.dumps(
                                 {
                                     "code": (
-                                        "catalog = bifrost_search(query='read chunk')\n"
-                                        "path = catalog['results'][0]['path']\n"
-                                        "contract = bifrost_describe(target=path)\n"
-                                        "assert contract['types']\n"
                                         "receipt = read_chunk(index=0)\n"
                                         "{'payload': receipt['payload']}"
                                     )
@@ -225,9 +218,7 @@ async def test_automatic_sdk_deepseek_wire_exposes_only_run_code() -> None:
         for body in bodies
     ]
     assert visible_tools == [{"run_code"}, {"run_code"}]
-    assert all(not (SANDBOX_SDK_TOOL_NAMES & names) for names in visible_tools)
     assert all("read_chunk" not in names for names in visible_tools)
-    assert all("search_tools" not in names for names in visible_tools)
 
 
 @pytest.mark.asyncio
@@ -286,16 +277,14 @@ async def test_chat_automatic_code_mode_audits_three_nested_reads_and_projects_h
         if len(requests) == 1:
             names = {tool.name for tool in info.function_tools}
             assert names == {"run_code"}
+            assert info.instructions is not None
+            assert "def read_chunk(*, index: int)" in info.instructions
             return ModelResponse(
                 parts=[
                     ToolCallPart(
                         "run_code",
                         {
                             "code": (
-                                "catalog = bifrost_search(query='read chunk')\n"
-                                "path = catalog['results'][0]['path']\n"
-                                "contract = bifrost_describe(target=path)\n"
-                                "assert contract['types']\n"
                                 "chunks = [read_chunk(index=index) for index in range(3)]\n"
                                 "combined = ''.join(chunk['payload'] for chunk in chunks)\n"
                                 "{'combined_length': len(combined)}"

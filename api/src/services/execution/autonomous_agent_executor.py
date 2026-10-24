@@ -66,6 +66,7 @@ from src.services.agent_runtime import (
 from src.services.agent_runtime.empty_output import EmptyOutputCircuitBreaker
 from src.services.agent_runtime.composition import build_agent_composition
 from src.services.agent_runtime.tool_policy import build_automatic_code_mode_capabilities
+from src.services.agent_runtime.toolset import code_mode_safe_name_map
 from src.services.ai_behavior_service import (
     AGENT_EXECUTION_MODE_METADATA_KEY,
     AgentExecutionMode,
@@ -721,6 +722,10 @@ class AutonomousAgentExecutor:
         # default_max_tokens; agent.llm_max_tokens wins when set,
         # otherwise the profile default (or provider default) applies.
         # Fallbacks resolve from their own profile defaults.
+        automatic_code_mode = (
+            self._agent_execution_mode == "automatic"
+            and (tool_definitions or composition is not None)
+        )
         toolset = (
             composition.entry_toolset(
                 execute_tool,
@@ -735,6 +740,10 @@ class AutonomousAgentExecutor:
                 toolset_id=f"bifrost-{agent.id}",
             )
         )
+        if automatic_code_mode and composition is None:
+            toolset = toolset.renamed(
+                code_mode_safe_name_map(tuple(definition.name for definition in tool_definitions))
+            )
         # Blank / repetitive no-tool completions are billed like real output
         # (observed: 131072 output tokens with zero visible content and zero
         # tool calls). Pydantic AI treats them as valid final output, so the
@@ -745,8 +754,7 @@ class AutonomousAgentExecutor:
         empty_output_guard = EmptyOutputCircuitBreaker()
         automatic_code_mode_capabilities = (
             build_automatic_code_mode_capabilities()
-                if self._agent_execution_mode == "automatic"
-                and (tool_definitions or composition is not None)
+                if automatic_code_mode
             else []
         )
         runtime = PydanticAgent(
@@ -762,7 +770,6 @@ class AutonomousAgentExecutor:
                 *(composition.capabilities(
                     execute_tool,
                     record_tool_event,
-                    include_tool_search=self._agent_execution_mode != "automatic",
                 ) if composition is not None else []),
                 *automatic_code_mode_capabilities,
             ],

@@ -131,16 +131,14 @@ async def test_automatic_chat_persists_nested_code_mode_audit_and_replays_only_o
         if request_number == 1:
             names = {tool.name for tool in info.function_tools}
             assert names == {"run_code"}
+            assert info.instructions is not None
+            assert "def read_chunk(*, index: int)" in info.instructions
             return ModelResponse(
                 parts=[
                     ToolCallPart(
                         "run_code",
                         {
                             "code": (
-                                "catalog = bifrost_search(query='read chunk')\n"
-                                "path = catalog['results'][0]['path']\n"
-                                "contract = bifrost_describe(target=path)\n"
-                                "assert contract['types']\n"
                                 "chunks = [read_chunk(index=index) for index in range(3)]\n"
                                 "combined = ''.join(chunk['payload'] for chunk in chunks)\n"
                                 "{'combined_length': len(combined)}"

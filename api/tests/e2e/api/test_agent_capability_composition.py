@@ -13,6 +13,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     TextPart,
     ToolCallPart,
+    ToolSearchReturnPart,
     ToolReturnPart,
 )
 from pydantic_ai.models import ModelRequestParameters
@@ -44,13 +45,15 @@ pytestmark = pytest.mark.asyncio
 class _LoadsSpecialistCapability(TestModel):
     """Load one deferred capability, then use its child-owned workflow tool."""
 
-    def __init__(self, capability_id: str, child_instruction: str, child_id: UUID, tool_name: str) -> None:
+    def __init__(
+        self, capability_id: str, child_instruction: str, child_id: UUID, tool_name: str
+    ) -> None:
         super().__init__(model_name="test-agent-capability-composition")
         self._capability_id = capability_id
         self._child_instruction = child_instruction
         self.loaded_instruction_text = ""
         self.child_tool_name = _qualified_tool_name(child_id, tool_name)
-        self._python_tool_name = tool_name
+        self._source_tool_name = tool_name
 
     def _request(
         self,
@@ -92,21 +95,53 @@ class _LoadsSpecialistCapability(TestModel):
             "Use it only for work this specialist owns and return evidence to the "
             "owning conversation."
         ]
-        visible = {tool.name for tool in model_request_parameters.function_tools}
-        assert "run_code" in visible
-        assert "search_tools" not in visible
-        assert self.child_tool_name not in visible
-        if "call-specialist-tool" not in completed:
-            program = (
-                f"catalog = bifrost_search(query={self._python_tool_name!r})\n"
-                f"assert catalog['results'][0]['path'] == {self._python_tool_name!r}\n"
-                f"contract = bifrost_describe(target={self._python_tool_name!r})\n"
-                "assert 'query' in contract['types']\n"
-                f"result = {self._python_tool_name}(query='composition boundary')\n"
-                "{'answer': result['answer']}"
+        search_completed = any(
+            isinstance(message, ModelRequest)
+            and any(
+                isinstance(part, ToolSearchReturnPart)
+                and part.tool_call_id == "search-specialist-tool"
+                for part in message.parts
+            )
+            for message in messages
+        )
+        if not search_completed:
+            assert self.child_tool_name not in {
+                tool.name
+                for tool in model_request_parameters.function_tools
+                if model_request_parameters.visibility_of(tool.name)
+                in {"visible", "via_history"}
+            }, "a loaded specialist tool must still be searched"
+            assert any(
+                tool.name == "search_tools"
+                and model_request_parameters.visibility_of(tool.name)
+                in {"visible", "via_history"}
+                for tool in model_request_parameters.function_tools
             )
             return ModelResponse(
-                parts=[ToolCallPart("run_code", {"code": program}, tool_call_id="call-specialist-tool")],
+                parts=[
+                    ToolCallPart(
+                        "search_tools",
+                        {"queries": [self._source_tool_name]},
+                        tool_call_id="search-specialist-tool",
+                    )
+                ],
+                model_name=self.model_name,
+            )
+
+        if "call-specialist-tool" not in completed:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "run_code",
+                        {
+                            "code": (
+                                f"receipt = {self.child_tool_name}(query='composition boundary')\n"
+                                "{'answer': receipt['answer']}"
+                            )
+                        },
+                        tool_call_id="call-specialist-tool",
+                    )
+                ],
                 model_name=self.model_name,
             )
         return ModelResponse(
@@ -287,7 +322,7 @@ async def test_loaded_child_capability_uses_its_bound_workflow_in_the_owning_run
                 agent_execution_mode="automatic",
             )
 
-        assert result["status"] == "completed"
+        assert result["status"] == "completed", result
         assert result["output"] == "Specialist capability completed."
         assert model.child_tool_name is not None
         assert model.loaded_instruction_text.count(child_instruction) == 1

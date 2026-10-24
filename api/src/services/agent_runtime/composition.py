@@ -8,7 +8,6 @@ tool.  In particular, it never consults the global tool catalog.
 
 from __future__ import annotations
 
-from collections import Counter
 from collections.abc import Awaitable, Callable, Sequence
 from copy import deepcopy
 from contextvars import ContextVar
@@ -20,7 +19,7 @@ from uuid import UUID
 from pydantic_ai import Agent as PydanticAgent
 from pydantic_ai import AgentRunResult
 from pydantic_ai.agent.wrapper import WrapperAgent
-from pydantic_ai.capabilities import AbstractCapability, Capability, ToolSearch
+from pydantic_ai.capabilities import AbstractCapability, Capability
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import RunContext, ToolDefinition as PydanticToolDefinition
 from pydantic_ai_harness.subagents import SubAgent, SubAgents
@@ -34,8 +33,10 @@ from src.services.agent_runtime.toolset import (
     ToolEvent,
     ToolEventHandler,
     ToolExecutor,
+    code_mode_safe_name_map,
 )
 from src.services.agent_runtime.errors import AgentRunCancelled
+from src.services.agent_runtime.tool_policy import build_bifrost_tool_search
 from src.services.authorization.agent_runtime import (
     AgentRuntimeAuthorizationError,
     authorize_agent_execution,
@@ -60,11 +61,8 @@ or schema.
 If discovery or invocation corrects an unknown callable or invalid arguments, use that correction
 before making another call.
 
-For specialist work, load an approved capability's instructions, then use run_code and its
-Bifrost sandbox SDK to search, describe, and call approved Python functions with keyword arguments.
-The SDK discovers
-entry-agent and loaded-specialist tools inside one bounded program. Use same-conversation
-specialist tools by default. Start an isolated child only when context isolation
+For specialist work, load an approved capability's instructions, discover its approved tools, then
+use run_code to combine related calls. Use same-conversation specialist tools by default. Start an isolated child only when context isolation
 or independent review is actually required; never use a child as a permission workaround. Include
 the necessary context, inspect the child receipt, and follow up when more information can unblock
 it. Respect specialist instructions and approval constraints. Verify uncertain effects before
@@ -377,6 +375,7 @@ class AgentComposition:
         self._bindings = dict(bindings)
         self._deferred = tuple(deferred)
         self._isolated_delegates = dict(isolated_delegates)
+        self._code_mode_name_map = code_mode_safe_name_map(tuple(self._bindings))
 
     def provenance_for(self, name: str, args: dict[str, Any] | None = None) -> dict[str, Any] | None:
         """Return static review metadata without treating it as live authority."""
@@ -399,18 +398,17 @@ class AgentComposition:
         schemas stay deferred until native ``ToolSearch`` reveals a relevant
         individual tool.
         """
-        return BifrostToolset(
+        toolset = BifrostToolset(
             _model_visible_definitions(self.entry_definitions),
             executor,
             event_handler=event_handler,
             toolset_id=toolset_id,
-            tool_metadata=self._sandbox_tool_metadata(),
+            tool_metadata=self._tool_metadata(),
         ).defer_loading()
+        return toolset.renamed(self._code_mode_name_map)
 
-    def _sandbox_tool_metadata(self) -> dict[str, dict[str, str]]:
+    def _tool_metadata(self) -> dict[str, dict[str, str]]:
         """Carry callable identity separately from human-authored descriptions."""
-        original_counts = Counter(binding.original_name for binding in self._bindings.values())
-        owner_names = {deferred.agent.id: deferred.agent.name for deferred in self._deferred}
         descriptions = {
             (self.root_id, definition.name): definition.description
             for definition in self.entry_definitions
@@ -425,15 +423,7 @@ class AgentComposition:
                 "bifrost_original_name": binding.original_name,
                 "bifrost_search_path": f"{_capability_id(binding.owner_id)}.{binding.original_name}",
                 "bifrost_tool_description": descriptions.get((binding.owner_id, binding.original_name), ""),
-                "bifrost_owner_id": str(binding.owner_id),
-                **({"bifrost_tool_ref": binding.tool_ref} if binding.tool_ref is not None else {}),
                 "bifrost_connector": _capability_id(binding.owner_id),
-                "bifrost_connector_description": owner_names.get(binding.owner_id, "Entry agent"),
-                "bifrost_python_name": (
-                    binding.original_name
-                    if original_counts[binding.original_name] == 1
-                    else f"owner_{binding.owner_id.hex}_{binding.original_name}"
-                ),
             }
             for name, binding in self._bindings.items()
         }
@@ -526,16 +516,12 @@ class AgentComposition:
         self,
         executor: ToolExecutor,
         event_handler: ToolEventHandler | None = None,
-        *,
-        include_tool_search: bool = True,
     ) -> list[Any]:
         """Build framework capabilities bound to this composition snapshot."""
-        capabilities: list[Any] = [_CompositionAuthorizationCapability(self, event_handler)]
-        if include_tool_search:
-            # Legacy delegated execution keeps native provider discovery. Automatic
-            # CodeMode uses its fixed sandbox SDK so business schemas never enter
-            # the outer model catalog.
-            capabilities.append(ToolSearch(strategy="keywords"))
+        capabilities: list[Any] = [
+            _CompositionAuthorizationCapability(self, event_handler),
+            build_bifrost_tool_search(),
+        ]
         specialist_definitions: list[ToolDefinition] = []
         owner_capability_by_tool_name: dict[str, str] = {}
         for deferred in self._deferred:
@@ -588,10 +574,11 @@ class AgentComposition:
                             executor,
                             event_handler=event_handler,
                             toolset_id="bifrost-specialist-search",
-                            tool_metadata=self._sandbox_tool_metadata(),
+                            tool_metadata=self._tool_metadata(),
                         )
                         .filtered(specialist_owner_is_loaded)
                         .defer_loading()
+                        .renamed(self._code_mode_name_map)
                     ],
                 )
             )

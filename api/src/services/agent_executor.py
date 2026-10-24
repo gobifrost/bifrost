@@ -80,7 +80,10 @@ from src.services.agent_runtime.tool_policy import (
     build_automatic_code_mode_capabilities,
     code_mode_nested_tool_call_ids_from_audit,
 )
-from src.services.agent_runtime.toolset import get_code_mode_tool_result_scope
+from src.services.agent_runtime.toolset import (
+    code_mode_safe_name_map,
+    get_code_mode_tool_result_scope,
+)
 from src.services.ai_behavior_service import (
     AgentExecutionMode,
     AIBehaviorService,
@@ -873,6 +876,10 @@ class AgentExecutor:
                 max_tokens=max_tokens_override,
                 session_id=str(conversation.id),
             )
+            automatic_code_mode = (
+                self._agent_execution_mode == "automatic"
+                and (tool_definitions or composition is not None)
+            )
             toolset = (
                 composition.entry_toolset(
                     execute_runtime_tool,
@@ -885,10 +892,13 @@ class AgentExecutor:
                     toolset_id=f"bifrost-chat-{agent.id if agent else 'default'}",
                 )
             )
+            if automatic_code_mode and composition is None:
+                toolset = toolset.renamed(
+                    code_mode_safe_name_map(tuple(definition.name for definition in tool_definitions))
+                )
             automatic_code_mode_capabilities = (
                 build_automatic_code_mode_capabilities()
-                if self._agent_execution_mode == "automatic"
-                and (tool_definitions or composition is not None)
+                if automatic_code_mode
                 else []
             )
             runtime = PydanticAgent(
@@ -903,7 +913,6 @@ class AgentExecutor:
                     *build_runtime_capabilities(budget, context_window=context_window),
                     *(composition.capabilities(
                         execute_runtime_tool,
-                        include_tool_search=self._agent_execution_mode != "automatic",
                     ) if composition is not None else []),
                     *automatic_code_mode_capabilities,
                 ],

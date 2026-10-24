@@ -373,10 +373,9 @@ async def test_code_mode_guides_one_call_to_filter_and_chain_private_results() -
                         "run_code",
                         {
                             "code": (
-                                "import json\n"
-                                "page = json.loads(search_records(page_size=100))\n"
+                                "page = search_records(page_size=100)\n"
                                 "targets = [row for row in page['rows'] if row['kind'] == 'target']\n"
-                                "details = [json.loads(read_record(record_id=row['id'])) for row in targets]\n"
+                                "details = [read_record(record_id=row['id']) for row in targets]\n"
                                 "{'count': len(details), 'target_ids': [detail['id'] for detail in details], "
                                 "'verification': [detail['verified'] for detail in details]}"
                             )

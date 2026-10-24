@@ -61,23 +61,19 @@ async def test_code_mode_dispatches_one_bound_workflow_on_existing_executors(
             names = {tool.name for tool in info.function_tools}
             assert "load_capability" in names
             assert "run_code" in names
-            assert "search_tools" not in names
             assert tool_name not in names
             part = ToolCallPart("load_capability", {"id": capability_id})
         elif model_requests == 2:
             names = {tool.name for tool in info.function_tools}
             assert "run_code" in names
-            assert "search_tools" not in names
+            assert tool_name not in names
+            part = ToolCallPart("search_tools", {"queries": [test_tool_workflow["name"]]})
+        elif model_requests == 3:
+            names = {tool.name for tool in info.function_tools}
+            assert "run_code" in names
             assert tool_name not in names
             part = ToolCallPart("run_code", {
-                "code": (
-                    f"catalog = bifrost_search(query={test_tool_workflow['name']!r})\n"
-                    "path = catalog['results'][0]['path']\n"
-                    "contract = bifrost_describe(target=path)\n"
-                    "assert contract['types']\n"
-                    f"receipt = wf_{test_tool_workflow['name']}(query='code-mode-boundary')\n"
-                    "{'receipt': receipt}"
-                ),
+                "code": f"receipt = {tool_name}(query='code-mode-boundary')\nreceipt",
             })
         else:
             final_tool_value = next(

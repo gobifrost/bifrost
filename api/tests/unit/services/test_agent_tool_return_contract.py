@@ -77,8 +77,8 @@ def test_code_mode_scope_getter_is_read_only_and_scoped() -> None:
 
 
 @pytest.mark.asyncio
-async def test_code_mode_decodes_the_documented_json_string_return() -> None:
-    """The callable contract lets a snippet decode structured Bifrost text."""
+async def test_code_mode_decodes_json_or_text_before_the_snippet_receives_it() -> None:
+    """Nested CodeMode calls receive parsed JSON while ordinary tool transport stays text."""
     seen: list[list[ModelMessage]] = []
 
     async def execute(name: str, arguments: dict[str, Any], tool_call_id: str) -> str:
@@ -94,15 +94,14 @@ async def test_code_mode_decodes_the_documented_json_string_return() -> None:
             )
         if len(seen) == 2:
             assert info.instructions is not None
-            assert "def read_record(*, record_id: str) -> str:" in info.instructions
+            assert "def read_record(*, record_id: str) -> Any:" in info.instructions
             return ModelResponse(
                 parts=[
                     ToolCallPart(
                         "run_code",
                         {
                             "code": (
-                                "import json\n"
-                                "record = json.loads(read_record(record_id='r-7'))\n"
+                                "record = read_record(record_id='r-7')\n"
                                 "{'record_id': record['record_id'], 'status': record['status']}"
                             )
                         },
@@ -129,7 +128,7 @@ async def test_code_mode_decodes_the_documented_json_string_return() -> None:
         ],
         execute,
     )
-    exposed_tools = await toolset.get_tools(SimpleNamespace())
+    exposed_tools = await toolset.get_tools(SimpleNamespace(capabilities={}))
     assert (
         exposed_tools["read_record"].tool_def.return_schema
         == bifrost_adapter_return_schema()
@@ -237,7 +236,7 @@ async def test_toolset_without_a_known_return_schema_keeps_direct_behavior() -> 
         ],
         execute,
     )
-    ctx = SimpleNamespace(tool_call_id="direct")
+    ctx = SimpleNamespace(tool_call_id="direct", capabilities={})
     tools = await toolset.get_tools(ctx)
 
     assert tools["unknown_result"].tool_def.return_schema is None
