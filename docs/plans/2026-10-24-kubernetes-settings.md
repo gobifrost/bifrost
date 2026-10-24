@@ -117,6 +117,12 @@ used; remove from your environment: …". This is computed from the process
 environment, so it disappears once the variables are gone. Docker installs
 see the startup warning only, since the page is Kubernetes-only.
 
+`BIFROST_RABBITMQ_URL` is still read today: each API start uses it to move
+runs an earlier release left in RabbitMQ into PostgreSQL. The drain records
+when it finishes on this release; from then on it no longer connects, and
+the variable is unread like any other (Jack, 2026-10-24). A rollback to a
+release that queues to RabbitMQ again needs that record cleared.
+
 ### Aliases
 
 Each renamed variable reads the new name first, then the old one. When the
