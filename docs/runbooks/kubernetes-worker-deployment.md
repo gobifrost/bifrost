@@ -174,9 +174,24 @@ counts you set. On-demand worker Jobs drain themselves after
 `BIFROST_POOL_IDLE_SECONDS` without work or `BIFROST_POOL_MAX_LIFETIME_SECONDS`
 of life, and the controller keeps at least `BIFROST_POOL_MIN_WORKERS` warm.
 
+After an upgrade, the controller replaces worker Jobs running a build that no
+live controller runs, once every controller of that build has stopped: it
+launches current Jobs for the warm minimum, and when they can claim, the
+outdated Jobs drain (`end_reason = rotated`). They are never deleted. All
+outdated Jobs drain in the same pass, so under heavy load capacity dips until
+their runs finish, because draining Jobs still count toward
+`BIFROST_POOL_MAX_WORKERS`.
+
+A drain the platform asks for (idle, rotated, maximum lifetime) stops claiming
+and lets runs and platform jobs finish, each within its own timeout; it has
+no deadline of its own. A run without a timeout keeps its drained Job (and its
+place under `BIFROST_POOL_MAX_WORKERS`) until it ends, and the API logs a
+warning once such a drain passes the maximum lifetime.
+
 On SIGTERM an executor stops claiming, hands its supervised services over, and
 lets active runs and platform jobs finish for up to 300 seconds before it
-exits. Keep the pod's grace period above that:
+exits, also when SIGTERM arrives during a drain. Keep the pod's grace period
+above that:
 
 ```yaml
 terminationGracePeriodSeconds: 360

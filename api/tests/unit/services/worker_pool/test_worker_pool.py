@@ -1214,7 +1214,10 @@ async def _admitted_job(  # type: ignore[no-untyped-def]
         await session.execute(
             update(ExecutionWorker)
             .where(ExecutionWorker.id == worker.id)
-            .values(version=version, launched_by=launched_by, reserved_for_dispatch_id=reserved_for)
+            .values(
+                version=version, launched_by=launched_by, reserved_for_dispatch_id=reserved_for,
+                memory_budget_bytes=GIB,
+            )
         )
         await session.commit()
     return worker.id
@@ -1237,10 +1240,13 @@ async def _pass(pool: controller.WorkerPoolController) -> list[UUID]:
     return launched
 
 
-async def _admit(sessions, worker_id: UUID) -> None:  # type: ignore[no-untyped-def]
+async def _admit(sessions, worker_id: UUID, *, pool_up: bool = True) -> None:  # type: ignore[no-untyped-def]
+    """Admit a launched Job's pod; ``pool_up``: its pool started and it reported its budget."""
     async with sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
     assert await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid=f"pod-{worker_id}") is not None
+    if pool_up:
+        await _report_budget(worker_id, GIB)
 
 
 async def _state(sessions, worker_id: UUID) -> tuple[str, str | None]:  # type: ignore[no-untyped-def]
@@ -1408,3 +1414,70 @@ async def test_worker_jobs_pull_like_the_controller() -> None:
 
     assert manifest["spec"]["template"]["spec"]["containers"][0]["imagePullPolicy"] == "Always"
     assert (await resolve_worker_job_spec(client, SETTINGS)).image_pull_policy == "IfNotPresent"  # type: ignore[arg-type]
+
+
+async def test_the_old_job_serves_until_its_replacement_can_claim(db) -> None:
+    """An admitted replacement still starts its pool (seconds to minutes);
+    the old Job drains only once the replacement has measured its budget."""
+    pool = _controller(FakeCluster(), "2.0")
+    outdated = await _admitted_job(db.sessions, version="1.0", launched_by=None)
+    [replacement] = await _pass(pool)
+    await _admit(db.sessions, replacement, pool_up=False)
+
+    await _pass(pool)
+    assert await _state(db.sessions, outdated) == ("ready", None)
+
+    await _report_budget(replacement, GIB)
+    await _pass(pool)
+    assert await _state(db.sessions, outdated) == ("draining", "rotated")
+
+
+async def test_an_adopted_job_keeps_no_launcher(db) -> None:
+    """A Job created by an instance that died before binding it runs that
+    instance's image: the adopting controller does not vouch for it."""
+    cluster = FakeCluster()
+    dead, adopting = _controller(cluster, "1.0"), _controller(cluster, "2.0")
+    [worker_id] = await dead.launch_for_demand()
+    async with db.sessions() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        await cluster.create_job(build_worker_job_manifest(worker_id, WARM, SPEC, memory_limit_bytes=None))
+        name = worker.kubernetes_job_name
+
+    await adopting.reconcile_worker(worker_id)
+
+    async with db.sessions() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+    assert (worker.state, worker.launched_by) == ("starting", None)
+    assert cluster.created == [name]
+
+
+async def test_a_full_reconcile_launches_before_it_drains(db) -> None:
+    from shared.version import get_version
+
+    cluster = FakeCluster()
+    old = _controller(cluster, "old-build")
+    await old.reconcile()
+    [warm] = cluster.created
+    async with db.sessions() as session:
+        warm_id = (
+            await session.execute(select(ExecutionWorker.id).where(ExecutionWorker.kubernetes_job_name == warm))
+        ).scalar_one()
+    await _admit(db.sessions, warm_id)
+    async with db.sessions() as session:
+        await session.execute(update(ExecutionWorker).where(ExecutionWorker.id == warm_id).values(version="old-build"))
+        await session.commit()
+    await controller._withdraw_live(old.id)
+    new = _controller(cluster, get_version())
+
+    await new.reconcile()
+    assert await _state(db.sessions, warm_id) == ("ready", None)
+    replacement = next(name for name in cluster.created if name != warm)
+    async with db.sessions() as session:
+        replacement_id = (
+            await session.execute(select(ExecutionWorker.id).where(ExecutionWorker.kubernetes_job_name == replacement))
+        ).scalar_one()
+    await _admit(db.sessions, replacement_id)
+    await new.reconcile()
+
+    assert await _state(db.sessions, warm_id) == ("draining", "rotated")
+    assert len(cluster.created) == 2 and cluster.deleted == []

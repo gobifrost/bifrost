@@ -32,11 +32,12 @@ back.
   the controller instance that created the Job
   (`execution_workers.launched_by`), in the same commit that binds the Job
   UID at `reserved → starting`. The replica that only reserved the row is
-  not recorded.
+  not recorded. A controller that adopts a Job created by an instance that
+  died before binding it records no launcher.
 - **Live controllers are published.** Each controller instance (one id per
   loop start) writes its version to a Redis hash on every pass and removes
   itself when it stops. An instance is live while it wrote within
-  `HEARTBEAT_LOST_AFTER` (30 s).
+  `HEARTBEAT_LOST_AFTER` (30 s), measured on Redis's clock.
 - **A Job is outdated when it is admitted, no live controller runs its
   version, and the controller that launched it is no longer live.** Two
   things follow:
@@ -82,9 +83,12 @@ The new `replace_outdated()` step runs in each reconcile pass after
 `launch_for_demand`. Under the capacity lock (try-lock, the same one used
 by launches and idle drains):
 
-- If the ready, current standard Jobs number at least `pool_min_workers`,
-  move every **ready** outdated Job to `draining` with
-  `end_reason = "rotated"`.
+- If the ready, current standard Jobs that have measured their budget
+  (their pool is up, so they can claim) number at least
+  `pool_min_workers`, move every **ready** outdated Job to `draining` with
+  `end_reason = "rotated"`. All of them drain in one pass. Draining in
+  smaller batches would not avoid a capacity dip under heavy load, because
+  draining Jobs still count toward `pool_max_workers`.
 - Skip a Job that still holds `reserved_for_dispatch_id`: it was launched
   for one large dispatch it has not claimed yet.
 - Otherwise do nothing yet.
@@ -136,8 +140,12 @@ New rule:
   `pool_max_workers`. The controller logs a warning once per worker when a
   draining Job with active runs passes `pool_max_lifetime_seconds`.
 
-**First production rollout:** the Job being replaced runs the old code, so
-it still has the 300 s grace. Check that no long run is on the warm Job
+**First rollout of this release (production and community):** controllers
+from earlier releases never publish themselves, and their Jobs carry no
+version or launcher. The first new controller therefore rotates them during
+the rollout, not after the last old replica stops. That is benign: the
+replacement runs the new code. But the Job being replaced runs the old code,
+so it still has the 300 s grace. Check that no long run is on the warm Job
 before promoting.
 
 ### 5. Static executors register `starting` (leftover m2)

@@ -18,10 +18,12 @@ afterwards; the API keeps the warm minimum of Jobs.
 - unschedulable: workers that cannot be scheduled (the warm minimum
   included) are marked lost at their start deadline and replaced within the
   ceiling; queued work waits visibly.
-- upgrade: roll the API to a new image while the warm worker runs a run
-  longer than the shutdown grace (#1052). One replacement on the new image
-  becomes ready before the old worker drains as ``rotated``; the run
-  succeeds, the old worker retires, and nothing is lost.
+- upgrade: move the API image's tag to a new build (as a new ``:latest``
+  does) while the warm worker runs a run longer than the shutdown grace
+  (#1052). One replacement on the new build becomes ready before the old
+  worker drains as ``rotated``; a new run is served at once, the long run
+  succeeds, the old worker retires, and nothing is lost. Then roll back the
+  same way.
 """
 from __future__ import annotations
 
@@ -194,15 +196,6 @@ def unschedulable_drill() -> dict:
         kubectl("rollout", "status", "deployment/bifrost-api", "--timeout=300s")
 
 
-DRILLS = (
-    ("kill", kill_drill),
-    ("controller_restart", controller_restart_drill),
-    ("oom", oom_drill),
-    ("unschedulable", unschedulable_drill),
-    ("upgrade", upgrade_drill),
-)
-
-
 def api_image() -> str:
     return kubectl(
         "get", "deployment/bifrost-api", "-o",
@@ -210,61 +203,117 @@ def api_image() -> str:
     ).strip()
 
 
-def tag_on_nodes(image: str, tag: str) -> None:
-    """A new image name for the same content, on every node (as a push would be)."""
-    for node in kubectl("get", "nodes", "-o", "jsonpath={.items[*].metadata.name}").split():
-        subprocess.run(
-            ["docker", "exec", node, "ctr", "-n", "k8s.io", "images", "tag", "--force",
-             f"docker.io/library/{image}", f"docker.io/library/{tag}"],
-            check=True, capture_output=True,
-        )
+def nodes() -> list[str]:
+    return kubectl("get", "nodes", "-o", "jsonpath={.items[*].metadata.name}").split()
 
 
-def upgrade_drill() -> dict:
-    wait_floor(300)
-    [old] = live_workers()
-    started_at = sql("SELECT now()")[0][0]
-    [long_run] = enqueue(1, 400)  # past the 300 s grace a shutdown gets
-    wait_status([long_run], {"Running"}, 120)
-    image = api_image()
-    upgraded = f"{image}-upgraded"
-    tag_on_nodes(image, upgraded)
-    kubectl("set", "image", "deployment/bifrost-api", f"api={upgraded}")
+def ctr(node: str, *args: str, data: bytes | None = None) -> None:
+    subprocess.run(["docker", "exec", "-i", node, "ctr", "-n", "k8s.io", "images", *args],
+                   check=True, capture_output=True, input=data)
+
+
+def publish_same_tag(image: str, version: str) -> None:
+    """Move ``image``'s tag to a new build (``BIFROST_VERSION=version``), as
+    pushing a new ``:latest`` does."""
+    build = subprocess.run(
+        ["docker", "build", "-q", "-"], check=True, capture_output=True,
+        input=f"FROM {image}\nENV BIFROST_VERSION={version}\n".encode(),
+    ).stdout.decode().strip()
+    subprocess.run(["docker", "tag", build, image], check=True)
+    archive = subprocess.run(["docker", "save", image], check=True, capture_output=True).stdout
+    for node in nodes():
+        ctr(node, "import", "-", data=archive)
+
+
+def restart_api() -> None:
+    kubectl("rollout", "restart", "deployment/bifrost-api")
     kubectl("rollout", "status", "deployment/bifrost-api", "--timeout=600s")
 
-    # The old worker drains only once a replacement on the new image is ready.
-    replaced_when = None
+
+def rotation(old_id: str, version: str, started_at: str, long_run: str | None) -> dict:
+    """Wait for the replacement on ``version`` to be ready and the old worker
+    to drain as rotated, check warm capacity during it, then its retirement."""
     deadline = time.monotonic() + 300
-    while replaced_when is None:
+    while True:
         assert time.monotonic() < deadline, live_workers()
-        state = sql(f"SELECT state, coalesce(end_reason,'') FROM execution_workers WHERE id='{old['id']}'")[0]
+        state = sql(f"SELECT state, coalesce(end_reason,'') FROM execution_workers WHERE id='{old_id}'")[0]
         ready_current = int(sql(
             "SELECT count(*) FROM execution_workers WHERE form='job' AND state='ready' "
-            f"AND image='{upgraded}'"
+            f"AND memory_budget_bytes IS NOT NULL AND version='{version}'"
         )[0][0])
         if state[0] != "ready":
             assert state == ["draining", "rotated"], state
-            assert ready_current >= 1, "drained before its replacement was ready"
-            replaced_when = time.monotonic()
+            assert ready_current >= 1, "drained before its replacement could claim"
+            break
         time.sleep(1)
-    run_seconds = wait_done([long_run], 900)
-    deadline = time.monotonic() + 120
-    while sql(f"SELECT state FROM execution_workers WHERE id='{old['id']}'")[0][0] != "retired":
+    # Interactive work is served at once by the replacement.
+    quick = enqueue(1, 0.1)
+    quick_seconds = wait_done(quick, 30)
+    assert quick_seconds < 10, quick_seconds
+    run_wait = wait_done([long_run], 900) if long_run else 0.0
+    deadline = time.monotonic() + 600
+    while sql(f"SELECT state FROM execution_workers WHERE id='{old_id}'")[0][0] != "retired":
         assert time.monotonic() < deadline, "the drained worker did not retire"
         time.sleep(2)
     launched = sql(
-        "SELECT coalesce(image,''), state FROM execution_workers "
+        "SELECT coalesce(version,''), state FROM execution_workers "
         f"WHERE form='job' AND created_at >= '{started_at}'"
     )
     lost = sql(f"SELECT id, end_reason FROM execution_workers WHERE state='lost' AND ended_at >= '{started_at}'")
     assert lost == [], lost
-    assert [row[0] for row in launched] == [upgraded], f"one replacement, no churn: {launched}"
-    return {
-        "image": upgraded,
-        "run_done_after_drain_seconds": round(run_seconds, 1),
-        "launched": launched,
-        "lost": lost,
-    }
+    assert [row[0] for row in launched] == [version], f"one replacement, no churn: {launched}"
+    return {"quick_run_seconds": quick_seconds, "long_run_wait_seconds": run_wait, "launched": launched}
+
+
+def running_version() -> str:
+    return kubectl(
+        "exec", ready_api_pod(), "--", "python", "-c",
+        "from shared.version import get_version; print(get_version())",
+    ).strip()
+
+
+def upgrade_drill() -> dict:
+    image = api_image()
+    original = f"{image}-drill-original"
+    local_original = subprocess.run(
+        ["docker", "image", "inspect", "-f", "{{.Id}}", image], check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    for node in nodes():
+        ctr(node, "tag", "--force", f"docker.io/library/{image}", f"docker.io/library/{original}")
+    report: dict = {}
+
+    # Same-tag upgrade while the warm worker runs past the shutdown grace.
+    wait_floor(300)
+    [old] = live_workers()
+    started_at = sql("SELECT now()")[0][0]
+    [long_run] = enqueue(1, 400)
+    wait_status([long_run], {"Running"}, 120)
+    upgraded = f"drill-{int(time.time())}"
+    publish_same_tag(image, upgraded)
+    restart_api()
+    report["upgrade"] = rotation(old["id"], upgraded, started_at, long_run)
+
+    # Rollback to the original build, under the same tag again.
+    wait_floor(300)
+    [old] = live_workers()
+    started_at = sql("SELECT now()")[0][0]
+    for node in nodes():
+        ctr(node, "tag", "--force", f"docker.io/library/{original}", f"docker.io/library/{image}")
+    subprocess.run(["docker", "tag", local_original, image], check=True)
+    restart_api()
+    rolled_back = running_version()
+    report["rollback"] = rotation(old["id"], rolled_back, started_at, None)
+    report["versions"] = {"upgraded": upgraded, "rolled_back": rolled_back}
+    return report
+
+
+DRILLS = (
+    ("kill", kill_drill),
+    ("controller_restart", controller_restart_drill),
+    ("oom", oom_drill),
+    ("unschedulable", unschedulable_drill),
+    ("upgrade", upgrade_drill),
+)
 
 
 STATIC = ("deployment/bifrost-scheduler", "deployment/bifrost-worker")

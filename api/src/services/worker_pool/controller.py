@@ -143,6 +143,8 @@ class WorkerPoolController:
                     )
                 )
             ).all()
+        for worker_id in set(self._draining_since) - set(ids):
+            del self._draining_since[worker_id]
         for worker_id in ids:
             await self._reconcile_one(worker_id)
         for worker_id in await self.launch_for_demand():
@@ -194,10 +196,12 @@ class WorkerPoolController:
                             memory_limit_bytes=worker.memory_limit_bytes,
                         )
                     )
+                    # Whoever creates the Job launches it, whichever replica
+                    # reserved the row. A Job adopted from an instance that
+                    # died before binding it keeps no launcher: it runs that
+                    # instance's image, not this one's.
+                    worker.launched_by = self.id
                 worker.kubernetes_job_uid = remote["metadata"]["uid"]
-                # Whoever creates the Job launches it, whichever replica
-                # reserved the row.
-                worker.launched_by = self.id
                 worker.state = "starting"
                 await db.commit()
                 # The binding is durable; only now may the pod start.
@@ -439,10 +443,14 @@ class WorkerPoolController:
                 for worker in ready
                 if self.live.outdated(worker) and worker.reserved_for_dispatch_id is None
             ]
+            # A replacement counts once its pool is up (it has measured its
+            # budget), not when admitted: until then it cannot claim.
             current = sum(
                 1
                 for worker in ready
-                if worker.resource_class == "standard" and not self.live.outdated(worker)
+                if worker.resource_class == "standard"
+                and worker.memory_budget_bytes is not None
+                and not self.live.outdated(worker)
             )
             if not outdated or current < self.settings.pool_min_workers:
                 return []
@@ -554,8 +562,10 @@ async def _publish_live(controller_id: UUID, version: str) -> LiveControllers:
     """Record this instance as live and read every instance that is."""
     from src.core.cache.redis_client import get_redis
 
-    now = time.time()
     async with get_redis() as redis:
+        # Redis's clock, so every instance's "at" compares on one clock.
+        seconds, microseconds = await redis.time()  # type: ignore[misc]
+        now = seconds + microseconds / 1_000_000
         await redis.hset(  # type: ignore[misc]
             CONTROLLERS_KEY, str(controller_id), json.dumps({"version": version, "at": now})
         )

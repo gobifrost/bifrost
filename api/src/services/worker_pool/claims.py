@@ -50,7 +50,7 @@ def _now() -> datetime:
 
 
 async def admit_worker(incarnation_id: UUID, *, job_uid: str, pod_uid: str) -> int | None:
-    """Bind this pod to its incarnation once; return its slots, or None.
+    """Bind this pod to its incarnation once; None if it was refused.
 
     Only the first pod of the UID-bound Job can admit: a second start of the
     same Job, or a pod of another Job, is refused. The pod reports the build
