@@ -32,7 +32,7 @@ REQUIRED_ACCESS: tuple[tuple[str, str, str], ...] = (
 
 
 # This process's answer, once a cluster gave one (``may_manage_jobs``).
-_job_access: bool | None = None
+_job_access: dict[str, bool] = {}
 
 
 async def may_manage_jobs(settings: Any) -> bool:
@@ -41,20 +41,19 @@ async def may_manage_jobs(settings: Any) -> bool:
     Answered once per process (it makes five access reviews); a review the
     cluster could not answer is asked again by the next caller.
     """
-    global _job_access
-    if _job_access is not None:
-        return _job_access
+    if "answer" in _job_access:
+        return _job_access["answer"]
     try:
         client = KubernetesJobClient(settings)
     except KubernetesConfigurationError:
-        _job_access = False  # Not running in a cluster.
+        _job_access["answer"] = False  # Not running in a cluster.
         return False
     try:
         for verb, resource, group in REQUIRED_ACCESS:
             if not await client.allows(verb, resource, group):
-                _job_access = False
+                _job_access["answer"] = False
                 return False
-        _job_access = True
+        _job_access["answer"] = True
         return True
     except KubernetesApiError:
         logger.warning("Could not review Kubernetes Job permissions", exc_info=True)

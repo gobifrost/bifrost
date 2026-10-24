@@ -43,7 +43,7 @@ class _Client:
 @pytest.fixture(autouse=True)
 def _unanswered(monkeypatch: pytest.MonkeyPatch) -> None:
     """Each test starts in a process that has not asked yet."""
-    monkeypatch.setattr(kubernetes_control, "_job_access", None)
+    monkeypatch.setattr(kubernetes_control, "_job_access", {})
 
 
 def _with_client(monkeypatch: pytest.MonkeyPatch, client: _Client | None) -> list[object]:
@@ -66,13 +66,13 @@ async def test_outside_a_cluster_the_loops_are_off(monkeypatch: pytest.MonkeyPat
 
 async def test_every_required_verb_must_be_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
     for missing in REQUIRED_ACCESS:
-        monkeypatch.setattr(kubernetes_control, "_job_access", None)
+        monkeypatch.setattr(kubernetes_control, "_job_access", {})
         client = _Client(denied={missing})
         _with_client(monkeypatch, client)
         assert await may_manage_jobs(SimpleNamespace()) is False, missing
         assert client.closed
 
-    monkeypatch.setattr(kubernetes_control, "_job_access", None)
+    monkeypatch.setattr(kubernetes_control, "_job_access", {})
     allowed = _Client()
     _with_client(monkeypatch, allowed)
     assert await may_manage_jobs(SimpleNamespace()) is True

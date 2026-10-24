@@ -481,7 +481,7 @@ async def test_status_reports_whether_this_api_may_manage_jobs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     for permitted in (True, False):
-        monkeypatch.setattr(kubernetes_control, "_job_access", permitted)
+        monkeypatch.setattr(kubernetes_control, "_job_access", {"answer": permitted})
         assert (await kube.KubernetesExecutionService.status()).configured is permitted
 
 
