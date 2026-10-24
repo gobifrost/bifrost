@@ -5613,6 +5613,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/kubernetes/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Kubernetes Policy */
+        put: operations["update_kubernetes_policy_api_admin_kubernetes_policy_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/required-instructions": {
         parameters: {
             query?: never;
@@ -21338,7 +21355,7 @@ export interface components {
         };
         /**
          * KubernetesExecutionJobType
-         * @description One remotely-eligible job type with its product opt-in state.
+         * @description One isolatable job type with its per-type state.
          */
         KubernetesExecutionJobType: {
             /** Job Type */
@@ -21351,8 +21368,6 @@ export interface components {
             enabled: boolean;
             /** Default Enabled */
             default_enabled: boolean;
-            /** Allowed By Deployment */
-            allowed_by_deployment: boolean;
             /** Max Concurrency */
             max_concurrency?: number | null;
             /** Default Max Concurrency */
@@ -21360,15 +21375,22 @@ export interface components {
         };
         /**
          * KubernetesExecutionSettings
-         * @description Product opt-in state for remote execution, per job type.
+         * @description Everything Settings -> Kubernetes shows.
          */
         KubernetesExecutionSettings: {
+            policy: components["schemas"]["KubernetesPolicyValues"];
+            /** Imported From Env */
+            imported_from_env: {
+                [key: string]: components["schemas"]["KubernetesPolicyProvenance"];
+            };
             /** Job Types */
             job_types: components["schemas"]["KubernetesExecutionJobType"][];
+            /** Unread Variables */
+            unread_variables: string[];
         };
         /**
          * KubernetesExecutionUpdate
-         * @description Toggle remote execution and/or concurrency for one job type.
+         * @description Toggle isolation and/or concurrency for one job type.
          *
          *     max_concurrency is tri-state: omitted leaves the override unchanged,
          *     null clears it back to the code default, 1-32 sets it.
@@ -21382,14 +21404,65 @@ export interface components {
             max_concurrency?: number | null;
         };
         /**
+         * KubernetesPolicyProvenance
+         * @description A setting whose value was imported from a deployment variable.
+         */
+        KubernetesPolicyProvenance: {
+            /** Variable */
+            variable: string;
+            /**
+             * Imported At
+             * Format: date-time
+             */
+            imported_at: string;
+        };
+        /**
+         * KubernetesPolicyUpdate
+         * @description Change any of the scaling and isolation settings; omitted ones stay.
+         */
+        KubernetesPolicyUpdate: {
+            /** Warm Workers */
+            warm_workers?: number | null;
+            /** Max Workers */
+            max_workers?: number | null;
+            /** Worker Memory Mib */
+            worker_memory_mib?: number | null;
+            /** Largest Worker Mib */
+            largest_worker_mib?: number | null;
+            /** Idle Seconds */
+            idle_seconds?: number | null;
+            /** Isolated Jobs Enabled */
+            isolated_jobs_enabled?: boolean | null;
+            /** Max Isolated Pods */
+            max_isolated_pods?: number | null;
+        };
+        /**
+         * KubernetesPolicyValues
+         * @description Worker scaling and isolated-job settings in effect.
+         */
+        KubernetesPolicyValues: {
+            /** Warm Workers */
+            warm_workers: number;
+            /** Max Workers */
+            max_workers: number;
+            /** Worker Memory Mib */
+            worker_memory_mib: number;
+            /** Largest Worker Mib */
+            largest_worker_mib: number;
+            /** Idle Seconds */
+            idle_seconds: number;
+            /** Isolated Jobs Enabled */
+            isolated_jobs_enabled: boolean;
+            /** Max Isolated Pods */
+            max_isolated_pods: number;
+        };
+        /**
          * KubernetesStatus
-         * @description Whether this deployment configured remote build execution.
+         * @description Whether this API may manage Kubernetes Jobs (the page gate).
          */
         KubernetesStatus: {
             /** Configured */
             configured: boolean;
-            /** Backend */
-            backend: string;
         };
         /**
          * LLMModelInfo
@@ -40851,6 +40924,39 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["KubernetesExecutionUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KubernetesExecutionSettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_kubernetes_policy_api_admin_kubernetes_policy_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesPolicyUpdate"];
             };
         };
         responses: {

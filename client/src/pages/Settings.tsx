@@ -23,7 +23,7 @@ import { MemorySettings } from "@/pages/settings/MemorySettings";
 import { RequiredInstructionsSettings } from "@/pages/settings/RequiredInstructionsSettings";
 import { MCP } from "@/pages/settings/MCP";
 import { Maintenance } from "@/pages/settings/Maintenance";
-import { KubernetesExecutions } from "@/pages/settings/KubernetesExecutions";
+import { KubernetesSettings } from "@/pages/settings/KubernetesSettings";
 import { getKubernetesStatus } from "@/services/kubernetes";
 import { cn } from "@/lib/utils";
 import {
@@ -152,10 +152,7 @@ const settingsSections: SettingsSection[] = [
 	},
 ];
 
-function findActiveSectionId(
-	sections: SettingsSection[],
-	currentTab: string,
-) {
+function findActiveSectionId(sections: SettingsSection[], currentTab: string) {
 	return (
 		sections.find((section) =>
 			section.items.some((item) => item.value === currentTab),
@@ -167,24 +164,26 @@ const kubernetesSection: SettingsSection = {
 	id: "kubernetes",
 	label: "Kubernetes",
 	icon: KubernetesIcon,
-		items: [
-			{
-				value: "kubernetes-executions",
-				label: "Executions",
-				icon: Container,
-				content: KubernetesExecutions,
-			},
-		],
+	items: [
+		{
+			value: "kubernetes-executions",
+			label: "Scaling & Isolation",
+			icon: Container,
+			content: KubernetesSettings,
+		},
+	],
 };
 
 export function Settings() {
 	const navigate = useNavigate();
 	const location = useLocation();
-	const [kubernetesAvailable, setKubernetesAvailable] = useState(false);
+	// null until the status check answers.
+	const [kubernetesAvailable, setKubernetesAvailable] = useState<
+		boolean | null
+	>(null);
 
-	// The Kubernetes section appears only when the deployment configured
-	// the remote-build backend. It is a second home for K8s options later
-	// (e.g. built-in monitoring) beside today's Executions toggles.
+	// The Kubernetes section appears wherever this API may manage
+	// Kubernetes Jobs, whether or not build jobs are isolated.
 	useEffect(() => {
 		let active = true;
 		getKubernetesStatus()
@@ -199,16 +198,21 @@ export function Settings() {
 		};
 	}, []);
 
-	const sections = useMemo(
-		() =>
-			kubernetesAvailable
-				? [...settingsSections, kubernetesSection]
-				: settingsSections,
-		[kubernetesAvailable],
-	);
-
 	// Parse the current tab from the URL path
 	const requestedTab = location.pathname.split("/settings/")[1];
+
+	// A link straight to a Kubernetes tab keeps it open while the status
+	// check is in flight, instead of redirecting before the answer.
+	const showKubernetes =
+		kubernetesAvailable ??
+		kubernetesSection.items.some((item) => item.value === requestedTab);
+	const sections = useMemo(
+		() =>
+			showKubernetes
+				? [...settingsSections, kubernetesSection]
+				: settingsSections,
+		[showKubernetes],
+	);
 	const currentTab = sections.some((section) =>
 		section.items.some((item) => item.value === requestedTab),
 	)

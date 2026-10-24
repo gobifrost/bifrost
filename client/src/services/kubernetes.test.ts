@@ -7,9 +7,11 @@ vi.mock("@/lib/api-client", () => ({
 }));
 
 import {
+	KubernetesRequestError,
 	getKubernetesExecution,
 	getKubernetesStatus,
 	updateKubernetesExecution,
+	updateKubernetesPolicy,
 } from "./kubernetes";
 
 describe("kubernetes service", () => {
@@ -18,10 +20,9 @@ describe("kubernetes service", () => {
 	it("loads status and execution settings", async () => {
 		authFetchMock
 			.mockResolvedValueOnce(
-				new Response(
-					JSON.stringify({ configured: true, backend: "kubernetes" }),
-					{ status: 200 },
-				),
+				new Response(JSON.stringify({ configured: true }), {
+					status: 200,
+				}),
 			)
 			.mockResolvedValueOnce(
 				new Response(
@@ -33,7 +34,6 @@ describe("kubernetes service", () => {
 								description: "Compile apps in pods.",
 								enabled: true,
 								default_enabled: true,
-								allowed_by_deployment: true,
 							},
 						],
 					}),
@@ -43,7 +43,6 @@ describe("kubernetes service", () => {
 
 		await expect(getKubernetesStatus()).resolves.toEqual({
 			configured: true,
-			backend: "kubernetes",
 		});
 		await expect(getKubernetesExecution()).resolves.toMatchObject({
 			job_types: [
@@ -85,13 +84,72 @@ describe("kubernetes service", () => {
 			enabled: true,
 			maxConcurrency: null,
 		});
-		const [, init] = authFetchMock.mock.calls[0] as [
-			string,
-			RequestInit,
-		];
+		const [, init] = authFetchMock.mock.calls[0] as [string, RequestInit];
 		expect(JSON.parse(init.body as string)).toMatchObject({
 			job_type: "application.deploy",
 			max_concurrency: null,
+		});
+	});
+
+	it("sends only the changed policy fields", async () => {
+		authFetchMock.mockResolvedValueOnce(
+			new Response(JSON.stringify({ job_types: [] }), { status: 200 }),
+		);
+
+		await updateKubernetesPolicy({ max_workers: 10 });
+
+		const [url, init] = authFetchMock.mock.calls[0] as [
+			string,
+			RequestInit,
+		];
+		expect(url).toBe("/api/admin/kubernetes/policy");
+		expect(init.method).toBe("PUT");
+		expect(JSON.parse(init.body as string)).toEqual({ max_workers: 10 });
+	});
+
+	it("reports which field a validation error is about", async () => {
+		authFetchMock.mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					detail: [
+						{
+							type: "less_than_equal",
+							loc: ["body", "max_workers"],
+							msg: "Input should be less than or equal to 100",
+						},
+					],
+				}),
+				{ status: 422 },
+			),
+		);
+
+		const error = await updateKubernetesPolicy({ max_workers: 500 }).catch(
+			(caught: unknown) => caught,
+		);
+		expect(error).toBeInstanceOf(KubernetesRequestError);
+		expect(error).toMatchObject({
+			message: "Input should be less than or equal to 100",
+			status: 422,
+			field: "max_workers",
+		});
+	});
+
+	it("keeps a plain refusal message without a field", async () => {
+		authFetchMock.mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					detail: "Warm workers must not exceed max workers",
+				}),
+				{ status: 422 },
+			),
+		);
+
+		await expect(
+			updateKubernetesPolicy({ warm_workers: 9 }),
+		).rejects.toMatchObject({
+			message: "Warm workers must not exceed max workers",
+			status: 422,
+			field: undefined,
 		});
 	});
 });
