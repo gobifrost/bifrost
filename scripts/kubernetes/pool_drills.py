@@ -60,7 +60,7 @@ from pool_spike import (
     wait_done,
     wait_floor,
 )
-from spike import ROOT, kubectl
+from spike import ROOT, kubectl, wait_for_rollout
 
 MIB = 2**20
 STANDARD_POD_MIB = 2048
@@ -382,7 +382,7 @@ def unschedulable_drill() -> dict:
             f"BIFROST_POOL_WORKER_MEMORY_REQUEST_MIB={unschedulable_mib}",
             "BIFROST_POOL_START_TIMEOUT_SECONDS=60",
         )
-        kubectl("rollout", "status", "deployment/bifrost-api", "--timeout=300s")
+        wait_for_rollout("deployment/bifrost-api", 300)
         try:
             # Replace every worker, the warm minimum included, with ones that
             # cannot be scheduled; nothing else can serve the run.
@@ -410,7 +410,7 @@ def unschedulable_drill() -> dict:
                 "BIFROST_POOL_WORKER_MEMORY_REQUEST_MIB-",
                 "BIFROST_POOL_START_TIMEOUT_SECONDS-",
             )
-            kubectl("rollout", "status", "deployment/bifrost-api", "--timeout=300s")
+            wait_for_rollout("deployment/bifrost-api", 300)
     finally:
         set_policy(**previous)
         # Workers started between the two restores carry the drill's limit.
@@ -448,7 +448,7 @@ def publish_same_tag(image: str, version: str) -> None:
 
 def restart_api() -> None:
     kubectl("rollout", "restart", "deployment/bifrost-api")
-    kubectl("rollout", "status", "deployment/bifrost-api", "--timeout=600s")
+    wait_for_rollout("deployment/bifrost-api", 600)
 
 
 def rotation(old_id: str, version: str, started_at: str, long_run: str | None) -> dict:
@@ -700,7 +700,7 @@ def scale_static(replicas: int) -> None:
     for deployment in STATIC:
         kubectl("scale", deployment, f"--replicas={replicas}")
     for deployment in STATIC:
-        kubectl("rollout", "status", deployment, "--timeout=600s")
+        wait_for_rollout(deployment, 600)
 
 
 def run(out: Path, only: list[str]) -> dict:
