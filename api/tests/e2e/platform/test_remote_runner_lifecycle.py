@@ -148,6 +148,14 @@ async def remote_launcher(async_session_factory, e2e_api_url):
     )
     removed_capabilities: dict[UUID, list[str]] = {}
     launcher = _TestLauncher(api_url=e2e_api_url, identity=identity)
+
+    async def retired() -> bool | None:
+        async with async_session_factory() as db:
+            worker = await db.get(ExecutionWorker, identity.incarnation_id)
+            if worker is None or worker.state == "retired":
+                return True
+        return None
+
     try:
         await launcher.connect()
 
@@ -220,13 +228,6 @@ async def remote_launcher(async_session_factory, e2e_api_url):
             )
             await db.commit()
         await launcher.stop()
-
-        async def retired() -> bool | None:
-            async with async_session_factory() as db:
-                worker = await db.get(ExecutionWorker, identity.incarnation_id)
-                if worker is None or worker.state == "retired":
-                    return True
-            return None
 
         await _wait_for(retired, timeout=20, description="test remote launcher retirement")
         async with async_session_factory() as db:

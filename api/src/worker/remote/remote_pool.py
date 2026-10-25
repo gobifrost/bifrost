@@ -41,11 +41,14 @@ class ThinRemoteTransport(Protocol):
     connected: bool
     hostname: str
 
-    async def request(self, action: str, payload: dict[str, Any]) -> dict[str, Any]: ...
+    async def request(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Send an acknowledged physical-runner command."""
 
-    def memory(self) -> tuple[int, int]: ...
+    def memory(self) -> tuple[int, int]:
+        """Return the physical container's current usage and limit."""
 
-    def memory_request_bytes(self, key: str) -> int | None: ...
+    def memory_request_bytes(self, key: str) -> int | None:
+        """Return the canonical reservation for a running route."""
 
 
 class _RemoteProcess:
@@ -74,11 +77,11 @@ class ThinRemoteProcessPool(ProcessPoolManager):
         worker_id: str | None = None,
         **kwargs: Any,
     ) -> None:
-        super().__init__(**kwargs)
-        self.transport = transport
-        self.worker_id = worker_id or (
+        identity = worker_id or (
             f"thin-remote:{os.environ.get('HOSTNAME', 'api')}"
         )
+        super().__init__(worker_id=identity, **kwargs)
+        self.transport = transport
         self._routes: dict[str, ProcessHandle] = {}
         self._route_metrics: dict[str, dict[str, float | int]] = {}
         self._remote_memory_current = -1
@@ -385,7 +388,7 @@ class ThinRemoteProcessPool(ProcessPoolManager):
                 try:
                     await task
                 except asyncio.CancelledError:
-                    pass
+                    pass  # Expected after cancelling this owned background task.
 
         owns_session = await self._owns_session()
         if owns_session and self.transport.connected:

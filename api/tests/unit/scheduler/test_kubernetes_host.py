@@ -32,10 +32,10 @@ async def test_control_host_waits_for_schema_then_stops_existing_loops(
         loop_stopped.set()
 
     started = AsyncMock(return_value=[asyncio.create_task(loop())])
-    monkeypatch.setattr(kubernetes_host, "get_settings", lambda: SimpleNamespace())
+    monkeypatch.setattr(kubernetes_host, "get_settings", SimpleNamespace)
     monkeypatch.setattr(kubernetes_host, "init_db", AsyncMock())
     monkeypatch.setattr(kubernetes_host, "close_db", closed)
-    monkeypatch.setattr(kubernetes_host, "get_engine", lambda: object())
+    monkeypatch.setattr(kubernetes_host, "get_engine", object)
     monkeypatch.setattr(kubernetes_host, "wait_for_schema", schema)
     monkeypatch.setattr(kubernetes_host, "get_session_factory", lambda: session)
     monkeypatch.setattr(kubernetes_host, "import_kubernetes_policy_from_env", imported)
@@ -75,10 +75,10 @@ async def test_control_host_exits_when_the_role_is_denied(
     async def session():
         yield object()
 
-    monkeypatch.setattr(kubernetes_host, "get_settings", lambda: SimpleNamespace())
+    monkeypatch.setattr(kubernetes_host, "get_settings", SimpleNamespace)
     monkeypatch.setattr(kubernetes_host, "init_db", AsyncMock())
     monkeypatch.setattr(kubernetes_host, "close_db", closed)
-    monkeypatch.setattr(kubernetes_host, "get_engine", lambda: object())
+    monkeypatch.setattr(kubernetes_host, "get_engine", object)
     monkeypatch.setattr(kubernetes_host, "wait_for_schema", AsyncMock())
     monkeypatch.setattr(kubernetes_host, "get_session_factory", lambda: session)
     monkeypatch.setattr(kubernetes_host, "import_kubernetes_policy_from_env", AsyncMock())

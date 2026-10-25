@@ -91,7 +91,7 @@ async def test_connected_session_releases_lease_only_after_worker_drain() -> Non
         session = RemoteSession(bridge, worker, LEASE)
         stopping = asyncio.create_task(session.stop())
         await asyncio.sleep(0)
-        release.assert_not_awaited()
+        assert release.await_count == 0
         drained.set()
         await stopping
 
@@ -182,7 +182,7 @@ async def test_inventory_reconciliation_does_not_block_its_terminate_reply() -> 
     await task
 
     worker.reconcile_transport_inventory.assert_awaited_once_with(expected_generation=1)
-    socket.close.assert_not_awaited()
+    assert socket.close.await_count == 0
     stopped.set()
     await session.detach()
 

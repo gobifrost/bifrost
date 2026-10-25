@@ -37,8 +37,8 @@ async def test_platform_process_wait_survives_heartbeat_wait_cancellation():
     wait = asyncio.create_task(process.wait())
     await asyncio.sleep(0)
     wait.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await wait
+    results = await asyncio.gather(wait, return_exceptions=True)
+    assert isinstance(results[0], asyncio.CancelledError)
     assert not process.exited.cancelled()
     await bridge.receive({"event": "job_exit", "route_id": "route", "returncode": 0})
     assert await process.wait() == 0

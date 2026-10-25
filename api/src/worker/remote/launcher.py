@@ -621,6 +621,7 @@ async def run_launcher(
                         # install. The API's ordinary worker heartbeat can then
                         # keep the canonical row alive while it waits for the
                         # inventory below; no work is ready to route yet.
+                        started = False
                         try:
                             await candidate.hello({})
                             setup = asyncio.create_task(candidate.start())
@@ -636,9 +637,10 @@ async def run_launcher(
                                             "pressure_ratio": memory_pressure_ratio(), "runs": {},
                                         })
                             await setup
-                        except BaseException:
-                            await candidate.stop()
-                            raise
+                            started = True
+                        finally:
+                            if not started:
+                                await candidate.stop()
                         launcher = candidate
                     else:
                         launcher.socket = socket

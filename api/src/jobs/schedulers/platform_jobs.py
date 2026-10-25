@@ -134,19 +134,24 @@ class PlatformJobProcess(Protocol):
     """A runner process controlled by a platform-job execution backend."""
 
     @property
-    def returncode(self) -> int | None: ...
+    def returncode(self) -> int | None:
+        """Return the exit code once the runner has exited."""
 
-    async def wait(self) -> int: ...
+    async def wait(self) -> int:
+        """Wait for the physical runner to exit."""
 
-    async def terminate(self) -> None: ...
+    async def terminate(self) -> None:
+        """Terminate this attempt's physical runner."""
 
 
 class PlatformJobExecutionBackend(Protocol):
     """Starts and observes one claimed platform-job runner."""
 
-    async def spawn(self, claim: ClaimedPlatformJob) -> PlatformJobProcess: ...
+    async def spawn(self, claim: ClaimedPlatformJob) -> PlatformJobProcess:
+        """Start the handler for an already-claimed attempt."""
 
-    def memory(self) -> tuple[int, int]: ...
+    def memory(self) -> tuple[int, int]:
+        """Return current container usage and effective memory limit."""
 
 
 def _remote_job_name(job_id: UUID, lease_token: UUID) -> str:

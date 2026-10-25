@@ -18,8 +18,10 @@ from tests.unit.services.worker_pool.test_worker_pool import (
     FakeCluster,
     _accept_pool_run,
     _clean as _clean,
-    db as db,
+    db as db_fixture,
 )
+
+db = db_fixture
 
 
 async def _executor(db, name: str, handlers: list[str], budget: int) -> None:

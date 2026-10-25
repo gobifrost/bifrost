@@ -136,6 +136,13 @@ reset_state() {
     docker compose -f "$COMPOSE_FILE" stop \
         api worker scheduler scheduler-fixtures pgbouncer 2>/dev/null || true
 
+    # A reset creates a new DB/object-store generation. Application containers
+    # keep writable worktrees such as GitHubSyncService's /tmp/git, so merely
+    # stopping them can pair stale on-disk Git state with an empty object store.
+    # Recreate only those ephemeral application containers; infrastructure and
+    # fixture volumes remain intact.
+    docker compose -f "$COMPOSE_FILE" rm -sf api worker scheduler > /dev/null
+
     docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U bifrost -d postgres -c \
         "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'bifrost_test' AND pid <> pg_backend_pid();" \
         > /dev/null 2>&1 || true
@@ -158,7 +165,7 @@ reset_state() {
     docker compose -f "$COMPOSE_FILE" --profile e2e start scheduler-fixtures > /dev/null
     wait_for_service "$COMPOSE_FILE" scheduler-fixtures \
         python -c "import ssl,urllib.request; urllib.request.urlopen('http://localhost:8080/health'); urllib.request.urlopen('https://fixture.openrouter.ai:8443/health', context=ssl.create_default_context(cafile='/fixture-tls/trust.pem'))"
-    docker compose -f "$COMPOSE_FILE" --profile e2e start \
+    docker compose -f "$COMPOSE_FILE" --profile e2e up -d --no-build \
         api worker scheduler > /dev/null
     wait_for_api_ready "$COMPOSE_FILE"
 

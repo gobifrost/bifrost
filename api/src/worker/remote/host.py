@@ -433,7 +433,6 @@ class ApiExecutor(PoolWorker):
             handlers=(("workflow.execute", 1),),
         )
         self.incarnation_id = incarnation_id
-        self.static = remote_static
         self.bridge = bridge
         self._reconcile_lock = asyncio.Lock()
         self._reconciled_generation = 0

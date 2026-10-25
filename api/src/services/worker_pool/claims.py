@@ -272,6 +272,9 @@ async def claim_next(
             if reserve_claim is not None:
                 reserve_claim(claim)
                 reserved = True
+            # Keep commit inside the reservation's cleanup guard so a failed
+            # transaction cannot retain a local admission hold.
+            await db.commit()
     except BaseException:
         if reserved and claim is not None and release_reservation is not None:
             release_reservation(claim)

@@ -191,4 +191,5 @@ def test_platform_runner_child_preserves_nonzero_main_return(monkeypatch, capsys
             try:
                 os.close(fd)
             except OSError:
+                # The child or an earlier cleanup step may already have closed this descriptor.
                 pass

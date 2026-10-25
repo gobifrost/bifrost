@@ -241,7 +241,7 @@ async def test_shutdown_after_disconnect_starts_one_bounded_drain_before_stop() 
     await drain_started.wait()
 
     launcher.begin_drain.assert_awaited_once_with()
-    launcher.stop.assert_not_awaited()
+    assert launcher.stop.await_count == 0
     gate.set()
     await shutdown
     launcher.stop.assert_awaited_once_with()
@@ -257,7 +257,7 @@ async def test_shutdown_reuses_the_existing_drain_task() -> None:
     shutdown = asyncio.create_task(_shutdown_launcher(launcher, drain, stopping))
     await asyncio.sleep(0)
 
-    launcher.begin_drain.assert_not_awaited()
+    assert launcher.begin_drain.await_count == 0
     gate.set()
     await shutdown
     launcher.stop.assert_awaited_once_with()

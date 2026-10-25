@@ -77,6 +77,7 @@ def _memory(cgroup: Path) -> dict[str, Any]:
             try:
                 values[key] = int(raw_value)
             except ValueError:
+                # Ignore malformed cgroup statistics and retain the missing value.
                 pass
     current, inactive = _read_int(cgroup / "memory.current"), values["inactive_file"]
     return {
@@ -118,6 +119,7 @@ def _process(pid: int, *, proc_root: Path) -> dict[str, int | str | None]:
                 try:
                     values["rss_bytes"] = int(raw_value.split()[0]) * 1024
                 except (IndexError, ValueError):
+                    # The optional VmRSS value may be absent or malformed.
                     pass
     for line in (_read_text(process / "smaps_rollup") or "").splitlines():
         key, _, raw_value = line.partition(":")
@@ -125,6 +127,7 @@ def _process(pid: int, *, proc_root: Path) -> dict[str, int | str | None]:
             try:
                 values["pss_bytes"] = int(raw_value.split()[0]) * 1024
             except (IndexError, ValueError):
+                # The optional Pss value may be absent or malformed.
                 pass
     return values
 

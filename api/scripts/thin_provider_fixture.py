@@ -77,6 +77,7 @@ def main() -> None:
     assert default_ca is not None
     (directory / "trust.pem").write_bytes(Path(default_ca).read_bytes() + cert_path.read_bytes())
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(cert_path, key_path)
     tls_server = ThreadingHTTPServer(("0.0.0.0", 8443), VideoHandler)
     tls_server.socket = context.wrap_socket(tls_server.socket, server_side=True)

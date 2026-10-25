@@ -229,11 +229,33 @@ def test_state_reset_reloads_the_mounted_scheduler_fixture_server():
     stop_block = reset_state.split("docker compose", 1)[1].split("2>/dev/null", 1)[0]
     assert "scheduler-fixtures" in stop_block
     fixture_start = 'docker compose -f "$COMPOSE_FILE" --profile e2e start scheduler-fixtures'
-    executor_start = 'docker compose -f "$COMPOSE_FILE" --profile e2e start \\\n        api worker scheduler'
+    executor_start = 'docker compose -f "$COMPOSE_FILE" --profile e2e up -d --no-build \\\n        api worker scheduler'
     assert fixture_start in reset_state
     assert 'wait_for_service "$COMPOSE_FILE" scheduler-fixtures' in reset_state
     assert executor_start in reset_state
     assert reset_state.index(fixture_start) < reset_state.index(executor_start)
+
+
+def test_state_reset_recreates_application_containers_after_data_reset():
+    """A fresh DB/object-store generation cannot reuse an old writable worktree.
+
+    GitHubSyncService caches its workspace under ``/tmp/git`` in each
+    application container. Resetting SeaweedFS while merely stopping and
+    starting the worker leaves a stale ``.git`` directory behind, which can no
+    longer be restored from the new object-store generation. Recreate only the
+    application containers; postgres, redis, fixture volumes, and the test
+    image remain long-lived.
+    """
+    script = _find_repo_file("test.sh").read_text()
+    reset_state = script.split("reset_state() {", 1)[1].split("\n}", 1)[0]
+
+    recreate = 'docker compose -f "$COMPOSE_FILE" rm -sf api worker scheduler'
+    executor_up = 'docker compose -f "$COMPOSE_FILE" --profile e2e up -d --no-build \\\n        api worker scheduler'
+
+    assert recreate in reset_state
+    assert executor_up in reset_state
+    assert reset_state.index(recreate) < reset_state.index(executor_up)
+    assert 'start \\\n        api worker scheduler' not in reset_state
 
 
 def test_canonical_scheduler_fixture_serves_thin_provider_jobs():

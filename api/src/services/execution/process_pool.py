@@ -403,6 +403,7 @@ class ProcessPoolManager:
         registration_ttl_seconds: int = 30,
         on_result: ResultCallback | None = None,
         on_service_result: ResultCallback | None = None,
+        worker_id: str | None = None,
     ):
         """
         Initialize the process pool manager.
@@ -427,7 +428,7 @@ class ProcessPoolManager:
         self.memory_kill_growth_bytes: int | None = None
 
         # Worker ID from HOSTNAME env var (Docker container name) or UUID
-        self.worker_id = os.environ.get("HOSTNAME", str(uuid.uuid4()))
+        self.worker_id = worker_id or os.environ.get("HOSTNAME", str(uuid.uuid4()))
 
         # Process tracking
         self.processes: dict[str, ProcessHandle] = {}
