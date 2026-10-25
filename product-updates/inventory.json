@@ -2,9 +2,9 @@
   "schema_version": 1,
   "repository": "gobifrost/bifrost",
   "base_ref": "ade714a08b95c84daa285e859ebece55f45c6754",
-  "target_ref": "96298ab8539e89ffed8d85d08137db79070c68c1",
-  "collected_at": "2026-10-24T22:33:34Z",
-  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...96298ab8539e89ffed8d85d08137db79070c68c1",
+  "target_ref": "32552d0f5f20e3647d2b2e9a6186d3aa23e6e17e",
+  "collected_at": "2026-10-25T01:45:26Z",
+  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...32552d0f5f20e3647d2b2e9a6186d3aa23e6e17e",
   "commits": [
     {
       "sha": "2399fbb049e6b6c121ca07980ffa649844c0d477",
@@ -1614,6 +1614,20 @@
       "subject": "Move Kubernetes scaling and isolation to Settings (#1061)",
       "prs": [
         1061
+      ]
+    },
+    {
+      "sha": "7aa1ccea9e228b843ae4f18a97ef5aeffb208284",
+      "subject": "Activate the Scaling and Isolation note (#1063)",
+      "prs": [
+        1063
+      ]
+    },
+    {
+      "sha": "32552d0f5f20e3647d2b2e9a6186d3aa23e6e17e",
+      "subject": "Mask HTTP credentials in runtime logs while preserving user DEBUG (#1064)",
+      "prs": [
+        1064
       ]
     }
   ],
@@ -4616,6 +4630,32 @@
       "merge_commit": "b1574715c562fab5284780a3872daa2934f5cf1d",
       "body": "## Product Updates\n\n- [ ] Highlight\n- [x] Other \u2014 The sidebar and header stay in place while a page loads.\n- [ ] Omit\n\n## Summary\n\nBlocking repair for #1061's merge-queue failure. `PageShell` rendered the routed page through `<Outlet />` with no Suspense boundary of its own; the nearest was the full-screen `<Suspense fallback={<PageLoader />}>` in `App.tsx`, above the shell. When a page (or a lazy child) suspended after the shell had rendered, React replaced the whole shell with \"Loading...\" and then remounted it.\n\nEvidence from the failed run (`CI` 40131714078, Critical Browser Smoke, `mobile navigation traps focus \u2026`): the drawer was visible, then the failure snapshot shows only `status \"Loading...\"` (the app-level fallback); the API log shows the header's `/api/profile` and `/api/mcp/run` requested twice (the remount) and the Workflows page data never requested. #1061 does not touch the shell; the race landed on its run. Users hit the same thing as a flash of a blank workspace.\n\nFix: a Suspense boundary inside `<main>` around the page, with a small \"Loading page\u2026\" loader, so the sidebar, header and an open mobile drawer stay.\n\n## Verification\n\n- `npx vitest run src/components/layout/PageShell.test.tsx`: 8 passed; the new test (a suspended page keeps the navigation and header and shows the page loader) failed before the fix.\n- `npm run tsc`, eslint and prettier on the changed files.\n- The merge-queue browser smoke runs the original spec.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1062"
+    },
+    {
+      "number": 1063,
+      "title": "Activate the Scaling and Isolation note",
+      "url": "https://github.com/gobifrost/bifrost/pull/1063",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-24T22:59:36Z",
+      "merge_commit": "7aa1ccea9e228b843ae4f18a97ef5aeffb208284",
+      "body": "## Product Updates\n\n- [ ] Highlight\n- [ ] Other\n- [x] Omit \u2014 refreshes verified inventory only; activates the already-approved upgrade card.\n\n## Summary\n\nRefreshes `product-updates/inventory.json` through #1062 (target `96298ab8`) so the approved \"Scaling and Isolation Move to Settings\" note from #1061, with its Agent Prompt, enters the image bundle. Its eligibility requires #1061, which merged after the last inventory refresh.\n\n## Verification\n\n- `python3 scripts/product_updates.py validate ...`: passes.\n- `bundle` against the refreshed inventory: \"Scaling and Isolation Move to Settings\" (with its prompt) leads, followed by the upgrade card and \"Workers Scale on Demand in Kubernetes\".\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1063"
+    },
+    {
+      "number": 1064,
+      "title": "Mask HTTP credentials in runtime logs while preserving user DEBUG",
+      "url": "https://github.com/gobifrost/bifrost/pull/1064",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-25T01:39:01Z",
+      "merge_commit": "32552d0f5f20e3647d2b2e9a6186d3aa23e6e17e",
+      "body": "## Product Updates\n\n- [x] Other \u2014 Workflow and service logs mask credential-bearing HTTP headers while retaining user DEBUG messages.\n\n## Summary\n\nWorkflow and service execution enables DEBUG capture for user logs, which also let transport libraries dump response cookies into worker console logs. Raise transport logger levels to INFO during execution and redact Authorization, Proxy-Authorization, Cookie, and Set-Cookie values before console output or runtime log transport.\n\nThe same sanitization covers failed execution logs and errors rebuilt after capture ends. Restore logger levels and handler formatters when execution exits.\n\n## Validation\n\n- `./test.sh tests/unit/engine/test_engine_token_redaction.py tests/unit/engine/test_service_execution.py tests/unit/engine/test_runtime_log_lock.py -v` \u2014 25 passed.\n- `./test.sh tests/e2e/platform/test_engine_token_redaction_live.py -v --durations=0` \u2014 passed; checks redacted stored headers, working SDK credentials, and preserved DEBUG logs through diagnostic access.\n- `./test.sh pr-preflight` \u2014 API quality, backend/client unit tests, changed backend E2E, client lint/types/build, and fresh Python/JavaScript CodeQL analysis.\n- `./test.sh tests/e2e/engine/test_variable_capture_on_error.py tests/e2e/engine/test_script_logging.py -v --durations=0` \u2014 5 passed.\n- Independent Codex review; fixed and regression-tested both post-capture exception bypasses it found.\n\nThe full backend E2E and browser suites are left to the merge queue.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1064"
     }
   ]
 }
