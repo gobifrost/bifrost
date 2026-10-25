@@ -64,6 +64,8 @@ from spike import ROOT, kubectl
 
 MIB = 2**20
 STANDARD_POD_MIB = 2048
+INLINE_RUN_RESERVATION_BYTES = 64 * MIB
+CONTROLLER_RESTART_RUN_SECONDS = 120
 BUILD_FIXTURE = ROOT / "api/scripts/kubernetes_build_spike.py"
 PLATFORM_DONE = ("succeeded", "failed", "canceled")
 
@@ -88,10 +90,165 @@ def wait_status(ids: list[str], wanted: set[str], timeout: float) -> dict[str, s
     raise TimeoutError(statuses(ids))
 
 
-def job_count() -> int:
-    """Unfinished worker Jobs (finished ones stay until their TTL as history)."""
+def controller_restart_burst_count(warm_worker_budget: int) -> int:
+    """Keep enough 64 MiB runs alive to require three Job workers.
+
+    The first worker is the warm floor. Two further full budgets make the
+    controller replacement adopt a pool that has already scaled up.
+    """
+    assert warm_worker_budget >= INLINE_RUN_RESERVATION_BYTES, warm_worker_budget
+    per_worker = warm_worker_budget // INLINE_RUN_RESERVATION_BYTES
+    return 2 * per_worker + 1
+
+
+def ready_api_pods() -> dict[str, str]:
+    """Ready, non-terminating API pod names and their incarnation UIDs."""
+    pods = json.loads(kubectl("get", "pods", "-l", API, "-o", "json"))["items"]
+    return {
+        pod["metadata"]["name"]: pod["metadata"]["uid"]
+        for pod in pods
+        if not pod["metadata"].get("deletionTimestamp")
+        and any(
+            condition["type"] == "Ready" and condition["status"] == "True"
+            for condition in pod.get("status", {}).get("conditions", [])
+        )
+    }
+
+
+def live_controller_ids() -> set[str]:
+    """Controller instance IDs currently published in Redis' controller hash."""
+    script = """import asyncio, json
+from src.core.cache.redis_client import get_redis
+from src.services.worker_pool.controller import CONTROLLERS_KEY
+async def main():
+    async with get_redis() as redis:
+        ids = await redis.hkeys(CONTROLLERS_KEY)
+    print(json.dumps(sorted(key.decode() if isinstance(key, bytes) else key for key in ids)))
+asyncio.run(main())
+"""
+    return set(json.loads(kubectl("exec", ready_api_pod(), "--", "python", "-c", script)))
+
+
+def active_pool_jobs() -> dict[str, str]:
+    """Unfinished pool Jobs, keyed by their durable Kubernetes UID binding."""
     jobs = json.loads(kubectl("get", "jobs", "-l", POOL, "-o", "json"))["items"]
-    return sum(1 for job in jobs if not job["status"].get("succeeded") and not job["status"].get("failed"))
+    return {
+        job["metadata"]["name"]: job["metadata"]["uid"]
+        for job in jobs
+        if not job["status"].get("succeeded") and not job["status"].get("failed")
+    }
+
+
+def worker_job_bindings() -> dict[str, str | None]:
+    """Worker rows by Job name, before or after the remote UID is persisted."""
+    rows = sql(
+        "SELECT kubernetes_job_name, kubernetes_job_uid FROM execution_workers "
+        "WHERE form='job' AND state IN ('reserved','starting','ready','draining') "
+        "AND kubernetes_job_name IS NOT NULL"
+    )
+    assert len(rows) == len({row[0] for row in rows}), f"duplicate worker Job bindings: {rows}"
+    return {name: uid or None for name, uid in rows}
+
+
+def assert_active_jobs_bound() -> dict[str, str]:
+    """Every live Kubernetes Job must have a row, with no changed bound UID.
+
+    A Job may briefly exist after Kubernetes accepts its create request and
+    before its controller persists the returned UID. Its deterministic name
+    already proves ownership; once the row has a UID, an incarnation change is
+    always a failure.
+    """
+    bindings = worker_job_bindings()
+    jobs = active_pool_jobs()
+    orphaned = {name: uid for name, uid in jobs.items() if name not in bindings}
+    mismatched = {
+        name: {"job": uid, "worker": bindings[name]}
+        for name, uid in jobs.items()
+        if bindings.get(name) is not None and bindings[name] != uid
+    }
+    assert not orphaned and not mismatched, (
+        f"orphaned active Jobs: {orphaned}; changed Job UIDs: {mismatched}; "
+        f"worker bindings: {bindings}"
+    )
+    return jobs
+
+
+def assert_retained_job_bindings(expected: dict[str, str]) -> None:
+    """The active Job incarnations from before the API restart still exist."""
+    bindings = worker_job_bindings()
+    jobs = active_pool_jobs()
+    changed = {
+        name: {"expected": uid, "worker": bindings.get(name), "job": jobs.get(name)}
+        for name, uid in expected.items()
+        if bindings.get(name) != uid or jobs.get(name) != uid
+    }
+    assert not changed, f"pre-restart Job bindings changed: {changed}"
+
+
+def snapshot_active_job_bindings() -> dict[str, str]:
+    """Take a fully persisted incarnation snapshot before deleting the API."""
+    jobs = assert_active_jobs_bound()
+    bindings = worker_job_bindings()
+    unbound = {name: uid for name, uid in jobs.items() if bindings.get(name) is None}
+    assert not unbound, f"active Jobs have not persisted their UIDs: {unbound}"
+    return jobs
+
+
+def running_worker_bindings(ids: list[str]) -> dict[str, str]:
+    quoted = ",".join(f"'{id_}'" for id_ in ids)
+    rows = sql(
+        "SELECT e.id, w.kubernetes_job_name FROM executions e "
+        "JOIN execution_worker_claims c ON c.subject_id=e.id "
+        "JOIN execution_workers w ON w.id=c.worker_id "
+        f"WHERE e.id IN ({quoted}) AND e.status='Running'"
+    )
+    return {execution_id: name for execution_id, name in rows}
+
+
+def wait_for_scaled_burst(burst: list[str], timeout: float) -> tuple[dict[str, str], dict[str, str]]:
+    """Wait until active runs occupy more than the warm Job worker."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        active = snapshot_active_job_bindings()
+        bindings = running_worker_bindings(burst)
+        ready = [worker for worker in live_workers() if worker["state"] == "ready"]
+        if len(ready) > 1 and len(set(bindings.values())) > 1:
+            return active, bindings
+        time.sleep(1)
+    raise TimeoutError(
+        f"burst did not scale past the warm floor: workers={live_workers()}, "
+        f"running={running_worker_bindings(burst)}"
+    )
+
+
+def wait_for_restarted_api(
+    previous_pods: dict[str, str],
+    previous_controllers: set[str],
+    active_jobs: dict[str, str],
+    burst: list[str],
+) -> tuple[dict[str, str], set[str]]:
+    """Require replacement API pods/controllers while the original Jobs run."""
+    deadline = time.monotonic() + 300
+    while time.monotonic() < deadline:
+        current = statuses(burst)
+        assert not {id_: status for id_, status in current.items() if status in ("Failed", "Cancelled", "Timeout")}, current
+        if any(status == "Running" for status in current.values()):
+            assert_retained_job_bindings(active_jobs)
+        assert_active_jobs_bound()
+        pods = ready_api_pods()
+        controllers = live_controller_ids()
+        if (
+            len(pods) >= len(previous_pods)
+            and set(pods.values()).isdisjoint(previous_pods.values())
+            and len(controllers) >= len(previous_controllers)
+            and controllers.isdisjoint(previous_controllers)
+        ):
+            return pods, controllers
+        time.sleep(1)
+    raise TimeoutError(
+        f"API controllers did not fully restart: pods={ready_api_pods()}, "
+        f"controllers={live_controller_ids()}"
+    )
 
 
 def kill_drill() -> dict:
@@ -127,28 +284,56 @@ def kill_drill() -> dict:
 
 
 def controller_restart_drill() -> dict:
-    burst = enqueue(12, 8)
-    time.sleep(5)
-    kubectl("delete", "pod", "-l", "app.kubernetes.io/name=bifrost-api", "--wait=false")
-    peak_jobs = 0
+    wait_floor(300)
+    [floor_worker] = live_workers()
+    burst_count = controller_restart_burst_count(floor_worker["budget"])
+    burst = enqueue(burst_count, CONTROLLER_RESTART_RUN_SECONDS)
+    active_jobs, before_bindings = wait_for_scaled_burst(burst, 300)
+    assert len(set(before_bindings.values())) > 1, before_bindings
+    before_pods = ready_api_pods()
+    before_controllers = live_controller_ids()
+    assert before_pods and before_controllers, (before_pods, before_controllers)
+
     started = time.monotonic()
+    kubectl("delete", "pod", "-l", API, "--wait=false")
+    after_pods, after_controllers = wait_for_restarted_api(
+        before_pods, before_controllers, active_jobs, burst
+    )
+    assert_retained_job_bindings(active_jobs)
+    assert_active_jobs_bound()
+    after_bindings = running_worker_bindings(burst)
+    assert len(set(after_bindings.values())) > 1, after_bindings
+    assert any(status == "Running" for status in statuses(burst).values()), "the burst ended during restart"
+
+    deadline = time.monotonic() + 900
     while True:
         current = statuses(burst)
-        peak_jobs = max(peak_jobs, job_count())
-        executors = int(sql("SELECT count(*) FROM execution_workers WHERE form='job'")[0][0])
-        assert job_count() <= executors, "a Job exists without an executor row"
-        if len(current) == len(burst) and all(s == "Success" for s in current.values()):
+        failed = {id_: status for id_, status in current.items() if status in ("Failed", "Cancelled", "Timeout")}
+        assert not failed, f"runs failed: {failed}"
+        if len(current) == len(burst) and all(status == "Success" for status in current.values()):
             break
-        assert time.monotonic() - started < 600, current
-        time.sleep(2)
-    duplicates = sql(
-        "SELECT kubernetes_job_name, count(*) FROM execution_workers "
-        "WHERE form='job' GROUP BY 1 HAVING count(*) > 1"
+        assert_active_jobs_bound()
+        assert time.monotonic() < deadline, current
+        time.sleep(1)
+
+    quoted = ",".join(f"'{id_}'" for id_ in burst)
+    claims = sql(
+        "SELECT subject_id, count(*) FROM execution_worker_claims "
+        "WHERE family='workflow_execution' AND subject_id IN ("
+        f"{quoted}) GROUP BY subject_id ORDER BY subject_id"
     )
+    assert len(claims) == len(burst) and all(int(count) == 1 for _, count in claims), claims
     return {
         "burst_seconds": round(time.monotonic() - started, 1),
-        "peak_jobs": peak_jobs,
-        "duplicate_jobs": duplicates,
+        "burst_runs": burst_count,
+        "pre_restart_job_bindings": active_jobs,
+        "pre_restart_api_pods": before_pods,
+        "post_restart_api_pods": after_pods,
+        "pre_restart_controllers": sorted(before_controllers),
+        "post_restart_controllers": sorted(after_controllers),
+        "running_workers_before_restart": sorted(set(before_bindings.values())),
+        "running_workers_after_restart": sorted(set(after_bindings.values())),
+        "execution_claims": claims,
     }
 
 

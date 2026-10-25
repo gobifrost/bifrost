@@ -1630,6 +1630,36 @@ async def test_a_restart_on_the_same_build_replaces_nothing(db) -> None:
     assert await _state(db.sessions, warm) == ("ready", None)
 
 
+async def test_a_same_build_controller_adopts_bound_workers_without_new_jobs(db) -> None:
+    """A replacement API controller must preserve the Job incarnation it finds."""
+    from shared.version import get_version
+
+    await _store_policy(db.sessions, WARM)
+    cluster = FakeCluster()
+    stopped = _controller(cluster, get_version())
+    await stopped.reconcile()
+    [name] = cluster.created
+    async with db.sessions() as session:
+        worker_id, uid = (
+            await session.execute(
+                select(ExecutionWorker.id, ExecutionWorker.kubernetes_job_uid).where(
+                    ExecutionWorker.kubernetes_job_name == name
+                )
+            )
+        ).one()
+    await _admit(db.sessions, worker_id)
+    await controller._withdraw_live(stopped.id)
+
+    replacement = _controller(cluster, get_version())
+    await replacement.reconcile()
+
+    async with db.sessions() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+    assert (worker.kubernetes_job_name, worker.kubernetes_job_uid, worker.state) == (name, uid, "ready")
+    assert cluster.created == [name]
+    assert cluster.deleted == []
+
+
 async def test_a_replacement_on_another_build_is_never_replaced_while_its_launcher_lives(db) -> None:
     """An explicit build image can run another build than the controller;
     the Jobs it launches must not be replaced in a loop."""

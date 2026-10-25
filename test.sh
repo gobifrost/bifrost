@@ -447,6 +447,7 @@ repository_ci_checks() {
     bash scripts/lib/test_stack_lock_test.sh
     python3 -m unittest scripts.test_codeql_changed_lines
     python3 -m unittest scripts.test_e2e_shard
+    python3 -m unittest scripts.test_pool_drills
     python3 -m unittest scripts.test_product_updates
     python3 -m unittest scripts.test_release_gate
     bash scripts/test_release_check.sh
