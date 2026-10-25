@@ -40,12 +40,12 @@ class PoolDrillTests(unittest.TestCase):
         }
         with (
             patch.object(spike, "kubectl", side_effect=[json.dumps(pending), json.dumps(complete)]) as request,
-            patch.object(spike.time, "monotonic", side_effect=[0, 61, 62]),
+            patch.object(spike.time, "monotonic", side_effect=[0, 61, 61.1, 61.2, 62, 62.1]),
             patch.object(spike.time, "sleep"),
         ):
             drills.wait_for_rollout("deployment/bifrost-api", 600)
         self.assertEqual(request.call_count, 2)
-        request.assert_called_with("get", "deployment/bifrost-api", "-o", "json", "--request-timeout=10s")
+        request.assert_called_with("get", "deployment/bifrost-api", "-o", "json", "--request-timeout=10s", timeout=538)
 
     def test_rollout_failure_is_reported_without_waiting_to_the_deadline(self) -> None:
         drills = pool_drills()
@@ -92,6 +92,18 @@ class PoolDrillTests(unittest.TestCase):
             self.assertRaises(TimeoutError),
         ):
             drills.wait_for_rollout("deployment/bifrost-api", 600)
+
+    def test_rollout_request_is_capped_by_the_remaining_deadline(self) -> None:
+        drills = pool_drills()
+        spike = sys.modules[drills.wait_for_rollout.__module__]
+        complete = {"metadata": {"generation": 4}, "spec": {"replicas": 0}, "status": {"observedGeneration": 4}}
+        with (
+            patch.object(spike, "kubectl", return_value=json.dumps(complete)) as request,
+            patch.object(spike.time, "monotonic", side_effect=[0, 599.5, 600.1]),
+            self.assertRaises(TimeoutError),
+        ):
+            drills.wait_for_rollout("deployment/bifrost-api", 600)
+        request.assert_called_once_with("get", "deployment/bifrost-api", "-o", "json", "--request-timeout=0.5s", timeout=0.5)
 
     def test_controller_restart_burst_exceeds_two_warm_worker_budgets(self) -> None:
         drills = pool_drills()

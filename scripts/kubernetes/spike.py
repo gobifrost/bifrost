@@ -11,10 +11,10 @@ LOCAL = ROOT / "scripts/kubernetes/local-kind.sh"
 NS = "bifrost-local"
 
 
-def kubectl(*args: str, data: str | None = None) -> str:
+def kubectl(*args: str, data: str | None = None, timeout: float = 60) -> str:
     result = subprocess.run(
         [str(LOCAL), "kubectl", "--", "-n", NS, *args], input=data,
-        text=True, capture_output=True, check=True, timeout=60,
+        text=True, capture_output=True, check=True, timeout=timeout,
     )
     return result.stdout
 
@@ -22,8 +22,14 @@ def kubectl(*args: str, data: str | None = None) -> str:
 def wait_for_rollout(resource: str, timeout: float) -> None:
     """Observe a deployment with short requests within its rollout deadline."""
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        deployment = json.loads(kubectl("get", resource, "-o", "json", "--request-timeout=10s"))
+    while (remaining := deadline - time.monotonic()) > 0:
+        request_timeout = min(10, remaining)
+        deployment = json.loads(kubectl(
+            "get", resource, "-o", "json", f"--request-timeout={request_timeout:g}s",
+            timeout=remaining,
+        ))
+        if time.monotonic() >= deadline:
+            break
         status = deployment.get("status", {})
         observed = status.get("observedGeneration", 0) >= deployment["metadata"]["generation"]
         for condition in status.get("conditions", []):
@@ -37,5 +43,5 @@ def wait_for_rollout(resource: str, timeout: float) -> None:
             and status.get("availableReplicas", 0) == desired
         ):
             return
-        time.sleep(1)
+        time.sleep(min(1, max(0, deadline - time.monotonic())))
     raise TimeoutError(f"{resource} did not finish its rollout within {timeout}s")
