@@ -123,7 +123,9 @@ The current default runtime uses the canonical fixture lifecycle through `./test
 ./test.sh quality api
 ```
 
-Verification of this promoted path is pending; do not substitute the historical result for it.
+Current promotion verification and its limitations are recorded in the
+[default-runner report](2026-10-25-default-remote-runner.md); the figures above
+remain historical matched measurements.
 
 ## Cloudflare direction
 
@@ -137,7 +139,11 @@ A Cloudflare port still needs validated container lifecycle/admission, control r
 
 The current worktree promotes the runtime through the default API, worker, scheduler, Compose, and Kubernetes wiring. It replaces the experiment-only bootstrap and overlays with authenticated launcher control, incarnation and owner fencing, API-resident agent/summary execution, remote physical launchers, and canonical fixture lifecycle.
 
-This is implementation status only. Focused tests, quality checks, canonical all-job E2E execution, and merge-gate verification remain pending. The measured historical runs do not prove current shutdown, reconnect/adoption, Kubernetes-role, admission, package-change, large-payload, concurrent cancellation/loss/drain, or throughput behavior.
+The [default-runner report](2026-10-25-default-remote-runner.md) records focused
+verification, live job coverage, packages, large-result/cancellation recovery,
+Kubernetes enrollment, API restart adoption, and isolated builds. The figures
+above continue to describe only the historical matched experiment. PR #1066
+tracks the merge gate; local validation is not a production rollout claim.
 
 ## Hosted deployment assessment — 2026-10-25
 

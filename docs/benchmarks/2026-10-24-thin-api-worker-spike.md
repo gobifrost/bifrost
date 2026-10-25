@@ -96,7 +96,10 @@ Work-dispatch families exercised live: `workflow.execute`, `agent.run`, and `age
 
 The current worktree promotes the thin runtime to the default API, worker, scheduler, Compose, and Kubernetes wiring. It replaces the experiment-only bootstrap and overlays with authenticated launcher control, incarnation and owner fencing, API-resident agent/summary execution, remote physical launchers, and the existing Kubernetes control loops for legacy scheduler-Role installations.
 
-This is an implementation status, **not a completed rollout claim**. Focused tests, quality checks, the canonical all-job E2E path, and the merge gate remain pending at this document's update. The historical measurements above have not been re-collected against the promoted runtime, so they remain evidence about the commits named below rather than current performance evidence.
+The [default-runner report](2026-10-25-default-remote-runner.md) records current
+local verification and measurements. This is not a production rollout claim.
+The historical matched measurements above remain evidence about the commits
+named below. PR #1066 tracks the merge gate.
 
 ## Reproduction and verification
 
@@ -144,7 +147,8 @@ The current source has no thin-runtime Compose overlay. Start the normal test st
 ./test.sh quality api
 ```
 
-These commands are the intended current validation path; their promotion-run results are pending.
+Promotion-run results and exact verification commands are recorded in the
+[default-runner report](2026-10-25-default-remote-runner.md) and its JSON evidence.
 
 The separate 155-test command was:
 
