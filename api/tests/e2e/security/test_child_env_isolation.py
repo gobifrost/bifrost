@@ -102,7 +102,7 @@ class TestChildEnvIsolation:
         """The child env must contain no SECRET_KEY / DB / S3 vars.
 
         BIFROST_REDIS_URL must be absent. Execution context, module source,
-        logs, and SDK buffering are parent-mediated or worker-UDS operations.
+        logs, and SDK buffering use parent mediation or scoped API HTTP.
         """
         data = execute_workflow_sync(
             e2e_client,

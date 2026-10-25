@@ -96,6 +96,64 @@
     "command": "BIFROST_TEST_IMAGE_TAG=bifrost-test-b60bcc82 BIFROST_SKIP_BUILD=1 ./test.sh tests/unit/dev/test_thin_launcher.py tests/unit/dev/test_thin_bridge.py tests/unit/worker/remote -q",
     "result": "49 passed in 1.58s"
   },
+  "followup_template_recycle_recovery": {
+    "cause": "Monitor checked template liveness outside the recycle lock, mistook intentional requirements replacement for a crash, and exited permanently. Reconnecting retained the failed monitor, so telemetry expired and the API retired both static runners.",
+    "deterministic_red": {
+      "command": "BIFROST_TEST_IMAGE_TAG=bifrost-test-b60bcc82 BIFROST_SKIP_BUILD=1 ./test.sh tests/unit/dev/test_thin_launcher.py::test_monitor_waits_for_intentional_template_replacement -q",
+      "summary": "Failed on old source: monitor finished with RuntimeError(Execution template died) while recycle owned the lock."
+    },
+    "failed_ci_run": 40178132814,
+    "failed_merge_candidate": "479744151306ec24d3230f3a303c53bee09993dc",
+    "focused_unit": {
+      "command": "BIFROST_TEST_IMAGE_TAG=bifrost-test-b60bcc82 BIFROST_SKIP_BUILD=1 ./test.sh tests/unit/dev/test_thin_launcher.py tests/unit/worker/remote tests/unit/dev/test_thin_bridge.py -q",
+      "junit": {
+        "errors": "0",
+        "failures": "0",
+        "hostname": "1ff02bd353b4",
+        "name": "pytest",
+        "skipped": "0",
+        "tests": "56",
+        "time": "1.530",
+        "timestamp": "2026-10-25T09:18:39.342306+00:00"
+      },
+      "summary": "56 passed in 1.52s"
+    },
+    "identity_assertion": "The second failed shard had 844 passed, 19 skipped, and one obsolete positive worker-UDS assertion; the engine-token user-list test now requires scoped API HTTP and retains its functional assertion.",
+    "initial_live_recheck": {
+      "command": "BIFROST_TEST_IMAGE_TAG=bifrost-test-b60bcc82 BIFROST_SKIP_BUILD=1 ./test.sh tests/e2e/platform/test_remote_runner_packages.py tests/e2e/platform/test_sdk_config_local.py tests/e2e/platform/test_sdk_events_local.py tests/e2e/platform/test_r3a_identity_authorization.py -v --durations=20",
+      "summary": "17 passed in 41.98s"
+    },
+    "initial_lock_fix_unit": {
+      "summary": "54 passed in 1.46s"
+    },
+    "live_recheck": {
+      "command": "BIFROST_TEST_IMAGE_TAG=bifrost-test-b60bcc82 BIFROST_SKIP_BUILD=1 ./test.sh tests/e2e/platform/test_remote_runner_packages.py tests/e2e/platform/test_sdk_config_local.py tests/e2e/platform/test_sdk_events_local.py tests/e2e/platform/test_r3a_identity_authorization.py tests/e2e/security/test_child_env_isolation.py -v --durations=20",
+      "cost": "Package installation/removal and template generation replacement: 27.47s; remaining time in ordinary requests, fixture setup, and MFA enrollment. No new background jobs added.",
+      "junit": {
+        "errors": "0",
+        "failures": "0",
+        "hostname": "3ba238bb0ee2",
+        "name": "pytest",
+        "skipped": "0",
+        "tests": "19",
+        "time": "47.301",
+        "timestamp": "2026-10-25T09:16:47.581939+00:00"
+      },
+      "summary": "19 passed in 47.29s"
+    },
+    "quality": {
+      "command": "BIFROST_TEST_IMAGE_TAG=bifrost-test-b60bcc82 BIFROST_SKIP_BUILD=1 ./test.sh quality api",
+      "summary": "Pyright: 0 errors, 0 warnings; Ruff: all checks passed"
+    },
+    "repair": "Share the template lock for liveness and replacement; preserve automatic genuine template-crash replacement and live child handles. Failed replacement clears readiness and exits nonzero instead of reconnecting with a dead monitor.",
+    "source_base_commit": "a49ec3106c4d93af2c33284b1946210596561bee",
+    "source_hashes": {
+      "api/src/worker/remote/launcher.py": "bbb8de26d065fb566c9cbf40d360a73b99f0855818201c88978e41637c312ecb",
+      "api/tests/e2e/platform/test_r3a_identity_authorization.py": "a3bda437f8b6aaf3f7a151ac776c57f1a06b8ba60cbe3c0cab297a287f4c36e4",
+      "api/tests/e2e/security/test_child_env_isolation.py": "b777b0adee021c4174aff3033c6c74f82af6dacb25306c523a98adf5a75b585e",
+      "api/tests/unit/dev/test_thin_launcher.py": "b795e36cf6f96cbb7d6fa9ba7384e1ea9d8e77e8fcb64b4d9bb3175afc420004"
+    }
+  },
   "job_successes": {
     "agent.summary_backfill": {
       "attempt": 1,

@@ -162,6 +162,8 @@ class Launcher:
         self._template_lock = asyncio.Lock()
         self._send_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[Any]] = set()
+        self._monitor_task: asyncio.Task[Any] | None = None
+        self.failed = False
         self.pressure_threshold: float | None = None
         self.dangerous_memory_ratio: float | None = None
         self.baseline_bytes: int | None = None
@@ -198,14 +200,18 @@ class Launcher:
         self.pending_terminal_inventory[event_id] = {"event_id": event_id, **inventory}
         await self.send(event)
 
-    def task(self, coroutine: Any) -> None:
+    def task(self, coroutine: Any) -> asyncio.Task[Any]:
         task = asyncio.create_task(coroutine)
         self._tasks.add(task)
         task.add_done_callback(self.task_finished)
+        return task
 
     def task_finished(self, task: asyncio.Task[Any]) -> None:
         self._tasks.discard(task)
         if not task.cancelled() and task.exception() is not None:
+            if task is self._monitor_task:
+                self.failed = True
+                self.on_stop()
             logger.error("Launcher supervision failed", exc_info=task.exception())
             asyncio.create_task(self.socket.close(code=1011, reason="Launcher supervision failed"))
 
@@ -216,7 +222,7 @@ class Launcher:
         await asyncio.to_thread(self.template.start)
         current, limit = effective_memory_sample()
         self.baseline_bytes = current
-        self.task(self.monitor())
+        self._monitor_task = self.task(self.monitor())
 
     async def hello(self, requirements: dict[str, Any]) -> None:
         """Authenticate each new WebSocket; the physical process stays alive."""
@@ -507,8 +513,14 @@ class Launcher:
     async def monitor(self) -> None:
         tick = 0
         while True:
-            if not self.template.is_alive():
-                raise RuntimeError("Execution template died")
+            # A package recycle intentionally stops the template while holding
+            # this lock. Observe liveness only outside that replacement window.
+            async with self._template_lock:
+                if not self.template.is_alive():
+                    # Preserve the canonical pool's template-crash recovery;
+                    # live children retain their existing pipes and identities.
+                    logger.warning("Execution template died; replacing it")
+                    await asyncio.to_thread(self.template.start)
             current, limit = effective_memory_sample()
             samples = {}
             for child in list(self.children.values()):
@@ -609,7 +621,7 @@ async def run_launcher(
         loop.add_signal_handler(sig, stopping.set)
     try:
         drain_task: asyncio.Task[None] | None = None
-        while launcher is None or not launcher.retired.is_set():
+        while launcher is None or (not launcher.retired.is_set() and not launcher.failed):
             try:
                 async with connect(control_url, max_size=2**20, open_timeout=10) as socket:
                     if launcher is None:
@@ -660,13 +672,13 @@ async def run_launcher(
                 raise
             except Exception:
                 logger.warning("Remote control connection lost; preserving local children", exc_info=True)
-                if stopping.is_set():
+                if stopping.is_set() or (launcher is not None and launcher.failed):
                     break
                 await asyncio.sleep(1)
     finally:
         if launcher is not None:
             await _shutdown_launcher(launcher, drain_task, stopping)
-    return 0
+    return 1 if launcher is not None and launcher.failed else 0
 
 
 async def main() -> int:

@@ -136,6 +136,11 @@ and the execution identity matrix. These runs reproduce the affected queue
 conditions; they do not replace the complete merge-queue gate.
 The legacy scheduler-role wrapper and deployment contracts passed another ten
 tests, including a fresh-process import guard.
+The later recycle/crash-recovery fix passed **56 focused unit tests** and a
+**19-test live sequence** covering package replacement followed by SDK calls,
+engine-token identity authorization, and child credential isolation. The
+package lifecycle accounts for 27.5 seconds of that 47.3-second live run; no
+additional background jobs were added for this follow-up.
 
 Failures found during validation received concrete fixes:
 
@@ -174,6 +179,17 @@ Failures found during validation received concrete fixes:
 - Existing SDK live tests still asserted the previous private-socket transport.
   Their workflow, persistence, and authorization checks remain, and their
   transport assertions now require scoped shared API HTTP with no worker UDS.
+- A later full queue run exposed a package-recycle race: the physical monitor
+  observed the template's deliberate shutdown outside the replacement lock,
+  exited, and left a reconnecting launcher without telemetry. A deterministic
+  regression reproduced that interleave. Liveness checks now share the recycle
+  lock. Genuine template crashes retain the existing pool's automatic template
+  replacement without discarding live child handles; a failed replacement
+  clears readiness and exits nonzero for normal container recovery.
+- The same queue run found one remaining identity-authorization test asserting
+  the removed worker socket. It now requires scoped HTTP while retaining its
+  successful engine-token user-list check. The rest of that shard passed
+  844 tests, with 19 existing skips.
 - Review found that the legacy token-mounted controller wrapper imported
   controller dependencies into the physical launcher as well as its helper.
   Those imports now execute only inside the helper. Fresh Docker-process import

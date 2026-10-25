@@ -1,6 +1,7 @@
 """OS supervisor contracts that must survive the footprint split."""
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from uuid import uuid4
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -12,6 +13,7 @@ from src.worker.remote.launcher import (
     _shutdown_launcher,
     _next_control_frame,
     _receive_control_commands,
+    run_launcher,
 )
 from src.worker.remote.identity import LauncherIdentity
 from src.worker.remote.protocol import ControlEnvelope
@@ -48,16 +50,127 @@ async def test_timeout_owns_result_after_deadline_was_observed():
 
 
 @pytest.mark.asyncio
-async def test_failed_monitor_closes_control_connection():
+async def test_failed_template_replacement_marks_launcher_failed_and_closes_connection():
     socket = Mock(close=AsyncMock())
     launcher = _launcher(socket)
-    async def failed_monitor():
-        raise RuntimeError("Template died")
-    launcher.task(failed_monitor())
+    launcher.on_stop = Mock()
+    launcher.template = Mock(
+        is_alive=Mock(return_value=False), start=Mock(side_effect=RuntimeError("Template failed")),
+    )
+    launcher._monitor_task = launcher.task(launcher.monitor())
     # Flush the task and its done callback deterministically.
     await asyncio.gather(*launcher._tasks, return_exceptions=True)
     await asyncio.sleep(0)
     socket.close.assert_awaited_once_with(code=1011, reason="Launcher supervision failed")
+    assert launcher.failed
+    launcher.on_stop.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_template_crash_replacement_retains_live_child_handles() -> None:
+    launcher = _launcher(Mock())
+    launcher.template = Mock(is_alive=Mock(return_value=False))
+    launcher.template.start.side_effect = lambda: setattr(launcher.template.is_alive, "return_value", True)
+    child = Child("route", "execution", 123, Mock(), Mock(), 0, 0)
+    child.sampler = Mock(last_process_rss_bytes=1, peak_cpu_cores=0)
+    launcher.children[child.route_id] = child
+    sampled = asyncio.Event()
+
+    async def send(_payload):
+        sampled.set()
+
+    launcher.send = AsyncMock(side_effect=send)
+    with (
+        patch("src.worker.remote.launcher.effective_memory_sample", return_value=(1, 100)),
+        patch("src.worker.remote.launcher.memory_pressure_ratio", return_value=.1),
+    ):
+        task = asyncio.create_task(launcher.monitor())
+        try:
+            await asyncio.wait_for(sampled.wait(), timeout=1)
+            launcher.template.start.assert_called_once_with()
+            assert launcher.children == {child.route_id: child}
+            assert not launcher.failed
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_fatal_launcher_exits_instead_of_reconnecting() -> None:
+    closed = asyncio.Event()
+    socket = Mock(close=AsyncMock(side_effect=lambda **_kwargs: closed.set()))
+    launcher = _launcher(socket)
+    launcher.template = Mock(
+        is_alive=Mock(return_value=False), start=Mock(side_effect=RuntimeError("Template failed")),
+    )
+
+    async def start():
+        launcher._monitor_task = launcher.task(launcher.monitor())
+
+    launcher.start = AsyncMock(side_effect=start)
+    launcher.hello, launcher.send, launcher.stop = (AsyncMock() for _ in range(3))
+    launcher.inventory = Mock(return_value={})
+
+    @asynccontextmanager
+    async def connect(*_args, **_kwargs):
+        yield socket
+
+    async def receive(*_args):
+        await closed.wait()
+        raise ConnectionError("monitor failed")
+
+    with (
+        patch("websockets.asyncio.client.connect", new=connect),
+        patch("src.worker.remote.launcher.Launcher", return_value=launcher) as factory,
+        patch("src.worker.remote.launcher.load_launcher_identity", return_value=launcher.identity),
+        patch("src.worker.remote.launcher._receive_control_commands", new=receive),
+        patch("src.worker.remote.launcher.asyncio.sleep", new=AsyncMock(side_effect=AssertionError("must not reconnect"))),
+        patch.object(asyncio.get_running_loop(), "add_signal_handler"),
+        patch.dict("os.environ", {"BIFROST_SECRET_KEY": "test-secret"}),
+    ):
+        assert await run_launcher() == 1
+
+    factory.assert_called_once()
+    assert launcher.failed
+    socket.close.assert_awaited_once_with(code=1011, reason="Launcher supervision failed")
+    launcher.stop.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_monitor_waits_for_intentional_template_replacement() -> None:
+    launcher = _launcher(Mock())
+    launcher.template = Mock(is_alive=Mock(return_value=False))
+    sampled = asyncio.Event()
+    entered = asyncio.Event()
+
+    async def send(_payload):
+        sampled.set()
+
+    async def monitor():
+        entered.set()
+        await launcher.monitor()
+
+    launcher.send = AsyncMock(side_effect=send)
+    # Recycling owns this lock while the old template is stopped and the new
+    # one has not yet started. That interval must not look like a crash.
+    await launcher._template_lock.acquire()
+    task = asyncio.create_task(monitor())
+    try:
+        await entered.wait()
+        assert not task.done()
+        launcher.template.is_alive.assert_not_called()
+        launcher.template.is_alive.return_value = True
+        launcher._template_lock.release()
+        with (
+            patch("src.worker.remote.launcher.effective_memory_sample", return_value=(1, 100)),
+            patch("src.worker.remote.launcher.memory_pressure_ratio", return_value=.1),
+        ):
+            await asyncio.wait_for(sampled.wait(), timeout=1)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        if launcher._template_lock.locked():
+            launcher._template_lock.release()
 
 
 @pytest.mark.asyncio
