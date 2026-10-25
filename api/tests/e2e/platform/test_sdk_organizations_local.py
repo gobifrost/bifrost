@@ -13,6 +13,7 @@ the external HTTP API:
 """
 
 import uuid
+from datetime import datetime
 
 import pytest
 
@@ -57,6 +58,7 @@ async def {name}():
     return {{
         "used_socket": used_socket,
         "created_id": created.id,
+        "metadata": {{"created_at": created.created_at}},
         "created_by": created.created_by,
         "fetched_name": fetched.name,
         "listed_before": created.id in [o.id for o in listed],
@@ -104,6 +106,10 @@ class TestSdkOrganizationsLocalLiveE2E:
         assert out["used_socket"] is False
         # Scoped shared API calls preserve the initiating administrator as actor.
         assert out["created_by"] == platform_admin.email
+        # SDK contracts expose Python datetimes. They must survive the real
+        # child -> launcher -> API result transport, including nesting.
+        created_at = datetime.fromisoformat(out["metadata"]["created_at"])
+        assert created_at.tzinfo is not None
         assert out["fetched_name"] == live_org_keys["name"]
         assert out["listed_before"] is True
         assert out["updated_name"] == f"{live_org_keys['name']}-renamed"
@@ -120,6 +126,7 @@ class TestSdkOrganizationsLocalLiveE2E:
         body = fetched.json()
         assert body["name"] == f"{live_org_keys['name']}-renamed"
         assert body["is_active"] is False
+        assert created_at == datetime.fromisoformat(body["created_at"])
 
         listed = e2e_client.get("/api/organizations", headers=platform_admin.headers)
         assert listed.status_code == 200, listed.text

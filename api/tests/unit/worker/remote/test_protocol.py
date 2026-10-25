@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from uuid import UUID
 
 import pytest
@@ -84,12 +86,43 @@ def test_envelope_round_trips_only_json_object_payloads() -> None:
         ControlEnvelope.from_json(json.dumps(["not", "an", "object"]))
 
 
+def test_envelope_uses_the_execution_result_json_contract_for_non_json_values() -> None:
+    created_at = datetime(2026, 10, 25, 12, 34, 56, tzinfo=timezone.utc)
+    identifier = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+    envelope = ControlEnvelope(
+        session_generation=7,
+        sequence=3,
+        kind="result",
+        payload={
+            "result": {
+                "metadata": {"created_at": created_at, "day": date(2026, 10, 25)},
+                "identifier": identifier,
+                "amount": Decimal("12.34"),
+            },
+        },
+    )
+
+    decoded = ControlEnvelope.from_json(envelope.to_json())
+
+    assert decoded.payload == {
+        "result": {
+            "metadata": {"created_at": str(created_at), "day": "2026-10-25"},
+            "identifier": str(identifier),
+            "amount": "12.34",
+        },
+    }
+
+
 def test_large_logical_message_round_trips_in_bounded_ordered_frames() -> None:
+    created_at = datetime(2026, 10, 25, 12, 34, 56, tzinfo=timezone.utc)
     envelope = ControlEnvelope(
         session_generation=1,
         sequence=1,
         kind="command",
-        payload={"context": "x" * (MAX_FRAME_BYTES * 2)},
+        payload={
+            "context": "x" * (MAX_FRAME_BYTES * 2),
+            "result": {"metadata": {"created_at": created_at}},
+        },
     )
 
     frames = list(fragment(envelope))
@@ -99,4 +132,12 @@ def test_large_logical_message_round_trips_in_bounded_ordered_frames() -> None:
     assert all(len(frame.to_json().encode()) <= MAX_FRAME_BYTES for frame in frames)
     received = [assembler.feed(frame) for frame in frames]
     assert received[:-1] == [None] * (len(frames) - 1)
-    assert received[-1] == envelope
+    assert received[-1] == ControlEnvelope(
+        session_generation=1,
+        sequence=1,
+        kind="command",
+        payload={
+            "context": "x" * (MAX_FRAME_BYTES * 2),
+            "result": {"metadata": {"created_at": str(created_at)}},
+        },
+    )

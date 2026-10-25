@@ -13,6 +13,7 @@ import pytest
 from src.worker.remote.host import ApiExecutor, Bridge, RemoteControlHost, RemoteSession
 from src.worker.remote.ownership import RemoteOwnerLease
 from src.worker.remote.protocol import Hello, sign_hello
+from src.worker.pool_main import PoolWorker
 
 
 LEASE = RemoteOwnerLease(
@@ -257,6 +258,38 @@ async def test_reconnect_budget_uses_launcher_baseline_not_active_working_set() 
 
     assert budget.baseline_bytes == 80
     assert budget.budget_bytes == 720
+
+
+@pytest.mark.asyncio
+async def test_lost_remote_owner_detaches_without_retiring_live_launcher_claims() -> None:
+    executor = object.__new__(ApiExecutor)
+    executor._lost = True
+    executor.bridge = Mock(handoff=False, connected=True, lease=LEASE, request=AsyncMock())
+
+    with (
+        patch("src.worker.remote.host.owns_remote_session", new=AsyncMock(return_value=True)),
+        patch.object(PoolWorker, "_retire", new_callable=AsyncMock) as retire,
+    ):
+        await executor._retire()
+
+    retire.assert_not_awaited()
+    executor.bridge.request.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_drained_remote_owner_retires_its_launcher() -> None:
+    executor = object.__new__(ApiExecutor)
+    executor._lost = False
+    executor.bridge = Mock(handoff=False, connected=True, lease=LEASE, request=AsyncMock())
+
+    with (
+        patch("src.worker.remote.host.owns_remote_session", new=AsyncMock(return_value=True)),
+        patch.object(PoolWorker, "_retire", new_callable=AsyncMock) as retire,
+    ):
+        await executor._retire()
+
+    retire.assert_awaited_once_with()
+    executor.bridge.request.assert_awaited_once_with("retired", {})
 
 
 def test_remote_admission_uses_launcher_pressure_ratio_not_unbounded_usage_ratio() -> None:

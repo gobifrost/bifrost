@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
 from uuid import UUID, uuid4
 
@@ -88,7 +89,9 @@ class _TestLauncher:
         self._socket = socket
         self._receiver = asyncio.create_task(self._receive(socket))
 
-    async def disconnect_and_reconnect(self) -> None:
+    async def disconnect_and_reconnect(
+        self, *, before_reconnect: Callable[[], Awaitable[None]] | None = None
+    ) -> None:
         """Drop transport only; the launcher and its physical children stay alive."""
         socket, receiver = self._socket, self._receiver
         assert socket is not None
@@ -96,6 +99,8 @@ class _TestLauncher:
         if receiver is not None:
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(receiver, timeout=5)
+        if before_reconnect is not None:
+            await before_reconnect()
         await self.connect()
 
     async def stop(self) -> None:
@@ -338,7 +343,33 @@ async def {function_name}():
 
         await _wait_for(started_once, timeout=30, description="one remote workflow side effect")
         first_generation = launcher.generation
-        await launcher.disconnect_and_reconnect()
+        # Telemetry can expire while a recently renewed owner lease remains
+        # valid. Keep that precise exposing condition deterministic: losing
+        # the API owner must not retire the physical launcher's pending result.
+        async with async_session_factory() as db:
+            await db.execute(
+                update(ExecutionWorker)
+                .where(ExecutionWorker.id == worker_id)
+                .values(remote_owner_lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=1))
+            )
+            await db.commit()
+
+        async def wait_for_owner_release() -> None:
+            async def released() -> bool | None:
+                async with async_session_factory() as db:
+                    worker = await db.get(ExecutionWorker, worker_id)
+                    assert worker is not None
+                    assert worker.state not in ("retired", "lost")
+                    expiry = worker.remote_owner_lease_expires_at
+                    if expiry is not None and expiry <= datetime.now(timezone.utc):
+                        return True
+                return None
+
+            await _wait_for(released, timeout=40, description="expired telemetry releases its API owner")
+            execution = await _execution(async_session_factory, execution_id)
+            assert execution is not None and execution.status == ExecutionStatus.RUNNING
+
+        await launcher.disconnect_and_reconnect(before_reconnect=wait_for_owner_release)
         assert launcher.generation > first_generation
 
         async def complete() -> Execution | None:

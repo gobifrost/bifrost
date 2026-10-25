@@ -2,6 +2,7 @@
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from uuid import uuid4
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -181,6 +182,31 @@ async def test_job_exit_cleans_route_when_transport_has_disconnected():
     with pytest.raises(ConnectionError):
         await launcher.wait_job("job", process)
     assert launcher.jobs == {}
+
+
+@pytest.mark.asyncio
+async def test_terminal_datetime_result_replays_after_reconnect() -> None:
+    socket = Mock(send=AsyncMock())
+    launcher = _launcher(socket)
+    created_at = datetime(2026, 10, 25, 12, 34, 56, tzinfo=timezone.utc)
+
+    await launcher.send_terminal(
+        {
+            "event": "result",
+            "route_id": "route-1",
+            "result": {"metadata": {"created_at": created_at}},
+        },
+        inventory={"route_id": "route-1", "kind": "workflow", "subject_id": "execution-1"},
+    )
+    pending = next(iter(launcher.pending_terminal.values()))
+    await launcher.send(pending)
+
+    sent = [ControlEnvelope.from_json(call.args[0]).payload for call in socket.send.await_args_list]
+    assert [payload["event"] for payload in sent] == ["result", "result"]
+    assert all(
+        payload["result"]["metadata"]["created_at"] == str(created_at)
+        for payload in sent
+    )
 
 
 @pytest.mark.asyncio

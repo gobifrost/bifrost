@@ -573,8 +573,13 @@ class ApiExecutor(PoolWorker):
             )
 
     async def _retire(self) -> None:
-        """A replaced API owner detaches; it cannot retire the physical pod."""
-        if self.bridge.handoff or not await owns_remote_session(self.bridge.lease):
+        """Only a drained owner can retire the physical launcher.
+
+        An ownership loss leaves the launcher and its retained terminal
+        results available for a fenced successor to adopt. Retiring its row
+        here would strand those still-running durable claims.
+        """
+        if self._lost or self.bridge.handoff or not await owns_remote_session(self.bridge.lease):
             return
         await super()._retire()
         if self.bridge.connected and await owns_remote_session(self.bridge.lease):

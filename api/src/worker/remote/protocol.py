@@ -122,7 +122,7 @@ class ControlEnvelope:
             raise ProtocolError("invalid control message kind")
 
     def to_json(self) -> str:
-        raw = json.dumps(asdict(self), separators=(",", ":"), sort_keys=True)
+        raw = json.dumps(asdict(self), default=str, separators=(",", ":"), sort_keys=True)
         if len(raw.encode()) > MAX_FRAME_BYTES:
             raise ProtocolError("control frame exceeds limit")
         return raw
@@ -163,7 +163,7 @@ class ControlEnvelope:
 
 def fragment(envelope: ControlEnvelope) -> Iterator[ControlEnvelope]:
     """Encode one logical envelope into bounded ordered transport frames."""
-    raw = json.dumps(asdict(envelope), separators=(",", ":"), sort_keys=True).encode()
+    raw = json.dumps(asdict(envelope), default=str, separators=(",", ":"), sort_keys=True).encode()
     # A base64 fragment plus JSON envelope must fit in MAX_FRAME_BYTES.
     chunk_size = ((MAX_FRAME_BYTES - 1024) * 3) // 4
     if len(raw) <= chunk_size:
