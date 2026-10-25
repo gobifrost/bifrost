@@ -259,7 +259,7 @@ async def test_the_process_pool_is_ready_before_any_work_is_claimed(monkeypatch)
     for name in ("init_db", "wait_for_schema", "close_db", "begin_drain", "retire_worker",
                  "remove_scheduler_replica", "replica_heartbeat_loop",
                  "recover_expired_platform_jobs", "claim_platform_job"):
-        monkeypatch.setattr(pool_main, name, AsyncMock())
+        monkeypatch.setattr(pool_main, name, AsyncMock(return_value=None))
     monkeypatch.setattr(pool_main, "get_engine", lambda *args: None)
     monkeypatch.setattr(pool_main, "register_static_worker", AsyncMock(return_value=uuid4()))
 

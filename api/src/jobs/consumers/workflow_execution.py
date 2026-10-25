@@ -25,7 +25,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -37,6 +37,9 @@ from src.core.redis_client import ActiveExecution, PendingExecution, get_redis_c
 from src.models.enums import ExecutionStatus
 from src.models.orm import Execution, User
 from src.repositories.executions import create_execution, update_execution
+
+if TYPE_CHECKING:
+    from src.services.execution.process_pool import ProcessPoolManager
 
 logger = logging.getLogger(__name__)
 
@@ -64,15 +67,17 @@ class WorkflowExecutionConsumer:
     # written only while that executor still holds the run.
     owner_worker_id: UUID | None = None
 
-    def __init__(self):
-        from src.services.execution.process_pool import get_process_pool
-
+    def __init__(self, pool: ProcessPoolManager | None = None):
         self._redis_client = get_redis_client()
 
-        # Get the global ProcessPoolManager instance
-        # This ensures package_install consumer can also update it
-        self._pool = get_process_pool()
-        # Set the result callback on the global pool
+        # Default to the process-wide manager so package installation keeps
+        # updating the same pool; API hosts may supply their canonical pool.
+        if pool is None:
+            from src.services.execution.process_pool import get_process_pool
+
+            pool = get_process_pool()
+        self._pool = pool
+        # Set the result callback on the selected pool.
         self._pool.on_result = self._handle_result
         self._pool_started = False
 

@@ -480,6 +480,13 @@ def _run_forked_child(
         force=True,
     )
 
+    # Mark this post-fork child before any user code runs. The scoped SDK
+    # transport uses the worker-local socket when one is injected, otherwise
+    # it uses the ordinary network engine client.
+    from src.core.module_cache_sync import mark_execution_child
+
+    mark_execution_child()
+
     # Engine start: install the worker-local SDK socket transport before any
     # user code runs.
     from bifrost.client import _clear_engine_socket, _install_engine_socket

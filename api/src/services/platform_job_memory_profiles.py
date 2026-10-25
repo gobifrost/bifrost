@@ -142,6 +142,7 @@ async def record_platform_job_memory_profile(
     job: "PlatformJob",
     *,
     out_of_memory: bool = False,
+    memory_sample: tuple[int, int] | None = None,
 ) -> None:
     """Learn from a terminal attempt using the conservative working-set delta.
 
@@ -150,6 +151,13 @@ async def record_platform_job_memory_profile(
     rises to at least the limit plus the margin, so a retry is sized larger,
     and its profile learns it.
     """
+
+    if memory_sample is not None:
+        current_memory, memory_limit = memory_sample
+        if current_memory >= 0:
+            job.memory_peak_bytes = max(job.memory_peak_bytes or 0, current_memory)
+        if memory_limit > 0:
+            job.memory_limit_bytes = memory_limit
 
     if out_of_memory and job.memory_limit_bytes:
         job.memory_required_bytes = max(

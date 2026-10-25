@@ -36,6 +36,7 @@ from src.config import Settings, get_settings
 from src.core.database import close_db, get_db_context, get_engine, init_db
 from src.core.redis_client import PendingExecution
 from src.jobs.schedulers.platform_jobs import (
+    ClaimedPlatformJob,
     claim_platform_job,
     recover_expired_platform_jobs,
     run_claimed_platform_job,
@@ -223,7 +224,8 @@ class PoolWorker:
                 handlers.append((summary_handler, 1))
         return tuple(handlers)
 
-    async def run(self) -> int:
+    async def _initialize_runtime(self) -> bool:
+        """Initialize this process's database runtime and join the worker pool."""
         get_engine(executor_database_settings(self.settings))
         await init_db()
         await wait_for_schema(get_engine())
@@ -241,7 +243,49 @@ class PoolWorker:
                     "Pool worker was not admitted (not this Job's first pod)",
                     extra={"incarnation_id": str(self.incarnation_id)},
                 )
-                return 1
+                return False
+        return True
+
+    async def _close_runtime(self) -> None:
+        """Release the database runtime owned by this executor process."""
+        await close_db()
+
+    async def _start_background_control(self) -> list[asyncio.Task[None]]:
+        """Start static-executor Kubernetes control loops when this host owns them."""
+        if not self.static:
+            return []
+        # On an install whose executor container may manage Jobs (the builds
+        # runbook binds that Role to the scheduler), it runs the Kubernetes
+        # loops; elsewhere this starts nothing.
+        async with get_db_context() as db:
+            await import_kubernetes_policy_from_env(db, os.environ)
+        return await start_kubernetes_loops(self._platform_stop, self.settings)
+
+    def _measure_budget(self) -> MemoryBudget:
+        return measure_budget(self.settings.memory_pressure_threshold)
+
+    def _under_pressure(self) -> bool:
+        return under_pressure(self.settings.memory_pressure_threshold)
+
+    def _make_workflow_consumer(self):  # type: ignore[no-untyped-def]
+        from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
+
+        return WorkflowExecutionConsumer()
+
+    def _make_package_consumer(self):  # type: ignore[no-untyped-def]
+        from src.jobs.consumers.package_install import PackageInstallConsumer
+
+        return PackageInstallConsumer()
+
+    async def _execute_platform_job(self, claim: ClaimedPlatformJob) -> bool:
+        return await run_claimed_platform_job(claim)
+
+    async def _claim_platform_job(self, fits_bytes: int) -> ClaimedPlatformJob | None:
+        return await claim_platform_job(backend="local", fits_bytes=fits_bytes)
+
+    async def run(self) -> int:
+        if not await self._initialize_runtime():
+            return 1
 
         # Heartbeat from registration on: starting the pool (and installing
         # its requirements) can take minutes, longer than a silent executor
@@ -273,13 +317,7 @@ class PoolWorker:
             ),
             asyncio.create_task(self._platform_job_loop(), name="pool-platform-jobs"),
         ]
-        if self.static:
-            # On an install whose executor container may manage Jobs (the
-            # builds runbook binds that Role to the scheduler), it runs the
-            # Kubernetes loops; elsewhere this starts nothing.
-            async with get_db_context() as db:
-                await import_kubernetes_policy_from_env(db, os.environ)
-            background.extend(await start_kubernetes_loops(self._platform_stop, self.settings))
+        background.extend(await self._start_background_control())
         if self._on_ready is not None:
             self._on_ready()
         try:
@@ -295,7 +333,7 @@ class PoolWorker:
             except Exception:
                 logger.exception("Failed to remove the executor's diagnostics heartbeat")
             await self._workflow_consumer.stop_pool()
-            await close_db()
+            await self._close_runtime()
         logger.info(
             "Pool worker retired",
             extra={"incarnation_id": str(self.incarnation_id), "runs": self.runs_handled},
@@ -305,31 +343,27 @@ class PoolWorker:
     async def _start_executor(self) -> None:
         """Start the pool, consumers, memory gate and service supervision."""
         from src.jobs.consumers.agent_run import AgentRunConsumer
-        from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
 
         # Read the package generation before the pool installs requirements:
         # a change committed in between is then applied again (installs are
         # idempotent) instead of being missed.
         self.package_generation = await current_package_generation()
-        self._workflow_consumer = WorkflowExecutionConsumer()
+        self._workflow_consumer = self._make_workflow_consumer()
         self._workflow_consumer.owner_worker_id = self.incarnation_id
         await self._workflow_consumer.start_pool()
         self._agent_consumer = AgentRunConsumer()
         # Applies recorded package changes; it never consumes the broadcast.
-        from src.jobs.consumers.package_install import PackageInstallConsumer
-
-        self._package_consumer = PackageInstallConsumer()
+        self._package_consumer = self._make_package_consumer()
         # Measured once the parent and fork template are up, before any
         # service claims: what remains is what work may use.
-        self.budget = measure_budget(self.settings.memory_pressure_threshold)
+        self.budget = self._measure_budget()
         pool = self._workflow_consumer._pool
         pool.memory_kill_growth_bytes = max(
             0, self.budget.budget_bytes - WORKFLOW_REQUEST_MARGIN_BYTES
         )
-        threshold = self.settings.memory_pressure_threshold
         self.admission = Admission(
             budget_bytes=self.budget.budget_bytes,
-            under_pressure=lambda: under_pressure(threshold),
+            under_pressure=self._under_pressure,
             running_workflow_ids=pool.active_execution_ids,
             workflow_growth=pool.workflow_growth,
         )
@@ -501,7 +535,7 @@ class PoolWorker:
                 claim = None
                 async with self.admission.claiming() as fits:
                     if fits is not None:
-                        claim = await claim_platform_job(backend="local", fits_bytes=fits)
+                        claim = await self._claim_platform_job(fits)
                         if claim is not None:
                             self.admission.hold(str(claim.id), claim.memory_required_bytes)
                 if claim is not None:
@@ -524,7 +558,7 @@ class PoolWorker:
 
     async def _run_platform_job(self, claim) -> None:  # type: ignore[no-untyped-def]
         try:
-            await run_claimed_platform_job(claim)
+            await self._execute_platform_job(claim)
         except Exception:
             logger.exception("Platform job runner failed", extra={"job_id": str(claim.id)})
         finally:

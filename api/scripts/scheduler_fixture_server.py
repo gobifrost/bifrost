@@ -112,6 +112,20 @@ def prepare_solution_repository() -> None:
     (BARE_REPO / "git-daemon-export-ok").touch()
 
 
+def _chat_content(request: dict[str, object]) -> str:
+    if request.get("model") == "fixture-summary":
+        return json.dumps(
+            {
+                "asked": "Run the fixture chat agent.",
+                "did": "Called the fixture chat model.",
+                "answered": "ok",
+                "confidence": 0.9,
+                "metadata": {"fixture": "summary"},
+            }
+        )
+    return "ok"
+
+
 def chat_completion_payload(request: dict[str, object]) -> dict[str, object]:
     return {
         "id": "chatcmpl-fixture",
@@ -121,7 +135,7 @@ def chat_completion_payload(request: dict[str, object]) -> dict[str, object]:
         "choices": [
             {
                 "index": 0,
-                "message": {"role": "assistant", "content": "ok"},
+                "message": {"role": "assistant", "content": _chat_content(request)},
                 "finish_reason": "stop",
             }
         ],
@@ -159,7 +173,7 @@ def chat_completion_stream_events(
             "choices": [
                 {
                     "index": 0,
-                    "delta": {"content": "ok"},
+                    "delta": {"content": _chat_content(request)},
                     "finish_reason": None,
                 }
             ],
