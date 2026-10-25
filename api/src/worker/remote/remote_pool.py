@@ -43,12 +43,15 @@ class ThinRemoteTransport(Protocol):
 
     async def request(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
         """Send an acknowledged physical-runner command."""
+        raise NotImplementedError
 
     def memory(self) -> tuple[int, int]:
         """Return the physical container's current usage and limit."""
+        raise NotImplementedError
 
     def memory_request_bytes(self, key: str) -> int | None:
         """Return the canonical reservation for a running route."""
+        raise NotImplementedError
 
 
 class _RemoteProcess:

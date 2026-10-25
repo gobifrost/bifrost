@@ -136,12 +136,15 @@ class PlatformJobProcess(Protocol):
     @property
     def returncode(self) -> int | None:
         """Return the exit code once the runner has exited."""
+        raise NotImplementedError
 
     async def wait(self) -> int:
         """Wait for the physical runner to exit."""
+        raise NotImplementedError
 
     async def terminate(self) -> None:
         """Terminate this attempt's physical runner."""
+        raise NotImplementedError
 
 
 class PlatformJobExecutionBackend(Protocol):
@@ -149,9 +152,11 @@ class PlatformJobExecutionBackend(Protocol):
 
     async def spawn(self, claim: ClaimedPlatformJob) -> PlatformJobProcess:
         """Start the handler for an already-claimed attempt."""
+        raise NotImplementedError
 
     def memory(self) -> tuple[int, int]:
         """Return current container usage and effective memory limit."""
+        raise NotImplementedError
 
 
 def _remote_job_name(job_id: UUID, lease_token: UUID) -> str:
