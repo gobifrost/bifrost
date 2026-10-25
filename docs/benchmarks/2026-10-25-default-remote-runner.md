@@ -128,6 +128,13 @@ summaries, observations, and Kind reports are retained in the JSON. Full local
 backend/client/browser suites were not run; the merge queue is the complete
 suite gate.
 
+The merge-queue follow-up passed **42 focused remote-owner tests**, then
+**637 live tests** in the failing shard's complete prefix through reconnect
+and package refresh. A separate **97-test live run** passed all fourteen SDK
+test files updated for HTTP transport, run retention, MCP tool authorization,
+and the execution identity matrix. These runs reproduce the affected queue
+conditions; they do not replace the complete merge-queue gate.
+
 Failures found during validation received concrete fixes:
 
 - The hybrid fixture initially omitted its Git daemon. Its canonical server
@@ -154,6 +161,17 @@ Failures found during validation received concrete fixes:
   machine authentication, its JSON projection is regenerated, and the manifest
   test requires the existing worker readiness module. Runtime access gates were
   unchanged.
+- The merge queue exposed a real ownership-renewal bug under ordinary API
+  activity. A telemetry sample older than the three-second admission window
+  skipped the first ten-second renewal tick; the next tick reached the
+  twenty-second database lease expiry and retired a healthy runner. A local
+  shard-prefix reproduction confirmed both physical executors retired during
+  repeated MFA enrollment requests. Renewal now uses the full existing owner
+  window, while admission still pauses at three seconds. Deterministic tests
+  cover delayed telemetry, disconnected transport, and expired telemetry.
+- Existing SDK live tests still asserted the previous private-socket transport.
+  Their workflow, persistence, and authorization checks remain, and their
+  transport assertions now require scoped shared API HTTP with no worker UDS.
 - CodeQL findings prompted an explicit TLS 1.2 minimum in the local fixture and
   cleanup of redundant assignments, protocol bodies, exception handling, and
   test assertions. No skips, retry policy, or timeout inflation was introduced.

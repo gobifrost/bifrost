@@ -4,12 +4,10 @@ Exercises the full path — workflow code in a forked worker child calling
 the five fixed ``bifrost.organizations`` methods — proving parity with
 the external HTTP API:
 
-- the workflow records that the engine injected the worker's private socket,
-  so the migrated calls rode the shared client transport rather than the
-  network API (the zero-HTTP proof lives in the unit and forked-child socket
-  tests, where the child's network API is dead);
+- the workflow confirms the default physical worker has no UDS, so the
+  migrated calls use scoped shared API HTTP;
 - create/get/list/update/delete round-trip inside the workflow through
-  the real user/organization routes served on that socket;
+  the real user/organization routes;
 - the committed state (renamed, then soft-disabled) is verified over
   external HTTP.
 """
@@ -35,10 +33,9 @@ def live_org_keys():
 def live_org_workflow(e2e_client, platform_admin, org1, live_org_keys):
     """Workflow exercising the organizations facade through the live worker.
 
-    The workflow records that the engine injected its private socket, so the
-    migrated calls rode the shared client transport rather than the network
-    API (the zero-HTTP proof lives in the unit and forked-child socket tests).
-    The test then verifies the committed state over external HTTP.
+    The default physical worker has no UDS, so the migrated calls use scoped
+    shared API HTTP. The test then verifies the committed state over external
+    HTTP.
     """
     name = f"e2e_sdk_local_orgs_{live_org_keys['tag']}"
     path = f"{name}.py"
@@ -49,9 +46,6 @@ from bifrost.client import get_engine_socket_path
 
 @workflow(name="{name}", description="Local organizations E2E")
 async def {name}():
-    # The engine injected its private socket; the zero-HTTP proof lives in
-    # the unit and forked-child socket tests where the child's network API
-    # is dead by environment.
     used_socket = get_engine_socket_path() is not None
     created = await organizations.create("{base}")
     fetched = await organizations.get(created.id)
@@ -106,11 +100,9 @@ class TestSdkOrganizationsLocalLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # The engine injected its private socket, so every migrated call rode
-        # the shared client transport (zero-HTTP proof lives in the unit and
-        # forked-child socket tests).
-        assert out["used_socket"] is True
-        # Worker-local calls preserve the initiating administrator as actor.
+        # The default physical worker uses scoped shared API HTTP, without a UDS.
+        assert out["used_socket"] is False
+        # Scoped shared API calls preserve the initiating administrator as actor.
         assert out["created_by"] == platform_admin.email
         assert out["fetched_name"] == live_org_keys["name"]
         assert out["listed_before"] is True

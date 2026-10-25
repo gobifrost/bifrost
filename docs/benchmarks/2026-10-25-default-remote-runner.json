@@ -28,6 +28,42 @@
     "prior_ci_result": "10190 passed, two failed: missing WebSocket access entry and obsolete readiness assertion",
     "result": "81 passed in 65.89s"
   },
+  "followup_merge_queue_repairs": {
+    "base_commit_before_repairs": "44bb2b0f4b470a2c9a1567ed274f4ed87fd19c66",
+    "cause": "The three-second admission freshness check skipped ownership renewal at the ten-second tick; the next tick reached the twenty-second DB lease expiry and retired healthy runners under MFA-enrollment API activity. Ownership renewal now uses the full existing owner window while admission still pauses at three seconds.",
+    "focused_unit": {
+      "command": "BIFROST_TEST_IMAGE_TAG=bifrost-test-b60bcc82 BIFROST_SKIP_BUILD=1 ./test.sh tests/unit/worker/remote tests/unit/dev/test_thin_bridge.py -q",
+      "summary": "42 passed in 1.56s"
+    },
+    "quality": {
+      "command": "BIFROST_TEST_IMAGE_TAG=bifrost-test-b60bcc82 BIFROST_SKIP_BUILD=1 ./test.sh quality api",
+      "summary": "Pyright: 0 errors, 0 warnings; Ruff: all checks passed"
+    },
+    "sdk_and_identity": {
+      "command": "BIFROST_TEST_IMAGE_TAG=bifrost-test-b60bcc82 BIFROST_SKIP_BUILD=1 ./test.sh tests/e2e/platform/test_sdk_ai_local.py tests/e2e/platform/test_sdk_artifacts_local.py tests/e2e/platform/test_sdk_config_local.py tests/e2e/platform/test_sdk_events_local.py tests/e2e/platform/test_sdk_execution_reads_local.py tests/e2e/platform/test_sdk_files_local.py tests/e2e/platform/test_sdk_forms_local.py tests/e2e/platform/test_sdk_integration_mutations_local.py tests/e2e/platform/test_sdk_integrations_local.py tests/e2e/platform/test_sdk_knowledge_local.py tests/e2e/platform/test_sdk_organizations_local.py tests/e2e/platform/test_sdk_tables_local.py tests/e2e/platform/test_sdk_tables_writes_local.py tests/e2e/platform/test_sdk_workflow_mutations_local.py tests/e2e/api/test_run_retention_api.py tests/e2e/mcp/test_mcp_tool_access_matrix.py tests/e2e/scenarios/test_execution_identity_matrix.py -v --durations=20 --maxfail=3",
+      "junit": {
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 97
+      },
+      "summary": "97 passed, 1 warning in 109.57s"
+    },
+    "shard_prefix": {
+      "command": "BIFROST_TEST_IMAGE_TAG=bifrost-test-b60bcc82 BIFROST_SKIP_BUILD=1 ./test.sh $(python3 scripts/e2e_shard.py --shard-id 1 --total 3 | sed -n '1,/test_remote_runner_packages.py/p') -v --durations=20 --maxfail=3",
+      "junit": {
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0,
+        "tests": 637
+      },
+      "summary": "637 passed, 28 warnings in 358.32s"
+    },
+    "source_hashes": {
+      "api/src/worker/remote/host.py": "dbcffb47f1b512b7b38333b16f361dad689e8bbe65260216d01d198f03094a60",
+      "api/tests/unit/worker/remote/test_host.py": "19ac3f87b467c3f052cca6e6b9aacd62a10a350446e6aa3b744241c2a3403d71"
+    }
+  },
   "followup_task_join_tests": {
     "command": "BIFROST_TEST_IMAGE_TAG=bifrost-test-b60bcc82 BIFROST_SKIP_BUILD=1 ./test.sh tests/unit/dev/test_thin_launcher.py tests/unit/dev/test_thin_bridge.py tests/unit/worker/remote -q",
     "result": "49 passed in 1.58s"

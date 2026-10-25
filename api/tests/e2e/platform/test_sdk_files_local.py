@@ -5,10 +5,8 @@ files facade (write/read/read_bytes/write_bytes/list/delete/stat/exists/
 get_signed_url/search) — against the same storage the external HTTP endpoints
 serve, proving parity end to end:
 
-- the workflow records that the engine injected the worker's private socket,
-  so the migrated calls rode the shared client transport rather than the
-  network API (the zero-HTTP proof lives in the unit and forked-child socket
-  tests, where the child's network API is dead);
+- the workflow confirms the default physical worker has no UDS, so the
+  migrated calls use scoped shared API HTTP;
 - a file the workflow writes is readable with identical content over
   external HTTP, and cleanup over HTTP removes it.
 
@@ -117,7 +115,7 @@ async def {name}():
         "{blob}", method="GET", location="{LOCATION}",
         content_type="application/octet-stream")
     hits = await files.search("e2e-hello")
-    # ~2 MiB binary payload over the real worker socket.
+    # ~2 MiB binary payload through scoped shared API HTTP.
     payload = bytes((i * 7) % 256 for i in range(2 * 1024 * 1024))
     await files.write_bytes("{big}", payload, location="{LOCATION}")
     big_len = len(await files.read_bytes("{big}", location="{LOCATION}"))
@@ -212,10 +210,8 @@ class TestSdkFilesLocalLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # The worker injected its private socket, so the migrated calls rode
-        # the shared client transport (zero-HTTP proof is in the unit and
-        # forked-child tests).
-        assert out["used_socket"] is True
+        # The default physical worker uses scoped shared API HTTP, without a UDS.
+        assert out["used_socket"] is False
         # Text/binary encoding parity with the HTTP routes.
         assert out["text"] == "e2e-hello"
         assert bytes.fromhex(out["raw_hex"]) == b"\x00\x01e2e"
@@ -230,7 +226,7 @@ class TestSdkFilesLocalLiveE2E:
             "query", "output_mode", "matches", "files", "returned", "has_more_matches",
             "response_complete", "next_cursor", "guidance", "search_time_ms",
         }
-        # ~2 MiB payload over the real worker socket.
+        # ~2 MiB payload through scoped shared API HTTP.
         assert out["big_len"] == 2 * 1024 * 1024
         # Cleanup committed: the deleted files are gone.
         assert out["gone"] is False

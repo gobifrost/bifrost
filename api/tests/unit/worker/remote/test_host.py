@@ -24,6 +24,59 @@ LEASE = RemoteOwnerLease(
 
 
 @pytest.mark.asyncio
+async def test_admission_stale_telemetry_still_renews_the_connected_owner() -> None:
+    bridge = Bridge(
+        Mock(), {"current": 1, "limit": 100, "requirements": {}, "hostname": "runner"}, LEASE
+    )
+    bridge.sample_at = 96
+    session = object.__new__(RemoteSession)
+    session.bridge, session.lease = bridge, LEASE
+    session.lose_ownership = AsyncMock()
+
+    with (
+        patch("src.worker.remote.host.time.monotonic", return_value=100),
+        patch("src.worker.remote.host.asyncio.sleep", new=AsyncMock(side_effect=[None, asyncio.CancelledError()])),
+        patch("src.worker.remote.host.renew_remote_owner", new=AsyncMock(return_value=True)) as renew,
+    ):
+        # Claims pause at three seconds, but that is not an expired owner.
+        assert bridge.memory()[0] == -1
+        with pytest.raises(asyncio.CancelledError):
+            await session._renew()
+
+    renew.assert_awaited_once_with(LEASE)
+    session.lose_ownership.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("connected,age", [(False, 4), (True, 20), (False, 20)])
+async def test_owner_does_not_renew_disconnected_or_expired_telemetry(connected, age) -> None:
+    bridge = Bridge(
+        Mock(), {"current": 1, "limit": 100, "requirements": {}, "hostname": "runner"}, LEASE
+    )
+    bridge.connected, bridge.sample_at = connected, 100 - age
+    session = object.__new__(RemoteSession)
+    session.bridge, session.lease = bridge, LEASE
+    session.lose_ownership = AsyncMock()
+
+    with (
+        patch("src.worker.remote.host.time.monotonic", return_value=100),
+        patch("src.worker.remote.host.asyncio.sleep", new=AsyncMock(side_effect=[None, asyncio.CancelledError()])),
+        patch("src.worker.remote.host.renew_remote_owner", new_callable=AsyncMock) as renew,
+    ):
+        if age < 20:
+            with pytest.raises(asyncio.CancelledError):
+                await session._renew()
+        else:
+            await session._renew()
+
+    renew.assert_not_awaited()
+    if age >= 20:
+        session.lose_ownership.assert_awaited_once_with("Remote launcher telemetry expired")
+    else:
+        session.lose_ownership.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_one_api_agent_executor_starts_once_per_api_host() -> None:
     executor = Mock()
     executor.run.return_value = 0

@@ -648,8 +648,16 @@ class RemoteSession:
         try:
             while True:
                 await asyncio.sleep(DEFAULT_OWNER_LEASE_SECONDS / 2)
-                current, limit = self.bridge.memory()
-                if current < 0 or limit <= 0:
+                # Admission's three-second freshness window pauses new claims
+                # during brief API event-loop delays. It must not also skip
+                # ownership renewal: repeated short delays could otherwise
+                # expire a healthy launcher's twenty-second owner lease.
+                if (
+                    not self.bridge.connected
+                    or self.bridge.current < 0
+                    or self.bridge.limit <= 0
+                    or time.monotonic() - self.bridge.sample_at >= DEFAULT_OWNER_LEASE_SECONDS
+                ):
                     # A WebSocket is only transport. Stop fresh claims as
                     # soon as telemetry is stale, but keep the database lease
                     # until its bounded expiry so a transient reconnect or a
