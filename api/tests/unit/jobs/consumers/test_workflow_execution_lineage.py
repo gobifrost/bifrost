@@ -34,12 +34,12 @@ def _consumer() -> WorkflowExecutionConsumer:
     return consumer
 
 
-async def _created_with(claimed: dict) -> dict:
+async def _created_with(claimed: dict, *, queue_error: Exception | None = None) -> dict:
     with (
         patch(f"{MODULE}.create_execution", new=AsyncMock()) as create,
         patch(f"{MODULE}.publish_execution_update", new=AsyncMock()),
         patch(f"{MODULE}.publish_history_update", new=AsyncMock()),
-        patch("src.services.execution.queue_tracker.remove_from_queue", new=AsyncMock()),
+        patch("src.services.execution.queue_tracker.remove_from_queue", new=AsyncMock(side_effect=queue_error)),
     ):
         consumer = _consumer()
         await consumer.process_message(MESSAGE, claimed)  # type: ignore[arg-type]
@@ -104,3 +104,11 @@ async def test_a_run_that_moved_on_is_discarded_and_wakes_its_sync_caller() -> N
     create.assert_not_awaited()
     consumer._pool.route_execution.assert_not_awaited()
     notify.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [TimeoutError("queue unavailable"), ConnectionError("queue unavailable")])
+async def test_ui_queue_tracking_failure_does_not_abandon_a_claimed_workflow(error) -> None:
+    created = await _created_with(_claimed(), queue_error=error)
+
+    assert created["execution_id"] == EXECUTION_ID

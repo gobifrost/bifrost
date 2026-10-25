@@ -976,7 +976,7 @@ async def update_delivery_from_execution(
     status: str,
     error_message: str | None = None,
     session: AsyncSession | None = None,
-) -> None:
+) -> EventDelivery | None:
     """
     Update EventDelivery status based on workflow execution completion.
 
@@ -990,9 +990,6 @@ async def update_delivery_from_execution(
         session: Optional database session. If provided, uses it and
                  caller is responsible for commit. If None, creates own session.
     """
-    from sqlalchemy import select
-    from sqlalchemy.orm import joinedload
-
     # Map execution status to delivery status
     status_map = {
         "Success": EventDeliveryStatus.SUCCESS,
@@ -1003,34 +1000,18 @@ async def update_delivery_from_execution(
 
     delivery_status = status_map.get(status, EventDeliveryStatus.FAILED)
 
-    async def _do_update(db: AsyncSession) -> None:
-        # Find delivery by execution_id
-        result = await db.execute(
-            select(EventDelivery).options(
-                joinedload(EventDelivery.event),
-                joinedload(EventDelivery.subscription),
-            ).where(
-                EventDelivery.execution_id == uuid.UUID(execution_id)
-            )
+    async def _do_update(db: AsyncSession) -> EventDelivery | None:
+        delivery_repo = EventDeliveryRepository(db)
+        delivery = await delivery_repo.complete_from_execution(
+            uuid.UUID(execution_id),
+            delivery_status,
+            error_message,
         )
-        delivery = result.unique().scalar_one_or_none()
 
         if not delivery:
-            # Not an event-triggered execution, nothing to update
-            return
-
-        # Update delivery status
-        delivery.status = delivery_status
-        delivery.completed_at = datetime.now(timezone.utc)
-        delivery.attempt_count += 1
-
-        if error_message:
-            delivery.error_message = error_message
-
-        await db.flush()
+            return None
 
         # Update the parent event status
-        delivery_repo = EventDeliveryRepository(db)
         await delivery_repo.update_event_status(delivery.event_id)
 
         logger.info(
@@ -1099,14 +1080,17 @@ async def update_delivery_from_execution(
             except Exception as e:
                 logger.warning(f"Failed to broadcast event update: {e}")
 
+        return delivery
+
     if session is not None:
         # Use provided session (caller manages commit)
-        await _do_update(session)
+        return await _do_update(session)
     else:
         # Create own session
         from src.core.database import get_session_factory
 
         session_factory = get_session_factory()
         async with session_factory() as db:
-            await _do_update(db)
+            delivery = await _do_update(db)
             await db.commit()
+            return delivery

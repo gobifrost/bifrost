@@ -1052,34 +1052,27 @@ class AgentRunConsumer:
         error_message: str | None = None,
     ) -> None:
         """Update EventDelivery status after agent run completes."""
-        from src.models.orm.events import EventDelivery
         from src.models.enums import EventDeliveryStatus
         from src.repositories.events import EventDeliveryRepository
 
         try:
-            result = await db.execute(
-                select(EventDelivery).where(
-                    EventDelivery.id == UUID(event_delivery_id)
-                )
-            )
-            delivery = result.scalar_one_or_none()
-            if not delivery:
-                return
-
             # Map agent run status to delivery status
             if run_status == "completed":
-                delivery.status = EventDeliveryStatus.SUCCESS
+                delivery_status = EventDeliveryStatus.SUCCESS
             else:
-                delivery.status = EventDeliveryStatus.FAILED
-                delivery.error_message = error_message
+                delivery_status = EventDeliveryStatus.FAILED
 
-            delivery.agent_run_id = UUID(agent_run_id)
-            delivery.completed_at = datetime.now(timezone.utc)
-            delivery.attempt_count += 1
-            await db.flush()
+            delivery_repo = EventDeliveryRepository(db)
+            delivery = await delivery_repo.complete_from_agent_run(
+                UUID(event_delivery_id),
+                UUID(agent_run_id),
+                delivery_status,
+                error_message,
+            )
+            if delivery is None:
+                return
 
             # Update parent event status
-            delivery_repo = EventDeliveryRepository(db)
             await delivery_repo.update_event_status(delivery.event_id)
 
             await db.commit()

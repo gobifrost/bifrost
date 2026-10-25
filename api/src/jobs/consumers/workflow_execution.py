@@ -652,7 +652,16 @@ class WorkflowExecutionConsumer:
         # waits on a private Redis result list while pool admission remains
         # fully enforced.
         if not is_sync:
-            await remove_from_queue(execution_id)
+            # PostgreSQL already owns this claim. UI queue tracking must not
+            # strand it before a child starts when Redis is unavailable.
+            try:
+                await remove_from_queue(execution_id)
+            except Exception:
+                logger.warning(
+                    "Could not update execution queue tracking",
+                    extra={"execution_id": execution_id},
+                    exc_info=True,
+                )
 
         if claimed is None:
             logger.info(
