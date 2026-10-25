@@ -15,15 +15,10 @@ import signal
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-
-from shared.schema_gate import wait_for_schema
-from src.config import get_settings
-from src.core.database import close_db, get_engine, get_session_factory, init_db
-from src.jobs.platform.kubernetes_client import SERVICE_ACCOUNT_TOKEN_PATH
-from src.services.kubernetes_control import start_kubernetes_loops
-from src.services.kubernetes_execution import import_kubernetes_policy_from_env
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+SERVICE_ACCOUNT_TOKEN_PATH = Path("/var/run/secrets/kubernetes.io/serviceaccount/token")
 
 
 def has_service_account_token() -> bool:
@@ -33,6 +28,14 @@ def has_service_account_token() -> bool:
 
 async def run_control_host(stop_event: asyncio.Event) -> int:
     """Own the existing loops after the database schema is usable."""
+    # The physical launcher imports legacy_control_process from this module.
+    # Only the separate controller process needs application dependencies.
+    from shared.schema_gate import wait_for_schema
+    from src.config import get_settings
+    from src.core.database import close_db, get_engine, get_session_factory, init_db
+    from src.services.kubernetes_control import start_kubernetes_loops
+    from src.services.kubernetes_execution import import_kubernetes_policy_from_env
+
     settings = get_settings()
     tasks: list[asyncio.Task[None]] = []
     await init_db()

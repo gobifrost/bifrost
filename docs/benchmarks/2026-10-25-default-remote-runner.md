@@ -134,6 +134,8 @@ and package refresh. A separate **97-test live run** passed all fourteen SDK
 test files updated for HTTP transport, run retention, MCP tool authorization,
 and the execution identity matrix. These runs reproduce the affected queue
 conditions; they do not replace the complete merge-queue gate.
+The legacy scheduler-role wrapper and deployment contracts passed another ten
+tests, including a fresh-process import guard.
 
 Failures found during validation received concrete fixes:
 
@@ -172,6 +174,14 @@ Failures found during validation received concrete fixes:
 - Existing SDK live tests still asserted the previous private-socket transport.
   Their workflow, persistence, and authorization checks remain, and their
   transport assertions now require scoped shared API HTTP with no worker UDS.
+- Review found that the legacy token-mounted controller wrapper imported
+  controller dependencies into the physical launcher as well as its helper.
+  Those imports now execute only inside the helper. Fresh Docker-process import
+  probes measured peak RSS of 107,704 KiB before and 23,904 KiB after; these are
+  import probes, not whole-container idle measurements. Base manifests keep the
+  controller role on the API. Legacy scheduler-role installations retain their
+  controller helper's additional memory, without duplicating its imports in
+  the physical launcher.
 - CodeQL findings prompted an explicit TLS 1.2 minimum in the local fixture and
   cleanup of redundant assignments, protocol bodies, exception handling, and
   test assertions. No skips, retry policy, or timeout inflation was introduced.

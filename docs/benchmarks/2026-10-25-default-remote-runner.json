@@ -28,6 +28,29 @@
     "prior_ci_result": "10190 passed, two failed: missing WebSocket access entry and obsolete readiness assertion",
     "result": "81 passed in 65.89s"
   },
+  "followup_legacy_controller_import": {
+    "command": "BIFROST_TEST_IMAGE_TAG=bifrost-test-b60bcc82 BIFROST_SKIP_BUILD=1 ./test.sh tests/unit/scheduler/test_kubernetes_host.py tests/unit/test_remote_launcher_deployment_contract.py -q",
+    "import_probe": {
+      "image": "bifrost-test-api-dev:bifrost-test-b60bcc82",
+      "image_id": "sha256:71c74aeb8ba034c213016c2cb0e0fd5eda5970f84f3bc65d360e34ce0b462691",
+      "limitation": "Import-only peak RSS; default tokenless whole-container observations above are unchanged. A legacy controller helper still consumes its own memory.",
+      "metric": "resource.getrusage(resource.RUSAGE_SELF).ru_maxrss after module import in separate fresh Docker Python processes, KiB",
+      "new_module": "src.scheduler.kubernetes_host",
+      "new_peak_rss_kib": 23904,
+      "old_module": "git show c1335c8dd:api/src/scheduler/kubernetes_host.py",
+      "old_peak_rss_kib": 107704
+    },
+    "quality": {
+      "command": "BIFROST_TEST_IMAGE_TAG=bifrost-test-b60bcc82 BIFROST_SKIP_BUILD=1 ./test.sh quality api",
+      "summary": "Pyright: 0 errors, 0 warnings; Ruff: all checks passed"
+    },
+    "source_base_commit": "c1335c8ddf81ba6458a7301bc9e3fb74ee54262f",
+    "source_hashes": {
+      "api/src/scheduler/kubernetes_host.py": "20695f06c03b8f6beb1ec8fe31815efd4aec641127dc9981390458667a61f2f9",
+      "api/tests/unit/scheduler/test_kubernetes_host.py": "0f7d4bad9ea57b4b1f76b48b4adcb3bb6a7cb37a3dc90e4ac23ffec62e5aeb8a"
+    },
+    "summary": "10 passed in 8.48s"
+  },
   "followup_merge_queue_repairs": {
     "base_commit_before_repairs": "44bb2b0f4b470a2c9a1567ed274f4ed87fd19c66",
     "cause": "The three-second admission freshness check skipped ownership renewal at the ten-second tick; the next tick reached the twenty-second DB lease expiry and retired healthy runners under MFA-enrollment API activity. Ownership renewal now uses the full existing owner window while admission still pauses at three seconds.",
