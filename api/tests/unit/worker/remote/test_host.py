@@ -93,7 +93,7 @@ async def test_connected_session_releases_lease_only_after_worker_drain() -> Non
         await asyncio.sleep(0)
         assert release.await_count == 0
         drained.set()
-        await stopping
+        await asyncio.gather(stopping)
 
     worker.request_stop.assert_called_once_with()
     release.assert_awaited_once_with(LEASE)
@@ -179,7 +179,7 @@ async def test_inventory_reconciliation_does_not_block_its_terminate_reply() -> 
     request_id = next(iter(bridge.pending))
 
     await bridge.receive({"reply": request_id, "result": {}})
-    await task
+    await asyncio.gather(task)
 
     worker.reconcile_transport_inventory.assert_awaited_once_with(expected_generation=1)
     assert socket.close.await_count == 0

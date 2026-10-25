@@ -636,7 +636,7 @@ async def run_launcher(
                                             "limit": limit,
                                             "pressure_ratio": memory_pressure_ratio(), "runs": {},
                                         })
-                            await setup
+                            await asyncio.gather(setup)
                             started = True
                         finally:
                             if not started:

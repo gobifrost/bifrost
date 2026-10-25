@@ -221,7 +221,7 @@ async def test_control_loop_keeps_receiving_retirement_while_signal_drain_runs()
     assert drain_task is not None
     assert not drain_task.done()
     gate.set()
-    await drain_task
+    await asyncio.gather(drain_task)
 
 
 @pytest.mark.asyncio
@@ -243,7 +243,7 @@ async def test_shutdown_after_disconnect_starts_one_bounded_drain_before_stop() 
     launcher.begin_drain.assert_awaited_once_with()
     assert launcher.stop.await_count == 0
     gate.set()
-    await shutdown
+    await asyncio.gather(shutdown)
     launcher.stop.assert_awaited_once_with()
 
 
@@ -259,5 +259,5 @@ async def test_shutdown_reuses_the_existing_drain_task() -> None:
 
     assert launcher.begin_drain.await_count == 0
     gate.set()
-    await shutdown
+    await asyncio.gather(shutdown)
     launcher.stop.assert_awaited_once_with()
