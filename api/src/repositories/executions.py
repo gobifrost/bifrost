@@ -230,6 +230,16 @@ class ExecutionRepository(BaseRepository[Execution]):
         # Get status value if it's an enum
         status_value = status.value if hasattr(status, "value") else status
 
+        # A remote launcher's API control owner may have been replaced while
+        # its child was finishing. The fence holds the worker row's shared
+        # lock through this session's transaction, so the replacement either
+        # happens before this check (and refuses the result) or after this
+        # write commits.
+        from src.worker.remote.fencing import fence_remote_owner
+
+        if not await fence_remote_owner(self.session):
+            return False
+
         # Build update values
         update_values: dict[str, Any] = {
             "status": status_value,

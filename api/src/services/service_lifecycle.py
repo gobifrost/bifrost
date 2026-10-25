@@ -633,6 +633,10 @@ async def claim_eligible_service(
     never block each other; the partial unique index backstops races.
     Returns None when nothing is eligible. The caller commits.
     """
+    from src.worker.remote.fencing import fence_remote_owner
+
+    if not await fence_remote_owner(db):
+        return None
     now = now or _now()
     live_exists = (
         select(ServiceAttempt.id)
@@ -722,6 +726,10 @@ async def _locked_live_attempt(
     must not renew, report, or complete. Expiry is enforced here as well as
     in expire_leases so a stale owner can never resurrect its lease.
     """
+    from src.worker.remote.fencing import fence_remote_owner
+
+    if not await fence_remote_owner(db):
+        raise StaleLeaseError("The remote API owner is no longer current.")
     result = await db.execute(
         select(ServiceAttempt)
         .where(ServiceAttempt.id == attempt_id)

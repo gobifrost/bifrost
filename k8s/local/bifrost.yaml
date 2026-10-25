@@ -34,7 +34,7 @@ spec:
         - name: api
           image: bifrost-api:kind-local
           imagePullPolicy: IfNotPresent
-          command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+          command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "300"]
           envFrom:
             - configMapRef:
                 name: bifrost-local-config
@@ -64,6 +64,8 @@ spec:
             limits:
               cpu: "2"
               memory: 2Gi
+      # API remote-control and agent consumers may drain for 300 seconds.
+      terminationGracePeriodSeconds: 310
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -134,10 +136,7 @@ spec:
           command: ["python", "-m", "src.worker.main"]
           readinessProbe:
             exec:
-              command:
-                - python
-                - -c
-                - "import os, redis; r=redis.Redis.from_url(os.environ['BIFROST_REDIS_URL'], socket_timeout=2); raise SystemExit(0 if r.exists('bifrost:pool:'+os.environ['HOSTNAME']) else 1)"
+              command: ["python", "-m", "src.worker.health", "--ready"]
             periodSeconds: 2
             timeoutSeconds: 3
             failureThreshold: 3

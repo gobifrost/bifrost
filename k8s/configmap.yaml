@@ -10,6 +10,7 @@ data:
   # Environment
   BIFROST_ENVIRONMENT: "production"
   BIFROST_DEBUG: "false"
+  BIFROST_API_URL: "http://api:8000"
 
   # S3 Configuration (non-sensitive)
   BIFROST_S3_BUCKET: "my-bifrost-bucket"

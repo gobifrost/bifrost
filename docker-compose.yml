@@ -189,7 +189,10 @@ services:
       start_period: 120s
     deploy:
       replicas: ${API_REPLICAS:-1}
-    command: uvicorn src.main:app --host 0.0.0.0 --port 8000
+    # Preserve the API-owned executor's canonical 300-second drain window.
+    # Compose otherwise sends SIGKILL ten seconds after SIGTERM.
+    stop_grace_period: 310s
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --timeout-graceful-shutdown 300
 
   # Frontend (Vite)
   client:

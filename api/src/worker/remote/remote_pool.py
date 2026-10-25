@@ -1,4 +1,4 @@
-"""Development-only ProcessPoolManager adapter for the thin remote launcher.
+"""Reconnect-aware ProcessPoolManager adapter for a remote launcher.
 
 The API process remains the canonical execution owner: it keeps the Redis
 leases, completion callbacks, cancellation subscription, and service claim
@@ -15,7 +15,9 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Protocol, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
+
+from sqlalchemy import func, select
 
 from shared.execution_context import validate_execution_context
 from src.config import get_settings
@@ -43,6 +45,8 @@ class ThinRemoteTransport(Protocol):
 
     def memory(self) -> tuple[int, int]: ...
 
+    def memory_request_bytes(self, key: str) -> int | None: ...
+
 
 class _RemoteProcess:
     """PID-less ProcessHandle shim; remote liveness arrives as launcher events."""
@@ -58,8 +62,9 @@ class _RemoteProcess:
 class ThinRemoteProcessPool(ProcessPoolManager):
     """Use canonical pool bookkeeping while dispatching OS work remotely.
 
-    This is intentionally development-only.  It is not imported by production
-    startup and does not create a template process or worker-local SDK server.
+    A dropped control socket only pauses new work. Existing OS children stay
+    alive in the physical launcher and are reconciled after its signed
+    reconnect. ``ownership_lost`` is the separate, fenced terminal path.
     """
 
     def __init__(
@@ -79,6 +84,156 @@ class ThinRemoteProcessPool(ProcessPoolManager):
         self._remote_memory_current = -1
         self._remote_memory_limit = -1
         self._lease_refresh_task: asyncio.Task[None] | None = None
+        self._result_locks: dict[str, asyncio.Lock] = {}
+
+    async def reconcile_inventory(self, inventory: dict[str, Any]) -> dict[str, Any]:
+        """Reattach physical children only to their still-authoritative claims.
+
+        The launcher journals compact transport metadata until terminal ACK.
+        PostgreSQL validates that identity; it never trusts inventory as a new
+        claim. Finished but unacknowledged routes need the same reconstruction
+        as live children so completion can be replayed after an API restart.
+        """
+        from src.core.database import get_db_context
+        from src.jobs.platform.catalog import get_platform_job_metadata
+        from src.jobs.schedulers.platform_jobs import ClaimedPlatformJob
+        from src.models.enums import ExecutionStatus
+        from src.models.orm.execution_workers import ExecutionWorkerClaim
+        from src.models.orm.executions import Execution
+        from src.models.orm.platform_jobs import PlatformJob
+        from src.models.orm.services import ServiceAttempt, ServiceDefinition
+        from src.services.service_claim import OwnedAttempt
+        from src.worker.remote.fencing import fence_remote_owner
+
+        if inventory.get("version") != 1:
+            raise ValueError("Unsupported launcher inventory")
+        entries = inventory.get("routes", []) + inventory.get("terminal_routes", [])
+        if not all(isinstance(entry, dict) for entry in entries):
+            raise ValueError("Invalid launcher inventory")
+        workflows: dict[str, int] = {}
+        services: list[OwnedAttempt] = []
+        jobs: list[tuple[str, ClaimedPlatformJob]] = []
+        observed: set[str] = set()
+        rejected: list[tuple[str, str]] = []
+        async with get_db_context() as db:
+            if not await fence_remote_owner(db):
+                raise ConnectionError("Remote API ownership was replaced")
+            for entry in entries:
+                route_id, kind = entry.get("route_id"), entry.get("kind")
+                if not isinstance(route_id, str) or route_id in observed:
+                    continue
+                observed.add(route_id)
+                subject = UUID(str(entry["subject_id"]))
+                request_bytes = entry.get("memory_request_bytes")
+                if isinstance(request_bytes, bool) or not isinstance(request_bytes, int) or request_bytes < 0:
+                    raise ValueError("Launcher route is missing its memory reservation")
+                if kind == "workflow":
+                    valid = await db.scalar(select(Execution.id).join(
+                        ExecutionWorkerClaim,
+                        ExecutionWorkerClaim.subject_id == Execution.id,
+                    ).where(
+                        Execution.id == subject,
+                        Execution.status.in_((ExecutionStatus.RUNNING, ExecutionStatus.CANCELLING)),
+                        ExecutionWorkerClaim.worker_id == UUID(self.worker_id),
+                        ExecutionWorkerClaim.family == "workflow_execution",
+                    ))
+                    if valid is None:
+                        rejected.append((route_id, kind))
+                        continue
+                    active = entry.get("active_execution")
+                    if not isinstance(active, dict) or active.get("execution_id") != str(subject):
+                        raise ValueError("Launcher workflow metadata is missing or mismatched")
+                    started_at = datetime.fromisoformat(entry["started_at"])
+                    execution = ExecutionInfo(
+                        execution_id=str(subject), started_at=started_at,
+                        timeout_seconds=int(entry["timeout_seconds"]),
+                        active_execution=cast(ActiveExecution, active),
+                    )
+                    handle = self._routes.get(route_id)
+                    if handle is None:
+                        handle = self._adopt_handle(route_id, entry, started_at)
+                        handle.current_execution = execution
+                        self.processes[route_id] = handle
+                    await self._write_active_execution_lease(execution)
+                    workflows[str(subject)] = request_bytes
+                elif kind == "service":
+                    identity = entry.get("service") or {}
+                    row = (await db.execute(select(ServiceAttempt, ServiceDefinition).join(
+                        ServiceDefinition, ServiceDefinition.id == ServiceAttempt.service_id,
+                    ).where(
+                        ServiceAttempt.id == subject,
+                        ServiceAttempt.worker_id == self.worker_id,
+                        ServiceAttempt.lease_token == identity.get("lease_token"),
+                        ServiceAttempt.state.in_(("starting", "running", "stopping")),
+                        ServiceAttempt.lease_expires_at > func.now(),
+                    ))).one_or_none()
+                    if row is None:
+                        rejected.append((route_id, kind))
+                        continue
+                    attempt, definition = row
+                    if identity.get("service_id") != str(definition.id):
+                        raise ValueError("Launcher service identity does not match its claim")
+                    handle = self._routes.get(route_id)
+                    if handle is None:
+                        handle = self._adopt_handle(
+                            route_id, entry, attempt.started_at or datetime.now(timezone.utc),
+                        )
+                        handle.service = ServiceInfo(
+                            service_id=str(definition.id), attempt_id=str(subject),
+                            lease_token=attempt.lease_token,
+                            graceful_shutdown_seconds=definition.graceful_shutdown_seconds,
+                        )
+                        self.service_processes[route_id] = handle
+                    services.append(OwnedAttempt(
+                        attempt_id=subject, service_id=definition.id, lease_token=attempt.lease_token,
+                        workflow_id=definition.workflow_id, memory_request_bytes=request_bytes,
+                    ))
+                elif kind == "platform_job":
+                    job = await db.scalar(select(PlatformJob).where(
+                        PlatformJob.id == subject,
+                        PlatformJob.lease_token == UUID(str(entry["lease_token"])),
+                        PlatformJob.status.in_(("running", "cancel_requested")),
+                        PlatformJob.lease_expires_at > func.now(),
+                    ))
+                    metadata = get_platform_job_metadata(job.job_type) if job is not None else None
+                    if job is None or metadata is None:
+                        rejected.append((route_id, kind))
+                        continue
+                    jobs.append((route_id, ClaimedPlatformJob(
+                        id=subject, lease_token=UUID(str(job.lease_token)),
+                        timeout_seconds=job.timeout_seconds,
+                        hard_memory_ratio=metadata.policy.hard_memory_ratio,
+                        memory_required_bytes=job.memory_required_bytes, job_type=job.job_type,
+                    )))
+                else:
+                    raise ValueError("Unknown launcher route kind")
+            await db.commit()
+        for route_id, kind in rejected:
+            await self.transport.request(
+                "terminate_job" if kind == "platform_job" else "terminate",
+                {"route_id": route_id, "error_type": "OwnerLost", "error": "Claim no longer belongs to this launcher"},
+            )
+        # An uncertain launch that never reached the launcher cannot remain
+        # RUNNING forever. A present terminal journal is observed above too.
+        for route_id, handle in list(self._routes.items()):
+            if route_id not in observed:
+                await self._handle_result(handle, {
+                    "type": "result", "success": False,
+                    "execution_id": handle.current_execution.execution_id if handle.current_execution else None,
+                    "error_type": "ProcessCrashError", "error": "Launcher no longer owns this process",
+                })
+        return {"workflow_requests": workflows, "services": services, "platform_jobs": jobs}
+
+    def _adopt_handle(self, route_id: str, entry: dict[str, Any], started_at: datetime) -> ProcessHandle:
+        handle = ProcessHandle(
+            id=route_id, process=_RemoteProcess(), pid=None, state=ProcessState.BUSY,
+            work_queue=None, result_queue=None, started_at=started_at,
+        )
+        pid = entry.get("pid")
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
+            handle.process.remote_pid = pid
+        self._routes[route_id] = handle
+        return handle
 
     def _workflow_route_id(self, execution_id: str) -> str:
         return f"workflow:{execution_id}:{uuid4()}"
@@ -215,7 +370,7 @@ class ThinRemoteProcessPool(ProcessPoolManager):
 
     async def stop(self) -> None:
         """Stop accepting work and ask the launcher to terminate owned routes."""
-        if self._shutdown:
+        if not self._started:
             return
         self._shutdown = True
         tasks = [
@@ -232,9 +387,8 @@ class ThinRemoteProcessPool(ProcessPoolManager):
                 except asyncio.CancelledError:
                     pass
 
-        if not self.transport.connected:
-            await self._report_disconnected_routes()
-        else:
+        owns_session = await self._owns_session()
+        if owns_session and self.transport.connected:
             await asyncio.gather(
                 *(
                     self._request_terminate(
@@ -251,41 +405,31 @@ class ThinRemoteProcessPool(ProcessPoolManager):
                 ),
                 return_exceptions=True,
             )
-        await self._unregister_worker()
+        if owns_session:
+            await self._unregister_worker()
         if self._redis is not None:
             await self._redis.aclose()
             self._redis = None
         self._started = False
 
-    async def _report_disconnected_routes(self) -> None:
-        """Close every local ownership record when its remote owner vanished."""
-        for route_id, handle in list(self._routes.items()):
-            if self._routes.pop(route_id, None) is not handle:
-                continue
-            handle.process.exitcode = 1
-            if handle.service is not None:
-                result = {
-                    "type": "result",
-                    "attempt_id": handle.service.attempt_id,
-                    "success": False,
-                    "status": "Failed",
-                    "error": "Remote launcher disconnected",
-                    "error_type": "ProcessCrashError",
-                }
-            else:
-                execution = handle.current_execution
-                if execution is None:
-                    continue
-                result = {
-                    "type": "result",
-                    "execution_id": execution.execution_id,
-                    "success": False,
-                    "error": "Remote launcher disconnected",
-                    "error_type": "ProcessCrashError",
-                    "duration_ms": int(execution.elapsed_seconds * 1000),
-                }
-            await self._handle_result(handle, result)
-            self._route_metrics.pop(route_id, None)
+    async def ownership_lost(self, reason: str = "Remote owner lease lost") -> None:
+        """Detach a replaced owner without mutating the surviving children."""
+        logger.info("Remote pool detaching: %s", reason)
+        self._shutdown = True
+        self.processes.clear()
+        self.service_processes.clear()
+        self._routes.clear()
+        self._route_metrics.clear()
+
+    async def _owns_session(self) -> bool:
+        from src.worker.remote.fencing import current_remote_lease_ref
+        from src.worker.remote.ownership import owns_remote_session
+
+        ref = current_remote_lease_ref()
+        return ref is None or await owns_remote_session(ref.lease)
+
+    def _request_bytes(self, key: str) -> int:
+        return self.transport.memory_request_bytes(key) or 0
 
     async def route_execution(
         self,
@@ -341,9 +485,18 @@ class ThinRemoteProcessPool(ProcessPoolManager):
                         "execution_id": execution_id,
                         "context": context,
                         "memory_kill_growth_bytes": self.memory_kill_growth_bytes,
+                        "active_execution": dict(active_execution),
+                        "started_at": started_at.isoformat(),
+                        "timeout_seconds": timeout,
+                        "memory_request_bytes": self._request_bytes(execution_id),
                     },
                 )
                 handle.process.remote_pid = self._remote_pid_from_ack(response)
+            except (ConnectionError, TimeoutError):
+                # The child may already exist. Inventory resolves this exact
+                # route after reconnect; reporting failure now could duplicate
+                # side effects while its original process continues.
+                logger.warning("Remote workflow launch ACK uncertain: %s", route_id)
             except Exception:
                 self.processes.pop(handle.id, None)
                 self._routes.pop(route_id, None)
@@ -399,6 +552,7 @@ class ThinRemoteProcessPool(ProcessPoolManager):
                         "execution_id": attempt_id,
                         "context": context,
                         "graceful_shutdown_seconds": graceful_shutdown_seconds,
+                        "memory_request_bytes": self._request_bytes("service:" + attempt_id),
                         "service": {
                             "service_id": service_id,
                             "attempt_id": attempt_id,
@@ -407,6 +561,8 @@ class ThinRemoteProcessPool(ProcessPoolManager):
                     },
                 )
                 handle.process.remote_pid = self._remote_pid_from_ack(response)
+            except (ConnectionError, TimeoutError):
+                logger.warning("Remote service launch ACK uncertain: %s", route_id)
             except Exception:
                 self.service_processes.pop(handle.id, None)
                 self._routes.pop(route_id, None)
@@ -593,13 +749,42 @@ class ThinRemoteProcessPool(ProcessPoolManager):
         if not isinstance(route_id, str) or not isinstance(result, dict):
             logger.warning("Ignoring malformed thin remote result event")
             return
-        handle = self._routes.pop(route_id, None)
+        handle = self._routes.get(route_id)
         if handle is None:
             logger.info("Ignoring late thin remote result for %s", route_id)
             return
-        handle.process.exitcode = 0
         await self._handle_result(handle, result)
-        self._route_metrics.pop(route_id, None)
+
+    async def _handle_result(self, handle: ProcessHandle, result: dict[str, Any]) -> None:
+        """Release a remote route only after its canonical callback succeeds.
+
+        Local pipe delivery may consume a result once; a reconnecting remote
+        launcher retains it until ACK. Keep the handle and propagate callback
+        failures so that transport replay can safely try the durable commit.
+        """
+        async with self._result_locks.setdefault(handle.id, asyncio.Lock()):
+            if handle.id not in self._routes:
+                return
+            if not await self._owns_session():
+                raise ConnectionError("Remote API ownership was replaced")
+            if handle.service is not None:
+                if self.on_service_result is not None:
+                    await self.on_service_result(self._service_envelope(handle, result))
+            elif handle.current_execution is not None:
+                result = handle.current_execution.attach_transport_metadata(result)
+                self._attach_resource_peaks(handle, result)
+                if self.on_result is not None:
+                    await self.on_result(result)
+            if not await self._owns_session():
+                raise ConnectionError("Remote API ownership was replaced before ACK")
+            handle.result_reported = True
+            handle.process.exitcode = 0
+            handle.current_execution = None
+            self.processes.pop(handle.id, None)
+            self.service_processes.pop(handle.id, None)
+            self._routes.pop(handle.id, None)
+            self._route_metrics.pop(handle.id, None)
+            self._result_locks.pop(handle.id, None)
 
     def _build_heartbeat(self) -> dict[str, Any]:
         """Publish remote cgroup usage without inspecting the API host."""

@@ -9,6 +9,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
+import pytest
+
 from src.services.kubernetes_execution import KubernetesPolicy
 from src.services.memory_requests import MIB, MemoryBudget
 from src.worker import pool_main
@@ -196,6 +198,20 @@ async def test_sigterm_during_a_drain_starts_the_grace(monkeypatch) -> None:  # 
     assert 29.0 < grace <= 30.0
 
 
+async def test_drain_cancels_api_hosted_work_after_the_grace(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(pool_main, "DRAIN_GRACE_SECONDS", 0.0)
+    worker = _worker_with_pool()
+    agent = asyncio.create_task(asyncio.sleep(60))
+    worker._tasks["agent.run"].add(agent)
+    agent.add_done_callback(worker._tasks["agent.run"].discard)
+    worker.request_stop()
+
+    await worker._drain()
+    await asyncio.gather(agent, return_exceptions=True)
+
+    assert agent.cancelled()
+
+
 async def test_an_executor_lost_during_a_drain_stops_waiting(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     worker = _worker_with_pool(running={"long-run"})
     pool = worker._workflow_consumer._pool  # type: ignore[union-attr]
@@ -206,29 +222,6 @@ async def test_an_executor_lost_during_a_drain_stops_waiting(monkeypatch) -> Non
 
     await asyncio.wait_for(drain, timeout=2)
     pool.drain_active_executions.assert_awaited_once_with(0.0)
-
-
-async def test_an_incarnation_makes_a_job_worker_and_none_a_static_one(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    from src.worker import pool_main
-
-    formed: list[tuple[bool, object]] = []
-
-    async def run(self) -> int:  # type: ignore[no-untyped-def]
-        formed.append((self.static, self._on_ready))
-        return 0
-
-    monkeypatch.setattr(pool_main.PoolWorker, "run", run)
-    ready = object()
-
-    monkeypatch.delenv("BIFROST_WORKER_INCARNATION_ID", raising=False)
-    assert await pool_main.run_executor(on_ready=ready) == 0  # type: ignore[arg-type]
-
-    monkeypatch.setenv("BIFROST_WORKER_INCARNATION_ID", str(uuid4()))
-    monkeypatch.setenv("BIFROST_KUBERNETES_JOB_UID", "job-uid")
-    monkeypatch.setenv("BIFROST_KUBERNETES_POD_UID", "pod-uid")
-    assert await pool_main.run_executor() == 0
-
-    assert formed == [(True, ready), (False, None)]
 
 
 async def test_the_process_pool_is_ready_before_any_work_is_claimed(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -252,7 +245,7 @@ async def test_the_process_pool_is_ready_before_any_work_is_claimed(monkeypatch)
         async def stop_pool(self) -> None:
             order.append("pool stopped")
 
-    async def claim_next(incarnation_id, handlers, *, fits_bytes, budget_bytes):  # type: ignore[no-untyped-def]
+    async def claim_next(incarnation_id, handlers, *, fits_bytes, budget_bytes, **kwargs):  # type: ignore[no-untyped-def]
         order.append("claim")
         worker._stop.set()
 
@@ -311,9 +304,38 @@ def _workflow_claim(execution_id: str, request: int) -> PoolClaim:
     )
 
 
+def _agent_claim(request: int) -> PoolClaim:
+    return PoolClaim(
+        dispatch_id=uuid4(),
+        handler="agent.run",
+        message={},
+        subject_id=uuid4(),
+        memory_request_bytes=request,
+        queued_at=QUEUED_AT,
+    )
+
+
 async def _run_to_routed(worker: PoolWorker, claim: PoolClaim) -> None:
+    worker._reserve_claim(claim)
     worker._start(claim)
     await asyncio.gather(*worker._tasks["workflow.execute"])
+
+
+def test_a_failed_task_start_releases_its_precommitted_reservation(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    worker = _worker_with_pool()
+    claim = _agent_claim(100 * MIB)
+    worker._reserve_claim(claim)
+
+    def fail(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("event loop stopping")
+
+    monkeypatch.setattr(pool_main.asyncio, "create_task", fail)
+
+    with pytest.raises(RuntimeError, match="event loop stopping"):
+        worker._start(claim)
+
+    assert worker.admission.free_bytes() == GIB
+    assert worker._started == {}
 
 
 async def test_a_workflow_run_is_held_until_its_child_ends() -> None:
@@ -375,7 +397,7 @@ async def test_a_database_error_while_claiming_does_not_end_the_executor(monkeyp
     worker._agent_consumer = object()  # type: ignore[assignment]
     calls: list[str] = []
 
-    async def claim_next(incarnation_id, handlers, *, fits_bytes, budget_bytes):  # type: ignore[no-untyped-def]
+    async def claim_next(incarnation_id, handlers, *, fits_bytes, budget_bytes, **kwargs):  # type: ignore[no-untyped-def]
         calls.append("claim")
         if len(calls) == 1:
             raise ConnectionError("database restarting")

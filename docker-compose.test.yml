@@ -122,6 +122,7 @@ services:
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
       BIFROST_REDIS_URL: redis://redis:6379/0
+      BIFROST_API_URL: http://api:8000
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
       # Browser-facing callbacks use the Playwright loopback client proxy.
@@ -138,6 +139,8 @@ services:
       # Enable registration for E2E tests
       BIFROST_ALLOW_REGISTRATION: "true"
       EMBEDDING_ALLOWED_HOSTS: scheduler-fixtures
+      SSL_CERT_FILE: /fixture-tls/trust.pem
+      GIT_CONFIG_GLOBAL: /fixture-gitconfig
     # No ports exposed - all access via Docker network (test-runner connects to api:8000)
     volumes:
       - ./api/src:/app/src
@@ -162,6 +165,8 @@ services:
       # by the uid-1000 test-runner, so chown-ing just this subdir to 1000 is a
       # no-op and never touches the LOG_DIR root.
       - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures
+      - thin-provider-tls:/fixture-tls:ro
+      - ./api/scripts/thin_fixture.gitconfig:/fixture-gitconfig:ro
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -171,6 +176,8 @@ services:
         condition: service_started
       init:
         condition: service_completed_successfully
+      scheduler-fixtures:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/ready"]
       interval: 5s
@@ -194,6 +201,7 @@ services:
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
       BIFROST_REDIS_URL: redis://redis:6379/0
+      BIFROST_API_URL: http://api:8000
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
       # Exercise the same claim/beat transitions without production idle intervals.
@@ -214,6 +222,9 @@ services:
       # C1.5: Parity with production hardening
       PIP_NO_CACHE_DIR: "1"
       HOME: /home/bifrost
+      EMBEDDING_ALLOWED_HOSTS: scheduler-fixtures
+      SSL_CERT_FILE: /fixture-tls/trust.pem
+      GIT_CONFIG_GLOBAL: /fixture-gitconfig
     volumes:
       - ./api/src:/app/src
       - /app/src/services/app_compiler/node_modules  # preserve npm deps from image
@@ -227,6 +238,8 @@ services:
       # The same as the scheduler: both are executors and run any work.
       - test-mounts:/mounts
       - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures
+      - thin-provider-tls:/fixture-tls:ro
+      - ./api/scripts/thin_fixture.gitconfig:/fixture-gitconfig:ro
     healthcheck:
       test: ["CMD", "python", "-m", "src.worker.health", "--ready"]
       interval: 10s
@@ -241,6 +254,8 @@ services:
       seaweedfs:
         condition: service_started
       api:
+        condition: service_healthy
+      scheduler-fixtures:
         condition: service_healthy
     # C1.5: Run as bifrost uid. user: "1000:1000" bypasses gosu so cap_drop: ALL works.
     user: "1000:1000"
@@ -262,6 +277,7 @@ services:
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
       BIFROST_REDIS_URL: redis://redis:6379/0
+      BIFROST_API_URL: http://api:8000
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
       # S3-compatible object storage
@@ -276,6 +292,9 @@ services:
       # The same executor tuning as the worker service.
       BIFROST_SERVICE_CLAIM_INTERVAL_SECONDS: "1"
       BIFROST_SERVICE_HEARTBEAT_INTERVAL_SECONDS: "2"
+      EMBEDDING_ALLOWED_HOSTS: scheduler-fixtures
+      SSL_CERT_FILE: /fixture-tls/trust.pem
+      GIT_CONFIG_GLOBAL: /fixture-gitconfig
     volumes:
       - ./api/src:/app/src
       - /app/src/services/app_compiler/node_modules  # preserve npm deps from image
@@ -292,6 +311,8 @@ services:
       # server-side. Same safety shape as the api mount: only the
       # uid-1000-created fixture subdir, never the LOG_DIR root.
       - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures
+      - thin-provider-tls:/fixture-tls:ro
+      - ./api/scripts/thin_fixture.gitconfig:/fixture-gitconfig:ro
     healthcheck:
       test: ["CMD", "python", "-m", "src.scheduler.health", "--ready"]
       interval: 10s
@@ -323,16 +344,20 @@ services:
     build:
       context: .
       dockerfile: api/Dockerfile.dev
-    command: ["python", "/app/scripts/scheduler_fixture_server.py"]
+    # One shared provider fixture: HTTP OAuth/embeddings/MCP and the local TLS
+    # video endpoint used by the full platform-job suite.
+    command: ["python", "-m", "scripts.thin_provider_fixture"]
     volumes:
       - ./api/scripts:/app/scripts:ro
+      - thin-provider-tls:/fixture-tls
+    networks:
+      default:
+        aliases: [fixture.openrouter.ai]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "python", "-c", "import ssl,urllib.request; urllib.request.urlopen('http://localhost:8080/health'); urllib.request.urlopen('https://fixture.openrouter.ai:8443/health', context=ssl.create_default_context(cafile='/fixture-tls/trust.pem'))"]
       interval: 2s
       timeout: 2s
       retries: 20
-    profiles:
-      - e2e
 
   # Test Runner - Executes pytest inside container with all dependencies
   test-runner:
@@ -403,6 +428,8 @@ services:
                                       # tests/unit/test_compose_test_harness.py
                                       # asserts the api service never re-binds
                                       # the host LOG_DIR root over /tmp/bifrost.
+      - ./docker-compose.yml:/app/docker-compose.yml:ro  # Production deployment contract.
+      - ./docker-compose.dev.yml:/app/docker-compose.dev.yml:ro  # Development deployment contract.
       - ./client/src:/client/src:ro  # Read-only — the drift test in
                                       # tests/unit/test_platform_names_match_runtime.py
                                       # parses app-code-runtime.ts to detect new platform exports.
@@ -530,3 +557,8 @@ services:
 # Named volumes for test data - ephemeral within test session
 volumes:
   test-mounts:  # File storage for uploads, branding, etc.
+  thin-provider-tls:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: uid=1000,gid=1000,mode=0755

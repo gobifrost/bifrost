@@ -105,6 +105,11 @@ from src.routers.version import router as version_router
 from src.routers.websocket import router as websocket_router
 from src.routers.workflow_keys import router as workflow_keys_router
 from src.routers.workflows import router as workflows_router
+from src.worker.remote.host import (
+    router as remote_control_router,
+    start_remote_control_host,
+    stop_remote_control_host,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -194,6 +199,9 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await control_host.start()
     logger.info("Platform control hosted by this API replica")
 
+    await start_remote_control_host(app)
+    logger.info("Remote execution control hosted by this API replica")
+
     from src.services.legacy_broker_drain import drain_legacy_broker
 
     legacy_drain = asyncio.create_task(drain_legacy_broker(), name="legacy-broker-drain")
@@ -204,6 +212,10 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Shutdown
     logger.info("Shutting down Bifrost API...")
+
+    # Stop accepting launchers and drain the API-owned consumers while the
+    # database and transport clients are still available.
+    await stop_remote_control_host()
 
     # An unfinished drain leaves its unacknowledged message queued.
     legacy_drain.cancel()
@@ -495,6 +507,9 @@ def create_app() -> FastAPI:
     app.include_router(sdk_runtime_router)
     app.include_router(policy_rules_router)
     app.include_router(product_updates_router)
+    # The FastMCP application below mounts at the root and catches unmatched
+    # paths, so this WebSocket route must precede it.
+    app.include_router(remote_control_router)
 
     # Mount MCP OAuth routes at root level (required by RFC 8414/9728)
     # These must be registered BEFORE the FastMCP ASGI mount

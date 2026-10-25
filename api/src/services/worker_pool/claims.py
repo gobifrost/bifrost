@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -14,6 +15,7 @@ from src.core.database import get_db_context, get_liveness_db_context
 from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
 from src.models.orm.work_dispatches import WorkDispatch
 from src.services.kubernetes_execution import load_kubernetes_policy
+from src.worker.remote.fencing import fence_remote_owner
 
 # Shared with the capacity controller: launches and idle drains serialize.
 CAPACITY_LOCK = "bifrost:worker-pool:capacity"
@@ -59,6 +61,8 @@ async def admit_worker(incarnation_id: UUID, *, job_uid: str, pod_uid: str) -> i
     """
     now = _now()
     async with get_db_context() as db:
+        if not await fence_remote_owner(db, for_update=True):
+            return None
         return await db.scalar(
             update(ExecutionWorker)
             .where(
@@ -79,19 +83,31 @@ async def admit_worker(incarnation_id: UUID, *, job_uid: str, pod_uid: str) -> i
         )
 
 
-async def register_static_worker(*, hostname: str) -> UUID:
+async def register_static_worker(
+    *,
+    hostname: str,
+    supported_handlers: list[str] | None = None,
+    incarnation_id: UUID | None = None,
+) -> UUID:
     """A long-running executor joins the pool as ``starting``.
 
     Its pool can take a minute or more to start, so it offers no capacity
     (and claims nothing) until ``mark_static_ready`` reports its measured
-    budget.
+    budget. A remote physical launcher may supply its immutable incarnation
+    UUID; this always creates a new row and never adopts or overwrites one.
     """
     worker = ExecutionWorker(
+        **({"id": incarnation_id} if incarnation_id is not None else {}),
         form="static",
         state="starting",
         resource_class="standard",
         slots=0,
         hostname=hostname,
+        supported_handlers=(
+            supported_handlers
+            if supported_handlers is not None
+            else [handler for handler, _version in SUPPORTED_HANDLERS]
+        ),
         version=get_version(),
         heartbeat_at=func.now(),
     )
@@ -106,6 +122,8 @@ async def mark_static_ready(incarnation_id: UUID, *, memory_budget_bytes: int) -
     """``starting → ready`` with the budget measured once the pool is up."""
     now = _now()
     async with get_db_context() as db:
+        if not await fence_remote_owner(db, for_update=True):
+            return False
         ready = await db.scalar(
             update(ExecutionWorker)
             .where(ExecutionWorker.id == incarnation_id, ExecutionWorker.state == "starting")
@@ -126,6 +144,8 @@ async def claim_next(
     *,
     fits_bytes: int,
     budget_bytes: int,
+    reserve_claim: Callable[[PoolClaim], None] | None = None,
+    release_reservation: Callable[[PoolClaim], None] | None = None,
 ) -> PoolClaim | None:
     """Assign the oldest unassigned dispatch this worker can take now.
 
@@ -136,7 +156,10 @@ async def claim_next(
     whatever it measured: it exists for that work, and the real-memory gate
     and the dangerous-memory stop still apply. When older work
     that fits ``budget_bytes`` (but not the free budget) has waited past
-    HEAD_OF_LINE_WAIT, nothing newer is taken until it fits.
+    HEAD_OF_LINE_WAIT, nothing newer is taken until it fits. When supplied,
+    ``reserve_claim`` runs after the assignment is fenced but before the
+    transaction commits; ``release_reservation`` undoes that local hold if
+    the transaction fails.
     """
     pairs = [pair for pair in handlers if pair in SUPPORTED_HANDLERS]
     unassigned = (
@@ -148,11 +171,20 @@ async def claim_next(
         .where(ExecutionWorker.id == incarnation_id)
         .scalar_subquery()
     )
+    worker_supports_handler = exists().where(
+        ExecutionWorker.id == incarnation_id,
+        ExecutionWorker.supported_handlers.op("?")(WorkDispatch.handler),
+    )
     candidate = (
         select(WorkDispatch.id, WorkDispatch.created_at)
         .where(
             *unassigned,
-            (WorkDispatch.memory_request_bytes <= fits_bytes) | (WorkDispatch.id == reserved_for),
+            worker_supports_handler,
+            (WorkDispatch.memory_request_bytes <= fits_bytes)
+            | (
+                (WorkDispatch.id == reserved_for)
+                & (WorkDispatch.handler == "workflow.execute")
+            ),
         )
         .order_by(
             (WorkDispatch.id == reserved_for).is_(True).desc(),
@@ -162,74 +194,89 @@ async def claim_next(
         .with_for_update(skip_locked=True)
     )
     ready = exists().where(
-        ExecutionWorker.id == incarnation_id, ExecutionWorker.state == "ready"
+        ExecutionWorker.id == incarnation_id,
+        ExecutionWorker.state == "ready",
+        ExecutionWorker.supported_handlers.op("?")(WorkDispatch.handler),
     )
-    async with get_db_context() as db:
-        picked = (await db.execute(candidate)).one_or_none()
-        if picked is None:
-            return None
-        blocked = await db.scalar(
-            select(
-                exists().where(
-                    *unassigned,
-                    WorkDispatch.created_at < picked.created_at,
-                    WorkDispatch.created_at < _now() - HEAD_OF_LINE_WAIT,
-                    WorkDispatch.memory_request_bytes > fits_bytes,
-                    WorkDispatch.memory_request_bytes <= budget_bytes,
+    claim: PoolClaim | None = None
+    reserved = False
+    try:
+        async with get_db_context() as db:
+            if not await fence_remote_owner(db, for_update=True):
+                return None
+            picked = (await db.execute(candidate)).one_or_none()
+            if picked is None:
+                return None
+            blocked = await db.scalar(
+                select(
+                    exists().where(
+                        *unassigned,
+                        WorkDispatch.created_at < picked.created_at,
+                        WorkDispatch.created_at < _now() - HEAD_OF_LINE_WAIT,
+                        WorkDispatch.memory_request_bytes > fits_bytes,
+                        WorkDispatch.memory_request_bytes <= budget_bytes,
+                    )
                 )
             )
-        )
-        if blocked:
-            return None
-        row = (
-            await db.execute(
-                update(WorkDispatch)
-                .where(WorkDispatch.id == picked.id, ready)
-                .values(assigned_worker_id=incarnation_id)
-                .returning(
-                    WorkDispatch.id.label("dispatch_id"),
-                    WorkDispatch.handler.label("handler"),
-                    WorkDispatch.message.label("message"),
-                    WorkDispatch.family.label("dispatch_family"),
-                    WorkDispatch.subject_id.label("subject"),
-                    WorkDispatch.memory_request_bytes.label("memory_request_bytes"),
-                    WorkDispatch.created_at.label("queued_at"),
+            if blocked:
+                return None
+            row = (
+                await db.execute(
+                    update(WorkDispatch)
+                    .where(WorkDispatch.id == picked.id, ready)
+                    .values(assigned_worker_id=incarnation_id)
+                    .returning(
+                        WorkDispatch.id.label("dispatch_id"),
+                        WorkDispatch.handler.label("handler"),
+                        WorkDispatch.message.label("message"),
+                        WorkDispatch.family.label("dispatch_family"),
+                        WorkDispatch.subject_id.label("subject"),
+                        WorkDispatch.memory_request_bytes.label("memory_request_bytes"),
+                        WorkDispatch.created_at.label("queued_at"),
+                    )
+                )
+            ).one_or_none()
+            if row is None:
+                return None
+            db.add(
+                ExecutionWorkerClaim(
+                    worker_id=incarnation_id,
+                    family=row.dispatch_family,
+                    subject_id=row.subject,
                 )
             )
-        ).one_or_none()
-        if row is None:
-            return None
-        db.add(
-            ExecutionWorkerClaim(
-                worker_id=incarnation_id,
-                family=row.dispatch_family,
-                subject_id=row.subject,
-            )
-        )
-        claimed = None
-        if row.handler == "workflow.execute":
-            from src.services.execution.workflow_dispatch import claim_workflow_dispatch
+            claimed = None
+            if row.handler == "workflow.execute":
+                from src.services.execution.workflow_dispatch import claim_workflow_dispatch
 
-            # One transaction for assignment and the run's own claim. A run
-            # that moved on (cancelled) leaves claimed None: the consumer then
-            # finds nothing to claim and discards it, waking a sync caller.
-            claimed = await claim_workflow_dispatch(
-                db, dispatch_id=row.dispatch_id, execution_id=row.subject
+                # One transaction for assignment and the run's own claim. A run
+                # that moved on (cancelled) leaves claimed None: the consumer then
+                # finds nothing to claim and discards it, waking a sync caller.
+                claimed = await claim_workflow_dispatch(
+                    db, dispatch_id=row.dispatch_id, execution_id=row.subject
+                )
+            await db.execute(
+                update(ExecutionWorker)
+                .where(ExecutionWorker.id == incarnation_id)
+                .values(last_claim_at=_now(), reserved_for_dispatch_id=None)
             )
-        await db.execute(
-            update(ExecutionWorker)
-            .where(ExecutionWorker.id == incarnation_id)
-            .values(last_claim_at=_now(), reserved_for_dispatch_id=None)
-        )
-    return PoolClaim(
-        dispatch_id=row.dispatch_id,
-        handler=row.handler,
-        message=row.message,
-        subject_id=row.subject,
-        memory_request_bytes=row.memory_request_bytes,
-        queued_at=row.queued_at,
-        claimed=dict(claimed) if claimed is not None else None,
-    )
+            claim = PoolClaim(
+                dispatch_id=row.dispatch_id,
+                handler=row.handler,
+                message=row.message,
+                subject_id=row.subject,
+                memory_request_bytes=row.memory_request_bytes,
+                queued_at=row.queued_at,
+                claimed=dict(claimed) if claimed is not None else None,
+            )
+            if reserve_claim is not None:
+                reserve_claim(claim)
+                reserved = True
+    except BaseException:
+        if reserved and claim is not None and release_reservation is not None:
+            release_reservation(claim)
+        raise
+    return claim
 
 
 async def heartbeat_worker(
@@ -249,6 +296,8 @@ async def heartbeat_worker(
     executor's own heartbeat connection, so a heartbeat never waits behind
     the runs' queries."""
     async with get_liveness_db_context() as db:
+        if not await fence_remote_owner(db, for_update=True):
+            return None
         return await db.scalar(
             update(ExecutionWorker)
             .where(
@@ -272,6 +321,8 @@ async def heartbeat_worker(
 async def begin_drain(incarnation_id: UUID, reason: str) -> bool:
     """``ready → draining``; after this the worker can never claim again."""
     async with get_db_context() as db:
+        if not await fence_remote_owner(db, for_update=True):
+            return False
         drained = await db.scalar(
             update(ExecutionWorker)
             .where(ExecutionWorker.id == incarnation_id, ExecutionWorker.state == "ready")
@@ -293,6 +344,10 @@ async def begin_idle_drain(incarnation_id: UUID) -> bool:
             text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
             {"key": CAPACITY_LOCK},
         )
+        # Keep the capacity lock before the worker lock: the controller uses
+        # this order while changing worker state, so reversing it can deadlock.
+        if not await fence_remote_owner(db, for_update=True):
+            return False
         keep_ready = (await load_kubernetes_policy(db)).warm_workers
         # A sized Job always drains once idle: only standard Jobs make up the
         # warm minimum.
@@ -321,6 +376,8 @@ async def begin_idle_drain(incarnation_id: UUID) -> bool:
 
 async def retire_worker(incarnation_id: UUID, *, runs_handled: int) -> None:
     async with get_db_context() as db:
+        if not await fence_remote_owner(db, for_update=True):
+            return
         await db.execute(
             update(ExecutionWorker)
             .where(

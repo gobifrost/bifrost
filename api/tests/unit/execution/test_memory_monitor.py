@@ -4,7 +4,11 @@ Unit tests for memory_monitor module.
 
 from unittest.mock import patch, mock_open
 
-from src.services.execution.memory_monitor import get_cgroup_memory
+from src.services.execution.memory_monitor import (
+    effective_memory_sample,
+    get_cgroup_memory,
+    memory_pressure_ratio,
+)
 
 
 class TestGetCgroupMemory:
@@ -69,3 +73,23 @@ class TestGetCgroupMemory:
                 current, limit = get_cgroup_memory()
                 assert current == -1
                 assert limit == -1
+
+
+def test_effective_sample_uses_host_limit_for_an_unbounded_cgroup(monkeypatch):
+    monkeypatch.setattr(
+        "src.services.execution.memory_monitor.get_cgroup_memory", lambda: (123, -1)
+    )
+    monkeypatch.setattr(
+        "src.services.execution.memory_monitor.host_memory_bytes", lambda: 456
+    )
+
+    assert effective_memory_sample() == (123, 456)
+
+
+def test_unbounded_pressure_uses_host_used_memory_not_container_working_set(monkeypatch):
+    monkeypatch.setattr(
+        "src.services.execution.memory_monitor.get_cgroup_memory", lambda: (123, -1)
+    )
+    meminfo = "MemTotal: 100 kB\nMemAvailable: 25 kB\n"
+    with patch("builtins.open", mock_open(read_data=meminfo)):
+        assert memory_pressure_ratio() == .75

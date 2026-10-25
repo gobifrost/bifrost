@@ -292,6 +292,22 @@ async def test_a_ready_worker_claims_each_dispatch_once(db) -> None:
     assert winners[0].handler == "workflow.execute"
 
 
+async def test_claim_reserves_memory_before_its_assignment_commits(db) -> None:
+    worker_id = await _static_executor("static-1")
+    await _accept_pool_run()
+    reserved: list[claims.PoolClaim] = []
+
+    claim = await claims.claim_next(
+        worker_id,
+        fits_bytes=GIB,
+        budget_bytes=GIB,
+        reserve_claim=reserved.append,
+    )
+
+    assert claim is not None
+    assert reserved == [claim]
+
+
 async def test_a_draining_worker_never_claims(db) -> None:
     worker = await _job_worker(db.sessions, state="ready")
     assert await claims.begin_drain(worker.id, "idle")
@@ -539,27 +555,26 @@ async def test_silent_worker_is_lost_and_its_unstarted_work_released(db, monkeyp
     from src.services.execution.agent_run_service import enqueue_agent_run
 
     monkeypatch.setattr(agent_run_service, "get_dispatch_db_context", claims.get_db_context)
-    cluster = FakeCluster()
-    pool = controller.WorkerPoolController(cluster, SETTINGS, SPEC)  # type: ignore[arg-type]
     run_id = await enqueue_agent_run(agent_id=None, trigger_type="sdk", lineage=None)
-    [worker_id] = await pool.launch_for_demand(POLICY)
-    await pool.reconcile_worker(worker_id, POLICY)
-    async with db.sessions() as session:
-        job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
-    assert await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod") is not None
+    worker_id = await claims.register_static_worker(
+        hostname="api-agent", supported_handlers=["agent.run"]
+    )
+    assert await claims.mark_static_ready(worker_id, memory_budget_bytes=GIB)
     claim = await _claim(worker_id)
     assert claim is not None and claim.handler == "agent.run"
 
-    # The node dies: no heartbeat, the pod never claims the run.
+    # The API process dies: its consumer never starts the assigned run.
     async with db.sessions() as session:
         await session.execute(
-            update(ExecutionWorker).values(heartbeat_at=datetime.now(timezone.utc) - timedelta(minutes=5))
+            update(ExecutionWorker)
+            .where(ExecutionWorker.id == worker_id)
+            .values(heartbeat_at=datetime.now(timezone.utc) - timedelta(minutes=5))
         )
         await session.execute(
             update(WorkDispatch).values(created_at=datetime.now(timezone.utc) - timedelta(minutes=5))
         )
         await session.commit()
-    await pool.reconcile_worker(worker_id, POLICY)
+    await liveness.end_silent_static_executors()
     await work_dispatch.reconcile_work_dispatches()
 
     async with db.sessions() as session:
@@ -571,9 +586,37 @@ async def test_silent_worker_is_lost_and_its_unstarted_work_released(db, monkeyp
         ).scalar_one()
     assert (worker.state, worker.end_reason) == ("lost", "heartbeat_lost")
     assert dispatch.assigned_worker_id is None
-    assert cluster.deleted == []  # deleted on the next pass, as a lost worker
-    await pool.reconcile_worker(worker_id, POLICY)
-    assert cluster.deleted == [worker.kubernetes_job_name]
+
+
+async def test_api_agent_capacity_cannot_claim_oversized_agent_work_but_remote_workflows_fit(
+    db, monkeypatch
+) -> None:
+    from src.services.execution import agent_run_service
+    from src.services.execution.agent_run_service import enqueue_agent_run
+
+    monkeypatch.setattr(agent_run_service, "get_dispatch_db_context", claims.get_db_context)
+    await enqueue_agent_run(agent_id=None, trigger_type="sdk", lineage=None)
+    api_worker = await claims.register_static_worker(
+        hostname="api-agent", supported_handlers=["agent.run"]
+    )
+    assert await claims.mark_static_ready(api_worker, memory_budget_bytes=16 * MIB)
+
+    assert await claims.claim_next(
+        api_worker,
+        (("agent.run", 1),),
+        fits_bytes=16 * MIB,
+        budget_bytes=16 * MIB,
+    ) is None
+
+    workflow_id = await _accept_pool_run()
+    remote_worker = await claims.register_static_worker(
+        hostname="remote", supported_handlers=["workflow.execute"]
+    )
+    assert await claims.mark_static_ready(remote_worker, memory_budget_bytes=GIB)
+    workflow = await _claim(remote_worker)
+
+    assert workflow is not None
+    assert workflow.message["execution_id"] == workflow_id
 
 
 async def test_pool_run_fails_visibly_when_no_capacity_arrives(db) -> None:
@@ -747,7 +790,8 @@ def test_worker_job_is_suspended_tokenless_and_has_no_deadline() -> None:
     assert "activeDeadlineSeconds" not in spec
     assert pod["restartPolicy"] == "Never"
     assert pod["automountServiceAccountToken"] is False
-    assert container["command"] == ["python", "-m", "src.worker.pool_main"]
+    assert container["command"] == ["python", "-m", "src.worker.main"]
+    assert env["BIFROST_API_URL"] == {"name": "BIFROST_API_URL", "value": "http://api:8000"}
     assert container["resources"]["requests"]["memory"] == "512Mi"
     assert container["resources"]["limits"]["memory"] == "3072Mi", "Worker memory from Settings"
     assert "controller-uid" in env["BIFROST_KUBERNETES_JOB_UID"]["valueFrom"]["fieldRef"]["fieldPath"]
@@ -863,6 +907,191 @@ async def test_the_executor_holding_a_run_writes_its_result(db) -> None:
         await session.commit()
         execution = await session.get(Execution, UUID(execution_id))
     assert execution.status == ExecutionStatus.SUCCESS
+
+
+async def test_stale_remote_owner_cannot_commit_a_workflow_result(db) -> None:
+    from src.repositories.executions import update_execution
+    from src.services.execution.workflow_dispatch import claim_workflow_dispatch
+    from src.worker.remote.fencing import LeaseRef, remote_owner_context
+    from src.worker.remote.ownership import RemoteOwnerLease
+
+    worker_id = await _static_executor("remote")
+    execution_id = await _accept_pool_run()
+    claim = await _claim(worker_id)
+    assert claim is not None
+    current_owner, stale_owner, launcher = uuid4(), uuid4(), uuid4()
+    async with db.sessions() as session:
+        await claim_workflow_dispatch(
+            session, dispatch_id=claim.dispatch_id, execution_id=UUID(execution_id)
+        )
+        await session.execute(
+            update(ExecutionWorker)
+            .where(ExecutionWorker.id == worker_id)
+            .values(
+                remote_owner_id=current_owner,
+                remote_launcher_id=launcher,
+                remote_session_generation=2,
+                remote_owner_lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
+            )
+        )
+        await session.commit()
+
+    stale = LeaseRef(
+        RemoteOwnerLease(
+            worker_id=worker_id,
+            owner_id=stale_owner,
+            launcher_id=launcher,
+            session_generation=1,
+        )
+    )
+    with remote_owner_context(stale):
+        async with db.sessions() as session:
+            written = await update_execution(
+                execution_id=execution_id,
+                status=ExecutionStatus.SUCCESS,
+                session=session,
+                owner_worker_id=worker_id,
+            )
+            await session.commit()
+            execution = await session.get(Execution, UUID(execution_id))
+
+    assert not written
+    assert execution.status == ExecutionStatus.RUNNING
+
+
+async def test_stale_remote_owner_cannot_control_its_replaced_worker(db) -> None:
+    from src.worker.remote.fencing import LeaseRef, remote_owner_context
+    from src.worker.remote.ownership import RemoteOwnerLease
+
+    worker_id = await _static_executor("remote")
+    await _accept_pool_run()
+    current_owner, stale_owner, launcher = uuid4(), uuid4(), uuid4()
+    async with db.sessions() as session:
+        await session.execute(
+            update(ExecutionWorker)
+            .where(ExecutionWorker.id == worker_id)
+            .values(
+                remote_owner_id=current_owner,
+                remote_launcher_id=launcher,
+                remote_session_generation=2,
+                remote_owner_lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
+            )
+        )
+        await session.commit()
+
+    stale = LeaseRef(
+        RemoteOwnerLease(
+            worker_id=worker_id,
+            owner_id=stale_owner,
+            launcher_id=launcher,
+            session_generation=1,
+        )
+    )
+    with remote_owner_context(stale):
+        assert (
+            await claims.heartbeat_worker(
+                worker_id,
+                active_runs=1,
+                runs_handled=1,
+                package_generation=1,
+                memory_pressured=False,
+                memory_budget_bytes=GIB,
+                memory_reserved_bytes=64 * MIB,
+            )
+            is None
+        )
+        assert (
+            await claims.claim_next(worker_id, fits_bytes=GIB, budget_bytes=GIB)
+        ) is None
+        assert not await claims.begin_drain(worker_id, "stale owner")
+        await claims.retire_worker(worker_id, runs_handled=99)
+
+    async with db.sessions() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        dispatch = await session.scalar(
+            select(WorkDispatch).where(WorkDispatch.assigned_worker_id == worker_id)
+        )
+    assert worker is not None
+    assert worker.state == "ready"
+    assert worker.active_runs == 0
+    assert worker.runs_handled == 0
+    assert dispatch is None
+
+
+async def test_stale_remote_owner_cannot_ready_a_starting_worker(db) -> None:
+    from src.worker.remote.fencing import LeaseRef, remote_owner_context
+    from src.worker.remote.ownership import RemoteOwnerLease
+
+    worker_id = await claims.register_static_worker(hostname="remote")
+    current_owner, stale_owner, launcher = uuid4(), uuid4(), uuid4()
+    async with db.sessions() as session:
+        await session.execute(
+            update(ExecutionWorker)
+            .where(ExecutionWorker.id == worker_id)
+            .values(
+                remote_owner_id=current_owner,
+                remote_launcher_id=launcher,
+                remote_session_generation=2,
+                remote_owner_lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
+                kubernetes_job_uid="job",
+            )
+        )
+        await session.commit()
+
+    stale = LeaseRef(
+        RemoteOwnerLease(
+            worker_id=worker_id,
+            owner_id=stale_owner,
+            launcher_id=launcher,
+            session_generation=1,
+        )
+    )
+    with remote_owner_context(stale):
+        assert not await claims.mark_static_ready(worker_id, memory_budget_bytes=GIB)
+
+    async with db.sessions() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+    assert worker is not None
+    assert worker.state == "starting"
+    assert worker.memory_budget_bytes is None
+
+
+async def test_stale_remote_owner_cannot_admit_a_starting_worker(db) -> None:
+    from src.worker.remote.fencing import LeaseRef, remote_owner_context
+    from src.worker.remote.ownership import RemoteOwnerLease
+
+    worker_id = await claims.register_static_worker(hostname="remote")
+    current_owner, stale_owner, launcher = uuid4(), uuid4(), uuid4()
+    async with db.sessions() as session:
+        await session.execute(
+            update(ExecutionWorker)
+            .where(ExecutionWorker.id == worker_id)
+            .values(
+                remote_owner_id=current_owner,
+                remote_launcher_id=launcher,
+                remote_session_generation=2,
+                remote_owner_lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
+                kubernetes_job_uid="job",
+            )
+        )
+        await session.commit()
+
+    stale = LeaseRef(
+        RemoteOwnerLease(
+            worker_id=worker_id,
+            owner_id=stale_owner,
+            launcher_id=launcher,
+            session_generation=1,
+        )
+    )
+    with remote_owner_context(stale):
+        assert await claims.admit_worker(worker_id, job_uid="job", pod_uid="pod") is None
+
+    async with db.sessions() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+    assert worker is not None
+    assert worker.state == "starting"
+    assert worker.kubernetes_pod_uid is None
 
 
 async def _lose_running_job_worker(db, *, oom: bool) -> tuple[UUID, UUID]:  # type: ignore[no-untyped-def]

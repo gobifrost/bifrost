@@ -140,10 +140,10 @@ def build_worker_job_manifest(
     requests its whole limit, so it is only scheduled where that memory
     exists.
 
-    The pod runs the ordinary worker runtime in pool mode, with the worker
-    Deployment's credentials and no Kubernetes token. It has no deadline: a
-    reusable worker drains itself at its idle timeout or maximum lifetime
-    and is never stopped mid-run by a Job deadline.
+    The pod runs the worker entrypoint, which hosts a physical remote launcher,
+    with the worker Deployment's credentials and no Kubernetes token. It has
+    no deadline: a reusable worker drains itself at its idle timeout or maximum
+    lifetime and is never stopped mid-run by a Job deadline.
     """
     namespace = spec.namespace
     image = spec.image
@@ -190,9 +190,10 @@ def build_worker_job_manifest(
                             "name": "worker",
                             "image": image,
                             "imagePullPolicy": spec.image_pull_policy,
-                            "command": ["python", "-m", "src.worker.pool_main"],
+                            "command": ["python", "-m", "src.worker.main"],
                             "envFrom": [dict(source) for source in spec.env_from],
                             "env": [
+                                {"name": "BIFROST_API_URL", "value": "http://api:8000"},
                                 {"name": "BIFROST_WORKER_INCARNATION_ID", "value": str(incarnation_id)},
                                 # The controller's lifetime, so a worker never
                                 # disagrees with the controller that launched it.

@@ -4,6 +4,7 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.orm.base import Base
@@ -35,6 +36,40 @@ class ExecutionWorker(Base):
     hostname: Mapped[str | None] = mapped_column(String(255), nullable=True)
     kubernetes_job_uid: Mapped[str | None] = mapped_column(String(128), nullable=True)
     kubernetes_pod_uid: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # The physical launcher and the API replica controlling it are distinct
+    # identities.  A websocket is only a transport for this persisted fence.
+    remote_launcher_id: Mapped[UUID | None] = mapped_column(unique=True, nullable=True)
+    remote_owner_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    remote_session_generation: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    remote_owner_lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # SHA-256 of the authenticated one-time hello nonce. Never persist a
+    # reusable proof or the platform secret itself.
+    remote_auth_nonce_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Signed monotonically increasing launch-process hello sequence. This is
+    # durable replay protection across API replicas, unlike a last-nonce check.
+    remote_hello_sequence: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    # Existing rows retain the prior all-handler behavior during rollout.
+    # New worker forms narrow the list when they are registered or reserved.
+    supported_handlers: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=lambda: [
+            "workflow.execute",
+            "agent.run",
+            "agent.summarize",
+            "agent.summarize_backfill",
+        ],
+        server_default=text(
+            "'[\"workflow.execute\", \"agent.run\", \"agent.summarize\", "
+            "\"agent.summarize_backfill\"]'::jsonb"
+        ),
+    )
     active_runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # Over its memory threshold: claims nothing, so its free slots are not
     # capacity the controller can count on.
@@ -68,7 +103,10 @@ class ExecutionWorker(Base):
         DateTime(timezone=True), nullable=False, server_default=text("NOW()")
     )
 
-    __table_args__ = (Index("ix_execution_workers_state", "state"),)
+    __table_args__ = (
+        Index("ix_execution_workers_state", "state"),
+        Index("ix_execution_workers_remote_owner_lease", "remote_owner_lease_expires_at"),
+    )
 
 
 class ExecutionWorkerClaim(Base):

@@ -1,14 +1,17 @@
-"""Local TLS video provider for the explicit thin-worker live-job experiment.
+"""Local provider fixture for the platform-job integration suite.
 
-The container-only DNS alias preserves the production OpenRouter hostname
-checks. A generated, short-lived test certificate preserves TLS verification.
-No external provider request or real credential is involved.
+The fixture retains the scheduler suite's HTTP OAuth, embeddings, and MCP
+responses while adding a local TLS video provider. The container-only DNS alias
+preserves the production OpenRouter hostname checks; a generated short-lived
+certificate preserves TLS verification. No external provider request or real
+credential is involved.
 """
 
 from __future__ import annotations
 
 import json
 import ssl
+import threading
 from datetime import datetime, timedelta, timezone
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -19,12 +22,12 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
-from scripts.scheduler_fixture_server import FixtureHandler
+from scripts import scheduler_fixture_server
 
 VIDEO_BYTES = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
 
 
-class VideoHandler(FixtureHandler):
+class VideoHandler(scheduler_fixture_server.FixtureHandler):
     def do_POST(self) -> None:  # noqa: N802
         if self.path != "/v1/videos":
             super().do_POST()
@@ -75,9 +78,14 @@ def main() -> None:
     (directory / "trust.pem").write_bytes(Path(default_ca).read_bytes() + cert_path.read_bytes())
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(cert_path, key_path)
-    server = ThreadingHTTPServer(("0.0.0.0", 8443), VideoHandler)
-    server.socket = context.wrap_socket(server.socket, server_side=True)
-    server.serve_forever()
+    tls_server = ThreadingHTTPServer(("0.0.0.0", 8443), VideoHandler)
+    tls_server.socket = context.wrap_socket(tls_server.socket, server_side=True)
+    threading.Thread(target=tls_server.serve_forever, daemon=True).start()
+    try:
+        scheduler_fixture_server.main()
+    finally:
+        tls_server.shutdown()
+        tls_server.server_close()
 
 
 if __name__ == "__main__":

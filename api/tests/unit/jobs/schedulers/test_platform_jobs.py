@@ -23,6 +23,7 @@ from src.jobs.platform.application_publish import (
 )
 from src.jobs.platform.kubernetes_client import _lease_token_fingerprint
 from src.jobs.schedulers import platform_jobs as scheduler
+from src.models.orm.execution_workers import ExecutionWorker
 from src.models.orm.platform_job_memory_profiles import PlatformJobMemoryProfile
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solution_export_jobs import SolutionExportJob
@@ -378,6 +379,73 @@ async def test_an_oom_killed_pod_teaches_its_job_a_larger_pod(
     assert profile.memory_required_bytes >= limit + MEMORY_PROFILE_SAFETY_MARGIN_BYTES
     pod = SIZING.pod_limit_bytes(job.memory_required_bytes)
     assert pod is not None and pod > limit
+
+
+@pytest.mark.asyncio
+async def test_expired_remote_owner_cannot_claim_a_queued_platform_job(db_session: AsyncSession) -> None:
+    from src.worker.remote.fencing import LeaseRef, remote_owner_context
+    from src.worker.remote.ownership import RemoteOwnerLease
+
+    job = await _queued_remote_build_job(db_session)
+    job.execution_backend = "local"
+    await db_session.flush()
+    with remote_owner_context(LeaseRef(RemoteOwnerLease(uuid4(), uuid4(), uuid4(), 1))):
+        assert await scheduler.claim_platform_job(fits_bytes=AMPLE) is None
+    await db_session.refresh(job)
+    assert job.status == "queued"
+    assert job.lease_token is None
+
+
+@pytest.mark.asyncio
+async def test_stale_remote_owner_cannot_requeue_a_live_platform_job(
+    db_session: AsyncSession,
+) -> None:
+    from src.worker.remote.fencing import LeaseRef, remote_owner_context
+    from src.worker.remote.ownership import RemoteOwnerLease
+
+    job = await _queued_job(db_session)
+    claim = await scheduler.claim_platform_job(fits_bytes=AMPLE)
+    assert claim is not None
+    worker_id, current_owner, stale_owner, launcher = uuid4(), uuid4(), uuid4(), uuid4()
+    db_session.add(
+        ExecutionWorker(
+            id=worker_id,
+            form="static",
+            state="ready",
+            resource_class="standard",
+            slots=0,
+            supported_handlers=["workflow.execute"],
+            remote_owner_id=current_owner,
+            remote_launcher_id=launcher,
+            remote_session_generation=2,
+            remote_owner_lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
+        )
+    )
+    await db_session.commit()
+    original_expiry = job.lease_expires_at
+    stale = LeaseRef(
+        RemoteOwnerLease(
+            worker_id=worker_id,
+            owner_id=stale_owner,
+            launcher_id=launcher,
+            session_generation=1,
+        )
+    )
+
+    with remote_owner_context(stale):
+        assert await scheduler._heartbeat(claim.id, claim.lease_token) is None
+        requeued = await scheduler._handle_runner_loss(
+            claim.id,
+            claim.lease_token,
+            error_code="runner_lost",
+            error_message="stale owner must not requeue this job",
+        )
+
+    assert not requeued
+    await db_session.refresh(job)
+    assert job.status == "running"
+    assert job.lease_token == claim.lease_token
+    assert job.lease_expires_at == original_expiry
 
 
 @pytest.mark.asyncio

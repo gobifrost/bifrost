@@ -1,22 +1,19 @@
-"""Scheduler container entry point: a static executor.
+"""Scheduler container entry point for the physical remote launcher.
 
-The ``scheduler`` and ``worker`` containers run the same executor
-(``src.worker.pool_main``): workflows, agent runs, summaries, services and
-local platform jobs. Platform control (trigger leadership and dispatch
-reconciliation) runs in the API (``src.scheduler.control``); the Kubernetes
-loops run wherever a process may manage Jobs, which on an install that bound
-the controller Role to this container includes its executor.
-
-This entry point keeps the scheduler's health files: the liveness heartbeat
-starts before the schema gate, and readiness is marked once the executor can
-claim work, so existing healthchecks and probes keep passing.
+The API owns platform control and claims. This process retains the scheduler
+heartbeat and readiness files expected by existing Kubernetes probes while it
+connects to the API as a physical launcher.
 """
 
 import asyncio
 import logging
 import sys
+from pathlib import Path
 
 from src.scheduler.health import clear_ready, heartbeat_loop, mark_ready, write_heartbeat
+
+
+SERVICE_ACCOUNT_TOKEN_PATH = Path("/var/run/secrets/kubernetes.io/serviceaccount/token")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,13 +22,18 @@ logging.basicConfig(
 
 
 async def main() -> int:
-    from src.worker.pool_main import run_executor
+    from src.worker.remote.launcher import run_launcher
 
     clear_ready()
     write_heartbeat()
     heartbeat = asyncio.create_task(heartbeat_loop(), name="scheduler-liveness")
     try:
-        return await run_executor(on_ready=mark_ready)
+        if not SERVICE_ACCOUNT_TOKEN_PATH.is_file():
+            return await run_launcher(on_ready=mark_ready, on_stop=clear_ready)
+        from src.scheduler.kubernetes_host import legacy_control_process
+
+        async with legacy_control_process():
+            return await run_launcher(on_ready=mark_ready, on_stop=clear_ready)
     finally:
         heartbeat.cancel()
         await asyncio.gather(heartbeat, return_exceptions=True)

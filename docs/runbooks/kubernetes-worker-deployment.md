@@ -1,25 +1,38 @@
 # Kubernetes Worker Deployment
 
-Every Bifrost execution container is an **executor**
-(`api/src/worker/pool_main.py`): the on-demand worker Jobs that the API
-starts and, where an install still runs them, the retired `bifrost-worker`
-and `bifrost-scheduler` Deployments (static executors, through their
-unchanged entry points). An executor claims workflow runs, agent runs,
-summaries, supervised services and local platform jobs from PostgreSQL.
-Platform control (trigger leadership and dispatch reconciliation) runs in the
-API replicas.
+A Kubernetes worker Job is a **physical launcher**, not the durable execution
+owner. Its retained `python -m src.worker.main` entrypoint starts the
+lightweight standard-library supervisor and preserves the worker readiness
+probe. The retained `python -m src.scheduler.main` entrypoint does the same
+while preserving the scheduler heartbeat and readiness probes. Both connect to
+the API's remote-control WebSocket through `BIFROST_API_URL`; shipped manifests
+provide the internal default `http://api:8000`, and that internal connectivity
+is required for a launcher to become ready.
+
+The API owns the canonical `PoolWorker` control for each authenticated launcher.
+It claims workflows, services, and local PlatformJobs and sends the physical
+launcher only the process operations it must perform. Durable workflow claims,
+service leases, and PlatformJob leases stay in PostgreSQL. Child SDK code uses
+scoped API HTTP tokens; it never receives the launcher-control socket. The
+launcher authenticates its enrollment hello with an HMAC made from the existing
+platform `BIFROST_SECRET_KEY`. Kubernetes Job and Pod UIDs are supplied
+automatically when the Job starts, so there is no separate enrollment setup for
+operators.
 
 ## Current Implementation
 
-- **On-demand worker Jobs.** The worker controller runs in every process whose
-  service account may manage Jobs (the base manifests bind
-  `bifrost-worker-controller` to the API in `k8s/api/rbac.yaml`). It keeps
-  **Warm Workers** (default 1) worker Jobs warm and starts more, up to **Max
-  Workers** (default 6), when accepted work exceeds the free capacity of every
-  executor. Idle Job workers drain back to the warm minimum.
+- **On-demand worker Jobs.** The API's worker controller keeps **Warm Workers**
+  (default 1) launchers warm and starts more, up to **Max Workers** (default
+  6), when accepted workflow, service, or PlatformJob work exceeds free
+  physical-launcher capacity. Idle Job workers drain back to the warm minimum.
+  The controller does not add agent capacity.
+- **API agents.** One `ApiAgentExecutor` runs per API process. It accepts only
+  agent runs and summaries from that API process's memory budget. Scale API
+  replicas and API memory independently for agent demand; worker Jobs do not
+  provide overflow capacity for agents.
 - **Policy lives in Settings.** Warm Workers, Max Workers, Worker Memory,
   Largest Worker and Idle Time are set in Settings → Kubernetes → Scaling &
-  Isolation. The controllers read them every pass and workers read Warm
+  Isolation. The controller reads them every pass and launchers read Warm
   Workers and Idle Time when they decide to drain, so a change applies without
   a restart; a Worker Memory change sizes new Jobs only. An upgraded install
   imports them once from the `BIFROST_POOL_*` variables earlier releases read,
@@ -27,13 +40,19 @@ API replicas.
   [Upgrading From Environment
   Variables](kubernetes-build-jobs.md#upgrading-from-environment-variables)).
 - **Job identity.** Without the optional `BIFROST_KUBERNETES_JOB_*` variables,
-  a worker Job copies the controller pod's namespace, image and `envFrom`, and
-  runs with the `default` service account and no token.
-- **Static executors (retired).** `python -m src.worker.main` and
-  `python -m src.scheduler.main` both still start the executor and keep their
-  own health files, so an install that keeps one keeps passing its probes.
-- Supervised services need an executor: the warm Job worker (or a static
-  executor an install kept).
+  a worker Job copies the controller pod's namespace, image, and `envFrom`,
+  runs with the `default` service account and no token, and enrolls its Job/Pod
+  UID automatically with the API.
+- **Legacy controller Role.** The API normally owns Kubernetes control through
+  the base manifests' Role. Existing installations that bound that controller
+  Role only to a scheduler or worker remain supported: if the launcher has an
+  in-cluster service-account token, its token-gated compatibility helper starts
+  the same canonical loops after its authorization check. Tokenless launchers
+  do not start the helper.
+- **Rolling API handoff.** The physical launcher keeps children alive when its
+  API WebSocket closes during an API rollout. A successor API replica
+  authenticates and adopts its inventory; durable leases fence stale owners.
+  A connected launcher follows the normal drain path instead.
 
 ### Upgrading and rolling back
 
@@ -165,27 +184,29 @@ variables.
 
 On-demand worker Jobs drain themselves after **Idle Time** (Settings →
 Kubernetes) without work or `BIFROST_POOL_MAX_LIFETIME_SECONDS` of life, and
-the controller keeps at least **Warm Workers** warm. Lowering Warm Workers
-lets running idle workers drain too. A static executor an install kept keeps
-the replica count it was given.
+the controller keeps at least **Warm Workers** warm. Lowering Warm Workers lets
+running idle launchers drain too. A static launcher an install kept retains its
+configured replica count.
 
 After an upgrade, the controller replaces worker Jobs running a build that no
 live controller runs, once every controller of that build has stopped: it
-launches current Jobs for the warm minimum, and when they can claim, the
+launches current Jobs for the warm minimum, and when they can accept work, the
 outdated Jobs drain (`end_reason = rotated`). They are never deleted. All
 outdated Jobs drain in the same pass, so under heavy load capacity dips until
-their runs finish, because draining Jobs still count toward Max Workers.
+their children finish, because draining Jobs still count toward Max Workers.
 
-A drain the platform asks for (idle, rotated, maximum lifetime) stops claiming
-and lets runs and platform jobs finish, each within its own timeout; it has
-no deadline of its own. A run without a timeout keeps its drained Job (and its
-place under Max Workers) until it ends, and the API logs a
-warning once such a drain passes the maximum lifetime.
+A drain the platform asks for (idle, rotated, maximum lifetime) stops new
+workflow, service, and PlatformJob dispatch to that launcher and lets its
+physical children finish under their own timeout and lease rules. A run without
+a timeout keeps its drained Job (and its place under Max Workers) until it ends,
+and the API logs a warning once such a drain passes the maximum lifetime.
 
-On SIGTERM an executor stops claiming, hands its supervised services over, and
-lets active runs and platform jobs finish for up to 300 seconds before it
-exits, also when SIGTERM arrives during a drain. Keep the pod's grace period
-above that:
+API rollout drain is distinct. An API process drains its `ApiAgentExecutor` for
+up to 300 seconds and its supported deployment gives it a 310-second shutdown
+budget. A launcher whose WebSocket is closed during that lifecycle remains
+alive for a successor API replica to adopt; it is not treated as a request to
+kill its children. Keep any launcher pod grace period above the time its own
+running children require:
 
 ```yaml
 terminationGracePeriodSeconds: 360
@@ -193,9 +214,8 @@ terminationGracePeriodSeconds: 360
 
 ## Security And RBAC
 
-The current worker does not need Kubernetes API access.
-
-Use the current pod hardening pattern:
+A physical launcher does not need Kubernetes API access for ordinary workflow,
+service, or PlatformJob execution. Use the current pod hardening pattern:
 
 ```yaml
 spec:
@@ -226,63 +246,73 @@ spec:
       emptyDir: {}
 ```
 
-Only the API manages Kubernetes resources: `k8s/api/rbac.yaml` binds the
+The API normally manages Kubernetes resources: `k8s/api/rbac.yaml` binds the
 namespace-scoped `bifrost-worker-controller` Role to the API ServiceAccount so
-it can create, start and remove worker Jobs and isolated build Jobs and read
+it can create, start, and remove worker Jobs and isolated build Jobs and read
 their pods. Those Jobs run with the `default` ServiceAccount (or
-`BIFROST_KUBERNETES_JOB_SERVICE_ACCOUNT`, which the `deploy/kubernetes/builds`
-overlay sets to the tokenless, RBAC-free `bifrost-build-runner`) and never
-mount a token.
+`BIFROST_KUBERNETES_JOB_SERVICE_ACCOUNT`, which the
+`deploy/kubernetes/builds` overlay sets to the tokenless, RBAC-free
+`bifrost-build-runner`) and normally never mount a token.
+
+An existing scheduler-Role-only deployment remains supported without a manual
+RBAC migration. Its scheduler launcher sees the mounted token and starts the
+compatibility Kubernetes-control helper only when the Role passes the canonical
+authorization check. This preserves its controller behavior while keeping
+ordinary launcher templates tokenless and least-privileged.
 
 ## Resource Sizing
 
 Recommended defaults:
 
-- **Kubernetes:** worker Jobs with a 512Mi request and a 2Gi limit (Worker
-  Memory 2048), one warm (Warm Workers 1) and up to six (Max Workers 6); two
-  API replicas (256Mi request, 1Gi limit) and two client replicas.
-- **Docker Compose:** the `worker` service with two replicas and a 2 GB
-  limit each, one API and one client; give the host 8 GB.
+- **Kubernetes:** physical worker Jobs with a 512Mi request and a 2Gi limit
+  (Worker Memory 2048), one warm (Warm Workers 1) and up to six (Max Workers
+  6); two API replicas (256Mi request, 1Gi limit) and two client replicas.
+  Size the API limit for its own HTTP/control workload plus its separate agent
+  capacity.
+- **Docker Compose:** the `worker` service with two replicas and a 2 GB limit
+  each, one API and one client; give the host 8 GB. The worker and scheduler
+  commands remain their established entrypoints but run launchers.
 
-Production on 2026-10-24, with this layout, measured about 430 MiB per API
-pod, 5–7 MiB per client pod and about 620 MiB for the warm worker Job.
-Customer workflow code, installed packages, provider SDKs, large payloads
-and concurrent runs add to a worker's memory; raise Worker Memory in Settings
-(or the Compose limits) for workflows that need more. A workflow that no
-standard worker can hold gets a worker Job sized for it, up to Largest
-Worker. Isolated build Jobs follow the same sizing rule
+The 2026-10-24 layout measurement of roughly 430 MiB per API pod, 5–7 MiB per
+client pod, and 620 MiB for a warm worker Job is a historical baseline, not a
+capacity guarantee for this runtime. Customer workflow code, installed
+packages, provider SDKs, large payloads, concurrent runs, and agent load add
+to the relevant physical-worker or API budget. Raise Worker Memory (or Compose
+limits) for workflows that need more, and size API memory separately for agent
+work. A workflow that no standard worker can hold gets a worker Job sized for
+it, up to Largest Worker. Isolated build Jobs follow the same sizing rule
 (`docs/runbooks/kubernetes-build-jobs.md`).
 
-### How executors use their memory
+### How physical launchers use their memory
 
-Every executor admits work by memory (`docs/plans/2026-10-23-769-stage6-resource-requests.md`):
-its budget is 85% of its container's limit (`memory_pressure_threshold`)
-minus what the executor itself uses, and work claims from it by its memory
-request. At 95% of the container's real memory, the executor stops the run
-or service that grew most; the stopped run teaches its workflow a larger
-request.
+The API-side `PoolWorker` admits workflow, service, and PlatformJob work using
+the physical launcher's cgroup telemetry
+(`docs/plans/2026-10-23-769-stage6-resource-requests.md`): its budget is 85%
+of the launcher's container limit (`memory_pressure_threshold`) minus what that
+launcher reports as in use, and work claims from it by its memory request. At
+95% of the physical container's real memory, the control plane stops the run or
+service that grew most; the stopped run teaches its workflow a larger request.
+The API agent executor uses the API process's measured memory and does not draw
+from this worker budget.
 
 **Whole-container OOM on Kubernetes.** On cgroup v2, Kubernetes sets
-`memory.oom.group` on containers, so when the kernel's OOM killer acts it
-kills every process in the container, the executor included, not only the
-run that grew (Docker kills only that run). The executor's runs then fail
-as lost. When it was a Job worker, the controller sees the pod OOMKilled and
-those runs' workflows learn the executor's budget, so their next run fits an
-executor alone; a static executor (a Deployment pod) restarts without that
-lesson. Clusters on Kubernetes 1.32 or later can set the
-kubelet's `singleProcessOOMKill: true` to kill one process instead; Bifrost
-does not rely on it. Size the worker limit with headroom for the largest
-workflow you run.
+`memory.oom.group` on containers, so when the kernel's OOM killer acts it kills
+every process in the launcher container, not only the run that grew (Docker
+kills only that run). Its API-owned claims then expire or reconcile as lost.
+When it was a Job worker, the controller sees the pod OOMKilled and those runs'
+workflows learn the launcher's budget, so their next run fits a launcher alone.
+Clusters on Kubernetes 1.32 or later can set the kubelet's
+`singleProcessOOMKill: true` to kill one process instead; Bifrost does not rely
+on it. Size the worker limit with headroom for the largest workflow you run.
 
 **Docker.** The Compose template runs two `worker` replicas limited to 2 GB
-each, which gives them separate budgets. A container without a limit takes
-85% of the host's memory as its budget, so two of them on one host each
+each, which gives them separate physical budgets. A container without a limit
+takes 85% of the host's memory as its budget, so two of them on one host each
 believe they have it; only the real-memory check, measured against the host,
 keeps them within it. Compose files from earlier releases also have a
-`scheduler` service (limited to 1 GB) and an unlimited `worker`. The
-`scheduler` runs the same executor, so an unchanged file keeps working; set a
-2 GB limit on both, or switch to the new file and run
-`docker compose up -d --remove-orphans` to retire the `scheduler` container.
+`scheduler` service (limited to 1 GB) and an unlimited `worker`. Their commands
+remain compatible launcher entrypoints; set real limits on both, or switch to
+the current file and run `docker compose up -d --remove-orphans`.
 
 ## Dependency Hydration
 
@@ -324,7 +354,8 @@ For a manual drain:
 1. Lower Warm Workers (and, to stop growth, Max Workers) in Settings →
    Kubernetes; workers above them drain once idle.
 2. Watch worker logs for graceful drain completion.
-3. Verify durable workflow or agent terminal state rather than only pod exit.
+3. Verify durable workflow, service, or PlatformJob state rather than only pod
+   exit.
 
 Useful checks:
 
@@ -334,22 +365,21 @@ kubectl get pods -n bifrost -l app.kubernetes.io/name=bifrost-pool-worker
 kubectl logs -n bifrost -l app.kubernetes.io/name=bifrost-pool-worker --tail=200
 ```
 
-Graceful SIGTERM and deadline behavior were proven in local Kind. Abrupt node
-loss, SIGKILL after a missed deadline, database outage during result
-persistence, and OOM termination still need durable attempt reconciliation.
+The current launcher handoff and drain behavior should be validated in the
+target cluster. Abrupt node loss, SIGKILL after a missed deadline, database
+outage during result persistence, and OOM termination need durable attempt
+reconciliation.
 
 ## Remaining Gaps
 
-The worker Jobs are the production executors: the warm worker (Warm Workers
-1 or more) is the always-on capacity for interactive runs and supervised
-services, and no static executor is needed alongside it. Large work is
+Physical worker Jobs are the production capacity for workflows, services, and
+PlatformJobs. API replicas separately carry agent capacity. Large work is
 covered: a workflow no standard worker can hold gets a sized worker Job, and
-build-class platform jobs can run in isolated pods sized the same way, both
+build-class PlatformJobs can run in isolated pods sized the same way, both
 learning from OOM kills. What remains operator-owned or unbuilt:
 
 - dependency hydration is not yet immutable or artifact-fingerprinted for
   zero-replica pools;
-- local fixture services are not production storage, cache or ingress
-  designs;
-- node autoscaling, node selectors, tolerations and priority classes remain
+- local fixture services are not production storage, cache, or ingress designs;
+- node autoscaling, node selectors, tolerations, and priority classes remain
   operator-owned and unproven for this runtime.

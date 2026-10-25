@@ -78,6 +78,11 @@ class Admission:
     def free_bytes(self) -> int:
         return max(0, self.budget_bytes - self.held_bytes())
 
+    def request_bytes(self, key: str) -> int | None:
+        """Return the original request held for ``key``, if it is active."""
+        hold = self._holds.get(key)
+        return hold.request_bytes if hold is not None else None
+
     def pressured(self) -> bool:
         """Real memory over the threshold; logs each change."""
         pressured = self._under_pressure()

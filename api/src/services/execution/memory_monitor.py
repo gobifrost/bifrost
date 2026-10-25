@@ -86,3 +86,36 @@ def get_cgroup_memory() -> tuple[int, int]:
             logger.warning(f"Failed to read cgroup memory.max: {e}")
 
     return (current, limit)
+
+
+def host_memory_bytes() -> int:
+    """Return host physical memory without importing application settings."""
+    with open("/proc/meminfo") as meminfo:
+        for line in meminfo:
+            if line.startswith("MemTotal:"):
+                return int(line.split()[1]) * 1024
+    raise RuntimeError("/proc/meminfo has no MemTotal")
+
+
+def effective_memory_sample() -> tuple[int, int]:
+    """Use cgroup usage with the host limit when a cgroup is unbounded.
+
+    This is the same policy used by ``memory_requests.measure_budget``. It
+    keeps Compose and other unbounded installations runnable while preserving
+    cgroup working-set telemetry whenever it is available.
+    """
+    current, limit = get_cgroup_memory()
+    return max(current, 0), limit if limit > 0 else host_memory_bytes()
+
+
+def memory_pressure_ratio() -> float:
+    """Use host-used pressure when the cgroup has no finite limit."""
+    current, limit = get_cgroup_memory()
+    if current >= 0 and limit > 0:
+        return current / limit
+    values: dict[str, int] = {}
+    with open("/proc/meminfo") as meminfo:
+        for line in meminfo:
+            key, _, rest = line.partition(":")
+            values[key] = int(rest.split()[0]) * 1024
+    return (values["MemTotal"] - values["MemAvailable"]) / values["MemTotal"]

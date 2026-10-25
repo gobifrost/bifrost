@@ -54,6 +54,15 @@ def test_a_workflow_run_is_held_while_routed_and_until_its_child_ends() -> None:
     assert gate.starting_workflows() == 0
 
 
+def test_request_bytes_reports_the_request_for_an_active_hold() -> None:
+    gate = _gate()
+    gate.hold("workflow", 100 * MIB, workflow=True)
+
+    assert gate.request_bytes("workflow") == 100 * MIB
+    gate.release("workflow")
+    assert gate.request_bytes("workflow") is None
+
+
 async def test_over_the_threshold_a_claim_takes_nothing() -> None:
     pressured = [True]
     gate = _gate(pressured=pressured)

@@ -145,7 +145,7 @@ async def test_shutdown_waits_for_lease_release(gated: SimpleNamespace) -> None:
 
 
 @pytest.mark.asyncio
-async def test_lifespan_always_hosts_control(
+async def test_lifespan_hosts_control_and_remote_launchers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from fastapi import FastAPI
@@ -174,12 +174,20 @@ async def test_lifespan_always_hosts_control(
     monkeypatch.setattr(api_main.pubsub_manager, "close", AsyncMock())
     monkeypatch.setattr(api_main, "close_health_check_clients", AsyncMock())
     monkeypatch.setattr(api_host, "ApiControlHost", make_host)
+    remote_start = AsyncMock()
+    remote_stop = AsyncMock()
+    monkeypatch.setattr(api_main, "start_remote_control_host", remote_start)
+    monkeypatch.setattr(api_main, "stop_remote_control_host", remote_stop)
 
-    async with api_main.app_lifespan(FastAPI()):
+    application = FastAPI()
+    async with api_main.app_lifespan(application):
         [host] = hosts
         host.start.assert_awaited_once()
         host.stop.assert_not_awaited()
+        remote_start.assert_awaited_once_with(application)
+        remote_stop.assert_not_awaited()
     host.stop.assert_awaited_once()
+    remote_stop.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_lifespan_imports_kubernetes_settings_before_serving(
@@ -215,6 +223,8 @@ async def test_lifespan_imports_kubernetes_settings_before_serving(
     monkeypatch.setattr(api_main.pubsub_manager, "close", AsyncMock())
     monkeypatch.setattr(api_main, "close_health_check_clients", AsyncMock())
     monkeypatch.setattr(api_host, "ApiControlHost", lambda: MagicMock(start=AsyncMock(), stop=AsyncMock()))
+    monkeypatch.setattr(api_main, "start_remote_control_host", AsyncMock())
+    monkeypatch.setattr(api_main, "stop_remote_control_host", AsyncMock())
 
     async with api_main.app_lifespan(FastAPI()):
         imported.assert_awaited_once_with(session, os.environ)

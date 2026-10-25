@@ -6,7 +6,7 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from src.dev.thin_host import PackageProxy
+from src.worker.remote.host import PackageProxy
 
 
 async def test_package_proxy_recycles_the_remote_template_before_publishing_inventory() -> None:

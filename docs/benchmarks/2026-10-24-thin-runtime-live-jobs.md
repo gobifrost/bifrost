@@ -1,8 +1,8 @@
 # Thin-worker follow-up: every job type and workflow latency
 
-**All 23 registered PlatformJob types completed real work successfully on both the existing and thin worker designs.** Each matched run passed 15 tests, with no skips or failures; every recorded job succeeded on its first attempt. This is an explicit local spike, not a production deployment.
+**All 23 registered PlatformJob types completed real work successfully on both the existing and thin worker designs.** Each matched run passed 15 tests, with no skips or failures; every recorded job succeeded on its first attempt. This is a historical local spike measurement, not a production deployment.
 
-The architecture remains the [API-hosted-control spike](2026-10-24-thin-api-worker-spike.md) at `a263ba418`. This follow-up changes tests and fixtures, with no further runtime changes. The source/image hashes, 46 successful job records, 44 workflow samples, JUnit totals, and complete post-workload memory traces are in [the adjacent JSON](2026-10-24-thin-runtime-live-jobs.json).
+The matched runs used the API-hosted-control spike at historical commit `ecc0890f2aeb7ed3f1945ec169a24068cb5689ea`; this follow-up changed tests and fixtures without a further runtime change. The source/image hashes, 46 successful job records, 44 workflow samples, JUnit totals, and complete post-workload memory traces are in [the adjacent JSON](2026-10-24-thin-runtime-live-jobs.json). They do not describe the current promoted default runtime.
 
 ## Workflow speed
 
@@ -36,7 +36,7 @@ RAM is host-observed cgroup working set (`memory.current - inactive_file`) acros
 
 In the thin variant, the worker no longer hosts the private SDK API/Unix socket. Workflow and service children call the existing API's authorized SDK endpoints over HTTP using their scoped runtime credentials. The API-to-supervisor WebSocket carries control commands, acknowledgements, results, and resource samples. The actual workflow code still runs in worker children.
 
-Agents and summaries stay warm in the API. Generic platform jobs still execute the same registered handlers in fresh physical-worker subprocesses; their heavy dependencies disappear when those processes exit. The worker image retains all capabilities, rather than becoming a minimal dependency image. Default production entrypoints still use the existing design, including its SDK socket.
+In the historical thin variant, agents and summaries stayed warm in the API. Generic platform jobs executed the same registered handlers in fresh physical-worker subprocesses; their heavy dependencies disappeared when those processes exited. The worker image retained all capabilities, rather than becoming a minimal dependency image. The historical default production entrypoints still used the existing design, including its SDK socket.
 
 ## Every registered handler ran
 
@@ -76,7 +76,9 @@ No paid model call is made. Chat/embedding/video upstreams are deterministic loc
 
 ## Reproduce the matched runs
 
-These commands name this worktree's project. In another worktree, use the project printed by `./test.sh stack status`. Boot once with `./test.sh stack up`. Choose `docker-compose.thin-spike.yml` for thin or `docker-compose.thin-spike-baseline.yml` for existing. Preserve `LOG_DIR`: it makes the Git fixture mount identical in the API, worker and runner.
+### Historical exact reproduction
+
+These overlay commands apply only after checking out historical commit `ecc0890f2aeb7ed3f1945ec169a24068cb5689ea` in a disposable worktree. That commit contains the experiment overlays; the current source intentionally deletes them.
 
 ```bash
 COMPOSE_PROJECT_NAME=bifrost-test-b60bcc82 \
@@ -100,25 +102,46 @@ python3 api/scripts/worker_memory_probe.py \
 BIFROST_SKIP_BUILD=1 BIFROST_TEST_IMAGE_TAG=bifrost-test-b60bcc82 ./test.sh quality api
 ```
 
-Pyright and Ruff passed. Full backend, frontend, Playwright, production-load and merge-queue suites were not run. These spike tests require the explicit live-fixture overlay; they are not a claim that the branch is merge-ready.
+At the time of the historical run, Pyright and Ruff passed. Full backend, frontend, Playwright, production-load and merge-queue suites were not run. The historical spike required an explicit live-fixture overlay; that result was not a merge-readiness claim.
 
 Fixture errors found and permanently corrected: first-profile creation assigns all AI defaults (cleanup now restores all assignments); usage attribution needs a real SDK execution context (video now runs from a workflow); run retention has a 30-day minimum (fixture event is 31 days old); App metadata reads use slugs; shared Git mounts require the worktree `LOG_DIR`; and Git's per-command credential config replaces `GIT_CONFIG_COUNT` (the test rewrite now lives in `GIT_CONFIG_GLOBAL`). No product fallback, retries, timeout increases, skips, or xfails were added. Failed intermediate fixture runs are excluded from the successful evidence above.
 
+### Current canonical validation
+
+The current default runtime uses the canonical fixture lifecycle through `./test.sh`, without an overlay. Start the normal stack once, then invoke the exact test paths directly; do not prefix the command with `e2e`, which selects the whole E2E suite.
+
+```bash
+./test.sh stack up
+
+./test.sh \
+  tests/performance/test_workflow_dispatch_latency.py \
+  tests/e2e/platform/test_thin_platform_jobs_providers.py \
+  tests/e2e/platform/test_thin_platform_jobs_misc.py \
+  tests/e2e/platform/test_thin_platform_jobs_build.py \
+  tests/e2e/platform/test_scheduler_fixture_workloads.py -q -s --durations=0
+
+./test.sh quality api
+```
+
+Verification of this promoted path is pending; do not substitute the historical result for it.
+
 ## Cloudflare direction
 
-The portability gain is an architectural inference, not a tested Cloudflare deployment: execution supervision is now separated from the main application, while durable coordination remains central. That creates a smaller unit of remote compute to place elsewhere. The full image and job capabilities remain available; this pass reduces resident memory rather than removing dependencies from the image.
+The historical portability gain is an architectural inference, not a tested Cloudflare deployment: execution supervision was separated from the main application while durable coordination remained central. That created a smaller unit of remote compute to place elsewhere. The full image and job capabilities remained available; the pass reduced resident memory rather than removing dependencies from the image.
 
 [Cloudflare Containers](https://developers.cloudflare.com/containers/get-started/) runs container images inside Linux VMs and supports on-demand instances coordinated through Workers/Durable Objects. It is the plausible target for the current fork/subprocess runner. [Native Python Workers](https://developers.cloudflare.com/workers/languages/python/stdlib/) use Pyodide; multiprocessing and threading are nonfunctional there, so native Workers would require a different execution implementation. These product capabilities were checked on 2026-10-25.
 
 A Cloudflare port still needs validated container lifecycle/admission, control reconnection and ownership fencing, database/API/storage reachability and regional latency, package availability, and measured throughput. Trusted platform-job children currently retain direct PostgreSQL access. The local memory reduction alone does not establish Cloudflare deployment compatibility, cold-start behavior, or cost.
 
-## Remaining production work
+## Production-promotion implementation status — 2026-10-25
 
-Live type coverage is now complete for the local backend. Production incarnation-scoped Kubernetes enrollment, API reconnect/adoption and owner fencing, and correct pre-claim API/worker resource admission are still blockers. The existing prototype can hold an agent claim while waiting indefinitely for API capacity, and ends children when the control connection dies. Also validate isolated Kubernetes launches, real package changes, large payloads, cancellation/loss/drain under load, and API/SDK throughput. Consolidate the dev adapter/test-fixture lifecycle and rebase onto current main before a PR or rollout.
+The current worktree promotes the runtime through the default API, worker, scheduler, Compose, and Kubernetes wiring. It replaces the experiment-only bootstrap and overlays with authenticated launcher control, incarnation and owner fencing, API-resident agent/summary execution, remote physical launchers, and canonical fixture lifecycle.
+
+This is implementation status only. Focused tests, quality checks, canonical all-job E2E execution, and merge-gate verification remain pending. The measured historical runs do not prove current shutdown, reconnect/adoption, Kubernetes-role, admission, package-change, large-payload, concurrent cancellation/loss/drain, or throughput behavior.
 
 ## Hosted deployment assessment — 2026-10-25
 
-This is a source-backed implementation roadmap, not a deployed or tested Cloudflare/Neon configuration. The measurements above remain local Docker results. No runtime code changes were made for this assessment.
+This remains a future, source-backed implementation roadmap, not a deployed or tested Cloudflare/Neon configuration. The measurements above remain local Docker results from the historical prototype. The current default-runtime promotion does not make a hosted deployment claim.
 
 ### First hosted deployment
 
@@ -137,12 +160,12 @@ Neon supports PostgreSQL and pgvector, so this direction preserves the relationa
 
 R2 exposes an S3-compatible API and `RepoStorage` already accepts a configurable endpoint. That is a promising existing boundary, not evidence that every upload, presigned URL, multipart operation or browser CORS path has been validated on R2. Source: [R2 compatibility](https://developers.cloudflare.com/r2/api/s3/api/).
 
-### Shared runtime work before a provider port
+### Runtime validation before a provider port
 
-1. **Separate memory admission by execution location before claiming.** `ApiExecutor._run_claim` currently waits for API memory after PostgreSQL assignment. Add a narrow claim-admission seam to `PoolWorker`, keeping its canonical claim loop. Under a consistent lock order, reserve the resources required by each handler before committing its claim. Remote workflow work must remain eligible when only the API's agent/summary budget is exhausted. Cover full API capacity, concurrent reservations, oversized requests and release after failed startup. Resource advertisements and controller sizing must describe the same domains; a new remote launcher does not add API agent capacity.
-2. **Make launcher identity independent of its connection.** Reuse canonical worker incarnations, liveness and lost-worker recovery. Replace the single-use local bootstrap with authenticated enrollment bound to an immutable physical launcher identity. Kubernetes enrollment must retain its Job/Pod identity checks; a Cloudflare adapter needs an equivalent authenticated provider-instance binding. Add a persisted control-owner lease and session generation so another API replica can adopt a launcher without trusting an old socket or a PID on another machine.
-3. **Reconcile active work across reconnects.** Inventory active route IDs with execution/attempt/job lease identity and retain unacknowledged terminal results until ownership-aware reconciliation accepts them. Superseded sessions must not issue commands or write completion. A transient transport loss should not immediately destroy all children; an expired ownership lease must still trigger canonical loss handling. Preserve existing workflow replay semantics: do not automatically rerun started workflows that may have external side effects. Test disconnect during launch, execution and completion, API restart, competing API owners, stale results, container loss and cancellation while disconnected.
-4. **Consolidate the implementation and validate Kubernetes.** Promote the dev adapter into one supported backend boundary, remove obsolete experiment-only paths, and exercise real package changes, large payloads, cancellation/drain, isolated launches and concurrency. Rebase against current main and repeat focused verification after the implementation changes. The all-types local result does not prove these failure paths.
+1. **Validate memory admission by execution location before a provider port.** The promoted runtime separates API-agent and remote-executor ownership. Prove that its pre-claim reservations hold under full API capacity, concurrent reservations, oversized requests, and failed startup, and that resource advertisements/controller sizing describe the same domains.
+2. **Validate launcher identity and adoption.** The promoted runtime binds authenticated launchers to canonical incarnations and owner fencing. Exercise Kubernetes Job/Pod bindings, API rolling restart, competing owners, stale results, and a provider-instance binding with no shared pod PID.
+3. **Validate active-work reconciliation.** Exercise disconnect during launch, execution, and completion; retain and reconcile unacknowledged terminal results; preserve canonical loss handling after a genuinely expired lease; and avoid automatically replaying started workflows with external side effects.
+4. **Validate the supported backend boundary in Kubernetes.** Exercise real package changes, large payloads, cancellation/drain, isolated launches, and concurrency. The historical all-types local result does not prove these failure paths.
 
 The existing worker lifecycle, workflow completion ownership checks, service attempt tokens, PlatformJob lease tokens and unstarted-claim recovery are capabilities to extend. Cloudflare lifecycle coordination must not become another business-job queue or replace PostgreSQL dispatch authority.
 

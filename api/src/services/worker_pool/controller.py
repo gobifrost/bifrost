@@ -308,7 +308,12 @@ class WorkerPoolController:
                         WorkDispatch.created_at.label("created_at"),
                         literal(True).label("is_dispatch"),
                     )
-                    .where(WorkDispatch.assigned_worker_id.is_(None))
+                    .where(
+                        WorkDispatch.assigned_worker_id.is_(None),
+                        # Agents and summaries use the API's memory domain.
+                        # Launching a physical worker cannot add that capacity.
+                        WorkDispatch.handler == "workflow.execute",
+                    )
                     .union_all(
                         select(
                             PlatformJob.id,
@@ -336,6 +341,8 @@ class WorkerPoolController:
             free: list[int] = []
             covered: set[UUID] = set()
             for worker in workers:
+                if "workflow.execute" not in worker.supported_handlers:
+                    continue
                 if worker.state == "draining" or worker.memory_pressured:
                     continue
                 # A worker launched for one dispatch holds it until it claims it.
@@ -490,6 +497,7 @@ class WorkerPoolController:
                 slots=0,
                 memory_limit_bytes=memory_limit_bytes,
                 reserved_for_dispatch_id=reserved_for,
+                supported_handlers=["workflow.execute"],
                 kubernetes_namespace=self.client.namespace,
                 kubernetes_job_name=worker_job_name(worker_id),
             )

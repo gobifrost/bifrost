@@ -6,11 +6,13 @@ Covers ensure/idempotence, desired-state transitions, worker-pull claims
 lease expiry, and observed-state derivation.
 """
 
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
 
+from src.models.orm.execution_workers import ExecutionWorker
 from src.models.orm.services import ServiceAttempt
 from src.services import service_lifecycle
 from src.services.service_lifecycle import (
@@ -133,6 +135,70 @@ async def test_ensure_is_idempotent_and_preserves_policy(db_session):
     assert again.id == definition.id
     assert again.restart_policy == "never"
     assert again.desired_state == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_expired_remote_owner_cannot_claim_an_eligible_service(db_session):
+    from src.worker.remote.fencing import LeaseRef, remote_owner_context
+    from src.worker.remote.ownership import RemoteOwnerLease
+
+    await _ensure(db_session)
+    ref = LeaseRef(RemoteOwnerLease(uuid4(), uuid4(), uuid4(), 1))
+    with remote_owner_context(ref):
+        assert await service_lifecycle.claim_eligible_service(
+            db_session, fits_bytes=AMPLE, worker_id=str(ref.lease.worker_id),
+        ) is None
+    assert await service_lifecycle.claim_eligible_service(
+        db_session, fits_bytes=AMPLE, worker_id="current",
+    ) is not None
+
+
+@pytest.mark.asyncio
+async def test_stale_remote_owner_cannot_complete_a_live_service_attempt(db_session):
+    from src.worker.remote.fencing import LeaseRef, remote_owner_context
+    from src.worker.remote.ownership import RemoteOwnerLease
+
+    definition, _ = await _ensure(db_session)
+    attempt = await service_lifecycle.claim_eligible_service(
+        db_session, fits_bytes=AMPLE, worker_id="remote"
+    )
+    assert attempt is not None
+    worker_id, current_owner, stale_owner, launcher = uuid4(), uuid4(), uuid4(), uuid4()
+    db_session.add(
+        ExecutionWorker(
+            id=worker_id,
+            form="static",
+            state="ready",
+            resource_class="standard",
+            slots=0,
+            supported_handlers=["workflow.execute"],
+            remote_owner_id=current_owner,
+            remote_launcher_id=launcher,
+            remote_session_generation=2,
+            remote_owner_lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
+        )
+    )
+    await db_session.flush()
+    stale = LeaseRef(
+        RemoteOwnerLease(
+            worker_id=worker_id,
+            owner_id=stale_owner,
+            launcher_id=launcher,
+            session_generation=1,
+        )
+    )
+
+    with remote_owner_context(stale), pytest.raises(StaleLeaseError, match="remote API owner"):
+        await service_lifecycle.complete_attempt(
+            db_session,
+            attempt_id=attempt.id,
+            lease_token=attempt.lease_token,
+            reason="failed",
+            error="stale owner",
+        )
+
+    await db_session.refresh(attempt)
+    assert attempt.state in ("starting", "running")
 
 
 @pytest.mark.asyncio

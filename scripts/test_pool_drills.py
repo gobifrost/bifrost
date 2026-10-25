@@ -28,6 +28,13 @@ def pool_drills():
 
 
 class PoolDrillTests(unittest.TestCase):
+    def test_workflow_capacity_excludes_api_agent_executors(self) -> None:
+        drills = pool_drills()
+        pool = sys.modules[drills.live_workers.__module__]
+        with patch.object(pool, "sql", return_value=[]) as query:
+            self.assertEqual(pool.live_workers("static"), [])
+        self.assertIn("supported_handlers ? 'workflow.execute'", query.call_args.args[0])
+
     def test_rollout_wait_beyond_sixty_seconds_uses_short_status_reads(self) -> None:
         drills = pool_drills()
         spike = sys.modules[drills.wait_for_rollout.__module__]
@@ -129,6 +136,20 @@ class PoolDrillTests(unittest.TestCase):
             self.assertRaisesRegex(AssertionError, "changed Job UIDs"),
         ):
             drills.assert_active_jobs_bound()
+
+    def test_scale_up_between_snapshots_does_not_report_a_false_orphan(self) -> None:
+        drills = pool_drills()
+        bindings = {}
+
+        def create_job_after_committing_reservation():
+            bindings["worker-a"] = "job-a"
+            return {"worker-a": "job-a"}
+
+        with (
+            patch.object(drills, "active_pool_jobs", side_effect=create_job_after_committing_reservation),
+            patch.object(drills, "worker_job_bindings", side_effect=lambda: dict(bindings)),
+        ):
+            self.assertEqual(drills.assert_active_jobs_bound(), {"worker-a": "job-a"})
 
     def test_retained_snapshot_rejects_an_extra_bound_job(self) -> None:
         drills = pool_drills()

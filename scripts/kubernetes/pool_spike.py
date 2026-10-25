@@ -89,6 +89,7 @@ def live_workers(form: str = "job") -> list[dict]:
         "SELECT id, state, coalesce(kubernetes_pod_uid,''), runs_handled, "
         "coalesce(memory_budget_bytes, 0) FROM execution_workers "
         f"WHERE form = '{form}' AND state IN ('reserved','starting','ready','draining') "
+        "AND supported_handlers ? 'workflow.execute' "
         "ORDER BY created_at"
     )
     return [

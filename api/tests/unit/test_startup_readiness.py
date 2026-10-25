@@ -35,16 +35,22 @@ async def test_scheduler_entry_beats_while_gated_and_is_ready_once_the_executor_
     monkeypatch.setattr(scheduler_health, "READY_PATH", tmp_path / "ready")
     gate_open, stop = asyncio.Event(), asyncio.Event()
 
-    async def executor(*, on_ready: Callable[[], None]) -> int:
+    async def launcher(
+        *, on_ready: Callable[[], None] | None = None, on_stop: Callable[[], None] | None = None,
+    ) -> int:
         await gate_open.wait()  # the schema gate
+        assert on_ready is not None
         on_ready()
         await stop.wait()
+        if on_stop:
+            on_stop()
         return 0
 
     async def fast_heartbeat() -> None:
         await scheduler_health.heartbeat_loop(0.01)
 
-    monkeypatch.setattr("src.worker.pool_main.run_executor", executor)
+    monkeypatch.setattr("src.worker.remote.launcher.run_launcher", launcher)
+    monkeypatch.setattr(scheduler_main, "SERVICE_ACCOUNT_TOKEN_PATH", tmp_path / "no-token")
     monkeypatch.setattr(scheduler_main, "heartbeat_loop", fast_heartbeat)
 
     entry = asyncio.create_task(scheduler_main.main())
@@ -71,13 +77,19 @@ def test_worker_entry_is_ready_only_while_the_executor_is(
     worker_health.mark_ready()  # left over from a previous start
     seen: list[bool] = []
 
-    async def executor(*, on_ready: Callable[[], None]) -> int:
+    async def launcher(
+        *, on_ready: Callable[[], None] | None = None, on_stop: Callable[[], None] | None = None,
+    ) -> int:
         seen.append(worker_health.is_ready())
+        assert on_ready is not None
         on_ready()
         seen.append(worker_health.is_ready())
+        if on_stop:
+            on_stop()
         return 0
 
-    monkeypatch.setattr("src.worker.pool_main.run_executor", executor)
+    monkeypatch.setattr("src.worker.remote.launcher.run_launcher", launcher)
+    monkeypatch.setattr(worker_main, "SERVICE_ACCOUNT_TOKEN_PATH", tmp_path / "no-token")
 
     with pytest.raises(SystemExit) as exited:
         worker_main.run()

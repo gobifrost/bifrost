@@ -1,8 +1,8 @@
 # Thin worker with API-hosted execution control — 2026-10-24
 
-**Follow-up:** [All 23 job types have now passed live on both runtime variants](2026-10-24-thin-runtime-live-jobs.md), with direct workflow timings and RAM measured after that larger workload. The tables below preserve the earlier, smaller experiment.
+**Historical follow-up:** [All 23 job types passed live on both runtime variants](2026-10-24-thin-runtime-live-jobs.md), with direct workflow timings and RAM measured after that larger workload. The tables below preserve the earlier, smaller experiment.
 
-This local spike meets the **100 MiB warm whole-worker target** on the exercised workload. It is not a production rollout candidate. Its remaining admission and API-restart limitations are described below.
+This local spike met the **100 MiB warm whole-worker target** on the exercised workload. The measurements describe the 2026-10-24 experimental source, not a production rollout or a result from the current default runtime.
 
 ## Measured memory and speed
 
@@ -37,7 +37,7 @@ Fresh containers and fresh Python processes, with the image already local, warm 
 
 One trial per variant. Worker readiness is the existing ready marker, observed through the host's `/proc/<pid>/root` without adding a measurement process inside the container. API readiness uses Uvicorn's application-startup-complete timestamp. The API was ready before the worker started. This excludes image pulls, Kubernetes scheduling/CNI, and package installation from non-empty requirements. Thus **75 MiB warm does not mean a 100 MiB hard limit**: startup helpers briefly use about 174 MiB, and active jobs still need their admitted memory.
 
-## Architecture implemented in the spike
+## Architecture in the 2026-10-24 spike
 
 - The existing API process hosts the canonical `PoolWorker`, PostgreSQL claims/leases, workflow preparation/completion, Redis bookkeeping, SDK routes, and warm agent/summary execution.
 - An authenticated development-only WebSocket carries commands, acknowledgements, child results, and resource samples. Route UUIDs fence late results. The channel is transport; durable dispatch and user-visible status remain in `WorkDispatch`, `PlatformJob`, and the existing notification system.
@@ -48,7 +48,7 @@ One trial per variant. Worker readiness is the existing ready marker, observed t
 
 This moves the ownership of claims and warm privileged execution as well as SDK HTTP handling. It is more than moving the SDK socket back to an API URL. Agent/summary execution remains warm in the API; the rejected subprocess-per-agent experiment and its multi-second cold penalty are not part of this branch.
 
-Default production entrypoints remain the existing worker and API. The spike is enabled explicitly by the Compose overlay and Uvicorn factory. Internal backend injection reuses the canonical platform-job lease/cancel/timeout/loss state machine. Remote resource samples initialize job memory at claim time; the API's cgroup is not used to size a remote attempt.
+At the time of this experiment, the default production entrypoints remained the existing worker and API. The thin candidate was selected with Compose overlays and a Uvicorn factory. Internal backend injection reused the canonical platform-job lease/cancel/timeout/loss state machine. Remote resource samples initialized job memory at claim time; the API cgroup was not used to size a remote attempt.
 
 ## What was actually exercised
 
@@ -84,17 +84,25 @@ Each matched runtime run passed **40 tests**. Real work included six API-enqueue
 
 Work-dispatch families exercised live: `workflow.execute`, `agent.run`, and `agent.summarize`. `agent.summarize_backfill` was not exercised as a live child. The summary-backfill fixture reconciles its parent status only. Services exercised the real canonical claim loop. The isolated Kubernetes Job launch/admission path was not exercised. No external OpenAI, Anthropic, GitHub, or video-provider call was made.
 
-## Required before production rollout
+## Rollout gaps recorded at the time of the spike
 
-1. Replace the single-launcher local bootstrap file with incarnation-scoped production admission, preserving the existing Kubernetes Job UID / Pod UID binding. Wire the thin entrypoint into actual worker Job manifests.
-2. Implement reconnect/adoption and control-owner fencing across API rolling restarts and network failures. This prototype ends the session/children when its API connection dies; that changes availability and is not rollout-safe.
-3. Make API and physical-worker memory domains explicit **before claiming work**, including capacity planning. The prototype conservatively holds agent requests in both domains and waits for API capacity after claiming. An agent request larger than the API's available budget can wait indefinitely; adding more thin launchers would not solve that. This is a blocking design limitation, not completed admission parity.
-4. Verify the remaining live job families, large input/result handling (the experimental channel currently caps messages at 32 MiB), real package changes, cancellation/loss/drain under concurrent work, phase-aligned CPU, and SDK/API p95/p99 throughput. The test above establishes a small-workload latency result, not a production SLO.
-5. Consolidate the experimental adapter into the shared execution backend, rebase onto current main, and run focused verification plus the merge gate before any rollout. There is no production deployment or PR from this spike.
+1. Replace the single-launcher local bootstrap file with incarnation-scoped production admission, preserving the existing Kubernetes Job UID / Pod UID binding, and wire the thin entrypoint into worker Job manifests.
+2. Implement reconnect/adoption and control-owner fencing across API rolling restarts and network failures. The prototype ended its session/children when its API connection died.
+3. Make API and physical-worker memory domains explicit **before claiming work**, including capacity planning. The prototype could hold an agent claim while waiting for API capacity.
+4. Verify live job families, large input/result handling, real package changes, cancellation/loss/drain under concurrent work, phase-aligned CPU, and SDK/API p95/p99 throughput.
+5. Consolidate the experiment into the shared execution backend and run focused verification plus the merge gate before rollout.
+
+## Production-promotion implementation status — 2026-10-25
+
+The current worktree promotes the thin runtime to the default API, worker, scheduler, Compose, and Kubernetes wiring. It replaces the experiment-only bootstrap and overlays with authenticated launcher control, incarnation and owner fencing, API-resident agent/summary execution, remote physical launchers, and the existing Kubernetes control loops for legacy scheduler-Role installations.
+
+This is an implementation status, **not a completed rollout claim**. Focused tests, quality checks, the canonical all-job E2E path, and the merge gate remain pending at this document's update. The historical measurements above have not been re-collected against the promoted runtime, so they remain evidence about the commits named below rather than current performance evidence.
 
 ## Reproduction and verification
 
-Run from this worktree. The normal test stack is created once with `./test.sh stack up`. Use the same image tag for both variants. For the control choose `docker-compose.thin-spike-baseline.yml`; for the candidate choose `docker-compose.thin-spike.yml`:
+### Historical exact reproduction
+
+The measurements above used experiment commit `ecc0890f2aeb7ed3f1945ec169a24068cb5689ea`, which still contains `docker-compose.thin-spike.yml` and `docker-compose.thin-spike-baseline.yml`. Check out that commit in a disposable worktree to use the following historical overlay commands; those files are intentionally absent from the current default-runtime source.
 
 ```bash
 COMPOSE_PROJECT_NAME=bifrost-test-b60bcc82 \
@@ -117,7 +125,26 @@ python3 api/scripts/worker_memory_probe.py \
 BIFROST_SKIP_BUILD=1 BIFROST_TEST_IMAGE_TAG=bifrost-test-b60bcc82 ./test.sh quality api
 ```
 
-The scheduler container is deliberately idle in both overlays so each comparison has one executor. The ordinary API continues to host its canonical scheduler/control loops. `test.sh` resets stop/start these containers and retain the selected commands.
+The scheduler container was deliberately idle in both historical overlays so each comparison had one executor. The ordinary API hosted its canonical scheduler/control loops. `test.sh` reset/start behavior retained the selected historical commands.
+
+### Current canonical validation
+
+The current source has no thin-runtime Compose overlay. Start the normal test stack once, then pass the exact test paths directly to `./test.sh`; do not prefix the command with `e2e`, because that selects the whole E2E suite rather than these paths.
+
+```bash
+./test.sh stack up
+
+./test.sh \
+  tests/performance/test_workflow_dispatch_latency.py \
+  tests/e2e/platform/test_thin_platform_jobs_providers.py \
+  tests/e2e/platform/test_thin_platform_jobs_misc.py \
+  tests/e2e/platform/test_thin_platform_jobs_build.py \
+  tests/e2e/platform/test_scheduler_fixture_workloads.py -q -s --durations=0
+
+./test.sh quality api
+```
+
+These commands are the intended current validation path; their promotion-run results are pending.
 
 The separate 155-test command was:
 

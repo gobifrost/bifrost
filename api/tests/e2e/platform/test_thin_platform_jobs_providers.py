@@ -3,7 +3,7 @@
 Four jobs: one seeded embedding rewrite, two video submit/poll/download/store
 paths, and the public models.dev catalog refresh. Providers are local except
 for the credential-free catalog GET. No handler or process boundary is mocked.
-Requires docker-compose.thin-live-jobs.yml alongside the runtime overlay.
+Uses the canonical test stack's local HTTP/TLS provider fixtures.
 """
 
 import asyncio

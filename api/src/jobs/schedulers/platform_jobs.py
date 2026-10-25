@@ -205,6 +205,10 @@ async def claim_platform_job(
         raise ValueError("An isolated platform-job claim, and only one, needs its pods")
     updated: list[PlatformJob] = []
     async with get_db_context() as db:
+        from src.worker.remote.fencing import fence_remote_owner
+
+        if not await fence_remote_owner(db):
+            return None
         candidate_ids = (
             (
                 await db.execute(
@@ -389,6 +393,10 @@ async def _heartbeat(
     memory_sample: tuple[int, int] | None = None,
 ) -> str | None:
     async with get_db_context() as db:
+        from src.worker.remote.fencing import fence_remote_owner
+
+        if not await fence_remote_owner(db):
+            return None
         job = (
             await db.execute(
                 select(PlatformJob)
@@ -485,6 +493,10 @@ async def _handle_runner_loss(
     limit, so the job learns it needs more (a retry asks for it).
     """
     async with get_db_context() as db:
+        from src.worker.remote.fencing import fence_remote_owner
+
+        if not await fence_remote_owner(db):
+            return False
         job = (
             await db.execute(
                 select(PlatformJob)

@@ -1,4 +1,4 @@
-"""Contracts for the development-only remote process-pool adapter."""
+"""Contracts for the production remote process-pool adapter."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.core.redis_client import ActiveExecution
-from src.dev.thin_remote_pool import ThinRemoteProcessPool
+from src.worker.remote.remote_pool import ThinRemoteProcessPool
 from src.models.contracts.platform import ProcessInfo
 
 
@@ -25,6 +25,9 @@ class _Transport:
         if action == "package_tool" and payload == {"operation": "inventory"}:
             return {"packages": self.inventory}
         return {"accepted": True, "pid": 12345}
+
+    def memory_request_bytes(self, key: str) -> int:
+        return 1024
 
     def memory(self) -> tuple[int, int]:
         return (600, 1000)
@@ -207,7 +210,7 @@ async def test_routes_service_and_uses_remote_terminate_without_a_local_pid() ->
 
 
 @pytest.mark.asyncio
-async def test_stop_disconnected_pool_reports_pidless_routes_as_crashes() -> None:
+async def test_fenced_ownership_loss_detaches_without_failing_adoptable_routes() -> None:
     transport = _Transport()
     on_result = AsyncMock()
     pool = ThinRemoteProcessPool(transport, on_result=on_result)
@@ -218,13 +221,27 @@ async def test_stop_disconnected_pool_reports_pidless_routes_as_crashes() -> Non
         await pool.route_execution("exec-1", {"timeout_seconds": 30}, _active("exec-1"))
 
     transport.connected = False
-    with patch.object(pool, "_unregister_worker", new_callable=AsyncMock):
-        await pool.stop()
+    await pool.ownership_lost()
 
-    result = on_result.await_args.args[0]
-    assert result["error_type"] == "ProcessCrashError"
-    assert result["sync"] is True
+    on_result.assert_not_awaited()
     assert pool.processes == {}
+    assert pool._routes == {}
+
+
+@pytest.mark.asyncio
+async def test_socket_loss_preserves_live_routes_for_reconnect() -> None:
+    transport = _Transport()
+    pool = ThinRemoteProcessPool(transport)
+    with (
+        patch.object(pool, "_write_context_to_redis", new_callable=AsyncMock),
+        patch.object(pool, "_write_active_execution_lease", new_callable=AsyncMock),
+    ):
+        await pool.route_execution("exec-1", {"timeout_seconds": 30}, _active("exec-1"))
+
+    transport.connected = False
+
+    assert len(pool.processes) == 1
+    assert len(pool._routes) == 1
 
 
 @pytest.mark.asyncio
@@ -296,3 +313,41 @@ async def test_worker_registration_uses_the_remote_package_inventory() -> None:
     redis_client.expire.assert_awaited_once_with(
         "bifrost:pool:thin-worker", pool.registration_ttl_seconds
     )
+
+
+@pytest.mark.asyncio
+async def test_launch_ack_loss_preserves_route_for_inventory_reconciliation() -> None:
+    transport = _Transport()
+    pool = ThinRemoteProcessPool(transport)
+    transport.request = AsyncMock(side_effect=ConnectionError("ACK lost"))
+    with (
+        patch.object(pool, "_write_context_to_redis", new_callable=AsyncMock),
+        patch.object(pool, "_write_active_execution_lease", new_callable=AsyncMock),
+    ):
+        await pool.route_execution("exec-1", {"timeout_seconds": 30}, _active("exec-1"))
+    assert len(pool._routes) == 1
+    payload = transport.request.await_args.args[1]
+    assert payload["memory_request_bytes"] == 1024
+    assert payload["active_execution"]["sync"] is True
+
+
+@pytest.mark.asyncio
+async def test_callback_failure_retains_route_until_durable_result_replay() -> None:
+    transport = _Transport()
+    callback = AsyncMock(side_effect=[ConnectionError("DB unavailable"), None])
+    pool = ThinRemoteProcessPool(transport, on_result=callback)
+    with (
+        patch.object(pool, "_write_context_to_redis", new_callable=AsyncMock),
+        patch.object(pool, "_write_active_execution_lease", new_callable=AsyncMock),
+    ):
+        await pool.route_execution("exec-1", {"timeout_seconds": 30}, _active("exec-1"))
+    route = transport.requests[-1][1]["route_id"]
+    event = {"event": "result", "route_id": route,
+             "result": {"execution_id": "exec-1", "success": True}}
+    with pytest.raises(ConnectionError, match="DB unavailable"):
+        await pool.handle_event(event)
+    assert route in pool._routes
+    await pool.handle_event(event)
+    assert pool._routes == {}
+    assert callback.await_count == 2
+    assert callback.await_args.args[0]["sync"] is True

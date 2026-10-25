@@ -216,24 +216,31 @@ async def _settle_pool_dispatch(
     return None
 
 
-async def largest_budget(db: AsyncSession) -> int | None:
+async def largest_budget(db: AsyncSession, handler: str = "workflow.execute") -> int | None:
     """The most memory any executor can hand to one piece of work: the
     largest budget of an executor live now or within ``RECENTLY_LIVE`` (one
     restarting or rolling over counts), or what the worker controller can
-    launch. None while no executor has reported (an outage is not too-large
-    work)."""
+    launch. Only executors supporting this handler count. A physical worker
+    launch adds workflow capacity, never API-resident agent capacity. None
+    while no compatible executor has reported (an outage is not too-large work).
+    """
     from src.core.cache.redis_client import get_redis
     from src.models.orm.execution_workers import ExecutionWorker
     from src.services.memory_requests import LAUNCHABLE_KEY
 
     live = await db.scalar(
         select(func.max(ExecutionWorker.memory_budget_bytes)).where(
-            ExecutionWorker.state.in_(("ready", "draining"))
-            | (ExecutionWorker.ended_at >= func.now() - RECENTLY_LIVE)
+            ExecutionWorker.supported_handlers.contains([handler]),
+            (
+                ExecutionWorker.state.in_(("ready", "draining"))
+                | (ExecutionWorker.ended_at >= func.now() - RECENTLY_LIVE)
+            ),
         )
     )
-    async with get_redis() as redis:
-        launchable = await redis.get(LAUNCHABLE_KEY)
+    launchable = None
+    if handler == "workflow.execute":
+        async with get_redis() as redis:
+            launchable = await redis.get(LAUNCHABLE_KEY)
     sizes = [size for size in (live, int(launchable) if launchable else None) if size is not None]
     return max(sizes) if sizes else None
 
@@ -247,24 +254,34 @@ async def reconcile_work_dispatches(*, limit: int = RECONCILE_BATCH) -> None:
     """
     now = datetime.now(timezone.utc)
     async with get_db_context() as db:
-        largest = await largest_budget(db)
+        from src.services.worker_pool.claims import SUPPORTED_HANDLERS
+
+        budgets = {
+            handler: await largest_budget(db, handler)
+            for handler, _version in SUPPORTED_HANDLERS
+        }
         due = WorkDispatch.created_at <= now - POOL_RECHECK_AFTER
-        if largest is not None:
-            due = due | (
-                WorkDispatch.assigned_worker_id.is_(None)
-                & (WorkDispatch.memory_request_bytes > largest)
-            )
+        for handler, largest in budgets.items():
+            if largest is not None:
+                due = due | (
+                    WorkDispatch.assigned_worker_id.is_(None)
+                    & (WorkDispatch.handler == handler)
+                    & (WorkDispatch.memory_request_bytes > largest)
+                )
         candidates = (
             await db.execute(
-                select(WorkDispatch.id, WorkDispatch.family, WorkDispatch.subject_id)
+                select(
+                    WorkDispatch.id, WorkDispatch.family,
+                    WorkDispatch.subject_id, WorkDispatch.handler,
+                )
                 .where(due)
                 .order_by(WorkDispatch.created_at.asc())
                 .limit(limit)
             )
         ).all()
     families = _families()
-    for dispatch_id, family_name, subject_id in candidates:
-        await _reconcile_one(families, dispatch_id, family_name, subject_id, largest)
+    for dispatch_id, family_name, subject_id, handler in candidates:
+        await _reconcile_one(families, dispatch_id, family_name, subject_id, budgets.get(handler))
 
 
 __all__ = [

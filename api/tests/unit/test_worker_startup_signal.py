@@ -18,7 +18,7 @@ import threading
 
 class BlockingWorkerAppFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
     def find_spec(self, fullname, path, target=None):
-        if fullname == "src.worker.pool_main":
+        if fullname == "src.worker.remote.launcher":
             return importlib.machinery.ModuleSpec(fullname, self)
         return None
 

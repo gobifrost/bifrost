@@ -158,8 +158,11 @@ def assert_active_jobs_bound() -> dict[str, str]:
     already proves ownership; once the row has a UID, an incarnation change is
     always a failure.
     """
-    bindings = worker_job_bindings()
     jobs = active_pool_jobs()
+    # The controller commits the reservation before creating its Job. Read
+    # Jobs first so a concurrent scale-up cannot appear as an orphan merely
+    # because its durable row was committed after our earlier DB snapshot.
+    bindings = worker_job_bindings()
     orphaned = {name: uid for name, uid in jobs.items() if name not in bindings}
     mismatched = {
         name: {"job": uid, "worker": bindings[name]}
