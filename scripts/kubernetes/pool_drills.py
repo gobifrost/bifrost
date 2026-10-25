@@ -182,16 +182,18 @@ def assert_retained_job_bindings(expected: dict[str, str]) -> None:
         for name, uid in expected.items()
         if bindings.get(name) != uid or jobs.get(name) != uid
     }
-    assert not changed, f"pre-restart Job bindings changed: {changed}"
+    added = jobs.keys() - expected.keys()
+    assert not changed and not added, (
+        f"pre-restart Job bindings changed: {changed}; unexpected Jobs: {sorted(added)}"
+    )
 
 
-def snapshot_active_job_bindings() -> dict[str, str]:
-    """Take a fully persisted incarnation snapshot before deleting the API."""
+def snapshot_active_job_bindings() -> dict[str, str] | None:
+    """Wait for creation to finish before taking the incarnation snapshot."""
     jobs = assert_active_jobs_bound()
     bindings = worker_job_bindings()
     unbound = {name: uid for name, uid in jobs.items() if bindings.get(name) is None}
-    assert not unbound, f"active Jobs have not persisted their UIDs: {unbound}"
-    return jobs
+    return None if unbound else jobs
 
 
 def running_worker_bindings(ids: list[str]) -> dict[str, str]:
@@ -206,13 +208,19 @@ def running_worker_bindings(ids: list[str]) -> dict[str, str]:
 
 
 def wait_for_scaled_burst(burst: list[str], timeout: float) -> tuple[dict[str, str], dict[str, str]]:
-    """Wait until active runs occupy more than the warm Job worker."""
+    """Wait until all runs are claimed so restart cannot legitimately add Jobs."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         active = snapshot_active_job_bindings()
         bindings = running_worker_bindings(burst)
-        ready = [worker for worker in live_workers() if worker["state"] == "ready"]
-        if len(ready) > 1 and len(set(bindings.values())) > 1:
+        workers = live_workers()
+        ready = [worker for worker in workers if worker["state"] == "ready"]
+        if (
+            active is not None
+            and len(bindings) == len(burst)
+            and len(ready) == len(workers) > 1
+            and len(set(bindings.values())) > 1
+        ):
             return active, bindings
         time.sleep(1)
     raise TimeoutError(

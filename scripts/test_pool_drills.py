@@ -43,6 +43,7 @@ class PoolDrillTests(unittest.TestCase):
             patch.object(drills, "active_pool_jobs", return_value={"worker-a": "job-a"}),
         ):
             self.assertEqual(drills.assert_active_jobs_bound(), {"worker-a": "job-a"})
+            self.assertIsNone(drills.snapshot_active_job_bindings())
 
         with (
             patch.object(drills, "worker_job_bindings", return_value={"worker-a": "job-b"}),
@@ -50,3 +51,12 @@ class PoolDrillTests(unittest.TestCase):
             self.assertRaisesRegex(AssertionError, "changed Job UIDs"),
         ):
             drills.assert_active_jobs_bound()
+
+    def test_retained_snapshot_rejects_an_extra_bound_job(self) -> None:
+        drills = pool_drills()
+        with (
+            patch.object(drills, "worker_job_bindings", return_value={"worker-a": "job-a", "worker-b": "job-b"}),
+            patch.object(drills, "active_pool_jobs", return_value={"worker-a": "job-a", "worker-b": "job-b"}),
+            self.assertRaisesRegex(AssertionError, "unexpected Jobs"),
+        ):
+            drills.assert_retained_job_bindings({"worker-a": "job-a"})
