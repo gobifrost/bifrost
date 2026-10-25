@@ -27,7 +27,7 @@ def pool_drills():
 
 
 class PoolDrillTests(unittest.TestCase):
-    def test_controller_restart_burst_requires_at_least_three_warm_worker_budgets(self) -> None:
+    def test_controller_restart_burst_exceeds_two_warm_worker_budgets(self) -> None:
         drills = pool_drills()
         warm_budget = 8 * drills.INLINE_RUN_RESERVATION_BYTES
 

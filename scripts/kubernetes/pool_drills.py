@@ -93,8 +93,8 @@ def wait_status(ids: list[str], wanted: set[str], timeout: float) -> dict[str, s
 def controller_restart_burst_count(warm_worker_budget: int) -> int:
     """Keep enough 64 MiB runs alive to require three Job workers.
 
-    The first worker is the warm floor. Two further full budgets make the
-    controller replacement adopt a pool that has already scaled up.
+    Demand exceeds two complete worker budgets, so the warm worker cannot
+    absorb the burst before controller replacement.
     """
     assert warm_worker_budget >= INLINE_RUN_RESERVATION_BYTES, warm_worker_budget
     per_worker = warm_worker_budget // INLINE_RUN_RESERVATION_BYTES
@@ -313,7 +313,7 @@ def controller_restart_drill() -> dict:
     assert len(set(after_bindings.values())) > 1, after_bindings
     assert any(status == "Running" for status in statuses(burst).values()), "the burst ended during restart"
 
-    deadline = time.monotonic() + 900
+    deadline = time.monotonic() + 600
     while True:
         current = statuses(burst)
         failed = {id_: status for id_, status in current.items() if status in ("Failed", "Cancelled", "Timeout")}
