@@ -6,9 +6,8 @@ from pydantic import BaseModel
 
 from src.jobs.platform.base import (
     PlatformJobContext,
-    PlatformJobDefinition,
     PlatformJobFailure,
-    PlatformJobPolicy,
+    define_platform_job,
 )
 
 
@@ -37,18 +36,6 @@ async def run_solution_export(
     return {"export_job_id": str(payload.export_job_id)}
 
 
-SOLUTION_EXPORT_DEFINITION = PlatformJobDefinition(
-    job_type="solution.export",
-    payload_version=1,
-    payload_model=SolutionExportPayload,
-    handler=run_solution_export,
-    policy=PlatformJobPolicy(
-        timeout_seconds=60 * 60,
-        max_attempts=2,
-        max_concurrency=1,
-        min_memory_headroom_mb=512,
-        execution_class="build",
-    ),
-    display_name="Solution Backup Exports",
-    description="Builds encrypted full-backup archives in an isolated pod.",
+SOLUTION_EXPORT_DEFINITION = define_platform_job(
+    "solution.export", SolutionExportPayload, run_solution_export
 )

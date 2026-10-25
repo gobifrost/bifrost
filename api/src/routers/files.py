@@ -50,8 +50,6 @@ from src.models import (
     SearchResponse,
     WorkflowIdConflict,
 )
-from src.services.file_storage import FileStorageService
-from shared.role_cache import get_user_roles
 from shared.file_access import (
     FileCaller,
     FileServiceError,
@@ -399,6 +397,8 @@ async def _test_principal(
     db: AsyncSession,
     user_id: str | None,
 ) -> UserPrincipal:
+    from shared.role_cache import get_user_roles
+
     if not user_id:
         return ctx.user
 
@@ -767,6 +767,7 @@ async def _record_completed_signed_upload(
 ) -> None:
     """Record file metadata and publish changes after a browser PUT succeeds."""
     from shared.file_paths import resolve_s3_key
+    from src.services.file_storage import FileStorageService
 
     try:
         effective_scope = await _resolve_effective_scope(ctx, request.location, request.scope)
@@ -1443,6 +1444,8 @@ async def get_file_content_editor(
 
     Cloud mode only - used by browser editor.
     """
+    from src.services.file_storage import FileStorageService
+
     await authorize_operation(db, user, "workspace.files.editor.read", GLOBAL)
     try:
         storage = FileStorageService(db)
@@ -1490,6 +1493,8 @@ async def put_file_content_editor(
 
     Cloud mode only - used by browser editor.
     """
+    from src.services.file_storage import FileStorageService
+
     await authorize_operation(db, user, "workspace.files.editor.write", GLOBAL)
     try:
         storage = FileStorageService(db)
@@ -1656,6 +1661,8 @@ async def create_folder_editor(
 
     Cloud mode only - used by browser editor.
     """
+    from src.services.file_storage import FileStorageService
+
     await authorize_operation(db, user, "workspace.files.editor.folder.create", GLOBAL)
     try:
         storage = FileStorageService(db)
@@ -1693,6 +1700,8 @@ async def delete_file_editor(
     Cloud mode only - used by browser editor.
     Uses S3 prefix listing to detect folders (no file_index markers needed).
     """
+    from src.services.file_storage import FileStorageService
+
     await authorize_operation(db, user, "workspace.files.editor.delete", GLOBAL)
     from src.services.repo_storage import RepoStorage
 
@@ -1758,6 +1767,8 @@ async def rename_file_editor(
 
     Cloud mode only - used by browser editor.
     """
+    from src.services.file_storage import FileStorageService
+
     await authorize_operation(db, user, "workspace.files.editor.rename", GLOBAL)
     try:
         storage = FileStorageService(db)

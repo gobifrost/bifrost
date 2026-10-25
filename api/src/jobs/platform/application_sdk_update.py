@@ -10,9 +10,8 @@ from pydantic import BaseModel, Field
 from src.core.database import get_db_context
 from src.jobs.platform.base import (
     PlatformJobContext,
-    PlatformJobDefinition,
     PlatformJobFailure,
-    PlatformJobPolicy,
+    define_platform_job,
 )
 from src.models.orm.applications import Application
 from src.services.application_build import rebuild_application_from_source
@@ -66,20 +65,6 @@ async def run_application_sdk_update(
     return result
 
 
-APPLICATION_SDK_UPDATE_DEFINITION = PlatformJobDefinition(
-    job_type="application.sdk_update",
-    payload_version=1,
-    payload_model=ApplicationSdkUpdatePayload,
-    handler=run_application_sdk_update,
-    policy=PlatformJobPolicy(
-        timeout_seconds=20 * 60,
-        max_attempts=1,
-        max_concurrency=1,
-        min_memory_headroom_mb=512,
-        execution_class="build",
-    ),
-    display_name="App SDK Rebuilds",
-    description=(
-        "Rebuilds the web SDK and republishes affected apps in an isolated pod."
-    ),
+APPLICATION_SDK_UPDATE_DEFINITION = define_platform_job(
+    "application.sdk_update", ApplicationSdkUpdatePayload, run_application_sdk_update
 )

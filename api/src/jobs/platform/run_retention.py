@@ -13,9 +13,8 @@ from src.core.principal import UserPrincipal
 from src.jobs.platform.base import (
     PlatformJobCancelled,
     PlatformJobContext,
-    PlatformJobDefinition,
     PlatformJobFailure,
-    PlatformJobPolicy,
+    define_platform_job,
 )
 from src.jobs.platform.system_maintenance import enqueue_system_maintenance
 from src.models.orm.platform_jobs import PlatformJob
@@ -115,19 +114,8 @@ async def run_run_retention(context: PlatformJobContext, payload: RunRetentionPa
     return state
 
 
-RUN_RETENTION_DEFINITION = PlatformJobDefinition(
-    job_type=RUN_RETENTION_JOB_TYPE,
-    payload_version=1,
-    payload_model=RunRetentionPayload,
-    handler=run_run_retention,
-    policy=PlatformJobPolicy(
-        timeout_seconds=2 * 60 * 60,
-        max_attempts=3,
-        max_concurrency=1,
-        retry_on_runner_loss=True,
-        min_memory_headroom_mb=256,
-        allow_running_cancellation=True,
-    ),
+RUN_RETENTION_DEFINITION = define_platform_job(
+    RUN_RETENTION_JOB_TYPE, RunRetentionPayload, run_run_retention
 )
 
 

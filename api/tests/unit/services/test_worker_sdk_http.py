@@ -187,7 +187,8 @@ class TestRouteReuse:
     def test_build_app_mounts_real_sdk_routes_by_identity(self):
         from fastapi.routing import APIRoute
 
-        from src.routers.agent_runs import router as agent_runs_router
+        from src.routers.agent_run_sdk import detail_router, enqueue_router
+        from src.routers.agent_runs import router as api_agent_runs_router
         from src.routers.cli import router as sdk_router
         from src.routers.events import router as events_router
         from src.routers.executions import router as executions_router
@@ -276,7 +277,14 @@ class TestRouteReuse:
         }
         agent_run_originals = {
             (route.path, method): route
-            for route in agent_runs_router.routes
+            for agent_run_router in (detail_router, enqueue_router)
+            for route in agent_run_router.routes
+            if (wanted := AGENT_RUN_ROUTE_METHODS.get(getattr(route, "path", None)))
+            for method in (getattr(route, "methods", None) or set()) & wanted
+        }
+        api_agent_run_routes = {
+            (route.path, method): route
+            for route in api_agent_runs_router.routes
             if (wanted := AGENT_RUN_ROUTE_METHODS.get(getattr(route, "path", None)))
             for method in (getattr(route, "methods", None) or set()) & wanted
         }
@@ -461,6 +469,10 @@ class TestRouteReuse:
 
         assert set(mounted_agent_runs) == set(agent_run_originals)
         for key, route in mounted_agent_runs.items():
+            assert route is agent_run_originals[key]
+            assert route.endpoint is agent_run_originals[key].endpoint
+        assert set(api_agent_run_routes) == set(agent_run_originals)
+        for key, route in api_agent_run_routes.items():
             assert route is agent_run_originals[key]
             assert route.endpoint is agent_run_originals[key].endpoint
 

@@ -31,7 +31,7 @@ from src.jobs.platform.kubernetes_client import (
     build_job_manifest,
     oom_killed,
 )
-from src.jobs.platform.registry import get_platform_job_definition
+from src.jobs.platform.catalog import get_platform_job_metadata
 from src.jobs.schedulers.platform_jobs import (
     ClaimedPlatformJob,
     IsolatedPods,
@@ -184,12 +184,12 @@ class KubernetesBuildController:
             token = row.lease_token
             if token is None:
                 raise RuntimeError("Active Kubernetes build has no attempt token")
-            definition = get_platform_job_definition(row.job_type)
-            if definition is None:
+            metadata = get_platform_job_metadata(row.job_type)
+            if metadata is None:
                 raise RuntimeError("Active Kubernetes build has no registered handler")
             claim = ClaimedPlatformJob(
                 id=row.id, lease_token=token, timeout_seconds=row.timeout_seconds,
-                hard_memory_ratio=definition.policy.hard_memory_ratio,
+                hard_memory_ratio=metadata.policy.hard_memory_ratio,
                 memory_required_bytes=row.memory_required_bytes,
                 job_type=row.job_type,
             )

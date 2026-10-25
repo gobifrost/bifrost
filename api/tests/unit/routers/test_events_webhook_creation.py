@@ -57,15 +57,17 @@ def _caller(organization_id):
 
 def _stub_create_authorization(monkeypatch, organization_id):
     caller = _caller(organization_id)
-    monkeypatch.setattr("src.routers.events.load_caller", AsyncMock(return_value=caller))
     monkeypatch.setattr(
-        "src.routers.events.resolve_effective_scope", lambda **_kwargs: organization_id
+        "src.services.authorization.enforce.load_caller", AsyncMock(return_value=caller)
     )
     monkeypatch.setattr(
-        "src.routers.events.user_reach",
+        "shared.scope_resolver.resolve_effective_scope", lambda **_kwargs: organization_id
+    )
+    monkeypatch.setattr(
+        "src.services.authorization.enforce.user_reach",
         lambda _caller: SimpleNamespace(covers=lambda _target: True),
     )
-    monkeypatch.setattr("src.routers.events.require_permission", MagicMock())
+    monkeypatch.setattr("src.services.authorization.enforce.require_permission", MagicMock())
 
 
 @pytest.mark.asyncio
@@ -84,7 +86,7 @@ async def test_provider_subscription_starts_after_webhook_source_commit(monkeypa
     )
     registry = MagicMock()
     registry.get.return_value = adapter
-    monkeypatch.setattr("src.routers.events.get_adapter_registry", lambda: registry)
+    monkeypatch.setattr("src.services.webhooks.registry.get_adapter_registry", lambda: registry)
     _stub_create_authorization(monkeypatch, uuid4())
     monkeypatch.setattr(
         "src.routers.events._build_event_source_secret_response",
@@ -119,7 +121,7 @@ async def test_failed_provider_subscription_removes_provisional_source(monkeypat
     )
     registry = MagicMock()
     registry.get.return_value = adapter
-    monkeypatch.setattr("src.routers.events.get_adapter_registry", lambda: registry)
+    monkeypatch.setattr("src.services.webhooks.registry.get_adapter_registry", lambda: registry)
     _stub_create_authorization(monkeypatch, uuid4())
 
     with pytest.raises(HTTPException, match="Failed to create provider subscription"):

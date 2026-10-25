@@ -185,10 +185,9 @@ EXECUTION_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/executions/{execution_id}": frozenset({"GET"}),
 }
 
-# The SDK agent-run facade routes, selected from
-# ``src.routers.agent_runs`` by path AND method. ``/api/agent-runs/{run_id}``
-# owns only the detail GET here; the rerun/cancel/verdict/flag siblings are
-# separate paths and stay on the API.
+# The SDK agent-run facade routes, selected from the narrow
+# ``src.routers.agent_run_sdk`` routers by path AND method. The CRUD, tuning,
+# and summarization graph stays out of the worker SDK import closure.
 AGENT_RUN_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/agent-runs/enqueue": frozenset({"POST"}),
     "/api/agent-runs/{run_id}": frozenset({"GET"}),
@@ -323,7 +322,7 @@ def build_worker_sdk_app() -> Any:
         install_request_context_middleware,
         register_exception_handlers,
     )
-    from src.routers.agent_runs import router as agent_runs_router
+    from src.routers.agent_run_sdk import detail_router, enqueue_router
     from src.routers.cli import router as sdk_router
     from src.routers.events import router as events_router
     from src.routers.executions import router as executions_router
@@ -457,18 +456,17 @@ def build_worker_sdk_app() -> Any:
         len(methods) for methods in EXECUTION_ROUTE_METHODS.values()
     )
 
-    # The SDK agent-run routes are selected by (path, method) from their real
-    # router. ``/api/agent-runs/{run_id}`` is the detail GET; the rerun,
-    # cancel, verdict, and flag-conversation siblings live on child paths and
-    # stay on the API.
-    for route in agent_runs_router.routes:
-        wanted = AGENT_RUN_ROUTE_METHODS.get(
-            getattr(route, "path", None), frozenset()
-        )
-        methods = getattr(route, "methods", None) or frozenset()
-        if wanted and methods & wanted:
-            app.router.routes.append(route)
-            selected += 1
+    # The narrow agent-run routers expose only the SDK enqueue and detail
+    # routes, so importing them avoids the main agent-run CRUD/tuning graph.
+    for agent_run_router in (detail_router, enqueue_router):
+        for route in agent_run_router.routes:
+            wanted = AGENT_RUN_ROUTE_METHODS.get(
+                getattr(route, "path", None), frozenset()
+            )
+            methods = getattr(route, "methods", None) or frozenset()
+            if wanted and methods & wanted:
+                app.router.routes.append(route)
+                selected += 1
     expected += sum(
         len(methods) for methods in AGENT_RUN_ROUTE_METHODS.values()
     )

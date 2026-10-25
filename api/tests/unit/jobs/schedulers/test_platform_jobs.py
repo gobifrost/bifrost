@@ -16,13 +16,12 @@ from src.jobs.platform.application_deploy import (
     APPLICATION_DEPLOY_DEFINITION,
     ApplicationDeployPayload,
 )
-from src.jobs.platform.base import PlatformJobDefinition
+from src.jobs.platform.catalog import PlatformJobMetadata, get_platform_job_metadata
 from src.jobs.platform.application_publish import (
     APPLICATION_PUBLISH_DEFINITION,
     ApplicationPublishPayload,
 )
 from src.jobs.platform.kubernetes_client import _lease_token_fingerprint
-from src.jobs.platform import registry
 from src.jobs.schedulers import platform_jobs as scheduler
 from src.models.orm.platform_job_memory_profiles import PlatformJobMemoryProfile
 from src.models.orm.platform_jobs import PlatformJob
@@ -108,7 +107,7 @@ async def _queued_remote_build_job(
     return job
 
 
-def _unlimited_deploy() -> PlatformJobDefinition:
+def _unlimited_deploy() -> PlatformJobMetadata:
     """Deploy definition with the concurrency cap lifted.
 
     Production serializes deploys (max_concurrency=1). Tests exercising
@@ -116,25 +115,22 @@ def _unlimited_deploy() -> PlatformJobDefinition:
     same-type claims, so they lift the cap through the same lookup the
     scheduler uses instead of switching job types.
     """
-    return replace(
-        APPLICATION_DEPLOY_DEFINITION,
-        policy=replace(
-            APPLICATION_DEPLOY_DEFINITION.policy, max_concurrency=None
-        ),
-    )
+    metadata = get_platform_job_metadata(APPLICATION_DEPLOY_DEFINITION.job_type)
+    assert metadata is not None
+    return replace(metadata, policy=replace(metadata.policy, max_concurrency=None))
 
 
 def _lift_deploy_concurrency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    real_definition = registry.get_platform_job_definition
+    real_metadata = scheduler.get_platform_job_metadata
     monkeypatch.setattr(
-        registry,
-        "get_platform_job_definition",
+        scheduler,
+        "get_platform_job_metadata",
         lambda job_type: (
             _unlimited_deploy()
             if job_type == APPLICATION_DEPLOY_DEFINITION.job_type
-            else real_definition(job_type)
+            else real_metadata(job_type)
         ),
     )
 
@@ -278,7 +274,7 @@ async def test_type_concurrency_limit_counts_opposite_backend_jobs(
         APPLICATION_DEPLOY_DEFINITION,
         policy=replace(APPLICATION_DEPLOY_DEFINITION.policy, max_concurrency=1),
     )
-    monkeypatch.setattr(registry, "get_platform_job_definition", lambda _type: limited)
+    monkeypatch.setattr(scheduler, "get_platform_job_metadata", lambda _type: limited)
 
     assert await scheduler.claim_platform_job(backend="local", fits_bytes=AMPLE) is None
     await db_session.refresh(queued)
@@ -900,7 +896,7 @@ async def test_type_concurrency_limit_is_enforced(
         APPLICATION_PUBLISH_DEFINITION,
         policy=replace(APPLICATION_PUBLISH_DEFINITION.policy, max_concurrency=1),
     )
-    monkeypatch.setattr(registry, "get_platform_job_definition", lambda _type: limited)
+    monkeypatch.setattr(scheduler, "get_platform_job_metadata", lambda _type: limited)
 
     assert await scheduler.claim_platform_job(fits_bytes=AMPLE) is not None
     assert await scheduler.claim_platform_job(fits_bytes=AMPLE) is None

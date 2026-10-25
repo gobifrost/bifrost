@@ -17,14 +17,18 @@ import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Protocol
 from uuid import uuid4
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.jobs.platform.base import PlatformJobDefinition
-from src.jobs.platform.registry import list_platform_job_definitions
+from src.jobs.platform.catalog import (
+    PlatformJobMetadata,
+    get_platform_job_metadata,
+    list_platform_job_metadata,
+)
+from src.jobs.platform.policy import PlatformJobPolicy
 from src.models.contracts.kubernetes import (
     POLICY_BOUNDS,
     KubernetesExecutionJobType,
@@ -74,6 +78,11 @@ class KubernetesPolicy:
     max_isolated_pods: int = 2
     enabled_job_types: frozenset[str] = DEFAULT_REMOTE_JOB_TYPES
     max_concurrency: Mapping[str, int] = field(default_factory=dict)
+
+
+class PlatformJobPolicyView(Protocol):
+    job_type: str
+    policy: PlatformJobPolicy
 
 
 #: The scalar settings an admin edits on the page (and the import fills).
@@ -264,7 +273,9 @@ async def import_kubernetes_policy_from_env(
                 continue
             value = _parse_imported(name, present[variable])
             if value is None:
-                skip(variable, "not a valid value for this setting; the default applies")
+                skip(
+                    variable, "not a valid value for this setting; the default applies"
+                )
                 continue
             if name == "worker_memory_mib" and value < memory_request_mib:
                 skip(
@@ -325,14 +336,9 @@ class KubernetesExecutionService:
         self.session = db
 
     @staticmethod
-    def _require_build_class(job_type: str) -> PlatformJobDefinition:
-        from src.jobs.platform.registry import get_platform_job_definition
-
-        definition = get_platform_job_definition(job_type)
-        if (
-            definition is None
-            or definition.policy.execution_class != "build"
-        ):
+    def _require_build_class(job_type: str) -> PlatformJobMetadata:
+        definition = get_platform_job_metadata(job_type)
+        if definition is None or definition.policy.execution_class != "build":
             raise KeyError(f"Not a remotely-eligible job type: {job_type}")
         return definition
 
@@ -398,13 +404,15 @@ class KubernetesExecutionService:
         def mutate(payload: dict[str, Any]) -> bool:
             for name, value in changes.items():
                 _edit(payload, name, value)
-            validate_policy(_policy_from(payload), memory_request_mib=memory_request_mib)
+            validate_policy(
+                _policy_from(payload), memory_request_mib=memory_request_mib
+            )
             return bool(changes)
 
         await _merge(self.session, mutate, updated_by=updated_by)
 
     async def effective_max_concurrency(
-        self, definition: PlatformJobDefinition
+        self, definition: PlatformJobPolicyView
     ) -> int | None:
         """UI override wins when set, otherwise the code policy default."""
         overrides = (await load_kubernetes_policy(self.session)).max_concurrency
@@ -440,7 +448,7 @@ class KubernetesExecutionService:
             for definition in sorted(
                 (
                     definition
-                    for definition in list_platform_job_definitions()
+                    for definition in list_platform_job_metadata()
                     if definition.policy.execution_class == "build"
                 ),
                 key=lambda definition: definition.job_type,
@@ -466,13 +474,12 @@ class KubernetesExecutionService:
 
 
 async def decide_execution_backend(
-    db: AsyncSession, definition: PlatformJobDefinition
+    db: AsyncSession, definition: PlatformJobPolicyView
 ) -> str:
     """Local or isolated placement for one enqueue.
 
     A build-class job runs isolated when isolated jobs are on and its type
-    is enabled in Settings -> Kubernetes. Imported lazily by callers: this
-    module pulls the job registry, which pulls platform_jobs at load time.
+    is enabled in Settings -> Kubernetes.
     """
     if definition.policy.execution_class != "build":
         return "local"

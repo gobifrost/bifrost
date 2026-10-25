@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import desc, func, literal_column, or_, select, update
 from sqlalchemy.orm import selectinload
 
@@ -25,9 +25,6 @@ from src.models.contracts.agent_run_flag_conversations import (
 )
 from src.models.contracts.agent_runs import (
     AgentRunCreateRequest,
-    AgentRunDetailResponse,
-    AgentRunEnqueueRequest,
-    AgentRunEnqueueResponse,
     AgentRunListResponse,
     AgentRunRerunResponse,
     AgentRunResponse,
@@ -39,7 +36,6 @@ from src.models.contracts.agent_runs import (
     DryRunResponse,
     MetadataKeysResponse,
     MetadataValuesResponse,
-    PausedResponse,
     SummaryBackfillJobListResponse,
     SummaryBackfillJobResponse,
     VerdictRequest,
@@ -47,8 +43,6 @@ from src.models.contracts.agent_runs import (
 )
 from shared.sdk_agent_runs import (
     SdkAgentRunError,
-    enqueue_sdk_agent_run,
-    get_sdk_agent_run,
     resolve_agent_run_actor,
     resolve_executable_agent,
     resolve_rerun_actor,
@@ -60,6 +54,7 @@ from src.models.orm.agents import Agent
 from src.models.orm.ai_usage import AIUsage
 from src.models.orm.summary_backfill_job import SummaryBackfillJob
 from src.core.redis_client import get_redis_client
+from src.routers.agent_run_sdk import detail_router, enqueue_router
 from src.services.agent_run_usage_summary import summarize_run_usage
 from src.services.agent_write_policy import caller_user_id
 from src.services.authorization.enforce import (
@@ -82,7 +77,6 @@ from src.services.execution.tuning_service import (
     append_user_message_and_reply,
     get_or_create_conversation,
 )
-from src.services.run_retention.settings import run_not_found_suffix
 
 logger = logging.getLogger(__name__)
 
@@ -544,20 +538,9 @@ async def get_backfill_eligible(
     )
 
 
-@router.get("/{run_id}")
-async def get_agent_run(
-    run_id: UUID,
-    db: DbSession,
-    user: CurrentActiveUser,
-) -> AgentRunDetailResponse:
-    """Get agent run detail with steps."""
-    try:
-        return await get_sdk_agent_run(db, user, run_id=run_id)
-    except SdkAgentRunError as e:
-        detail = e.detail
-        if e.status_code == status.HTTP_404_NOT_FOUND:
-            detail = f"Agent run {run_id} not found." + await run_not_found_suffix(db)
-        raise HTTPException(status_code=e.status_code, detail=detail) from None
+# These routes already carry the public prefix and tags. Append them at their
+# original registration positions so route precedence and OpenAPI stay exact.
+router.routes.extend(detail_router.routes)
 
 
 @router.post("/{run_id}/rerun")
@@ -885,7 +868,11 @@ async def regenerate_summary(
 ) -> dict:
     """Reset summary state and re-enqueue a summarization job. Admin-only."""
     run = (
-        await db.execute(select(AgentRun).where(AgentRun.id == run_id))
+        await db.execute(
+            select(AgentRun)
+            .where(AgentRun.id == run_id)
+            .with_for_update(of=AgentRun)
+        )
     ).scalar_one_or_none()
     if not run:
         raise HTTPException(
@@ -954,32 +941,7 @@ async def dry_run_agent_run(
     )
 
 
-@router.post(
-    "/enqueue",
-    status_code=status.HTTP_202_ACCEPTED,
-    response_model=AgentRunEnqueueResponse | PausedResponse,
-)
-async def enqueue_agent_run_request(
-    request: AgentRunEnqueueRequest,
-    response: Response,
-    db: DbSession,
-    user: CurrentActiveUser,
-) -> AgentRunEnqueueResponse | PausedResponse:
-    """Queue an agent run and return without waiting for execution."""
-    try:
-        result = await enqueue_sdk_agent_run(
-            db,
-            user,
-            agent_name=request.agent_name,
-            input_data=request.input,
-            output_schema=request.output_schema,
-            run_as=request.run_as,
-        )
-    except SdkAgentRunError as e:
-        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
-    if isinstance(result, PausedResponse):
-        response.status_code = status.HTTP_200_OK
-    return result
+router.routes.extend(enqueue_router.routes)
 
 
 @router.post("/execute")

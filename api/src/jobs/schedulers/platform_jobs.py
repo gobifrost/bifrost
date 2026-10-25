@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import func, or_, select, text
 
 from src.core.database import get_db_context
+from src.jobs.platform.catalog import get_platform_job_metadata
 from src.models.orm.platform_jobs import PlatformJob
 from src.services.execution.memory_monitor import get_cgroup_memory
 from src.services.platform_job_memory_profiles import (
@@ -212,10 +213,8 @@ async def claim_platform_job(
                 continue
             if backend == "kubernetes" and job.kubernetes_job_name is not None:
                 continue
-            from src.jobs.platform.registry import get_platform_job_definition
-
-            definition = get_platform_job_definition(job.job_type)
-            if definition is None:
+            metadata = get_platform_job_metadata(job.job_type)
+            if metadata is None:
                 job.status = "failed"
                 job.phase = "Failed"
                 job.error_code = "unknown_job_type"
@@ -240,7 +239,7 @@ async def claim_platform_job(
 
             max_concurrency = await KubernetesExecutionService(
                 db
-            ).effective_max_concurrency(definition)
+            ).effective_max_concurrency(metadata)
             if max_concurrency is not None:
                 handler_lock = (
                     await db.execute(
@@ -345,7 +344,7 @@ async def claim_platform_job(
                 id=job.id,
                 lease_token=token,
                 timeout_seconds=job.timeout_seconds,
-                hard_memory_ratio=definition.policy.hard_memory_ratio,
+                hard_memory_ratio=metadata.policy.hard_memory_ratio,
                 memory_required_bytes=job.memory_required_bytes,
                 job_type=job.job_type,
             )

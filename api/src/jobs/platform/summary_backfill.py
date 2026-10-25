@@ -6,9 +6,8 @@ from pydantic import BaseModel
 
 from src.jobs.platform.base import (
     PlatformJobContext,
-    PlatformJobDefinition,
     PlatformJobDeferred,
-    PlatformJobPolicy,
+    define_platform_job,
 )
 
 
@@ -79,15 +78,6 @@ async def run_summary_backfill(
     )
 
 
-SUMMARY_BACKFILL_DEFINITION = PlatformJobDefinition(
-    job_type="agent.summary_backfill",
-    payload_version=1,
-    payload_model=SummaryBackfillPayload,
-    handler=run_summary_backfill,
-    policy=PlatformJobPolicy(
-        timeout_seconds=15 * 60,
-        max_attempts=2,
-        min_memory_headroom_mb=128,
-    ),
-    encrypt_payload=True,
+SUMMARY_BACKFILL_DEFINITION = define_platform_job(
+    "agent.summary_backfill", SummaryBackfillPayload, run_summary_backfill
 )

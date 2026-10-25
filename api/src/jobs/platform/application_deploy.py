@@ -12,9 +12,8 @@ from pydantic import BaseModel
 
 from src.jobs.platform.base import (
     PlatformJobContext,
-    PlatformJobDefinition,
     PlatformJobFailure,
-    PlatformJobPolicy,
+    define_platform_job,
 )
 from src.services.application_build import rebuild_application_from_source
 from src.services.application_deploy_storage import ApplicationDeployStorage
@@ -41,9 +40,7 @@ async def run_application_deploy(
         await context.report("Loading App source", percent=5)
         with tempfile.TemporaryDirectory(prefix="bifrost-app-deploy-") as tmp:
             source_zip = Path(tmp) / "source.zip"
-            await storage.copy_to_path(
-                source_zip, expected_sha256=payload.input_sha256
-            )
+            await storage.copy_to_path(source_zip, expected_sha256=payload.input_sha256)
             retained_source_zip = Path(tmp) / "retained-source.zip"
             try:
                 source_files = await asyncio.to_thread(
@@ -77,21 +74,6 @@ async def run_application_deploy(
             )
 
 
-APPLICATION_DEPLOY_DEFINITION = PlatformJobDefinition(
-    job_type="application.deploy",
-    payload_version=1,
-    payload_model=ApplicationDeployPayload,
-    handler=run_application_deploy,
-    policy=PlatformJobPolicy(
-        timeout_seconds=20 * 60,
-        max_attempts=1,
-        max_concurrency=1,
-        min_memory_headroom_mb=512,
-        execution_class="build",
-    ),
-    display_name="App Deploys",
-    description=(
-        "Compiles and publishes independent apps (npm install and vite build) "
-        "in an isolated pod."
-    ),
+APPLICATION_DEPLOY_DEFINITION = define_platform_job(
+    "application.deploy", ApplicationDeployPayload, run_application_deploy
 )

@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.database import get_db_context
 from src.core.pubsub import manager as pubsub_manager
 from src.jobs.platform.base import PlatformJobDefinition
+from src.jobs.platform.catalog import get_platform_job_metadata
 from src.models.contracts.notifications import (
     NotificationCategory,
     NotificationCreate,
@@ -87,8 +88,6 @@ async def fail_linked_solution_export(
 
 
 def platform_job_to_public(job: PlatformJob) -> PlatformJobPublic:
-    from src.jobs.platform.registry import get_platform_job_definition
-
     error = None
     if job.error_message:
         error = PlatformJobError(
@@ -96,11 +95,11 @@ def platform_job_to_public(job: PlatformJob) -> PlatformJobPublic:
             message=job.error_message,
             retryable=bool(job.error_retryable),
         )
-    definition = get_platform_job_definition(job.job_type)
+    metadata = get_platform_job_metadata(job.job_type)
     can_cancel = job.status in ("queued", "waiting") or (
         job.status == "running"
-        and definition is not None
-        and definition.policy.allow_running_cancellation
+        and metadata is not None
+        and metadata.policy.allow_running_cancellation
     )
     return PlatformJobPublic(
         id=job.id,
@@ -284,8 +283,7 @@ async def enqueue_platform_job(
     )
 
     # Isolated when the job is build class and Settings -> Kubernetes
-    # isolates its type (imported lazily: kubernetes_execution pulls the job
-    # registry, which pulls this module at load time).
+    # isolates its type.
     from src.services.kubernetes_execution import decide_execution_backend
 
     execution_backend = await decide_execution_backend(db, definition)
@@ -636,10 +634,8 @@ async def request_platform_job_cancel(
     if job.status in TERMINAL_PLATFORM_JOB_STATUSES:
         return job, False
     if job.status in ("running", "cancel_requested"):
-        from src.jobs.platform.registry import get_platform_job_definition
-
-        definition = get_platform_job_definition(job.job_type)
-        if definition is None or not definition.policy.allow_running_cancellation:
+        metadata = get_platform_job_metadata(job.job_type)
+        if metadata is None or not metadata.policy.allow_running_cancellation:
             return job, False
     now = _now()
     accepted = job.cancel_requested_at is None

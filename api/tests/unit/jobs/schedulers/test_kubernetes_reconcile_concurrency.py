@@ -23,7 +23,7 @@ import pytest_asyncio
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from src.jobs.platform import registry
+from src.jobs.platform.catalog import get_platform_job_metadata
 from src.jobs.platform.application_deploy import (
     APPLICATION_DEPLOY_DEFINITION,
     ApplicationDeployPayload,
@@ -122,10 +122,20 @@ def real_sessions(
         APPLICATION_DEPLOY_DEFINITION,
         policy=replace(APPLICATION_DEPLOY_DEFINITION.policy, max_concurrency=None),
     )
-    real = registry.get_platform_job_definition
-    lookup = lambda job_type: unlimited if job_type == unlimited.job_type else real(job_type)  # noqa: E731
-    monkeypatch.setattr(registry, "get_platform_job_definition", lookup)
-    monkeypatch.setattr(kubernetes_jobs, "get_platform_job_definition", lookup)
+    metadata = get_platform_job_metadata(unlimited.job_type)
+    assert metadata is not None
+    unlimited_metadata = replace(metadata, policy=unlimited.policy)
+
+    def metadata_lookup(job_type: str):
+        if job_type == unlimited.job_type:
+            return unlimited_metadata
+        return get_platform_job_metadata(job_type)
+
+    monkeypatch.setattr(
+        platform_jobs, "get_platform_job_metadata",
+        metadata_lookup,
+    )
+    monkeypatch.setattr(kubernetes_jobs, "get_platform_job_metadata", metadata_lookup)
     return async_session_factory
 
 

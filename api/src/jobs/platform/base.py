@@ -3,23 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Literal
+from typing import Any, Awaitable, Callable
 from uuid import UUID
 
 from pydantic import BaseModel
 
-
-@dataclass(frozen=True)
-class PlatformJobPolicy:
-    timeout_seconds: int
-    max_attempts: int = 2
-    max_concurrency: int | None = None
-    retry_on_runner_loss: bool = True
-    retry_on_failure: bool = False
-    min_memory_headroom_mb: int = 256
-    hard_memory_ratio: float = 0.95
-    allow_running_cancellation: bool = False
-    execution_class: Literal["default", "build"] = "default"
+from src.jobs.platform.catalog import get_platform_job_metadata
+from src.jobs.platform.policy import PlatformJobPolicy
 
 
 class PlatformJobFailure(Exception):
@@ -144,3 +134,24 @@ class PlatformJobDefinition:
     # leave these unset.
     display_name: str | None = None
     description: str | None = None
+
+
+def define_platform_job(
+    job_type: str,
+    payload_model: type[BaseModel],
+    handler: PlatformJobHandler,
+) -> PlatformJobDefinition:
+    """Materialize a handler definition from the immutable metadata catalog."""
+    metadata = get_platform_job_metadata(job_type)
+    if metadata is None:
+        raise ValueError(f"No platform-job metadata is registered for {job_type}")
+    return PlatformJobDefinition(
+        job_type=metadata.job_type,
+        payload_version=metadata.payload_version,
+        payload_model=payload_model,
+        handler=handler,
+        policy=metadata.policy,
+        encrypt_payload=metadata.encrypt_payload,
+        display_name=metadata.display_name,
+        description=metadata.description,
+    )

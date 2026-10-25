@@ -12,11 +12,8 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import select
 
-from shared import access_checks
-from src.config import get_settings
 from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
-from src.services.access_explain import entry_for_key, test_access
 from src.services.authorization.enforce import (
     Caller,
     load_caller,
@@ -26,16 +23,7 @@ from src.services.authorization.enforce import (
     require_operation,
     require_unprotected,
 )
-from src.services.events import emit_event
-from src.services.user_access_map import get_user_access_map as get_user_access_map_service
-from src.services.user_invite_service import UserInviteService
-from src.services.user_mfa_reset import reset_user_mfa as reset_user_mfa_service
-from src.services.user_role_assignments import (
-    RoleAssignmentError,
-    get_role_assignments as get_role_assignments_service,
-    replace_role_assignments as replace_role_assignments_service,
-)
-from src.models import User as UserORM, UserRole as UserRoleORM, FormRole as FormRoleORM, Organization as OrganizationORM
+from src.models import User as UserORM
 from src.models import (
     BulkUserOperation,
     BulkUserResponse,
@@ -56,7 +44,6 @@ from src.models.contracts.user_invites import (
     CreateInviteResponse,
     SendInviteRequest,
 )
-from src.models.orm.workflows import Workflow as WorkflowORM
 from src.services.operation_catalog import operation_route
 
 logger = logging.getLogger(__name__)
@@ -201,6 +188,8 @@ async def send_invite(
     user: CurrentActiveUser,
     db: DbSession,
 ) -> CreateInviteResponse:
+    from src.services.user_invite_service import UserInviteService
+
     caller = await load_caller(db, user)
     await _require_invite_target(db, caller, user_id, operation="users.invites.send")
     token = _extract_invite_token(request.registration_url)
@@ -257,6 +246,8 @@ async def revoke_invite(
     user: CurrentActiveUser,
     db: DbSession,
 ) -> None:
+    from src.services.user_invite_service import UserInviteService
+
     caller = await load_caller(db, user)
     target = await _require_invite_target(
         db, caller, user_id, operation="users.invites.revoke", missing_ok=True
@@ -287,6 +278,9 @@ async def _require_invite_target(
 async def _generate_invite(
     *, user_id: UUID, actor, db, send: bool
 ) -> CreateInviteResponse:
+    from src.config import get_settings
+    from src.services.user_invite_service import UserInviteService
+
     target = (
         await db.execute(select(UserORM).where(UserORM.id == user_id))
     ).scalar_one_or_none()
@@ -338,6 +332,8 @@ async def _emit_user_invited_event(
     registration_url: str,
     target: UserORM,
 ) -> UUID:
+    from src.services.events import emit_event
+
     event_id, _ = await emit_event(
         "user.invited",
         {
@@ -447,6 +443,7 @@ async def reset_user_mfa(
     db: DbSession,
 ) -> UserMfaResetResponse:
     from shared.sdk_users import UserServiceError
+    from src.services.user_mfa_reset import reset_user_mfa as reset_user_mfa_service
 
     try:
         return await reset_user_mfa_service(db, await load_caller(db, user), user_id)
@@ -466,6 +463,8 @@ async def get_user_roles(
     db: DbSession,
 ) -> UserRolesResponse:
     """Get all roles assigned to a user."""
+    from src.models import UserRole as UserRoleORM
+
     caller = await load_caller(db, user)
     db_user = await _require_assignment_reader(db, caller, user_id, operation="users.roles.list")
     user_uuid = db_user.id
@@ -490,6 +489,9 @@ async def get_user_forms(
     db: DbSession,
 ) -> UserFormsResponse:
     """Get all forms a user can access."""
+    from shared import access_checks
+    from src.models import FormRole as FormRoleORM, UserRole as UserRoleORM
+
     caller = await load_caller(db, user)
     db_user = await _require_assignment_reader(db, caller, user_id, operation="users.forms.list")
 
@@ -565,6 +567,11 @@ async def get_role_assignments(
     user: CurrentActiveUser,
     db: DbSession,
 ) -> UserRoleAssignmentsResponse:
+    from src.services.user_role_assignments import (
+        RoleAssignmentError,
+        get_role_assignments as get_role_assignments_service,
+    )
+
     try:
         return await get_role_assignments_service(db, await load_caller(db, user), user_id=user_id)
     except RoleAssignmentError as e:
@@ -585,6 +592,9 @@ async def get_user_access(
     user: CurrentActiveUser,
     db: DbSession,
 ) -> UserAccessMap:
+    from src.services.user_access_map import get_user_access_map as get_user_access_map_service
+    from src.services.user_role_assignments import RoleAssignmentError
+
     try:
         return await get_user_access_map_service(db, await load_caller(db, user), user_id=user_id)
     except RoleAssignmentError as e:
@@ -603,6 +613,11 @@ async def replace_role_assignments(
     user: CurrentActiveUser,
     db: DbSession,
 ) -> UserRoleAssignmentsResponse:
+    from src.services.user_role_assignments import (
+        RoleAssignmentError,
+        replace_role_assignments as replace_role_assignments_service,
+    )
+
     try:
         return await replace_role_assignments_service(
             db, await load_caller(db, user), user_id=user_id, request=request
@@ -627,6 +642,10 @@ async def check_user_access(
     user: CurrentActiveUser,
     db: DbSession,
 ) -> AccessTrace:
+    from src.models import Organization as OrganizationORM
+    from src.models.orm.workflows import Workflow as WorkflowORM
+    from src.services.access_explain import entry_for_key, test_access
+
     operation = "POST /api/users/{user_id}/access/check"
     caller = await load_caller(db, user)
     reach = operation_reach(caller, operation)

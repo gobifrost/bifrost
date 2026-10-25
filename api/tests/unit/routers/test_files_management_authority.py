@@ -55,7 +55,7 @@ async def test_workspace_read_grant_admits_watcher_snapshot_without_admin_flag(d
 async def test_workspace_write_refuses_read_only_grant_before_storage(db_session, monkeypatch, global_grant):
     user, _home, _foreign = await _person(db_session, "repository.read", global_grant=global_grant, actor_flag=True)
     storage = Mock(side_effect=AssertionError("storage initialized before authorization"))
-    monkeypatch.setattr(files, "FileStorageService", storage)
+    monkeypatch.setattr("src.services.file_storage.FileStorageService", storage)
     with pytest.raises(HTTPException) as error:
         await files.create_folder_editor(SimpleNamespace(), user, "reports", db_session)
     assert error.value.status_code == 403
