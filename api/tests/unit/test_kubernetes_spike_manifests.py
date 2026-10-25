@@ -98,8 +98,7 @@ def test_static_executors_have_fixed_replicas_and_no_autoscaler() -> None:
     assert worker["spec"]["replicas"] == 1  # Extra capacity comes from worker Jobs.
     worker_container = _containers(worker)[0]
     readiness = worker_container["readinessProbe"]["exec"]["command"]
-    assert "bifrost:pool:" in readiness[-1]
-    assert "HOSTNAME" in readiness[-1]
+    assert readiness == ["python", "-m", "src.worker.health", "--ready"]
 
     autoscaling_kinds = {
         "HorizontalPodAutoscaler",

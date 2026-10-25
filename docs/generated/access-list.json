@@ -8602,6 +8602,20 @@
     "reason": "Public/unauthenticated entry point (login, OAuth/device flow, health, CLI download, or inbound webhook)."
   },
   {
+    "access_class": "public",
+    "boundary": null,
+    "current_gate": "none",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "WS",
+    "operation_id": null,
+    "path": "/api/worker-control",
+    "permission": null,
+    "reason": "Custom machine authentication outside human JWT/permission gates: RemoteControlHost.connect verifies installation-secret HMAC, timestamp, monotonic hello sequence, canonical launcher Job/Pod identity and a fenced owner lease before enrollment. Workflow credentials cannot enroll."
+  },
+  {
     "access_class": "permission",
     "boundary": "organization",
     "current_gate": "authenticated",

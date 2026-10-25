@@ -22,6 +22,16 @@
     }
   },
   "failure_dispositions_reference": "2026-10-25-default-remote-runner.md#verification-and-failure-dispositions",
+  "followup_ci_tripwires": {
+    "command": "BIFROST_TEST_IMAGE_TAG=bifrost-test-b60bcc82 BIFROST_SKIP_BUILD=1 ./test.sh tests/unit/test_access_list.py tests/unit/test_kubernetes_spike_manifests.py -q",
+    "fix": "Record custom machine-authenticated worker control in access inventory, regenerate projection, and assert the canonical readiness module; runtime access gates unchanged.",
+    "prior_ci_result": "10190 passed, two failed: missing WebSocket access entry and obsolete readiness assertion",
+    "result": "81 passed in 65.89s"
+  },
+  "followup_task_join_tests": {
+    "command": "BIFROST_TEST_IMAGE_TAG=bifrost-test-b60bcc82 BIFROST_SKIP_BUILD=1 ./test.sh tests/unit/dev/test_thin_launcher.py tests/unit/dev/test_thin_bridge.py tests/unit/worker/remote -q",
+    "result": "49 passed in 1.58s"
+  },
   "job_successes": {
     "agent.summary_backfill": {
       "attempt": 1,

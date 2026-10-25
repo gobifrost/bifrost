@@ -118,7 +118,9 @@ cover those final changes. Image identities and source hashes are in the JSON.
 
 ## Verification and failure dispositions
 
-All **425 tests in the changed unit files passed**. Python lint/types passed.
+The focused runtime suite passed **425 unit tests**. Python lint/types passed.
+After CI found two additional inventory/assertion gaps, the full access-list
+and Kubernetes-manifest tripwires passed **81 tests** locally.
 The final build/Git, reconnect/cancellation, workflow timing, and SDK throughput
 recheck passed all five tests after the reset fix. The preceding combined run
 passed 21 tests and exposed the now-corrected stale-Git reset failure. Exact commands, JUnit
@@ -147,6 +149,11 @@ Failures found during validation received concrete fixes:
   invalid checkout after storage synchronization. Reset now recreates only
   application containers, so their ephemeral files and installed packages
   reset with durable test state. No Git repair fallback was added.
+- CI exposed a missing access-inventory entry for the control WebSocket and an
+  obsolete Redis readiness assertion. The inventory now records its custom HMAC
+  machine authentication, its JSON projection is regenerated, and the manifest
+  test requires the existing worker readiness module. Runtime access gates were
+  unchanged.
 - CodeQL findings prompted an explicit TLS 1.2 minimum in the local fixture and
   cleanup of redundant assignments, protocol bodies, exception handling, and
   test assertions. No skips, retry policy, or timeout inflation was introduced.
