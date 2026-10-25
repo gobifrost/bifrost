@@ -118,25 +118,21 @@ async def get_redis() -> AsyncIterator[redis.Redis]:
 _shared_client: redis.Redis | None = None
 _shared_loop: asyncio.AbstractEventLoop | None = None
 _shared_pid: int | None = None
-_shared_initialization_lock: asyncio.Lock | None = None
-_shared_initialization_loop: asyncio.AbstractEventLoop | None = None
-_shared_initialization_pid: int | None = None
+_shared_initialization: tuple[int, asyncio.AbstractEventLoop, asyncio.Lock] | None = None
 
 
 def _get_shared_initialization_lock() -> asyncio.Lock:
     """Return a lock that is local to the current process and event loop."""
-    global _shared_initialization_lock, _shared_initialization_loop, _shared_initialization_pid
+    global _shared_initialization
     loop = asyncio.get_running_loop()
     pid = os.getpid()
     if (
-        _shared_initialization_lock is None
-        or _shared_initialization_loop is not loop
-        or _shared_initialization_pid != pid
+        _shared_initialization is None
+        or _shared_initialization[0] != pid
+        or _shared_initialization[1] is not loop
     ):
-        _shared_initialization_lock = asyncio.Lock()
-        _shared_initialization_loop = loop
-        _shared_initialization_pid = pid
-    return _shared_initialization_lock
+        _shared_initialization = (pid, loop, asyncio.Lock())
+    return _shared_initialization[2]
 
 
 async def initialize_shared_redis() -> redis.Redis:

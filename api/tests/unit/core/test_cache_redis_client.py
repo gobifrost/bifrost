@@ -86,12 +86,13 @@ async def test_borrowed_client_translates_redis_errors_without_closing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = redis_mock()
+    client.get = AsyncMock(side_effect=redis.ConnectionError("lost connection"))
     monkeypatch.setattr(redis_client.redis, "from_url", MagicMock(return_value=client))
     await redis_client.initialize_shared_redis()
 
     with pytest.raises(redis_client.CacheConnectionError):
-        async with redis_client.get_redis():
-            raise redis.ConnectionError("lost connection")
+        async with redis_client.get_redis() as borrowed:
+            await borrowed.get("connection-error-check")
 
     client.aclose.assert_not_awaited()
 
