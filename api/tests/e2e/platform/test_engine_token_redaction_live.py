@@ -69,6 +69,11 @@ async def {name}():
 
     token = os.environ.get("BIFROST_ACCESS_TOKEN", "")
     logging.getLogger(__name__).info("installed token: %s", token)
+    logging.getLogger(__name__).debug("user debug survives runtime capture")
+    logging.getLogger(__name__).warning(
+        "Authorization: Bearer unknown-header-secret\\r\\n"
+        "Cookie: session=unknown-cookie-secret; theme=dark"
+    )
 
     return {{"sdk_still_works": sdk_still_works, "token": token}}
 '''
@@ -96,7 +101,7 @@ async def {name}():
 
 class TestEngineTokenRedactionLive:
     def test_execution_succeeds_and_token_is_redacted(
-        self, e2e_client, org1_user, engine_token_workflow, local_config
+        self, e2e_client, platform_admin, org1_user, engine_token_workflow, local_config
     ):
         result = execute_workflow_sync(
             e2e_client,
@@ -121,3 +126,17 @@ class TestEngineTokenRedactionLive:
         joined = " ".join(log["message"] for log in logs)
         assert "installed token" in joined
         assert not _JWT_RE.search(joined)
+        assert "unknown-header-secret" not in joined
+        assert "unknown-cookie-secret" not in joined
+
+        # DEBUG rows require diagnostic read access; the ordinary caller's
+        # view above deliberately hides them.
+        diagnostic_logs = e2e_client.get(
+            f"/api/executions/{result['execution_id']}/logs",
+            headers=platform_admin.headers,
+        )
+        assert diagnostic_logs.status_code == 200, diagnostic_logs.text
+        assert any(
+            log["message"] == "user debug survives runtime capture"
+            for log in diagnostic_logs.json()
+        )

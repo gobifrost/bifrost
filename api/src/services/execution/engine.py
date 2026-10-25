@@ -4,19 +4,21 @@ Single source of truth for all code execution (workflows, scripts, data provider
 """
 
 import asyncio
+import copy
 import dis
 import inspect
 import json
 import logging
 import os
+import re
 import signal
 import sys
-from contextlib import redirect_stdout, redirect_stderr
+from contextlib import ExitStack, contextmanager, redirect_stdout, redirect_stderr
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
-from typing import Any, get_type_hints, get_origin, get_args, Union
+from typing import Any, Callable, Iterator, get_type_hints, get_origin, get_args, Union
 
 from pydantic import BaseModel
 
@@ -30,6 +32,139 @@ from src.core.error_messages import format_exception_message
 from src.core.secret_string import redact_secrets
 
 logger = logging.getLogger(__name__)
+
+
+_RUNTIME_TRANSPORT_LOGGERS = (
+    "httpcore",
+    "hpack",
+    "h2",
+    "h11",
+    "urllib3.connectionpool",
+)
+_RUNTIME_CREDENTIAL_HEADERS = (
+    "authorization",
+    "proxy-authorization",
+    "cookie",
+    "set-cookie",
+)
+_RUNTIME_CREDENTIAL_HEADER_PATTERN = "|".join(_RUNTIME_CREDENTIAL_HEADERS)
+_RUNTIME_HEADER_LINE_RE = re.compile(
+    rf"(?i)(\b(?:{_RUNTIME_CREDENTIAL_HEADER_PATTERN})\s*:\s*)(.*?)(?=(?:[\r\n]|\\[rn])|$)"
+)
+_RUNTIME_HEADER_STRUCTURED_RE = re.compile(
+    rf"(?i)((?:b)?(?:\\?['\"])(?:{_RUNTIME_CREDENTIAL_HEADER_PATTERN})(?:\\?['\"])\s*[:,]\s*(?:b)?)"
+)
+
+
+def _quoted_log_scalar_end(message: str, start: int) -> int | None:
+    """Return the end of a quoted repr/JSON scalar without splitting its value."""
+    escaped_delimiter = message.startswith("\\'", start) or message.startswith('\\"', start)
+    delimiter_length = 2 if escaped_delimiter else 1
+    quote = message[start + delimiter_length - 1]
+    index = start + delimiter_length
+    while index < len(message):
+        if escaped_delimiter:
+            if message.startswith(f"\\{quote}", index):
+                following = index + 2
+                while following < len(message) and message[following].isspace():
+                    following += 1
+                if following == len(message) or message[following] in ",)]}":
+                    return index + 2
+                index += 2
+                continue
+        elif message[index] == "\\":
+            index += 2
+            continue
+        elif message[index] == quote:
+            return index + 1
+        index += 1
+    return None
+
+
+def _sanitize_structured_header_values(message: str) -> str:
+    """Redact quoted dict and bytes-tuple header values without truncating them."""
+    sanitized: list[str] = []
+    cursor = 0
+    for match in _RUNTIME_HEADER_STRUCTURED_RE.finditer(message):
+        if match.start() < cursor:
+            continue
+        value_start = match.end()
+        if value_start >= len(message) or message[value_start] not in "'\\\"":
+            continue
+        value_end = _quoted_log_scalar_end(message, value_start)
+        if value_end is None:
+            delimiter_length = 2 if message[value_start] == "\\" else 1
+            delimiter = message[value_start:value_start + delimiter_length]
+            sanitized.append(message[cursor:value_start])
+            sanitized.append(f"{delimiter}[REDACTED]")
+            return "".join(sanitized)
+        delimiter_length = 2 if message[value_start] == "\\" else 1
+        delimiter = message[value_start:value_start + delimiter_length]
+        sanitized.append(message[cursor:value_start])
+        sanitized.append(f"{delimiter}[REDACTED]{delimiter}")
+        cursor = value_end
+    sanitized.append(message[cursor:])
+    return "".join(sanitized)
+
+
+def _sanitize_runtime_log_message(message: str, secret_values: set[str]) -> str:
+    """Redact credentials from HTTP header renderings before they leave the engine."""
+    sanitized = _sanitize_structured_header_values(message)
+    sanitized = _RUNTIME_HEADER_LINE_RE.sub(
+        lambda match: f"{match.group(1)}[REDACTED]", sanitized
+    )
+    return redact_secrets(sanitized, secret_values)
+
+
+class _RuntimeLogSanitizingFormatter(logging.Formatter):
+    """Format a cloned record so console output cannot alter capture behavior."""
+
+    def __init__(
+        self,
+        formatter: logging.Formatter | None,
+        secret_values: Callable[[], set[str]],
+    ) -> None:
+        super().__init__()
+        self._formatter = formatter or logging.Formatter()
+        self._secret_values = secret_values
+
+    def format(self, record: logging.LogRecord) -> str:
+        formatted = self._formatter.format(copy.copy(record))
+        return _sanitize_runtime_log_message(formatted, self._secret_values())
+
+
+@contextmanager
+def _runtime_logging_scope(
+    root_logger: logging.Logger,
+    secret_values: Callable[[], set[str]],
+) -> Iterator[None]:
+    """Capture user DEBUG logs while keeping transport noise and credentials scoped."""
+    root_level = root_logger.level
+    handlers = list(root_logger.handlers)
+    handler_formatters = [(handler, handler.formatter) for handler in handlers]
+    logger_levels: dict[logging.Logger, int] = {}
+    for name, candidate in logging.root.manager.loggerDict.items():
+        if not isinstance(candidate, logging.Logger):
+            continue
+        if any(name == family or name.startswith(f"{family}.") for family in _RUNTIME_TRANSPORT_LOGGERS):
+            logger_levels[candidate] = candidate.level
+    for family in _RUNTIME_TRANSPORT_LOGGERS:
+        transport_logger = logging.getLogger(family)
+        logger_levels.setdefault(transport_logger, transport_logger.level)
+
+    for handler, formatter in handler_formatters:
+        handler.setFormatter(_RuntimeLogSanitizingFormatter(formatter, secret_values))
+    for transport_logger, level in logger_levels.items():
+        transport_logger.setLevel(max(level, logging.INFO))
+    root_logger.setLevel(logging.DEBUG)
+    try:
+        yield
+    finally:
+        root_logger.setLevel(root_level)
+        for transport_logger, level in logger_levels.items():
+            transport_logger.setLevel(level)
+        for handler, formatter in handler_formatters:
+            handler.setFormatter(formatter)
 
 
 def _human_size(num_bytes: int) -> str:
@@ -235,8 +370,15 @@ def _scrub_outputs(
     logs: list[dict[str, Any]] | None = None,
     error_message: str | None = None,
 ) -> tuple[Any, dict[str, Any] | None, list[dict[str, Any]] | None, str | None]:
-    """Scrub secret values from execution outputs before returning."""
+    """Scrub credentials from logs/errors and known secrets from all outputs."""
     secret_values = context._collect_secret_values()
+    if logs is not None:
+        logs = [
+            {**entry, "message": _sanitize_runtime_log_message(entry["message"], secret_values)}
+            for entry in logs
+        ]
+    if error_message is not None:
+        error_message = _sanitize_runtime_log_message(error_message, secret_values)
     if not secret_values:
         return result, variables, logs, error_message
     return (
@@ -604,15 +746,16 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
             context=execution_context,
         )
 
-        logger.error(
-            f"Execution error: {request.name or 'script'}",
-            extra={
-                "execution_id": request.execution_id,
-                "error": error_message,
-                "error_type": type(e).__name__
-            },
-            exc_info=True
-        )
+        with _runtime_logging_scope(logging.getLogger(), context._collect_secret_values):
+            logger.error(
+                f"Execution error: {request.name or 'script'}",
+                extra={
+                    "execution_id": request.execution_id,
+                    "error": _sanitize_runtime_log_message(error_message, context._collect_secret_values()),
+                    "error_type": type(e).__name__
+                },
+                exc_info=True
+            )
 
         # Add traceback to logs
         import traceback
@@ -822,11 +965,7 @@ async def execute_service(
         # they land verbatim in ServiceAttempt.error via the attempts API.
         secret_values = context._collect_secret_values()
         raw_message = format_exception_message(e)
-        error_message = (
-            redact_secrets(raw_message, secret_values)
-            if secret_values
-            else raw_message
-        )
+        error_message = _sanitize_runtime_log_message(raw_message, secret_values)
         service_logger.error("service failed: %s", error_message)
         e.__traceback__ = None
         return ExecutionResult(
@@ -940,8 +1079,7 @@ async def _execute_service_with_trace(
         def emit(self, record: logging.LogRecord) -> None:
             message = record.getMessage()
             current_secrets = context._collect_secret_values()
-            if current_secrets:
-                message = redact_secrets(message, current_secrets)
+            message = _sanitize_runtime_log_message(message, current_secrets)
             service_logs.append(
                 {"level": record.levelname, "message": message}
             )
@@ -953,14 +1091,17 @@ async def _execute_service_with_trace(
     handler = ServiceLogHandler()
     handler.setLevel(logging.DEBUG)
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)
-    root_logger.addHandler(handler)
-    # System rows are first-class service log entries: starting is emitted
-    # here so the handler above captures it like every later row.
-    logging.getLogger(getattr(func, "__module__", __name__)).info(
-        "service starting (revision %s)", cfg.revision or "unknown"
+    logging_scope = ExitStack()
+    logging_scope.enter_context(
+        _runtime_logging_scope(root_logger, context._collect_secret_values)
     )
+    root_logger.addHandler(handler)
     try:
+        # System rows are first-class service log entries: starting is emitted
+        # here so the handler above captures it like every later row.
+        logging.getLogger(getattr(func, "__module__", __name__)).info(
+            "service starting (revision %s)", cfg.revision or "unknown"
+        )
         sig = inspect.signature(func)
         params = list(sig.parameters.values())
         accepted_param_names = {p.name for p in params}
@@ -1030,6 +1171,7 @@ async def _execute_service_with_trace(
         return user_task.result(), service_logs, False
     finally:
         root_logger.removeHandler(handler)
+        logging_scope.close()
 
 
 def _script_to_callable(code: str, name: str):
@@ -1214,8 +1356,7 @@ async def _execute_workflow_with_trace(
             # Format: [LEVEL] message
             message = record.getMessage()
             _current_secrets = context._collect_secret_values()
-            if _current_secrets:
-                message = redact_secrets(message, _current_secrets)
+            message = _sanitize_runtime_log_message(message, _current_secrets)
             log_entry = f"[{record.levelname}] {message}"
             workflow_logs.append(log_entry)
 
@@ -1262,7 +1403,10 @@ async def _execute_workflow_with_trace(
 
     # Attach to root logger since workflows use logging.info() which goes to root
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)  # Set logger level to capture DEBUG messages
+    logging_scope = ExitStack()
+    logging_scope.enter_context(
+        _runtime_logging_scope(root_logger, context._collect_secret_values)
+    )
     root_logger.addHandler(handler)
 
     def remove_circular_refs(obj, seen=None):
@@ -1504,6 +1648,7 @@ async def _execute_workflow_with_trace(
         # Note: trace function cleanup is handled in _run_workflow_in_thread
         # Clean up the logging handler
         root_logger.removeHandler(handler)
+        logging_scope.close()
         # Note: Extra params are now stored in context.parameters instead of being
         # injected into func.__globals__, so no cleanup needed here
 

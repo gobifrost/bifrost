@@ -7,6 +7,7 @@ supervisor (ready drain, stop mirror, credential rotation) with scoped I/O.
 
 import asyncio
 import json
+from io import StringIO
 import logging
 
 import pytest
@@ -181,6 +182,27 @@ async def test_exception_message_redacts_fetched_secrets():
     assert result.status == ExecutionStatus.FAILED
     assert "s3cr3t-service-token-value" not in (result.error_message or "")
     assert "s3cr3t-service-token-value" not in json.dumps(result.logs)
+
+
+async def test_exception_header_is_redacted_after_service_capture_closes():
+    @service
+    async def bridge():
+        raise RuntimeError("Set-Cookie: session=service-exception-secret; Path=/")
+
+    stream = StringIO()
+    console = logging.StreamHandler(stream)
+    console.setFormatter(logging.Formatter("[worker] %(levelname)s - %(message)s"))
+    root = logging.getLogger()
+    root.addHandler(console)
+    try:
+        result = await execute(_request(bridge))
+    finally:
+        root.removeHandler(console)
+
+    assert result.status == ExecutionStatus.FAILED
+    assert "service-exception-secret" not in (result.error_message or "")
+    assert "service-exception-secret" not in stream.getvalue()
+    assert "[REDACTED]" in (result.error_message or "")
 
 
 async def test_stop_control_unwinds_to_success(runtime_io):
