@@ -41,6 +41,15 @@ _RUNTIME_TRANSPORT_LOGGERS = (
     "h11",
     "urllib3.connectionpool",
 )
+
+
+def _is_runtime_transport_logger(name: str) -> bool:
+    return any(
+        name == family or name.startswith(f"{family}.")
+        for family in _RUNTIME_TRANSPORT_LOGGERS
+    )
+
+
 _RUNTIME_CREDENTIAL_HEADERS = (
     "authorization",
     "proxy-authorization",
@@ -146,7 +155,7 @@ def _runtime_logging_scope(
     for name, candidate in logging.root.manager.loggerDict.items():
         if not isinstance(candidate, logging.Logger):
             continue
-        if any(name == family or name.startswith(f"{family}.") for family in _RUNTIME_TRANSPORT_LOGGERS):
+        if _is_runtime_transport_logger(name):
             logger_levels[candidate] = candidate.level
     for family in _RUNTIME_TRANSPORT_LOGGERS:
         transport_logger = logging.getLogger(family)
@@ -1246,7 +1255,14 @@ def _script_to_callable(code: str, name: str):
         setattr(script_logging, 'critical', script_logger.critical)
         setattr(script_logging, 'exception', script_logger.exception)
         setattr(script_logging, 'log', script_logger.log)
-        setattr(script_logging, 'getLogger', lambda name=None: script_logger)  # Return our logger for any getLogger calls
+        def get_script_logger(name: str | None = None) -> logging.Logger:
+            # Third-party modules imported by a script bind this logger during
+            # import, so transport families must retain their real identities.
+            if name is not None and _is_runtime_transport_logger(name):
+                return logging.getLogger(name)
+            return script_logger
+
+        setattr(script_logging, 'getLogger', get_script_logger)
 
         # Temporarily replace logging in sys.modules so imports get our wrapper
         original_logging = sys.modules.get('logging')

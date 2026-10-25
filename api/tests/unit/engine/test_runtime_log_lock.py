@@ -1,14 +1,16 @@
 """Runtime log delivery does not lock out infrastructure logging threads."""
 
 import asyncio
+import base64
 from io import StringIO
 import logging
+import sys
 import threading
 from uuid import uuid4
 
 import pytest
 
-from src.sdk.context import ExecutionContext
+from src.sdk.context import Caller, ExecutionContext
 from src.services.execution import engine
 
 
@@ -32,6 +34,18 @@ def _service_config() -> engine.ServiceRunConfig:
     return engine.ServiceRunConfig(
         service_id=str(uuid4()), attempt_id=str(uuid4()), lease_token="test-lease",
         revision="review", token="test-attempt", token_expires_at="2026-10-17T00:00:00Z",
+    )
+
+
+def _inline_script_request(code: str) -> engine.ExecutionRequest:
+    return engine.ExecutionRequest(
+        execution_id=str(uuid4()),
+        caller=Caller(
+            user_id=str(uuid4()), email="actor@example.test", name="Contoso Actor",
+        ),
+        organization=None,
+        code=base64.b64encode(code.encode()).decode(),
+        name="fresh_transport_import",
     )
 
 
@@ -187,6 +201,50 @@ async def test_runtime_logs_scrub_headers_without_hiding_user_debug_or_info(monk
             "escaped-cookie-secret", "nested-header-secret", "transport-secret", "continued",
         ):
             assert secret not in output
+
+
+async def test_inline_script_fresh_transport_import_uses_transport_logger():
+    """Fresh urllib3 imports retain their noisy logger while user DEBUG is captured."""
+    transport_marker = "fresh-urllib3-transport-debug"
+    user_marker = "inline-user-debug-survives"
+    console_stream = StringIO()
+    console = logging.StreamHandler(console_stream)
+    console.setLevel(logging.DEBUG)
+    root_logger = logging.getLogger()
+    root_logger.addHandler(console)
+
+    prefixes = ("requests", "urllib3")
+    saved_modules = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == prefixes[0] or name.startswith(f"{prefixes[0]}.")
+        or name == prefixes[1] or name.startswith(f"{prefixes[1]}.")
+    }
+    for name in saved_modules:
+        sys.modules.pop(name)
+
+    try:
+        result = await engine.execute(_inline_script_request(f"""
+import logging
+import requests
+import urllib3.connectionpool
+
+urllib3.connectionpool.log.debug("{transport_marker}")
+logging.getLogger("user").debug("{user_marker}")
+result = "done"
+"""))
+    finally:
+        root_logger.removeHandler(console)
+        for name in tuple(sys.modules):
+            if any(name == prefix or name.startswith(f"{prefix}.") for prefix in prefixes):
+                sys.modules.pop(name)
+        sys.modules.update(saved_modules)
+
+    captured_output = "\n".join(entry["message"] for entry in result.logs)
+    assert result.result == "done"
+    assert transport_marker not in captured_output
+    assert transport_marker not in console_stream.getvalue()
+    assert user_marker in captured_output
 
 
 @pytest.mark.asyncio
