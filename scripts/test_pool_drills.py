@@ -52,11 +52,44 @@ class PoolDrillTests(unittest.TestCase):
         spike = sys.modules[drills.wait_for_rollout.__module__]
         deployment = {
             "metadata": {"generation": 4}, "spec": {"replicas": 2},
-            "status": {"conditions": [{"type": "Progressing", "reason": "ProgressDeadlineExceeded", "message": "failed rollout"}]},
+            "status": {"observedGeneration": 4, "conditions": [{"type": "Progressing", "reason": "ProgressDeadlineExceeded", "message": "failed rollout"}]},
         }
         with (
             patch.object(spike, "kubectl", return_value=json.dumps(deployment)),
             self.assertRaisesRegex(RuntimeError, "failed rollout"),
+        ):
+            drills.wait_for_rollout("deployment/bifrost-api", 600)
+
+    def test_rollout_ignores_a_previous_generations_failure_condition(self) -> None:
+        drills = pool_drills()
+        spike = sys.modules[drills.wait_for_rollout.__module__]
+        stale = {
+            "metadata": {"generation": 5}, "spec": {"replicas": 2},
+            "status": {"observedGeneration": 4, "conditions": [{"type": "Progressing", "reason": "ProgressDeadlineExceeded"}]},
+        }
+        complete = {
+            **stale, "status": {"observedGeneration": 5, "replicas": 2, "updatedReplicas": 2, "availableReplicas": 2},
+        }
+        with (
+            patch.object(spike, "kubectl", side_effect=[json.dumps(stale), json.dumps(complete)]) as request,
+            patch.object(spike.time, "sleep"),
+        ):
+            drills.wait_for_rollout("deployment/bifrost-api", 600)
+        self.assertEqual(request.call_count, 2)
+
+    def test_rollout_accepts_a_deployment_scaled_to_zero(self) -> None:
+        drills = pool_drills()
+        spike = sys.modules[drills.wait_for_rollout.__module__]
+        deployment = {"metadata": {"generation": 4}, "spec": {"replicas": 0}, "status": {"observedGeneration": 4}}
+        with patch.object(spike, "kubectl", return_value=json.dumps(deployment)):
+            drills.wait_for_rollout("deployment/bifrost-worker", 600)
+
+    def test_rollout_stops_at_its_existing_deadline(self) -> None:
+        drills = pool_drills()
+        spike = sys.modules[drills.wait_for_rollout.__module__]
+        with (
+            patch.object(spike.time, "monotonic", side_effect=[0, 601]),
+            self.assertRaises(TimeoutError),
         ):
             drills.wait_for_rollout("deployment/bifrost-api", 600)
 

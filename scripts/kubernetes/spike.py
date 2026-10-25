@@ -25,12 +25,13 @@ def wait_for_rollout(resource: str, timeout: float) -> None:
     while time.monotonic() < deadline:
         deployment = json.loads(kubectl("get", resource, "-o", "json", "--request-timeout=10s"))
         status = deployment.get("status", {})
+        observed = status.get("observedGeneration", 0) >= deployment["metadata"]["generation"]
         for condition in status.get("conditions", []):
-            if condition.get("type") == "Progressing" and condition.get("reason") == "ProgressDeadlineExceeded":
+            if observed and condition.get("type") == "Progressing" and condition.get("reason") == "ProgressDeadlineExceeded":
                 raise RuntimeError(f"{resource}: {condition.get('message', 'rollout failed')}")
         desired = deployment["spec"].get("replicas", 1)
         if (
-            status.get("observedGeneration", 0) >= deployment["metadata"]["generation"]
+            observed
             and status.get("updatedReplicas", 0) == desired
             and status.get("replicas", 0) == desired
             and status.get("availableReplicas", 0) == desired
