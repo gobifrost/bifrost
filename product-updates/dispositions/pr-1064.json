@@ -1,0 +1,18 @@
+{
+  "key": "pr:1064",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "hardening",
+  "summary": "Workflow and service logs mask credential-bearing HTTP headers while retaining user DEBUG messages.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1064",
+      "Jack authorized the runtime credential-log repair and autonomous merge after verification on 2026-10-24. Independent Codex security review confirmed and regression-tested both post-capture error paths."
+    ]
+  },
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1064"
+  }
+}
