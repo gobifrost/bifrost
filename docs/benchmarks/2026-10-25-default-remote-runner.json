@@ -30,6 +30,11 @@
   },
   "followup_legacy_controller_import": {
     "command": "BIFROST_TEST_IMAGE_TAG=bifrost-test-b60bcc82 BIFROST_SKIP_BUILD=1 ./test.sh tests/unit/scheduler/test_kubernetes_host.py tests/unit/test_remote_launcher_deployment_contract.py -q",
+    "guard_recheck": {
+      "command": "BIFROST_TEST_IMAGE_TAG=bifrost-test-b60bcc82 BIFROST_SKIP_BUILD=1 ./test.sh tests/unit/scheduler/test_kubernetes_host.py::test_launcher_control_wrapper_imports_no_application_runtime -q",
+      "reason": "CodeQL requested an explicit source string instead of implicit string concatenation in the subprocess argument list.",
+      "summary": "1 passed in 0.50s; targeted Docker Ruff check passed"
+    },
     "import_probe": {
       "image": "bifrost-test-api-dev:bifrost-test-b60bcc82",
       "image_id": "sha256:71c74aeb8ba034c213016c2cb0e0fd5eda5970f84f3bc65d360e34ce0b462691",
@@ -47,7 +52,7 @@
     "source_base_commit": "c1335c8ddf81ba6458a7301bc9e3fb74ee54262f",
     "source_hashes": {
       "api/src/scheduler/kubernetes_host.py": "20695f06c03b8f6beb1ec8fe31815efd4aec641127dc9981390458667a61f2f9",
-      "api/tests/unit/scheduler/test_kubernetes_host.py": "0f7d4bad9ea57b4b1f76b48b4adcb3bb6a7cb37a3dc90e4ac23ffec62e5aeb8a"
+      "api/tests/unit/scheduler/test_kubernetes_host.py": "f306371e4706f214d0aaf0458833bf4fc50dddbb4f89873a9df4d768b892fc76"
     },
     "summary": "10 passed in 8.48s"
   },

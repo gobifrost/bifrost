@@ -114,10 +114,16 @@ async def test_launcher_wrapper_stops_token_gated_control_helper(
 
 def test_launcher_control_wrapper_imports_no_application_runtime() -> None:
     """A token-mounted launcher must remain lean beside its controller helper."""
+    source = """
+import sys
+import src.scheduler.kubernetes_host
+assert not {
+    'sqlalchemy', 'pydantic', 'httpx', 'src.config',
+    'src.core.database', 'src.services.kubernetes_control',
+} & sys.modules.keys()
+"""
     subprocess.run(
-        [sys.executable, "-c", "import sys; import src.scheduler.kubernetes_host; "
-         "assert not {'sqlalchemy', 'pydantic', 'httpx', 'src.config', "
-         "'src.core.database', 'src.services.kubernetes_control'} & sys.modules.keys()"],
+        [sys.executable, "-c", source],
         check=True,
         capture_output=True,
         text=True,
