@@ -115,3 +115,49 @@ A Cloudflare port still needs validated container lifecycle/admission, control r
 ## Remaining production work
 
 Live type coverage is now complete for the local backend. Production incarnation-scoped Kubernetes enrollment, API reconnect/adoption and owner fencing, and correct pre-claim API/worker resource admission are still blockers. The existing prototype can hold an agent claim while waiting indefinitely for API capacity, and ends children when the control connection dies. Also validate isolated Kubernetes launches, real package changes, large payloads, cancellation/loss/drain under load, and API/SDK throughput. Consolidate the dev adapter/test-fixture lifecycle and rebase onto current main before a PR or rollout.
+
+## Hosted deployment assessment — 2026-10-25
+
+This is a source-backed implementation roadmap, not a deployed or tested Cloudflare/Neon configuration. The measurements above remain local Docker results. No runtime code changes were made for this assessment.
+
+### First hosted deployment
+
+The useful first target removes cluster management while retaining warm request handling. Full application scale-to-zero is a later milestone with different latency and scheduling requirements.
+
+| Responsibility | Proposed host | Initial lifecycle |
+|---|---|---|
+| Static frontend and request routing | Cloudflare static hosting and a small routing Worker | Managed edge delivery |
+| Existing Python API, execution control, agents and summaries | Cloudflare Containers, subject to network/throughput validation | Warm; replicas sized for availability and measured load |
+| Workflow/service processes and platform-job handlers | Same thin launcher in Cloudflare Containers | Demand-started with a configurable warm minimum and idle drain |
+| Relational state, work dispatch, worker identities and leases | Neon Postgres | Warm for predictable production latency initially |
+| Source, application output and artifacts | R2 through the existing S3 storage boundary | Persistent independently of container lifecycle |
+| Cache, log/event streams, result waits and pub/sub | A compatible managed Redis service | Retained initially; provider feature validation required |
+
+Neon supports PostgreSQL and pgvector, so this direction preserves the relational data model rather than porting it to SQLite. Its transaction-mode pooled endpoint needs an actual compatibility rehearsal with our asyncpg/SQLAlchemy configuration; use an appropriate direct connection for migrations and session-dependent administration. Bifrost's scheduler leadership already uses database-time row leases specifically for transaction-pool compatibility. Source: [Neon connection pooling](https://neon.com/docs/connect/connection-pooling), [pgvector](https://neon.com/docs/extensions/pgvector).
+
+R2 exposes an S3-compatible API and `RepoStorage` already accepts a configurable endpoint. That is a promising existing boundary, not evidence that every upload, presigned URL, multipart operation or browser CORS path has been validated on R2. Source: [R2 compatibility](https://developers.cloudflare.com/r2/api/s3/api/).
+
+### Shared runtime work before a provider port
+
+1. **Separate memory admission by execution location before claiming.** `ApiExecutor._run_claim` currently waits for API memory after PostgreSQL assignment. Add a narrow claim-admission seam to `PoolWorker`, keeping its canonical claim loop. Under a consistent lock order, reserve the resources required by each handler before committing its claim. Remote workflow work must remain eligible when only the API's agent/summary budget is exhausted. Cover full API capacity, concurrent reservations, oversized requests and release after failed startup. Resource advertisements and controller sizing must describe the same domains; a new remote launcher does not add API agent capacity.
+2. **Make launcher identity independent of its connection.** Reuse canonical worker incarnations, liveness and lost-worker recovery. Replace the single-use local bootstrap with authenticated enrollment bound to an immutable physical launcher identity. Kubernetes enrollment must retain its Job/Pod identity checks; a Cloudflare adapter needs an equivalent authenticated provider-instance binding. Add a persisted control-owner lease and session generation so another API replica can adopt a launcher without trusting an old socket or a PID on another machine.
+3. **Reconcile active work across reconnects.** Inventory active route IDs with execution/attempt/job lease identity and retain unacknowledged terminal results until ownership-aware reconciliation accepts them. Superseded sessions must not issue commands or write completion. A transient transport loss should not immediately destroy all children; an expired ownership lease must still trigger canonical loss handling. Preserve existing workflow replay semantics: do not automatically rerun started workflows that may have external side effects. Test disconnect during launch, execution and completion, API restart, competing API owners, stale results, container loss and cancellation while disconnected.
+4. **Consolidate the implementation and validate Kubernetes.** Promote the dev adapter into one supported backend boundary, remove obsolete experiment-only paths, and exercise real package changes, large payloads, cancellation/drain, isolated launches and concurrency. Rebase against current main and repeat focused verification after the implementation changes. The all-types local result does not prove these failure paths.
+
+The existing worker lifecycle, workflow completion ownership checks, service attempt tokens, PlatformJob lease tokens and unstarted-claim recovery are capabilities to extend. Cloudflare lifecycle coordination must not become another business-job queue or replace PostgreSQL dispatch authority.
+
+### Cloudflare and Neon proof
+
+After the shared runtime is sound, implement a provider adapter that starts/stops launchers and delivers advisory wakes while the canonical PostgreSQL claim remains authoritative. Validate one workflow, one SDK-reading workflow, one real app build and live log delivery first, then repeat every registered job type on the hosted backend. Trusted platform-job subprocesses still need database, Redis and object-storage connectivity; they are not API-only clients today.
+
+Measure cold and warm HTTP latency, dispatch latency, SDK round trips, container startup, build speed, concurrency, dependency restoration and billing. Keep control and data geographically close and test actual network latency: Cloudflare exposes regional placement constraints, which do not promise that a container shares a datacenter with Neon. Source: [Cloudflare placement](https://developers.cloudflare.com/containers/concepts/placement/).
+
+### What full scale-to-zero would additionally require
+
+Current idle traffic prevents database sleep: executors poll PostgreSQL for work every second, local PlatformJob claims scan every two seconds, and API control continuously renews leadership and reconciles dispatch. Merely switching the database URL to Neon will not remove those queries. Neon normally suspends after five inactive minutes and reports resume in a few hundred milliseconds; that is a provider claim, not a Bifrost measurement. Source: [Neon scale to zero](https://neon.com/docs/introduction/scale-to-zero).
+
+To let all compute sleep, externalize wake timing, not job authority. A durable next-due alarm or request must start the existing control/dispatch paths; committed work must remain discoverable if its immediate wake is lost. Cloudflare Durable Object alarms can wake coordination without a live container and have at-least-once delivery, so callbacks must use Bifrost's existing idempotence and fencing. Scheduler ordering, missed schedules and maintenance/recovery deadlines need explicit parity tests. Source: [Durable Object alarms](https://developers.cloudflare.com/durable-objects/api/alarms/).
+
+The current API also owns browser WebSockets and Redis subscriptions. Retaining an open socket can require keeping that API alive. Sleeping it would require a deliberately implemented edge connection owner plus authorized replay/reconnect, or an explicit change in realtime behavior. Redis pub/sub alone cannot replay missed events. Continuous user services and actively running jobs are real work and must keep their runtime alive.
+
+Warm API/control and database capacity is the initial choice for preserving response speed. A fully sleeping environment would add application/container/database cold starts. It cannot be promised to match warm latency. Removing Redis or rewriting the Python API as native Workers is not required for the first hosted deployment.
