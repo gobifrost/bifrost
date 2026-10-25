@@ -153,11 +153,12 @@ async def test_lifespan_hosts_control_and_remote_launchers(
     from src import main as api_main
 
     hosts: list[MagicMock] = []
+    shutdown: list[str] = []
 
     def make_host() -> MagicMock:
         host = MagicMock()
         host.start = AsyncMock()
-        host.stop = AsyncMock()
+        host.stop = AsyncMock(side_effect=lambda: shutdown.append("control"))
         hosts.append(host)
         return host
 
@@ -171,16 +172,25 @@ async def test_lifespan_hosts_control_and_remote_launchers(
     monkeypatch.setattr(api_main, "close_db", AsyncMock())
     monkeypatch.setattr(api_main, "register_dynamic_workflow_endpoints", AsyncMock())
     monkeypatch.setattr(api_main, "get_session_factory", MagicMock(side_effect=RuntimeError))
-    monkeypatch.setattr(api_main.pubsub_manager, "close", AsyncMock())
+    shared_redis_start = AsyncMock()
+    shared_redis_close = AsyncMock(side_effect=lambda: shutdown.append("redis"))
+    monkeypatch.setattr(api_main, "initialize_shared_redis", shared_redis_start)
+    monkeypatch.setattr(api_main, "close_shared_redis", shared_redis_close)
+    monkeypatch.setattr(
+        api_main.pubsub_manager,
+        "close",
+        AsyncMock(side_effect=lambda: shutdown.append("pubsub")),
+    )
     monkeypatch.setattr(api_main, "close_health_check_clients", AsyncMock())
     monkeypatch.setattr(api_host, "ApiControlHost", make_host)
     remote_start = AsyncMock()
-    remote_stop = AsyncMock()
+    remote_stop = AsyncMock(side_effect=lambda: shutdown.append("remote"))
     monkeypatch.setattr(api_main, "start_remote_control_host", remote_start)
     monkeypatch.setattr(api_main, "stop_remote_control_host", remote_stop)
 
     application = FastAPI()
     async with api_main.app_lifespan(application):
+        shared_redis_start.assert_awaited_once()
         [host] = hosts
         host.start.assert_awaited_once()
         host.stop.assert_not_awaited()
@@ -188,6 +198,9 @@ async def test_lifespan_hosts_control_and_remote_launchers(
         remote_stop.assert_not_awaited()
     host.stop.assert_awaited_once()
     remote_stop.assert_awaited_once()
+    shared_redis_close.assert_awaited_once()
+    assert shutdown.index("remote") < shutdown.index("control") < shutdown.index("pubsub")
+    assert shutdown.index("pubsub") < shutdown.index("redis")
 
 @pytest.mark.asyncio
 async def test_lifespan_imports_kubernetes_settings_before_serving(
@@ -220,6 +233,8 @@ async def test_lifespan_imports_kubernetes_settings_before_serving(
     monkeypatch.setattr(api_main, "close_db", AsyncMock())
     monkeypatch.setattr(api_main, "register_dynamic_workflow_endpoints", AsyncMock())
     monkeypatch.setattr(api_main, "get_session_factory", lambda: open_session)
+    monkeypatch.setattr(api_main, "initialize_shared_redis", AsyncMock())
+    monkeypatch.setattr(api_main, "close_shared_redis", AsyncMock())
     monkeypatch.setattr(api_main.pubsub_manager, "close", AsyncMock())
     monkeypatch.setattr(api_main, "close_health_check_clients", AsyncMock())
     monkeypatch.setattr(api_host, "ApiControlHost", lambda: MagicMock(start=AsyncMock(), stop=AsyncMock()))

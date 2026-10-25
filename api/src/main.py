@@ -13,6 +13,7 @@ from typing import AsyncGenerator
 from fastapi import FastAPI
 
 from src.config import get_settings
+from src.core.cache.redis_client import close_shared_redis, initialize_shared_redis
 from src.core.csrf import CSRFMiddleware
 from src.core.embed_middleware import EmbedScopeMiddleware
 from src.core.request_body_limit import RouteBodyLimitMiddleware
@@ -147,6 +148,9 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await init_db()
     logger.info("Database connection established")
 
+    await initialize_shared_redis()
+    logger.info("Redis cache connection established")
+
     # Register dynamic workflow endpoints for OpenAPI documentation
     logger.info("Registering workflow endpoints...")
     await register_dynamic_workflow_endpoints(app)
@@ -230,6 +234,7 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     await close_ai_retry_http_client()
     await pubsub_manager.close()
+    await close_shared_redis()
     await close_health_check_clients()
     await close_db()
     logger.info("Bifrost API shutdown complete")

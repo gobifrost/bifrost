@@ -167,11 +167,13 @@ async def isolate_global_db_engine() -> AsyncGenerator[None, None]:
 
 @pytest_asyncio.fixture(autouse=True)
 async def isolate_global_redis_client() -> AsyncGenerator[None, None]:
-    """Close the process-global async Redis connection on its owning test loop."""
+    """Close process-global Redis pools on their owning test loop."""
+    from src.core.cache.redis_client import close_shared_redis
     from src.core.redis_client import close_redis_client
 
     yield
     await close_redis_client()
+    await close_shared_redis()
 
 
 @pytest_asyncio.fixture(autouse=True)
