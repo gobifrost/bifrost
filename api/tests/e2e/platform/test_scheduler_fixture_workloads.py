@@ -17,6 +17,7 @@ def test_scheduler_fixture_suite_executes_real_work_through_central_runner():
         timeout=90,
     )
     result = json.loads(completed.stdout)
+    print("SCHEDULER_FIXTURE_LIVE_EVIDENCE " + json.dumps(result, sort_keys=True))
 
     assert result["checks"] == {
         "oauth_refreshed": True,

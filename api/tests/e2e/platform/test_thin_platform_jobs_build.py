@@ -22,17 +22,36 @@ from src.models.orm.applications import Application
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solutions import Solution
 from src.services.github_config import delete_github_config, save_github_config
-from src.services.repo_storage import RepoStorage
 from tests.e2e.platform.thin_live_helpers import wait_for_job
 
 pytestmark = pytest.mark.e2e
 
 
-_SHARED_ROOT = Path("/tmp/bifrost/shared/thin-live-platform-jobs")
+_SHARED_ROOT = Path("/tmp/bifrost/solution-repo-fixtures")
 
 
 def _run_git(*args: str, cwd: Path) -> None:
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+
+def _remove_fixture(path: Path) -> None:
+    """Remove one test-owned shared fixture and fail loudly on cleanup errors."""
+    shutil.rmtree(path)
+    assert not path.exists()
+
+
+def _delete_application(e2e_client, headers: dict[str, str], app_id: str) -> None:
+    response = e2e_client.delete(f"/api/applications/{app_id}", headers=headers)
+    assert response.status_code == 204, response.text
+
+
+def _delete_solution(e2e_client, headers: dict[str, str], solution_id: str, slug: str) -> None:
+    response = e2e_client.delete(
+        f"/api/solutions/{solution_id}",
+        params={"confirm": slug},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
 
 
 def _vite_source_zip() -> bytes:
@@ -116,7 +135,7 @@ async def _platform_job_id(async_session_factory, *, job_type: str, resource_id:
 
 
 async def test_thin_worker_executes_build_and_git_platform_jobs(
-    e2e_client, platform_admin, async_session_factory
+    e2e_client, platform_admin, async_session_factory, request
 ) -> None:
     """Run the seven build/Git handlers through physical thin worker children.
 
@@ -140,6 +159,9 @@ async def test_thin_worker_executes_build_and_git_platform_jobs(
     )
     assert app_response.status_code == 201, app_response.text
     app = app_response.json()
+    request.addfinalizer(
+        lambda: _delete_application(e2e_client, headers, app["id"])
+    )
     upload_headers = {
         key: value for key, value in headers.items() if key.lower() != "content-type"
     }
@@ -182,7 +204,7 @@ async def test_thin_worker_executes_build_and_git_platform_jobs(
         "application.sdk_update",
     )
     assert sdk_update["result"]["deployment_id"] != first_deployment_id
-    updated_app = e2e_client.get(f"/api/applications/{app['id']}", headers=headers)
+    updated_app = e2e_client.get(f"/api/applications/{app['slug']}", headers=headers)
     assert updated_app.status_code == 200, updated_app.text
     assert updated_app.json()["sdk_fingerprint"]
     assert updated_app.json()["sdk_fingerprint"] != "thin-live-stale-sdk"
@@ -198,6 +220,9 @@ async def test_thin_worker_executes_build_and_git_platform_jobs(
     )
     assert publish_response.status_code == 201, publish_response.text
     publish_app = publish_response.json()
+    request.addfinalizer(
+        lambda: _delete_application(e2e_client, headers, publish_app["id"])
+    )
     publish_job_response = e2e_client.post(
         f"/api/applications/{publish_app['id']}/publish", headers=headers
     )
@@ -221,6 +246,14 @@ async def test_thin_worker_executes_build_and_git_platform_jobs(
     )
     assert solution_response.status_code == 201, solution_response.text
     solution_id = solution_response.json()["id"]
+    request.addfinalizer(
+        lambda: _delete_solution(
+            e2e_client,
+            headers,
+            solution_id,
+            f"thin-solution-{suffix}",
+        )
+    )
     workflow_name = f"Thin Solution Workflow {suffix}"
     workflow_source = (
         "from bifrost import workflow\n\n"
@@ -240,6 +273,7 @@ async def test_thin_worker_executes_build_and_git_platform_jobs(
                     "function_name": "thin_solution_workflow",
                     "path": "workflows/thin_solution.py",
                     "type": "workflow",
+                    "source": workflow_source,
                 }
             ],
         },
@@ -297,6 +331,14 @@ async def test_thin_worker_executes_build_and_git_platform_jobs(
     async with async_session_factory() as db:
         db.add(git_solution)
         await db.commit()
+    request.addfinalizer(
+        lambda: _delete_solution(
+            e2e_client,
+            headers,
+            str(git_solution.id),
+            git_solution_slug,
+        )
+    )
     try:
         sync_response = e2e_client.post(
             f"/api/solutions/{git_solution.id}/sync", headers=headers
@@ -318,7 +360,7 @@ async def test_thin_worker_executes_build_and_git_platform_jobs(
         assert synced_solution.status_code == 200, synced_solution.text
         assert synced_solution.json()["version"] == "1.0.0"
     finally:
-        shutil.rmtree(git_solution_repo, ignore_errors=True)
+        _remove_fixture(git_solution_repo)
 
     workspace_repo, workspace_root = _make_workspace_remote()
     try:
@@ -340,8 +382,9 @@ async def test_thin_worker_executes_build_and_git_platform_jobs(
             "workspace.git",
         )
         assert workspace_fetch["result"]["success"] is True
-        assert await RepoStorage().read("thin-live-workspace.txt") == b"fetched through the thin worker\n"
+        assert workspace_fetch["result"]["remote_branch_exists"] is True
+        assert workspace_fetch["result"]["commits_behind"] == 0
     finally:
         async with async_session_factory() as db:
             await delete_github_config(db, None)
-        shutil.rmtree(workspace_root, ignore_errors=True)
+        _remove_fixture(workspace_root)

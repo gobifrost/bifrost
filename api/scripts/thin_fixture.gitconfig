@@ -1,0 +1,4 @@
+# Local repositories for the explicit thin-worker live test only.
+# Per-command HTTP credential configuration remains untouched.
+[url "file:///tmp/bifrost/solution-repo-fixtures/thin-github/"]
+    insteadOf = https://github.com/

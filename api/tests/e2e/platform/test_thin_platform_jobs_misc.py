@@ -1,10 +1,9 @@
 """Live disposable-runner coverage for non-build PlatformJob handlers.
 
-Each case keeps the scheduler from racing its assertion by claiming a job that
-was created by ``enqueue_platform_job``, then executes the *real* runner in a
-separate process through the thin-runner probe bridge.  The cases deliberately
-seed one observable unit of work instead of accepting an empty successful
-sweep.
+Each case queues work through ``enqueue_platform_job`` and observes it through
+the live API.  The thin API worker claims the job, hands it over the bridge,
+and starts the physical runner process.  The cases deliberately seed one
+observable unit of work instead of accepting an empty successful sweep.
 
 Cost: eight PlatformJob runner children.  ``agent.summary_backfill`` also
 hands one real summary dispatch to the test worker, which is the cross-process
@@ -13,10 +12,8 @@ contract unique to that parent job.
 
 from __future__ import annotations
 
-import asyncio
+from copy import deepcopy
 import gzip
-import json
-import time
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -24,7 +21,6 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import delete, select
 
-from scripts.lean_runner_spike import launch_probe_child
 from shared.file_paths import resolve_s3_key
 from src.config import get_settings
 from src.jobs.platform.audit_archive import AUDIT_ARCHIVE_DEFINITION, AuditArchivePayload
@@ -66,13 +62,16 @@ from src.services.solutions.deploy import SolutionBundle
 from src.services.solutions.export import build_workspace_zip
 from src.services.solutions.workspace_bundle_storage import WorkspaceBundleStorage
 from src.models.orm.solutions import Solution
+from tests.e2e.platform.thin_live_helpers import wait_for_job
 
 
 pytestmark = [pytest.mark.e2e, pytest.mark.asyncio]
 
 
-async def _enqueue_claim_and_run(async_session_factory, definition, payload, *, label: str) -> UUID:
-    """Canonical enqueue followed by one fenced, physical runner invocation."""
+async def _enqueue(
+    async_session_factory, platform_admin, definition, payload, *, label: str, job_id: UUID | None = None,
+) -> UUID:
+    """Use canonical enqueue; the live thin API worker claims and runs it."""
     async with async_session_factory() as db:
         job, reused = await enqueue_platform_job(
             db,
@@ -81,48 +80,19 @@ async def _enqueue_claim_and_run(async_session_factory, definition, payload, *, 
             dedupe_key=f"thin-misc:{label}:{uuid4()}",
             resource_lock_key=f"thin-misc:{label}:{uuid4()}",
             organization_id=None,
-            requested_by_user_id=uuid4(),
-            requested_by_email="thin-misc@example.test",
-            requested_by_name="Thin Misc E2E",
+            requested_by_user_id=platform_admin.user_id,
+            requested_by_email=platform_admin.email,
+            requested_by_name=platform_admin.name,
             resource_type="thin-misc",
             resource_id=label,
             title=f"Thin misc {label}",
             action_url=None,
+            job_id=job_id,
         )
         assert not reused
-        now = datetime.now(UTC)
-        lease_token = uuid4()
-        job.status = "running"
-        job.phase = "Thin runner fixture claim"
-        job.attempt = 1
-        job.started_at = now
-        job.lease_owner = "thin-misc-e2e"
-        job.lease_token = lease_token
-        job.heartbeat_at = now
-        job.lease_expires_at = now + timedelta(minutes=5)
-        job.revision += 1
         job_id = job.id
         await db.commit()
-
-    report = await asyncio.to_thread(
-        launch_probe_child,
-        "platform-runner",
-        metadata={"job_id": str(job_id), "lease_token": str(lease_token)},
-        timeout_seconds=120,
-    )
-    assert report["ok"], report
-    assert report["returncode"] == 0
-    assert report["process_group_reaped"]
-    assert str(lease_token) not in json.dumps(report)
     return job_id
-
-
-async def _job(async_session_factory, job_id: UUID) -> PlatformJob:
-    async with async_session_factory() as db:
-        row = await db.get(PlatformJob, job_id)
-        assert row is not None
-        assert row.status == "succeeded", (row.error_code, row.error_message, row.result)
-        return row
 
 
 async def _delete_job(async_session_factory, job_id: UUID) -> None:
@@ -147,11 +117,13 @@ async def _delete_s3(key: str) -> None:
         await s3.delete_object(Bucket=get_settings().s3_bucket, Key=key)
 
 
-async def test_artifact_retention_cleanup_runs_real_handler_and_deletes_seeded_artifact(async_session_factory):
+async def test_artifact_retention_cleanup_runs_real_handler_and_deletes_seeded_artifact(
+    async_session_factory, e2e_client, platform_admin,
+):
     artifact_id = uuid4()
     key = f"_artifacts/thin-misc/{artifact_id}.txt"
     job_id: UUID | None = None
-    previous = None
+    previous_value: dict | None = None
     try:
         await _put_s3(key, b"expired artifact")
         async with async_session_factory() as db:
@@ -159,6 +131,7 @@ async def test_artifact_retention_cleanup_runs_real_handler_and_deletes_seeded_a
                 SystemConfig.category == "artifact_retention", SystemConfig.key == "chat",
                 SystemConfig.organization_id.is_(None),
             ))
+            previous_value = deepcopy(previous.value_json) if previous is not None else None
             await ArtifactRetentionSettingsService(db).update_settings(
                 ArtifactRetentionSettings(enabled=True, retention_days=1), updated_by="thin-misc"
             )
@@ -168,12 +141,12 @@ async def test_artifact_retention_cleanup_runs_real_handler_and_deletes_seeded_a
             ))
             await db.commit()
 
-        job_id = await _enqueue_claim_and_run(
-            async_session_factory, ARTIFACT_RETENTION_CLEANUP_DEFINITION, EmptyMaintenancePayload(),
+        job_id = await _enqueue(
+            async_session_factory, platform_admin, ARTIFACT_RETENTION_CLEANUP_DEFINITION, EmptyMaintenancePayload(),
             label="artifact-retention",
         )
-        job = await _job(async_session_factory, job_id)
-        assert job.result == {"enabled": True, "retention_days": 1, "deleted_count": 1, "failed_count": 0}
+        job = wait_for_job(e2e_client, platform_admin.headers, job_id, "artifact.retention_cleanup")
+        assert job["result"] == {"enabled": True, "retention_days": 1, "deleted_count": 1, "failed_count": 0}
         async with async_session_factory() as db:
             assert await db.get(Artifact, artifact_id) is None
         assert not await _object_exists(key)
@@ -184,27 +157,30 @@ async def test_artifact_retention_cleanup_runs_real_handler_and_deletes_seeded_a
                 SystemConfig.category == "artifact_retention", SystemConfig.key == "chat",
                 SystemConfig.organization_id.is_(None),
             ))
-            if previous is None:
+            if previous_value is None:
                 if current is not None:
                     await db.delete(current)
             elif current is not None:
-                current.value_json = previous.value_json
+                current.value_json = previous_value
             await db.commit()
         if job_id is not None:
             await _delete_job(async_session_factory, job_id)
 
 
-async def test_audit_archive_runs_real_handler_and_archives_seeded_event(async_session_factory):
+async def test_audit_archive_runs_real_handler_and_archives_seeded_event(
+    async_session_factory, e2e_client, platform_admin,
+):
     source_id, audit_id = uuid4(), uuid4()
     job_id: UUID | None = None
     segment_keys: list[str] = []
-    previous = None
+    previous_value: dict | None = None
     try:
         async with async_session_factory() as db:
             previous = await db.scalar(select(SystemConfig).where(
                 SystemConfig.category == "audit_retention", SystemConfig.key == "policy",
                 SystemConfig.organization_id.is_(None),
             ))
+            previous_value = deepcopy(previous.value_json) if previous is not None else None
             await AuditRetentionSettingsService(db).update_settings(
                 AuditRetentionSettings(hot_days=1, archive_days=None), updated_by="thin-misc"
             )
@@ -213,11 +189,11 @@ async def test_audit_archive_runs_real_handler_and_archives_seeded_event(async_s
             db.add(AuditLog(id=audit_id, action="thin.misc.archive", source="service",
                             details={"fixture": "thin-misc"}, created_at=datetime.now(UTC) - timedelta(days=2)))
             await db.commit()
-        job_id = await _enqueue_claim_and_run(
-            async_session_factory, AUDIT_ARCHIVE_DEFINITION, AuditArchivePayload(), label="audit-archive"
+        job_id = await _enqueue(
+            async_session_factory, platform_admin, AUDIT_ARCHIVE_DEFINITION, AuditArchivePayload(), label="audit-archive"
         )
-        job = await _job(async_session_factory, job_id)
-        assert job.result is not None and job.result["archived_rows"] == 1
+        job = wait_for_job(e2e_client, platform_admin.headers, job_id, "audit.archive")
+        assert job["result"] is not None and job["result"]["archived_rows"] == 1
         async with async_session_factory() as db:
             assert await db.get(AuditLog, audit_id) is None
             segments = (await db.execute(select(AuditArchiveSegment).where(
@@ -239,17 +215,19 @@ async def test_audit_archive_runs_real_handler_and_archives_seeded_event(async_s
                 SystemConfig.category == "audit_retention", SystemConfig.key == "policy",
                 SystemConfig.organization_id.is_(None),
             ))
-            if previous is None:
+            if previous_value is None:
                 if current is not None:
                     await db.delete(current)
             elif current is not None:
-                current.value_json = previous.value_json
+                current.value_json = previous_value
             await db.commit()
         if job_id is not None:
             await _delete_job(async_session_factory, job_id)
 
 
-async def test_audit_query_runs_real_handler_and_writes_seeded_export(async_session_factory):
+async def test_audit_query_runs_real_handler_and_writes_seeded_export(
+    async_session_factory, e2e_client, platform_admin,
+):
     audit_id = uuid4()
     job_id: UUID | None = None
     now = datetime.now(UTC)
@@ -259,13 +237,16 @@ async def test_audit_query_runs_real_handler_and_writes_seeded_export(async_sess
                             details={"fixture": "thin-misc"}, created_at=now))
             await db.commit()
         payload = AuditQueryPayload(
-            request=AuditExportRequest(start_date=now - timedelta(minutes=1), end_date=now + timedelta(minutes=1)),
+            request=AuditExportRequest(
+                start_date=now - timedelta(minutes=1), end_date=now + timedelta(minutes=1),
+                action="thin.misc.export",
+            ),
             reach=ReachSnapshot(everything=True, organization_ids=[], managed=False, include_global=True),
         )
-        job_id = await _enqueue_claim_and_run(async_session_factory, AUDIT_QUERY_DEFINITION, payload, label="audit-query")
-        job = await _job(async_session_factory, job_id)
-        assert job.result is not None and job.result["rows"] == 1
-        assert job.result["export_key"] == export_key(job_id)
+        job_id = await _enqueue(async_session_factory, platform_admin, AUDIT_QUERY_DEFINITION, payload, label="audit-query")
+        job = wait_for_job(e2e_client, platform_admin.headers, job_id, "audit.query")
+        assert job["result"] is not None and job["result"]["rows"] == 1
+        assert job["result"]["export_key"] == export_key(job_id)
         content = await AuditArchiveStore(get_settings()).get(export_key(job_id))
         assert b"thin.misc.export" in gzip.decompress(content)
     finally:
@@ -277,24 +258,26 @@ async def test_audit_query_runs_real_handler_and_writes_seeded_export(async_sess
             await db.commit()
 
 
-async def test_run_retention_runs_real_handler_and_deletes_seeded_event(async_session_factory):
+async def test_run_retention_runs_real_handler_and_deletes_seeded_event(
+    async_session_factory, e2e_client, platform_admin,
+):
     source_id, event_id = uuid4(), uuid4()
     job_id: UUID | None = None
     previous = None
     try:
         async with async_session_factory() as db:
             previous = await RunRetentionSettingsService(db).get_settings()
-            await RunRetentionSettingsService(db).update_settings(RunRetentionSettings(days=1), updated_by="thin-misc")
+            await RunRetentionSettingsService(db).update_settings(RunRetentionSettings(days=30), updated_by="thin-misc")
             db.add(EventSource(id=source_id, name=f"thin-retention-{source_id}", source_type=EventSourceType.TOPIC,
                                event_type="thin.retention", created_by="thin-misc"))
             db.add(Event(id=event_id, event_source_id=source_id, data={"fixture": "thin-misc"},
-                         created_at=datetime.now(UTC) - timedelta(days=2)))
+                         created_at=datetime.now(UTC) - timedelta(days=31)))
             await db.commit()
-        job_id = await _enqueue_claim_and_run(
-            async_session_factory, RUN_RETENTION_DEFINITION, RunRetentionPayload(), label="run-retention"
+        job_id = await _enqueue(
+            async_session_factory, platform_admin, RUN_RETENTION_DEFINITION, RunRetentionPayload(), label="run-retention"
         )
-        job = await _job(async_session_factory, job_id)
-        assert job.result is not None and job.result["events_deleted"] == 1
+        job = wait_for_job(e2e_client, platform_admin.headers, job_id, "run.retention")
+        assert job["result"] is not None and job["result"]["events_deleted"] == 1
         async with async_session_factory() as db:
             assert await db.get(Event, event_id) is None
     finally:
@@ -308,7 +291,9 @@ async def test_run_retention_runs_real_handler_and_deletes_seeded_event(async_se
             await _delete_job(async_session_factory, job_id)
 
 
-async def test_files_move_runs_real_handler_and_moves_seeded_object(async_session_factory):
+async def test_files_move_runs_real_handler_and_moves_seeded_object(
+    async_session_factory, e2e_client, platform_admin,
+):
     scope = f"thin-misc-{uuid4().hex}"
     source, destination = "before.txt", "after.txt"
     source_key = resolve_s3_key("docs", scope, source)
@@ -316,15 +301,15 @@ async def test_files_move_runs_real_handler_and_moves_seeded_object(async_sessio
     job_id: UUID | None = None
     try:
         await _put_s3(source_key, b"physical runner move")
-        user_id = uuid4()
+        user_id = platform_admin.user_id
         payload = FileMovePayload(
             location="docs", scope=scope, requested_by_user_id=user_id, policy_user_id=user_id,
             total=1, items=[FileMoveWorkItem(index=0, source=source, destination=destination)],
         )
-        job_id = await _enqueue_claim_and_run(async_session_factory, FILE_MOVE_DEFINITION, payload, label="files-move")
-        job = await _job(async_session_factory, job_id)
-        assert job.result is not None and job.result["moved"] == 1
-        assert job.result["results"] == [{"source": source, "destination": destination, "path": None,
+        job_id = await _enqueue(async_session_factory, platform_admin, FILE_MOVE_DEFINITION, payload, label="files-move")
+        job = wait_for_job(e2e_client, platform_admin.headers, job_id, "files.move")
+        assert job["result"] is not None and job["result"]["moved"] == 1
+        assert job["result"]["results"] == [{"source": source, "destination": destination, "path": None,
                                             "renamed": False, "adopted": False, "status_code": 200, "error": None}]
         assert not await _object_exists(source_key)
         assert await S3StorageClient(get_settings()).read_uploaded_file(destination_key) == b"physical runner move"
@@ -338,7 +323,9 @@ async def test_files_move_runs_real_handler_and_moves_seeded_object(async_sessio
             await _delete_job(async_session_factory, job_id)
 
 
-async def test_workspace_reimport_runs_real_handler_and_indexes_seeded_source(async_session_factory):
+async def test_workspace_reimport_runs_real_handler_and_indexes_seeded_source(
+    async_session_factory, e2e_client, platform_admin,
+):
     workflow_id = uuid4()
     suffix = uuid4().hex[:8]
     path = f"workflows/thin_reimport_{suffix}.py"
@@ -350,11 +337,11 @@ async def test_workspace_reimport_runs_real_handler_and_indexes_seeded_source(as
             db.add(Workflow(id=workflow_id, name=f"thin-reimport-{suffix}", function_name=f"thin_reimport_{suffix}",
                             path=path, type="workflow", access_level="authenticated", is_active=True))
             await db.commit()
-        job_id = await _enqueue_claim_and_run(
-            async_session_factory, WORKSPACE_REIMPORT_DEFINITION, WorkspaceReimportPayload(), label="workspace-reimport"
+        job_id = await _enqueue(
+            async_session_factory, platform_admin, WORKSPACE_REIMPORT_DEFINITION, WorkspaceReimportPayload(), label="workspace-reimport"
         )
-        job = await _job(async_session_factory, job_id)
-        assert job.result is not None and "entities_imported" in job.result
+        job = wait_for_job(e2e_client, platform_admin.headers, job_id, "workspace.reimport")
+        assert job["result"] is not None and "entities_imported" in job["result"]
         async with async_session_factory() as db:
             indexed = await db.get(FileIndex, path)
             assert indexed is not None and indexed.content == source
@@ -401,7 +388,7 @@ async def test_workspace_bundle_import_runs_real_handler_and_promotes_seeded_bun
             dedupe_key=f"{metadata['requested_by']}:{preview_id}",
             resource_lock_key="workspace:mutation", priority=500, organization_id=None,
             requested_by_user_id=UUID(metadata["requested_by"]),
-            requested_by_email="thin-misc@example.test", requested_by_name="Thin Misc E2E",
+            requested_by_email=platform_admin.email, requested_by_name=platform_admin.name,
             resource_type="workspace", resource_id="bundle-import", title="Thin workspace bundle import",
             action_url="/solutions",
         )
@@ -409,21 +396,10 @@ async def test_workspace_bundle_import_runs_real_handler_and_promotes_seeded_bun
         metadata["platform_job_id"] = str(job.id)
         await storage.stage_metadata(metadata)
         job_id = job.id
-        token = uuid4()
-        now = datetime.now(UTC)
-        job.status, job.attempt, job.started_at = "running", 1, now
-        job.lease_owner, job.lease_token = "thin-misc-e2e", token
-        job.heartbeat_at, job.lease_expires_at = now, now + timedelta(minutes=5)
-        job.revision += 1
         await db.commit()
     try:
-        report = await asyncio.to_thread(
-            launch_probe_child, "platform-runner",
-            metadata={"job_id": str(job_id), "lease_token": str(token)}, timeout_seconds=120,
-        )
-        assert report["ok"], report
-        job = await _job(async_session_factory, job_id)
-        assert job.result is not None and str(workflow_id) in job.result["imported_entity_ids"]
+        job = wait_for_job(e2e_client, platform_admin.headers, job_id, "workspace.bundle_import")
+        assert job["result"] is not None and str(workflow_id) in job["result"]["imported_entity_ids"]
         assert await RepoStorage().read(path) == source.encode()
     finally:
         await WorkspaceBundleStorage(preview.json()["preview_token"]).delete()
@@ -438,11 +414,13 @@ async def test_summary_backfill_runs_real_handler_and_summary_child(async_sessio
     """The parent must defer only after handing one real summary to the worker."""
     suffix = uuid4().hex[:8]
     connection_id, profile_id, agent_id, run_id, backfill_id = (uuid4() for _ in range(5))
-    original_assignment = None
+    original_assignments: dict[str, UUID] = {}
     try:
         # The scheduler-fixtures service is the deterministic local OpenAI-compatible provider.
         async with async_session_factory() as db:
-            original_assignment = await db.get(AIModelAssignment, "summarization")
+            original_assignments = dict((await db.execute(select(
+                AIModelAssignment.assignment_key, AIModelAssignment.profile_id
+            ))).all())
         connection = e2e_client.post("/api/admin/ai/connections", headers=platform_admin.headers, json={
             "name": f"thin-summary-{suffix}", "provider": "openai_compatible", "api_key": "fixture-key",
             "endpoint": "http://scheduler-fixtures:8080/v1",
@@ -466,31 +444,24 @@ async def test_summary_backfill_runs_real_handler_and_summary_child(async_sessio
             db.add(Agent(id=agent_id, name=f"thin-summary-agent-{suffix}", description="thin summary",
                          system_prompt="test", channels=[], access_level="authenticated", is_active=True,
                          knowledge_sources=[], system_tools=[], created_by="thin-misc"))
-            db.add(SummaryBackfillJob(id=backfill_id, requested_by=uuid4(), agent_id=agent_id,
+            db.add(SummaryBackfillJob(id=backfill_id, requested_by=platform_admin.user_id, agent_id=agent_id,
                                       status="running", total=1, estimated_cost_usd=Decimal("0")))
             db.add(AgentRun(id=run_id, agent_id=agent_id, trigger_type="thin-misc", status="completed",
                             summary_status="pending", summary_backfill_job_id=backfill_id,
                             input={"request": "summarize thin fixture"}, output={"text": "completed"},
                             completed_at=datetime.now(UTC)))
             await db.commit()
-        job_id = await _enqueue_claim_and_run(
-            async_session_factory, SUMMARY_BACKFILL_DEFINITION,
-            SummaryBackfillPayload(backfill_job_id=backfill_id, run_ids=[run_id]), label="summary-backfill",
+        job_id = await _enqueue(
+            async_session_factory, platform_admin, SUMMARY_BACKFILL_DEFINITION,
+            SummaryBackfillPayload(backfill_job_id=backfill_id, run_ids=[run_id]),
+            label="summary-backfill", job_id=backfill_id,
         )
-        # The parent reaches waiting; the worker's real dispatch completes it.
-        deadline = time.monotonic() + 45
-        while time.monotonic() < deadline:
-            async with async_session_factory() as db:
-                parent = await db.get(PlatformJob, job_id)
-                run = await db.get(AgentRun, run_id)
-                backfill = await db.get(SummaryBackfillJob, backfill_id)
-                if parent is not None and parent.status == "succeeded":
-                    assert run is not None and run.summary_status == "completed"
-                    assert backfill is not None and (backfill.succeeded, backfill.failed) == (1, 0)
-                    break
-            await asyncio.sleep(0.2)
-        else:
-            raise AssertionError("summary backfill parent did not complete through the summary worker")
+        wait_for_job(e2e_client, platform_admin.headers, job_id, "agent.summary_backfill")
+        async with async_session_factory() as db:
+            run = await db.get(AgentRun, run_id)
+            backfill = await db.get(SummaryBackfillJob, backfill_id)
+            assert run is not None and run.summary_status == "completed"
+            assert backfill is not None and (backfill.succeeded, backfill.failed) == (1, 0)
     finally:
         async with async_session_factory() as db:
             await db.execute(delete(WorkDispatch).where(WorkDispatch.subject_id == run_id))
@@ -498,12 +469,15 @@ async def test_summary_backfill_runs_real_handler_and_summary_child(async_sessio
             await db.execute(delete(SummaryBackfillJob).where(SummaryBackfillJob.id == backfill_id))
             await db.execute(delete(PlatformJob).where(PlatformJob.id == backfill_id))
             await db.execute(delete(Agent).where(Agent.id == agent_id))
-            assignment = await db.get(AIModelAssignment, "summarization")
-            if original_assignment is None:
-                if assignment is not None:
+            assignments = (await db.execute(select(AIModelAssignment).where(
+                AIModelAssignment.profile_id == profile_id
+            ))).scalars().all()
+            for assignment in assignments:
+                if assignment.assignment_key in original_assignments:
+                    assignment.profile_id = original_assignments[assignment.assignment_key]
+                else:
                     await db.delete(assignment)
-            elif assignment is not None:
-                assignment.profile_id = original_assignment.profile_id
+            await db.flush()
             await db.execute(delete(AIModelProfile).where(AIModelProfile.id == profile_id))
             await db.execute(delete(AIProviderConnection).where(AIProviderConnection.id == connection_id))
             await db.commit()

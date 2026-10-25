@@ -1,5 +1,7 @@
 # Thin worker with API-hosted execution control — 2026-10-24
 
+**Follow-up:** [All 23 job types have now passed live on both runtime variants](2026-10-24-thin-runtime-live-jobs.md), with direct workflow timings and RAM measured after that larger workload. The tables below preserve the earlier, smaller experiment.
+
 This local spike meets the **100 MiB warm whole-worker target** on the exercised workload. It is not a production rollout candidate. Its remaining admission and API-restart limitations are described below.
 
 ## Measured memory and speed
