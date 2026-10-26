@@ -17,11 +17,11 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import urlparse
 
-from botocore.config import Config
-from botocore.exceptions import BotoCoreError, ClientError
+import httpx
 
 from src.config import Settings
 from src.core.s3_session import get_s3_session
+from src.core.s3_transport import S3Error
 
 logger = logging.getLogger(__name__)
 
@@ -64,23 +64,23 @@ class ObjectPreconditionFailed(Exception):
         self.side = side
 
 
-def _error_code(exc: ClientError) -> str:
+def _error_code(exc: S3Error) -> str:
     return str(exc.response.get("Error", {}).get("Code", ""))
 
 
-def _http_status(exc: ClientError) -> int | None:
+def _http_status(exc: S3Error) -> int | None:
     return exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
 
 
 def is_storage_unavailable(exc: BaseException) -> bool:
     """True when ``exc`` means object storage is unreachable or refusing the bucket."""
-    if isinstance(exc, ClientError):
+    if isinstance(exc, S3Error):
         status = _http_status(exc)
         return _error_code(exc) in _UNAVAILABLE_CODES or (status is not None and status >= 500)
-    return isinstance(exc, (BotoCoreError, ConnectionError, TimeoutError))
+    return isinstance(exc, (httpx.TransportError, ConnectionError, TimeoutError))
 
 
-def _copy_error(exc: ClientError) -> Exception:
+def _copy_error(exc: S3Error) -> Exception:
     if _error_code(exc) == "PreconditionFailed" or _http_status(exc) == 412:
         return ObjectPreconditionFailed("source")
     if _error_code(exc) in _NOT_FOUND_CODES:
@@ -106,7 +106,7 @@ class S3StorageClient:
         Get S3 client context manager.
 
         Yields:
-            Async S3 client from aiobotocore
+            Async CRT-signed S3 client
 
         Raises:
             RuntimeError: If S3 storage is not configured
@@ -121,8 +121,6 @@ class S3StorageClient:
             aws_access_key_id=self.settings.s3_access_key,
             aws_secret_access_key=self.settings.s3_secret_key,
             region_name=self.settings.s3_region,
-            # Keep presigned requests from falling back to legacy SigV2 signing.
-            config=Config(signature_version="s3v4"),
         ) as client:
             yield client
 
@@ -376,7 +374,7 @@ class S3StorageClient:
         async with self.get_client() as s3:
             try:
                 response = await s3.head_object(Bucket=self.settings.s3_bucket, Key=key)
-            except ClientError as exc:
+            except S3Error as exc:
                 if _error_code(exc) in _NOT_FOUND_CODES:
                     return None
                 raise
@@ -423,7 +421,7 @@ class S3StorageClient:
                         Metadata=metadata,
                         **source.headers,
                     )
-                except ClientError as exc:
+                except S3Error as exc:
                     mapped = _copy_error(exc)
                     if mapped is exc:
                         raise
@@ -449,7 +447,7 @@ class S3StorageClient:
                             CopySourceRange=f"bytes={start}-{end}",
                             CopySourceIfMatch=source.etag,
                         )
-                    except ClientError as exc:
+                    except S3Error as exc:
                         mapped = _copy_error(exc)
                         if mapped is exc:
                             raise
@@ -463,7 +461,7 @@ class S3StorageClient:
                         MultipartUpload={"Parts": parts},
                         IfNoneMatch="*",
                     )
-                except ClientError as exc:
+                except S3Error as exc:
                     if _error_code(exc) in {"PreconditionFailed", "ConditionalRequestConflict"} or _http_status(exc) == 412:
                         raise ObjectPreconditionFailed("destination") from exc
                     raise

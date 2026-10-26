@@ -824,7 +824,7 @@ async def get_v2_dist_asset(
     hashed entry/css from the bundle-manifest and loads them from this dist/
     prefix; the app's own bundle pulls any further chunks from here too.
     """
-    from botocore.exceptions import ClientError
+    from src.core.s3_transport import S3Error
     from fastapi import HTTPException
     from fastapi.responses import Response
 
@@ -836,9 +836,8 @@ async def get_v2_dist_asset(
         data = await SolutionAppBuilder().read_dist(
             str(app.id), rel, deployment_id=app.active_deployment_id
         )
-    except ClientError as exc:
-        # read_dist surfaces a missing key as the raw botocore ClientError from
-        # get_object (Code=NoSuchKey). Only THAT is a 404 — anything else is a
+    except S3Error as exc:
+        # A missing object (Code=NoSuchKey) is a 404; anything else is a
         # real storage failure and must surface, not masquerade as not-found.
         if exc.response.get("Error", {}).get("Code") == "NoSuchKey":
             raise HTTPException(

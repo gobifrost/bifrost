@@ -269,7 +269,7 @@ class TestTargetedResolver:
 
 
 class TestS3ClientCaching:
-    """Tests for botocore S3 client caching in _get_s3_module."""
+    """Tests for synchronous S3 client caching in _get_s3_module."""
 
     @pytest.fixture(autouse=True)
     def reset_cache(self):
@@ -283,7 +283,7 @@ class TestS3ClientCaching:
         """NoSuchKey errors should log at DEBUG level, not WARNING."""
         import src.core.module_cache_sync as mod
 
-        # Set up mock botocore client that raises NoSuchKey
+        # Set up a mock S3 client that raises NoSuchKey
         mock_client = MagicMock()
         nosuchkey_error = Exception("NoSuchKey")
         nosuchkey_error.response = {"Error": {"Code": "NoSuchKey"}}

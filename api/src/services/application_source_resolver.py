@@ -13,9 +13,8 @@ from typing import Literal
 from uuid import UUID
 
 import click
-from botocore.exceptions import ClientError
-
 from src.models.orm.applications import Application
+from src.core.s3_transport import S3Error
 from src.services.application_source_archive import (
     APP_SOURCE_MAX_EXPANDED_BYTES,
     SOLUTION_SOURCE_MAX_EXPANDED_BYTES,
@@ -216,7 +215,7 @@ def _resolver_code(code: str) -> str:
 
 
 def _is_missing_object_error(exc: Exception) -> bool:
-    if isinstance(exc, ClientError):
+    if isinstance(exc, S3Error):
         error = exc.response.get("Error", {})
         return error.get("Code") in {"NoSuchKey", "404", "NotFound", "Not Found"}
     text = f"{type(exc).__name__}: {exc}"

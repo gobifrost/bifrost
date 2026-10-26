@@ -25,6 +25,7 @@ from typing import Any, Literal
 from src.config import Settings, get_settings
 from src.core.log_safety import log_safe
 from src.core.s3_session import get_s3_session
+from src.core.s3_transport import S3NoSuchKey
 
 logger = logging.getLogger(__name__)
 
@@ -274,12 +275,8 @@ class AppStorageService:
             try:
                 response = await client.get_object(Bucket=self._bucket, Key=key)
                 return await response["Body"].read()
-            except client.exceptions.NoSuchKey:
+            except S3NoSuchKey:
                 raise FileNotFoundError(f"App file not found: {relative_path} (mode={mode})")
-            except Exception as e:
-                if "NoSuchKey" in str(type(e).__name__) or "404" in str(e):
-                    raise FileNotFoundError(f"App file not found: {relative_path} (mode={mode})")
-                raise
 
     async def list_files(self, app_id: str, mode: AppMode) -> list[str]:
         """List relative file paths in _apps/{app_id}/{mode}/.

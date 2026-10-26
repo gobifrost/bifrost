@@ -81,7 +81,7 @@ def get_requirements_sync() -> str | None:
 
     Lookup order:
     1. Redis cache (fast path)
-    2. Direct S3 via botocore while the privileged setup helper still has
+    2. Direct S3 via the parent-only CRT transport while the privileged setup helper still has
        storage credentials (re-caches on hit)
     3. None (not found)
 
@@ -124,7 +124,7 @@ def get_requirements_sync() -> str | None:
 
 
 def _read_requirements_from_s3(get_client_fn: Any) -> str | None:
-    """Read _repo/requirements.txt from S3 using a sync botocore client."""
+    """Read _repo/requirements.txt from S3 using the synchronous CRT transport."""
     bucket = os.environ.get("BIFROST_S3_BUCKET")
     if not bucket:
         return None

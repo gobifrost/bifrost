@@ -120,8 +120,6 @@ logging.basicConfig(
 
 # Suppress noisy third-party loggers
 logging.getLogger("apscheduler").setLevel(logging.WARNING)
-logging.getLogger("botocore").setLevel(logging.WARNING)
-logging.getLogger("aiobotocore").setLevel(logging.WARNING)
 logging.getLogger("s3transfer").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 

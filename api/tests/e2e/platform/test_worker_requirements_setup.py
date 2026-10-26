@@ -67,7 +67,7 @@ print(json.dumps({
     "result": result.to_json_dict(),
     "retained_setup_modules": [name for name in (
         "src.core.requirements_cache", "src.services.repo_storage",
-        "botocore", "aiobotocore",
+        "botocore", "aiobotocore", "awscrt",
     ) if name in sys.modules],
 }))
 """],

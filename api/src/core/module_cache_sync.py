@@ -552,9 +552,7 @@ def resolve_module_sync(name: str) -> ModuleResolution:
 
 
 def _get_s3_client() -> Any:
-    """
-    Get or create a sync S3 client using botocore (always available via aiobotocore).
-    """
+    """Get or create the parent-only synchronous CRT S3 client."""
     global _s3_client, _s3_available
 
     if _s3_available is False:
@@ -568,28 +566,21 @@ def _get_s3_client() -> Any:
     secret_key = os.environ.get("BIFROST_S3_SECRET_KEY")
     region = os.environ.get("BIFROST_S3_REGION", "us-east-1")
 
-    if not all([access_key, secret_key]):
-        logger.debug("S3 not configured, skipping S3 fallback")
-        _s3_available = False
-        return None
-
     try:
-        import botocore.session  # type: ignore[import-untyped]
+        from src.core.s3_transport import SyncS3Transport
 
-        session = botocore.session.get_session()
-        client = session.create_client(
-            "s3",
+        client = SyncS3Transport(
             endpoint_url=endpoint_url,
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
-            region_name=region,
+            access_key_id=access_key,
+            secret_access_key=secret_key,
+            region=region,
         )
         _s3_client = client
         _s3_available = True
         return client
     except Exception:
         _s3_available = False
-        logger.debug("botocore not available, S3 fallback disabled")
+        logger.debug("S3 transport unavailable; S3 fallback disabled")
         return None
 
 
@@ -741,5 +732,8 @@ def reset_sync_redis() -> None:
 def reset_s3_client() -> None:
     """Reset the cached S3 client. Used for testing."""
     global _s3_client, _s3_available
+    if _s3_client is not None:
+        with suppress(Exception):
+            _s3_client.close()
     _s3_client = None
     _s3_available = None

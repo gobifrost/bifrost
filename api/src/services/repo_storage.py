@@ -14,10 +14,9 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 
-from botocore.exceptions import ClientError
-
 from src.config import Settings, get_settings
 from src.core.s3_session import get_s3_session
+from src.core.s3_transport import S3Error
 
 logger = logging.getLogger(__name__)
 
@@ -226,7 +225,7 @@ class RepoStorage:
         async with self._get_client() as client:
             try:
                 response = await client.head_object(Bucket=self._bucket, Key=self._repo_key(path))
-            except ClientError as exc:
+            except S3Error as exc:
                 if exc.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
                     return None
                 raise

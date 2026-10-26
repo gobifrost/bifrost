@@ -14,6 +14,7 @@ from uuid import UUID
 
 from src.config import Settings, get_settings
 from src.core.s3_session import get_s3_session
+from src.core.s3_transport import S3NoSuchKey
 
 SOURCE_ARTIFACTS_ROOT = "_solution_artifacts"
 SOURCE_ARTIFACT_NAME = "source.zip"
@@ -57,23 +58,15 @@ class SolutionSourceArtifactStorage:
             try:
                 response = await client.get_object(Bucket=self._bucket, Key=self._key())
                 return await response["Body"].read()
-            except client.exceptions.NoSuchKey:
+            except S3NoSuchKey:
                 return None
-            except Exception as exc:  # noqa: BLE001 - aiobotocore backends vary
-                if "NoSuchKey" in str(type(exc).__name__) or "404" in str(exc):
-                    return None
-                raise
 
     async def copy_to_path(self, path: Path) -> bool:
         async with self._get_client() as client:
             try:
                 response = await client.get_object(Bucket=self._bucket, Key=self._key())
-            except client.exceptions.NoSuchKey:
+            except S3NoSuchKey:
                 return False
-            except Exception as exc:  # noqa: BLE001 - aiobotocore backends vary
-                if "NoSuchKey" in str(type(exc).__name__) or "404" in str(exc):
-                    return False
-                raise
 
             body = response["Body"]
             async with body:

@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from botocore.exceptions import EndpointConnectionError
+import httpx
 from pydantic import ValidationError
 
 from src.jobs.platform import file_move
@@ -177,7 +177,7 @@ async def test_swap_fails_cleanly_and_loses_nothing(store, solution_target, cont
 
 async def test_three_consecutive_storage_failures_stop_the_job(store, solution_target, context) -> None:
     async def unreachable(_key: str) -> None:
-        raise EndpointConnectionError(endpoint_url="http://s3")
+        raise httpx.ConnectError("s3 unavailable")
 
     store.before["head"] = unreachable
     items = [(i, f"a/{i}.pdf", f"b/{i}.pdf") for i in range(5)]
@@ -199,7 +199,7 @@ async def test_non_storage_failure_resets_the_storage_run(store, solution_target
         # Items 0 and 1 hit storage errors; item 2 (two clean heads) is a plain
         # 404 that resets the run; item 3 fails on storage again — no stop.
         if calls in (1, 2, 5):
-            raise EndpointConnectionError(endpoint_url="http://s3")
+            raise httpx.ConnectError("s3 unavailable")
 
     store.before["head"] = flaky
     items = [(i, f"a/{i}.pdf", f"b/{i}.pdf") for i in range(4)]
