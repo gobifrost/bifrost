@@ -26,6 +26,7 @@ from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.fastmcp.tools.base import Tool as SDKTool
+from mcp.server.fastmcp.utilities.func_metadata import ArgModelBase, FuncMetadata
 from mcp.types import CallToolResult, ContentBlock, Icon
 
 
@@ -65,6 +66,11 @@ _WORKFLOW_ID_TO_TOOL_NAME: dict[str, str] = {}
 
 # Stored references for refresh_workflow_tools()
 _fastmcp_instance: FastMCP | None = None
+
+# Dynamic workflow schemas are validated by ``SDKWorkflowTool.run``. Every
+# wrapper therefore shares this empty SDK argument model instead of creating a
+# synthetic Pydantic model from its ``**arguments`` signature.
+_WORKFLOW_TOOL_FN_METADATA = FuncMetadata(arg_model=ArgModelBase)
 
 
 def _normalize_tool_name(name: str) -> str:
@@ -848,8 +854,8 @@ async def _register_workflow_tools(mcp: FastMCP) -> int:
                         ),
                     )
 
-                    # Add a callable for execution, then install the dynamic
-                    # workflow schema used by tools/list and the SDK validator.
+                    # Install the dynamic workflow schema used by tools/list
+                    # and SDKWorkflowTool's validator.
                     try:
                         def build_workflow_wrapper(bound_tool: WorkflowTool):
                             async def workflow_wrapper(
@@ -866,12 +872,14 @@ async def _register_workflow_tools(mcp: FastMCP) -> int:
                         workflow_wrapper.__name__ = tool_name
                         workflow_wrapper.__qualname__ = tool_name
                         workflow_wrapper.__doc__ = description
-                        registered = SDKWorkflowTool.from_function(
-                            workflow_wrapper,
+                        registered = SDKWorkflowTool(
+                            fn=workflow_wrapper,
                             name=tool_name,
                             description=description,
+                            parameters=workflow_tool.parameters,
+                            fn_metadata=_WORKFLOW_TOOL_FN_METADATA,
+                            is_async=True,
                         )
-                        registered.parameters = workflow_tool.parameters
                         # SDK add_tool preserves an existing name. Refresh must
                         # replace its callable as well as its dynamic schema.
                         mcp._tool_manager._tools[tool_name] = registered
