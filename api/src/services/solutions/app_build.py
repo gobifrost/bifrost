@@ -22,10 +22,9 @@ import tempfile
 from pathlib import Path
 from uuid import UUID
 
-from aiobotocore.session import get_session
-
 from shared.subprocess_env import package_tool_env
 from src.config import Settings, get_settings
+from src.core.s3_session import get_s3_session
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +59,7 @@ class SolutionAppBuilder:
         return f"{base}{rel.lstrip('/')}" if rel else base
 
     def _client(self):
-        session = get_session()
+        session = get_s3_session()
         return session.create_client(
             "s3",
             endpoint_url=self._settings.s3_endpoint_url,

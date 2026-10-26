@@ -21,7 +21,8 @@ from contextlib import asynccontextmanager
 from uuid import UUID
 
 from src.config import Settings, get_settings
-from src.services.repo_storage import S3FileMetadata, _get_shared_session
+from src.core.s3_session import get_s3_session
+from src.services.repo_storage import S3FileMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ class SolutionStorage:
 
     @asynccontextmanager
     async def _get_client(self):
-        session = _get_shared_session()
+        session = get_s3_session()
         async with session.create_client(
             "s3",
             endpoint_url=self._settings.s3_endpoint_url,

@@ -3,6 +3,7 @@
 import gzip
 import json
 from datetime import datetime, timezone
+from decimal import Decimal
 
 import httpx
 import pytest
@@ -146,6 +147,30 @@ def test_reasoning_choices_come_from_the_catalog_options() -> None:
     # Budget-only models get on/off; the adapter picks the budget.
     assert catalog.model("anthropic", "claude-haiku-4-5").reasoning_choices == ["off", "on"]
     assert catalog.model("community-00", "model-0").reasoning_choices == []
+
+
+def test_parse_skips_invalid_models_and_validates_slotted_nested_records() -> None:
+    raw = _raw_catalog()
+    valid = raw["deepseek"]["models"]["deepseek-v4"]
+    valid["reasoning_options"] = [{"type": "budget_tokens", "min": "1024"}]
+    valid["limit"] = {"context": "128"}
+    valid["cost"] = {"input": "1.25"}
+    raw["deepseek"]["models"]["invalid"] = {
+        "id": "invalid",
+        "name": "Invalid",
+        "cost": {"input": "not-a-decimal"},
+    }
+
+    catalog = parse_catalog(trim_catalog(raw), fetched_at=None, source="bundled")
+    provider = catalog.provider("deepseek")
+    model = provider.models["deepseek-v4"]
+
+    assert "invalid" not in provider.models
+    assert model.context_window == 128
+    assert model.reasoning_options[0].min == 1024
+    assert model.cost.input == Decimal("1.25")
+    assert not hasattr(provider, "__dict__")
+    assert not hasattr(model, "__dict__")
 
 
 def test_bundled_snapshot_is_a_usable_catalog() -> None:

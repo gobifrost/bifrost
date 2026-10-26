@@ -13,7 +13,7 @@ from pathlib import Path
 from uuid import UUID
 
 from src.config import Settings, get_settings
-from src.services.repo_storage import _get_shared_session
+from src.core.s3_session import get_s3_session
 
 SOURCE_ARTIFACTS_ROOT = "_solution_artifacts"
 SOURCE_ARTIFACT_NAME = "source.zip"
@@ -30,7 +30,7 @@ class SolutionSourceArtifactStorage:
 
     @asynccontextmanager
     async def _get_client(self):
-        session = _get_shared_session()
+        session = get_s3_session()
         async with session.create_client(
             "s3",
             endpoint_url=self._settings.s3_endpoint_url,

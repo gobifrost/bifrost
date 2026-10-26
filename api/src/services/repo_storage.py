@@ -14,10 +14,10 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 
-from aiobotocore.session import get_session
 from botocore.exceptions import ClientError
 
 from src.config import Settings, get_settings
+from src.core.s3_session import get_s3_session
 
 logger = logging.getLogger(__name__)
 
@@ -32,17 +32,6 @@ class S3FileMetadata:
     size: int
 
 
-_shared_session = None
-
-
-def _get_shared_session():
-    """Reuse a single aiobotocore session to share the connection pool."""
-    global _shared_session
-    if _shared_session is None:
-        _shared_session = get_session()
-    return _shared_session
-
-
 class RepoStorage:
     """S3 storage scoped to _repo/ prefix."""
 
@@ -52,7 +41,7 @@ class RepoStorage:
 
     @asynccontextmanager
     async def _get_client(self):
-        session = _get_shared_session()
+        session = get_s3_session()
         async with session.create_client(
             "s3",
             endpoint_url=self._settings.s3_endpoint_url,

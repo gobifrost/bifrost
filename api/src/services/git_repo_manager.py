@@ -314,14 +314,14 @@ class GitRepoManager:
         checkpoint. Another process's working dir is rewritten the next time a
         git operation opens it there.
         """
-        from aiobotocore.session import get_session
+        from src.core.s3_session import get_s3_session
 
         local = PERSISTENT_WORK_DIR / ".git" / "config"
         if local.is_file():
             local.write_text(_URL_CREDENTIALS.sub(r"\1", local.read_text()))
 
         bucket = self._settings.s3_bucket
-        async with get_session().create_client(
+        async with get_s3_session().create_client(
             "s3",
             endpoint_url=self._settings.s3_endpoint_url,
             aws_access_key_id=self._settings.s3_access_key,

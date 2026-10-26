@@ -21,6 +21,7 @@ from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
 from src.config import Settings
+from src.core.s3_session import get_s3_session
 
 logger = logging.getLogger(__name__)
 
@@ -113,9 +114,7 @@ class S3StorageClient:
         if not self.settings.s3_configured:
             raise RuntimeError("S3 storage not configured")
 
-        from aiobotocore.session import get_session
-
-        session = get_session()
+        session = get_s3_session()
         async with session.create_client(
             "s3",
             endpoint_url=self.settings.s3_endpoint_url,

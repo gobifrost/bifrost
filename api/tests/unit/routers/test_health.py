@@ -203,14 +203,12 @@ async def test_redis_check_reuses_cached_client(monkeypatch):
 @pytest.mark.asyncio
 async def test_s3_check_reuses_cached_client(monkeypatch):
     await health.close_health_check_clients()
-    sessions: list[FakeS3Session] = []
+    session = FakeS3Session()
 
-    def get_session():
-        session = FakeS3Session()
-        sessions.append(session)
+    def get_s3_session():
         return session
 
-    monkeypatch.setattr(health, "get_session", get_session)
+    monkeypatch.setattr(health, "get_s3_session", get_s3_session)
 
     try:
         first_name, first_component = await health.check_s3(_settings())
@@ -222,24 +220,21 @@ async def test_s3_check_reuses_cached_client(monkeypatch):
     assert second_name == "s3"
     assert first_component == {"status": "healthy", "type": "s3"}
     assert second_component == {"status": "healthy", "type": "s3"}
-    assert len(sessions) == 1
-    assert sessions[0].create_client_count == 1
-    assert sessions[0].context.enter_count == 1
-    assert sessions[0].client.head_bucket_count == 2
-    assert sessions[0].context.exit_count == 1
+    assert session.create_client_count == 1
+    assert session.context.enter_count == 1
+    assert session.client.head_bucket_count == 2
+    assert session.context.exit_count == 1
 
 
 @pytest.mark.asyncio
 async def test_s3_check_closes_cached_client_when_settings_change(monkeypatch):
     await health.close_health_check_clients()
-    sessions: list[FakeS3Session] = []
+    session = FakeS3Session()
 
-    def get_session():
-        session = FakeS3Session()
-        sessions.append(session)
+    def get_s3_session():
         return session
 
-    monkeypatch.setattr(health, "get_session", get_session)
+    monkeypatch.setattr(health, "get_s3_session", get_s3_session)
 
     try:
         await health.check_s3(_settings())
@@ -249,10 +244,9 @@ async def test_s3_check_closes_cached_client_when_settings_change(monkeypatch):
     finally:
         await health.close_health_check_clients()
 
-    assert len(sessions) == 2
-    assert [session.create_client_count for session in sessions] == [1, 1]
-    assert sessions[0].context.exit_count == 1
-    assert sessions[1].context.exit_count == 1
+    assert session.create_client_count == 2
+    assert session.context.enter_count == 2
+    assert session.context.exit_count == 2
 
 
 @pytest.mark.asyncio

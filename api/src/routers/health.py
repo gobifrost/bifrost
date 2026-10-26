@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 from typing import Any, cast
 
 import redis.asyncio as redis
-from aiobotocore.session import get_session
 from fastapi import APIRouter, Depends, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -18,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import Settings, get_settings
 from src.core.database import get_db
+from src.core.s3_session import get_s3_session
 from shared.version import get_version
 
 router = APIRouter(prefix="/health", tags=["health"])
@@ -100,7 +100,7 @@ class S3HealthClient:
                 return client
 
             await self.close()
-            session = get_session()
+            session = get_s3_session()
             context = session.create_client(
                 "s3",
                 endpoint_url=settings.s3_endpoint_url,

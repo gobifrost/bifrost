@@ -22,14 +22,15 @@ import gzip
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
-from pydantic import BaseModel, Field
+from pydantic import TypeAdapter
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -106,16 +107,18 @@ _MODEL_FIELDS = (
 _PROVIDER_FIELDS = ("id", "name", "api", "npm", "doc", "env")
 
 
-class ReasoningOption(BaseModel):
+@pydantic_dataclass(slots=True, kw_only=True)
+class ReasoningOption:
     """One way a model accepts reasoning control, as published by models.dev."""
 
     type: str
-    values: list[str] = Field(default_factory=list)
+    values: list[str] = field(default_factory=list)
     min: int | None = None
     max: int | None = None
 
 
-class CatalogCost(BaseModel):
+@pydantic_dataclass(slots=True, kw_only=True)
+class CatalogCost:
     """USD per million tokens."""
 
     input: Decimal | None = None
@@ -124,16 +127,17 @@ class CatalogCost(BaseModel):
     cache_write: Decimal | None = None
 
 
-class CatalogModel(BaseModel):
+@pydantic_dataclass(slots=True, kw_only=True)
+class CatalogModel:
     id: str
     name: str
     family: str | None = None
     reasoning: bool = False
-    reasoning_options: list[ReasoningOption] = Field(default_factory=list)
+    reasoning_options: list[ReasoningOption] = field(default_factory=list)
     tool_call: bool = False
     attachment: bool = False
-    input_modalities: list[str] = Field(default_factory=list)
-    output_modalities: list[str] = Field(default_factory=list)
+    input_modalities: list[str] = field(default_factory=list)
+    output_modalities: list[str] = field(default_factory=list)
     context_window: int | None = None
     max_output_tokens: int | None = None
     cost: CatalogCost | None = None
@@ -163,14 +167,15 @@ class CatalogModel(BaseModel):
         return choices
 
 
-class CatalogProvider(BaseModel):
+@pydantic_dataclass(slots=True, kw_only=True)
+class CatalogProvider:
     id: str
     name: str
     api: str | None = None
     npm: str | None = None
     doc: str | None = None
-    env: list[str] = Field(default_factory=list)
-    models: dict[str, CatalogModel] = Field(default_factory=dict)
+    env: list[str] = field(default_factory=list)
+    models: dict[str, CatalogModel] = field(default_factory=dict)
 
     @property
     def adapter(self) -> AdapterKind | None:
@@ -222,6 +227,10 @@ class CatalogProvider(BaseModel):
             or NATIVE_DEFAULT_ENDPOINTS.get(self.id)
             or OPENAI_COMPATIBLE_ENDPOINTS.get(self.id)
         )
+
+
+_REASONING_OPTION_ADAPTER = TypeAdapter(ReasoningOption)
+_CATALOG_COST_ADAPTER = TypeAdapter(CatalogCost)
 
 
 @dataclass(frozen=True)
@@ -354,7 +363,7 @@ def _parse_model(model: dict[str, Any]) -> CatalogModel:
         family=model.get("family"),
         reasoning=bool(model.get("reasoning")),
         reasoning_options=[
-            ReasoningOption.model_validate(option)
+            _REASONING_OPTION_ADAPTER.validate_python(option)
             for option in model.get("reasoning_options") or []
             if isinstance(option, dict) and isinstance(option.get("type"), str)
         ],
@@ -364,7 +373,7 @@ def _parse_model(model: dict[str, Any]) -> CatalogModel:
         output_modalities=list(modalities.get("output") or []),
         context_window=limit.get("context"),
         max_output_tokens=limit.get("output"),
-        cost=CatalogCost.model_validate(cost) if isinstance(cost, dict) else None,
+        cost=_CATALOG_COST_ADAPTER.validate_python(cost) if isinstance(cost, dict) else None,
         status=model.get("status"),
         route_sdk=route.get("npm"),
         route_api=route.get("api"),
