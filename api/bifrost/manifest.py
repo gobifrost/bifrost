@@ -433,6 +433,10 @@ class ManifestAgent(EntityCodec, BaseModel):
         in (rather than read from relationships) so the caller controls
         eager-loading and ordering — matching the pattern used for workflow/form roles.
         """
+        # A transient agent may have no profile foreign key and a ``lazy=raise``
+        # relationship.  Do not touch that relationship in the null case.  A
+        # configured profile remains an explicit caller-loading contract.
+        llm_profile = agent.llm_profile.name if agent.llm_profile_id is not None else None
         return cls(
             id=str(agent.id),
             name=agent.name,
@@ -450,7 +454,7 @@ class ManifestAgent(EntityCodec, BaseModel):
             knowledge_sources=list(agent.knowledge_sources) if agent.knowledge_sources else [],
             system_tools=list(agent.system_tools) if agent.system_tools else [],
             mcp_connection_ids=[str(m) for m in (mcp_connection_ids or [])],
-            llm_profile=agent.llm_profile.name if getattr(agent, "llm_profile", None) else None,
+            llm_profile=llm_profile,
             llm_max_tokens=agent.llm_max_tokens,
             max_iterations=agent.max_iterations,
             max_token_budget=agent.max_token_budget,

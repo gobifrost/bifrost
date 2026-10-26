@@ -1439,6 +1439,65 @@ def test_agent_from_row_coerces_uuid_junction_ids():
     assert all(isinstance(x, str) for x in m.tool_ids)
 
 
+def test_agent_from_row_does_not_read_an_unloaded_profile_without_a_foreign_key():
+    """Transient agents have no profile relationship to load or serialize."""
+    from uuid import uuid4
+
+    from bifrost.manifest import ManifestAgent
+
+    class _AgentWithoutProfile:
+        id = uuid4()
+        name = "no-profile"
+        organization_id = None
+        access_level = None
+        description = None
+        system_prompt = "x"
+        channels = []
+        knowledge_sources = []
+        system_tools = []
+        llm_profile_id = None
+        llm_max_tokens = None
+        max_iterations = None
+        max_token_budget = None
+
+        @property
+        def llm_profile(self):
+            raise AssertionError("a null llm_profile_id must not read the relationship")
+
+    manifest = ManifestAgent.from_row(_AgentWithoutProfile())
+
+    assert manifest.llm_profile is None
+
+
+def test_agent_from_row_still_requires_a_loaded_nonnull_profile():
+    """Callers with a configured profile must eagerly load it before serializing."""
+    from uuid import uuid4
+
+    from bifrost.manifest import ManifestAgent
+
+    class _AgentWithUnloadedProfile:
+        id = uuid4()
+        name = "unloaded-profile"
+        organization_id = None
+        access_level = None
+        description = None
+        system_prompt = "x"
+        channels = []
+        knowledge_sources = []
+        system_tools = []
+        llm_profile_id = uuid4()
+        llm_max_tokens = None
+        max_iterations = None
+        max_token_budget = None
+
+        @property
+        def llm_profile(self):
+            raise AssertionError("configured profiles must be explicitly loaded")
+
+    with pytest.raises(AssertionError, match="explicitly loaded"):
+        ManifestAgent.from_row(_AgentWithUnloadedProfile())
+
+
 @pytest.mark.e2e
 async def test_agent_install_parity(db_session):
     """INSTALL view of a seeded solution-owned Agent matches the committed golden snapshot.
