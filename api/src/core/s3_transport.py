@@ -28,6 +28,7 @@ from awscrt import auth, checksums, http
 
 
 _ssl_context: tuple[int, ssl.SSLContext] | None = None
+_default_credentials_provider: tuple[int, auth.AwsCredentialsProvider] | None = None
 _MAX_ATTEMPTS = 5
 _RETRYABLE_S3_CODES = frozenset({"InternalError", "SlowDown", "RequestTimeout", "BadDigest"})
 
@@ -66,6 +67,35 @@ class S3Error(RuntimeError):
 
 class S3NoSuchKey(S3Error):
     """The requested S3 object does not exist."""
+
+
+class S3PartialCredentialsError(ValueError):
+    """Only one half of explicit static S3 credentials was configured."""
+
+
+def _credentials_provider(
+    access_key_id: str | None,
+    secret_access_key: str | None,
+    session_token: str | None,
+) -> auth.AwsCredentialsProvider:
+    """Resolve static credentials or this process's refresh-capable default chain."""
+    if bool(access_key_id) != bool(secret_access_key):
+        raise S3PartialCredentialsError(
+            "S3 access_key_id and secret_access_key must be configured together"
+        )
+    if access_key_id is not None:
+        return auth.AwsCredentialsProvider.new_static(
+            access_key_id, secret_access_key, session_token
+        )
+
+    global _default_credentials_provider
+    pid = os.getpid()
+    if _default_credentials_provider is None or _default_credentials_provider[0] != pid:
+        _default_credentials_provider = (
+            pid,
+            auth.AwsCredentialsProvider.new_default_chain(),
+        )
+    return _default_credentials_provider[1]
 
 
 def _xml_local(element: ET.Element, name: str) -> ET.Element | None:
@@ -158,11 +188,7 @@ def _sign_request(
     expires: int | None = None,
     now: datetime | None = None,
 ) -> httpx.Request:
-    provider = (
-        auth.AwsCredentialsProvider.new_static(access_key_id, secret_access_key, session_token)
-        if access_key_id and secret_access_key
-        else auth.AwsCredentialsProvider.new_default_chain()
-    )
+    provider = _credentials_provider(access_key_id, secret_access_key, session_token)
     signature_type = (
         auth.AwsSignatureType.HTTP_REQUEST_QUERY_PARAMS
         if presign
@@ -622,10 +648,15 @@ class S3ListObjectsV2Paginator:
         if "PaginationConfig" in kwargs:
             raise ValueError("PaginationConfig is not used by Bifrost S3 callers")
         request = dict(kwargs)
+        seen_tokens: set[str] = set()
         while True:
             page = await self._client.list_objects_v2(**request)
-            yield page
             token = page.get("NextContinuationToken")
+            if page.get("IsTruncated") and token:
+                if token in seen_tokens:
+                    raise RuntimeError("S3 list_objects_v2 returned a repeated continuation token")
+                seen_tokens.add(token)
+            yield page
             if not page.get("IsTruncated") or not token:
                 return
             request["ContinuationToken"] = token

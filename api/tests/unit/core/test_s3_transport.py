@@ -6,12 +6,15 @@ import base64
 import gzip
 import asyncio
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from unittest.mock import Mock
 from urllib.parse import parse_qs
 
 import httpx
 import pytest
 from awscrt import checksums
 
+from src.core import s3_transport
 from src.core.s3_transport import S3Error, S3NoSuchKey, S3Transport, SyncS3Transport
 
 
@@ -79,6 +82,29 @@ def regional_transport_for(handler: httpx.MockTransport, **kwargs) -> S3Transpor
         now=lambda: datetime(2026, 10, 25, tzinfo=UTC),
         **kwargs,
     )
+
+
+def test_default_credentials_provider_is_reused_per_process(monkeypatch) -> None:
+    first, second = object(), object()
+    factory = Mock(side_effect=[first, second])
+    monkeypatch.setattr(s3_transport, "_default_credentials_provider", None)
+    monkeypatch.setattr(s3_transport.os, "getpid", Mock(side_effect=[101, 101, 202]))
+    monkeypatch.setattr(
+        s3_transport.auth,
+        "AwsCredentialsProvider",
+        SimpleNamespace(new_default_chain=factory),
+    )
+
+    assert s3_transport._credentials_provider(None, None, None) is first
+    assert s3_transport._credentials_provider(None, None, None) is first
+    assert s3_transport._credentials_provider(None, None, None) is second
+    assert factory.call_count == 2
+
+
+@pytest.mark.parametrize("access_key_id,secret_access_key", [("access", None), (None, "secret")])
+def test_partial_static_credentials_are_rejected(access_key_id, secret_access_key) -> None:
+    with pytest.raises(s3_transport.S3PartialCredentialsError):
+        s3_transport._credentials_provider(access_key_id, secret_access_key, None)
 
 
 @pytest.mark.asyncio
@@ -263,6 +289,25 @@ async def test_list_objects_v2_paginator_preserves_options_and_continues() -> No
         "list-type": "2", "prefix": "café/", "delimiter": "/", "max-keys": "2", "encoding-type": "url", "continuation-token": "next",
     }
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_list_objects_v2_paginator_rejects_a_repeated_token() -> None:
+    class RepeatingListClient:
+        calls = 0
+
+        async def list_objects_v2(self, **kwargs):
+            self.calls += 1
+            if self.calls > 2:
+                raise AssertionError("paginator requested a repeated token again")
+            return {"IsTruncated": True, "NextContinuationToken": "repeat"}
+
+    client = RepeatingListClient()
+    paginator = s3_transport.S3ListObjectsV2Paginator(client)
+    with pytest.raises(RuntimeError, match="repeated continuation token"):
+        async for _ in paginator.paginate(Bucket="bucket", Prefix="prefix/"):
+            pass
+    assert client.calls == 2
 
 
 def test_sync_region_redirect_rebuilds_default_endpoint() -> None:
