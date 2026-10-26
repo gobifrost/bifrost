@@ -21,7 +21,7 @@ from email.utils import parsedate_to_datetime
 from io import BytesIO
 from types import SimpleNamespace
 from typing import Any
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, unquote, urlencode
 
 import httpx
 from awscrt import auth, checksums, http
@@ -29,7 +29,7 @@ from awscrt import auth, checksums, http
 
 _ssl_context: tuple[int, ssl.SSLContext] | None = None
 _MAX_ATTEMPTS = 5
-_RETRYABLE_S3_CODES = frozenset({"SlowDown", "RequestTimeout", "BadDigest"})
+_RETRYABLE_S3_CODES = frozenset({"InternalError", "SlowDown", "RequestTimeout", "BadDigest"})
 
 
 def _retry_delay(attempt: int, random_value: Callable[[], float]) -> float:
@@ -93,6 +93,19 @@ def _error_from_payload(status_code: int, payload: bytes) -> S3Error:
             message = payload.decode("utf-8", "replace")[:512]
     error_type = S3NoSuchKey if code in {"NoSuchKey", "404", "NotFound"} else S3Error
     return error_type(code, status_code, message)
+
+
+def _embedded_error(payload: bytes) -> S3Error | None:
+    """Return an S3 error embedded in a nominally successful XML response."""
+    if not payload:
+        return None
+    try:
+        root = ET.fromstring(payload)
+    except ET.ParseError:
+        return None
+    if root.tag.rsplit("}", 1)[-1] == "Error":
+        return _error_from_payload(200, payload)
+    return None
 
 
 def _encode_key(key: str) -> str:
@@ -361,6 +374,7 @@ class S3Transport:
         headers: Mapping[str, str] | None = None,
         body: Any = None,
         stream: bool = False,
+        embedded_error: bool = False,
     ) -> httpx.Response:
         content = _to_bytes(body)
         for attempt in range(_MAX_ATTEMPTS):
@@ -393,6 +407,14 @@ class S3Transport:
                     await self._sleep(_retry_delay(attempt, self._random_value))
                     continue
                 raise error
+            if embedded_error:
+                error = _embedded_error(await response.aread())
+                if error is not None:
+                    await response.aclose()
+                    if attempt < _MAX_ATTEMPTS - 1 and _is_retryable_s3_error(response.status_code, error):
+                        await self._sleep(_retry_delay(attempt, self._random_value))
+                        continue
+                    raise error
             return response
         raise RuntimeError("unreachable")
 
@@ -487,35 +509,47 @@ class S3Transport:
 
     async def list_objects_v2(self, *, Bucket: str, **kwargs: Any) -> dict[str, Any]:
         names = {"Prefix": "prefix", "Delimiter": "delimiter", "ContinuationToken": "continuation-token", "MaxKeys": "max-keys"}
-        query = [("list-type", "2")] + [(wire, str(kwargs[name])) for name, wire in names.items() if kwargs.get(name) is not None]
+        query = [("list-type", "2"), ("encoding-type", "url")] + [(wire, str(kwargs[name])) for name, wire in names.items() if kwargs.get(name) is not None]
         response = await self._request("GET", bucket=Bucket, query=query)
         payload = await response.aread()
         await response.aclose()
         root = ET.fromstring(payload)
+        decode = unquote if _xml_text(root, "EncodingType") == "url" else lambda value: value
         contents = []
         for item in root:
             if item.tag.rsplit("}", 1)[-1] != "Contents":
                 continue
-            entry: dict[str, Any] = {"Key": _xml_text(item, "Key"), "ETag": _xml_text(item, "ETag"), "Size": int(_xml_text(item, "Size", "0"))}
+            entry: dict[str, Any] = {"Key": decode(_xml_text(item, "Key")), "ETag": _xml_text(item, "ETag"), "Size": int(_xml_text(item, "Size", "0"))}
             modified = _xml_text(item, "LastModified")
             if modified:
                 entry["LastModified"] = datetime.fromisoformat(modified.replace("Z", "+00:00"))
             contents.append(entry)
-        return {
+        result = {
             "Contents": contents,
-            "CommonPrefixes": [{"Prefix": _xml_text(item, "Prefix")} for item in root if item.tag.rsplit("}", 1)[-1] == "CommonPrefixes"],
+            "CommonPrefixes": [{"Prefix": decode(_xml_text(item, "Prefix"))} for item in root if item.tag.rsplit("}", 1)[-1] == "CommonPrefixes"],
             "IsTruncated": _xml_text(root, "IsTruncated").lower() == "true",
             "NextContinuationToken": _xml_text(root, "NextContinuationToken") or None,
             "KeyCount": int(_xml_text(root, "KeyCount", str(len(contents)))),
         }
+        prefix = _xml_text(root, "Prefix")
+        if prefix:
+            result["Prefix"] = decode(prefix)
+        encoding_type = _xml_text(root, "EncodingType")
+        if encoding_type:
+            result["EncodingType"] = encoding_type
+        return result
+
+    def get_paginator(self, operation_name: str) -> S3ListObjectsV2Paginator:
+        if operation_name != "list_objects_v2":
+            raise ValueError(f"unsupported S3 paginator: {operation_name}")
+        return S3ListObjectsV2Paginator(self)
 
     async def copy_object(self, *, Bucket: str, Key: str, CopySource: Mapping[str, str] | str, **kwargs: Any) -> dict[str, Any]:
         source = CopySource if isinstance(CopySource, str) else f"/{CopySource['Bucket']}/{_encode_key(CopySource['Key'])}"
         headers = {"x-amz-copy-source": source, **_object_headers(kwargs)}
-        response = await self._request("PUT", bucket=Bucket, key=Key, headers=headers)
+        response = await self._request("PUT", bucket=Bucket, key=Key, headers=headers, embedded_error=True)
         payload = await response.aread()
         await response.aclose()
-        _raise_embedded_error(payload)
         return {"CopyObjectResult": {"ETag": _xml_text(ET.fromstring(payload), "ETag")}} if payload else {}
 
     async def create_multipart_upload(self, *, Bucket: str, Key: str, **kwargs: Any) -> dict[str, Any]:
@@ -533,10 +567,9 @@ class S3Transport:
     async def upload_part_copy(self, *, Bucket: str, Key: str, UploadId: str, PartNumber: int, CopySource: Mapping[str, str] | str, **kwargs: Any) -> dict[str, Any]:
         source = CopySource if isinstance(CopySource, str) else f"/{CopySource['Bucket']}/{_encode_key(CopySource['Key'])}"
         headers = {"x-amz-copy-source": source, **_object_headers(kwargs)}
-        response = await self._request("PUT", bucket=Bucket, key=Key, query=(("partNumber", str(PartNumber)), ("uploadId", UploadId)), headers=headers)
+        response = await self._request("PUT", bucket=Bucket, key=Key, query=(("partNumber", str(PartNumber)), ("uploadId", UploadId)), headers=headers, embedded_error=True)
         payload = await response.aread()
         await response.aclose()
-        _raise_embedded_error(payload)
         root = ET.fromstring(payload)
         return {"CopyPartResult": {"ETag": _xml_text(root, "ETag")}}
 
@@ -546,10 +579,8 @@ class S3Transport:
             element = ET.SubElement(root, "Part")
             ET.SubElement(element, "PartNumber").text = str(part["PartNumber"])
             ET.SubElement(element, "ETag").text = part["ETag"]
-        response = await self._request("POST", bucket=Bucket, key=Key, query=(("uploadId", UploadId),), headers=_object_headers(kwargs), body=ET.tostring(root, encoding="utf-8"))
-        payload = await response.aread()
+        response = await self._request("POST", bucket=Bucket, key=Key, query=(("uploadId", UploadId),), headers=_object_headers(kwargs), body=ET.tostring(root, encoding="utf-8"), embedded_error=True)
         await response.aclose()
-        _raise_embedded_error(payload)
         return {}
 
     async def abort_multipart_upload(self, *, Bucket: str, Key: str, UploadId: str) -> dict[str, Any]:
@@ -581,6 +612,25 @@ class S3Transport:
         return str(signed.url)
 
 
+class S3ListObjectsV2Paginator:
+    """Async paginator for the sole S3 listing operation used by the API."""
+
+    def __init__(self, client: S3Transport) -> None:
+        self._client = client
+
+    async def paginate(self, **kwargs: Any) -> AsyncIterator[dict[str, Any]]:
+        if "PaginationConfig" in kwargs:
+            raise ValueError("PaginationConfig is not used by Bifrost S3 callers")
+        request = dict(kwargs)
+        while True:
+            page = await self._client.list_objects_v2(**request)
+            yield page
+            token = page.get("NextContinuationToken")
+            if not page.get("IsTruncated") or not token:
+                return
+            request["ContinuationToken"] = token
+
+
 def _object_headers(values: Mapping[str, Any]) -> dict[str, str]:
     names = {
         "ContentType": "content-type", "ContentDisposition": "content-disposition", "ContentEncoding": "content-encoding",
@@ -592,17 +642,6 @@ def _object_headers(values: Mapping[str, Any]) -> dict[str, str]:
     for key, value in (values.get("Metadata") or {}).items():
         headers[f"x-amz-meta-{key}"] = str(value)
     return headers
-
-
-def _raise_embedded_error(payload: bytes) -> None:
-    if not payload:
-        return
-    try:
-        root = ET.fromstring(payload)
-    except ET.ParseError:
-        return
-    if root.tag.rsplit("}", 1)[-1] == "Error":
-        raise _error_from_payload(200, payload)
 
 
 class SyncS3Transport:

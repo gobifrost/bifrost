@@ -236,6 +236,35 @@ async def test_async_retry_exhaustion_uses_five_attempts_and_full_jitter(status,
     await client.aclose()
 
 
+@pytest.mark.asyncio
+async def test_list_objects_v2_paginator_preserves_options_and_continues() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if len(seen) == 1:
+            content = b"""<ListBucketResult><EncodingType>url</EncodingType><Prefix>caf%C3%A9/</Prefix><IsTruncated>true</IsTruncated><NextContinuationToken>next</NextContinuationToken><KeyCount>1</KeyCount><Contents><Key>caf%C3%A9/%252F//source.bin</Key><ETag>etag-1</ETag><Size>1</Size></Contents><CommonPrefixes><Prefix>caf%C3%A9/%252F/</Prefix></CommonPrefixes></ListBucketResult>"""
+        else:
+            content = b"""<ListBucketResult><EncodingType>url</EncodingType><Prefix>caf%C3%A9/</Prefix><IsTruncated>false</IsTruncated><KeyCount>1</KeyCount><Contents><Key>caf%C3%A9/two</Key><ETag>etag-2</ETag><Size>2</Size></Contents></ListBucketResult>"""
+        return httpx.Response(200, content=content, request=request)
+
+    client = transport_for(httpx.MockTransport(handler))
+    pages = [
+        page async for page in client.get_paginator("list_objects_v2").paginate(
+            Bucket="bucket", Prefix="café/", Delimiter="/", MaxKeys=2,
+        )
+    ]
+
+    assert [page["Contents"][0]["Key"] for page in pages] == ["café/%2F//source.bin", "café/two"]
+    assert pages[0]["Prefix"] == "café/"
+    assert pages[0]["CommonPrefixes"] == [{"Prefix": "café/%2F/"}]
+    assert dict(seen[0].url.params) == {"list-type": "2", "prefix": "café/", "delimiter": "/", "max-keys": "2", "encoding-type": "url"}
+    assert dict(seen[1].url.params) == {
+        "list-type": "2", "prefix": "café/", "delimiter": "/", "max-keys": "2", "encoding-type": "url", "continuation-token": "next",
+    }
+    await client.aclose()
+
+
 def test_sync_region_redirect_rebuilds_default_endpoint() -> None:
     seen: list[str] = []
 
@@ -286,16 +315,82 @@ def test_sync_retry_exhaustion_uses_five_attempts_and_full_jitter() -> None:
 
 
 @pytest.mark.asyncio
-async def test_copy_object_rejects_embedded_200_error() -> None:
+@pytest.mark.parametrize("operation", ["copy", "part-copy", "complete"])
+async def test_embedded_transient_200_error_retries_then_succeeds(operation: str) -> None:
+    attempts = 0
+    delays: list[float] = []
+
     def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx.Response(
+                200,
+                content=b"<Error><Code>SlowDown</Code><Message>try again</Message></Error>",
+                request=request,
+            )
+        return httpx.Response(200, content=b"<Result><ETag>etag</ETag></Result>", request=request)
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+
+    client = transport_for(httpx.MockTransport(handler), sleep=sleep, random_value=lambda: 0.5)
+    if operation == "copy":
+        await client.copy_object(Bucket="bucket", Key="destination", CopySource={"Bucket": "bucket", "Key": "source"})
+    elif operation == "part-copy":
+        await client.upload_part_copy(
+            Bucket="bucket", Key="destination", UploadId="upload", PartNumber=1,
+            CopySource={"Bucket": "bucket", "Key": "source"},
+        )
+    else:
+        await client.complete_multipart_upload(
+            Bucket="bucket", Key="destination", UploadId="upload",
+            MultipartUpload={"Parts": [{"PartNumber": 1, "ETag": '"etag"'}]},
+        )
+
+    assert attempts == 2
+    assert delays == [0.5]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_embedded_transient_200_error_exhausts_retry_budget() -> None:
+    attempts = 0
+    delays: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
         return httpx.Response(
             200,
             content=b"<Error><Code>InternalError</Code><Message>copy failed</Message></Error>",
             request=request,
         )
 
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+
+    client = transport_for(httpx.MockTransport(handler), sleep=sleep, random_value=lambda: 0.5)
+    with pytest.raises(S3Error) as raised:
+        await client.copy_object(Bucket="bucket", Key="destination", CopySource={"Bucket": "bucket", "Key": "source"})
+
+    assert raised.value.code == "InternalError"
+    assert attempts == 5
+    assert delays == [0.5, 1.0, 2.0, 4.0]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_copy_object_rejects_nonretryable_embedded_200_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=b"<Error><Code>AccessDenied</Code><Message>copy denied</Message></Error>",
+            request=request,
+        )
+
     client = transport_for(httpx.MockTransport(handler))
-    with pytest.raises(S3Error, match="copy failed"):
+    with pytest.raises(S3Error, match="copy denied"):
         await client.copy_object(
             Bucket="bucket", Key="destination", CopySource={"Bucket": "bucket", "Key": "source"}
         )
