@@ -61,7 +61,7 @@ Other changes:
   the Python removal also removes its sole hard dependency, NumPy. OpenPyXL now
   works without opportunistically loading NumPy, including after XLSX generation.
 
-The lock removes **28 packages** and adds **`awscrt==0.38.0`**. Other locked versions
+The lock removes **26 packages** and adds **`awscrt==0.38.0`**. Other locked versions
 remain unchanged; `mcp` was pinned to its existing locked version. OpenAI and
 Anthropic remain because the supported Pydantic AI provider adapters use them.
 The AWS CLI remains a separate subprocess dependency for repository sync.
@@ -86,7 +86,8 @@ of owned protocol code. Sharing the original SDK session captured most of the
 AWS saving with substantially less code. The additional reduction from replacing
 the SDK must be weighed against owning and validating that protocol surface.
 **Actual AWS S3 conditional races and default-credential deployment environments
-have not been live-tested**; SeaweedFS and signing/error fixtures are not substitutes.
+have not been live-tested**. DigitalOcean Spaces acceptance for the deployed
+provider is recorded below; SeaweedFS and signing/error fixtures alone are not substitutes.
 
 Review found and corrected these compatibility gaps before accepting the local
 candidate:
@@ -390,3 +391,51 @@ acceptance and deployment-credential checks, an audit of workflow requirements
 for packages previously available only transitively, and normal PR/release verification.
 Production load, sustained concurrency, and image-pull startup remain unmeasured.
 Vite/build memory is still the next investigation after this API pass.
+
+## Promotion acceptance follow-up — 26 October
+
+The deployment uses DigitalOcean Spaces with explicit configured credentials.
+The operator selected live acceptance against that provider for this promotion.
+Both the candidate transport and the existing aiobotocore client passed the same
+live object, metadata, guarded copy, ordinary/ranged multipart, streaming-read,
+pagination, signed-browser upload/download, abort, and deletion control. Every
+test used a unique `_tmp/api-memory-acceptance/` prefix and removed its own objects
+and active multipart uploads. The temporary test pod was deleted afterwards.
+
+The live test exposed a real candidate defect: HTTPX's default `Connection`
+header was signed, then removed by the Spaces ingress, causing signature
+verification to fail. Signing now excludes hop-by-hop headers while retaining
+Host, date, payload hash, and Content-MD5. A focused regression failed before
+the repair and passed afterwards. Async and sync regional recovery also preserve
+the `400 AuthorizationHeaderMalformed` response with a bucket-region hint.
+
+Ranged multipart copy from a key containing a literal encoded slash failed with
+`NoSuchKey` on both the old SDK and the candidate. This is an existing provider
+edge case; the live multipart control copies from an ordinary key while ordinary
+copy, read, and listing still check the unusual key. The local container-store
+control retains its original encoded-key multipart coverage. No alternate storage
+path or provider-specific fallback was added.
+
+Review also found and repaired agent manifest serialization after changing ORM
+relationship defaults. Workspace export, Solution capture, and workspace-bundle
+planning explicitly load the selected agent model profile. Regression fixtures
+query and expunge ORM objects before serializing them. A null profile foreign key
+does not read the relationship; a configured but unloaded profile still fails.
+
+A read-only audit scanned 2,750 indexed workspace/Solution source and dependency
+files for the import roots of all 26 removed distributions. There were no matches
+or Python parse errors, and the deployed requirements file declared none of those
+packages. Dynamic imports and transitive dependencies of arbitrary external
+packages are not established by this static audit.
+
+The frozen runtime revision passed 10,266 backend unit tests. Changed integration
+files passed 20 tests after updating the requirements-helper fixture to seed via
+the shared workspace writer rather than the worker's now-read-only sync client.
+An initial in-flight source edit invalidated source-introspection checks; the
+subsequent frozen run passed. All exposing failures and intermediate logs are
+retained under `/tmp/bifrost-api-promotion-20261026/`.
+
+AWS-specific live credential-chain/conditional-race acceptance remains unmeasured
+for AWS deployments. Production rollout and before/after workflow results are
+recorded separately when completed; this acceptance section is not a deployment
+claim.

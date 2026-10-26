@@ -178,7 +178,7 @@ async def test_cancelled_body_read_closes_the_response() -> None:
     await started.wait()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        await asyncio.gather(task)
     assert stream.closed is True
     await client.aclose()
 

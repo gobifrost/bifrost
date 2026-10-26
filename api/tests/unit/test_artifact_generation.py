@@ -26,20 +26,19 @@ API_ROOT = Path(__file__).resolve().parents[2]
 
 def test_metadata_helpers_do_not_import_format_renderers() -> None:
     """Validation and thumbnail-version checks stay cheap in fresh processes."""
+    probe = (
+        "import json, sys; "
+        "from shared.artifact_generation import validate_artifact_content; "
+        "from shared.logo_processing import is_logo_thumbnail_version; "
+        "from shared.artifact_preview import preview_office_artifact; "
+        "validate_artifact_content(filename='note.txt', content_type='text/plain', content=b'ready'); "
+        "assert is_logo_thumbnail_version('a' * 64); "
+        "assert preview_office_artifact(b'', 'application/pdf') is None; "
+        "print(json.dumps(sorted({name.split('.')[0] for name in sys.modules} & "
+        "{'cairosvg', 'docx', 'numpy', 'openpyxl', 'reportlab'})))"
+    )
     completed = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import json, sys; "
-            "from shared.artifact_generation import validate_artifact_content; "
-            "from shared.logo_processing import is_logo_thumbnail_version; "
-            "from shared.artifact_preview import preview_office_artifact; "
-            "validate_artifact_content(filename='note.txt', content_type='text/plain', content=b'ready'); "
-            "assert is_logo_thumbnail_version('a' * 64); "
-            "assert preview_office_artifact(b'', 'application/pdf') is None; "
-            "print(json.dumps(sorted({name.split('.')[0] for name in sys.modules} & "
-            "{'cairosvg', 'docx', 'numpy', 'openpyxl', 'reportlab'})))",
-        ],
+        [sys.executable, "-c", probe],
         cwd=API_ROOT,
         check=True,
         capture_output=True,
