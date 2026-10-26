@@ -8,12 +8,15 @@ Python full-replace writer from deleting it.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import UUID
 
 from src.config import Settings, get_settings
 from src.core.s3_transport import S3NoSuchKey, S3Transport
+from src.services.application_deploy_storage import CHUNK_SIZE
+from src.services.file_storage.s3_client import S3StorageClient
 
 SOURCE_ARTIFACTS_ROOT = "_solution_artifacts"
 SOURCE_ARTIFACT_NAME = "source.zip"
@@ -27,6 +30,7 @@ class SolutionSourceArtifactStorage:
         self.prefix = f"{SOURCE_ARTIFACTS_ROOT}/{self.solution_id}/"
         self._settings = settings or get_settings()
         self._bucket: str = self._settings.s3_bucket or ""
+        self._storage = S3StorageClient(self._settings)
 
     @asynccontextmanager
     async def _get_client(self):
@@ -46,9 +50,14 @@ class SolutionSourceArtifactStorage:
             await client.put_object(Bucket=self._bucket, Key=self._key(), Body=data)
 
     async def write_from_path(self, path: Path) -> None:
-        async with self._get_client() as client:
-            with path.open("rb") as f:
-                await client.put_object(Bucket=self._bucket, Key=self._key(), Body=f)
+        async def chunks() -> AsyncIterator[bytes]:
+            with path.open("rb") as source:
+                while chunk := source.read(CHUNK_SIZE):
+                    yield chunk
+
+        await self._storage.put_object_from_chunks(
+            self._key(), chunks(), content_type="application/zip"
+        )
 
     async def read(self) -> bytes | None:
         async with self._get_client() as client:

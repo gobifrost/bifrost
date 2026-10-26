@@ -6,6 +6,7 @@ import base64
 import gzip
 import asyncio
 from datetime import UTC, datetime
+from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import Mock
 from urllib.parse import parse_qs
@@ -105,6 +106,11 @@ def test_default_credentials_provider_is_reused_per_process(monkeypatch) -> None
 def test_partial_static_credentials_are_rejected(access_key_id, secret_access_key) -> None:
     with pytest.raises(s3_transport.S3PartialCredentialsError):
         s3_transport._credentials_provider(access_key_id, secret_access_key, None)
+
+
+def test_transport_rejects_file_like_body() -> None:
+    with pytest.raises(TypeError, match="str, bytes, or bytearray"):
+        s3_transport._to_bytes(BytesIO(b"archive"))
 
 
 @pytest.mark.asyncio

@@ -168,13 +168,7 @@ def _to_bytes(body: Any) -> bytes:
         return bytes(body)
     if isinstance(body, str):
         return body.encode()
-    read = getattr(body, "read", None)
-    if callable(read):
-        value = read()
-        if not isinstance(value, bytes):
-            raise TypeError("S3 Body.read() must return bytes")
-        return value
-    raise TypeError("S3 Body must be bytes or a binary file")
+    raise TypeError("S3 Body must be str, bytes, or bytearray")
 
 
 def _sign_request(
