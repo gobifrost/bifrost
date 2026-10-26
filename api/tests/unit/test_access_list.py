@@ -1131,15 +1131,18 @@ def _middleware_roots(middleware: list) -> list[object]:
 
 def _mount_roots() -> dict[str, list[object]]:
     """Starlette routes and mounts outside the access list: each mounted
-    app's in-scope ASGI layers, routes, middleware (FastMCP ``on_*``
-    middleware included) and lifespan, plus the dynamically registered MCP
-    ``WorkflowTool.run``."""
+    app's in-scope ASGI layers, routes, middleware and lifespan, plus the MCP
+    SDK's registered policy callbacks and dynamic ``WorkflowTool.run``."""
     from starlette.routing import Mount, Route
 
     from src.services.mcp_server import server as mcp_server
 
     roots: dict[str, list[object]] = {
         "MCP WorkflowTool.run": [mcp_server.WorkflowTool.run],
+        "MCP SDK policy": [
+            mcp_server.BifrostSDKServer.list_tools,
+            mcp_server.BifrostSDKServer.call_tool,
+        ],
         "APP middleware": _middleware_roots(app.user_middleware),
     }
     for route in app.routes:
@@ -1158,10 +1161,6 @@ def _mount_roots() -> dict[str, list[object]]:
                 if isinstance(r, Route) and _in_scope(_unbound(r.endpoint))
             )
             layers.extend(_middleware_roots(getattr(layer, "user_middleware", [])))
-            fastmcp_server = getattr(getattr(layer, "state", None), "fastmcp_server", None)
-            for mw in getattr(fastmcp_server, "middleware", ()):
-                if _in_scope(type(mw)):
-                    layers.extend(_object_methods(mw))
             lifespan = getattr(layer, "lifespan", None)
             if inspect.isfunction(lifespan) and _in_scope(lifespan):
                 layers.append(lifespan)

@@ -866,27 +866,15 @@ async def _register_workflow_tools(mcp: FastMCP) -> int:
                         workflow_wrapper.__name__ = tool_name
                         workflow_wrapper.__qualname__ = tool_name
                         workflow_wrapper.__doc__ = description
-                        mcp.add_tool(
+                        registered = SDKWorkflowTool.from_function(
                             workflow_wrapper,
                             name=tool_name,
                             description=description,
                         )
-                        registered = mcp._tool_manager.get_tool(tool_name)
-                        if registered is None:  # pragma: no cover - SDK invariant
-                            raise RuntimeError(f"MCP SDK did not register {tool_name}")
-                        mcp._tool_manager._tools[tool_name] = SDKWorkflowTool(
-                            fn=registered.fn,
-                            name=registered.name,
-                            title=registered.title,
-                            description=registered.description,
-                            parameters=workflow_tool.parameters,
-                            fn_metadata=registered.fn_metadata,
-                            is_async=registered.is_async,
-                            context_kwarg=registered.context_kwarg,
-                            annotations=registered.annotations,
-                            icons=registered.icons,
-                            meta=registered.meta,
-                        )
+                        registered.parameters = workflow_tool.parameters
+                        # SDK add_tool preserves an existing name. Refresh must
+                        # replace its callable as well as its dynamic schema.
+                        mcp._tool_manager._tools[tool_name] = registered
                         count += 1
                         logger.debug(
                             f"Registered workflow tool: {tool_name} "

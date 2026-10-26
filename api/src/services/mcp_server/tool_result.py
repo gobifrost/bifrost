@@ -31,7 +31,8 @@ class ToolResult:
     structured_content: dict[str, Any] | None = None
     is_error: bool = False
 
-    def to_call_tool_result(self) -> CallToolResult:
+    def __post_init__(self) -> None:
+        """Retain the former result's normalized content-block interface."""
         if isinstance(self.content, list) and all(
             getattr(block, "type", None) in {"text", "image", "audio", "resource_link", "resource"}
             for block in self.content
@@ -46,8 +47,11 @@ class ToolResult:
                     text=json.dumps(self.content, separators=(",", ":"), default=str),
                 )
             ]
+        object.__setattr__(self, "content", content)
+
+    def to_call_tool_result(self) -> CallToolResult:
         return CallToolResult(
-            content=content,
+            content=self.content,
             structuredContent=self.structured_content,
             isError=self.is_error,
         )
