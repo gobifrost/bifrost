@@ -66,7 +66,11 @@ async def _principal_from_authority(
     db: AsyncSession, authority: RuntimeAuthority
 ) -> UserPrincipal | None:
     actor = await db.get(User, authority.acting_user_id, populate_existing=True)
-    run_user = await db.get(User, authority.run_user.user_id, populate_existing=True)
+    run_user = (
+        actor
+        if authority.acting_user_id == authority.run_user.user_id
+        else await db.get(User, authority.run_user.user_id, populate_existing=True)
+    )
     if actor is None or run_user is None:
         return None
 

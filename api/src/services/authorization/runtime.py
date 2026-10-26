@@ -98,7 +98,7 @@ async def _load_workflow_execution(db: AsyncSession, execution_id: UUID) -> Runt
         raise RuntimeIdentityError(_EXECUTION_LINEAGE_MISSING)
     if execution.executed_by is None or is_system_account(execution.executed_by):
         raise RuntimeIdentityError(_EXECUTION_ACTOR_MISSING)
-    if await load_run_user(db, execution.executed_by) is None:
+    if execution.executed_by != run_user.user_id and await load_run_user(db, execution.executed_by) is None:
         raise RuntimeIdentityError(_EXECUTION_ACTOR_MISSING)
 
     powers = None
@@ -181,7 +181,7 @@ async def _load_agent_run(db: AsyncSession, run_id: UUID) -> RuntimeAuthority:
 
     if run.acting_user_id is None:
         raise RuntimeIdentityError(_AGENT_ACTOR_MISSING)
-    if await load_run_user(db, run.acting_user_id) is None:
+    if run.acting_user_id != run_user.user_id and await load_run_user(db, run.acting_user_id) is None:
         raise RuntimeIdentityError(_AGENT_ACTOR_MISSING)
     # HTTP/MCP refreshes use a fresh async session. Reading run.agent here
     # would attempt an implicit synchronous lazy query in that session.
