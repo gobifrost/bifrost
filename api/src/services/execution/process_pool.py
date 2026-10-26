@@ -1518,10 +1518,14 @@ class ProcessPoolManager:
                 if pubsub is not None:
                     try:
                         await pubsub.unsubscribe("bifrost:cancel")
-                        await pubsub.aclose()
                     except Exception as e:
-                        # Already-closed pubsub or Redis disconnect — best-effort cleanup
-                        logger.debug(f"cancel listener pubsub cleanup failed: {e}")
+                        # Already-closed pubsub or Redis disconnect.
+                        logger.debug(f"cancel listener pubsub unsubscribe failed: {e}")
+                    finally:
+                        try:
+                            await pubsub.aclose()
+                        except Exception as e:
+                            logger.debug(f"cancel listener pubsub close failed: {e}")
 
         logger.info("Cancel listener loop stopped")
 
@@ -1563,10 +1567,14 @@ class ProcessPoolManager:
                 if pubsub is not None:
                     try:
                         await pubsub.unsubscribe(channel)
-                        await pubsub.aclose()
                     except Exception as e:
-                        # Already-closed pubsub or Redis disconnect — best-effort cleanup
-                        logger.debug(f"command listener pubsub cleanup failed: {e}")
+                        # Already-closed pubsub or Redis disconnect.
+                        logger.debug(f"command listener pubsub unsubscribe failed: {e}")
+                    finally:
+                        try:
+                            await pubsub.aclose()
+                        except Exception as e:
+                            logger.debug(f"command listener pubsub close failed: {e}")
 
         logger.info("Command listener loop stopped")
 
