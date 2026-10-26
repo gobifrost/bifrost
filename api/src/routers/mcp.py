@@ -34,7 +34,9 @@ from typing import NoReturn
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import Response
 from mcp.server.auth.middleware.bearer_auth import RequireAuthMiddleware
+from mcp.server.auth.routes import build_resource_metadata_url
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from pydantic import AnyHttpUrl
 from starlette.applications import Starlette
 from starlette.middleware.cors import CORSMiddleware
 from starlette.routing import Route
@@ -351,8 +353,11 @@ def get_mcp_asgi_app():
                 endpoint=RequireAuthMiddleware(
                     mcp_endpoint,
                     auth_provider.required_scopes,
+                    build_resource_metadata_url(
+                        AnyHttpUrl(f"{auth_provider.base_url}/mcp")
+                    ),
                 ),
-                methods=["GET", "POST", "DELETE"],
+                methods=["POST", "DELETE"],
             ),
             *auth_provider.get_routes(mcp_path="/mcp"),
         ],
