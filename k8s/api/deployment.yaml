@@ -56,13 +56,6 @@ spec:
           ports:
             - containerPort: 8000
               name: http
-          # Keep transient large buffers independently releasable instead of
-          # allowing glibc to raise its heap-retention thresholds after bursts.
-          env:
-            - name: MALLOC_MMAP_THRESHOLD_
-              value: "131072"
-            - name: MALLOC_TRIM_THRESHOLD_
-              value: "131072"
           envFrom:
             - configMapRef:
                 name: bifrost-config

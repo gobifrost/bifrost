@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
+from starlette.websockets import WebSocketState
 
 from src.config import get_settings
 from src.core.database import get_liveness_db_context
@@ -915,7 +916,8 @@ async def remote_control(socket: WebSocket) -> None:
         # A transport disconnect does not kill children or release claims.
         pass
     except (AuthenticationError, ProtocolError):
-        await socket.close(code=1008)
+        if socket.application_state is not WebSocketState.DISCONNECTED:
+            await socket.close(code=1008)
     finally:
         if session is not None:
             session.bridge.disconnect(socket)

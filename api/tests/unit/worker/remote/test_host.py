@@ -304,3 +304,47 @@ def test_remote_admission_uses_launcher_pressure_ratio_not_unbounded_usage_ratio
     executor.settings = Mock(memory_pressure_threshold=.85)
 
     assert executor._under_pressure() is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("valid_proof", [False, True], ids=["invalid-proof", "owner-refused"])
+async def test_refused_remote_control_handshake_closes_once(valid_proof: bool) -> None:
+    """A rejected handshake must not send a second close after connect rejects it."""
+    from starlette.websockets import WebSocket
+
+    from src.worker.remote import host as host_mod
+
+    hello = Hello(
+        launcher_id=LEASE.launcher_id,
+        incarnation_id=LEASE.worker_id,
+        job_uid="job", pod_uid="pod", hostname="runner-0", form="job",
+        issued_at=int(time.time()), nonce="n" * 32, hello_sequence=1,
+    )
+    initial = {
+        "event": "hello",
+        "hello": sign_hello("secret" if valid_proof else "wrong-secret", hello).to_dict(),
+        "sample": {"current": 1, "limit": 100},
+    }
+    send = AsyncMock()
+    socket = WebSocket(
+        {"type": "websocket", "path": "/api/worker-control"},
+        receive=AsyncMock(side_effect=[
+            {"type": "websocket.connect"},
+            {"type": "websocket.receive", "text": json.dumps(initial)},
+        ]),
+        send=send,
+    )
+    host = RemoteControlHost()
+    with (
+        patch.object(host_mod, "_host", host),
+        patch.object(host_mod, "get_settings", return_value=Mock(secret_key="secret")),
+        patch.object(host_mod, "admit_worker", new=AsyncMock(return_value=object())),
+        patch.object(host_mod, "acquire_remote_owner", new=AsyncMock(return_value=None)),
+    ):
+        await host_mod.remote_control(socket)
+
+    assert [call.args[0]["type"] for call in send.await_args_list] == [
+        "websocket.accept", "websocket.close",
+    ]
+    assert send.await_args_list[-1].args[0]["code"] == 1008
+    assert host.sessions == {}

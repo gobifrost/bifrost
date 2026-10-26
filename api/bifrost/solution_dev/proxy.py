@@ -250,6 +250,13 @@ async def _refresh_cli_token(
     return True
 
 
+async def _recover_expired_cli_token(cfg: DevProxyConfig) -> bool:
+    """Recover a known-expired preview from its current credential source."""
+    if not cfg.auth_expired:
+        return True
+    return await _refresh_cli_token(cfg, cfg.token)
+
+
 async def _proactive_auth_refresh_loop(app: web.Application) -> None:
     """Renew an active preview token before its JWT expiry.
 
@@ -332,8 +339,7 @@ async def _authed_upstream_request(
             headers = {k: v for k, v in headers.items() if k.lower() not in drop_headers}
         return headers
 
-    observed_access_token = cfg.token
-    if cfg.auth_expired and not await _refresh_cli_token(cfg, observed_access_token):
+    if not await _recover_expired_cli_token(cfg):
         return None
     observed_access_token = cfg.token
     try:
@@ -701,7 +707,12 @@ def _with_cli_token(rel_url: yarl.URL, token: str) -> yarl.URL:
     return rel_url.update_query(token=token)
 
 
-async def _ws_proxy(request: web.Request, target_ws_url: str) -> web.WebSocketResponse:
+async def _ws_proxy(
+    request: web.Request,
+    target_ws_url: str,
+    *,
+    mark_auth_expired_on_401: bool = False,
+) -> web.WebSocketResponse:
     requested = [
         p.strip()
         for p in request.headers.get("Sec-WebSocket-Protocol", "").split(",")
@@ -751,21 +762,36 @@ async def _ws_proxy(request: web.Request, target_ws_url: str) -> web.WebSocketRe
             await asyncio.gather(*done, *pending, return_exceptions=True)
             await ws_client.close()
             await ws_server.close()
+    except aiohttp.WSServerHandshakeError as exc:
+        if not mark_auth_expired_on_401 or exc.status != 401:
+            raise
+        request.app[_CFG].auth_expired = True
+        await ws_server.close(
+            code=aiohttp.WSCloseCode.POLICY_VIOLATION,
+            message=b"authentication expired",
+        )
     finally:
         await session.close()
     return ws_server
 
 
-async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
-    """Bridge realtime (/ws/...) sockets to the dev API."""
+async def _api_ws_proxy(request: web.Request) -> web.StreamResponse:
+    """Bridge an API realtime socket after recovering a known-expired preview."""
     cfg: DevProxyConfig = request.app[_CFG]
+    if not await _recover_expired_cli_token(cfg):
+        return _dev_auth_expired_json_response()
     target = _ws_scheme(
         _join_upstream(
             cfg.upstream_url,
             _with_cli_token(request.rel_url, cfg.token),
         )
     )
-    return await _ws_proxy(request, target)
+    return await _ws_proxy(request, target, mark_auth_expired_on_401=True)
+
+
+async def _ws_handler(request: web.Request) -> web.StreamResponse:
+    """Bridge realtime (/ws/...) sockets to the dev API."""
+    return await _api_ws_proxy(request)
 
 
 def _is_uuid(ref: str) -> bool:
@@ -938,13 +964,7 @@ async def _execute_handler(request: web.Request) -> web.Response:
 async def _api_proxy_handler(request: web.Request) -> web.StreamResponse:
     cfg: DevProxyConfig = request.app[_CFG]
     if _is_ws_upgrade(request):
-        target = _ws_scheme(
-            _join_upstream(
-                cfg.upstream_url,
-                _with_cli_token(request.rel_url, cfg.token),
-            )
-        )
-        return await _ws_proxy(request, target)
+        return await _api_ws_proxy(request)
     data = await request.read()
     try:
         resp = await _authed_upstream_request(

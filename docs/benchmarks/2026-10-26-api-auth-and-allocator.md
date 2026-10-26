@@ -78,14 +78,26 @@ those test images. This is a local controlled comparison, not a production p95.
 An earlier `PYTHONMALLOC=mimalloc` comparison reduced growth above its baseline
 but ended slightly larger in absolute PSS; it did not justify an allocator switch.
 
-The API deployment fixes `MALLOC_MMAP_THRESHOLD_` and `MALLOC_TRIM_THRESHOLD_`
+The candidate fixed `MALLOC_MMAP_THRESHOLD_` and `MALLOC_TRIM_THRESHOLD_`
 at 131072 bytes. These are glibc's initial defaults; explicitly setting them
 disables upward dynamic adjustment. Large transient buffers can therefore remain
-independently releasable. This is limited to the API container; worker and build
-allocator configuration is unchanged. See the
+independently releasable. The experiment was limited to the API container;
+worker and build allocator configuration was unchanged. See the
 [GNU libc allocation tunables](https://sourceware.org/glibc/manual/latest/html_node/Memory-Allocation-Tunables.html).
 
-The measured local saving is about 12.5 MiB, not 184 MiB. Production needs an
-aged, workload-matched observation to establish lasting savings. The broader
-250 MiB fully-warmed API target remains unmet; these settings do not remove
-Python objects or the native allocations still in use.
+The measured local saving is about 12.5 MiB, not 184 MiB. A production check
+under substantial API load then observed much slower SDK-backed workflows and
+an HTTP read timeout, despite successful execution completion. That did not
+establish causation, but the settings were rolled back rather than accepting
+an unverified latency tradeoff. The base deployment retains its existing
+allocator policy. The broader 250 MiB fully-warmed API target remains unmet.
+
+## Worker admission diagnostics
+
+During API handoff, a refused worker connection was closed by the admission
+handler and then closed again by the route's exception handler. Starlette
+correctly rejected the second close, producing an ASGI traceback for an already
+handled rejection. A real Starlette WebSocket regression reproduces both an
+invalid proof and a refused owner lease. The route now avoids closing an
+already-disconnected socket; authentication, admission, and close code 1008
+are unchanged.
