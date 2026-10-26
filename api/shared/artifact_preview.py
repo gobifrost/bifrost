@@ -5,9 +5,6 @@ from __future__ import annotations
 import io
 from html import escape
 
-from docx import Document
-from openpyxl import load_workbook
-
 DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -43,6 +40,8 @@ def _page(body: str) -> str:
 
 def preview_docx(content: bytes) -> str:
     """Render paragraphs and tables from a DOCX without executing active content."""
+    from docx import Document
+
     document = Document(io.BytesIO(content))
     parts: list[str] = []
     for paragraph in document.paragraphs[:500]:
@@ -72,6 +71,8 @@ def preview_docx(content: bytes) -> str:
 
 def preview_xlsx(content: bytes) -> str:
     """Render a bounded workbook preview without evaluating formulas."""
+    from openpyxl import load_workbook
+
     workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=False)
     parts: list[str] = []
     try:
