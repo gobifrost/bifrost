@@ -22,6 +22,8 @@ import gzip
 import json
 import logging
 import time
+from collections import OrderedDict
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -175,7 +177,9 @@ class CatalogProvider:
     npm: str | None = None
     doc: str | None = None
     env: list[str] = field(default_factory=list)
-    models: dict[str, CatalogModel] = field(default_factory=dict)
+    # The mapping keeps validated normalized records as bytes and materializes
+    # typed models only as callers request them.
+    models: Any = field(default_factory=dict)
 
     @property
     def adapter(self) -> AdapterKind | None:
@@ -231,6 +235,42 @@ class CatalogProvider:
 
 _REASONING_OPTION_ADAPTER = TypeAdapter(ReasoningOption)
 _CATALOG_COST_ADAPTER = TypeAdapter(CatalogCost)
+_CATALOG_MODEL_ADAPTER = TypeAdapter(CatalogModel)
+_MODEL_CACHE_SIZE = 128
+
+
+class _CatalogModelMapping(Mapping[str, CatalogModel]):
+    """One provider's records with a catalog-wide parsed LRU cache."""
+
+    __slots__ = ("_provider_id", "_serialized", "_cache")
+
+    def __init__(
+        self,
+        provider_id: str,
+        serialized: dict[str, bytes],
+        cache: OrderedDict[tuple[str, str], CatalogModel],
+    ) -> None:
+        self._provider_id = provider_id
+        self._serialized = serialized
+        self._cache = cache
+
+    def __getitem__(self, model_id: str) -> CatalogModel:
+        cache_key = (self._provider_id, model_id)
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            self._cache.move_to_end(cache_key)
+            return cached
+        model = _CATALOG_MODEL_ADAPTER.validate_json(self._serialized[model_id])
+        self._cache[cache_key] = model
+        if len(self._cache) > _MODEL_CACHE_SIZE:
+            self._cache.popitem(last=False)
+        return model
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._serialized)
+
+    def __len__(self) -> int:
+        return len(self._serialized)
 
 
 @dataclass(frozen=True)
@@ -333,11 +373,17 @@ def parse_catalog(
     source: Literal["bundled", "refreshed"],
 ) -> ModelCatalog:
     providers: dict[str, CatalogProvider] = {}
+    model_cache: OrderedDict[tuple[str, str], CatalogModel] = OrderedDict()
     for provider_id, provider in payload.items():
-        models: dict[str, CatalogModel] = {}
+        models: dict[str, bytes] = {}
         for model_id, model in provider.get("models", {}).items():
             try:
-                models[model_id] = _parse_model(model)
+                # Validate and coerce eagerly so malformed models are still
+                # skipped at refresh/load time, while retaining one compact,
+                # normalized representation after parsing finishes.
+                models[model_id] = _CATALOG_MODEL_ADAPTER.dump_json(
+                    _parse_model(model), exclude_defaults=True
+                )
             except (ValueError, TypeError) as exc:
                 logger.debug("Skipping catalog model %s/%s: %s", provider_id, model_id, exc)
         providers[provider_id] = CatalogProvider(
@@ -347,7 +393,7 @@ def parse_catalog(
             npm=provider.get("npm"),
             doc=provider.get("doc"),
             env=list(provider.get("env") or []),
-            models=models,
+            models=_CatalogModelMapping(provider_id, models, model_cache),
         )
     return ModelCatalog(providers=providers, fetched_at=fetched_at, source=source)
 
