@@ -12,12 +12,13 @@ import pytest
 import redis
 
 from src.config import get_settings
-from src.core.module_cache_sync import _get_s3_client
+from src.core.s3_transport import S3NoSuchKey
 from src.services.execution.requirements_setup_result import RequirementsInstallResult
+from src.services.repo_storage import RepoStorage
 
 
 @pytest.mark.e2e
-def test_requirements_helper_installs_package_visible_to_fresh_python(tmp_path, monkeypatch):
+async def test_requirements_helper_installs_package_visible_to_fresh_python(tmp_path, monkeypatch):
     package = f"bifrost_setup_probe_{uuid4().hex}"
     distribution = package.replace("_", "-")
     requirement = f"{distribution}==0.0.1"
@@ -38,18 +39,18 @@ def test_requirements_helper_installs_package_visible_to_fresh_python(tmp_path, 
     isolated_url = urlunsplit(url._replace(path="/15"))
     client = redis.Redis.from_url(isolated_url)
     key = "bifrost:requirements:content"
-    storage = _get_s3_client()
-    assert storage is not None
-    bucket = os.environ["BIFROST_S3_BUCKET"]
-    object_key = "_repo/requirements.txt"
+    # Seed through the workspace writer. The worker's deliberately read-only
+    # synchronous cache client is exercised by the real setup subprocess below.
+    storage = RepoStorage()
+    object_key = "requirements.txt"
     try:
-        original_object = storage.get_object(Bucket=bucket, Key=object_key)["Body"].read()
-    except storage.exceptions.NoSuchKey:
+        original_object = await storage.read(object_key)
+    except S3NoSuchKey:
         original_object = None
     original = client.get(key)
     original_ttl = client.pttl(key)
     try:
-        storage.put_object(Bucket=bucket, Key=object_key, Body=requirement.encode())
+        await storage.write(object_key, requirement.encode())
         client.delete(key)
         monkeypatch.setenv("BIFROST_REDIS_URL", isolated_url)
         monkeypatch.setenv("PYTHONUSERBASE", str(tmp_path / "user-site"))
@@ -88,9 +89,9 @@ print(json.dumps({
         assert probe.stdout.strip() == "installed-by-helper"
     finally:
         if original_object is None:
-            storage.delete_object(Bucket=bucket, Key=object_key)
+            await storage.delete(object_key)
         else:
-            storage.put_object(Bucket=bucket, Key=object_key, Body=original_object)
+            await storage.write(object_key, original_object)
         if original is None:
             client.delete(key)
         elif original_ttl > 0:
