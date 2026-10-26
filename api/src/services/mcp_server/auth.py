@@ -21,7 +21,7 @@ import re
 import secrets
 from typing import Any
 
-from fastmcp.server.auth.auth import AccessToken
+from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
 from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
 from starlette.middleware import Middleware as StarletteMiddleware
@@ -43,6 +43,12 @@ TTL_MCP_CLIENT = 86400 * 30  # 30 days for registered clients
 
 # Shape of the hex HMAC-SHA256 tags produced by _secret_hmac.
 _AUTH_CODE_TAG = re.compile(r"[0-9a-f]{64}")
+
+
+class MCPAccessToken(AccessToken):
+    """SDK token with Bifrost identity claims for tool execution."""
+
+    claims: dict[str, Any]
 
 
 def _secret_hmac(message: str) -> str:
@@ -705,8 +711,8 @@ class BifrostAuthProvider:
 
         logger.info(f"MCP auth: Token valid for user {payload.get('email')}, roles={role_names}")
 
-        return AccessToken(
-            token=token,  # FastMCP requires this field
+        return MCPAccessToken(
+            token=token,
             client_id=str(principal.user_id if principal is not None else payload.get("sub")),
             scopes=["mcp:access"],
             expires_at=payload.get("exp"),
@@ -773,7 +779,7 @@ class BifrostAuthProvider:
         """
         Return HTTP middleware for the auth provider.
 
-        FastMCP requires AuthenticationMiddleware with BearerAuthBackend
+        The MCP SDK requires AuthenticationMiddleware with BearerAuthBackend
         to validate tokens and set scope["user"]. Without this, all
         requests fail with 401 because the RequireAuthMiddleware can't
         find an authenticated user.

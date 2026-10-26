@@ -1636,13 +1636,16 @@ class AutonomousAgentExecutor:
                 result = await func(context, **tool_call.arguments)
                 await db.commit()
 
-            # Extract result from FastMCP ToolResult format
+            # Preserve the MCP wire representation for Bifrost-owned tool
+            # results when the autonomous executor invokes a tool directly.
             import pydantic_core
+            from src.services.mcp_server.tool_result import ToolResult as MCPToolResult
 
-            if hasattr(result, "content") and hasattr(result, "structured_content"):
+            if isinstance(result, MCPToolResult):
+                wire_result = result.to_call_tool_result()
                 result_data = {
-                    "content": pydantic_core.to_jsonable_python(result.content),
-                    "structured_content": result.structured_content,
+                    "content": pydantic_core.to_jsonable_python(wire_result.content),
+                    "structured_content": wire_result.structuredContent,
                 }
             elif hasattr(result, "content"):
                 result_data = pydantic_core.to_jsonable_python(result.content)

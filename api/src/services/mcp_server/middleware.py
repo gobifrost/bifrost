@@ -10,9 +10,10 @@ the middleware preserves that agent's native tool surface.
 
 import logging
 
-from fastmcp.exceptions import ToolError
-from fastmcp.server.dependencies import get_access_token
-from fastmcp.server.middleware import Middleware, MiddlewareContext
+from types import SimpleNamespace
+
+from mcp.server.auth.middleware.auth_context import get_access_token
+from mcp.server.fastmcp.exceptions import ToolError
 
 from src.services.mcp_server.agent_scope import (
     get_scoped_agent_id as _get_agent_id_from_scope,
@@ -22,7 +23,7 @@ from src.services.mcp_server.tools.gateway import GATEWAY_TOOL_NAMES
 logger = logging.getLogger(__name__)
 
 
-class ToolFilterMiddleware(Middleware):
+class ToolFilterMiddleware:
     """
     FastMCP middleware for gateway and agent-scoped tool surfaces.
 
@@ -42,8 +43,26 @@ class ToolFilterMiddleware(Middleware):
     - on_call_tool: Rejects direct calls to hidden native tools
     """
 
+    async def filter_tools(self, all_tools: list) -> list:
+        """Filter SDK ``tools/list`` results with the established policy."""
+
+        async def return_tools(_context):
+            return all_tools
+
+        return await self.on_list_tools(None, return_tools)
+
+    async def authorize_tool_call(self, tool_name: str) -> None:
+        """Fail closed before the SDK dispatches a tool invocation."""
+
+        async def authorized(_context):
+            return None
+
+        await self.on_call_tool(
+            SimpleNamespace(message=SimpleNamespace(name=tool_name)), authorized
+        )
+
     async def on_list_tools(
-        self, context: MiddlewareContext, call_next
+        self, context, call_next
     ) -> list:
         """
         Filter tools/list response based on user permissions.
@@ -124,7 +143,7 @@ class ToolFilterMiddleware(Middleware):
             return []
 
     async def on_call_tool(
-        self, context: MiddlewareContext, call_next
+        self, context, call_next
     ):
         """
         Block execution of tools user doesn't have access to.

@@ -2,10 +2,10 @@
 MCP (Model Context Protocol) Router
 
 Provides external access to Bifrost's MCP server for LLM clients like Claude Desktop.
-Uses FastMCP to expose tools via Streamable HTTP transport with Bearer token authentication.
+Uses the bundled MCP SDK to expose tools via Streamable HTTP with Bearer authentication.
 
 Architecture:
-    - FastMCP server is mounted as an ASGI sub-application at /mcp
+    - MCP SDK server is mounted as an ASGI sub-application at /mcp
     - JWT Bearer token authentication using Bifrost's existing auth system
     - /mcp exposes stable agent discovery, dispatch, instruction, and memory tools
     - /mcp/{agent_id} preserves the native agent-scoped tool surface
@@ -33,7 +33,11 @@ from typing import NoReturn
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import Response
+from mcp.server.auth.middleware.bearer_auth import RequireAuthMiddleware
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from starlette.applications import Starlette
 from starlette.middleware.cors import CORSMiddleware
+from starlette.routing import Route
 
 from src.config import get_settings
 from src.core.auth import CurrentActiveUser
@@ -304,27 +308,19 @@ def get_mcp_asgi_app():
     """
     from contextlib import asynccontextmanager
 
-    from src.services.mcp_server.server import HAS_FASTMCP
-
-    if not HAS_FASTMCP:
-        logger.warning("FastMCP not installed - MCP HTTP endpoint will not be available")
-        return None
-
-    # Import here to avoid circular imports and only when FastMCP is available
+    # Import here to avoid the router/server cycle during application startup.
     from src.services.mcp_server.server import (
         BifrostMCPServer,
         MCPContext,
         _register_workflow_tools,
     )
 
-    # Create OAuth 2.1 auth provider for Bifrost
-    try:
-        from src.services.mcp_server.auth import create_bifrost_auth_provider
-        auth_provider = create_bifrost_auth_provider()
-        logger.info("Created Bifrost OAuth 2.1 auth provider for MCP")
-    except ImportError as e:
-        logger.warning(f"Could not create auth provider: {e}")
-        auth_provider = None
+    # Create OAuth 2.1 auth provider for Bifrost. MCP is never mounted without
+    # this verifier: an unavailable auth implementation is a startup failure.
+    from src.services.mcp_server.auth import create_bifrost_auth_provider
+
+    auth_provider = create_bifrost_auth_provider()
+    logger.info("Created Bifrost OAuth 2.1 auth provider for MCP")
 
     # Create a default context for tool schema generation
     # The actual user context is derived from the validated JWT token
@@ -336,25 +332,37 @@ def get_mcp_asgi_app():
     server = BifrostMCPServer(default_context)
     fastmcp_server = server.get_fastmcp_server(auth=auth_provider)
 
-    # Add tool filtering middleware to filter tools/list based on user permissions
-    try:
-        from src.services.mcp_server.middleware import ToolFilterMiddleware
-        fastmcp_server.add_middleware(ToolFilterMiddleware())
-        logger.info("Added ToolFilterMiddleware for per-user tool filtering")
-    except ImportError as e:
-        logger.warning(f"Could not add ToolFilterMiddleware: {e}")
+    # The SDK manager owns Streamable HTTP session and notification behavior.
+    # We deliberately retain stateless JSON responses to match the former
+    # FastMCP mount's wire contract.
+    session_manager = StreamableHTTPSessionManager(
+        app=fastmcp_server._mcp_server,
+        json_response=True,
+        stateless=True,
+    )
 
-    # Create ASGI app with default path="/mcp" - we mount at root so FastMCP
-    # handles /mcp directly without Starlette's trailing slash redirect
-    mcp_app = fastmcp_server.http_app(json_response=True, stateless_http=True)
+    async def mcp_endpoint(scope, receive, send):
+        await session_manager.handle_request(scope, receive, send)
 
-    # Store original lifespan before wrapping
-    original_lifespan = getattr(mcp_app, 'lifespan', None)
+    mcp_app = Starlette(
+        routes=[
+            Route(
+                "/mcp",
+                endpoint=RequireAuthMiddleware(
+                    mcp_endpoint,
+                    auth_provider.required_scopes,
+                ),
+                methods=["GET", "POST", "DELETE"],
+            ),
+            *auth_provider.get_routes(mcp_path="/mcp"),
+        ],
+        middleware=auth_provider.get_middleware(),
+    )
 
     # Create combined lifespan that registers workflow tools on startup
     @asynccontextmanager
     async def combined_lifespan(app):
-        """Combined lifespan that registers workflow tools and runs FastMCP lifespan."""
+        """Register workflow tools and run the SDK session manager."""
         # Register workflow tools on startup
         try:
             count = await _register_workflow_tools(fastmcp_server)
@@ -362,11 +370,7 @@ def get_mcp_asgi_app():
         except Exception as e:
             logger.warning(f"Failed to register workflow tools: {e}")
 
-        # Run original FastMCP lifespan if present
-        if original_lifespan:
-            async with original_lifespan(app):
-                yield
-        else:
+        async with session_manager.run():
             yield
 
     # Wrap with agent-scoping middleware to handle /mcp/{agent_id} paths
@@ -387,7 +391,7 @@ def get_mcp_asgi_app():
     # Store combined lifespan on the wrapper for main.py to find
     cors_app.lifespan = combined_lifespan  # type: ignore[attr-defined]
 
-    logger.info("Created FastMCP ASGI application with OAuth 2.1 auth and CORS")
+    logger.info("Created MCP SDK ASGI application with OAuth 2.1 auth and CORS")
 
     return cors_app
 

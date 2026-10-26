@@ -2,7 +2,7 @@
 
 from typing import Annotated, Any, Literal
 
-from fastmcp.tools import ToolResult
+from src.services.mcp_server.tool_result import ToolResult
 from pydantic import Field
 
 from src.services.mcp_server.generators.fastmcp_generator import (

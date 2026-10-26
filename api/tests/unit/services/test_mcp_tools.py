@@ -18,10 +18,13 @@ and ``tests/e2e/mcp/test_mcp_parity.py`` (live REST round-trip), not here.
 """
 
 from datetime import datetime, timezone
+from typing import Annotated, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
+from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 
 from src.core.principal import UserPrincipal
 from src.services.authorization.context import AuthorizationContext
@@ -248,6 +251,44 @@ class TestBifrostMCPServer:
 
         server = BifrostMCPServer(org_user_context)
         assert server.context == org_user_context
+
+
+@pytest.mark.asyncio
+async def test_sdk_generator_keeps_json_alias_in_schema_and_calls_python_parameter():
+    """The SDK passes aliases to wrappers, while handlers use Python names."""
+    from src.services.mcp_server.generators.fastmcp_generator import (
+        register_tool_with_context,
+    )
+    from src.services.mcp_server.tool_result import direct_result
+
+    seen: dict[str, Any] = {}
+
+    async def aliased_tool(
+        context: Any,
+        async_: Annotated[bool | None, Field(alias="async")] = None,
+    ):
+        seen["context"] = context
+        seen["async_"] = async_
+        return direct_result({"ok": True})
+
+    mcp = FastMCP("test")
+    context = object()
+    register_tool_with_context(
+        mcp,
+        aliased_tool,
+        "aliased_tool",
+        "Test alias forwarding.",
+        lambda: context,
+    )
+
+    tool = mcp._tool_manager.get_tool("aliased_tool")
+    assert tool is not None
+    assert "async" in tool.parameters["properties"]
+    assert "async_" not in tool.parameters["properties"]
+
+    await tool.run({"async": True}, convert_result=True)
+
+    assert seen == {"context": context, "async_": True}
 
 # ==================== get_system_tool_ids Tests ====================
 
