@@ -191,9 +191,14 @@ configured replica count.
 After an upgrade, the controller replaces worker Jobs running a build that no
 live controller runs, once every controller of that build has stopped: it
 launches current Jobs for the warm minimum, and when they can accept work, the
-outdated Jobs drain (`end_reason = rotated`). They are never deleted. All
-outdated Jobs drain in the same pass, so under heavy load capacity dips until
-their children finish, because draining Jobs still count toward Max Workers.
+outdated Jobs drain (`end_reason = rotated`). They are never deleted. If a full
+pool cannot launch a replacement, outdated ready standard Jobs above Warm
+Workers can drain first to free a slot. Workers count toward the warm minimum
+only after reporting their memory budget. The controller waits when a current
+replacement is already starting, and never drains below Warm Workers or exceeds
+Max Workers. A full pool exactly at its warm minimum still waits for ordinary
+retirement. Draining Jobs continue to count toward Max Workers until their
+children finish.
 
 A drain the platform asks for (idle, rotated, maximum lifetime) stops new
 workflow, service, and PlatformJob dispatch to that launcher and lets its

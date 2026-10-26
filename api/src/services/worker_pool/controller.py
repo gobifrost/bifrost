@@ -474,7 +474,10 @@ class WorkerPoolController:
                     for worker in jobs
                 )
                 ready_standard = sum(
-                    1 for worker in ready if worker.resource_class == "standard"
+                    1
+                    for worker in ready
+                    if worker.resource_class == "standard"
+                    and worker.memory_budget_bytes is not None
                 )
                 ready_excess = max(0, ready_standard - policy.warm_workers)
                 drainable = (

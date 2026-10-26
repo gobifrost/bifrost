@@ -1955,7 +1955,9 @@ async def test_a_full_outdated_pool_drains_one_ready_job_above_the_warm_minimum(
 
     async with db.sessions() as session:
         await session.execute(
-            update(ExecutionWorker).where(ExecutionWorker.id == draining[0]).values(state="lost")
+            update(ExecutionWorker)
+            .where(ExecutionWorker.id == draining[0])
+            .values(state="retired", active_runs=0)
         )
         await session.commit()
 
@@ -1979,6 +1981,26 @@ async def test_a_full_pool_at_its_warm_minimum_does_not_surge_or_drain(db) -> No
     ]
     assert await _pass(pool, policy) == []
     assert [await _state(db.sessions, worker_id) for worker_id in outdated] == [
+        ("ready", None),
+        ("ready", None),
+    ]
+
+
+async def test_an_unmeasured_ready_job_does_not_supply_warm_rotation_capacity(db) -> None:
+    policy = replace(WARM, max_workers=2, warm_workers=1)
+    pool = _controller(FakeCluster(), "2.0")
+    measured = await _admitted_job(db.sessions, version="1.0", launched_by=None)
+    unmeasured = await _admitted_job(db.sessions, version="1.0", launched_by=None)
+    async with db.sessions() as session:
+        await session.execute(
+            update(ExecutionWorker)
+            .where(ExecutionWorker.id == unmeasured)
+            .values(memory_budget_bytes=None)
+        )
+        await session.commit()
+
+    assert await _pass(pool, policy) == []
+    assert [await _state(db.sessions, worker_id) for worker_id in (measured, unmeasured)] == [
         ("ready", None),
         ("ready", None),
     ]

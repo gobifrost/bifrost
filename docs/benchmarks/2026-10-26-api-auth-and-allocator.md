@@ -101,3 +101,26 @@ handled rejection. A real Starlette WebSocket regression reproduces both an
 invalid proof and a refused owner lease. The route now avoids closing an
 already-disconnected socket; authentication, admission, and close code 1008
 are unchanged.
+
+## Repeated policy-recording reads
+
+A bounded 30-second production observation counted 94 document-query requests,
+about 70 MiB of response bodies, and 2,561 SQL statements attributed to those
+requests. This is request volume and database elapsed-time evidence, not a
+CPU-share attribution. The API consumed about 29.8 CPU-seconds during the window.
+When the large workload ended, API CPU fell to about 141 millicores while its
+working set remained about 669 MiB. The footprint includes retained allocation;
+it is not evidence of an idle process continually performing that work.
+
+Policy-decision recording previously reloaded the run user and workflow powers
+that authentication had just verified. The request collector now seeds its
+existing recording cache from the verified runtime authority. Authorization,
+policy enforcement, role refresh, and post-response audit persistence retain
+their existing checks. A new WebSocket-message collector starts with an empty
+cache; no facts are reused across requests or messages.
+
+A real-PostgreSQL recorder control used the same policy and verified runtime,
+with only the recording-cache seed removed: six SELECTs and 14.686 ms versus
+zero SELECTs and 0.156 ms with the seed. These are single recorder-step timings,
+not an end-to-end latency estimate. Collectors without a verified runtime keep
+the existing database-loading path.
