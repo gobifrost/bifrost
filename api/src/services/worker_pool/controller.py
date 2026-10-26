@@ -13,8 +13,9 @@ had started follow their domain's terminal sweeps (never replayed).
 
 After an upgrade the controller replaces Jobs running a build no live
 controller runs, launched by a controller that is gone (``LiveControllers``):
-the warm minimum launches current Jobs, and once they are ready the outdated
-ones drain (never deleted), so their runs finish.
+the ready warm minimum remains available while outdated Jobs drain (never
+deleted), so their runs finish. Replacements launch after normal capacity
+becomes available.
 
 Scaling (Warm workers, Max workers, Worker memory, Largest worker) is read
 from Settings -> Kubernetes at the start of every pass, so a change applies
@@ -371,7 +372,7 @@ class WorkerPoolController:
             jobs = sum(1 for worker in workers if worker.form == "job")
             # Only standard Jobs make up the warm minimum; a sized Job exists
             # for its large work and drains once idle. An outdated Job still
-            # claims until it drains, but its replacement is launched now.
+            # claims until it drains, so replacement stays within Max workers.
             undrained = sum(
                 1
                 for worker in workers
@@ -419,13 +420,13 @@ class WorkerPoolController:
         return launched
 
     async def replace_outdated(self, policy: KubernetesPolicy) -> list[UUID]:
-        """Drain outdated Jobs once current ones hold the warm minimum.
+        """Drain only old ready Jobs whose removal keeps the warm minimum.
 
-        Their replacements were launched as part of the warm minimum
-        (``launch_for_demand``), so interactive work always finds a ready
-        executor. A drained Job finishes its runs and retires; it is never
-        deleted. One still holding a dispatch it was launched for drains
-        after claiming it.
+        Current replacements launch first whenever a slot is available. If
+        a full pool has no current standard Job making progress, standard
+        ready Jobs above the warm minimum let one old Job drain and free an
+        ordinary slot. Draining Jobs continue to count toward Max workers
+        until they retire.
         """
         async with get_db_context() as db:
             locked = (
@@ -436,34 +437,61 @@ class WorkerPoolController:
             ).scalar_one()
             if not locked:
                 return []
-            ready = (
+            jobs = (
                 await db.execute(
                     select(ExecutionWorker).where(
-                        ExecutionWorker.form == "job", ExecutionWorker.state == "ready"
+                        ExecutionWorker.form == "job", ExecutionWorker.state.in_(LIVE_STATES)
                     )
                 )
             ).scalars().all()
+            ready = [worker for worker in jobs if worker.state == "ready"]
             outdated = [
-                worker.id
+                worker
                 for worker in ready
                 if self.live.outdated(worker) and worker.reserved_for_dispatch_id is None
             ]
-            # A replacement counts once its pool is up (it has measured its
-            # budget), not when admitted: until then it cannot claim.
-            current = sum(
+            if not outdated:
+                return []
+            current_ready = sum(
                 1
                 for worker in ready
                 if worker.resource_class == "standard"
                 and worker.memory_budget_bytes is not None
                 and not self.live.outdated(worker)
             )
-            if not outdated or current < policy.warm_workers:
+            outdated_standard = [
+                worker for worker in outdated if worker.resource_class == "standard"
+            ]
+            if policy.warm_workers == 0:
+                drainable = outdated
+            elif current_ready >= policy.warm_workers:
+                drainable = outdated
+            else:
+                current_starting = any(
+                    worker.resource_class == "standard"
+                    and worker.state in ("reserved", "starting")
+                    and not self.live.outdated(worker)
+                    for worker in jobs
+                )
+                ready_standard = sum(
+                    1 for worker in ready if worker.resource_class == "standard"
+                )
+                ready_excess = max(0, ready_standard - policy.warm_workers)
+                drainable = (
+                    outdated_standard[:ready_excess]
+                    if len(jobs) >= policy.max_workers and not current_starting
+                    else []
+                )
+            if not drainable:
                 return []
             drained = list(
                 (
                     await db.scalars(
                         update(ExecutionWorker)
-                        .where(ExecutionWorker.id.in_(outdated), ExecutionWorker.state == "ready")
+                        .where(
+                            ExecutionWorker.id.in_([worker.id for worker in drainable]),
+                            ExecutionWorker.state == "ready",
+                        )
                         .values(state="draining", end_reason="rotated")
                         .returning(ExecutionWorker.id)
                     )

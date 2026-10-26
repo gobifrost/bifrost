@@ -1919,6 +1919,126 @@ async def test_without_a_warm_minimum_outdated_jobs_drain_at_once(db) -> None:
     assert await _state(db.sessions, outdated) == ("draining", "rotated")
 
 
+async def test_a_full_outdated_pool_drains_one_ready_job_above_the_warm_minimum(db) -> None:
+    policy = replace(WARM, max_workers=2, warm_workers=1)
+    cluster = FakeCluster()
+    pool = _controller(cluster, "2.0")
+    outdated = [
+        await _admitted_job(db.sessions, version="1.0", launched_by=None),
+        await _admitted_job(db.sessions, version="1.0", launched_by=None),
+    ]
+    async with db.sessions() as session:
+        await session.execute(
+            update(ExecutionWorker).where(ExecutionWorker.id.in_(outdated)).values(active_runs=1)
+        )
+        await session.commit()
+
+    assert await _pass(pool, policy) == []
+    draining = [
+        worker_id
+        for worker_id in outdated
+        if await _state(db.sessions, worker_id) == ("draining", "rotated")
+    ]
+    assert len(draining) == 1
+    remaining = next(worker_id for worker_id in outdated if worker_id not in draining)
+    assert await _state(db.sessions, remaining) == ("ready", None)
+    async with db.sessions() as session:
+        assert (await session.get(ExecutionWorker, draining[0])).active_runs == 1
+    assert cluster.deleted == []
+
+    assert await _pass(pool, policy) == []
+    assert [
+        worker_id
+        for worker_id in outdated
+        if await _state(db.sessions, worker_id) == ("draining", "rotated")
+    ] == draining
+
+    async with db.sessions() as session:
+        await session.execute(
+            update(ExecutionWorker).where(ExecutionWorker.id == draining[0]).values(state="lost")
+        )
+        await session.commit()
+
+    [replacement] = await _pass(pool, policy)
+    assert await _state(db.sessions, replacement) == ("starting", None)
+    assert await _state(db.sessions, remaining) == ("ready", None)
+
+
+async def test_a_full_pool_at_its_warm_minimum_does_not_surge_or_drain(db) -> None:
+    policy = replace(WARM, max_workers=2, warm_workers=2)
+    pool = _controller(FakeCluster(), "2.0")
+    outdated = [
+        await _admitted_job(db.sessions, version="1.0", launched_by=None),
+        await _admitted_job(db.sessions, version="1.0", launched_by=None),
+    ]
+
+    assert await _pass(pool, policy) == []
+    assert [await _state(db.sessions, worker_id) for worker_id in outdated] == [
+        ("ready", None),
+        ("ready", None),
+    ]
+    assert await _pass(pool, policy) == []
+    assert [await _state(db.sessions, worker_id) for worker_id in outdated] == [
+        ("ready", None),
+        ("ready", None),
+    ]
+
+
+async def test_headroom_launches_a_replacement_before_draining_outdated_workers(db) -> None:
+    policy = replace(WARM, max_workers=3, warm_workers=1)
+    pool = _controller(FakeCluster(), "2.0")
+    outdated = [
+        await _admitted_job(db.sessions, version="1.0", launched_by=None),
+        await _admitted_job(db.sessions, version="1.0", launched_by=None),
+    ]
+
+    [replacement] = await _pass(pool, policy)
+    assert await _state(db.sessions, replacement) == ("starting", None)
+    assert [await _state(db.sessions, worker_id) for worker_id in outdated] == [
+        ("ready", None),
+        ("ready", None),
+    ]
+
+
+async def test_a_starting_current_replacement_prevents_an_early_excess_drain(db) -> None:
+    policy = replace(WARM, max_workers=4, warm_workers=2)
+    pool = _controller(FakeCluster(), "2.0")
+    outdated = [
+        await _admitted_job(db.sessions, version="1.0", launched_by=None)
+        for _ in range(3)
+    ]
+    current = await _job_worker(db.sessions, state="starting")
+    async with db.sessions() as session:
+        await session.execute(
+            update(ExecutionWorker)
+            .where(ExecutionWorker.id == current.id)
+            .values(version="2.0", launched_by=pool.id)
+        )
+        await session.commit()
+
+    assert await _pass(pool, policy) == []
+    assert [await _state(db.sessions, worker_id) for worker_id in outdated] == [
+        ("ready", None),
+        ("ready", None),
+        ("ready", None),
+    ]
+
+
+async def test_a_full_current_pool_never_uses_a_rolling_replacement_slot(db) -> None:
+    policy = replace(WARM, max_workers=2, warm_workers=2)
+    pool = _controller(FakeCluster(), "2.0")
+    current = [
+        await _admitted_job(db.sessions, version="2.0", launched_by=pool.id),
+        await _admitted_job(db.sessions, version="2.0", launched_by=pool.id),
+    ]
+
+    assert await _pass(pool, policy) == []
+    assert [await _state(db.sessions, worker_id) for worker_id in current] == [
+        ("ready", None),
+        ("ready", None),
+    ]
+
+
 async def test_a_current_job_that_idles_out_first_is_relaunched(db) -> None:
     """Both API pods restarting can let the current Job reach its idle drain
     before the outdated one is replaced; the warm minimum converges."""
