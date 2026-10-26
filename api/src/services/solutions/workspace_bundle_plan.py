@@ -15,6 +15,7 @@ from uuid import UUID, uuid5
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from bifrost.manifest import (
     Manifest,
@@ -559,6 +560,8 @@ class WorkspaceBundlePlanner:
         scoped_rows = {}
         for kind, model in (("form", Form), ("agent", Agent), ("file_policy", FilePolicy)):
             query = select(model).where(self._scope_clause(model.organization_id))
+            if kind == "agent":
+                query = query.options(selectinload(Agent.llm_profile))
             if "solution_id" in model.__table__.columns:
                 query = query.where(model.solution_id.is_(None))
             rows = (await self.db.execute(query)).scalars().all()
