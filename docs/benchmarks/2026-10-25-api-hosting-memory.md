@@ -1,7 +1,8 @@
 # API hosting memory spike
 
-This remains a **local spike**, based on `6f411bb9cf3c787acf11fbea2c3faa93ef7c9923`.
-It has not been filed as an issue, opened as a PR, merged, or deployed.
+These measurements began as a **local spike**, based on
+`6f411bb9cf3c787acf11fbea2c3faa93ef7c9923`. Promotion validation is recorded below;
+[PR #1070](https://github.com/gobifrost/bifrost/pull/1070) tracks delivery.
 
 The matched workflow/job workload settled at **372.2 MiB**, versus **576.7 MiB**
 originally: **204.4 MiB / 35.5% less memory**. Explicitly warming PDF, Word,
@@ -386,9 +387,10 @@ this worktree; the reports and raw measurements are retained.
 The local sweep established a substantially lower baseline and concrete tradeoffs.
 It did not demonstrate a 250 MiB fully warmed API. Further large reductions need
 more evidence about feature/process boundaries rather than subtracting library
-attribution labels. Before promotion, the owned S3 transport needs real-AWS
-acceptance and deployment-credential checks, an audit of workflow requirements
-for packages previously available only transitively, and normal PR/release verification.
+attribution labels. Before promotion, the owned S3 transport needs deployment-provider
+acceptance and credential checks, an audit of workflow requirements for packages
+previously available only transitively, and normal PR/release verification.
+The DigitalOcean deployment acceptance is recorded in the follow-up below.
 Production load, sustained concurrency, and image-pull startup remain unmeasured.
 Vite/build memory is still the next investigation after this API pass.
 

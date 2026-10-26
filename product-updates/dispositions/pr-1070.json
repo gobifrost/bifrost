@@ -1,0 +1,14 @@
+{
+  "key": "pr:1070",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Reduced API memory use while retaining existing workflows, jobs, and MCP access.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1070",
+      "Jack authorized the API memory reduction, normal merge checks, deployment, and safe production workflow comparisons. Local unit/integration/client checks, all 23 local job types, independent compatibility review, and real DigitalOcean Spaces acceptance support this change."
+    ]
+  }
+}
