@@ -20,8 +20,7 @@ from urllib.parse import urlparse
 import httpx
 
 from src.config import Settings
-from src.core.s3_session import get_s3_session
-from src.core.s3_transport import S3Error
+from src.core.s3_transport import S3Error, S3Transport
 
 logger = logging.getLogger(__name__)
 
@@ -114,13 +113,11 @@ class S3StorageClient:
         if not self.settings.s3_configured:
             raise RuntimeError("S3 storage not configured")
 
-        session = get_s3_session()
-        async with session.create_client(
-            "s3",
+        async with S3Transport(
             endpoint_url=self.settings.s3_endpoint_url,
-            aws_access_key_id=self.settings.s3_access_key,
-            aws_secret_access_key=self.settings.s3_secret_key,
-            region_name=self.settings.s3_region,
+            access_key_id=self.settings.s3_access_key,
+            secret_access_key=self.settings.s3_secret_key,
+            region=self.settings.s3_region,
         ) as client:
             yield client
 

@@ -11,11 +11,11 @@ import base64
 import asyncio
 import hashlib
 import os
+import random
 import ssl
 import time
 import xml.etree.ElementTree as ET
-from collections.abc import AsyncIterator, Callable, Iterable, Mapping
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from io import BytesIO
@@ -28,6 +28,17 @@ from awscrt import auth, checksums, http
 
 
 _ssl_context: tuple[int, ssl.SSLContext] | None = None
+_MAX_ATTEMPTS = 5
+_RETRYABLE_S3_CODES = frozenset({"SlowDown", "RequestTimeout", "BadDigest"})
+
+
+def _retry_delay(attempt: int, random_value: Callable[[], float]) -> float:
+    """Match botocore's full-jitter exponential retry delay (capped at 20s)."""
+    return random_value() * min(2**attempt, 20)
+
+
+def _is_retryable_s3_error(status_code: int, error: S3Error) -> bool:
+    return status_code == 429 or status_code >= 500 or error.code in _RETRYABLE_S3_CODES
 
 
 def _process_ssl_context() -> ssl.SSLContext:
@@ -233,8 +244,7 @@ class S3Body:
         # Mock transports may hand HTTPX a pre-consumed byte stream. Production
         # ``send(stream=True)`` leaves it untouched, but retaining the bytes
         # here keeps the body contract deterministic for any transport.
-        self._preconsumed = response.is_stream_consumed
-        self._pending = bytearray(response.content) if self._preconsumed else bytearray()
+        self._pending = bytearray()
         self._closed = False
         self._checksums = _response_checksums(response.headers)
 
@@ -280,9 +290,6 @@ class S3Body:
                 return result
             chunks.append(self._returned(bytes(self._pending)))
             self._pending.clear()
-            if self._preconsumed:
-                await self.close()
-                return b"".join(chunks)
         total = sum(map(len, chunks))
         try:
             while (chunk := await self._next_chunk()) is not None:
@@ -320,6 +327,8 @@ class S3Transport:
         session_token: str | None = None,
         client: httpx.AsyncClient | None = None,
         now: Callable[[], datetime] | None = None,
+        sleep: Callable[[float], Awaitable[None]] | None = None,
+        random_value: Callable[[], float] | None = None,
     ) -> None:
         self.endpoint_url = endpoint_url
         self.access_key_id = access_key_id
@@ -329,6 +338,8 @@ class S3Transport:
         self._client = client or httpx.AsyncClient(verify=_process_ssl_context(), timeout=60.0)
         self._owns_client = client is None
         self._now = now or (lambda: datetime.now(UTC))
+        self._sleep = sleep or asyncio.sleep
+        self._random_value = random_value or random.random
 
     async def __aenter__(self) -> S3Transport:
         return self
@@ -352,8 +363,8 @@ class S3Transport:
         stream: bool = False,
     ) -> httpx.Response:
         content = _to_bytes(body)
-        url = _query_url(_endpoint_url(self.endpoint_url, bucket, key, region=self.region), query)
-        for attempt in range(3):
+        for attempt in range(_MAX_ATTEMPTS):
+            url = _query_url(_endpoint_url(self.endpoint_url, bucket, key, region=self.region), query)
             request = self._client.build_request(method, url, headers=headers, content=content)
             signed = _sign_request(
                 request,
@@ -366,9 +377,9 @@ class S3Transport:
             try:
                 response = await self._client.send(signed, stream=stream)
             except (httpx.TimeoutException, httpx.TransportError):
-                if attempt == 2:
+                if attempt == _MAX_ATTEMPTS - 1:
                     raise
-                await asyncio.sleep(0.05 * (2**attempt))
+                await self._sleep(_retry_delay(attempt, self._random_value))
                 continue
             if response.status_code in {301, 307, 308} and response.headers.get("x-amz-bucket-region"):
                 self.region = response.headers["x-amz-bucket-region"]
@@ -378,8 +389,8 @@ class S3Transport:
                 payload = await response.aread()
                 error = _error_from_payload(response.status_code, payload)
                 await response.aclose()
-                if attempt < 2 and (response.status_code >= 500 or error.code in {"SlowDown", "RequestTimeout"}):
-                    await asyncio.sleep(0.05 * (2**attempt))
+                if attempt < _MAX_ATTEMPTS - 1 and _is_retryable_s3_error(response.status_code, error):
+                    await self._sleep(_retry_delay(attempt, self._random_value))
                     continue
                 raise error
             return response
@@ -597,16 +608,28 @@ def _raise_embedded_error(payload: bytes) -> None:
 class SyncS3Transport:
     """The sole synchronous S3 path, used by parent-only import cache fallback."""
 
-    def __init__(self, *, endpoint_url: str | None, access_key_id: str | None, secret_access_key: str | None, region: str | None) -> None:
+    def __init__(
+        self,
+        *,
+        endpoint_url: str | None,
+        access_key_id: str | None,
+        secret_access_key: str | None,
+        region: str | None,
+        client: httpx.Client | None = None,
+        sleep: Callable[[float], None] | None = None,
+        random_value: Callable[[], float] | None = None,
+    ) -> None:
         self.endpoint_url, self.access_key_id, self.secret_access_key = endpoint_url, access_key_id, secret_access_key
         self.region = region or "us-east-1"
-        self._client = httpx.Client(verify=_process_ssl_context(), timeout=60.0)
+        self._client = client or httpx.Client(verify=_process_ssl_context(), timeout=60.0)
+        self._sleep = sleep or time.sleep
+        self._random_value = random_value or random.random
 
     def close(self) -> None:
         self._client.close()
 
     def get_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
-        for attempt in range(3):
+        for attempt in range(_MAX_ATTEMPTS):
             request = self._client.build_request(
                 "GET",
                 _endpoint_url(self.endpoint_url, Bucket, Key, region=self.region),
@@ -616,19 +639,22 @@ class SyncS3Transport:
             try:
                 response = self._client.send(signed, stream=True)
             except (httpx.TimeoutException, httpx.TransportError):
-                if attempt == 2:
+                if attempt == _MAX_ATTEMPTS - 1:
                     raise
-                time.sleep(0.05 * (2**attempt))
+                self._sleep(_retry_delay(attempt, self._random_value))
                 continue
             try:
-                content = b"".join(response.iter_raw())
+                # Production sends stream=True and takes the raw path. Some
+                # in-memory HTTPX transports provide an already-buffered
+                # response, whose ``content`` is the only readable surface.
+                content = response.content if response.is_stream_consumed else b"".join(response.iter_raw())
                 if response.status_code in {301, 307, 308} and response.headers.get("x-amz-bucket-region"):
                     self.region = response.headers["x-amz-bucket-region"]
                     continue
                 if response.status_code >= 400:
                     error = _error_from_payload(response.status_code, content)
-                    if attempt < 2 and (response.status_code >= 500 or error.code in {"SlowDown", "RequestTimeout"}):
-                        time.sleep(0.05 * (2**attempt))
+                    if attempt < _MAX_ATTEMPTS - 1 and _is_retryable_s3_error(response.status_code, error):
+                        self._sleep(_retry_delay(attempt, self._random_value))
                         continue
                     raise error
                 _validate_buffered_checksums(response.headers, content)
@@ -636,9 +662,3 @@ class SyncS3Transport:
             finally:
                 response.close()
         raise RuntimeError("unreachable")
-
-
-@asynccontextmanager
-async def s3_client_context(**kwargs: Any) -> AsyncIterator[S3Transport]:
-    async with S3Transport(**kwargs) as client:
-        yield client

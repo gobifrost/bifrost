@@ -15,8 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from src.config import Settings, get_settings
-from src.core.s3_session import get_s3_session
-from src.core.s3_transport import S3Error
+from src.core.s3_transport import S3Error, S3Transport
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +39,11 @@ class RepoStorage:
 
     @asynccontextmanager
     async def _get_client(self):
-        session = get_s3_session()
-        async with session.create_client(
-            "s3",
+        async with S3Transport(
             endpoint_url=self._settings.s3_endpoint_url,
-            aws_access_key_id=self._settings.s3_access_key,
-            aws_secret_access_key=self._settings.s3_secret_key,
-            region_name=self._settings.s3_region,
+            access_key_id=self._settings.s3_access_key,
+            secret_access_key=self._settings.s3_secret_key,
+            region=self._settings.s3_region,
         ) as client:
             yield client
 

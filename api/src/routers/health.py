@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import Settings, get_settings
 from src.core.database import get_db
-from src.core.s3_session import get_s3_session
+from src.core.s3_transport import S3Transport
 from shared.version import get_version
 
 router = APIRouter(prefix="/health", tags=["health"])
@@ -100,13 +100,11 @@ class S3HealthClient:
                 return client
 
             await self.close()
-            session = get_s3_session()
-            context = session.create_client(
-                "s3",
+            context = S3Transport(
                 endpoint_url=settings.s3_endpoint_url,
-                aws_access_key_id=settings.s3_access_key,
-                aws_secret_access_key=settings.s3_secret_key,
-                region_name=settings.s3_region,
+                access_key_id=settings.s3_access_key,
+                secret_access_key=settings.s3_secret_key,
+                region=settings.s3_region,
             )
             client = await context.__aenter__()
             self.client = client

@@ -12,7 +12,7 @@ import httpx
 import pytest
 from awscrt import checksums
 
-from src.core.s3_transport import S3Error, S3NoSuchKey, S3Transport
+from src.core.s3_transport import S3Error, S3NoSuchKey, S3Transport, SyncS3Transport
 
 
 class RawStream(httpx.AsyncByteStream):
@@ -28,7 +28,36 @@ class RawStream(httpx.AsyncByteStream):
         self.closed = True
 
 
-def transport_for(handler: httpx.MockTransport) -> S3Transport:
+class RawSyncStream(httpx.SyncByteStream):
+    def __init__(self, content: bytes) -> None:
+        self.content = content
+
+    def __iter__(self):
+        yield self.content
+
+    def close(self) -> None:
+        return None
+
+
+class DirectSyncClient:
+    """A synchronous fixture that returns the supplied response unconsumed."""
+
+    def __init__(self, handler) -> None:
+        self.handler = handler
+        self._requests = httpx.Client()
+
+    def build_request(self, *args, **kwargs):
+        return self._requests.build_request(*args, **kwargs)
+
+    def send(self, request, *, stream: bool):
+        assert stream is True
+        return self.handler(request)
+
+    def close(self) -> None:
+        self._requests.close()
+
+
+def transport_for(handler: httpx.MockTransport, **kwargs) -> S3Transport:
     return S3Transport(
         endpoint_url="https://s3.example.test",
         access_key_id="AKIDEXAMPLE",
@@ -36,6 +65,19 @@ def transport_for(handler: httpx.MockTransport) -> S3Transport:
         region="us-east-1",
         client=httpx.AsyncClient(transport=handler),
         now=lambda: datetime(2026, 10, 25, tzinfo=UTC),
+        **kwargs,
+    )
+
+
+def regional_transport_for(handler: httpx.MockTransport, **kwargs) -> S3Transport:
+    return S3Transport(
+        endpoint_url=None,
+        access_key_id="AKIDEXAMPLE",
+        secret_access_key="secret",
+        region="us-west-1",
+        client=httpx.AsyncClient(transport=handler),
+        now=lambda: datetime(2026, 10, 25, tzinfo=UTC),
+        **kwargs,
     )
 
 
@@ -151,6 +193,96 @@ async def test_s3_xml_error_is_structured_and_missing_key_has_dedicated_type() -
     assert raised.value.status_code == 404
     assert raised.value.response["Error"]["Message"] == "missing"
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_region_redirect_rebuilds_async_default_endpoint() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        if len(seen) == 1:
+            return httpx.Response(301, headers={"x-amz-bucket-region": "eu-west-1"}, request=request)
+        return httpx.Response(200, request=request)
+
+    client = regional_transport_for(httpx.MockTransport(handler))
+    await client.head_bucket(Bucket="bucket")
+    assert seen == [
+        "https://s3.us-west-1.amazonaws.com/bucket",
+        "https://s3.eu-west-1.amazonaws.com/bucket",
+    ]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("status", "code"), [(429, "SlowDown"), (400, "BadDigest")])
+async def test_async_retry_exhaustion_uses_five_attempts_and_full_jitter(status, code) -> None:
+    seen: list[httpx.Request] = []
+    delays: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(status, content=f"<Error><Code>{code}</Code></Error>".encode(), request=request)
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+
+    client = transport_for(httpx.MockTransport(handler), sleep=sleep, random_value=lambda: 0.5)
+    with pytest.raises(S3Error) as raised:
+        await client.head_bucket(Bucket="bucket")
+    assert raised.value.code == code
+    assert len(seen) == 5
+    assert delays == [0.5, 1.0, 2.0, 4.0]
+    await client.aclose()
+
+
+def test_sync_region_redirect_rebuilds_default_endpoint() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        if len(seen) == 1:
+            return httpx.Response(301, headers={"x-amz-bucket-region": "eu-west-1"}, request=request)
+        return httpx.Response(200, stream=RawSyncStream(b"object"), request=request)
+
+    client = SyncS3Transport(
+        endpoint_url=None,
+        access_key_id="AKIDEXAMPLE",
+        secret_access_key="secret",
+        region="us-west-1",
+        client=DirectSyncClient(handler),
+    )
+    assert client.get_object(Bucket="bucket", Key="object")["Body"].read() == b"object"
+    assert seen == [
+        "https://s3.us-west-1.amazonaws.com/bucket/object",
+        "https://s3.eu-west-1.amazonaws.com/bucket/object",
+    ]
+    client.close()
+
+
+def test_sync_retry_exhaustion_uses_five_attempts_and_full_jitter() -> None:
+    seen: list[httpx.Request] = []
+    delays: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(429, stream=RawSyncStream(b"<Error><Code>SlowDown</Code></Error>"), request=request)
+
+    client = SyncS3Transport(
+        endpoint_url="https://s3.example.test",
+        access_key_id="AKIDEXAMPLE",
+        secret_access_key="secret",
+        region="us-east-1",
+        client=DirectSyncClient(handler),
+        sleep=delays.append,
+        random_value=lambda: 0.5,
+    )
+    with pytest.raises(S3Error) as raised:
+        client.get_object(Bucket="bucket", Key="object")
+    assert raised.value.code == "SlowDown"
+    assert len(seen) == 5
+    assert delays == [0.5, 1.0, 2.0, 4.0]
+    client.close()
 
 
 @pytest.mark.asyncio
