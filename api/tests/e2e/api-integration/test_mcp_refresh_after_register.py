@@ -57,7 +57,7 @@ class TestMCPRefreshAfterRegister:
 from bifrost import tool
 
 @tool(name="MCP Refresh Test {suffix}")
-def {function_name}(message: str) -> dict:
+async def {function_name}(message: str) -> dict:
     """Echoes the message — exists only to verify MCP refresh-after-register."""
     return {{"message": message}}
 '''
@@ -130,6 +130,42 @@ def {function_name}(message: str) -> dict:
                 f"tools/list — refresh_workflow_tools() likely ran before the "
                 f"register transaction committed. Tools returned: {tool_names}"
             )
+
+            call_resp = requests.post(
+                f"{TEST_API_URL}/mcp/{agent_id}",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "tools/call",
+                    "params": {
+                        "name": function_name,
+                        "arguments": {"message": "SDK workflow invocation"},
+                    },
+                },
+                headers=mcp_h,
+            )
+            assert call_resp.status_code == 200, call_resp.text
+            call_payload = call_resp.json()
+            assert "error" not in call_payload, call_payload
+            assert call_payload["result"].get("isError") is not True, call_payload
+            assert call_payload["result"]["structuredContent"] == {
+                "message": "SDK workflow invocation"
+            }
+
+            invalid_call_resp = requests.post(
+                f"{TEST_API_URL}/mcp/{agent_id}",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "tools/call",
+                    "params": {"name": function_name, "arguments": {}},
+                },
+                headers=mcp_h,
+            )
+            assert invalid_call_resp.status_code == 200, invalid_call_resp.text
+            invalid_call_payload = invalid_call_resp.json()
+            assert invalid_call_payload["result"]["isError"] is True
+            assert "message" in invalid_call_payload["result"]["content"][0]["text"]
         finally:
             if agent_id:
                 requests.delete(

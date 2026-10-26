@@ -18,13 +18,15 @@ Usage:
 import json
 import logging
 from dataclasses import dataclass, field
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
-from mcp.types import CallToolResult, Icon
+from mcp.server.fastmcp.tools.base import Tool as SDKTool
+from mcp.types import CallToolResult, ContentBlock, Icon
 
 
 if TYPE_CHECKING:
@@ -46,8 +48,6 @@ from src.services.mcp_server.tool_result import ToolResult, error_result, succes
 from src.services.tool_schema import parameters_json_schema
 
 logger = logging.getLogger(__name__)
-
-HAS_FASTMCP = True
 
 # Bifrost branding
 BIFROST_ICON_URL = "https://bifrostintegrations.blob.core.windows.net/public/logo.svg"
@@ -293,7 +293,7 @@ class BifrostSDKServer(FastMCP):
 
     async def call_tool(
         self, name: str, arguments: dict[str, Any]
-    ) -> list | dict[str, Any]:
+    ) -> Sequence[ContentBlock] | dict[str, Any]:
         from src.services.mcp_server.middleware import ToolFilterMiddleware
 
         await ToolFilterMiddleware().authorize_tool_call(name)
@@ -676,6 +676,26 @@ class WorkflowTool:
                 logger.exception(f"Error executing workflow tool {self.workflow_name}: {e}")
                 return error_result(str(e))
 
+
+class SDKWorkflowTool(SDKTool):
+    """SDK tool that validates and dispatches a database-defined workflow."""
+
+    async def run(
+        self,
+        arguments: dict[str, Any],
+        context: Any = None,
+        convert_result: bool = False,
+    ) -> CallToolResult:
+        """Validate the registered schema instead of synthetic ``**kwargs`` metadata."""
+        from jsonschema import Draft202012Validator
+        from jsonschema.exceptions import ValidationError
+
+        try:
+            Draft202012Validator(self.parameters).validate(arguments)
+        except ValidationError as exc:
+            raise ToolError(f"Invalid arguments for {self.name}: {exc.message}") from exc
+        return await self.fn(**arguments)
+
 def _map_type_to_json_schema(param_type: str) -> str:
     """Map workflow parameter type to JSON Schema type."""
     type_map = {
@@ -854,7 +874,19 @@ async def _register_workflow_tools(mcp: FastMCP) -> int:
                         registered = mcp._tool_manager.get_tool(tool_name)
                         if registered is None:  # pragma: no cover - SDK invariant
                             raise RuntimeError(f"MCP SDK did not register {tool_name}")
-                        registered.parameters = workflow_tool.parameters
+                        mcp._tool_manager._tools[tool_name] = SDKWorkflowTool(
+                            fn=registered.fn,
+                            name=registered.name,
+                            title=registered.title,
+                            description=registered.description,
+                            parameters=workflow_tool.parameters,
+                            fn_metadata=registered.fn_metadata,
+                            is_async=registered.is_async,
+                            context_kwarg=registered.context_kwarg,
+                            annotations=registered.annotations,
+                            icons=registered.icons,
+                            meta=registered.meta,
+                        )
                         count += 1
                         logger.debug(
                             f"Registered workflow tool: {tool_name} "
