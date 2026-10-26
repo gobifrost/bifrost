@@ -31,6 +31,13 @@ _ssl_context: tuple[int, ssl.SSLContext] | None = None
 _default_credentials_provider: tuple[int, auth.AwsCredentialsProvider] | None = None
 _MAX_ATTEMPTS = 5
 _RETRYABLE_S3_CODES = frozenset({"InternalError", "SlowDown", "RequestTimeout", "BadDigest"})
+# HTTPX adds Connection before signing. Spaces' ingress removes that hop-by-hop
+# header, so including it in SignedHeaders makes otherwise valid requests fail.
+_UNSIGNED_HEADERS = frozenset({
+    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+    "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade",
+    "expect", "user-agent", "x-amzn-trace-id",
+})
 
 
 def _retry_delay(attempt: int, random_value: Callable[[], float]) -> float:
@@ -200,6 +207,7 @@ def _sign_request(
         service="s3",
         date=now,
         signature_type=signature_type,
+        should_sign_header=lambda name: name.lower() not in _UNSIGNED_HEADERS,
         use_double_uri_encode=False,
         should_normalize_uri_path=False,
         signed_body_value=auth.AwsSignedBodyValue.UNSIGNED_PAYLOAD if presign else None,
@@ -423,6 +431,13 @@ class S3Transport:
                 payload = await response.aread()
                 error = _error_from_payload(response.status_code, payload)
                 await response.aclose()
+                region = response.headers.get("x-amz-bucket-region")
+                if (
+                    response.status_code == 400 and error.code == "AuthorizationHeaderMalformed"
+                    and region and region != self.region and attempt < _MAX_ATTEMPTS - 1
+                ):
+                    self.region = region
+                    continue
                 if attempt < _MAX_ATTEMPTS - 1 and _is_retryable_s3_error(response.status_code, error):
                     await self._sleep(_retry_delay(attempt, self._random_value))
                     continue
@@ -717,6 +732,13 @@ class SyncS3Transport:
                     continue
                 if response.status_code >= 400:
                     error = _error_from_payload(response.status_code, content)
+                    region = response.headers.get("x-amz-bucket-region")
+                    if (
+                        response.status_code == 400 and error.code == "AuthorizationHeaderMalformed"
+                        and region and region != self.region and attempt < _MAX_ATTEMPTS - 1
+                    ):
+                        self.region = region
+                        continue
                     if attempt < _MAX_ATTEMPTS - 1 and _is_retryable_s3_error(response.status_code, error):
                         self._sleep(_retry_delay(attempt, self._random_value))
                         continue

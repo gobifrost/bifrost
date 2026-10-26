@@ -228,13 +228,32 @@ async def test_s3_xml_error_is_structured_and_missing_key_has_dedicated_type() -
 
 
 @pytest.mark.asyncio
-async def test_region_redirect_rebuilds_async_default_endpoint() -> None:
+async def test_request_signature_excludes_headers_removed_by_proxies() -> None:
+    """Spaces cannot verify a signed Connection header its ingress removes."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        signed = request.headers["authorization"].partition("SignedHeaders=")[2].split(",")[0].split(";")
+        assert "connection" not in signed
+        assert "user-agent" not in signed
+        assert {"host", "x-amz-date", "x-amz-content-sha256", "content-md5"} <= set(signed)
+        return httpx.Response(200, content=b"<DeleteResult/>", request=request)
+
+    async with transport_for(httpx.MockTransport(handler)) as client:
+        await client.delete_objects(Bucket="bucket", Delete={"Objects": [{"Key": "owned-fixture"}]})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [301, 307, 308, 400])
+async def test_region_redirect_rebuilds_async_default_endpoint(status: int) -> None:
     seen: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(str(request.url))
         if len(seen) == 1:
-            return httpx.Response(301, headers={"x-amz-bucket-region": "eu-west-1"}, request=request)
+            return httpx.Response(
+                status, headers={"x-amz-bucket-region": "eu-west-1"},
+                content=b"<Error><Code>AuthorizationHeaderMalformed</Code></Error>", request=request,
+            )
+        assert "/eu-west-1/s3/aws4_request" in request.headers["authorization"]
         return httpx.Response(200, request=request)
 
     client = regional_transport_for(httpx.MockTransport(handler))
@@ -316,13 +335,18 @@ async def test_list_objects_v2_paginator_rejects_a_repeated_token() -> None:
     assert client.calls == 2
 
 
-def test_sync_region_redirect_rebuilds_default_endpoint() -> None:
+@pytest.mark.parametrize("status", [301, 307, 308, 400])
+def test_sync_region_redirect_rebuilds_default_endpoint(status: int) -> None:
     seen: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(str(request.url))
         if len(seen) == 1:
-            return httpx.Response(301, headers={"x-amz-bucket-region": "eu-west-1"}, request=request)
+            return httpx.Response(
+                status, headers={"x-amz-bucket-region": "eu-west-1"},
+                content=b"<Error><Code>AuthorizationHeaderMalformed</Code></Error>", request=request,
+            )
+        assert "/eu-west-1/s3/aws4_request" in request.headers["authorization"]
         return httpx.Response(200, stream=RawSyncStream(b"object"), request=request)
 
     client = SyncS3Transport(
