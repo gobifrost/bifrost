@@ -199,6 +199,84 @@ schema deferral (small import saving but worse OpenAPI footprint), and mimalloc
 (474.5 MiB versus the initial isolated candidate's 449.3 MiB). No periodic forced
 GC, cache-clearing loop, allocator switch, or trim workaround was added.
 
+### Follow-up: breaking down the application import increment
+
+A follow-up on the final source (`603e1d72d`, documentation-only after the last
+runtime change) traced direct imports from `src.main` and individual
+`FastAPI.include_router` calls. Each checkpoint collected garbage and read
+`/proc/self/smaps_rollup` in a fresh, network-disabled container using the final
+no-NumPy image and read-only source mount. No lifespan, database connections,
+production credentials, or real requests were used.
+
+This reproduced **222.1 MiB added after the ORM checkpoint**, compared with
+216.9 MiB in the earlier diagnostic. These are approximate import-stage PSS
+observations, not the unforced workload measurement or a new production memory
+result. Checkpointing and PSS sharing make small differences between these
+diagnostics possible; no runtime code changed during this follow-up.
+
+| First-use import or initialization group | Added PSS MiB |
+|---|---:|
+| AI/chat runtime and its dependencies | 43.5 |
+| MCP plus shared agent/file services | 27.2 |
+| Registering app route/dependency copies | 26.0 |
+| Core Redis, authentication, and security | 21.6 |
+| Git sync and source editing | 18.1 |
+| Agent-run contracts, SDK, and HTTP helpers | 15.4 |
+| Solutions and remote-worker control | 14.6 |
+| Remaining endpoint models and services | 55.7 |
+| **Total added after ORM** | **222.1** |
+
+These groups partition this one import sequence. They are **not exclusive
+library ownership or independently removable budgets**: for example, agents
+imports MCP and file services before later endpoints need them. The remaining
+55.7 MiB is spread across endpoints; its largest individual checkpoints were
+permissions/access catalog (5.5 MiB), passkeys (4.6), app-code files (3.8), events
+(3.3), files (3.0), auth (2.6), and forms (2.4). There was no additional single
+large import hidden in that remainder.
+
+Independent controls preloaded the actual libraries before importing application
+routes, then reversed their order. They converged at **298.0 / 298.2 MiB PSS**
+through app construction. Import order changed which group paid shared costs:
+preloading the agent harness first also loaded Pydantic AI and HTTP support.
+Loading the API/SDK contract modules used by this app accounted for another
+**26.8–28.1 MiB** in those controls. Those contract bytes are already represented
+in the table and must not be added again.
+
+The source edges explain the largest groups:
+
+- `routers/chat.py` imports `services/agent_executor.py`, which imports Pydantic
+  AI, runtime composition, compaction, code mode, subagents, tool execution, and
+  MCP client support. Those implement supported chat/agent behavior.
+- `routers/agents.py` imports `routers/tools.py` and shared file services, loading
+  the official MCP SDK, tool definitions, and the S3 transport. The same modules
+  serve later MCP/file routes; there is one cached module graph.
+- `routers/github.py` imports the Git operation definition and
+  `services/github_sync.py`; the latter imports GitPython. The decorator-property
+  service uses LibCST to preserve source formatting while editing decorators.
+- `worker/remote/host.py` imports `worker/pool_main.py`, bringing in scheduler
+  support and the Alembic-backed schema gate. The API-owned control host also
+  uses that schema gate at startup, so merely moving this import would not remove
+  its warmed footprint.
+- Passkeys use the real WebAuthn verifier; authentication uses JWT/password
+  cryptography. These are feature dependencies, not unused infrastructure.
+
+No additional runtime change was made. Deferring GitPython, LibCST, or the agent
+runtime could reduce startup memory until first use, but that is not a
+fully-warmed reduction and moves import work onto those requests. Removing them
+outright loses supported behavior. The prior duplicate-router removal control
+saved only about 5.5 MiB after diagnostic trimming and broke app-factory reuse;
+the 26 MiB registration stage is not a promise of 26 MiB removable memory.
+This follow-up found no second demonstrated duplication comparable to the AWS
+metadata and no new merge blocker. Real-AWS acceptance and deployed-workflow
+dependency checks below remain unresolved promotion requirements.
+
+Raw evidence and reproducible probe sources are retained under the report's
+artifact directory: `route-breakdown-forward.jsonl`,
+`route-breakdown-summary.json`, `route-components-full.jsonl`,
+`route-components-reverse.jsonl`, `api-import-stages-confirmed.jsonl`,
+`probe_route_breakdown.py`, and `probe_route_components_full.py`. This was
+profiling and documentation only; functional suites were not rerun.
+
 ## Compatibility evidence
 
 All **23 PlatformJob types** succeeded through real local runner processes:
