@@ -110,6 +110,14 @@ pod's limit plus a 128 MiB margin, so the next run gets a larger pod. This
 holds even when the controller first sees the stopped pod after the runner's
 lease expired.
 
+App build memory failures appear in the job error and its notification with
+recovery guidance: increase the build container's memory limit, or, for a
+non-Git-connected Solution, run `bifrost solution deploy` locally to build and
+upload prebuilt output. Independent `bifrost app deploy` still builds on the
+server; it does not accept a local prebuilt build. A preventive memory stop is
+identified separately from a confirmed OOM, and an unexplained SIGKILL/exit 137
+is described as a possible OOM rather than a confirmed one.
+
 ## Upgrading From Environment Variables
 
 Earlier releases configured isolation in deployment env. On its first start,

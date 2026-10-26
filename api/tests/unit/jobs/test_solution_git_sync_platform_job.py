@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+from shared.app_build_errors import AppBuildMemoryError
 from src.jobs.platform.base import PlatformJobFailure
 from src.jobs.platform.solution_git_sync import (
     SOLUTION_GIT_SYNC_DEFINITION,
@@ -179,3 +180,39 @@ async def test_solution_git_sync_keeps_update_badge_when_storage_finalization_fa
         report.kwargs.get("percent") != 100
         for report in context.report.await_args_list
     )
+
+
+@pytest.mark.asyncio
+async def test_solution_git_sync_preserves_build_memory_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    solution = Solution(
+        id=uuid4(),
+        slug="managed-git",
+        name="Managed Git",
+        git_connected=True,
+        git_repo_url="https://example.test/managed-git.git",
+    )
+    db = SimpleNamespace(get=AsyncMock(return_value=solution), commit=AsyncMock())
+
+    @asynccontextmanager
+    async def fake_db_context():
+        yield db
+
+    monkeypatch.setattr(
+        "src.jobs.platform.solution_git_sync.get_db_context", fake_db_context
+    )
+    monkeypatch.setattr(
+        "src.services.solutions.git_sync.sync",
+        AsyncMock(side_effect=AppBuildMemoryError()),
+    )
+
+    with pytest.raises(PlatformJobFailure) as failure:
+        await run_solution_git_sync(
+            SimpleNamespace(report=AsyncMock(), log=AsyncMock()),
+            SolutionGitSyncPayload(solution_id=solution.id),
+        )
+
+    assert failure.value.code == "memory_pressure"
+    assert failure.value.retryable is False
+    assert "increase the build container's memory limit" in failure.value.message

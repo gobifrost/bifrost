@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from shared.app_build_errors import AppBuildMemoryError
 from src.core.database import get_db_context
 from src.jobs.platform.base import (
     PlatformJobContext,
@@ -58,6 +59,8 @@ async def run_solution_git_sync(
                 "retries. Retry the Git update to complete it.",
                 retryable=True,
             ) from exc
+        except AppBuildMemoryError as exc:
+            raise PlatformJobFailure("memory_pressure", str(exc)) from exc
         except Exception as exc:  # noqa: BLE001 - job records the safe failure
             logger.exception(
                 "Managed Solution Git sync failed",

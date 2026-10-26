@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 import pytest
 
 import src.services.sdk_package as sdkpkg
+from shared.app_build_errors import AppBuildMemoryError
 from src.services.solutions import app_build as ab
 from src.services.solutions.app_build import SolutionAppBuilder
 from src.services.solutions.deploy import SolutionDeployConflict
@@ -164,6 +165,46 @@ def test_build_timeout_translated_to_deploy_failure(monkeypatch):
 
     with pytest.raises(SolutionDeployConflict, match="timed out"):
         b.compile_dist(app_id, src_files={}, dependencies={}, prebuilt_dist=None)
+
+
+@pytest.mark.parametrize("stage", ["materialize", "vite"])
+def test_build_v8_memory_failure_is_classified(monkeypatch, stage):
+    """Both SDK materialization and Vite preserve actionable OOM diagnostics."""
+    builder = SolutionAppBuilder()
+
+    def _oom(*_args, **_kwargs):
+        raise subprocess.CalledProcessError(
+            1,
+            ["npx", "vite", "build"],
+            stderr=b"FATAL ERROR: JavaScript heap out of memory",
+        )
+
+    if stage == "materialize":
+        monkeypatch.setattr(builder, "_materialize", _oom)
+    else:
+        monkeypatch.setattr(sdkpkg, "build_sdk_tarball", lambda _version: b"FAKE_TGZ")
+        monkeypatch.setattr(builder, "_run_vite_build", _oom)
+
+    with pytest.raises(AppBuildMemoryError) as error:
+        builder.compile_dist(uuid.uuid4(), src_files={}, dependencies={})
+
+    assert "increase the build container's memory limit" in str(error.value)
+
+
+def test_build_python_memory_error_is_classified(monkeypatch):
+    """An allocation failure in the build path reaches callers as build OOM."""
+    monkeypatch.setattr(sdkpkg, "build_sdk_tarball", lambda _version: b"FAKE_TGZ")
+    builder = SolutionAppBuilder()
+    monkeypatch.setattr(
+        builder,
+        "_run_vite_build",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(MemoryError()),
+    )
+
+    with pytest.raises(AppBuildMemoryError) as error:
+        builder.compile_dist(uuid.uuid4(), src_files={}, dependencies={})
+
+    assert str(error.value).startswith("The app build ran out of memory (OOM).")
 
 
 @pytest.mark.e2e

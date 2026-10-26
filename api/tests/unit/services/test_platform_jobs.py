@@ -10,6 +10,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.app_build_errors import APP_BUILD_JOB_TYPES, app_build_memory_message
 from src.jobs.platform.application_deploy import (
     APPLICATION_DEPLOY_DEFINITION,
     ApplicationDeployPayload,
@@ -17,6 +18,7 @@ from src.jobs.platform.application_deploy import (
 from src.jobs.platform.application_publish import (
     APPLICATION_PUBLISH_DEFINITION,
     ApplicationPublishPayload,
+    run_application_publish,
 )
 from src.jobs.platform.solution_export import (
     SOLUTION_EXPORT_DEFINITION,
@@ -534,6 +536,107 @@ async def test_websocket_event_matches_public_http_contract_and_hides_payload(
         )
         assert "payload" not in event["job"]
         assert "requested_by_email" not in event["job"]
+
+
+@pytest.mark.parametrize("job_type", sorted(APP_BUILD_JOB_TYPES))
+async def test_build_oom_message_reaches_notification_and_public_job(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch, job_type: str,
+) -> None:
+    job = await _enqueue(db_session)
+    job.job_type = job_type
+    job.status = "failed"
+    job.error_code = "memory_pressure"
+    job.error_message = app_build_memory_message()
+    job.notification_id = uuid4()
+    notifications = MagicMock()
+    notifications.update_notification = AsyncMock()
+    broadcast = AsyncMock()
+    monkeypatch.setattr(service, "get_notification_service", lambda: notifications)
+    monkeypatch.setattr(service.pubsub_manager, "broadcast", broadcast)
+
+    await service.publish_platform_job_update(job)
+
+    update = notifications.update_notification.await_args.args[1]
+    assert update.error == app_build_memory_message()
+    assert update.status.value == "failed"
+    for call in broadcast.await_args_list:
+        assert call.args[1]["job"]["error"]["message"] == app_build_memory_message()
+
+
+async def test_python_build_memory_error_is_recorded_with_recovery(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = await _enqueue(db_session)
+    job.status = "running"
+    job.lease_token = uuid4()
+    token = job.lease_token
+    await db_session.commit()
+
+    async def allocation_failed(*_args):
+        raise MemoryError
+
+    definition = PlatformJobDefinition(
+        job_type=job.job_type,
+        payload_version=job.payload_version,
+        payload_model=APPLICATION_PUBLISH_DEFINITION.payload_model,
+        handler=allocation_failed,
+        policy=PlatformJobPolicy(timeout_seconds=30),
+    )
+    monkeypatch.setattr(runner, "get_platform_job_definition", lambda _: definition)
+    monkeypatch.setattr(service, "publish_platform_job_update", AsyncMock())
+
+    await runner.run_claimed_platform_job(job.id, token)
+    await db_session.refresh(job)
+    assert job.error_code == "memory_pressure"
+    assert job.error_message == app_build_memory_message()
+
+
+@pytest.mark.asyncio
+async def test_application_publish_preserves_bundle_oom_guidance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_id = uuid4()
+
+    @asynccontextmanager
+    async def fake_db_context():
+        yield SimpleNamespace(
+            get=AsyncMock(
+                return_value=SimpleNamespace(id=app_id, organization_id=None)
+            )
+        )
+
+    class Repository:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        async def publish(self, *_args, **_kwargs):
+            raise ValueError(
+                "Bundle build failed during publish: " + app_build_memory_message()
+            )
+
+    monkeypatch.setattr(
+        "src.jobs.platform.application_publish.get_db_context", fake_db_context
+    )
+    monkeypatch.setattr(
+        "src.jobs.platform.application_publish.ApplicationRepository", Repository
+    )
+
+    with pytest.raises(PlatformJobFailure) as failure:
+        await run_application_publish(
+            SimpleNamespace(
+                requested_by_user_id=str(uuid4()),
+                requested_by_email="dev@example.test",
+                requested_by_name="Dev",
+                report=AsyncMock(),
+            ),
+            ApplicationPublishPayload(application_id=app_id),
+        )
+
+    assert failure.value.code == "application_publish_failed"
+    assert failure.value.retryable is False
+    assert failure.value.message == (
+        "Bundle build failed during publish: " + app_build_memory_message()
+    )
 
 
 @pytest.mark.asyncio

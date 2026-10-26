@@ -4,6 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -12,6 +13,7 @@ import pytest
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from shared.app_build_errors import APP_BUILD_JOB_TYPES, app_build_memory_message
 from src.jobs.platform.application_deploy import (
     APPLICATION_DEPLOY_DEFINITION,
     ApplicationDeployPayload,
@@ -1114,8 +1116,53 @@ async def test_hard_memory_pressure_stops_child_and_requeues_attempt(
     await db_session.refresh(job)
     assert job.status == "queued"
     assert job.error_code == "memory_pressure"
+    assert job.error_message == app_build_memory_message("pressure")
     assert job.error_retryable is True
     assert job.lease_token is None
+
+
+@pytest.mark.parametrize("job_type", sorted(APP_BUILD_JOB_TYPES))
+@pytest.mark.parametrize("out_of_memory", [False, True])
+async def test_build_memory_failure_keeps_actionable_durable_error(
+    db_session: AsyncSession, job_type: str, out_of_memory: bool,
+) -> None:
+    job = await _queued_job(db_session)
+    claim = await scheduler.claim_platform_job(fits_bytes=AMPLE)
+    assert claim is not None
+    job.job_type = job_type
+    job.attempt = job.max_attempts
+    await db_session.flush()
+
+    await scheduler._handle_runner_loss(
+        job.id, claim.lease_token, error_code="memory_pressure",
+        error_message="The build pod exceeded its memory limit.",
+        out_of_memory=out_of_memory,
+    )
+
+    await db_session.refresh(job)
+    assert job.status == "failed"
+    assert job.error_message == app_build_memory_message("oom" if out_of_memory else "pressure")
+
+
+@pytest.mark.parametrize("returncode", [-9, 137, 1])
+async def test_unreported_build_runner_exit_does_not_claim_confirmed_oom(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch, returncode: int,
+) -> None:
+    job = await _queued_job(db_session)
+    claim = await scheduler.claim_platform_job(fits_bytes=AMPLE)
+    assert claim is not None
+    job.attempt = job.max_attempts
+    await db_session.flush()
+    process = SimpleNamespace(returncode=returncode)
+    monkeypatch.setattr(scheduler.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
+
+    assert not await scheduler.run_claimed_platform_job(claim)
+    await db_session.refresh(job)
+    assert job.error_code == "runner_exited"
+    if returncode in (-9, 137):
+        assert job.error_message == app_build_memory_message("killed")
+    else:
+        assert "OOM" not in job.error_message
 
 
 @pytest.mark.asyncio

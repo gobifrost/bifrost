@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import func, or_, select, text
 
+from shared.app_build_errors import APP_BUILD_JOB_TYPES, app_build_memory_message
 from src.core.database import get_db_context
 from src.jobs.platform.catalog import get_platform_job_metadata
 from src.models.orm.platform_jobs import PlatformJob
@@ -520,6 +521,8 @@ async def _handle_runner_loss(
         ).scalar_one_or_none()
         if job is None:
             return False
+        if error_code == "memory_pressure" and job.job_type in APP_BUILD_JOB_TYPES:
+            error_message = app_build_memory_message("oom" if out_of_memory else "pressure")
         now = _now()
         if job.status == "cancel_requested":
             job.status = "cancelled"
@@ -661,14 +664,19 @@ async def run_claimed_platform_job(
         ):
             return job.status == "succeeded"
 
+    message = (
+        app_build_memory_message("killed")
+        if claim.job_type in APP_BUILD_JOB_TYPES and process.returncode in (-9, 137)
+        else (
+            f"Platform-job runner exited with code {process.returncode} "
+            "before recording a result."
+        )
+    )
     await _handle_runner_loss(
         claim.id,
         claim.lease_token,
         error_code="runner_exited",
-        error_message=(
-            f"Platform-job runner exited with code {process.returncode} "
-            "before recording a result."
-        ),
+        error_message=message,
         memory_sample=last_memory_sample,
     )
     return False

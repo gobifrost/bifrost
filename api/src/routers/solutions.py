@@ -36,6 +36,7 @@ from bifrost.solution_jobs import (
     DEPLOY_JOB_TIMEOUT_ERROR,
     DEPLOY_JOB_TIMEOUT_SECONDS,
 )
+from shared.app_build_errors import AppBuildMemoryError
 from shared.logo_processing import is_logo_thumbnail_version
 from src.core.auth import Context, CurrentActiveUser
 from src.core.principal import UserPrincipal
@@ -2595,6 +2596,8 @@ async def _run_deploy_job(
             "Deploy committed but storage was unavailable after retries. "
             "Re-run the deploy to complete it (it is idempotent).",
         )
+    except AppBuildMemoryError as exc:
+        await _set_status("failed", str(exc))
     except (
         SolutionDowngradeBlocked,
         SolutionDeployConflict,

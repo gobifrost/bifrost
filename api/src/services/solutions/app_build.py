@@ -22,6 +22,7 @@ import tempfile
 from pathlib import Path
 from uuid import UUID
 
+from shared.app_build_errors import AppBuildMemoryError, subprocess_memory_error
 from shared.subprocess_env import package_tool_env
 from src.config import Settings, get_settings
 from src.core.s3_transport import S3Transport
@@ -86,8 +87,8 @@ class SolutionAppBuilder:
             return prebuilt_dist
         with tempfile.TemporaryDirectory(prefix=f"bifrost-appbuild-{app_id}-") as tmp:
             workdir = Path(tmp)
-            self._materialize(workdir, src_files, dependencies)
             try:
+                self._materialize(workdir, src_files, dependencies)
                 # base must match the serving route so emitted asset URLs resolve
                 # under /api/applications/{id}/dist/ rather than the site root.
                 return self._run_vite_build(workdir, base=self._dist_base(app_id))
@@ -100,6 +101,15 @@ class SolutionAppBuilder:
                     f"npm/vite step timed out after {_BUILD_STEP_TIMEOUT_S}s for "
                     f"app {app_id}; a dependency's install script may be hanging"
                 ) from exc
+            except subprocess.CalledProcessError as exc:
+                memory_error = subprocess_memory_error(
+                    exc.returncode, exc.stderr, exc.stdout
+                )
+                if memory_error is not None:
+                    raise memory_error from exc
+                raise
+            except MemoryError as exc:
+                raise AppBuildMemoryError() from exc
 
     async def upload_dist(self, app_id: UUID | str, dist: dict[str, bytes]) -> None:
         """Full-replace upload of an already-compiled dist/ to

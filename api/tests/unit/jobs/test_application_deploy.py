@@ -1,3 +1,4 @@
+import subprocess
 import zipfile
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -7,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 
+from shared.app_build_errors import AppBuildMemoryError
 from src.jobs.platform.application_deploy import (
     ApplicationDeployPayload,
     run_application_deploy,
@@ -330,6 +332,139 @@ async def test_failed_build_keeps_active_artifact_and_cleans_transient_state(
         ("artifact", (app_id, new_id)),
         ("source", None),
     ]
+
+
+@pytest.mark.asyncio
+async def test_memory_failed_build_surfaces_nonretryable_memory_pressure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The independent-App platform job keeps the actionable OOM guidance."""
+    source = _zip(
+        tmp_path / "source.zip",
+        {"package.json": b"{}", "index.html": b"<div id='root'>"},
+    )
+    app_id, deployment_id = uuid4(), uuid4()
+
+    class Storage:
+        def __init__(self, _job_id):
+            pass
+
+        async def copy_to_path(self, path: Path, *, expected_sha256: str) -> None:
+            path.write_bytes(source.read_bytes())
+
+        async def delete(self) -> None:
+            pass
+
+    class Builder:
+        def compile_dist(self, *_args, **_kwargs):
+            raise AppBuildMemoryError()
+
+        async def delete_deployment(self, *_args, **_kwargs) -> None:
+            pass
+
+    class SourceArtifacts:
+        async def delete_deployment_source(self, *_args, **_kwargs) -> None:
+            pass
+
+    class Context:
+        job_id = uuid4()
+
+        async def report(self, _message: str, *, percent: int) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "src.jobs.platform.application_deploy.ApplicationDeployStorage", Storage
+    )
+    monkeypatch.setattr("src.services.application_build.SolutionAppBuilder", Builder)
+    monkeypatch.setattr(
+        "src.services.application_build.ApplicationSourceArtifactStorage",
+        SourceArtifacts,
+    )
+
+    with pytest.raises(PlatformJobFailure) as failure:
+        await run_application_deploy(
+            Context(),
+            ApplicationDeployPayload(
+                application_id=app_id,
+                deployment_id=deployment_id,
+                input_sha256="sha",
+            ),
+        )
+
+    assert failure.value.code == "memory_pressure"
+    assert failure.value.retryable is False
+    assert "increase the build container's memory limit" in failure.value.message
+
+
+@pytest.mark.asyncio
+async def test_sdk_metadata_oom_surfaces_nonretryable_memory_pressure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _zip(
+        tmp_path / "source.zip",
+        {"package.json": b"{}", "index.html": b"<div id='root'>"},
+    )
+    app_id, deployment_id = uuid4(), uuid4()
+
+    class Storage:
+        def __init__(self, _job_id):
+            pass
+
+        async def copy_to_path(self, path: Path, *, expected_sha256: str) -> None:
+            path.write_bytes(source.read_bytes())
+
+        async def delete(self) -> None:
+            pass
+
+    class Builder:
+        def compile_dist(self, *_args, **_kwargs):
+            raise AssertionError("build must not start after SDK metadata OOM")
+
+        async def delete_deployment(self, *_args, **_kwargs) -> None:
+            pass
+
+    class SourceArtifacts:
+        async def delete_deployment_source(self, *_args, **_kwargs) -> None:
+            pass
+
+    class Context:
+        job_id = uuid4()
+
+        async def report(self, _message: str, *, percent: int) -> None:
+            pass
+
+    def metadata_oom():
+        raise subprocess.CalledProcessError(
+            1,
+            ["npx", "esbuild"],
+            stderr=b"FATAL ERROR: JavaScript heap out of memory",
+        )
+
+    monkeypatch.setattr(
+        "src.jobs.platform.application_deploy.ApplicationDeployStorage", Storage
+    )
+    monkeypatch.setattr("src.services.application_build.SolutionAppBuilder", Builder)
+    monkeypatch.setattr(
+        "src.services.application_build.ApplicationSourceArtifactStorage",
+        SourceArtifacts,
+    )
+    monkeypatch.setattr(
+        "src.services.application_build.current_sdk_metadata", metadata_oom
+    )
+
+    with pytest.raises(PlatformJobFailure) as failure:
+        await run_application_deploy(
+            Context(),
+            ApplicationDeployPayload(
+                application_id=app_id,
+                deployment_id=deployment_id,
+                input_sha256="sha",
+            ),
+        )
+
+    assert failure.value.code == "memory_pressure"
+    assert failure.value.retryable is False
+    assert "increase the build container's memory limit" in failure.value.message
 
 
 @pytest.mark.asyncio
