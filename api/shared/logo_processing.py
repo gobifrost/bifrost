@@ -12,10 +12,14 @@ import io
 import re
 import warnings
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from defusedxml import ElementTree as DefusedET
 
 from shared.svg_sanitizer import SvgSanitizationError, sanitize_svg
+
+if TYPE_CHECKING:
+    from PIL import Image
 
 LOGO_ALLOWED_CONTENT_TYPES = {
     "image/jpeg",
@@ -158,8 +162,6 @@ def _square_canvas(source: Image.Image, dimension: int) -> Image.Image:
 
 def _encode_thumbnail(source: Image.Image) -> bytes:
     """Encode near 10 KB when practical and never exceed the hard ceiling."""
-    from PIL import Image
-
     candidates: list[bytes] = []
     for dimension in (128, 112, 96, 80, 64):
         canvas = _square_canvas(source, dimension)
