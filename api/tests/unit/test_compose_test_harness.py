@@ -127,6 +127,7 @@ def test_test_runner_mounts_pyright_inputs():
     compose = yaml.safe_load(_COMPOSE.read_text())
     volumes = compose["services"]["test-runner"].get("volumes", [])
     assert "./api/pyrightconfig.json:/app/pyrightconfig.json:ro" in volumes
+    assert "./api/entrypoint.sh:/app/entrypoint.sh:ro" in volumes
     assert "./test.sh:/app/test.sh:ro" in volumes
     assert "./api/Dockerfile.dev:/app/api/Dockerfile.dev:ro" in volumes
     assert "./docker-compose.yml:/app/docker-compose.yml:ro" in volumes
