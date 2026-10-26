@@ -211,3 +211,67 @@ async def test_bulk_decisions_load_the_run_user_once_per_request(
 
     assert loads == [principal.user_id]
     assert [n.facts["today"] for n in notes] == [False, True, False]
+
+
+async def test_verified_runtime_recording_reuses_its_verified_policy_subject(
+    db_session, world, monkeypatch
+) -> None:
+    """Recording keeps the enforcement trace without reloading runtime facts."""
+    from src.services import access_check_policies
+
+    context = AuthorizationContext(
+        user_id=world["original"].id,
+        home_organization_id=world["org"].id,
+        base_role_id=uuid4(),
+        is_external=False,
+        base_permissions=frozenset(),
+    )
+    runtime = UserPrincipal(
+        user_id=world["original"].id,
+        email=world["original"].email,
+        organization_id=world["org"].id,
+        name="Original",
+    )
+    runtime.runtime_authority = RuntimeAuthority(
+        kind="workflow_execution",
+        credential_id=uuid4(),
+        run_user=RunUser(world["original"].id, context, None, is_active=True),
+        powers=Powers(WorkflowPermissionMode.FULL, ()),
+        acting_user_id=world["original"].id,
+        organization_id=world["org"].id,
+        workflow_id=uuid4(),
+        started_by_user_id=world["original"].id,
+        root_execution_id=uuid4(),
+    )
+    current_policy_principal = await enforced_policy_principal(db_session, runtime)
+
+    async def unexpected_run_user_load(*_args, **_kwargs):
+        raise AssertionError("recording reloaded the verified run user")
+
+    async def unexpected_powers_load(*_args, **_kwargs):
+        raise AssertionError("recording reloaded the verified workflow powers")
+
+    monkeypatch.setattr(access_check_policies, "load_run_user", unexpected_run_user_load)
+    monkeypatch.setattr(access_check_policies, "load_powers", unexpected_powers_load)
+    token = access_checks.start_collecting(
+        {"credential_kind": "workflow_execution", "sub": str(runtime.runtime_authority.credential_id)},
+        principal=runtime,
+    )
+    try:
+        await record_table_policy(
+            db_session,
+            world["table"],
+            _policies(AUTHORITY_RULE),
+            current_policy_principal,
+            action="create",
+            allowed=True,
+        )
+        collector = access_checks.current()
+        assert collector is not None
+        [note] = collector.notes
+    finally:
+        access_checks.stop_collecting(token)
+
+    assert note.decision is not None
+    assert note.decision[1].outcome == "success"
+    assert note.facts["today"] is note.facts["model"] is True

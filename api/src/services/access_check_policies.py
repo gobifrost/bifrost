@@ -160,9 +160,6 @@ def _missing(policies: TablePolicies | FilePolicies, principal: UserPrincipal) -
     ]
 
 
-_RECORD_SUBJECT = "policy_record_subject"
-
-
 async def _record_policy(
     db: AsyncSession,
     *,
@@ -181,15 +178,18 @@ async def _record_policy(
         return
     # Loaded once per request: a bulk call (a 500-item files.move enqueue)
     # records up to three file decisions per item.
-    if _RECORD_SUBJECT not in collector.cache:
+    if access_checks.POLICY_RECORD_SUBJECT_CACHE_KEY not in collector.cache:
         loaded_user = await load_run_user(db, collector.run_user_id)
         loaded_powers = (
             None
             if loaded_user is None or collector.workflow_id is None
             else await load_powers(db, collector.workflow_id)
         )
-        collector.cache[_RECORD_SUBJECT] = (loaded_user, loaded_powers)
-    run_user, powers = collector.cache[_RECORD_SUBJECT]
+        collector.cache[access_checks.POLICY_RECORD_SUBJECT_CACHE_KEY] = (
+            loaded_user,
+            loaded_powers,
+        )
+    run_user, powers = collector.cache[access_checks.POLICY_RECORD_SUBJECT_CACHE_KEY]
     if run_user is None:
         access_checks.note("policy", organization_id, enforced=True, **facts)
         return

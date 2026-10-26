@@ -86,6 +86,12 @@ def test_verified_engine_requests_collect_their_durable_lineage() -> None:
         assert collector.run_user_id == run_user
         assert collector.workflow_id == workflow
         assert collector.execution_id == execution
+        assert collector.cache == {
+            access_checks.POLICY_RECORD_SUBJECT_CACHE_KEY: (
+                principal.runtime_authority.run_user,
+                principal.runtime_authority.powers,
+            )
+        }
         assert collector.notes == [access_checks.Note("scope_switch", target, {})]
     finally:
         access_checks.stop_collecting(token)
@@ -164,6 +170,12 @@ def test_anonymous_system_and_unverified_runtime_payloads_are_not_collected() ->
     assert access_checks.start_collecting(
         {"sub": str(uuid4()), "engine_execution_id": str(uuid4())}
     ) is None
+    assert access_checks.start_collecting(
+        {"credential_kind": "workflow_execution", "sub": str(uuid4())},
+        principal=UserPrincipal(
+            user_id=uuid4(), email="forged@example.test", organization_id=None
+        ),
+    ) is None
     assert access_checks.start_collecting({"sub": SYSTEM_USER_ID, "embed": True}) is None
 
 
@@ -211,6 +223,19 @@ def test_renew_hands_back_the_notes_and_collects_afresh() -> None:
     finally:
         access_checks.stop_collecting(token)
     assert access_checks.current() is None
+
+
+def test_renew_discards_verified_runtime_policy_recording_facts() -> None:
+    principal = _runtime_principal()
+    token = access_checks.start_collecting(_runtime_payload(principal), principal=principal)
+    try:
+        first = access_checks.renew()
+        fresh = access_checks.current()
+        assert first is not None
+        assert access_checks.POLICY_RECORD_SUBJECT_CACHE_KEY in first.cache
+        assert fresh is not None and fresh.cache == {}
+    finally:
+        access_checks.stop_collecting(token)
 
 
 def test_a_persons_collector_keeps_impersonation_provenance() -> None:
